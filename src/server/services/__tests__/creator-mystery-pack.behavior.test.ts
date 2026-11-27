@@ -1,3 +1,4 @@
+import { serverCopyTablesSql } from '@civitai/db-queries/test/image-uses';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { PGlite } from '@electric-sql/pglite';
@@ -171,7 +172,7 @@ beforeAll(async () => {
     CREATE TYPE "CosmeticType" AS ENUM ('Badge', 'NamePlate', 'ContentDecoration', 'ProfileDecoration', 'ProfileBackground', 'Sticker', 'ChatTheme', 'CardDecoration');
     CREATE TYPE "CosmeticShopItemStatus" AS ENUM ('Draft', 'PendingReview', 'Published', 'Rejected', 'RequestedChanges', 'Archived');
     CREATE TABLE "User" (id int PRIMARY KEY, muted boolean NOT NULL DEFAULT false, "bannedAt" timestamp, "deletedAt" timestamp);
-    CREATE TABLE "ServiceDealReviewImage" ("reviewId" int NOT NULL, "imageId" int NOT NULL);
+    ${serverCopyTablesSql};
     CREATE TABLE "Image" (id serial PRIMARY KEY, "userId" int NOT NULL, url text NOT NULL);
     CREATE TABLE "ShopArtworkKeyOwner" (key text PRIMARY KEY, "userId" int NOT NULL, "recordedAt" timestamp NOT NULL DEFAULT now());
     CREATE TABLE "ImageCdnShopTakedown" (url text, "shopItemId" int, PRIMARY KEY (url, "shopItemId"));

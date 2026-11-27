@@ -1,3 +1,4 @@
+import { serverCopyTablesSql } from '@civitai/db-queries/test/image-uses';
 import { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -18,8 +19,7 @@ beforeAll(async () => {
     CREATE TABLE "User" (id int PRIMARY KEY, settings jsonb NOT NULL DEFAULT '{}');
     INSERT INTO "User" (id) VALUES (${OWNER});
     CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int NOT NULL, url text NOT NULL);
-    CREATE TABLE "ServiceDealFileEntry" (id serial PRIMARY KEY, "imageId" int, "scanKey" text);
-    CREATE TABLE "ServiceDealFile" (id serial PRIMARY KEY, "imageId" int, "scanKey" text);
+    ${serverCopyTablesSql};
     INSERT INTO "Image" VALUES (${OWN}, ${OWNER}, 'own'), (${OWN_COPY}, ${OWNER}, 'copy'),
       (${OTHERS}, ${OTHER}, 'others');
     INSERT INTO "ServiceDealFileEntry" ("imageId", "scanKey") VALUES (${OWN_COPY}, 'copy');

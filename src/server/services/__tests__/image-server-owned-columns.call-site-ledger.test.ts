@@ -574,7 +574,10 @@ const IMAGE_FK_WRITE_LEDGER: Record<
       'data.heroImageId = null',
     ],
     decision: 'owner-checked',
-    dealCopy: ['getOwnedImageOrThrow(input.coverImageId,', 'getOwnedImageOrThrow(input.heroImageId,'],
+    dealCopy: [
+      'getOwnedImageOrThrow(input.coverImageId,',
+      'getOwnedImageOrThrow(input.heroImageId,',
+    ],
     guards: {
       'data.coverImageId = input.coverImageId':
         'if (input.coverImageId !== null && input.coverImageId !== project.coverImageId) { await getOwnedImageOrThrow(input.coverImageId, ctx.user.id); }',
@@ -1417,7 +1420,8 @@ describe('image foreign-key writes', () => {
         // Every check before the site's last write: the body of the last one holds them all.
         const last = at.at(-1);
         for (const text of texts)
-          if (last && !normalized(last.body).includes(normalized(text))) missing.push(`${key}: ${text}`);
+          if (last && !normalized(last.body).includes(normalized(text)))
+            missing.push(`${key}: ${text}`);
       }
       expect(missing).toEqual([]);
     });
@@ -1448,8 +1452,9 @@ describe('image foreign-key writes', () => {
         expect(body, helper).toContain(normalized(check));
         if (lookup) expect(body, helper).toContain(normalized(lookup));
       }
+      // 'used here' reads the deal file and review copy legs alike.
       expect(bodyOf('src/server/services/deal-file-image.ts', 'assertNotDealFileImages')).toContain(
-        'dealFileImageSql('
+        "act === 'used here' ? serverCopyImageSql : dealFileImageSql"
       );
     });
   });

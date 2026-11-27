@@ -1,3 +1,4 @@
+import { serverCopyTablesSql } from '@civitai/db-queries/test/image-uses';
 import { randomUUID } from 'crypto';
 import { PGlite } from '@electric-sql/pglite';
 import { TRPCError } from '@trpc/server';
@@ -123,13 +124,13 @@ beforeAll(async () => {
     CREATE TABLE "CsamReport" (id int PRIMARY KEY, "userId" int, images jsonb NOT NULL DEFAULT '[]');
     CREATE TABLE "Report" (id int PRIMARY KEY, reason text NOT NULL);
     CREATE TABLE "UserReport" ("userId" int NOT NULL, "reportId" int NOT NULL);
-    CREATE TABLE "ServiceDealReviewImage" ("reviewId" int NOT NULL, "imageId" int NOT NULL);
+    ${serverCopyTablesSql};
   `);
 });
 
 beforeEach(async () => {
   await holder.db.exec(`
-    TRUNCATE "Post", "Image", "CsamReport", "Report", "UserReport", "ServiceDealReviewImage";
+    TRUNCATE "Post", "Image", "CsamReport", "Report", "UserReport", "ServiceDealReviewImage", "ServiceDealFileEntry", "ServiceDealFile";
     INSERT INTO "Post" (id, "publishedAt") VALUES (1, now() - interval '1 day');
   `);
   redis.clear();

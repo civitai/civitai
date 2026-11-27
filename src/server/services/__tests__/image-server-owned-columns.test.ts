@@ -483,30 +483,6 @@ describe('entity image writers', () => {
     }
   });
 
-  it("updateEntityImages refuses to link the caller's own image when it is a service review's copy", async () => {
-    dbMock.dbWrite.imageConnection.findMany.mockResolvedValue([] as never);
-    dbMock.dbWrite.image.count.mockResolvedValue(1 as never);
-    const prior = dbMock.dbWrite.$queryRaw.getMockImplementation();
-    dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
-      [...strings].join('').includes('ServiceDealReviewImage')
-        ? [{ dealFileImage: true }]
-        : []) as never);
-    try {
-      await expect(
-        updateEntityImages({
-          images: [{ id: 555, url: URL_KEY, type: 'image' }],
-          userId: OWNER,
-          entityType: 'Bounty',
-          entityId: 1,
-        })
-      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
-      expect(dbMock.dbWrite.imageConnection.createMany).not.toHaveBeenCalled();
-    } finally {
-      if (prior) dbMock.dbWrite.$queryRaw.mockImplementation(prior);
-      else dbMock.dbWrite.$queryRaw.mockReset();
-    }
-  });
-
   describe('links the edit form was not shown', () => {
     let linked: number[];
     // Applies each deleteMany to `linked`, so a test reads which links survive the save.

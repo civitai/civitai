@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { NsfwLevel } from '~/server/common/enums';
+import { dealCopyCheckFor } from '~/server/services/__tests__/deal-file-copy.fake';
 
 /**
  * The redesign's members-only page customisation: who may set it, what a visitor is shown, and
@@ -335,14 +336,7 @@ describe('setProfileBackground', () => {
     const REVIEW_COPY = 71;
     subscriptions = [subscription('gold')];
     dbMock.dbRead.image.findUnique.mockResolvedValue({ userId: OWNER } as never);
-    dbMock.dbWrite.$queryRaw.mockImplementation((async (
-      strings: TemplateStringsArray,
-      ...values: unknown[]
-    ) =>
-      [...strings].join('').includes('ServiceDealReviewImage') &&
-      values.some((v) => Array.isArray(v) && v.includes(REVIEW_COPY))
-        ? [{ dealFileImage: true }]
-        : []) as never);
+    dbMock.dbWrite.$queryRaw.mockImplementationOnce(dealCopyCheckFor(REVIEW_COPY));
     await expect(setProfileBackground({ userId: OWNER, imageId: REVIEW_COPY })).rejects.toThrow(
       /delivery file/
     );

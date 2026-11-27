@@ -600,6 +600,14 @@ export const dealFileImageSql = (id: RawBuilder<unknown> | ReturnType<typeof sql
   )})`;
 
 /**
+ * True in SQL when the image whose id is `id` is a copy the server made of a deal file, for its
+ * scan (`dealFileImageSql`) or a service review (`reviewCopyImageSql`). No client names its key or
+ * attaches it anywhere.
+ */
+export const serverCopyImageSql = (id: RawBuilder<unknown> | ReturnType<typeof sql.ref>) =>
+  sql<boolean>`(${dealFileImageSql(id)} OR ${reviewCopyImageSql(id)})`;
+
+/**
  * The key a stored url names, lowercased; shop artwork columns hold whatever the client sent.
  * 🔴 Must match the expression indexes in migration `20261211120000_shop_artwork_key_indexes`
  * exactly, or every image create scans the shop artwork tables.
