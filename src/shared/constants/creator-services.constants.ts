@@ -314,7 +314,7 @@ export const SERVICE_FINAL_SCAN_STALE_MS = 2 * HOUR;
 export const SERVICE_DEAL_HOLD_REASONS = {
   sellerUnavailable: 'seller_unavailable',
   finalScanFailed: 'final_scan_failed',
-  /** A current-round final passed, but an image scanned in it is gone, so nothing shows it was not held. */
+  /** A current-round final passed, but an image scanned in it is gone. */
   finalImageGone: 'final_image_gone',
   finalAboveRating: 'final_above_rating',
 } as const;
