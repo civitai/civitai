@@ -34,6 +34,14 @@ describe('disputeOrigin', () => {
       code: null,
     });
     expect(
+      disputeOrigin({ disputeReason: 'final_above_rating', cancellationReason: null })
+    ).toEqual({
+      label: "A final file is rated above the deal's maximum",
+      system: true,
+      text: null,
+      code: null,
+    });
+    expect(
       disputeOrigin({
         disputeReason: 'final_scan_failed',
         cancellationReason: null,

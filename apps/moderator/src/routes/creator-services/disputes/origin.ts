@@ -4,6 +4,7 @@ const SYSTEM_LABELS: Record<string, string> = {
   seller_unavailable: 'Seller banned or deleted before payout',
   final_scan_failed: 'A final file failed scanning',
   final_image_gone: 'An image a final file was scanned with is gone',
+  final_above_rating: "A final file is rated above the deal's maximum",
 };
 
 /**
