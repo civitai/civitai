@@ -196,6 +196,7 @@ describe('getAssociatedResourcesSimple article side', () => {
   });
 });
 
+// The article listing's browsing-level rule (getArticles), as linked models follow it since #10680.
 describe('getAssociatedResourcesSimple article browsing level', () => {
   const listed = async (viewer: ArticleReader, browsingLevel: number) =>
     (
@@ -245,14 +246,13 @@ describe('setAssociatedResources and articles the editor cannot list', () => {
     expect(await ids()).toEqual([ARTICLES.draft.id]);
   });
 
-  // MODEL_OWNER edits LEVEL_MODEL and drops every link; OWNER wrote the articles.
-  const savedLevelLinks = async (browsingLevel: number) => {
-    await setAssociatedResources(
-      { fromId: LEVEL_MODEL, type: 'Suggested', associations: [], browsingLevel },
-      { id: MODEL_OWNER } as SessionUser
-    );
+  // The editor drops every link; OWNER wrote the articles. Deletes rows, so these run last.
+  const savedLevelLinks = async (fromId: number, editor: number, browsingLevel: number) => {
+    await setAssociatedResources({ fromId, type: 'Suggested', associations: [], browsingLevel }, {
+      id: editor,
+    } as SessionUser);
     const rows = await h.prisma.modelAssociations.findMany({
-      where: { fromModelId: LEVEL_MODEL },
+      where: { fromModelId: fromId },
       select: { toArticleId: true },
       orderBy: { id: 'asc' },
     });
@@ -261,8 +261,16 @@ describe('setAssociatedResources and articles the editor cannot list', () => {
 
   it('keeps links the editor could not see at its level, and removes the ones it showed', async () => {
     const { r, x, unrated } = LEVEL_ARTICLES;
-    expect(await savedLevelLinks(PG)).toEqual([r[0], x[0], unrated[0]]);
-    expect(await savedLevelLinks(MATURE)).toEqual([unrated[0]]);
+    expect(await savedLevelLinks(LEVEL_MODEL, MODEL_OWNER, PG)).toEqual([r[0], x[0], unrated[0]]);
+    expect(await savedLevelLinks(LEVEL_MODEL, MODEL_OWNER, MATURE)).toEqual([unrated[0]]);
+  });
+
+  it("removes the author's own unrated link, which their editor showed", async () => {
+    await h.pg.query(
+      `INSERT INTO "ModelAssociations" (id, "fromModelId", "toArticleId", type, index)
+       VALUES (401, ${MODEL}, ${LEVEL_ARTICLES.unrated[0]}, 'Suggested', 0)`
+    );
+    expect(await savedLevelLinks(MODEL, OWNER, PG)).not.toContain(LEVEL_ARTICLES.unrated[0]);
   });
 });
 
