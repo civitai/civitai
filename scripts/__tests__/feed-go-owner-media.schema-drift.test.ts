@@ -4,9 +4,10 @@ import { describe, expect, it } from 'vitest';
 import { OWNER_MEDIA_EXEMPT_BLOCKS } from '~/server/common/image-block-marker';
 
 // feed-go's OwnerMediaAllowedSQL (the twin of ownerMediaAllowedSql) inlines the exempt block reasons
-// as SQL literals. It answers the thumbnail cache's misses, so a reason added to or dropped from
-// OWNER_MEDIA_EXEMPT_BLOCKS without the Go list moving would serve (or withhold) a creator's blocked
-// video thumbnail differently from Node.
+// as SQL literals. It answers the thumbnail cache's misses and holds the owner's blocked rows in the
+// image page and associated-resources queries (BlockedMediaListSQL, ImageBlockedForSQL), so a reason
+// added to or dropped from OWNER_MEDIA_EXEMPT_BLOCKS without the Go list moving would serve (or
+// withhold) a creator's blocked image or video thumbnail differently from Node.
 const USERS_GO = join(__dirname, '../../apps/feed-go/internal/hydrate/users.go');
 // The golden generator's transcription of the same list (its getAllImagesUncaptured mirror holds the
 // owner's blocked rows to it), so a fixture's expected answer moves with Node's list too.
