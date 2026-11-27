@@ -40,6 +40,7 @@ export type RunnerMintRefusal =
   | 'cap'
   | 'authorization'
   | 'run_live'
+  | 'run_spent'
   | 'amount'
   | 'runs_per_period';
 
@@ -122,6 +123,8 @@ export async function decideRunnerMint(
   if (request.amount > auth.maxAmountPerRun) return refuse('amount');
 
   if (await reads.hasLiveAttempt(runId)) return refuse('run_live');
+  // A retry would reuse the run's externalId, and so its ended workflow: a new run is needed.
+  if (await reads.hasSpentAttempt(runId)) return refuse('run_spent');
 
   const headroom = cap - (await reads.capUsed(userId, clientId, periodStart(capPeriod, now)));
   if (request.amount > headroom) return refuse('cap');

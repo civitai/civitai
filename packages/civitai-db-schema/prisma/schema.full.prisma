@@ -5534,6 +5534,8 @@ model RunnerRunAttempt {
   createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt       DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
   settledAt       DateTime? @map("settled_at") @db.Timestamptz(6)
+  /// The Redis legs the attempt holds: key names and amounts only.
+  reservation     Json?
 
   @@unique([runId, attemptNo])
   @@index([userId, runnerClientId, createdAt], map: "runner_run_attempts_user_client_created_idx")

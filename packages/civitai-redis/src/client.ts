@@ -3103,6 +3103,13 @@ const REDIS_KEYS_UNPREFIXED = {
     // with a TTL just past the token's expiry (verifier clock tolerance). The attempt ledger bounds a
     // replay if it is evicted.
     RUNNER_SUBMIT_JTI: 'blocks:runner-submit-jti',
+    // A user disconnected a runner client: `${RUNNER_REVOKED}:${userId}:${clientId}`, TTL past the
+    // runner token's life. Value is the revoke time (epoch s); submits with a token minted at or
+    // before it are refused.
+    RUNNER_REVOKED: 'blocks:runner-revoked',
+    // The reconciler cancelled a runner workflow past its reserved ceiling:
+    // `${RUNNER_OVER_CEILING_CANCEL}:${attemptId}`, SET NX, 1h TTL, so it cancels once.
+    RUNNER_OVER_CEILING_CANCEL: 'blocks:runner-over-ceiling-cancel',
     // The viewer chose to continue on their own Buzz past their plan's daily app Buzz cap, for
     // one UTC day: `system:blocks:buzz-opt-in:${userId}:${UTC-day}` = '1', 25h TTL. Per user
     // only (no appBlockId): it widens the BUZZ_CAP ceiling, which is per user. Deliberately NOT
