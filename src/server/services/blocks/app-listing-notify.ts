@@ -2,6 +2,7 @@ import type { AppListingModerationNotificationDetails } from '~/server/notificat
 import {
   appReviewAttributionDetails,
   type AppReviewAttribution,
+  withoutAttributionFields,
 } from '~/server/notifications/app-review-attribution';
 
 /**
@@ -12,8 +13,8 @@ import {
  * DEDICATED module whose only static imports are a TYPE (erased at compile) and the
  * dependency-free `app-review-attribution` leaf, and which
  * DYNAMICALLY imports `createNotification` + `NotificationCategory` inside the async
- * body — so importing this helper adds ZERO runtime graph to a caller (mirrors the
- * services' own dynamic-import discipline for heavy deps). This keeps the service
+ * body — so importing this helper adds no meaningful runtime graph to a caller (mirrors
+ * the services' own dynamic-import discipline for heavy deps). This keeps the service
  * unit tests (which mock only `dbRead`/`dbWrite`) from pulling the notifications
  * client; a test that asserts emission mocks `~/server/services/notification.service`.
  *
@@ -49,6 +50,9 @@ export async function notifyAppListingOwner(opts: {
     category: NotificationCategory.System,
     type: opts.type,
     key: opts.key,
-    details: { ...opts.details, ...appReviewAttributionDetails(opts.attribution) },
+    details: {
+      ...withoutAttributionFields(opts.details),
+      ...appReviewAttributionDetails(opts.attribution),
+    },
   });
 }

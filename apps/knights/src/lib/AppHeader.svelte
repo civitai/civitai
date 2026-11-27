@@ -7,7 +7,7 @@
   import Icon from './Icon.svelte';
   import PrimaryNav from './PrimaryNav.svelte';
   import RankBadge from './RankBadge.svelte';
-  import RecapButton from './RecapButton.svelte';
+  import WhatsNewButton from './WhatsNewButton.svelte';
   import FeedbackDialog from './FeedbackDialog.svelte';
   import RestartCareerDialog from './RestartCareerDialog.svelte';
   import { rankPill } from './chrome';
@@ -24,7 +24,7 @@
     isPlayer = false,
     feedbackOpen = false,
     status,
-    recapUnseen = false,
+    hasUpdates = false,
     goldPerBuzz,
     ladder,
     badges,
@@ -39,8 +39,8 @@
     isPlayer?: boolean;
     feedbackOpen?: boolean;
     status?: PlayerStatus;
-    /** Today's recap has not been seen: the recap button wears a dot. */
-    recapUnseen?: boolean;
+    /** There are "What's new" entries for this player: the header shows their button. */
+    hasUpdates?: boolean;
     goldPerBuzz: number;
     ladder: LadderRow[];
     /** Rank badge image addresses by rank; a rank without one shows the crest. */
@@ -118,8 +118,8 @@
   {/if}
 
   {#if player}
-    {#if !inquisitor}
-      <RecapButton unseen={recapUnseen} />
+    {#if !inquisitor && hasUpdates}
+      <WhatsNewButton />
     {/if}
     <div class="account" bind:this={wrapper} {onfocusout}>
       <button
@@ -450,7 +450,7 @@
       right: 16px;
     }
   }
-  /* Narrow phones: the wordmark has no room beside gold, level, recap and the avatar; the shield stays as the Home link. */
+  /* Narrow phones: the wordmark has no room beside gold, level, "What's new" and the avatar; the shield stays as the Home link. */
   @media (max-width: 27.5rem) {
     .brand {
       flex: none;

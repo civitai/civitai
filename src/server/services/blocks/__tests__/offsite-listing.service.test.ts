@@ -915,8 +915,8 @@ describe('approveExternalRequest', () => {
       expect.objectContaining({
         type: 'app-listing-approved',
         userId: CALLER,
-        // The approving moderator and their note, for the "Reviewed by" line.
-        attribution: { kind: 'moderator', userId: MOD },
+        // The approved request (its reviewer is the byline) and the note; never the reviewer id.
+        attribution: { kind: 'moderator', requestId: 'alpr_1' },
         details: expect.objectContaining({
           slug: 'cool-app',
           listingId: 'apl_1',
@@ -1435,7 +1435,7 @@ describe('rejectExternalRequest', () => {
       expect.objectContaining({
         type: 'app-listing-rejected',
         userId: CALLER,
-        attribution: { kind: 'moderator', userId: MOD },
+        attribution: { kind: 'moderator', requestId: 'alpr_1' },
         details: expect.objectContaining({ slug: 'cool-app', reason: REASON }),
       })
     );

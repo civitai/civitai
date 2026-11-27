@@ -6,7 +6,8 @@
 // Every capture goes through Recorder.Record, the one entry point: it strips the request
 // (evalcorpus.Capture: credentials, client address, the viewer's own ids), computes the signature,
 // applies the per-pod daily admission limits, and queues the rows. Nothing here blocks: a full
-// writer queue drops the row (outcome dropped).
+// writer queue drops the row (outcome dropped). A capture whose viewer could not be resolved is
+// outcome unresolved, one that does not build a case outcome invalid: neither is a lost row.
 //
 // Insert-once (the `cases` pin contract): the writer login can INSERT but not SELECT, and `cases` is
 // a ReplacingMergeTree versioned by last_seen, where the row with the newest last_seen wins. The
@@ -47,6 +48,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
 	"github.com/civitai/civitai/apps/feed-go/internal/chwrite"
 	"github.com/civitai/civitai/apps/feed-go/internal/evalcorpus"
+	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 )
 
 // Sources: where a capture's Node answer (or outcome) came from (the `source` column and metric label).
@@ -59,8 +61,9 @@ const (
 	// back; no Node answer.
 	SourceServe = "serve"
 	// SourceCorpusOnly: a Node corpus-only sample (FEED_GO_SHADOW_CORPUS_ONLY_RATE, DESIGN.md §19.6
-	// T4): a credentialed `/api/v1/models/[id]` request with its credential taken out by Node, kept
-	// as its class (evalcorpus.Request.CredentialClass); never compared, no Node answer.
+	// T4): a credentialed `/api/v1/models/[id]` or tRPC `image.getInfinite` request with its
+	// credential taken out by Node, kept as its class (evalcorpus.Request.CredentialClass); never
+	// compared, no Node answer.
 	SourceCorpusOnly = "corpus-only"
 )
 
@@ -75,8 +78,16 @@ const (
 	// categories' budget, or the endpoint's daily cap were used up, or the identical case was already
 	// admitted today); its sample row was queued.
 	OutcomeDeduped = "deduped"
-	// OutcomeDropped: a row was not queued (a writer's queue was full or closed), or nothing could be
-	// captured (the viewer could not be resolved, or the request did not build a case).
+	// OutcomeUnresolved: nothing captured, the viewer could not be resolved (Sample.ViewerKnown false:
+	// an API credential the tap does not look up, a session the cache cannot answer, …; without the
+	// viewer the input cannot be searched for the viewer's own ids). Why: UnresolvedReason.
+	OutcomeUnresolved = "unresolved"
+	// OutcomeInvalid: nothing captured, the request did not build a case (evalcorpus.Capture refused
+	// it, or its signature or stored request could not be made).
+	OutcomeInvalid = "invalid"
+	// OutcomeDropped: a capture lost to load or shutdown: a row was not queued (a writer's queue was
+	// full or closed), and, counted by the server, a T3 capture with every worker busy or the server
+	// shutting down.
 	OutcomeDropped = "dropped"
 	// OutcomeRefused: SourceCorpusOnly only, counted by the server before Record: a corpus-only sample
 	// that still carried a credential, a credential class other than header or query, or Node's answer.
@@ -85,7 +96,39 @@ const (
 )
 
 // Outcomes is every outcome Record returns, in a fixed order (OutcomeRefused is the server's).
-var Outcomes = []string{OutcomeWritten, OutcomeDeduped, OutcomeDropped}
+var Outcomes = []string{OutcomeWritten, OutcomeDeduped, OutcomeUnresolved, OutcomeInvalid, OutcomeDropped}
+
+// Reasons of an OutcomeUnresolved capture (UnresolvedReason; the reason label of
+// feed_go_eval_capture_unresolved_total), a closed set.
+const (
+	// UnresolvedBearerToken: the request carries an API credential (every `bearer-*` fallback: the tap
+	// never looks a key up, and a looked-up one the computation could not serve is not a viewer).
+	UnresolvedBearerToken = "bearer-token"
+	// UnresolvedSessionCacheMiss, UnresolvedSessionCacheCleared, UnresolvedSessionIDMismatch: the
+	// session cache could not answer for the session's user (auth's fallbacks of those names).
+	UnresolvedSessionCacheMiss    = "session-cache-miss"
+	UnresolvedSessionCacheCleared = "session-cache-cleared"
+	UnresolvedSessionIDMismatch   = "session-id-mismatch"
+	// UnresolvedOther: any other error (or none given).
+	UnresolvedOther = "other"
+)
+
+// UnresolvedReasons is every UnresolvedReason value, in a fixed order.
+var UnresolvedReasons = []string{UnresolvedBearerToken, UnresolvedSessionCacheMiss, UnresolvedSessionCacheCleared,
+	UnresolvedSessionIDMismatch, UnresolvedOther}
+
+// UnresolvedReason is the reason an unresolved viewer is counted under: the viewer resolve's error
+// (Sample.ViewerErr) read by its fallback reason, one of UnresolvedReasons.
+func UnresolvedReason(err error) string {
+	reason := fallback.Reason(err)
+	switch {
+	case strings.HasPrefix(reason, "bearer-"):
+		return UnresolvedBearerToken
+	case reason == UnresolvedSessionCacheMiss, reason == UnresolvedSessionCacheCleared, reason == UnresolvedSessionIDMismatch:
+		return reason
+	}
+	return UnresolvedOther
+}
 
 // Production results a capture records besides the comparison results (prod_result).
 const (
@@ -149,10 +192,12 @@ type Sample struct {
 	Source string
 	// Request is the request as the server saw it, credentials included: Record strips them.
 	Request evalcorpus.Request
-	// Viewer is who made it; ViewerKnown false when it could not be resolved (Record then drops it:
-	// without the viewer the input cannot be searched for the viewer's own ids).
+	// Viewer is who made it; ViewerKnown false when it could not be resolved (Record then captures
+	// nothing, OutcomeUnresolved: without the viewer the input cannot be searched for the viewer's own
+	// ids), ViewerErr then the resolve's error (read for the metric by UnresolvedReason, never by Record).
 	Viewer      evalcorpus.Viewer
 	ViewerKnown bool
+	ViewerErr   error
 	// Weight is 1 / the effective rate this request was sampled at (0: unknown).
 	Weight float64
 	// ProdResult is the production verdict: a comparison result (match, fields, …, unsupported,
@@ -293,29 +338,30 @@ func OutcomeClass(prodResult string) string {
 	return "error"
 }
 
-// Record captures s and returns its outcome (OutcomeWritten, OutcomeDeduped or OutcomeDropped), or ""
-// for an endpoint that is not Supported (nothing done, nothing to count).
+// Record captures s and returns its outcome (OutcomeWritten, OutcomeDeduped, OutcomeUnresolved,
+// OutcomeInvalid or OutcomeDropped), or "" for an endpoint that is not Supported (nothing done,
+// nothing to count).
 func (r *Recorder) Record(s Sample) string {
 	if !Supported(s.Request.Endpoint) {
 		return ""
 	}
 	if !s.ViewerKnown {
-		return OutcomeDropped
+		return OutcomeUnresolved
 	}
 	now := r.now().UTC()
 	c, err := evalcorpus.Capture(s.Request, s.Viewer, evalcorpus.Env{
 		HostColors: r.cfg.HostColors, RegionRules: r.cfg.RegionRules, RegionBlockRules: r.cfg.RegionBlockRules, Now: now,
 	}, evalcorpus.Extra{})
 	if err != nil {
-		return OutcomeDropped
+		return OutcomeInvalid
 	}
 	sig, err := strconv.ParseUint(c.Signature, 16, 64)
 	if err != nil {
-		return OutcomeDropped
+		return OutcomeInvalid
 	}
 	reqJSON, err := Stored(c)
 	if err != nil {
-		return OutcomeDropped
+		return OutcomeInvalid
 	}
 	dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 	day := dayStart.Format(time.DateOnly)

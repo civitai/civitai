@@ -124,6 +124,10 @@ type Metrics struct {
 	// source: evalcapture.Sources, outcome: evalcapture.Outcomes, and evalcapture.OutcomeRefused for
 	// corpus-only; evalcapture.go). Seeded per source for the endpoints it captures.
 	EvalCapture *prometheus.CounterVec
+	// EvalCaptureUnresolved counts the outcome-unresolved captures again, by why the viewer was not
+	// resolved (feed_go_eval_capture_unresolved_total: endpoint, source, reason:
+	// evalcapture.UnresolvedReasons). Seeded per source that resolves a viewer (not corpus-only).
+	EvalCaptureUnresolved *prometheus.CounterVec
 	// EvalCaptureRowsDropped counts the eval capture's rows its writers dropped, by table (samples |
 	// cases) and chwrite reason (feed_go_eval_capture_rows_dropped_total): a batch ClickHouse refused
 	// after its retries included, which feed_go_eval_capture_total (rows queued) cannot see. Not per
@@ -188,8 +192,12 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		}, []string{EndpointLabel, "viewer", "result"}),
 		EvalCapture: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_eval_capture_total",
-			Help: "Eval capture taps (DESIGN.md §19.6) by source (shadow | serve-parity | serve) and outcome: written (admitted: sample and case rows queued), deduped (sample row queued, not admitted), dropped (a row not queued, or nothing capturable).",
+			Help: "Eval capture taps (DESIGN.md §19.6) by source (shadow | serve-parity | serve | corpus-only) and outcome: written (admitted: sample and case rows queued), deduped (sample row queued, not admitted), unresolved (the viewer could not be resolved; nothing captured), invalid (the request built no case), dropped (lost to load or shutdown: a row not queued, a T3 capture with every worker busy), refused (corpus-only: a sample still carrying a credential or Node's answer).",
 		}, []string{EndpointLabel, "source", "outcome"}),
+		EvalCaptureUnresolved: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "feed_go_eval_capture_unresolved_total",
+			Help: "Eval capture taps whose viewer could not be resolved (feed_go_eval_capture_total outcome unresolved), by reason: bearer-token (an API credential), session-cache-miss, session-cache-cleared, session-id-mismatch, other.",
+		}, []string{EndpointLabel, "source", "reason"}),
 		EvalCaptureRowsDropped: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_eval_capture_rows_dropped_total",
 			Help: "Eval capture rows the ClickHouse writers dropped, by table (samples | cases) and reason (queue_full, marshal, http_4xx, http_5xx, http_other, transport, shutdown).",
@@ -389,7 +397,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		}
 	}
 	reg.MustRegister(m.ShadowViewer, m.ShadowResponseViewer)
-	reg.MustRegister(m.Requests, m.Fallbacks, m.Duration, shadowResults, shadowDiffs, shadowResponse, m.ShadowDropped, m.ServeParity, m.EvalCapture, m.EvalCaptureRowsDropped,
+	reg.MustRegister(m.Requests, m.Fallbacks, m.Duration, shadowResults, shadowDiffs, shadowResponse, m.ShadowDropped, m.ServeParity, m.EvalCapture, m.EvalCaptureUnresolved, m.EvalCaptureRowsDropped,
 		m.ShadowPhase, m.ShadowPhaseCPU, m.ShadowPhaseSolo, m.ShadowPhaseSoloWall,
 		m.GoFirst, m.GoFirstMiss, m.GoFirstDropped, m.GoFirstRaced, m.GoFirstDBReads, m.GoFirstPages, m.GoFirstCheckLag,
 		m.Panics, m.RevocationDegraded, m.JWKSRefresh, m.JWKSStale, m.FallbackProxyErrors, m.CacheMisses, m.CacheWrites, m.Errors, serveInFlight, m.SearchRejected,

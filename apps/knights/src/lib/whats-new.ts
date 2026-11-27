@@ -1,12 +1,50 @@
-// The one-time "What's new" dialog shown to members after the v2 launch (`WhatsNewDialog.svelte`). All its copy is here.
+// "What's new" (`WhatsNewDialog.svelte`): the one-time welcome after the v2 launch, all its copy here, and the dialog of
+// later entries, written as files under `apps/knights/whats-new/`.
 
 /** Filled at launch with the announcement article's URL; the dialog's link shows only once it is set. */
 export const ANNOUNCEMENT_URL =
   'https://civitai.com/articles/38647/knights-v2-judge-the-image-rise-in-the-order';
 
-/** `link` turns that part of the lead-in into a link. */
-export type WhatsNewItem = { lead: string; body: string; link?: { text: string; href: string } };
-export type WhatsNew = { eyebrow: string; title: string; lead: string; items: WhatsNewItem[] };
+/** `link` turns that part of the lead-in into a link; `action` is a link after the body; `isNew` marks an unseen entry. */
+export type WhatsNewItem = {
+  /** Unique per item; the launch copy's leads are distinct, so it keys by lead. */
+  id?: string;
+  lead: string;
+  body: string;
+  link?: { text: string; href: string };
+  action?: { text: string; href: string };
+  isNew?: boolean;
+};
+export type WhatsNew = {
+  eyebrow: string;
+  title: string;
+  lead: string;
+  items: WhatsNewItem[];
+  /** The announcement article, linked in the footer. */
+  announcement?: string;
+};
+
+/** One entry from `apps/knights/whats-new/`, as the page gets it. */
+export type UpdateEntry = {
+  id: string;
+  title: string;
+  body: string;
+  link: { href: string; text: string } | null;
+};
+
+/** The entries dialog: the unseen ones first (newest first, as given), marked new. */
+export const updatesCopy = (entries: UpdateEntry[], unseen: number): WhatsNew => ({
+  eyebrow: "What's new",
+  title: 'News from the Order',
+  lead: unseen > 0 ? 'Since your last visit:' : 'Recent changes to the game:',
+  items: entries.map((entry, index) => ({
+    id: entry.id,
+    lead: entry.title,
+    body: entry.body,
+    ...(entry.link ? { action: entry.link } : {}),
+    isNew: index < unseen,
+  })),
+});
 
 const SHOP: WhatsNewItem = {
   lead: 'Earn gold, spend it in the shop.',
@@ -24,6 +62,7 @@ const CODEX: WhatsNewItem = {
 
 // A newcomer never saw the old game, so their version talks about how the Order works, not what changed.
 const RETURNING_COPY: WhatsNew = {
+  announcement: ANNOUNCEMENT_URL,
   eyebrow: "What's new",
   title: 'Welcome to the new Knights of New Order',
   lead: "The Order has a new home. Here's what changed:",
@@ -39,6 +78,7 @@ const RETURNING_COPY: WhatsNew = {
   ],
 };
 const NEWCOMER_COPY: WhatsNew = {
+  announcement: ANNOUNCEMENT_URL,
   eyebrow: 'Before you begin',
   title: 'Welcome to the Knights of New Order',
   lead: "Here's how the Order works:",
