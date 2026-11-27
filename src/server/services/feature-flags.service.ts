@@ -880,6 +880,9 @@ const featureFlags = createFeatureFlags({
   // launch. Off ⇒ Ultra is not offered and a submitted 'ultra' falls back to the
   // default (see `image/krea3.graph.ts`).
   krea3Ultra: { availability: ['mod'], fliptKey: 'krea3-ultra' },
+  // Gates the Seed Audio ecosystem in the generator: off ⇒ it is hidden from the audio picker and a
+  // submitted `SeedAudio` is refused (see `getEcosystemStates`).
+  seedAudioGenerator: { availability: ['mod'], fliptKey: 'seed-audio-generator' },
   // Retool privileged endpoints — `granted` means the moderator must carry the
   // matching permission key in user.permissions. Endpoints lookup the key
   // directly from `RetoolAction.privileged`, so the permission name MUST stay
