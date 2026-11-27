@@ -599,9 +599,10 @@ export async function markCopyDeletes(entryIds: number[]) {
 
 /**
  * Settles the marked entries a delete was asked for; returns the ids let go. An entry lets go of its
- * copy when this delete removed it or an earlier try did (marked, and the image is gone); one no file
- * owns goes with it. One whose copy still exists (kept for its case, or the delete failed) stays
- * pointed and unmarked. An unmarked entry whose image is gone stays pointed (`fileImageGone`).
+ * copy only when this delete returned it; one no file owns goes with it. One whose copy still exists
+ * (kept for its case, or the delete failed) stays pointed and unmarked. One whose copy is gone but
+ * not by this delete stays pointed and marked, so its file is refused (`fileImageGone`): a retry
+ * cannot tell an earlier try's delete from anyone else's. That one is logged as stranded.
  */
 export async function settleCopyDeletes(entryIds: number[], goneImageIds: number[]) {
   if (!entryIds.length) return [];
@@ -609,8 +610,7 @@ export async function settleCopyDeletes(entryIds: number[], goneImageIds: number
     WITH released AS (
       SELECT e."id", e."fileId" FROM "ServiceDealFileEntry" e
       WHERE e."id" IN (${Prisma.join(entryIds)}) AND e."imageId" IS NOT NULL
-        AND (e."imageId" IN (${Prisma.join(goneImageIds.length ? goneImageIds : [-1])})
-          OR (e."copyDeleteStartedAt" IS NOT NULL AND ${entryImageGone(Prisma.sql`e`)}))
+        AND e."imageId" IN (${Prisma.join(goneImageIds.length ? goneImageIds : [-1])})
     ), dropped AS (
       DELETE FROM "ServiceDealFileEntry" e USING released r
       WHERE e."id" = r."id" AND r."fileId" IS NULL RETURNING e."id"
@@ -620,6 +620,18 @@ export async function settleCopyDeletes(entryIds: number[], goneImageIds: number
       FROM released r WHERE e."id" = r."id" AND r."fileId" IS NOT NULL RETURNING e."id"
     )
     SELECT "id" FROM dropped UNION ALL SELECT "id" FROM cleared`;
+  const stranded = await dbWrite.$queryRaw<{ id: number; fileId: number | null }[]>`
+    SELECT e."id", e."fileId" FROM "ServiceDealFileEntry" e
+    WHERE e."id" IN (${Prisma.join(entryIds)}) AND e."copyDeleteStartedAt" IS NOT NULL
+      AND ${entryImageGone(Prisma.sql`e`)}`;
+  for (const { id, fileId } of stranded)
+    logToAxiom({
+      name: 'deal_copy_settle_stranded',
+      type: 'warning',
+      message: 'a marked scan copy is gone, but not by this delete; its file stays refused',
+      entryId: id,
+      fileId,
+    });
   await dbWrite.$executeRaw`
     UPDATE "ServiceDealFileEntry" e SET "copyDeleteStartedAt" = NULL
     WHERE e."id" IN (${Prisma.join(entryIds)}) AND e."copyDeleteStartedAt" IS NOT NULL
@@ -1622,7 +1634,8 @@ export async function startPreviewScans({ limit = 5 } = {}) {
       if (preview.scanKey) {
         // A crash left the object, and maybe the Image row: find it so it is never ingested twice.
         const [existing] = await dbWrite.$queryRaw<{ id: number }[]>`
-          SELECT "id" FROM "Image" WHERE "url" = ${preview.scanKey}::text LIMIT 1`;
+          SELECT "id" FROM "Image" WHERE "url" = ${preview.scanKey}::text AND "postId" IS NULL
+        ORDER BY "id" LIMIT 1`;
         imageId = existing?.id;
       }
       if (!imageId) {
@@ -1789,10 +1802,12 @@ export async function deleteScanCopies({ limit = 50 } = {}) {
   let deleted = 0;
   for (const row of rows) {
     try {
-      await service.deleteImages([row.imageId], {
+      const gone = await service.deleteImages([row.imageId], {
         updatePosts: false,
         actor: { system: 'creator-service-deal-file' },
       });
+      // A copy its case kept keeps its pointer and key, so it stays refused everywhere.
+      if (!gone.includes(row.imageId)) continue;
       await dbWrite.$executeRaw`
         UPDATE "ServiceDealFile" SET "imageId" = NULL, "scanKey" = NULL WHERE "id" = ${row.id}::int`;
       deleted++;

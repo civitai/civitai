@@ -1254,9 +1254,12 @@ describe('preview pipeline', () => {
       ]);
       return { id: row.id };
     });
-    images.deleteImages.mockImplementation(async (ids: number[]) => {
-      await q(`DELETE FROM "Image" WHERE id = ANY($1::int[])`, [ids]);
-    });
+    // As deleteImages does: the ids it deleted.
+    images.deleteImages.mockImplementation(async (ids: number[]) =>
+      (
+        await q<{ id: number }>(`DELETE FROM "Image" WHERE id = ANY($1::int[]) RETURNING id`, [ids])
+      ).map(({ id }) => id)
+    );
   });
 
   const verdict = (ingestion: string, flags = '') =>
@@ -1567,6 +1570,17 @@ describe('preview pipeline', () => {
     expect(images.deleteImages).not.toHaveBeenCalled();
     expect((await fileRow(fileId)).imageId).not.toBeNull();
     expect(await q(`SELECT 1 FROM "Image"`)).toHaveLength(1);
+  });
+
+  it('keeps the pointer and key of a copy its case kept, so the copy stays refused', async () => {
+    const { fileId } = await waiting();
+    await files.startPreviewScans();
+    await verdict('Scanned');
+    await files.settlePreviewScans();
+    const { imageId, scanKey } = await fileRow(fileId);
+    images.deleteImages.mockResolvedValueOnce([]);
+    expect(await files.deleteScanCopies()).toBe(0);
+    expect(await fileRow(fileId)).toMatchObject({ imageId, scanKey });
   });
 
   it('keeps the pointer when a delete fails, so the copy is retried', async () => {
@@ -1956,9 +1970,12 @@ describe('video previews', () => {
       ]);
       return { id: row.id };
     });
-    images.deleteImages.mockImplementation(async (ids: number[]) => {
-      await q(`DELETE FROM "Image" WHERE id = ANY($1::int[])`, [ids]);
-    });
+    // As deleteImages does: the ids it deleted.
+    images.deleteImages.mockImplementation(async (ids: number[]) =>
+      (
+        await q<{ id: number }>(`DELETE FROM "Image" WHERE id = ANY($1::int[]) RETURNING id`, [ids])
+      ).map(({ id }) => id)
+    );
   });
 
   let keys = 0;

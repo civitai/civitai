@@ -207,7 +207,8 @@ async function submitEntryImage(
   if (row.scanKey) {
     // A crash left the object, and maybe the Image row: find it so it is never ingested twice.
     const [existing] = await dbWrite.$queryRaw<{ id: number }[]>`
-      SELECT "id" FROM "Image" WHERE "url" = ${row.scanKey}::text LIMIT 1`;
+      SELECT "id" FROM "Image" WHERE "url" = ${row.scanKey}::text AND "postId" IS NULL
+        ORDER BY "id" LIMIT 1`;
     imageId = existing?.id;
   }
   if (!imageId) {
@@ -566,7 +567,8 @@ async function unpackVideo(file: ClaimedFinal, probeVideo: typeof probeVideoDime
   // A crash after the Image was made leaves it to be found, so it is never ingested twice.
   const [existing] = entry.scanKey
     ? await dbWrite.$queryRaw<{ id: number }[]>`
-        SELECT "id" FROM "Image" WHERE "url" = ${scanKey}::text LIMIT 1`
+        SELECT "id" FROM "Image" WHERE "url" = ${scanKey}::text AND "postId" IS NULL
+        ORDER BY "id" LIMIT 1`
     : [];
   const imageId =
     existing?.id ??
@@ -883,14 +885,18 @@ let danglingCountedAt = 0;
 export async function countDanglingScanCopies({ now = Date.now() } = {}) {
   if (now - danglingCountedAt < 60 * 60_000) return null;
   danglingCountedAt = now;
-  const [counts] = await dbWrite.$queryRaw<{ marked: number; unmarked: number }[]>`
-    SELECT count(*) FILTER (WHERE e."copyDeleteStartedAt" IS NOT NULL)::int AS marked,
-      count(*) FILTER (WHERE e."copyDeleteStartedAt" IS NULL)::int AS unmarked
+  // A mark past the settle window is a delete that will not settle: it dangles like an unmarked one.
+  const [counts] = await dbWrite.$queryRaw<{ settling: number; dangling: number }[]>`
+    SELECT count(*) FILTER (WHERE NOT ${entryImageGone(Prisma.sql`e`, {
+      exceptSettling: true,
+    })})::int AS settling,
+      count(*) FILTER (WHERE ${entryImageGone(Prisma.sql`e`, { exceptSettling: true })})::int
+        AS dangling
     FROM "ServiceDealFileEntry" e WHERE ${entryImageGone(Prisma.sql`e`)}`;
   logUnpack(
     'entries pointing at a gone image',
-    { count: counts.unmarked, total: counts.marked + counts.unmarked },
-    counts.unmarked ? 'warning' : 'info'
+    { count: counts.dangling, total: counts.settling + counts.dangling },
+    counts.dangling ? 'warning' : 'info'
   );
   return counts;
 }

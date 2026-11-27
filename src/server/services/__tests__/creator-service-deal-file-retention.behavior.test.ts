@@ -191,6 +191,34 @@ const sweepAndPurge = async () => {
 };
 
 describe('the retention windows', () => {
+  it.each([
+    ['still pointed at a passed copy not yet deleted', 'Passed', null],
+    ['rejected with its copy kept as evidence', 'Failed', 'An image in this file was rejected when it was checked.'],
+  ])("keeps a removed file whose image entry is %s, and the entry's pointer", async (_n, scanStatus, failReason) => {
+    const { finalId } = await closedDeal('Cancelled', 31);
+    await q(`INSERT INTO "Image" (id, url, "userId") VALUES (1, 'copy-key', ${SELLER})`);
+    await q(
+      `INSERT INTO "ServiceDealFileEntry" ("fileId", "dealId", "entryIndex", path, size, "imageId", "scanStatus", "failReason")
+       SELECT id, "dealId", 0, 'a.png', 1, 1, $2::"ServiceDealFileScanStatus", $3 FROM "ServiceDealFile" WHERE id = $1`,
+      [finalId, scanStatus, failReason]
+    );
+    await sweepAndPurge();
+    expect(await removed(finalId)).toBe(true);
+    expect(await kept(finalId)).toBe(true);
+    expect(await q(`SELECT "imageId" FROM "ServiceDealFileEntry"`)).toEqual([{ imageId: 1 }]);
+  });
+
+  it('purges a removed file whose image entry let go of its copy (control)', async () => {
+    const { finalId } = await closedDeal('Cancelled', 31);
+    await q(
+      `INSERT INTO "ServiceDealFileEntry" ("fileId", "dealId", "entryIndex", path, size, "scanStatus")
+       SELECT id, "dealId", 0, 'a.png', 1, 'Passed' FROM "ServiceDealFile" WHERE id = $1`,
+      [finalId]
+    );
+    await sweepAndPurge();
+    expect(await kept(finalId)).toBe(false);
+  });
+
   it.each(['Cancelled', 'Declined', 'Expired'] as const)(
     "removes a %s deal's files 30 days after it closed, and not a day before",
     async (status) => {

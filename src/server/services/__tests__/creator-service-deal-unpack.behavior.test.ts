@@ -1526,6 +1526,19 @@ describe('resuming', () => {
     expect((await entries(fileId))[0].imageId).toBe(1);
   });
 
+  it('never takes a posted image with the same key for the row a crash left', async () => {
+    const dealId = await accepted();
+    const fileId = await zipFinal(dealId, [{ name: 'a.png', data: IMAGE_A }]);
+    await q(
+      `INSERT INTO "ServiceDealFileEntry" ("fileId", "dealId", "entryIndex", "path", "size", "scanKey") VALUES ($1, 1, 0, 'a.png', 1, 'left-key')`,
+      [fileId]
+    );
+    await q(`INSERT INTO "Image" (url, "postId") VALUES ('left-key', 5), ('left-key', NULL)`);
+    expect(await unpack.unpackFinals()).toBe(1);
+    expect(images.createImage).not.toHaveBeenCalled();
+    expect((await entries(fileId))[0].imageId).toBe(2);
+  });
+
   it('does not submit an image that was already judged and whose copy is gone', async () => {
     const dealId = await accepted();
     const fileId = await zipFinal(dealId, [{ name: 'a.png', data: IMAGE_A }]);
@@ -1886,15 +1899,32 @@ describe('copies of scanned images', () => {
     const { fileId } = await settled();
     const hour = 60 * 60_000;
     const at = Date.now() + 1000 * hour;
-    expect(await unpack.countDanglingScanCopies({ now: at })).toEqual({ marked: 0, unmarked: 0 });
+    expect(await unpack.countDanglingScanCopies({ now: at })).toEqual({ settling: 0, dangling: 0 });
     await q(`DELETE FROM "Image" WHERE id = 1`);
     expect(await unpack.deleteEntryScanCopies()).toBe(0);
     expect((await entries(fileId))[0]).toMatchObject({ imageId: 1, scanKey: 'scan-key-1' });
     expect(await unpack.countDanglingScanCopies({ now: at + hour - 1 })).toBeNull();
     expect(await unpack.countDanglingScanCopies({ now: at + hour })).toEqual({
-      marked: 0,
-      unmarked: 1,
+      settling: 0,
+      dangling: 1,
     });
+  });
+
+  it('counts a marked entry as dangling once its delete is past the settle window', async () => {
+    const { fileId } = await settled();
+    const at = Date.now() + 2000 * 60 * 60_000;
+    await q(`DELETE FROM "Image" WHERE id = 1`);
+    await q(`UPDATE "ServiceDealFileEntry" SET "copyDeleteStartedAt" = now() WHERE "fileId" = $1`, [
+      fileId,
+    ]);
+    expect(await unpack.countDanglingScanCopies({ now: at })).toEqual({ settling: 1, dangling: 0 });
+    await q(
+      `UPDATE "ServiceDealFileEntry" SET "copyDeleteStartedAt" = now() - interval '31 minutes' WHERE "fileId" = $1`,
+      [fileId]
+    );
+    expect(
+      await unpack.countDanglingScanCopies({ now: at + 60 * 60_000 })
+    ).toEqual({ settling: 0, dangling: 1 });
   });
 
   it('keeps the copy of an image still being scanned, however old and whatever becomes of its file', async () => {
@@ -2472,7 +2502,12 @@ describe('a Final rated outside the domain', () => {
         )
       )[0].copyDeleteStartedAt;
 
-    it('settles our own copy delete that stopped before its clear on the next run, and the finals clear again', async () => {
+    const stranded = () =>
+      loggingMock.logToAxiom.mock.calls.filter(
+        ([entry]) => (entry as { name?: string }).name === 'deal_copy_settle_stranded'
+      );
+
+    it('strands, refused and logged, our own copy delete that stopped before its clear', async () => {
       const { dealId, fileId } = await completedRatedFinal('result.zip');
       expect(await finalsClear(dealId)).toBe(true);
       images.deleteImages.mockImplementationOnce(async (ids: number[]) => {
@@ -2481,13 +2516,33 @@ describe('a Final rated outside the domain', () => {
       });
       expect(await unpack.deleteEntryScanCopies()).toBe(0);
       expect(await marker(fileId)).not.toBeNull();
+      loggingMock.logToAxiom.mockClear();
+
+      // Only an id our own delete returns is let go; a retry cannot tell its delete from another's.
+      expect(await unpack.deleteEntryScanCopies()).toBe(0);
+      expect((await entries(fileId))[0].imageId).not.toBeNull();
       expect(await finalsClear(dealId)).toBe(false);
       expect((await everyoneSees(dealId, fileId)).buyer).toEqual(refused);
+      expect(stranded()).toHaveLength(1);
+      expect(JSON.stringify(stranded())).not.toContain('scan-key');
+    });
 
+    it('keeps a copy deleted elsewhere while marked and held pointed', async () => {
+      const { dealId, fileId } = await completedRatedFinal('result.zip');
+      images.deleteImages.mockImplementationOnce(async () => {
+        await q(`DELETE FROM "Image"`);
+        return [];
+      });
+      expect(await unpack.deleteEntryScanCopies()).toBe(0);
+      expect((await entries(fileId))[0].imageId).not.toBeNull();
+      expect(await finalsClear(dealId)).toBe(false);
+    });
+
+    it('lets go of a copy our own delete returned (control)', async () => {
+      const { dealId, fileId } = await completedRatedFinal('result.zip');
       expect(await unpack.deleteEntryScanCopies()).toBe(1);
       expect((await entries(fileId))[0]).toMatchObject({ imageId: null, scanKey: null });
       expect(await finalsClear(dealId)).toBe(true);
-      expect((await everyoneSees(dealId, fileId)).buyer).toEqual(served);
     });
 
     it('keeps a copy gone without our delete pointed, so the finals stay not clear', async () => {
