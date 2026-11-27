@@ -394,7 +394,7 @@ describe('/api/v1/blocks/me and blocks.getMyViewer return the SAME authorization
     expect(rest).toEqual(trpc);
     expect(rest).toEqual({
       outcome: 'allow',
-      body: { id: SUBJECT_ID, username: 'viewer', status: 'active', buzzBudget: 250 },
+      body: { id: SUBJECT_ID, username: 'viewer', status: 'active', image: null, buzzBudget: 250 },
     });
   });
 
@@ -572,7 +572,7 @@ describe('/api/v1/blocks/me and blocks.getMyViewer return the SAME authorization
     expect(rest).toEqual(trpc);
     expect(rest).toEqual({
       outcome: 'allow',
-      body: { id: SUBJECT_ID, username: 'viewer', status: 'muted', buzzBudget: 250 },
+      body: { id: SUBJECT_ID, username: 'viewer', status: 'muted', image: null, buzzBudget: 250 },
     });
   });
 
@@ -589,5 +589,51 @@ describe('/api/v1/blocks/me and blocks.getMyViewer return the SAME authorization
 
     expect(rest).toEqual(trpc);
     expect(rest).toEqual({ outcome: 'refuse', status: 404, message: 'User not found' });
+  });
+
+  it('K: the viewer avatar is judged against the SAME token ceiling on both doors', async () => {
+    // An SFW-domain token for a viewer whose own level allows everything. The X avatar is
+    // withheld on both doors and the PG one is a url on both: the two doors share
+    // `projectBlockViewerImage` + `blockOutputCeilingFromClaims`, and a door that skipped
+    // the ceiling (or read a different one) diverges here.
+    claimsBox.claims = fakeClaims({ maxBrowsingLevel: 1 | 2, viewerBrowsingLevel: 31 });
+
+    const x = await bothDoors(
+      userRow({ image: null, profilePicture: { url: 'key-x', nsfwLevel: 8, ingestion: 'Scanned' } })
+    );
+    expect(x.rest).toEqual(x.trpc);
+    expect(x.rest).toEqual({
+      outcome: 'allow',
+      body: {
+        id: SUBJECT_ID,
+        username: 'viewer',
+        status: 'active',
+        image: { restricted: true, reason: 'ceiling' },
+        buzzBudget: 250,
+      },
+    });
+
+    const pg = await bothDoors(
+      userRow({
+        image: null,
+        profilePicture: { url: 'key-pg', nsfwLevel: 1, ingestion: 'Scanned' },
+      })
+    );
+    expect(pg.rest).toEqual(pg.trpc);
+    expect(pg.rest).toEqual({
+      outcome: 'allow',
+      body: {
+        id: SUBJECT_ID,
+        username: 'viewer',
+        status: 'active',
+        image: {
+          url: expect.stringMatching(
+            /(^|\/)key-pg\/anim=false,width=320,optimized=true\/key-pg\.jpeg$/
+          ),
+          nsfwLevel: 'pg',
+        },
+        buzzBudget: 250,
+      },
+    });
   });
 });

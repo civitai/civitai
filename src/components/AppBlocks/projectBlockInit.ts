@@ -37,6 +37,7 @@ import {
 import type {
   BlockCheckpointInfo,
   BlockInitPayload,
+  BlockInitViewerImage,
   ModelSlotContext,
   ShowcaseImage,
   SlotContext,
@@ -233,14 +234,52 @@ export function projectBlockInitMaturity(input: {
  * any host produces — a narrow fixture cannot tell a pick from a spread.
  */
 export function withSignedInFlag(
-  viewer: { id: number; username: string | null } | null | undefined
+  viewer: { id: number; username: string | null } | null | undefined,
+  /** The mint's `viewerImage`, raw. Shape-checked by {@link projectBlockInitViewerImage}. */
+  image?: unknown
 ): BlockInitPayload['viewer'] {
   if (!viewer) return null;
+  const projectedImage = projectBlockInitViewerImage(image);
   return {
     id: viewer.id,
     username: viewer.username ?? null,
     signedIn: true,
+    ...(projectedImage !== undefined ? { image: projectedImage } : {}),
   };
+}
+
+const VIEWER_IMAGE_RATINGS: ReadonlySet<string> = new Set(['pg', 'pg13', 'r', 'x', 'xxx']);
+const VIEWER_IMAGE_RESTRICTED_REASONS: ReadonlySet<string> = new Set(['ceiling', 'unrated']);
+
+/**
+ * The mint's `viewerImage` → `BLOCK_INIT.viewer.image`, or `undefined` (the key is then
+ * ABSENT) for anything that is not one of the three shapes {@link BlockInitViewerImage}
+ * allows. The server already decided what the app may see (`projectBlockViewerImage`);
+ * this only refuses to forward a value it cannot vouch for, and copies by field so
+ * nothing else the response carried reaches the iframe. A url must be absolute
+ * http(s): a relative or `javascript:`/`data:` value is dropped, not forwarded.
+ */
+export function projectBlockInitViewerImage(raw: unknown): BlockInitViewerImage | undefined {
+  if (raw === null) return null;
+  if (typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const value = raw as Record<string, unknown>;
+  if (value.restricted === true) {
+    return typeof value.reason === 'string' && VIEWER_IMAGE_RESTRICTED_REASONS.has(value.reason)
+      ? { restricted: true, reason: value.reason as 'ceiling' | 'unrated' }
+      : undefined;
+  }
+  if (
+    typeof value.url === 'string' &&
+    /^https?:\/\//i.test(value.url) &&
+    typeof value.nsfwLevel === 'string' &&
+    VIEWER_IMAGE_RATINGS.has(value.nsfwLevel)
+  ) {
+    return {
+      url: value.url,
+      nsfwLevel: value.nsfwLevel as 'pg' | 'pg13' | 'r' | 'x' | 'xxx',
+    };
+  }
+  return undefined;
 }
 
 /**
@@ -254,13 +293,20 @@ export function withSignedInFlag(
  *
  * Returns `null` for anonymous viewers (no numeric viewer id).
  */
-export function projectBlockInitViewer(context: SlotContext): BlockInitPayload['viewer'] {
+export function projectBlockInitViewer(
+  context: SlotContext,
+  /** The mint's `viewerImage`, raw — see {@link withSignedInFlag}. */
+  image?: unknown
+): BlockInitPayload['viewer'] {
   const source = context as Partial<ModelSlotContext>;
   if (typeof source.viewerUserId !== 'number') return null;
-  return withSignedInFlag({
-    id: source.viewerUserId,
-    username: source.viewerUsername ?? null,
-  });
+  return withSignedInFlag(
+    {
+      id: source.viewerUserId,
+      username: source.viewerUsername ?? null,
+    },
+    image
+  );
 }
 
 /** Capabilities the page host advertises in `BLOCK_INIT`; see `BlockInitPayload.capabilities`. */
