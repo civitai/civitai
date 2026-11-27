@@ -50,7 +50,7 @@ const (
 	// renamed extension cannot pass as zero fixtures.
 	goldenMinAsPosts  = 35
 	goldenMinV1       = 36
-	goldenMinInfinite = 150
+	goldenMinInfinite = 155
 	goldenMinModels   = 53
 	goldenIssuer      = "https://auth.example.test"
 	goldenCookieName  = "__Secure-civ-token"
@@ -818,7 +818,76 @@ var (
 	// The minor content rule (minorMatureImageVisibleSql): a minor-flagged image rated NULL, 0 or at
 	// least the captured level is kept only for the bound owner (none bound: for nobody).
 	goldenReMinorMature = regexp.MustCompile(`\(NOT \(\(COALESCE\(i\."minor", FALSE\)\) AND \(i\."nsfwLevel" IS NULL OR i\."nsfwLevel" = 0 OR i\."nsfwLevel" >= (\d+)\)\)(?: OR i\."userId" = \$(\d+))?\)`)
+	// The block clauses (blockedMediaListConditions, image-visibility.ts): the owner's exemption from
+	// a blockedFor reason where ownerMediaAllowed allows it, the owner's own images held to
+	// ownerMediaAllowed (ownerMediaSql), and a bare owner exemption (any reason, no ownerMediaAllowed).
+	goldenReBlockedOwner     = regexp.MustCompile(`\(i\."blockedFor" IS NULL OR \(i\."userId" = \$(\d+) AND ` + regexp.QuoteMeta(goldenOwnerMediaAllowed) + `\)\)`)
+	goldenReOwnerMedia       = regexp.MustCompile(`\("i"\."userId" <> \$(\d+) OR ` + regexp.QuoteMeta(goldenOwnerMediaAllowed) + `\)`)
+	goldenReBlockedOwnerBare = regexp.MustCompile(`\(i\."blockedFor" IS NULL OR i\."userId" = \$(\d+)\)`)
 )
+
+// goldenOwnerMediaAllowed is ownerMediaAllowedSql('i') as the image query spells it, with
+// OWNER_MEDIA_EXEMPT_BLOCKS (src/server/common/image-block-marker.ts) inlined: goldenBlockedFor
+// evaluates it with that list, so a query spelling another list is a clause the harness refuses.
+const goldenOwnerMediaAllowed = `(CASE WHEN "i"."blockedFor" IS NOT NULL THEN "i"."blockedFor" IN ('AiNotVerified') ELSE "i"."ingestion" <> 'Blocked'::"ImageIngestionStatus" END)`
+
+// goldenBlockedFor reads the image query's block clauses from sql and returns whether an image passes
+// all of them, each evaluated as Postgres would over the row: `(i."blockedFor" IS NULL)`, the owner's
+// exemption where ownerMediaAllowed allows it, the owner's own images held to ownerMediaAllowed, and
+// the bare owner exemption. Any other mention of "blockedFor" outside the SELECT list is an error, so
+// a block clause the harness does not evaluate never reads as passing.
+func goldenBlockedFor(args []any, sql string) (func(goldenImage) bool, error) {
+	ownerAllowed := func(img goldenImage) bool {
+		if img.BlockedFor != nil {
+			return *img.BlockedFor == "AiNotVerified"
+		}
+		return img.Ingestion != "Blocked"
+	}
+	var keeps []func(goldenImage) bool
+	rest := sql
+	take := func(re *regexp.Regexp, keep func(viewer int) func(goldenImage) bool) error {
+		for _, m := range re.FindAllStringSubmatch(rest, -1) {
+			n, _ := strconv.Atoi(m[1])
+			if n < 1 || n > len(args) || goldenInt(args[n-1]) == 0 {
+				return fmt.Errorf("golden: a block clause's viewer is not bound: %s", m[0])
+			}
+			keeps = append(keeps, keep(goldenInt(args[n-1])))
+			rest = strings.Replace(rest, m[0], "", 1)
+		}
+		return nil
+	}
+	if err := take(goldenReBlockedOwner, func(v int) func(goldenImage) bool {
+		return func(img goldenImage) bool { return img.BlockedFor == nil || (img.UserID == v && ownerAllowed(img)) }
+	}); err != nil {
+		return nil, err
+	}
+	if err := take(goldenReOwnerMedia, func(v int) func(goldenImage) bool {
+		return func(img goldenImage) bool { return img.UserID != v || ownerAllowed(img) }
+	}); err != nil {
+		return nil, err
+	}
+	if err := take(goldenReBlockedOwnerBare, func(v int) func(goldenImage) bool {
+		return func(img goldenImage) bool { return img.BlockedFor == nil || img.UserID == v }
+	}); err != nil {
+		return nil, err
+	}
+	if n := strings.Count(rest, `(i."blockedFor" IS NULL)`); n > 0 {
+		keeps = append(keeps, func(img goldenImage) bool { return img.BlockedFor == nil })
+		rest = strings.ReplaceAll(rest, `(i."blockedFor" IS NULL)`, "")
+	}
+	rest = strings.ReplaceAll(rest, `i."blockedFor",`, "") // the SELECT column
+	if strings.Contains(rest, `blockedFor`) {
+		return nil, errors.New("golden: a blockedFor clause the harness does not evaluate")
+	}
+	return func(img goldenImage) bool {
+		for _, keep := range keeps {
+			if !keep(img) {
+				return false
+			}
+		}
+		return true
+	}, nil
+}
 
 // goldenMinorMature reads the minor content rule's clause from sql: present, the level it restricts
 // from, and the owner it exempts (0: none).
@@ -948,6 +1017,10 @@ func goldenImageRows(fx *goldenFixture, sql string, args []any) (*testkit.Rows, 
 	collOwner, hasCollOwner := goldenArg(args, goldenReCollOwner, sql)
 	if !hasLevel {
 		return nil, errors.New("golden: image query without a level clause")
+	}
+	blockedKeeps, err := goldenBlockedFor(args, sql)
+	if err != nil {
+		return nil, err
 	}
 	if hasCollection != strings.Contains(sql, `JOIN ct ON ct."imageId" = i.id`) ||
 		(hasCollection && !strings.Contains(sql, `AND ci."imageId" IS NOT NULL`)) {
@@ -1086,6 +1159,9 @@ func goldenImageRows(fx *goldenFixture, sql string, args []any) (*testkit.Rows, 
 			continue
 		}
 		if published && (img.PublishedAt.T == nil || !img.PublishedAt.T.Before(fx.Now)) {
+			continue
+		}
+		if !blockedKeeps(img) {
 			continue
 		}
 		if img.AcceptableMinor && (acceptableMinorAll || (hasAcceptableMinorOwner && img.UserID != goldenInt(acceptableMinorOwner))) {
