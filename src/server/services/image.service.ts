@@ -1404,9 +1404,10 @@ export async function handleUnblockImages({
   csamReview,
 }: ImageModerationUnblockSchema) {
   // Re-checked by the UPDATE itself, so a mark that lands after the caller's own check still holds.
-  const notWithheld = Prisma.sql`NOT EXISTS (
-    SELECT 1 FROM "Image" i WHERE i.id = "Image".id
-      AND ${Prisma.raw(moderatorWithheldSql('i', { csamReview }))}
+  // `i` is the target row itself; a self-join would re-read it from the statement's snapshot. The
+  // target takes no alias because the shared SET fragments name "Image".
+  const notWithheld = Prisma.sql`NOT (
+    SELECT ${Prisma.raw(moderatorWithheldSql('i', { csamReview }))} FROM (SELECT "Image".*) i
   )`;
   const found = await dbRead.image.findMany({
     where: { id: { in: imageIds } },
