@@ -1724,8 +1724,7 @@ export const upsertCollection = async ({
       )
         throw imageUrlUnavailableError();
       if (existingCover && existingCover.id !== currentCollection.image?.id) {
-        await assertCoverMediaAllowed(existingCover.id, asModerator, tx);
-        await assertNotDealFileImages([existingCover.id], 'used here');
+        await assertCollectionCoverAllowed(existingCover.id, asModerator, tx);
       }
       if (!imageId && image && !existingCover) {
         await assertClientImageUrlsUsable({ urls: [image.url], userId, db: tx });
@@ -2083,16 +2082,18 @@ export const upsertCollection = async ({
 };
 
 /**
- * Refuses an image as a collection cover when its block refuses its owner the media
- * (`ownerMediaAllowed`), since the cover serves it; a moderator view (`actsAsModerator`) may set it.
- * The visibility checks keep an owner's blocked row, so without this an owner could set their own
- * blocked image as a cover and have it served.
+ * Refuses an image as a collection cover: a deal file's or review's copy (`assertNotDealFileImages`),
+ * for everyone; and, outside a moderator view (`actsAsModerator`), one whose block refuses its owner
+ * the media (`ownerMediaAllowed`), since the cover serves it. The visibility checks keep an owner's
+ * blocked row, so without this an owner could set their own blocked image as a cover and have it
+ * served.
  */
-async function assertCoverMediaAllowed(
+async function assertCollectionCoverAllowed(
   imageId: number,
   asModerator: boolean,
   db: Pick<Prisma.TransactionClient, 'image'> = dbWrite
 ) {
+  await assertNotDealFileImages([imageId], 'used here');
   if (asModerator) return;
   // primary: a block from moments ago must refuse it.
   const image = await db.image.findUnique({
@@ -2130,8 +2131,7 @@ export const updateCollectionCoverImage = async ({
     isModerator,
     confirmBlockOnPrimary: true,
   });
-  await assertCoverMediaAllowed(imageId, asModerator);
-  await assertNotDealFileImages([imageId], 'used here');
+  await assertCollectionCoverAllowed(imageId, asModerator);
 
   const updated = await dbWrite.collection.update({
     select: { id: true, image: { select: { id: true, url: true, ingestion: true, type: true } } },

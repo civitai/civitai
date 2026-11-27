@@ -1254,11 +1254,9 @@ describe('preview pipeline', () => {
       ]);
       return { id: row.id };
     });
-    // As deleteImages does: the ids it deleted.
+    // As deleteImages does: the rows it deleted.
     images.deleteImages.mockImplementation(async (ids: number[]) =>
-      (
-        await q<{ id: number }>(`DELETE FROM "Image" WHERE id = ANY($1::int[]) RETURNING id`, [ids])
-      ).map(({ id }) => id)
+      q<{ id: number }>(`DELETE FROM "Image" WHERE id = ANY($1::int[]) RETURNING id`, [ids])
     );
   });
 
@@ -1581,6 +1579,24 @@ describe('preview pipeline', () => {
     images.deleteImages.mockResolvedValueOnce([]);
     expect(await files.deleteScanCopies()).toBe(0);
     expect(await fileRow(fileId)).toMatchObject({ imageId, scanKey });
+  });
+
+  it('clears the copy behind a full batch of kept ones', async () => {
+    const BATCH = 50;
+    const fileIds: number[] = [];
+    for (let i = 0; i <= BATCH; i++) fileIds.push((await waiting()).fileId);
+    expect(await files.startPreviewScans({ limit: BATCH + 1 })).toBe(BATCH + 1);
+    await verdict('Scanned');
+    await files.settlePreviewScans();
+    const imageIds = await Promise.all(fileIds.map(async (id) => (await fileRow(id)).imageId));
+    const kept = new Set(imageIds.slice(0, BATCH));
+    const realDelete = images.deleteImages.getMockImplementation()!;
+    images.deleteImages.mockImplementation(async (ids: number[]) =>
+      kept.has(ids[0]) ? [] : realDelete(ids)
+    );
+    expect(await files.deleteScanCopies()).toBe(1);
+    expect(await fileRow(fileIds[BATCH])).toMatchObject({ imageId: null, scanKey: null });
+    expect((await fileRow(fileIds[0])).imageId).toBe(imageIds[0]);
   });
 
   it('keeps the pointer when a delete fails, so the copy is retried', async () => {
@@ -1970,11 +1986,9 @@ describe('video previews', () => {
       ]);
       return { id: row.id };
     });
-    // As deleteImages does: the ids it deleted.
+    // As deleteImages does: the rows it deleted.
     images.deleteImages.mockImplementation(async (ids: number[]) =>
-      (
-        await q<{ id: number }>(`DELETE FROM "Image" WHERE id = ANY($1::int[]) RETURNING id`, [ids])
-      ).map(({ id }) => id)
+      q<{ id: number }>(`DELETE FROM "Image" WHERE id = ANY($1::int[]) RETURNING id`, [ids])
     );
   });
 

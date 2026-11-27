@@ -1588,6 +1588,17 @@ async function failOrRetry(preview: ClaimedPreview, error: unknown) {
 }
 
 /**
+ * The Image a crash left for a copy whose key was recorded, so the copy is never ingested twice. A
+ * copy is never posted, so a posted row with that url is not it.
+ */
+export async function findScanCopyImageId(scanKey: string) {
+  const [existing] = await dbWrite.$queryRaw<{ id: number }[]>`
+    SELECT "id" FROM "Image" WHERE "url" = ${scanKey}::text AND "postId" IS NULL
+    ORDER BY "id" LIMIT 1`;
+  return existing?.id;
+}
+
+/**
  * A bare Image row, scanned like any upload: no post, no feed, ingestion NOT skipped. The caller
  * records its id on the file so the copy can be found and deleted.
  */
@@ -1630,14 +1641,8 @@ export async function startPreviewScans({ limit = 5 } = {}) {
     const began = Date.now();
     try {
       let frames = 0;
-      let imageId: number | undefined;
-      if (preview.scanKey) {
-        // A crash left the object, and maybe the Image row: find it so it is never ingested twice.
-        const [existing] = await dbWrite.$queryRaw<{ id: number }[]>`
-          SELECT "id" FROM "Image" WHERE "url" = ${preview.scanKey}::text AND "postId" IS NULL
-        ORDER BY "id" LIMIT 1`;
-        imageId = existing?.id;
-      }
+      // A crash left the object, and maybe the Image row.
+      let imageId = preview.scanKey ? await findScanCopyImageId(preview.scanKey) : undefined;
       if (!imageId) {
         const original = await readObject(await getBucket(), preview.s3Key);
         // Scanned already marked: the transcode is the only place a video gets its mark, and publish reuses this clip.
@@ -1787,36 +1792,40 @@ export async function publishPreviews({ limit = 5 } = {}) {
  * moderation tooling reads, and deleting it would take the evidence with it.
  */
 export async function deleteScanCopies({ limit = 50 } = {}) {
-  const rows = await dbWrite.$queryRaw<{ id: number; imageId: number }[]>`
-    SELECT "id", "imageId" FROM "ServiceDealFile"
-    WHERE "imageId" IS NOT NULL
-      AND (("scanStatus" = 'Passed'::"ServiceDealFileScanStatus"
-          -- A video publishes by copying its scan copy, so the copy waits for that.
-          AND ("mimeType" NOT IN (${VIDEO_MIMES}) OR "watermarkedKey" IS NOT NULL
-            OR "status" = 'Failed'::"ServiceDealFileStatus"))
-        OR ("scanStatus" = 'Pending'::"ServiceDealFileScanStatus"
-          AND "status" = 'Failed'::"ServiceDealFileStatus"))
-    ORDER BY "id" LIMIT ${limit}::int`;
-  if (!rows.length) return 0;
   const service = await import('~/server/services/image.service');
   let deleted = 0;
-  for (const row of rows) {
-    try {
-      const gone = await service.deleteImages([row.imageId], {
-        updatePosts: false,
-        actor: { system: 'creator-service-deal-file' },
-      });
-      // A copy its case kept keeps its pointer and key, so it stays refused everywhere.
-      if (!gone.includes(row.imageId)) continue;
-      await dbWrite.$executeRaw`
-        UPDATE "ServiceDealFile" SET "imageId" = NULL, "scanKey" = NULL WHERE "id" = ${row.id}::int`;
-      deleted++;
-    } catch (error) {
-      logPreview(
-        'scan copy delete failed; it will be retried',
-        { fileId: row.id, imageId: row.imageId, error: (error as Error)?.message },
-        'error'
-      );
+  // A copy kept for its case stays selected, so the run pages past it rather than stopping there.
+  for (let afterId = 0; deleted < limit; ) {
+    const rows = await dbWrite.$queryRaw<{ id: number; imageId: number }[]>`
+      SELECT "id", "imageId" FROM "ServiceDealFile"
+      WHERE "imageId" IS NOT NULL AND "id" > ${afterId}::int
+        AND (("scanStatus" = 'Passed'::"ServiceDealFileScanStatus"
+            -- A video publishes by copying its scan copy, so the copy waits for that.
+            AND ("mimeType" NOT IN (${VIDEO_MIMES}) OR "watermarkedKey" IS NOT NULL
+              OR "status" = 'Failed'::"ServiceDealFileStatus"))
+          OR ("scanStatus" = 'Pending'::"ServiceDealFileScanStatus"
+            AND "status" = 'Failed'::"ServiceDealFileStatus"))
+      ORDER BY "id" LIMIT ${limit - deleted}::int`;
+    if (!rows.length) break;
+    afterId = rows[rows.length - 1].id;
+    for (const row of rows) {
+      try {
+        const gone = await service.deleteImages([row.imageId], {
+          updatePosts: false,
+          actor: { system: 'creator-service-deal-file' },
+        });
+        // A copy its case kept keeps its pointer and key, so it stays refused everywhere.
+        if (!gone.some((image) => image.id === row.imageId)) continue;
+        await dbWrite.$executeRaw`
+          UPDATE "ServiceDealFile" SET "imageId" = NULL, "scanKey" = NULL WHERE "id" = ${row.id}::int`;
+        deleted++;
+      } catch (error) {
+        logPreview(
+          'scan copy delete failed; it will be retried',
+          { fileId: row.id, imageId: row.imageId, error: (error as Error)?.message },
+          'error'
+        );
+      }
     }
   }
   return deleted;

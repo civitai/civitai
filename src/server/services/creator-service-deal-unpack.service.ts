@@ -23,6 +23,7 @@ import {
   recordFinalScanResult,
   markCopyDeletes,
   settleCopyDeletes,
+  findScanCopyImageId,
 } from '~/server/services/creator-service-deal-file.service';
 import { probeVideoDimensions } from '~/server/services/video-dimensions';
 import { readVideoLengths } from '~/server/utils/video-lengths';
@@ -203,14 +204,8 @@ async function submitEntryImage(
   // An image already submitted, or already judged and its copy deleted, is never ingested again.
   if (!row || row.imageId || row.scanStatus !== 'Pending') return;
 
-  let imageId: number | undefined;
-  if (row.scanKey) {
-    // A crash left the object, and maybe the Image row: find it so it is never ingested twice.
-    const [existing] = await dbWrite.$queryRaw<{ id: number }[]>`
-      SELECT "id" FROM "Image" WHERE "url" = ${row.scanKey}::text AND "postId" IS NULL
-        ORDER BY "id" LIMIT 1`;
-    imageId = existing?.id;
-  }
+  // A crash left the object, and maybe the Image row.
+  let imageId = row.scanKey ? await findScanCopyImageId(row.scanKey) : undefined;
   if (!imageId) {
     const copy = await buildEntryScanCopy(original);
     let scanKey = row.scanKey;
@@ -564,14 +559,9 @@ async function unpackVideo(file: ClaimedFinal, probeVideo: typeof probeVideoDime
     UPDATE "ServiceDealFile"
     SET "scannedEtag" = ${object.ETag}::text, "scannedVersionId" = ${object.VersionId ?? null}::text
     WHERE "id" = ${file.id}::int`;
-  // A crash after the Image was made leaves it to be found, so it is never ingested twice.
-  const [existing] = entry.scanKey
-    ? await dbWrite.$queryRaw<{ id: number }[]>`
-        SELECT "id" FROM "Image" WHERE "url" = ${scanKey}::text AND "postId" IS NULL
-        ORDER BY "id" LIMIT 1`
-    : [];
+  // A crash after the Image was made leaves it to be found.
   const imageId =
-    existing?.id ??
+    (entry.scanKey ? await findScanCopyImageId(scanKey) : undefined) ??
     (
       await createScanImage(
         scanKey,
@@ -879,13 +869,13 @@ let danglingCountedAt = 0;
 
 /**
  * Counts and logs entries pointing at a gone image, at most hourly. Each refuses and keeps its file
- * (`imageGone`), so a growing count is a backlog; `marked` ones are our own delete, which the next
- * copy run settles. Null when it did not count this run.
+ * (`imageGone`). `settling` ones are our own delete within the settle window, which the next copy
+ * run settles; `dangling` ones (unmarked, or marked past that window) are a backlog. Null when it did
+ * not count this run.
  */
 export async function countDanglingScanCopies({ now = Date.now() } = {}) {
   if (now - danglingCountedAt < 60 * 60_000) return null;
   danglingCountedAt = now;
-  // A mark past the settle window is a delete that will not settle: it dangles like an unmarked one.
   const [counts] = await dbWrite.$queryRaw<{ settling: number; dangling: number }[]>`
     SELECT count(*) FILTER (WHERE NOT ${entryImageGone(Prisma.sql`e`, {
       exceptSettling: true,

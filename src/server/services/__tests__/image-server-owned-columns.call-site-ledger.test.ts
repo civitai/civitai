@@ -383,13 +383,13 @@ const CONNECT_EXISTING_LEDGER: Record<
     sites: 1,
     guard: COLLECTION_MANAGE_GUARD,
     decides: 'collection-manager',
-    dealCopy: "assertNotDealFileImages([existingCover.id], 'used here')",
+    dealCopy: 'assertCollectionCoverAllowed(existingCover.id,',
   },
   'src/server/services/collection.service.ts#updateCollectionCoverImage': {
     sites: 1,
     guard: COLLECTION_MANAGE_GUARD,
     decides: 'collection-manager',
-    dealCopy: "assertNotDealFileImages([imageId], 'used here')",
+    dealCopy: 'assertCollectionCoverAllowed(imageId,',
   },
   // Both ids are what `resolveCoverImageId` returned, not client values.
   'src/server/services/crucible.service.ts#updateCrucible': {
@@ -464,6 +464,10 @@ type DealCopy = string | string[] | { structural: string };
  * `check` in its body, and `lookup` too when the check names the row the parameter found.
  */
 const DEAL_COPY_HELPERS: Record<string, { file: string; check: string; lookup?: string }> = {
+  'assertCollectionCoverAllowed(': {
+    file: 'src/server/services/collection.service.ts',
+    check: "assertNotDealFileImages([imageId], 'used here')",
+  },
   'getOwnedImageOrThrow(': {
     file: 'src/server/routers/comics.router.ts',
     check: "assertNotDealFileImages([imageId], 'used here')",
@@ -664,7 +668,7 @@ const IMAGE_FK_WRITE_LEDGER: Record<
   'src/server/services/collection.service.ts#upsertCollection': {
     writes: ['imageId'],
     decision: 'collection-manager',
-    dealCopy: "assertNotDealFileImages([existingCover.id], 'used here')",
+    dealCopy: 'assertCollectionCoverAllowed(existingCover.id,',
   },
   'src/server/services/collection.service.ts#validateContestCollectionEntry': {
     writes: ['whereClause.imageId = { in: imageIds }'],
@@ -1426,6 +1430,32 @@ describe('image foreign-key writes', () => {
       expect(missing).toEqual([]);
     });
 
+    // A client id written through a spread `data` object or handed to another module's write,
+    // which the literal-write detector does not see. Each names the exact check in its own body.
+    const UNSEEN_CLIENT_ID_SITES: Record<string, string> = {
+      'src/server/services/model3d.service.ts#upsertModel3D':
+        "assertNotDealFileImages([data.thumbnailImageId], 'used here')",
+      // Handed on to upsertModel3DFromWorkflow's sourceImageId, dropped when refused.
+      'src/server/services/model3d.service.ts#ensureModel3DFromWorkflow':
+        'usableHere(claimedSourceImageId!)',
+    };
+
+    it('is kept out where a client id reaches a write the detector cannot see', () => {
+      const missing: string[] = [];
+      for (const [key, check] of Object.entries(UNSEEN_CLIENT_ID_SITES)) {
+        const [file, name] = key.split('#');
+        const text = commentless.get(file)!;
+        const at = text.search(new RegExp(String.raw`\bconst\s+${name}\s*=\s*async\s*\(`));
+        expect(at, key).toBeGreaterThanOrEqual(0);
+        const body = balanced(text, text.indexOf('=> {', at) + 3, '{', '}');
+        if (!normalized(body).includes(normalized(check))) missing.push(`${key}: ${check}`);
+      }
+      expect(missing).toEqual([]);
+      expect(normalized(bodyOf('src/server/services/model3d.service.ts', 'usableHere'))).toContain(
+        normalized("assertNotDealFileImages([imageId], 'used here')")
+      );
+    });
+
     // Ingestion is no deal-file deleter: it removes blocked rows as a moderator would, copies included.
     // A call that dropped the flag would quietly start leaving copies its batch was meant to remove.
     it('is deleted by image ingestion only through its moderator delete', () => {
@@ -1487,9 +1517,15 @@ describe('raw SQL image-use writes', () => {
       if (!CLIENT_ID_DECISIONS.includes(decision)) continue;
       if (dealCopy === undefined) missing.push(`${key}: no dealCopy`);
       else if (dealCopy !== 'subject') {
-        const text = typeof dealCopy === 'string' ? dealCopy : dealCopy.structural;
+        const texts =
+          typeof dealCopy === 'string'
+            ? [dealCopy]
+            : Array.isArray(dealCopy)
+            ? dealCopy
+            : [dealCopy.structural];
         for (const s of sites.filter((s) => s.key === key))
-          if (!normalized(s.body).includes(normalized(text))) missing.push(`${key}: ${text}`);
+          for (const text of texts)
+            if (!normalized(s.body).includes(normalized(text))) missing.push(`${key}: ${text}`);
       }
     }
     expect(missing).toEqual([]);

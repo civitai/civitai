@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { serverCopyTablesSql } from '@civitai/db-queries/test/image-uses';
+import { PGlite } from '@electric-sql/pglite';
+import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { ensureModel3DFromWorkflow } from '~/server/services/model3d.service';
@@ -40,7 +43,7 @@ vi.mock('~/server/orchestrator/polygen/polygen-output', async (importOriginal) =
 
 const user = { id: 42, username: 'maker', isModerator: false } as SessionUser;
 // image id -> owning user id
-const images: Record<number, number> = { 11: user.id, 22: 7 };
+const images: Record<number, number> = { 11: user.id, 22: 7, 55: user.id, 66: user.id };
 
 function workflowWith(metadata: Record<string, unknown>) {
   return {
@@ -68,6 +71,28 @@ beforeEach(() => {
   }
 });
 
+// The use check runs its real SQL: a copy pointed at by its entry, and one named only by its key.
+const POINTED_COPY = 55;
+const KEYED_COPY = 66;
+let pg: PGlite;
+beforeAll(async () => {
+  pg = new PGlite();
+  await pg.exec(`
+    CREATE TABLE "Image" (id int PRIMARY KEY, url text NOT NULL);
+    ${serverCopyTablesSql};
+    INSERT INTO "Image" VALUES (11, 'own'), (${POINTED_COPY}, 'pointed'), (${KEYED_COPY}, 'keyed');
+    INSERT INTO "ServiceDealFileEntry" ("imageId", "scanKey")
+      VALUES (${POINTED_COPY}, NULL), (NULL, 'keyed');
+  `);
+});
+afterAll(() => pg.close());
+const bridgeUseCheck = () => {
+  const raw = pgliteRaw(pg);
+  dbMock.dbWrite.$queryRaw.mockImplementation(((s: TemplateStringsArray, ...v: unknown[]) =>
+    raw.queryRaw(s, ...v)) as never);
+};
+beforeEach(bridgeUseCheck);
+
 async function sourceImageIdHandedOn(metadata: Record<string, unknown>) {
   mocks.getWorkflow.mockResolvedValue(workflowWith(metadata));
   await ensureModel3DFromWorkflow({ input: { workflowId: 'wf-1' }, user, ctx: {} as never });
@@ -88,6 +113,17 @@ describe('ensureModel3DFromWorkflow source image', () => {
       .mockResolvedValueOnce(null)
       .mockResolvedValue({ id: 500, userId: user.id, status: 'Draft', deletedAt: null });
     expect(await sourceImageIdHandedOn({ sourceImageId: 999 })).toBeUndefined();
+  });
+
+  it.each([
+    ['pointed at by its entry', POINTED_COPY],
+    ['named only by its key', KEYED_COPY],
+  ])("drops the caller's own deal file copy (%s), but still materialises", async (_, id) => {
+    expect(await sourceImageIdHandedOn({ sourceImageId: id })).toBeUndefined();
+  });
+
+  it("keeps the caller's own plain image under the same check (control)", async () => {
+    expect(await sourceImageIdHandedOn({ sourceImageId: 11 })).toBe(11);
   });
 
   it('passes no source image when the metadata has none', async () => {

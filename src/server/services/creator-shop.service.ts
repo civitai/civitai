@@ -3305,9 +3305,11 @@ export const updateCreatorShopSettings = async ({
 }: UpdateCreatorShopSettingsInput & { userId: number; servicesEnabled?: boolean }) => {
   if (patch.coverImageId != null) {
     // primary: the image's owner as of this write.
-    const owned = await dbWrite.$queryRaw<unknown[]>`
-      SELECT 1 FROM "Image" WHERE id = ${patch.coverImageId} AND "userId" = ${userId}`;
-    if (!owned.length) throw throwBadRequestError('Choose one of your own images as the cover.');
+    const owned = await dbWrite.image.findFirst({
+      where: { id: patch.coverImageId, userId },
+      select: { id: true },
+    });
+    if (!owned) throw throwBadRequestError('Choose one of your own images as the cover.');
     await assertNotDealFileImages([patch.coverImageId], 'used here');
   }
   // The merge happens in Postgres, over the stored column. Reading the blob into JS

@@ -40,7 +40,6 @@ export async function assertCoverImagesValid({
 }) {
   const ids = [coverImageId, sfwCoverImageId].filter(isDefined);
   if (!ids.length) return;
-  // A copy is in no post, so the read below refuses it too; this holds if one ever is.
   await assertNotDealFileImages(ids, 'used here');
 
   const images = await dbRead.image.findMany({

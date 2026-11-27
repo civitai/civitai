@@ -38,6 +38,15 @@ beforeEach(() => {
   vi.mocked(dbMock.dbWrite.$executeRawUnsafe).mockImplementation(
     (async (text: string, ...v: unknown[]) => (await db.query(text, v)).affectedRows ?? 0) as never
   );
+  vi.mocked(dbMock.dbWrite.image.findFirst).mockImplementation(
+    (async ({ where }: { where: { id: number; userId: number } }) =>
+      (
+        await db.query(`SELECT id FROM "Image" WHERE id = $1 AND "userId" = $2`, [
+          where.id,
+          where.userId,
+        ])
+      ).rows[0] ?? null) as never
+  );
   // The settings merge runs on the same database.
   vi.mocked(dbMock.dbWrite.$transaction).mockImplementation(((
     run: (tx: typeof dbMock.dbWrite) => unknown
