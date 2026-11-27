@@ -85,9 +85,11 @@ export async function runTagReview(
   for (let pages = 0; pages < pagesPerRun && Date.now() < deadline; pages++) {
     const from = walk.after ?? { imageId: 0, tagId: 0 };
     // The flagged rows come from the `TagsOnImageNew_needsReview_idx` partial index alone (its predicate copied exactly
-    // in `flaggedSql`), materialized before any join: joining Tag or Image inside that scan makes Postgres walk the
-    // whole table instead (over a minute on prod). The same rule is noted on the moderator queue query.
-    const page = await readWithoutJit(db, (trx) =>
+    // in `flaggedSql`), materialized with no order or limit: joining Tag or Image inside that scan, or ordering it by
+    // the primary key, lets Postgres walk the whole table instead (over a minute on prod). The page of `pageSize` is
+    // cut from that set before any join, so the gate runs on one page, not on every flagged row ahead of the LIMIT.
+    // The same rule is noted on the moderator queue query.
+    const flagged = await readWithoutJit(db, (trx) =>
       trx
         .with(
           (cte) => cte('flagged').materialized(),
@@ -97,26 +99,49 @@ export async function runTagReview(
               .select(['f.imageId', 'f.tagId'])
               .where(flaggedSql('f'))
         )
-        .selectFrom('flagged as t')
-        .innerJoin('Image as img', 'img.id', 't.imageId')
-        .innerJoin('Post as p', 'p.id', 'img.postId')
-        .innerJoin('Tag as tag', 'tag.id', 't.tagId')
-        .select(['t.imageId', 't.tagId', 'tag.name'])
-        .where('tag.type', '=', 'Moderation')
-        .where('tag.nsfwLevel', '<', NsfwLevel.Blocked)
-        .where(servableImage)
-        .where(modReviewEligibleImage)
-        .where(sql<SqlBool>`(t."imageId", t."tagId") > (${from.imageId}, ${from.tagId})`)
+        .with(
+          (cte) => cte('page').materialized(),
+          (qb) =>
+            qb
+              .selectFrom('flagged as f')
+              .select(['f.imageId', 'f.tagId'])
+              .where(sql<SqlBool>`(f."imageId", f."tagId") > (${from.imageId}, ${from.tagId})`)
+              .orderBy('f.imageId', 'asc')
+              .orderBy('f.tagId', 'asc')
+              .limit(pageSize)
+        )
+        .selectFrom('page as t')
+        .leftJoin('Tag as tag', (join) =>
+          join
+            .onRef('tag.id', '=', 't.tagId')
+            .on('tag.type', '=', 'Moderation')
+            .on('tag.nsfwLevel', '<', NsfwLevel.Blocked)
+        )
+        .leftJoin('Image as img', 'img.id', 't.imageId')
+        .leftJoin('Post as p', 'p.id', 'img.postId')
+        .select((eb) => [
+          't.imageId',
+          't.tagId',
+          'tag.name',
+          sql<boolean>`COALESCE(${eb.and([
+            eb('tag.id', 'is not', null),
+            eb('p.id', 'is not', null),
+            servableImage(eb),
+            modReviewEligibleImage(eb),
+          ])}, false)`.as('eligible'),
+        ])
         .orderBy('t.imageId', 'asc')
         .orderBy('t.tagId', 'asc')
-        .limit(pageSize)
         .execute()
+    );
+    const page = flagged.flatMap(({ eligible, name, ...row }) =>
+      eligible && name !== null ? [{ ...row, name }] : []
     );
     if (page.length > 0) result.created += await createEpisodes(db, page, now);
     // Advanced only after the page's items exist, so a failed create retries this page next run.
-    const last = page.at(-1);
+    const last = flagged.at(-1);
     walk.after =
-      page.length < pageSize || !last ? null : { imageId: last.imageId, tagId: last.tagId };
+      flagged.length < pageSize || !last ? null : { imageId: last.imageId, tagId: last.tagId };
     if (!walk.after) break;
   }
   return result;

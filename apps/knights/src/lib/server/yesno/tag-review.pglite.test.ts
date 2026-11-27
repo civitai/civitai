@@ -211,6 +211,17 @@ describe('creating tag review items', () => {
     expect(await items()).toHaveLength(6);
   });
 
+  it('cuts each page from the flagged rows before checking them, so rows that get no item still use up the page', async () => {
+    await seedImage(pg, 99, { nsfwLevel: X });
+    await flag(99, 12);
+    await flag(99, 13);
+    const walk: TagReviewWalk = { after: null };
+    expect(await run({ walk, pageSize: 2, pagesPerRun: 1 })).toMatchObject({ created: 0 });
+    expect(walk.after).toEqual({ imageId: 99, tagId: 13 });
+    expect(await run({ walk, pageSize: 2, pagesPerRun: 1 })).toMatchObject({ created: 1 });
+    expect(walk.after).toBeNull();
+  });
+
   it('leaves the item Open at Paladin however long after creation the escalation runs', async () => {
     await run();
     await escalateExpired(db, { now: new Date(NOW.getTime() + 365 * 86_400_000) });
