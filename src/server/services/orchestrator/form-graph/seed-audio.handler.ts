@@ -2,8 +2,8 @@ import { defineHandler } from '../handlers/handler-factory';
 import type { StepInput } from '../handlers';
 import type { EcosystemData } from './types';
 
-// The pinned @civitai/orchestration-client (0.2.8, and 0.2.9 too) has no seedAudioGen type; shape from
-// the orchestrator's OpenAPI SeedAudioGenerateInput.
+// @civitai/orchestration-client has no seedAudioGen type yet; drop this for its type once it ships.
+// Shape from the orchestrator's OpenAPI SeedAudioGenerateInput.
 type SeedAudioGenerateInput = {
   operation: 'generate';
   prompt: string;
