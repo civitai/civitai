@@ -22,9 +22,9 @@ import { renderWithProviders } from '../../../test/component-setup';
  * "Mark all read" on the chat list. Real list components, real `~/utils/trpc` hooks and cache;
  * only the network is replaced, by a link that answers the chat procedures.
  *
- * The tester's case: the cached unread count is ahead of the server (read in another tab, or a
- * signal over-counted), so the server's mark-all changes no membership and returns []. The
- * control is the ordinary case, where the mutation returns the chat it changed.
+ * Cached unread count is ahead of the server (read in another tab, or a signal over-counted), so
+ * mark-all changes no membership and returns []. The control is the ordinary case, where it
+ * returns the changed chat.
  */
 
 const ME = 1;
