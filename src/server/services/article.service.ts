@@ -2,6 +2,8 @@ import { queueImageDeletes } from '@civitai/db-queries/content-deletion';
 import { ownerMediaAllowed } from '~/server/common/image-block-marker';
 import { sanitizeHtml } from '~/utils/html-sanitize-helpers';
 import { kyselyOver } from '~/server/db/prisma-kysely';
+import { sql } from 'kysely';
+import { CSAM_REPORT_LISTED_IMAGE_IDS_SQL, heldImageKnownSql } from '@civitai/shared/held-media';
 import {
   keepWithheldMedia,
   restoreWithheldMedia,
@@ -174,6 +176,7 @@ import {
   keyIssuers,
   MAX_KEYS,
   recordedKeys,
+  urlScheme,
 } from '~/server/services/image-url-ownership';
 import { createNotification } from '~/server/services/notification.service';
 import { updateArticleNsfwLevels } from '~/server/services/nsfwLevels.service';
@@ -3225,11 +3228,63 @@ export type RecomputeIngestionResult = {
 };
 
 const recomputeImageSelect = {
+  id: true,
+  url: true,
   ingestion: true,
   nsfwLevel: true,
   blockedFor: true,
   needsReview: true,
+  tosViolation: true,
+  minor: true,
+  poi: true,
 } as const;
+
+/** Its upload is absent: the scan found no file, or its `blob:` url was never uploaded. */
+const isAbsentImage = (image: { ingestion: ImageIngestionStatus; url: string }) =>
+  image.ingestion === ImageIngestionStatus.NotFound ||
+  (image.ingestion === ImageIngestionStatus.Error && urlScheme(image.url) === 'blob');
+
+const carriesImageHold = (image: {
+  ingestion: ImageIngestionStatus;
+  nsfwLevel: number;
+  blockedFor: string | null;
+  needsReview: string | null;
+  tosViolation: boolean;
+  minor: boolean;
+  poi: boolean;
+}) =>
+  image.needsReview != null ||
+  hasBlockMarker(image) ||
+  image.tosViolation ||
+  image.minor ||
+  image.poi;
+
+/**
+ * The ids among `imageIds` under a CSAM hold: flagged or blocked as CSAM, listed on a CsamReport,
+ * or owned by a user one names. All of them when the article itself has a CSAM report.
+ */
+async function csamHeldImageIds(
+  tx: Prisma.TransactionClient,
+  articleId: number,
+  imageIds: number[]
+): Promise<Set<number>> {
+  if (!imageIds.length) return new Set();
+  const db = kyselyOver(tx);
+  const { rows: reported } = await sql<{ id: number }>`
+    SELECT 1 AS id FROM "ArticleReport" ar
+    JOIN "Report" r ON r.id = ar."reportId"
+    WHERE ar."articleId" = ${articleId} AND r.reason = 'CSAM'
+    LIMIT 1
+  `.execute(db);
+  if (reported.length) return new Set(imageIds);
+  const { rows } = await sql<{ id: number }>`
+    SELECT i.id FROM "Image" i
+    WHERE i.id IN (${sql.join(imageIds)})
+      AND (${sql.raw(heldImageKnownSql('i'))}
+        OR (i.id)::text IN (${sql.raw(CSAM_REPORT_LISTED_IMAGE_IDS_SQL)}))
+  `.execute(db);
+  return new Set(rows.map((row) => row.id));
+}
 
 /**
  * In-transaction half of the ingestion state machine. Takes the advisory lock,
@@ -3311,18 +3366,34 @@ export async function recomputeArticleIngestionInTx(
   const images = [...connections.map((c) => c.image), ...ownImages];
   const imageStates: ImageIngestionStatus[] = images.map((image) => image.ingestion);
 
+  // A missing image is left out for readers (only Scanned images are served), so it hides the
+  // article only while it carries a hold a moderator has to clear.
+  const absent = images.filter(isAbsentImage);
+  const csamHeld = await csamHeldImageIds(
+    tx,
+    articleId,
+    absent.filter((image) => !carriesImageHold(image)).map((image) => image.id)
+  );
+  const isMissing = (image: (typeof images)[number]) =>
+    isAbsentImage(image) && !carriesImageHold(image) && !csamHeld.has(image.id);
+
   const totalImages = imageStates.length;
   const scannedImages = imageStates.filter((s) => s === ImageIngestionStatus.Scanned).length;
   const blockedImages = imageStates.filter((s) => s === ImageIngestionStatus.Blocked).length;
-  const missingImages = imageStates.filter((s) => s === ImageIngestionStatus.NotFound).length;
-  const errorImages =
-    imageStates.filter((s) => s === ImageIngestionStatus.Error).length + missingImages;
+  const missingImages = images.filter(isMissing).length;
+  const errorImages = images.filter(
+    (image) =>
+      !isMissing(image) &&
+      (image.ingestion === ImageIngestionStatus.Error ||
+        image.ingestion === ImageIngestionStatus.NotFound)
+  ).length;
 
   // A refused content url counts as a blocked image; a deferred one is applied below.
   const imageBlocked = blockedImages > 0 || !!hold?.refused.length;
   const imageError = errorImages > 0;
   const imageDone =
-    totalImages === 0 || scannedImages + blockedImages + errorImages === totalImages;
+    totalImages === 0 ||
+    scannedImages + blockedImages + errorImages + missingImages === totalImages;
 
   // --- Text moderation side ---
   const textModeration = await tx.entityModeration.findUnique({
@@ -3423,7 +3494,7 @@ export async function recomputeArticleIngestionInTx(
   // A text check the retry job is still retrying is not yet a failure worth telling the owner of.
   const textSpent = hasText && textCheckSpentRetries(textModeration);
   const reason = articleIngestionErrorReason({
-    errorImages: errorImages - missingImages,
+    errorImages,
     missingImages,
     textError: textSpent,
   });

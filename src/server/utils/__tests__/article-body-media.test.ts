@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { removeBodyMedia } from '~/server/utils/article-body-media';
+import {
+  readerArticleBody,
+  removeBodyMedia,
+  servableBodyImageUrls,
+} from '~/server/utils/article-body-media';
+import { servableArticleImage } from '~/shared/utils/article-card-image';
 
 const KEPT = '11111111-1111-4111-8111-111111111111';
 const HELD = '22222222-2222-4222-8222-222222222222';
@@ -135,5 +140,44 @@ describe('removeBodyMedia', () => {
     const html = `<img src="${cdn(`${HELD}/x.jpeg`)}">`;
 
     expect(removeBodyMedia(html, { withheld: [] })).toBe(html);
+  });
+});
+
+describe('what a reader is served of a body image', () => {
+  const MISSING = '33333333-3333-4333-8333-333333333333';
+  const image = (ingestion: string) => ({
+    id: 1,
+    url: MISSING,
+    ingestion: ingestion as 'Scanned',
+    nsfwLevel: 1,
+    needsReview: null,
+    tosViolation: false,
+    modelRestricted: false,
+    minor: false,
+  });
+  const body = `<p>a</p><img src="${cdn(
+    `${MISSING}/x.jpeg`
+  )}"><edge-media url="${MISSING}"></edge-media>`;
+
+  // An article with a missing image goes public, so its url must never reach a reader before the
+  // image itself is Scanned.
+  it.each(['NotFound', 'Error', 'Pending', 'Rescan', 'Blocked'])(
+    '🔴 never serves an image at %s',
+    (ingestion) => {
+      const served = readerArticleBody(body, [image(ingestion)], new Set());
+
+      expect(served.kept).toEqual([]);
+      expect(served.content).toBe('<p>a</p>');
+      expect(servableBodyImageUrls([image(ingestion)], 1).size).toBe(0);
+      expect(servableArticleImage(image(ingestion))).toBeNull();
+    }
+  );
+
+  it('serves the same image once it is Scanned', () => {
+    const served = readerArticleBody(body, [image('Scanned')], new Set());
+
+    expect(served.kept).toHaveLength(1);
+    expect(served.content).toContain(MISSING);
+    expect(servableBodyImageUrls([image('Scanned')], 1)).toEqual(new Set([MISSING]));
   });
 });

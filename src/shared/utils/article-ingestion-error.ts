@@ -1,4 +1,7 @@
-/** Why an article's safety scan could not finish, in the words its owner is shown. */
+/**
+ * Why an article's safety scan could not finish, in the words its owner is shown; null when nothing
+ * did. A missing image never hides an article by itself, so it is only noted beside a failure.
+ */
 export function articleIngestionErrorReason({
   errorImages,
   missingImages,
@@ -10,10 +13,12 @@ export function articleIngestionErrorReason({
 }): string | null {
   const parts: string[] = [];
   if (errorImages) parts.push(`${errorImages} image(s) could not be scanned`);
-  if (missingImages) parts.push(`${missingImages} image(s) could not be found`);
   if (textError) parts.push('the text check could not finish');
-  if (parts.length < 2) return parts[0] ?? null;
-  return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+  if (!parts.length) return null;
+  const failed = parts.join(' and ');
+  return missingImages
+    ? `${failed}. ${missingImages} image(s) could not be found and are left out of the article`
+    : failed;
 }
 
 /**

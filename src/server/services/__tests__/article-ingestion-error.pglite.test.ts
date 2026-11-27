@@ -28,7 +28,17 @@ beforeAll(async () => {
     CREATE TYPE "EntityModerationStatus" AS ENUM ('Pending', 'Succeeded', 'Failed', 'Expired', 'Canceled');
     CREATE TABLE "Image" (
       id int PRIMARY KEY, ingestion "ImageIngestionStatus" NOT NULL, "nsfwLevel" int NOT NULL DEFAULT 1,
-      "blockedFor" text, "needsReview" text
+      "blockedFor" text, "needsReview" text, url text NOT NULL DEFAULT 'img',
+      "userId" int NOT NULL DEFAULT 7, "tosViolation" boolean NOT NULL DEFAULT false,
+      minor boolean NOT NULL DEFAULT false, poi boolean NOT NULL DEFAULT false
+    );
+    CREATE TABLE "CsamReport" (
+      id serial PRIMARY KEY, "userId" int, images jsonb NOT NULL DEFAULT '[]', details jsonb NOT NULL DEFAULT '{}'
+    );
+    CREATE TABLE "Report" (id int PRIMARY KEY, reason text NOT NULL);
+    CREATE TABLE "ArticleReport" ("articleId" int NOT NULL, "reportId" int NOT NULL);
+    CREATE TABLE "AccessToken" (
+      id serial PRIMARY KEY, "resourceType" text NOT NULL, "resourceId" int NOT NULL, "revokedAt" timestamp(3)
     );
     CREATE TABLE "ImageConnection" ("imageId" int NOT NULL, "entityId" int NOT NULL, "entityType" text NOT NULL,
       PRIMARY KEY ("imageId", "entityType", "entityId"));
@@ -54,11 +64,20 @@ afterAll(() => h.stop());
 
 beforeEach(async () => {
   await h.pg.exec(
-    `TRUNCATE "Image", "ImageConnection", "Article", "EntityModeration", "ArticleContentLinkHold"`
+    `TRUNCATE "Image", "ImageConnection", "Article", "EntityModeration", "ArticleContentLinkHold", "CsamReport", "Report", "ArticleReport"`
   );
 });
 
-type Img = { ingestion: string; needsReview?: string; blockedFor?: string };
+type Img = {
+  ingestion: string;
+  needsReview?: string;
+  blockedFor?: string;
+  nsfwLevel?: number;
+  url?: string;
+  tosViolation?: boolean;
+  minor?: boolean;
+  poi?: boolean;
+};
 
 const seed = async ({
   status = 'Published',
@@ -88,8 +107,19 @@ const seed = async ({
   if (content) images.push([CONTENT, content]);
   for (const [id, img] of images)
     await h.pg.query(
-      `INSERT INTO "Image" (id, ingestion, "blockedFor", "needsReview") VALUES ($1, $2, $3, $4)`,
-      [id, img.ingestion, img.blockedFor ?? null, img.needsReview ?? null]
+      `INSERT INTO "Image" (id, ingestion, "blockedFor", "needsReview", "nsfwLevel", url, "tosViolation", minor, poi)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [
+        id,
+        img.ingestion,
+        img.blockedFor ?? null,
+        img.needsReview ?? null,
+        img.nsfwLevel ?? 1,
+        img.url ?? `img-${id}`,
+        img.tosViolation ?? false,
+        img.minor ?? false,
+        img.poi ?? false,
+      ]
     );
   if (content)
     await h.pg.query(`INSERT INTO "ImageConnection" VALUES ($1, $2, 'Article')`, [
@@ -349,5 +379,90 @@ describe('a rescan of an article at Error that has no recorded episode', () => {
     await rescanWrite();
 
     expect((await recompute()).metadata).toEqual(EPISODE);
+  });
+});
+
+describe('an image whose upload is missing', () => {
+  const MISSING = { ingestion: 'NotFound' };
+
+  it('no longer keeps an article in an Error episode hidden, and tells nobody', async () => {
+    await seed({ ingestion: 'Error', metadata: EPISODE, content: MISSING });
+
+    const after = await recompute();
+
+    expect(after.ingestion).toBe('Scanned');
+    expect(after.metadata).toEqual({});
+    expect(after.notice).toBeNull();
+  });
+
+  it('lets a Processing article publish', async () => {
+    await seed({ status: 'Processing', cover: MISSING, content: { ingestion: 'Scanned' } });
+
+    await recompute();
+
+    const {
+      rows: [row],
+    } = await h.pg.query<{ status: string }>(`SELECT status FROM "Article" WHERE id = $1`, [
+      ARTICLE,
+    ]);
+    expect(row.status).toBe('Published');
+  });
+
+  it('counts a blob: url, which was never uploaded, as missing', async () => {
+    await seed({ content: { ingestion: 'Error', url: 'blob:https://civitai.com/x' } });
+
+    expect((await recompute()).ingestion).toBe('Scanned');
+  });
+
+  it('still keeps the article hidden for an image that failed to scan', async () => {
+    await seed({ content: { ingestion: 'Error' } });
+
+    expect((await recompute()).ingestion).toBe('Error');
+  });
+
+  it.each<[string, Img]>([
+    ['held for csam review', { ...MISSING, needsReview: 'csam' }],
+    ['held for minor review', { ...MISSING, needsReview: 'minor' }],
+    ['blocked as CSAM', { ...MISSING, blockedFor: 'CSAM' }],
+    ['at the Blocked level', { ...MISSING, nsfwLevel: 32 }],
+    ['a ToS violation', { ...MISSING, tosViolation: true }],
+    ['flagged minor', { ...MISSING, minor: true }],
+    ['flagged poi', { ...MISSING, poi: true }],
+  ])('keeps the article hidden while the missing image is %s', async (_, content) => {
+    await seed({ content });
+
+    expect((await recompute()).ingestion).toBe('Error');
+  });
+
+  it('keeps the article hidden while the missing image is listed on a CSAM report', async () => {
+    await seed({ content: MISSING });
+    await h.pg.query(`INSERT INTO "CsamReport" (images) VALUES ($1)`, [
+      JSON.stringify([{ id: CONTENT }]),
+    ]);
+
+    expect((await recompute()).ingestion).toBe('Error');
+  });
+
+  it("keeps the article hidden while the missing image's owner is named on a CSAM report", async () => {
+    await seed({ content: MISSING });
+    await h.pg.query(`INSERT INTO "CsamReport" ("userId") VALUES ($1)`, [OWNER]);
+
+    expect((await recompute()).ingestion).toBe('Error');
+  });
+
+  it('keeps the article hidden while the article has a CSAM report', async () => {
+    await seed({ content: MISSING });
+    await h.pg.query(`INSERT INTO "Report" VALUES (990000001, 'CSAM')`);
+    await h.pg.query(`INSERT INTO "ArticleReport" VALUES ($1, 990000001)`, [ARTICLE]);
+
+    expect((await recompute()).ingestion).toBe('Error');
+  });
+
+  it('is published past a report for another reason', async () => {
+    await seed({ content: MISSING });
+    await h.pg.query(`INSERT INTO "Report" VALUES (990000002, 'NSFW')`);
+    await h.pg.query(`INSERT INTO "ArticleReport" VALUES ($1, 990000002)`, [ARTICLE]);
+
+    expect((await recompute()).ingestion).toBe('Scanned');
   });
 });
