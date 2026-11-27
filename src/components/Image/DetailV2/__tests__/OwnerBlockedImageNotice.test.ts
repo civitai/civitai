@@ -130,3 +130,61 @@ describe('OwnerBlockedImageNotice', () => {
     expect(render({ blockedFor: null, needsReview: 'minor' })).toBe('');
   });
 });
+
+const ROW = { id: 4321, createdAt: new Date('2026-03-14T12:00:00Z'), postId: 987 };
+type NoticeImage = React.ComponentProps<typeof OwnerBlockedImageNotice>['image'];
+
+/** Renders `image` whole, unlike `render`, which fixes its id and has no upload date or post. */
+function renderRow(image: NoticeImage) {
+  act(() => {
+    root.render(
+      React.createElement(
+        MantineProvider,
+        null,
+        React.createElement(
+          'div',
+          { 'data-notice': '' },
+          React.createElement(OwnerBlockedImageNotice, { image })
+        )
+      )
+    );
+  });
+  return notice();
+}
+
+describe('OwnerBlockedImageNotice names the image', () => {
+  it.each([
+    ['the appealable banner', { canAppeal: true }],
+    ['the neutral notice', { canAppeal: false }],
+  ])('%s carries the upload date and links the post', (_, data) => {
+    state.appealState = { data, isError: false };
+    const el = renderRow({ ...ROW, blockedFor: 'moderated', needsReview: null });
+    expect(el.textContent).toContain('Uploaded Mar 14, 2026');
+    expect(el.querySelector('a[href="/posts/987"]')?.textContent).toBe('post #987');
+  });
+
+  it('reads the same for every block it cannot appeal, with the identity present', () => {
+    state.appealState = { data: { canAppeal: false }, isError: false };
+    const refused = renderRow({ ...ROW, blockedFor: 'moderated' }).innerHTML;
+    expect(refused).toContain('post #987');
+    for (const reason of [
+      { blockedFor: 'tos' },
+      { blockedFor: 'CSAM' },
+      { blockedFor: 'AiNotVerified' },
+      { blockedFor: 'moderated', needsReview: 'appeal' },
+      { blockedFor: 'moderated', needsReview: 'csam' },
+    ]) {
+      expect({ reason, html: renderRow({ ...ROW, ...reason }).innerHTML }).toEqual({
+        reason,
+        html: refused,
+      });
+    }
+  });
+
+  it('adds nothing for a row with neither field', () => {
+    state.appealState = { data: { canAppeal: false }, isError: false };
+    const el = renderRow({ id: 4321, blockedFor: 'tos' });
+    expect(el.textContent).not.toContain('Uploaded');
+    expect(el.querySelector('a')).toBeNull();
+  });
+});

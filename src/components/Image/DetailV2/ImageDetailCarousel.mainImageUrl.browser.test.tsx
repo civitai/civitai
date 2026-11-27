@@ -95,3 +95,34 @@ describe('the carousel’s main <img> requests the URL the shell preloads', () =
     expect(src).toBe(imageDetailMainImageUrl(img));
   });
 });
+
+/**
+ * `image.get` serves a blocked image to its owner with `url` null: the row and its notice, never
+ * the media. The slide stands in `WithheldMedia` for it rather than handing the null to `EdgeMedia`,
+ * which draws a broken image. The guard is stubbed to "show", as the owner sees their own image.
+ */
+describe('a slide whose media the server withheld', () => {
+  test.each(['image', 'video'] as const)('a %s with no url shows WithheldMedia', async (type) => {
+    await page.viewport(1200, 800);
+    renderWithProviders(
+      <div data-slide style={{ width: 400, height: 300, display: 'flex' }}>
+        <ImageDetailCarousel
+          images={[
+            { id: 4103, name: 'mine.png', nsfwLevel: 1, height: 600, width: 400, type, url: null },
+          ]}
+          index={0}
+          next={noop}
+          previous={noop}
+          canNavigate={false}
+        />
+      </div>
+    );
+    const slide = await vi.waitFor(() => {
+      const found = document.querySelector<HTMLElement>('[data-slide]');
+      if (!found?.querySelector('img, video, svg')) throw new Error('slide not drawn yet');
+      return found;
+    });
+    expect(slide.textContent).toContain('Media unavailable');
+    expect(slide.querySelector('img, video')).toBeNull();
+  });
+});
