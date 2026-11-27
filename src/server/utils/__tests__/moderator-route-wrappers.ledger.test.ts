@@ -557,7 +557,6 @@ const FULL_SCOPE_SESSION_ROUTES = [
   'download/training/[modelVersionId]',
   'media/ingest/[mediaId]',
   'testing/model3d-seed',
-  'user/orchestrator-key',
   'v1/block-tokens/index',
   // A creator's own engagement counts and tipped Buzz: no read scope maps to them yet.
   'v1/creator/engagement',
