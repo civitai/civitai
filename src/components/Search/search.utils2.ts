@@ -1,6 +1,9 @@
 import { flagifyBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import type { Hit, TransformItemsMetadata } from 'instantsearch.js';
 import { useHits, useInfiniteHits } from 'react-instantsearch';
+import { useEffect } from 'react';
+import type { ImpressionEntityType } from '~/server/schema/track.schema';
+import { recordSearchFeedHits } from '~/utils/feed-events';
 import type { ArticleSearchIndexRecord } from '~/server/search-index/articles.search-index';
 import type { BountySearchIndexRecord } from '~/server/search-index/bounties.search-index';
 import type { CollectionSearchIndexRecord } from '~/server/search-index/collections.search-index';
@@ -158,6 +161,18 @@ export function useHitsTransformed<T extends IndexName>() {
   return useHits<SearchIndexDataMap[T][number]>({
     transformItems,
   });
+}
+
+/** Hands a search page's hits, in order, to its search feed load, for their seen and click rows. */
+export function useSearchFeedHits(
+  index: string,
+  entityType: ImpressionEntityType,
+  hits: { id: number }[]
+) {
+  const ids = hits.map((hit) => hit.id).join(',');
+  useEffect(() => {
+    recordSearchFeedHits(index, entityType, ids ? ids.split(',').map(Number) : []);
+  }, [index, entityType, ids]);
 }
 
 export function useInfiniteHitsTransformed<T extends IndexName>() {

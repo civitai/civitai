@@ -96,6 +96,7 @@ function ShowcaseItem({ id, name, images, rank, type, version }: ShowcaseItemPro
   return (
     <ElementInView
       component={Link}
+      impressions={[{ entityType: 'Model', entityId: id }]}
       className={clsx(
         'flex items-center gap-4 px-3 py-2 no-underline',
         'hover:bg-gray-1 dark:hover:bg-dark-5',

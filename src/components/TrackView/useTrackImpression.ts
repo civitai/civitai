@@ -145,14 +145,21 @@ function getRegistry(root: Element | null): Registry {
  * number — invisible.
  */
 export function useTrackImpression<T extends HTMLElement = HTMLDivElement>(
-  targets: ImpressionTarget[] | undefined
+  targets: ImpressionTarget[] | undefined,
+  /** Listen for clicks on the element's parent: for an overlay that takes no pointer events. */
+  { clicksOnParent = false }: { clicksOnParent?: boolean } = {}
 ) {
   // Identity of the entities, not of the array — callers rebuild the array every
   // render, and re-observing on that would be constant churn. This is the effect's
   // real dependency; `targets` is read inside it and deliberately not a dep.
   const key = targets?.map((t) => `${t.entityType}:${t.entityId}`).join(',') ?? '';
   // Read from this render's closure, never from a ref written during render.
-  return useImpressionObserver<T>(!!targets?.length, key, () => ({ targets: targets ?? [] }));
+  return useImpressionObserver<T>(
+    !!targets?.length,
+    key,
+    () => ({ targets: targets ?? [] }),
+    clicksOnParent
+  );
 }
 
 /**
@@ -181,7 +188,8 @@ export function useDwellImpression<T extends HTMLElement = HTMLDivElement>(
 function useImpressionObserver<T extends HTMLElement>(
   wanted: boolean,
   key: string,
-  buildState: () => Pick<ElementState, 'targets' | 'onSeen'>
+  buildState: () => Pick<ElementState, 'targets' | 'onSeen'>,
+  clicksOnParent = false
 ) {
   const ref = useRef<T>(null);
   // Optional, not `useFeatureFlags`: ElementInView calls this for every caller,
@@ -222,17 +230,17 @@ function useImpressionObserver<T extends HTMLElement>(
       if (event.type === 'auxclick' && event.button !== 1) return;
       if (isLinkClick(event.target)) recordFeedItemClick(state.targets);
     };
-    const tracksClicks = state.targets.length > 0;
-    if (tracksClicks) {
-      element.addEventListener('click', onClick);
-      element.addEventListener('auxclick', onClick);
-    }
+    const clickRoot = state.targets.length
+      ? clicksOnParent
+        ? element.parentElement
+        : element
+      : null;
+    clickRoot?.addEventListener('click', onClick);
+    clickRoot?.addEventListener('auxclick', onClick);
 
     return () => {
-      if (tracksClicks) {
-        element.removeEventListener('click', onClick);
-        element.removeEventListener('auxclick', onClick);
-      }
+      clickRoot?.removeEventListener('click', onClick);
+      clickRoot?.removeEventListener('auxclick', onClick);
       disarmDwell(state);
       registry.observer.unobserve(element);
       registry.elements.delete(element);
@@ -252,7 +260,7 @@ function useImpressionObserver<T extends HTMLElement>(
     // changes exactly when what it would build changes. Depending on it would
     // re-observe hundreds of cards per render for no change in meaning.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, key, root]);
+  }, [enabled, key, root, clicksOnParent]);
 
   return ref;
 }

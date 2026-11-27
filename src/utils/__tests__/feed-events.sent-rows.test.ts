@@ -7,7 +7,12 @@ import {
 } from '~/components/TrackView/impressionBuffer';
 import type { FeedEventContext } from '~/components/TrackView/impressionBuffer';
 import { __trackImpressionTestHooks as dwellHooks } from '~/components/TrackView/useTrackImpression';
-import { setFeedEventsCache, setFeedEventsEnabled, trackSearchPage } from '~/utils/feed-events';
+import {
+  recordSearchFeedHits,
+  setFeedEventsCache,
+  setFeedEventsEnabled,
+  trackSearchPage,
+} from '~/utils/feed-events';
 import { __trackBufferTestHooks } from '~/components/TrackView/trackEventBuffer';
 import type { TrackBatchEvent } from '~/server/schema/track.schema';
 
@@ -160,5 +165,59 @@ describe('search page visits (the SearchLayout call site)', () => {
         filters: { index: 'models_v9', baseModels: 'SDXL 1.0' },
       }),
     ]);
+  });
+});
+
+// A card on screen for the dwell: what useTrackImpression does when the timer matures.
+function dwell(targets: { entityType: 'Model' | 'Image'; entityId: number }[]) {
+  const element = {} as Element;
+  const state = { targets, timer: null };
+  const registry = {
+    observer: { unobserve: () => undefined } as unknown as IntersectionObserver,
+    elements: new Map([[element, state]]),
+    intersecting: new Set([element]),
+  };
+  dwellHooks.armDwell(registry, element, state);
+  vi.advanceTimersByTime(dwellHooks.DWELL_MS);
+  flushImpressions();
+}
+
+describe('search results', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    setFeedEventsCache(new QueryClient().getQueryCache());
+    setFeedEventsEnabled(true);
+  });
+
+  it('a search result on screen is a seen row of its facet-only load', () => {
+    // The hit list reports before the layout sends the load, as their effects run.
+    recordSearchFeedHits('models_v9', 'Model', [41, 42]);
+    trackSearchPage('models_v9', { baseModel: 'SDXL 1.0' }, vi.fn());
+    dwell([
+      { entityType: 'Model', entityId: 42 },
+      { entityType: 'Image', entityId: 900 },
+    ]);
+    const filters = { index: 'models_v9', baseModels: 'SDXL 1.0' };
+    expect(
+      feedRows().map(({ event, feed, seenIds, ...row }) => [event, feed, seenIds, row.filters])
+    ).toEqual([
+      ['load', 'search', undefined, filters],
+      ['seen', 'search', [42], filters],
+    ]);
+  });
+
+  it('a text search has no load, so its results are seen under none', () => {
+    recordSearchFeedHits('models_v9', 'Model', [51]);
+    trackSearchPage('models_v9', { baseModel: 'SDXL 1.0' }, vi.fn());
+    trackSearchPage('models_v9', { query: 'cat', sortBy: 'models_v9' }, vi.fn());
+    dwell([{ entityType: 'Model', entityId: 51 }]);
+    expect(feedRows().map((row) => row.event)).toEqual(['load']);
+  });
+
+  it('hits of another index belong to no load', () => {
+    recordSearchFeedHits('images_v6', 'Image', [71]);
+    trackSearchPage('models_v9', {}, vi.fn());
+    dwell([{ entityType: 'Image', entityId: 71 }]);
+    expect(feedRows().map((row) => row.event)).toEqual(['load']);
   });
 });

@@ -272,6 +272,7 @@ function ModelVersionDetailsContent({
 
   const { collection, setShowcaseCollection, settingShowcase } = useModelShowcaseCollection({
     modelId: model.id,
+    withModels: false,
   });
 
   const canDownload = version.canDownload || hasDownloadPermissions;
@@ -1271,8 +1272,9 @@ function ModelVersionDetailsContent({
                   </div>
                 </div>
                 <Accordion.Panel>
-                  {/* Collapsed by default, so deferring the body moves nothing on first paint. */}
-                  {!deferBelowFold && (
+                  {/* Collapsed by default, so deferring the body moves nothing on first paint. Mounted
+                      only while open: its models are fetched, and counted as a feed load, when shown. */}
+                  {!deferBelowFold && detailAccordions.includes('collection-showcase') && (
                     <CollectionShowcase modelId={model.id} loading={settingShowcase} />
                   )}
                 </Accordion.Panel>
