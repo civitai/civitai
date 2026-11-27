@@ -102,6 +102,57 @@ describe('lockedSdkVersions — reads the LOCKFILE, not package.json', () => {
     });
   });
 
+  it('pnpm 11+ two-document lockfile: the project (last) document, not the boot document', async () => {
+    // pnpm writes a leading boot document (its own version, config deps) before the project
+    // lockfile when the project pins a package manager. Both documents carry `importers["."]`.
+    const pnpm = [
+      '---',
+      "lockfileVersion: '9.0'",
+      '',
+      'importers:',
+      '',
+      '  .:',
+      '    configDependencies: {}',
+      '    packageManagerDependencies:',
+      '      pnpm:',
+      '        specifier: 12.3.4',
+      '        version: 12.3.4',
+      '',
+      'packages:',
+      '',
+      '  pnpm@12.3.4:',
+      '    resolution: {integrity: sha512-AAAA}',
+      '',
+      'snapshots:',
+      '',
+      '  pnpm@12.3.4: {}',
+      '---',
+      "lockfileVersion: '9.0'",
+      '',
+      'settings:',
+      '  autoInstallPeers: true',
+      '  excludeLinksFromLockfile: false',
+      '',
+      'importers:',
+      '',
+      '  .:',
+      '    dependencies:',
+      "      '@civitai/blocks-react':",
+      '        specifier: ^0.87.0',
+      '        version: 0.81.3(react@19.0.0)',
+      "      '@civitai/sdk':",
+      '        specifier: ^0.33.0',
+      '        version: 0.31.6',
+      '',
+    ].join('\n');
+    const locked = await lockedSdkVersions(await zipOf({ 'pnpm-lock.yaml': pnpm }), 'pnpm build');
+    expect(locked.lockfileStatus).toBe('read');
+    expect(Object.fromEntries(locked.versions)).toEqual({
+      '@civitai/sdk': '0.31.6',
+      '@civitai/blocks-react': '0.81.3',
+    });
+  });
+
   it('yarn.lock v1', async () => {
     const yarn = [
       '# yarn lockfile v1',

@@ -139,16 +139,20 @@ function npmLockfile(body: string): LockfileLookup {
 }
 
 /**
- * The root importer's (`importers["."]`, v6+/v9) or top-level (v5/v6) direct dependency, either a
- * bare string (v5) or `{ specifier, version }` (v6+), with a peer suffix — `0.31.0(react@19.0.0)`
- * or `0.31.0_react@19.0.0` — stripped.
+ * The project document's root importer's (`importers["."]`, v6+/v9) or top-level (v5/v6) direct
+ * dependency, either a bare string (v5) or `{ specifier, version }` (v6+), with a peer suffix —
+ * `0.31.0(react@19.0.0)` or `0.31.0_react@19.0.0` — stripped.
  */
 function pnpmLockfile(body: string): LockfileLookup {
   type DepSets = {
     dependencies?: Record<string, unknown>;
     devDependencies?: Record<string, unknown>;
   };
-  const lock = asObject(yaml.load(body) ?? {}) as DepSets & {
+  // pnpm 11+ may write TWO documents: a leading boot document (pnpm's own version and config
+  // dependencies, which also carries `importers["."]`) and then the project lockfile. The
+  // project lockfile is always the last document, so read that one.
+  const docs = yaml.loadAll(body);
+  const lock = asObject(docs[docs.length - 1] ?? {}) as DepSets & {
     importers?: Record<string, DepSets>;
   };
   const sets: DepSets[] = [];
