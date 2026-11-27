@@ -155,11 +155,14 @@ describe('with CIVITAI_INTERNAL_URL', () => {
       flag: 'minor',
       value: true,
       moderatorId: 2,
+      csamReview: true,
     });
     expect(result.ok).toBe(true);
     const flag = seen.find((s) => s.url?.startsWith('/api/mod/update-image-flag?'));
     expect(flag?.headers.host).toBe('civitai.com');
-    expect(new URLSearchParams(flag!.url!.split('?')[1]).get('token')).toBe('webhook-secret');
+    const query = new URLSearchParams(flag!.url!.split('?')[1]);
+    expect(query.get('token')).toBe('webhook-secret');
+    expect(query.get('csamReview')).toBe('true');
 
     await evictHomeBlocks([5]);
     const evict = seen.find((s) => s.url?.startsWith('/api/internal/home-block-evict?'));

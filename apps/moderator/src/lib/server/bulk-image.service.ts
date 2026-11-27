@@ -509,6 +509,8 @@ export async function removeImagesWithFollowUps(input: {
         flag: input.alsoFlag,
         value: true,
         moderatorId: input.moderatorId,
+        // Setting a flag needs no grant.
+        csamReview: false,
       }).then((r) =>
         r.ok
           ? { flag: input.alsoFlag!, applied: true }

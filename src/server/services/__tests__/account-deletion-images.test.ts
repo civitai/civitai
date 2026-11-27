@@ -38,6 +38,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { REDIS_SYS_KEYS } from '~/server/redis/client';
+import { moderatorWithheldSql } from '@civitai/shared/retracted-media-tier';
 const mockLogToAxiom = loggingMock.logToAxiom;
 const mockSysRedis = redisMock.sysRedis;
 const mockDbWrite = dbMock.dbWrite;
@@ -51,6 +52,9 @@ const mockDbWrite = dbMock.dbWrite;
  * value outside `ImageIngestionStatus` aborts the whole statement — so a reversal that lets a
  * malformed breadcrumb into its claim loses the batch rather than the row.
  */
+const WITHHELD_SQL = moderatorWithheldSql('i', { csamReview: false });
+const WITHHELD = '__withheld__';
+
 type ImageRow = {
   id: number;
   userId: number;
@@ -61,6 +65,8 @@ type ImageRow = {
   metadata: Record<string, string>;
   /** Fiction: a row the claim matches but the UPDATE never moves off `Blocked`. */
   stuck?: boolean;
+  /** Withheld from a moderator without the CSAM grant; what that means is pinned on Postgres. */
+  withheld?: boolean;
 };
 
 type QueueRow = { entityId: number; entityType: string; type: string };
@@ -205,6 +211,7 @@ function applyRestoreUpdate(rawSql: string, values: unknown[]) {
       return (row: ImageRow) => INGESTION_STATUSES.includes(row.metadata[args[0] as string]);
     // What the owner check means is pinned against Postgres below; here it only gates the claim.
     if (OWNER_CHECK.test(clause)) return (row: ImageRow) => row.userId === args[0] && ownerLive;
+    if (clause.trim() === `NOT ${WITHHELD}`) return (row: ImageRow) => !row.withheld;
     throw new Error(`unrecognized reversal predicate: ${clause.trim()}`);
   });
 
@@ -254,6 +261,8 @@ function countMatchingImages(sql: string, values: unknown[]) {
     .split(/\s+AND\s+/)
     .map((clause) => {
       const args = params.splice(0, (clause.match(/\?/g) ?? []).length);
+      if (clause.trim() === WITHHELD) return (row: ImageRow) => !!row.withheld;
+      clause = clause.replace(/^(\s*)i\./, '$1');
       if (/^\s*"userId" = \?/.test(clause)) return (row: ImageRow) => row.userId === args[0];
       if (/^\s*ingestion = 'Blocked'/.test(clause))
         return (row: ImageRow) => row.ingestion === 'Blocked';
@@ -308,7 +317,7 @@ beforeEach(() => {
   mockDbWrite.$queryRaw.mockImplementation((strings: TemplateStringsArray, ...raw: unknown[]) => {
     // Nested fragments flattened, as Prisma sends them.
     const { strings: flat, values } = Prisma.sql(strings, ...(raw as never[]));
-    const sql = flat.join('?');
+    const sql = flat.join('?').replaceAll(WITHHELD_SQL, WITHHELD);
     if (sql.includes('UPDATE "Image"')) return Promise.resolve(applyRestoreUpdate(sql, values));
     if (sql.includes('SELECT COUNT(*)')) return Promise.resolve(countMatchingImages(sql, values));
     throw new Error(`unexpected read: ${sql}`);
@@ -497,7 +506,13 @@ describe('unblockAccountDeletionImages', () => {
 
     const result = await unblockAccountDeletionImages(7);
 
-    expect(result).toEqual({ unblocked: 0, stillBlocked: 0, skipped: 0, drained: true });
+    expect(result).toEqual({
+      unblocked: 0,
+      stillBlocked: 0,
+      skipped: 0,
+      withheld: 0,
+      drained: true,
+    });
     expect(mockResetNsfwLevel).not.toHaveBeenCalled();
     expect(mockBustCachesForPosts).not.toHaveBeenCalled();
   });
@@ -573,7 +588,13 @@ describe('unblockAccountDeletionImages', () => {
       ingestion: 'Blocked',
       metadata: { [PRIOR_INGESTION_KEY]: 'Scannned' },
     });
-    expect(result).toEqual({ unblocked: 2, stillBlocked: 0, skipped: 1, drained: true });
+    expect(result).toEqual({
+      unblocked: 2,
+      stillBlocked: 0,
+      skipped: 1,
+      withheld: 0,
+      drained: true,
+    });
     expect(mockResetNsfwLevel).toHaveBeenCalledWith([1, 3], { unlockedOnly: true });
   });
 

@@ -31,6 +31,7 @@ import { IMAGE_REVIEW_PRECEDENCE, RESTORABLE_REVIEWS } from '@civitai/shared/ima
 import { getPendingAppealImageIds } from '~/server/services/image-appeal-flag';
 import { csamBlockedSql, pendingImageAppealSql } from '~/server/common/image-visibility';
 import { Prisma } from '@prisma/client';
+import { moderatorWithheldSql } from '@civitai/shared/retracted-media-tier';
 import {
   PRIOR_BLOCKED_FOR_KEY,
   PRIOR_INGESTION_KEY,
@@ -213,6 +214,9 @@ async function raiseToRecordedFloor(rows: { id: number; floorLevel: number | nul
   if (raised.length) await refreshImageLevelCaches(raised.map((x) => x.id));
 }
 
+/** An account restore is no moderator's ruling on the media, so it lifts no withheld image. */
+const WITHHELD_FROM_RESTORE = Prisma.raw(moderatorWithheldSql('i', { csamReview: false }));
+
 /**
  * One restore pass: claims up to RESTORE_BATCH_SIZE of the account's grace-blocked rows, puts back
  * what the grace block recorded, and strips the breadcrumbs. `recordedLevel` is set on a row whose
@@ -282,6 +286,7 @@ export function restoreAccountDeletionImageBatch(userId: number) {
         AND i."metadata"->>${PRIOR_INGESTION_KEY}::text IS NOT NULL
         AND i."metadata"->>${PRIOR_INGESTION_KEY}::text IN (SELECT unnest(enum_range(NULL::"ImageIngestionStatus"))::text)
         AND (SELECT COALESCE(u."deletedAt", u."bannedAt") IS NULL FROM "User" u WHERE u.id = ${userId})
+        AND NOT ${WITHHELD_FROM_RESTORE}
       LIMIT ${RESTORE_BATCH_SIZE}
       -- FOR UPDATE re-reads the newest row version, so a moderator rating committed mid-restore is
       -- not routed to the caller's re-rate, which would unlock it.
@@ -395,6 +400,24 @@ export async function unblockAccountDeletionImages(userId: number) {
   `;
   const skipped = audit?.count ?? 0;
 
+  const [held] = await dbWrite.$queryRaw<{ count: number }[]>`
+    SELECT COUNT(*)::int AS count
+    FROM "Image" i
+    WHERE i."userId" = ${userId}
+      AND i.ingestion = 'Blocked'::"ImageIngestionStatus"
+      AND i."metadata"->>${PRIOR_INGESTION_KEY}::text IS NOT NULL
+      AND ${WITHHELD_FROM_RESTORE}
+  `;
+  const withheld = held?.count ?? 0;
+  if (withheld > 0)
+    logToAxiom({
+      type: 'info',
+      name: 'account-deletion-image-restore',
+      message: 'left withheld images blocked',
+      userId,
+      payload: { withheld },
+    });
+
   if (skipped > 0 || !drained)
     logToAxiom({
       type: 'warning',
@@ -410,7 +433,7 @@ export async function unblockAccountDeletionImages(userId: number) {
       passes,
     });
 
-  return { unblocked, stillBlocked, skipped, drained };
+  return { unblocked, stillBlocked, skipped, withheld, drained };
 }
 
 export async function countPendingAccountDeletionImageRestores(userId: number) {

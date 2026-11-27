@@ -3,6 +3,7 @@ import { TRPCError } from '@trpc/server';
 import type { DB } from '@civitai/db-schema/kysely';
 import type { Kysely } from 'kysely';
 import { sql } from 'kysely';
+import * as z from 'zod';
 import { NsfwLevel } from '~/server/common/enums';
 import { kyselyWrite } from '~/server/db/kyselyDb';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
@@ -26,6 +27,19 @@ export function loosensImageLevelSql(next: number, currentColumn: string) {
     ? 'false'
     : `(${currentColumn} = 0 OR ${next} < ${currentColumn})`;
 }
+
+/**
+ * A moderator's CSAM grant as a trusted caller (the moderator app) forwards it to a token route.
+ * Fails closed: only `true` (in a JSON body) or `'true'` (in a query string) is the grant.
+ */
+export const forwardedCsamGrantInBody = z
+  .unknown()
+  .optional()
+  .transform((value) => value === true);
+export const forwardedCsamGrantInQuery = z
+  .unknown()
+  .optional()
+  .transform((value) => value === 'true');
 
 /**
  * The ids among `imageIds` that `moderatorWithheldSql` withholds from a moderator without the
