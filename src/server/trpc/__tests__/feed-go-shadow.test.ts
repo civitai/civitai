@@ -1751,6 +1751,16 @@ describe('createFeedGoShadow — image.getInfinite', () => {
         }),
       ],
       [
+        'an input that holds the key behind a JSON escape',
+        infiniteRequest({
+          headers: keyedHeaders(bearer),
+          query: {
+            trpc: 'image.getInfinite',
+            input: `{"json":{"limit":5,"note":"\\u007a${KEY.slice(1)}"}}`,
+          },
+        }),
+      ],
+      [
         'a kept header that holds the key',
         infiniteRequest({ headers: { ...keyedHeaders(bearer), host: `${KEY}.example` } }),
       ],

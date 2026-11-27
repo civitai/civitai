@@ -3931,7 +3931,7 @@ before the handler runs and whatever Node answers, under the same bounds, counte
 2xx. Sent: `{corpusOnly: true, credential, sampleRate, input, headers}`, `input` the raw tRPC
 `input` (no path); never the key in any form, Authorization, `x-feed-go-credential`, any cookie,
 `node`, `responseHeaders`. A request whose `input` or headers would still hold the key (as written,
-URI-encoded or JSON-escaped) is not sent corpus-only and stays an ordinary shadow sample. Both
+URI-encoded, JSON-escaped, or in the input once parsed as JSON) is not sent corpus-only and stays an ordinary shadow sample. Both
 credential kinds at once, or an empty `?token=`, stay ordinary shadow samples too. Feed-go checks and
 records it as below; a tRPC shape carries the class for an API credential (`header` / `query`,
 the shape table above), so it signs exactly as the same request with a real credential of that

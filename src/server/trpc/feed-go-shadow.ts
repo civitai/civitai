@@ -986,6 +986,12 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
       if (raw !== undefined && typeof raw !== 'string') return false;
       input = raw ?? '';
       probe = [JSON.stringify({ input, headers }), input];
+      // As feed-go reads it: a key spelled with JSON escapes is plain text once parsed.
+      try {
+        probe.push(JSON.stringify(JSON.parse(input)));
+      } catch {
+        // Not JSON: feed-go stores no input it cannot parse.
+      }
     }
     if (probe.some((text) => leaksSecret(text, secrets))) return false;
     const sample: FeedGoShadowSample = {
