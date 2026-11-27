@@ -306,6 +306,117 @@ func TestEvalCaptureServeFullQueueDrops(t *testing.T) {
 	}
 }
 
+// listSink is an evalcapture.Sink holding what it is handed.
+type listSink struct {
+	mu   sync.Mutex
+	rows []any
+}
+
+func (l *listSink) Add(row any) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.rows = append(l.rows, row)
+	return true
+}
+
+func (l *listSink) len() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.rows)
+}
+
+// serveUnresolvedCount reads feed_go_eval_capture_unresolved_total{feed_endpoint="as-posts",source="serve",reason}.
+func serveUnresolvedCount(t *testing.T, reg *prometheus.Registry, reason string) float64 {
+	t.Helper()
+	v, _ := metricValue(t, reg, "feed_go_eval_capture_unresolved_total", map[string]string{"feed_endpoint": EndpointAsPosts, "source": "serve", "reason": reason})
+	return v
+}
+
+// The tap and the real recorder together: a T3 capture whose viewer the compute could not resolve is
+// outcome unresolved (never dropped), counted again under the reason of the resolve's error; nothing
+// is written. One the compute resolved is written, with no unresolved count.
+func TestEvalCaptureServeUnresolvedReason(t *testing.T) {
+	cases := []struct {
+		name      string
+		viewerErr error
+		reason    string
+	}{
+		{"session cache miss", fallback.New("session-cache-miss"), "session-cache-miss"},
+		{"session cache cleared", fallback.New("session-cache-cleared"), "session-cache-cleared"},
+		{"session id mismatch", fallback.Newf("session-id-mismatch", "%s", "77"), "session-id-mismatch"},
+		{"api key cache miss", fallback.New("bearer-key-cache-miss"), "bearer-token"},
+		{"other error", errors.New("store timeout"), "other"},
+		{"resolved", nil, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			reg := prometheus.NewRegistry()
+			samples, caseRows := &listSink{}, &listSink{}
+			compute := func(ctx context.Context, r *http.Request) (*computed, error) {
+				if _, err := (&auth.Resolver{}).Resolve(auth.WithResolved(ctx, nil, c.viewerErr), r); err != nil {
+					return nil, err
+				}
+				return &computed{payload: []byte(servedPayload)}, nil
+			}
+			s := serveServer(reg, compute, &proxyRecorder{})
+			s.EvalCapture = &EvalCapture{
+				Recorder:  evalcapture.New(evalcapture.Config{Samples: samples, Cases: caseRows}),
+				ServeRate: 1, Queue: make(chan struct{}, 2), Random: func() float64 { return 0 },
+			}
+			s.ServeHTTP(httptest.NewRecorder(), publicRequest())
+			s.shadows.Wait()
+			if c.reason == "" {
+				if evalCount(t, reg, "serve", "written") != 1 || evalCount(t, reg, "serve", "unresolved") != 0 || samples.len() != 1 {
+					t.Errorf("written %v unresolved %v samples %d, want 1, 0 and 1",
+						evalCount(t, reg, "serve", "written"), evalCount(t, reg, "serve", "unresolved"), samples.len())
+				}
+				return
+			}
+			if evalCount(t, reg, "serve", "unresolved") != 1 || evalCount(t, reg, "serve", "dropped") != 0 || evalCount(t, reg, "serve", "invalid") != 0 {
+				t.Errorf("unresolved %v dropped %v invalid %v, want 1, 0 and 0",
+					evalCount(t, reg, "serve", "unresolved"), evalCount(t, reg, "serve", "dropped"), evalCount(t, reg, "serve", "invalid"))
+			}
+			for _, reason := range []string{"bearer-token", "session-cache-miss", "session-cache-cleared", "session-id-mismatch", "other"} {
+				want := 0.0
+				if reason == c.reason {
+					want = 1
+				}
+				if got := serveUnresolvedCount(t, reg, reason); got != want {
+					t.Errorf("unresolved{serve,%s} = %v, want %v", reason, got, want)
+				}
+			}
+			if samples.len()+caseRows.len() != 0 {
+				t.Errorf("rows written: %d samples %d cases", samples.len(), caseRows.len())
+			}
+		})
+	}
+}
+
+// A T3 hand-back decided before the compute resolved anything, from a request carrying an API key:
+// the capture worker resolves it with credentials redacted (the key is never looked up), so it is
+// unresolved with reason bearer-token.
+func TestEvalCaptureServeBearerUnresolved(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	samples, caseRows := &listSink{}, &listSink{}
+	s := serveServer(reg, func(context.Context, *http.Request) (*computed, error) { return nil, fallback.New("method") }, &proxyRecorder{})
+	s.Resolver = &auth.Resolver{}
+	s.EvalCapture = &EvalCapture{
+		Recorder:  evalcapture.New(evalcapture.Config{Samples: samples, Cases: caseRows}),
+		ServeRate: 1, Queue: make(chan struct{}, 2), Random: func() float64 { return 0 },
+	}
+	r := publicRequest()
+	r.Header.Set("Authorization", "Bearer synthetic-key-0001")
+	s.ServeHTTP(httptest.NewRecorder(), r)
+	s.shadows.Wait()
+	if evalCount(t, reg, "serve", "unresolved") != 1 || serveUnresolvedCount(t, reg, "bearer-token") != 1 || serveUnresolvedCount(t, reg, "other") != 0 {
+		t.Errorf("unresolved %v bearer-token %v other %v, want 1, 1 and 0", evalCount(t, reg, "serve", "unresolved"),
+			serveUnresolvedCount(t, reg, "bearer-token"), serveUnresolvedCount(t, reg, "other"))
+	}
+	if samples.len()+caseRows.len() != 0 {
+		t.Errorf("rows written: %d samples %d cases", samples.len(), caseRows.len())
+	}
+}
+
 // T1's weight is 1 / the sample's own sampleRate when it sends one in (0, 1], else 1 / the configured
 // FEED_GO_EVAL_CAPTURE_SHADOW_RATE: absent (an older sampler), above 1 or negative. The rates are
 // pairwise distinct, so a weight hardcoded to either one cannot pass every case.
@@ -673,10 +784,10 @@ func TestEvalCaptureCorpusOnlyDiscarded(t *testing.T) {
 func TestEvalCaptureSeeded(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	m := NewMetrics(reg)
-	if n := testutil.CollectAndCount(m.EvalCapture); n != 4*3+3*3+4*3+1*4 {
-		t.Fatalf("feed_go_eval_capture_total has %d series, want 37", n)
+	if n := testutil.CollectAndCount(m.EvalCapture); n != 61 {
+		t.Fatalf("feed_go_eval_capture_total has %d series, want 61 (4*5 + 3*5 + 4*5 + 1*6)", n)
 	}
-	for _, o := range []string{"written", "deduped", "dropped", "refused"} {
+	for _, o := range []string{"written", "deduped", "unresolved", "invalid", "dropped", "refused"} {
 		if v, found := metricValue(t, reg, "feed_go_eval_capture_total", map[string]string{"feed_endpoint": "v1-models-id", "source": "corpus-only", "outcome": o}); !found || v != 0 {
 			t.Errorf("eval_capture{v1-models-id,corpus-only,%s} = %v found=%v, want a 0 series", o, v, found)
 		}
@@ -690,12 +801,23 @@ func TestEvalCaptureSeeded(t *testing.T) {
 		"serve-parity": {"as-posts", "infinite", "model-getall"},
 	} {
 		for _, e := range endpoints {
-			for _, o := range []string{"written", "deduped", "dropped"} {
+			for _, o := range []string{"written", "deduped", "unresolved", "invalid", "dropped"} {
 				if v, found := metricValue(t, reg, "feed_go_eval_capture_total", map[string]string{"feed_endpoint": e, "source": source, "outcome": o}); !found || v != 0 {
 					t.Errorf("eval_capture{%s,%s,%s} = %v found=%v, want a 0 series", e, source, o, v, found)
 				}
 			}
+			for _, reason := range []string{"bearer-token", "session-cache-miss", "session-cache-cleared", "session-id-mismatch", "other"} {
+				if v, found := metricValue(t, reg, "feed_go_eval_capture_unresolved_total", map[string]string{"feed_endpoint": e, "source": source, "reason": reason}); !found || v != 0 {
+					t.Errorf("eval_capture_unresolved{%s,%s,%s} = %v found=%v, want a 0 series", e, source, reason, v, found)
+				}
+			}
 		}
+	}
+	if n := testutil.CollectAndCount(m.EvalCaptureUnresolved); n != 55 {
+		t.Errorf("feed_go_eval_capture_unresolved_total has %d series, want 55 ((4 + 3 + 4) * 5; corpus-only resolves no viewer)", n)
+	}
+	if _, found := metricValue(t, reg, "feed_go_eval_capture_unresolved_total", map[string]string{"feed_endpoint": "v1-models-id", "source": "corpus-only", "reason": "other"}); found {
+		t.Error("corpus-only resolves no viewer, but an unresolved series exists for it")
 	}
 	if n := testutil.CollectAndCount(m.EvalCaptureRowsDropped); n != 2*7 {
 		t.Errorf("feed_go_eval_capture_rows_dropped_total has %d series, want 14", n)
