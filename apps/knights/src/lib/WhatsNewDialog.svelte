@@ -1,6 +1,6 @@
 <script lang="ts">
   import { modal } from '$lib/modal';
-  import { ANNOUNCEMENT_URL, type WhatsNew } from '$lib/whats-new';
+  import type { WhatsNew } from '$lib/whats-new';
   import './overlay.css';
 
   let { copy, onclose }: { copy: WhatsNew; onclose: () => void } = $props();
@@ -26,10 +26,11 @@
       <p class="intro">{copy.lead}</p>
       <div class="rule" aria-hidden="true"><span class="gem"></span></div>
       <ul>
-        {#each copy.items as item (item.lead)}
+        {#each copy.items as item (item.id ?? item.lead)}
           <li>
             <span class="mark" aria-hidden="true"></span>
             <p>
+              {#if item.isNew}<span class="new">New</span>{/if}
               <strong>
                 {#if item.link}
                   {@const [before, after] = item.lead.split(item.link.text)}
@@ -39,14 +40,17 @@
                 {/if}
               </strong>
               {item.body}
+              {#if item.action}
+                <a class="action" href={item.action.href} onclick={onclose}>{item.action.text}</a>
+              {/if}
             </p>
           </li>
         {/each}
       </ul>
     </div>
     <div class="footer">
-      {#if ANNOUNCEMENT_URL}
-        <a class="announcement" href={ANNOUNCEMENT_URL} target="_blank" rel="noopener">Read the announcement</a>
+      {#if copy.announcement}
+        <a class="announcement" href={copy.announcement} target="_blank" rel="noopener">Read the announcement</a>
       {/if}
       <button type="button" class="ov-primary" data-autofocus onclick={onclose}>Got it</button>
     </div>
@@ -153,6 +157,27 @@
   }
   .announcement {
     font: 600 14px/1.4 var(--io-font-ui);
+  }
+  /* At least 24px tall to tap. */
+  .action {
+    display: block;
+    width: fit-content;
+    margin-top: 2px;
+    padding: 3px 0;
+    font: 600 14px/1.4 var(--io-font-ui);
+  }
+  .new {
+    display: inline-block;
+    margin-right: 8px;
+    padding: 1px 8px;
+    border: 1px solid var(--io-gold-muted);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--io-gold) 14%, transparent);
+    color: var(--io-gold);
+    font: 600 11px/1.5 var(--io-font-ui);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    vertical-align: 2px;
   }
   .handle {
     display: none;
