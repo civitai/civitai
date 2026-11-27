@@ -3764,7 +3764,7 @@ trailing newline) of:
 | `viewer` | the viewer descriptor: `class` (anon / crawler / banned / user / moderator), `browsingLevel`, `showNsfw`, `hiddenPrefs` (any hidden preference non-empty), `self` (the input named the viewer's own user or collection) |
 | `host` | the domain color of the `Host` (green / blue / red), `other`, or `unmapped` (no host colors configured) |
 | `region` | `none` (no country header), `open`, `restricted` (REGION_RESTRICTION_CONFIG), `blocked` (REGION_BLOCK_CONFIG); the country read as the server reads it (`x-isuk`, then `cf-ipcountry`, `cf-region-code` for a US state) |
-| `credential` | REST only: `none`, or `header` / `query` / `session` joined with `+` (`Authorization` or the sampler's credential header; a non-empty `token` query value; a session cookie name) |
+| `credential` | REST: `none`, or `header` / `query` / `session` joined with `+` (`Authorization` or the sampler's credential header; a non-empty `token` query value; a session cookie name). tRPC: only when the class holds `header` or `query` (an API credential), so a signed-out or session-cookie request's tRPC shape has no `credential` key |
 | `response`, `outcome` | optional, supplied by the caller, and always classes of the **Node** (reference) answer, never of Go's: a signature must not move when a Go handback is closed |
 
 The **signature** is xxhash64 of the shape's bytes as 16 lowercase hex digits (`github.com/cespare/xxhash/v2`,
@@ -3933,9 +3933,9 @@ before the handler runs and whatever Node answers, under the same bounds, counte
 `node`, `responseHeaders`. A request whose `input` or headers would still hold the key (as written,
 URI-encoded or JSON-escaped) is not sent corpus-only and stays an ordinary shadow sample. Both
 credential kinds at once, or an empty `?token=`, stay ordinary shadow samples too. Feed-go checks and
-records it as below; a tRPC shape never carried the credential class, so it signs exactly as the
-same request with a real credential (and as one with none), the class kept in the case's
-`credential` column.
+records it as below; a tRPC shape carries the class for an API credential (`header` / `query`,
+the shape table above), so it signs exactly as the same request with a real credential of that
+class and apart from the same request signed out.
 
 - **Sent:** `{corpusOnly: true, credential: "header" | "query", sampleRate, input, path, headers}`;
   `input` is the raw query string less every pair named like a credential (`token` in any case or
