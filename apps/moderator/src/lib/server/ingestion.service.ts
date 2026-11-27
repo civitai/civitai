@@ -199,6 +199,10 @@ export async function rescanStuckImages({
     .where(notWithheldTarget(holdsCsamReview(viewer)))
     .returning('id')
     .execute();
+  const left = ids.filter((id) => !rescanned.some((row) => row.id === id));
+  if (left.length)
+    skipped += (await listWithheldIds(left, { csamReview: holdsCsamReview(viewer) }, 'to-ingest'))
+      .size;
 
   // One row per image, as `bulkRemove` does: ModActivity keys on the content id.
   await Promise.all(

@@ -10,7 +10,14 @@ import path from 'path';
  */
 
 const REPO = path.resolve(__dirname, '../../../..');
-const ROOTS = ['src', 'packages', 'apps/moderator/src'];
+const ROOTS = [
+  'src',
+  'packages',
+  'apps/moderator/src',
+  'apps/knights/src',
+  'apps/creator-studio/src',
+  'apps/event-engine/src',
+];
 const SKIP_DIRS = new Set([
   'node_modules',
   '__tests__',
@@ -35,7 +42,7 @@ const EXACT = new RegExp(
  * nothing widens), or an outbound effect awaiting its decision.
  */
 const ALLOWED: Record<string, number> = {
-  // Holds media out of the purge.
+  // Retention unchanged under the no-holds rule.
   'src/server/jobs/image-ingestion.ts': 4,
   // Restated in a label_store function and trigger; moves with them.
   'src/server/jobs/appeal-decision-records.ts': 4,
@@ -43,10 +50,11 @@ const ALLOWED: Record<string, number> = {
   'src/server/services/training-data-restricted.service.ts': 1,
   // Read by the Knights gate view; moves with a new view migration.
   'packages/civitai-shared/src/held-media.ts': 2,
-  // A child-safety case keeps media; image-appeal-flag's clear moves with it.
+  // The vector index's flag; moves with the event-engine readers.
+  'apps/event-engine/src/vector-sync/image-flags.ts': 1,
+  // Retention unchanged under the no-holds rule; image-appeal-flag's clear moves with the case.
   'packages/civitai-db-queries/src/child-safety-case.db.ts': 3,
   'src/server/services/image-appeal-flag.ts': 1,
-  // The purge of a moderator's delete.
   'packages/civitai-db-queries/src/content-deletion.db.ts': 1,
   // A kept hide's recorded prior state.
   'packages/civitai-db-queries/src/pending-deletes.db.ts': 1,

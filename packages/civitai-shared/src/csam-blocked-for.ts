@@ -8,7 +8,9 @@ export function csamInBlockedForSql(blockedFor: string): string {
     )`;
 }
 
-/** `csamInBlockedForSql` for a value already read. */
+/** `csamInBlockedForSql` for a value already read. Trims spaces only, as `btrim` does. */
 export function blockedForNamesCsam(blockedFor: string | null | undefined): boolean {
-  return !!blockedFor?.split(',').some((reason) => reason.trim().toLowerCase() === 'csam');
+  return !!blockedFor
+    ?.split(',')
+    .some((reason) => reason.replace(/^ +| +$/g, '').toLowerCase() === 'csam');
 }

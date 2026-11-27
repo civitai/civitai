@@ -671,7 +671,7 @@ describe('a write that races the image becoming withheld', () => {
     );
     race.nth = 1;
     expect(await rescanStuckImages({ imageIds: [IMAGE_ID], userId: 2, viewer: undefined })).toEqual(
-      { ok: true, count: 0, skipped: 0 }
+      { ok: true, count: 0, skipped: 1 }
     );
 
     expect(await imageRow()).toMatchObject({ ingestion: 'Pending' });

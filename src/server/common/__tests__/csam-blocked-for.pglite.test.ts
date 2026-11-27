@@ -18,6 +18,7 @@ const CASES: [blockedFor: string | null, csam: boolean][] = [
   ['moderated', false],
   ['tos,moderated', false],
   ['csamish', false],
+  ['tos,\tcsam', false],
   ['', false],
   [null, false],
 ];
