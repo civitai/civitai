@@ -207,40 +207,59 @@ async function staleSinceCursor(db: Kysely<DB>, lastActivityId: number, cutoff: 
   return { n: Number(row.n), lastId: row.lastId };
 }
 
+const LIVE_STATUSES = [
+  REFERENCE_STATUS.active,
+  REFERENCE_STATUS.pending,
+  REFERENCE_STATUS.probation,
+];
+
+/**
+ * Retires the fresh items past their age, then every live non-core item whose image no longer stands at its answer.
+ * The image check runs on `retireGateChunk` reference ids at a time: under an OR with the age test, the planner hashed
+ * every Image and Post through the gate instead of probing each reference's image.
+ */
 async function retireStale(db: Kysely<DB>, now: Date, config: HarvestConfig): Promise<number> {
   const agedOut = new Date(now.getTime() - config.freshMaxAgeDays * DAY_MS);
-  const result = await readWithoutJit(db, (trx) =>
+  const retire = (trx: Kysely<DB>) =>
     trx
-      .updateTable('KnightsReferenceImage as r')
+      .updateTable('KnightsReferenceImage')
       .set({ status: REFERENCE_STATUS.retired, updatedAt: utc(now) })
-      .where('r.status', 'in', [
-        REFERENCE_STATUS.active,
-        REFERENCE_STATUS.pending,
-        REFERENCE_STATUS.probation,
-      ])
-      .where('r.source', '!=', REFERENCE_SOURCE.core)
-      .where((eb) =>
-        eb.or([
-          // A mod-confirmed check has no TTL: it leaves by the pool cap, Knights' failures, or its image moving off its level.
-          eb.and([
-            eb('r.harvestedAt', '<', utc(agedOut)),
-            eb('r.source', '!=', REFERENCE_SOURCE.inquisitor),
-          ]),
-          eb.not(
-            eb.exists(
-              eb
-                .selectFrom('Image as img')
-                .innerJoin('Post as p', 'p.id', 'img.postId')
-                .select(sql<number>`1`.as('one'))
-                .whereRef('img.id', '=', 'r.imageId')
-                .whereRef(sql`"img"."nsfwLevel"::text`, '=', 'r.answer')
-                .where('img.nsfwLevelLocked', '=', true)
-                .where(servableImageForSweeps)
-            )
-          ),
-        ])
-      )
-      .executeTakeFirst()
-  );
-  return Number(result.numUpdatedRows);
+      .where('status', 'in', LIVE_STATUSES);
+  // A mod-confirmed check has no TTL: it leaves by the pool cap, Knights' failures, or its image moving off its level.
+  const aged = await retire(db)
+    .where('source', 'not in', [REFERENCE_SOURCE.core, REFERENCE_SOURCE.inquisitor])
+    .where('harvestedAt', '<', utc(agedOut))
+    .executeTakeFirst();
+  let retired = Number(aged.numUpdatedRows);
+
+  const live = await db
+    .selectFrom('KnightsReferenceImage')
+    .select('id')
+    .where('status', 'in', LIVE_STATUSES)
+    .where('source', '!=', REFERENCE_SOURCE.core)
+    .orderBy('id')
+    .execute();
+  for (let at = 0; at < live.length; at += config.retireGateChunk) {
+    const chunk = live.slice(at, at + config.retireGateChunk).map((r) => r.id);
+    const standing = await readWithoutJit(db, (trx) =>
+      trx
+        .selectFrom('KnightsReferenceImage as r')
+        .innerJoin('Image as img', 'img.id', 'r.imageId')
+        .innerJoin('Post as p', 'p.id', 'img.postId')
+        .select('r.id')
+        .where('r.id', '=', sql<number>`any(${chunk}::int[])`)
+        .whereRef(sql`"img"."nsfwLevel"::text`, '=', 'r.answer')
+        .where('img.nsfwLevelLocked', '=', true)
+        .where(servableImageForSweeps)
+        .execute()
+    );
+    const stands = new Set(standing.map((r) => r.id));
+    const gone = chunk.filter((id) => !stands.has(id));
+    if (gone.length === 0) continue;
+    const result = await retire(db)
+      .where('id', '=', sql<number>`any(${gone}::int[])`)
+      .executeTakeFirst();
+    retired += Number(result.numUpdatedRows);
+  }
+  return retired;
 }

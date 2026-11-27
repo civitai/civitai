@@ -227,6 +227,44 @@ describe('harvestRulings', () => {
       [5, 'retired'],
     ]);
   });
+
+  it('checks the image gate only for the references it retires from, a chunk of ids at a time', async () => {
+    for (const id of [1, 2, 3, 4, 5]) await image(id, { level: id === 2 || id === 5 ? 8 : 4 });
+    await pg.query(
+      `INSERT INTO "KnightsReferenceImage" ("imageId","pool","answer","source","harvestedAt") VALUES
+       (1,'trials','4','harvested',$1), (2,'trials','4','harvested',$1), (3,'trials','4','harvested',$2),
+       (4,'trials','4','core',$1), (5,'trials','4','inquisitor',$2)`,
+      [daysAgo(1), daysAgo(100)]
+    );
+    const gateReads: (readonly unknown[])[] = [];
+    const watched = db.withPlugin({
+      transformQuery: ({ node, queryId }) => {
+        const { sql, parameters } = db.getExecutor().compileQuery(node, queryId);
+        if (sql.includes('"KnightsImageGate"') && sql.includes('"KnightsReferenceImage"'))
+          gateReads.push(parameters);
+        return node;
+      },
+      transformResult: async ({ result }) => result,
+    });
+    const result = await harvestRulings(watched, {
+      now: NOW,
+      config: { ...HARVEST, retireGateChunk: 2 },
+    });
+    expect(result.retired).toBe(3);
+
+    // The aged-out item (3) retires without the gate; 1, 2 and 5 are checked in chunks of 2; core (4) never is.
+    expect(gateReads.map((params) => params.find(Array.isArray))).toEqual([
+      [expect.any(Number), expect.any(Number)],
+      [expect.any(Number)],
+    ]);
+    expect((await references()).map((r) => [r.imageId, r.status])).toEqual([
+      [1, 'active'],
+      [2, 'retired'],
+      [3, 'retired'],
+      [4, 'active'],
+      [5, 'retired'],
+    ]);
+  });
 });
 
 describe('harvest defaults and the job switch', () => {
