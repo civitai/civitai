@@ -29,7 +29,7 @@ import (
 // integSeedImages resets the 2_101_xxx image fixture. Every column of image 2101001 holds a distinct,
 // recognisable value, so a scan that swaps two columns shows up as a wrong field.
 //
-//	2101001 post 2101501 (owner 2101901, Unsearchable) video, poi, blockedFor set — the full-row image
+//	2101001 post 2101501 (owner 2101901, Unsearchable) video, poi, blockedFor AiNotVerified — the full-row image
 //	2101002 post 2101501 owner 2101901          type image
 //	2101003 post 2101501 user 2101902           tagged 2101801 (enabled)
 //	2101004 post 2101501 user 2101902           minor
@@ -38,6 +38,9 @@ import (
 //	2101007 post 2101504 (user 2101902)         blockedFor set
 //	2101008 post 2101503 (user 2101902, Private)
 //	2101009 post 2101504 (user 2101902)         txt2img
+//
+// 2101001's block is the one that leaves its owner the media (ownerMediaAllowed), so its owner still
+// reads it through the owner shapes below; the owner rule itself is TestIntegrationOwnerBlockedMedia's.
 //
 // Resources: 2101001 and 2101009 used version 2101601, 2101005 version 2101602; both versions belong
 // to model 2101651. Every other image column passes every global filter of the image query, so a
@@ -60,7 +63,7 @@ func integSeedImages(t *testing.T, pool *pgxpool.Pool) {
 		  VALUES (2101001, 'integ-name', 'integ-url', 2101901, '2021-01-02 03:04:05.006',
 		    '{"civitaiResources": [], "extra": {"remixOfId": 2101077}}', 'integ-hash', 853, 641, 'video',
 		    '{"integKey": "integ-metadata"}', 2, 2101501, NULL, false, 7, '2021-05-06 07:08:09.010', 'integ/mime',
-		    'Scanned', 'integ-blocked-for', false, true, false);
+		    'Scanned', 'AiNotVerified', false, true, false);
 		INSERT INTO "Image" (id, url, "userId", type, "nsfwLevel", "postId", ingestion, minor, poi, "blockedFor", "generationProcess") VALUES
 		  (2101002, 'integ-u2', 2101901, 'image', 2, 2101501, 'Scanned', false, false, NULL, NULL),
 		  (2101003, 'integ-u3', 2101902, 'video', 2, 2101501, 'Scanned', false, false, NULL, NULL),
@@ -154,7 +157,7 @@ var integFullRow = RawImage{
 	Hash: integS("integ-hash"), HideMeta: false, HasMeta: true, HasPositivePrompt: false, OnSite: integB(true),
 	RemixOfID: json.RawMessage(`2101077`), CreatedAt: integTime("2021-01-02 03:04:05.006"),
 	SortAt: integTime("2021-05-06 07:08:09.010"), MimeType: integS("integ/mime"), Type: "video",
-	Metadata: json.RawMessage(`{"integKey":"integ-metadata"}`), Ingestion: "Scanned", BlockedFor: integS("integ-blocked-for"),
+	Metadata: json.RawMessage(`{"integKey":"integ-metadata"}`), Ingestion: "Scanned", BlockedFor: integS("AiNotVerified"),
 	ScannedAt: integTimeP("2021-05-06 07:08:09.010"), NeedsReview: nil, UserID: 2101901, PostID: 2101501,
 	PostTitle: integS("integ-post-title"), Index: integI(7), PublishedAt: integTimeP("2021-03-04 05:06:07.008"),
 	UnpublishedAt: integS("integ-unpublished-at"), ModelVersionID: integI(2101601), Model3DID: integI(2101701),

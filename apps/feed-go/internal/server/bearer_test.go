@@ -25,7 +25,8 @@ import (
 const bearerTestSecret = "test-secret"
 
 // bearerResolver is a Resolver with API keys on over an in-memory cache holding one full-scope personal
-// key, `k-full-user`, for user 42, and a session entry for that user. principalReads counts the
+// key, `k-full-user`, and one MediaRead-only key, `k-media-read`, both for user 42, and a session entry
+// for that user. principalReads counts the
 // principal-cache reads.
 func bearerResolver(t *testing.T) (r *auth.Resolver, principalReads *atomic.Int32) {
 	t.Helper()
@@ -45,11 +46,15 @@ func bearerResolver(t *testing.T) (r *auth.Resolver, principalReads *atomic.Int3
 		}
 		cache.SetString(key, b)
 	}
-	sum := sha512.Sum512([]byte("k-full-user" + bearerTestSecret))
-	put("packed:caches:api-key-principal:"+hex.EncodeToString(sum[:]), map[string]any{"apiKey": map[string]any{
-		"id": 7, "userId": 42, "tokenScope": 33554431, "tokenScopeWide": 33554431, "lastUsedAt": now.Add(-time.Minute),
-		"buzzLimit": nil, "clientId": nil, "type": "User", "expiresAt": nil,
-	}})
+	key := func(name string, id, scope int) {
+		sum := sha512.Sum512([]byte(name + bearerTestSecret))
+		put("packed:caches:api-key-principal:"+hex.EncodeToString(sum[:]), map[string]any{"apiKey": map[string]any{
+			"id": id, "userId": 42, "tokenScope": scope, "tokenScopeWide": scope, "lastUsedAt": now.Add(-time.Minute),
+			"buzzLimit": nil, "clientId": nil, "type": "User", "expiresAt": nil,
+		}})
+	}
+	key("k-full-user", 7, 33554431)
+	key("k-media-read", 8, 32) // MediaRead alone: a narrow-scope key of the same user
 	put("session:data2:42", map[string]any{"id": 42, "username": "viewer-a"})
 	packed := &hydrate.PackedReader{Redis: cache}
 	return &auth.Resolver{
@@ -220,4 +225,29 @@ func TestShadowAndProbeSamplesNeverResolveAPIKeys(t *testing.T) {
 			t.Fatalf("probe bearer-token fallbacks = %v, principal-cache reads = %d; want 1, 0", v, reads.Load())
 		}
 	})
+}
+
+// image.getInfinite's viewer is Node's ownerId (feedViewer: the user only where credentialViews'
+// asOwner, a session or a full-access personal key). feed-go answers no other credential: a
+// narrow-scope key of the same user falls back before any viewer is set, so the owner terms the page
+// query binds (blockedMediaListConditions and the rest) never read a viewer Node would not treat as
+// the owner. An invariant guard: the fallback predates the owner terms.
+func TestInfiniteViewerIsTheOwnerOnlyForAFullAccessCredential(t *testing.T) {
+	resolver, _ := bearerResolver(t)
+	s := &Server{Resolver: resolver, Infinite: &feed.InfiniteDeps{}}
+	mk := func(auth string) *http.Request {
+		r := httptest.NewRequestWithContext(context.Background(), http.MethodGet,
+			"/api/trpc/"+ProcedureInfinite+"?input="+url.QueryEscape(`{"json":{"userId":42,"limit":10}}`), nil)
+		r.Header.Set("Authorization", auth)
+		return r
+	}
+	// Positive control: the full-access key of user 42 is the viewer, and so the owner.
+	req, _, _, err := s.prepareInfiniteViewer(context.Background(), mk("Bearer k-full-user"))
+	if err != nil || req.Viewer == nil || req.Viewer.ID != 42 {
+		t.Fatalf("full-access key: viewer %+v, err %v; want viewer 42", req.Viewer, err)
+	}
+	_, _, _, err = s.prepareInfiniteViewer(context.Background(), mk("Bearer k-media-read"))
+	if got := fallback.Reason(err); got != "bearer-scoped-key" {
+		t.Fatalf("MediaRead-only key: reason %q (%v), want bearer-scoped-key", got, err)
+	}
 }
