@@ -116,7 +116,7 @@
     };
   };
 
-  // A disabled button takes no pointer events, so its reason is text, not a `title`.
+  // The reason is text: see DecisionUnavailable.
   const uid = $props.id();
   const unavailableId = `${uid}-unavailable`;
 </script>

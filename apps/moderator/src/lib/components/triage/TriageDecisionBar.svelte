@@ -15,9 +15,7 @@
   }: {
     /** Gets the id of the unavailable-reasons line: a disabled button points `aria-describedby` at it. */
     buttons: Snippet<[reasonId: string]>;
-    /** Why a decision button is disabled, one entry per button (blanks and repeats are dropped). Drawn
-     *  as text: a disabled button takes no pointer events, so its `title` never shows, and touch has no
-     *  hover. */
+    /** Why a decision button is disabled, one entry per button. */
     unavailable?: (string | null | undefined)[];
     /** The second line: the reason and note a decision button submits with. */
     fields?: Snippet;
