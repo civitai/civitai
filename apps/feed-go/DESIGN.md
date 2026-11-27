@@ -2408,9 +2408,10 @@ unheld model), each with the key absent; the `GallerySettingsMiss` rows of
 When the feed-service call fails, Node's `serveFromFeed` returns `timeout`, `error` or `status:5xx`
 and `answerWithoutFeed` throws `SERVICE_UNAVAILABLE` ("Image search is temporarily overloaded — please
 retry.", `isTransientFeedReason`). Handed back as the `feed-unavailable` / `feed-status` fallback, the
-request makes the app call the feed again, which in an outage usually fails again: the slow call runs
-twice and the 503 comes about twice as late. With the switch on, the public route writes that 503
-here instead, after making that second call itself (the retry, below) (`writeFeedUnavailable`), counted as request outcome `feed_unavailable`, neither `served`
+request makes the app call the feed again, and the app answers the 503 only when that second call
+fails too. With the switch on, the public route writes that 503 here instead (`writeFeedUnavailable`),
+after making the second call itself when the request budget has room for it, and otherwise still
+hands the request back (the retry, below). It is counted as request outcome `feed_unavailable`, neither `served`
 nor a fallback.
 
 - **Which failures.** A failed call (a transport error, the 5 s `FEED_PRIMARY_TIMEOUT_MS`, a body that
@@ -2459,10 +2460,23 @@ nor a fallback.
   app's does: if the request budget (`FEED_GO_REQUEST_BUDGET_MS`, 6 s) leaves less than the feed
   client's per-call timeout (`feedsvc.Client.AttemptTimeout`, 5 s), there is no second call here and
   the failure is handed back unmarked, the app's call being the retry. So a 503 is answered here only
-  after two whole calls failed, as the app answers it after a hand-back. With the switch off there is
+  after two whole calls failed, as the app answers it after a hand-back. That keeps the 503 rate
+  the app's, and gives up part of what answering it here was for: a first call that timed out
+  (5 s of the 6 s budget) is always handed back, so a hung feed's 503 still arrives after the app's
+  own call (about 10 s), as with the switch off. Only a fast failure (a refused connection, a 5xx)
+  is retried here and, failing again, answered here at once. With the switch off there is
   no retry here: the hand-back already gives the second call, and a retry would make a third.
+- **The app's breaker.** With `feed-service-degrade` on and its breaker open, the app answers a
+  handed-back request's 503 without calling the feed (`breaker`, also `isTransientFeedReason`). This
+  service cannot see that breaker, so its retry is made anyway: while the breaker is open a retried
+  request costs the feed two calls where the hand-back cost one. Accepted, not mirrored: only fast
+  failures are retried (a timed-out call, the load the breaker is for, is handed back and meets the
+  breaker), and a fast failure costs the failing service little. `feed_go_feed_retry_total{outcome="failed"}`
+  is the rate of those extra calls. A retry that answers 200 can still end the request past its
+  budget (the hydrate after the call), which is the `deadline` fallback and a hand-back; it is
+  counted `recovered` all the same.
   Outcomes on `feed_go_feed_retry_total{feed_endpoint, outcome}` (seeded on `infinite`): `recovered`
-  (the second call answered 200: the page is served), `failed` (it failed as the 503 again: the 503),
+  (the second call answered 200), `failed` (it failed as the 503 again: the 503),
   `other` (any other answer, or the request ending: handled as that answer always is), `handed_back`
   (too little budget for a whole call). A `failed` retry is also on `feed_go_feed_unavailable_total`,
   with the second call's cause.

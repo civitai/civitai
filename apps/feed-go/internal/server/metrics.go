@@ -310,7 +310,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		}, []string{EndpointLabel, "reason", "detail"}),
 		FeedRetry: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_feed_retry_total",
-			Help: "image.getInfinite feed-service calls that failed as the app's 503 and were retried here (FEED_GO_INFINITE_ANSWER_FEED_UNAVAILABLE on), by outcome: recovered (the second call answered, the page was served), failed (it failed again: the 503), other (another answer, handled as before), handed_back (too little of the request budget left for a whole call: handed back, the app's call is the retry).",
+			Help: "image.getInfinite feed-service calls that failed as the app's 503 with FEED_GO_INFINITE_ANSWER_FEED_UNAVAILABLE on, by what became of the one retry: recovered (the second call answered 200), failed (it failed again: the 503), other (another answer, handled as before), handed_back (too little of the request budget left for a whole call: handed back, the app's call is the retry).",
 		}, []string{EndpointLabel, "outcome"}),
 		FallbackProxyErrors: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_fallback_proxy_errors_total",

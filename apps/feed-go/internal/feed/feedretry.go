@@ -11,7 +11,8 @@ import (
 
 // The outcomes of the image.getInfinite feed-call retry (feed_go_feed_retry_total{outcome}).
 const (
-	// RetryRecovered: the second call answered 200, and the page is served.
+	// RetryRecovered: the second call answered 200 (the page is then computed from it; the request can
+	// still end past its budget, the `deadline` fallback).
 	RetryRecovered = "recovered"
 	// RetryFailed: the second call failed as the first did (a failed call or a 5xx), so the request
 	// is the app's 503 (UnavailableError).

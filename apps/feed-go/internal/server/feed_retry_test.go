@@ -10,6 +10,7 @@ import (
 	"slices"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 
@@ -45,14 +46,16 @@ func feedRetryCount(t *testing.T, reg *prometheus.Registry, outcome string) floa
 // The public image.getInfinite route end to end (the real compute, resolver and feed handler), for a
 // signed-in viewer, whose failed feed call is the app's 503: with FEED_GO_INFINITE_ANSWER_FEED_UNAVAILABLE
 // on, the call is made a second time here before that 503, as the app's own call after a hand-back
-// would be. A second answer is served (recovered), a second failure is the 503 (failed). Off, there
-// is one call and the request is handed back as before (the app makes the second), with no retry
-// counted.
+// would be. A second answer is served (recovered), a second failure is the 503 (failed). With a
+// request budget shorter than one feed call (2 s against the client's 5 s) there is no second call
+// here: the request is handed back, the app's call being the retry (handed_back). Off, there is one
+// call and the request is handed back as before (the app makes the second), with no retry counted.
 func TestServeInfiniteRetriesTheFeedCallBeforeThe503(t *testing.T) {
 	const input = `{"json":{"browsingLevel":1,"sort":"Newest","limit":10}}`
 	for _, c := range []struct {
 		name        string
 		answer      bool
+		budget      time.Duration // 0: DefaultRequestBudget (6 s)
 		fail        int
 		wantCode    int
 		wantCalls   int
@@ -60,14 +63,17 @@ func TestServeInfiniteRetriesTheFeedCallBeforeThe503(t *testing.T) {
 		wantRetry   map[string]float64
 		wantOutcome map[string]float64
 	}{
-		{"on, a failure then a page", true, 1, http.StatusOK, 2, 0,
+		{"on, a failure then a page", true, 0, 1, http.StatusOK, 2, 0,
 			map[string]float64{"recovered": 1, "failed": 0, "other": 0, "handed_back": 0},
 			map[string]float64{"served_empty": 1, "feed_unavailable": 0, "fallback": 0}},
-		{"on, two failures", true, 2, http.StatusServiceUnavailable, 2, 0,
+		{"on, two failures", true, 0, 2, http.StatusServiceUnavailable, 2, 0,
 			map[string]float64{"recovered": 0, "failed": 1, "other": 0, "handed_back": 0},
 			map[string]float64{"served_empty": 0, "feed_unavailable": 1, "fallback": 0}},
-		{"off, a failure", false, 1, http.StatusTeapot, 1, 1,
+		{"off, a failure", false, 0, 1, http.StatusTeapot, 1, 1,
 			map[string]float64{"recovered": 0, "failed": 0, "other": 0, "handed_back": 0},
+			map[string]float64{"served_empty": 0, "feed_unavailable": 0, "fallback": 1}},
+		{"on, a 2s budget: handed back", true, 2 * time.Second, 2, http.StatusTeapot, 1, 1,
+			map[string]float64{"recovered": 0, "failed": 0, "other": 0, "handed_back": 1},
 			map[string]float64{"served_empty": 0, "feed_unavailable": 0, "fallback": 1}},
 	} {
 		f := newComputeFixture(t)
@@ -78,6 +84,7 @@ func TestServeInfiniteRetriesTheFeedCallBeforeThe503(t *testing.T) {
 		f.s.Infinite = &feed.InfiniteDeps{Deps: f.s.Deps}
 		f.s.ServeInfinite = true
 		f.s.AnswerInfiniteFeedUnavailable = c.answer
+		f.s.RequestBudget = c.budget
 		f.s.AllowedOrigins = allowed
 		proxied := 0
 		f.s.Fallback = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
