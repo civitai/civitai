@@ -9,6 +9,7 @@ import {
   requestVerifiedCrawler,
 } from '~/server/utils/browsing-level';
 import { storedSourceImageIds } from '~/server/utils/source-image-ids';
+import { ownerVisibleBlockedFor } from '~/server/common/image-block-marker';
 import { imageVisibilityConditions } from '~/server/services/image-visibility.service';
 import { isRatingWithinCap } from '~/shared/utils/rating-cap';
 import {
@@ -77,19 +78,27 @@ export function withoutMedia<T extends { url: string | null; metadata?: unknown 
 
 /**
  * The owner's view of their image when its block refuses them the media (`ownerMediaAllowed`):
- * the row and its block notice (`blockedFor`, `ingestion`), with no media, blur hash or media
- * references in its generation meta.
+ * the row and its block notice (`ingestion`, and `blockedFor` only when the owner may see it,
+ * `ownerVisibleBlockedFor`), with no media, blur hash or media references in its generation meta.
  */
 export function ownerBlockedNotice<
-  T extends { url: string | null; hash?: string | null; metadata?: unknown; meta?: unknown }
+  T extends {
+    url: string | null;
+    hash?: string | null;
+    metadata?: unknown;
+    meta?: unknown;
+    blockedFor?: string | null;
+  }
 >(image: T): Omit<T, 'url' | 'hash'> & { url: null; hash: null } {
   const meta = (
     image.meta && typeof image.meta === 'object' ? withoutMediaReferences(image.meta) : image.meta
   ) as T['meta'];
-  return { ...withoutMedia(image), hash: null, meta } as Omit<T, 'url' | 'hash'> & {
-    url: null;
-    hash: null;
-  };
+  return {
+    ...withoutMedia(image),
+    hash: null,
+    meta,
+    ...('blockedFor' in image && { blockedFor: ownerVisibleBlockedFor(image.blockedFor) }),
+  } as Omit<T, 'url' | 'hash'> & { url: null; hash: null };
 }
 
 /**

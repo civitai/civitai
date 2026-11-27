@@ -50,6 +50,8 @@ const MOD_BLOCKED = 21;
 const SCAN_BLOCKED = 22;
 const METADATA_HOLD = 23;
 const RATED_BLOCKED = 24;
+const CSAM_BLOCKED = 25;
+const LISTED_REASONS = 26;
 
 const owner = { id: OWNER } as SessionUser;
 const moderator = { id: 99, isModerator: true } as SessionUser;
@@ -81,7 +83,9 @@ beforeAll(async () => {
       (${MOD_BLOCKED}, ${OWNER}, ${BLOCKED_POST}, 32, 'Blocked', 'moderated'),
       (${SCAN_BLOCKED}, ${OWNER}, ${BLOCKED_POST}, 1, 'Blocked', NULL),
       (${METADATA_HOLD}, ${OWNER}, ${BLOCKED_POST}, 1, 'Blocked', 'AiNotVerified'),
-      (${RATED_BLOCKED}, ${OWNER}, ${BLOCKED_POST}, 32, 'Scanned', NULL);
+      (${RATED_BLOCKED}, ${OWNER}, ${BLOCKED_POST}, 32, 'Scanned', NULL),
+      (${CSAM_BLOCKED}, ${OWNER}, ${BLOCKED_POST}, 32, 'Blocked', 'CSAM'),
+      (${LISTED_REASONS}, ${OWNER}, ${BLOCKED_POST}, 32, 'Blocked', 'AiNotVerified,CSAM');
   `);
   dbMock.dbRead.image.findMany.mockImplementation((async (args: { where: object }) =>
     (
@@ -226,7 +230,7 @@ describe('getPostEditImages: blocked images', () => {
         url: null,
         hash: null,
         thumbnailUrl: null,
-        blockedFor: 'moderated',
+        blockedFor: null,
         ingestion: 'Blocked',
         sourceImage: null,
       },
@@ -241,15 +245,43 @@ describe('getPostEditImages: blocked images', () => {
       },
       expect.objectContaining({ id: METADATA_HOLD, url: `media-${METADATA_HOLD}` }),
       expect.objectContaining({ id: RATED_BLOCKED, url: `media-${RATED_BLOCKED}` }),
+      expect.objectContaining({ id: CSAM_BLOCKED, url: null }),
+      expect.objectContaining({ id: LISTED_REASONS, url: null }),
     ]);
+  });
+
+  // civitai/civitai#10663: no payload the owner receives names a block reason they cannot act on.
+  // Only an owner-actionable hold (OWNER_MEDIA_EXEMPT_BLOCKS) keeps its reason, matched exactly.
+  it("names only an owner-actionable reason in the owner's editor load", async () => {
+    const reasons = Object.fromEntries(
+      (await blockedPostRows(owner)).map(({ id, blockedFor }) => [id, blockedFor])
+    );
+    expect(reasons[CSAM_BLOCKED]).toBeNull();
+    expect(reasons[LISTED_REASONS]).toBeNull();
+    expect(reasons[MOD_BLOCKED]).toBeNull();
+    expect(reasons[METADATA_HOLD]).toBe('AiNotVerified');
+    expect(JSON.stringify(await blockedPostRows(owner))).not.toContain('CSAM');
+  });
+
+  it('still names the reason to a moderator', async () => {
+    const reasons = Object.fromEntries(
+      (await blockedPostRows(moderator)).map(({ id, blockedFor }) => [id, blockedFor])
+    );
+    expect(reasons[CSAM_BLOCKED]).toBe('CSAM');
+    expect(reasons[MOD_BLOCKED]).toBe('moderated');
   });
 
   it('serves every one with its media to a moderator', async () => {
     expect((await blockedPostRows(moderator)).map(({ id, url }) => [id, url])).toEqual(
-      [BLOCKED_POST_CLEAN, MOD_BLOCKED, SCAN_BLOCKED, METADATA_HOLD, RATED_BLOCKED].map((id) => [
-        id,
-        `media-${id}`,
-      ])
+      [
+        BLOCKED_POST_CLEAN,
+        MOD_BLOCKED,
+        SCAN_BLOCKED,
+        METADATA_HOLD,
+        RATED_BLOCKED,
+        CSAM_BLOCKED,
+        LISTED_REASONS,
+      ].map((id) => [id, `media-${id}`])
     );
   });
 
@@ -260,6 +292,8 @@ describe('getPostEditImages: blocked images', () => {
       [SCAN_BLOCKED, null],
       [METADATA_HOLD, `media-${METADATA_HOLD}`],
       [RATED_BLOCKED, `media-${RATED_BLOCKED}`],
+      [CSAM_BLOCKED, null],
+      [LISTED_REASONS, null],
     ]);
   });
 });
