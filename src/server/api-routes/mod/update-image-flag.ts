@@ -24,11 +24,11 @@ export default WebhookEndpoint(async function updateImageFlag(
 ) {
   try {
     const { flag, ids, value, csamReview } = schema.parse(req.query);
-    // Clearing a flag loosens the image; setting one does not.
-    if (!value) await assertMayLoosenImages(ids, { csamReview });
-    await updateImagesFlag({ ids, flag, value });
+    const withheldFor = value ? undefined : { csamReview };
+    if (withheldFor) await assertMayLoosenImages(ids, withheldFor);
+    const written = await updateImagesFlag({ ids, flag, value, withheldFor });
     res.status(200).json({
-      message: `Updated ${ids.length} images with flag ${flag} to ${value}`,
+      message: `Updated ${written.length} images with flag ${flag} to ${value}`,
     });
   } catch (e) {
     if (e instanceof TRPCError && e.code === 'FORBIDDEN') return handleEndpointError(res, e);
