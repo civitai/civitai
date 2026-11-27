@@ -3932,8 +3932,8 @@ endpoints are captured (`evalcapture.Supported`); every other endpoint is skippe
   reason: an API credential, never looked up by a tap), `session-cache-miss`, `session-cache-cleared`,
   `session-id-mismatch`, `other` (anything else). Seeded at 0 for the endpoints each source captures
   (shadow and serve: the four first-wave endpoints; serve-parity: the three tRPC ones; corpus-only:
-  `v1-models-id` and `infinite`, `refused` included; the unresolved reasons for every source but corpus-only, which
-  resolves no viewer). It counts rows queued; a row the
+  `v1-models-id` and `infinite`, `refused` included; every unresolved reason for every source but corpus-only, which
+  resolves no viewer and is seeded `bearer-token` only, below). It counts rows queued; a row the
   writers drop afterwards (a batch ClickHouse refused after its retries, shutdown) is counted in
   `feed_go_eval_capture_rows_dropped_total{table,reason}` (chwrite's reasons, seeded) and the failure
   logged (`eval capture insert failed`). A case is queued before its sample, and the sample names it
@@ -3983,8 +3983,16 @@ class and apart from the same request signed out.
   pair, by the same rules the strip uses), a `credential` that is not exactly `header` or `query`, or
   any of Node's answer (`node`, `responseHeaders`, `upstream`). With the capture off, or on another
   endpoint: 202, discarded.
+- **Not recorded, counted `unresolved`** (202, `feed_go_eval_capture_unresolved_total{reason="bearer-token"}`):
+  a sample whose input holds a key Capture tests against the viewer's own identity
+  (`evalcorpus.MayNameViewer`: a top-level `userId`, `username`, `user`, `collectionId` or `*UserIds`
+  key, or a REST `username`/`userId` pair, whatever its value). The request was signed in with an API
+  key whose holder is not known here, so `$self` / `$self-collection` could not replace the holder's
+  own id, username or collection (§19.3) and the value would be stored as sent. Not a sampler fault,
+  so not `refused`; the Tempo import refuses the same requests by the same rule (§19.10).
 - **Recorded** with source `corpus-only`, result `corpus-only`, no Node answer, the viewer signed out
-  (or a verified crawler; nothing is resolved: no cookie, no credential), and the class on the request
+  (or a verified crawler; nothing is resolved: no cookie, no credential, and no input key that could
+  name the key holder, above), and the class on the request
   (`evalcorpus.Request.CredentialClass`): the case's `credential` is `header` / `query`, and its
   signature is exactly that of the same request carrying a real credential of that class (a `query`
   class also records `$credential-param`), so the corpus groups the two and the replay uses the API-key
