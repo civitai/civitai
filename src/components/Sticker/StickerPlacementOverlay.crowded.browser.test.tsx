@@ -152,6 +152,17 @@ describe('many pending stickers on one image', () => {
     await expect.poll(() => approveButtons().length).toBe(1);
   });
 
+  test('Escape inside the bar with nothing selected changes nothing', async () => {
+    renderWithProviders(stage(cluster), { user: { id: 7 } });
+    await expect.element(page.getByRole('link', { name: 'Review all' })).toBeInTheDocument();
+    (page.getByRole('link', { name: 'Review all' }).element() as HTMLElement).focus();
+
+    await userEvent.keyboard('{Escape}');
+
+    await expect.element(page.getByText('Pick a sticker to approve or decline')).toBeVisible();
+    await expect.poll(() => approveButtons().length).toBe(0);
+  });
+
   test('exactly two pending already use the bar; a non-owner sees none', async () => {
     const view = await renderWithProviders(stage(cluster.slice(0, 2)), { user: { id: 7 } });
     await expect.element(page.getByText('Pick a sticker to approve or decline')).toBeVisible();
