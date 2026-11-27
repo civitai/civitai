@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ListingIconThumb } from '~/components/Apps/ListingMediaThumb';
 import {
   ReviewDecisionAlert,
+  ReviewOnBehalfMeta,
   ReviewPlatformUpdatesMeta,
   ReviewSdkFloorMeta,
   ReviewSourceProvenanceMeta,
@@ -141,6 +142,7 @@ export function ReviewDetailView({
           <Stack gap={6}>
             <ReviewDetailHeader selection={selection} />
             <ReviewSubmitterMeta request={selection.request} now={now} />
+            <ReviewOnBehalfMeta fileSummary={selection.request.fileSummary} />
             <ReviewDeclaredRepository
               repository={
                 (selection.request.manifest as Record<string, unknown> | null)?.repository

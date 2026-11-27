@@ -7,10 +7,15 @@ export const APP_REVIEW_ATTRIBUTED_TYPES = [
   'app-block-rejected',
   'app-listing-approved',
   'app-listing-rejected',
+  // The owner's copy of a staff on-behalf submit's outcome
+  // (`app-platform-update-submit.notifications`).
+  'app-platform-update-approved',
+  'app-platform-update-rejected',
   // NOT `app-listing-hidden`: a takedown names the team only, so its reviewer is never resolved.
 ] as const;
 
-const isBlockType = (type: string) => type.startsWith('app-block-');
+const isBlockType = (type: string) =>
+  type.startsWith('app-block-') || type.startsWith('app-platform-update-');
 
 /**
  * Resolves the reviewer into `actor`, the reviewer the byline names and the notification list
@@ -18,8 +23,8 @@ const isBlockType = (type: string) => type.startsWith('app-block-');
  * back to "Civitai App Review".
  *
  * The reviewer is read server-side: from the stored `reviewRequestId`'s `reviewedByUserId`
- * (`AppBlockPublishRequest` for an `app-block-*` type, `AppListingPublishRequest` for an
- * `app-listing-*` one), or, on a notification sent before that was stored, from its legacy
+ * (`AppBlockPublishRequest` for an `app-block-*` or `app-platform-update-*` type,
+ * `AppListingPublishRequest` for an `app-listing-*` one), or, on a notification sent before that was stored, from its legacy
  * `reviewerUserId`.
  *
  * The details this returns go to the client verbatim (the notification list and

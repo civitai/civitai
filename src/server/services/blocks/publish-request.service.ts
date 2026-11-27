@@ -62,6 +62,15 @@ import { registryExportDiff } from '~/shared/constants/block-storage.constants';
 // the submitting developer of the moderator decision — best-effort, wrapped in a
 // try/catch at each call site so a notification failure can never fail the decision.
 import { notifyAppBlockSubmitter } from '~/server/services/blocks/app-block-notify';
+import type { AppBlockModerationNotificationDetails } from '~/server/notifications/app-block.notifications';
+import type { AppReviewAttribution } from '~/server/notifications/app-review-attribution';
+import { readOnBehalf } from '~/shared/utils/publish-request-on-behalf';
+// The platform-update RECORD module, not app-platform-update.service: that service imports the
+// source-repo and access services, which reach back here (an import cycle).
+import { supersedePlatformUpdate } from '~/server/services/blocks/app-platform-update.record';
+import { MANIFEST_PATH } from '~/server/services/blocks/app-source-repo.plan';
+import { deterministicBundleZip } from '~/server/services/blocks/bundle-zip';
+import type { dbRead as DbReadClient } from '~/server/db/client';
 import { manifestDeclaresPage } from '~/shared/utils/app-manifest-page';
 import { isMatureContentRating } from '~/server/utils/server-domain';
 // Pure const (no env/Prisma) — the marketplace category taxonomy + type guard.
@@ -256,14 +265,45 @@ export type SubmitVersionParams = {
    */
   allowUnmergedPlatformUpdate?: boolean;
   /**
-   * A STAFF SUBMIT ON THE OWNER'S BEHALF of one platform update (a moderator only; no route passes
-   * it). Its bundle is the approved version plus that one update, so it lacks every other
-   * unshipped update by construction: it is never refused for them, and what it left out is
-   * recorded for the moderator (`fileSummary.platformUpdatesMissing`, via `on-behalf`). Its approve
-   * ships nothing (an update ships only in an owner's build): that reads the request's
-   * `fileSummary.onBehalf` record, which the on-behalf submit writes.
+   * A staff submit on the owner's behalf: its bundle is the approved version plus one update, so
+   * it is never refused for the app's other unshipped updates (recorded as
+   * platformUpdatesMissing with via 'on-behalf'). Its approve ships no update. Moderator only;
+   * passed with onBehalf.
    */
   submittedOnBehalf?: boolean;
+  /**
+   * A STAFF SUBMIT ON THE OWNER'S BEHALF of a recorded platform update
+   * (`app-platform-update-submit.service.ts`), the only caller that passes it. The submitter
+   * (`submittedByUserId`) is the moderator; this names the update and the owner it was submitted
+   * for. Stored under `fileSummary.onBehalf` for the review UI ("submitted by <staff> for
+   * <owner>"). Refused unless the submitter is a moderator.
+   */
+  onBehalf?: OnBehalfSubmission;
+};
+
+/**
+ * The refusal of a submit while a STAFF SUBMISSION of a platform update (`fileSummary.onBehalf`)
+ * is pending for the app: the owner cannot withdraw it, so it says what it is and when their own
+ * submit can go through.
+ */
+export function staffPendingSubmitRefusal(slug: string, staffUsername: string | null): string {
+  return (
+    `slug ${slug} has a pending Civitai staff submission of a platform update by ` +
+    `${staffUsername ?? 'Civitai staff'}, under review; your submit can go through once it is ` +
+    `reviewed`
+  );
+}
+
+/** An on-behalf submit whose recorded owner is not the app's owner (or whose app is gone). */
+export const ON_BEHALF_OWNER_MISMATCH =
+  "the app's owner is not the owner this update was submitted for; reload and retry";
+
+/** What `fileSummary.onBehalf` records for a staff submit on the owner's behalf. */
+export type OnBehalfSubmission = {
+  platformUpdateId: string;
+  staffUsername: string | null;
+  ownerUserId: number;
+  ownerUsername: string | null;
 };
 
 export type SubmitVersionResult = {
@@ -328,8 +368,6 @@ export type SubmitListingReadiness = {
   /** Every listing problem, `blocking` and `advisory` (`computeListingProblems`). */
   problems: ListingProblem[];
 };
-
-const MANIFEST_PATH = 'block.manifest.json';
 
 // Diff threshold: fields that exceed N bytes when serialized are summarised
 // rather than embedded verbatim in the diff so manifestDiffSummary stays
@@ -1173,14 +1211,19 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     sourceDirty,
     githubOidcToken,
     sdkFloorOverride,
+    onBehalf,
     allowUnmergedPlatformUpdate,
     submittedOnBehalf,
   } = params;
-  if (submittedOnBehalf && !submitterIsModerator)
+  if ((onBehalf || submittedOnBehalf) && !submitterIsModerator)
     throw new Error('only a moderator can submit on behalf of an app owner');
 
-  const { assertAcceptedAppDeveloperTerms } = await import('./app-developer-terms.service');
-  await assertAcceptedAppDeveloperTerms(submittedByUserId);
+  // A staff submit on the owner's behalf ships the OWNER's app in the owner's name: their
+  // acceptance is required below (with the editor case), and the moderator's own is not.
+  if (!onBehalf) {
+    const { assertAcceptedAppDeveloperTerms } = await import('./app-developer-terms.service');
+    await assertAcceptedAppDeveloperTerms(submittedByUserId);
+  }
 
   if (bundleBuffer.length > MAX_BUNDLE_SIZE_BYTES) {
     throw new Error(`bundle is ${bundleBuffer.length} bytes (max ${MAX_BUNDLE_SIZE_BYTES})`);
@@ -1291,7 +1334,10 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   const ownerUserId = existingApp
     ? await resolveAppTermsOwner(existingApp.id, existingApp.app?.userId)
     : undefined;
-  if (typeof ownerUserId === 'number' && ownerUserId !== submittedByUserId) {
+  // On-behalf: the owner the request names must BE the app's owner, whose acceptance is then the
+  // one checked (even when that owner is the submitting moderator, whose own check was skipped).
+  if (onBehalf && ownerUserId !== onBehalf.ownerUserId) throw new Error(ON_BEHALF_OWNER_MISMATCH);
+  if (typeof ownerUserId === 'number' && (ownerUserId !== submittedByUserId || onBehalf)) {
     const { hasAcceptedAppDeveloperTerms } = await import('./app-developer-terms.service');
     if (!(await hasAcceptedAppDeveloperTerms(ownerUserId)))
       throw new AppDeveloperTermsNotAcceptedError(
@@ -1312,7 +1358,8 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   // act on it).
   const conflicting = await dbRead.appBlockPublishRequest.findFirst({
     where: { slug, status: 'pending' },
-    select: { id: true, submittedByUserId: true },
+    // fileSummary: a staff submit on the owner's behalf is named as one in the refusal.
+    select: { id: true, submittedByUserId: true, fileSummary: true },
   });
   if (conflicting) {
     if (conflicting.submittedByUserId === submittedByUserId) {
@@ -1320,6 +1367,9 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
         `you already have a pending submission for slug ${slug} (${conflicting.id}); withdraw it first with \`civitai app withdraw ${conflicting.id}\` before resubmitting`
       );
     }
+    // The owner cannot withdraw a staff submission, so say what it is and when theirs can go in.
+    const staffPending = readOnBehalf(conflicting.fileSummary);
+    if (staffPending) throw new Error(staffPendingSubmitRefusal(slug, staffPending.staffUsername));
     throw new Error(
       `slug ${slug} already has a pending submission from another user; wait for it to be reviewed before submitting a different bundle`
     );
@@ -1602,6 +1652,7 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
         fileSummary: {
           ...fileSummary,
           ...(sdkFloorRecorded ? { sdkFloor: sdkFloorRecorded } : {}),
+          ...(onBehalf ? { onBehalf: { ...onBehalf, staffUserId: submittedByUserId } } : {}),
           ...(platformUpdatesRecorded ? { platformUpdatesMissing: platformUpdatesRecorded } : {}),
         } as object,
         manifestDiffSummary: manifestDiffSummary as object,
@@ -2462,11 +2513,7 @@ export async function reconstructBundleFromForgejo(slug: string, ref: string): P
   }
 
   // Build an in-memory ZIP — same shape a developer would have uploaded.
-  // `date: new Date(0)` zeroes per-entry timestamps so re-runs with identical
-  // repo state produce an identical bundleSha256 (mirrors backfill).
-  const zip = new JSZip();
-  for (const f of files) zip.file(f.path, f.content, { date: new Date(0) });
-  return Buffer.from(await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' }));
+  return deterministicBundleZip(files);
 }
 
 export type ListPendingRequestsOptions = {
@@ -3950,10 +3997,11 @@ async function approveRequestUnderClaim(
 
   // A request filed before the owner accepted must not go live.
   // A first version has no app yet, so its submitter is the owner.
-  const termsOwnerUserId =
-    (existingAppBlock &&
-      (await resolveAppTermsOwner(existingAppBlock.id, existingAppBlock.app?.userId))) ??
-    request.submittedByUserId;
+  // The app's owner NOW, which an on-behalf request's owner notification also goes to.
+  const currentOwnerUserId = existingAppBlock
+    ? await resolveAppTermsOwner(existingAppBlock.id, existingAppBlock.app?.userId)
+    : undefined;
+  const termsOwnerUserId = currentOwnerUserId ?? request.submittedByUserId;
   {
     const { hasAcceptedAppDeveloperTerms } = await import('./app-developer-terms.service');
     if (!(await hasAcceptedAppDeveloperTerms(termsOwnerUserId)))
@@ -5417,30 +5465,24 @@ async function approveRequestUnderClaim(
   // whole call is wrapped so a notification failure can NEVER fail or roll back the
   // approve — the decision is already durable. Keyed by the request id for
   // idempotency (a re-approve of the same request notifies once).
-  try {
-    await notifyAppBlockSubmitter({
-      type: 'app-block-approved',
-      userId: request.submittedByUserId,
-      key: `app-block-approved:${params.publishRequestId}`,
-      attribution: { kind: 'moderator', requestId: params.publishRequestId },
-      details: {
-        slug: request.slug,
-        name: typeof manifest.name === 'string' ? manifest.name : null,
-        version: request.version,
-        approvalNote: params.approvalNotes?.trim() || null,
-        hasPage: manifestDeclaresPage(manifest),
-        mature: isMatureContentRating(
-          typeof manifest.contentRating === 'string' ? manifest.contentRating : null
-        ),
-      },
-    });
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.warn(
-      `[approveRequest] submitter notification failed (id=${params.publishRequestId}); ` +
-        `approve stands: ${err instanceof Error ? err.message : String(err)}`
-    );
-  }
+  await notifyReviewOutcome({
+    outcome: 'approved',
+    publishRequestId: params.publishRequestId,
+    submittedByUserId: request.submittedByUserId,
+    fileSummary: request.fileSummary,
+    currentOwnerUserId,
+    attribution: { kind: 'moderator', requestId: params.publishRequestId },
+    details: {
+      slug: request.slug,
+      name: typeof manifest.name === 'string' ? manifest.name : null,
+      version: request.version,
+      approvalNote: params.approvalNotes?.trim() || null,
+      hasPage: manifestDeclaresPage(manifest),
+      mature: isMatureContentRating(
+        typeof manifest.contentRating === 'string' ? manifest.contentRating : null
+      ),
+    },
+  });
 
   // Catalog bust: an onsite approve mints/flips the AppListing to `approved`, i.e. it
   // puts the app INTO the store catalog.
@@ -7584,12 +7626,18 @@ export async function getPublishRequestScreenshots(opts: {
  * fileSummary), the line diff needs the actual bytes, so this GETs the prior
  * bundle from MinIO (ZIP path) or reconstructs it from Forgejo (push path).
  */
-async function getPreviousApprovedFiles(
+export async function getPreviousApprovedFiles(
   slug: string,
-  excludePublishRequestId?: string
+  excludePublishRequestId?: string,
+  /**
+   * The client the approved row is read from: the replica unless given. A caller that builds on
+   * the approved version (the staff on-behalf submit) passes the primary, so a version approved a
+   * moment ago is not missed.
+   */
+  db?: Pick<typeof DbReadClient, 'appBlockPublishRequest'>
 ): Promise<Array<{ path: string; content: Buffer }> | null> {
-  const { dbRead } = await import('~/server/db/client');
-  const prior = await dbRead.appBlockPublishRequest.findFirst({
+  const client = db ?? (await import('~/server/db/client')).dbRead;
+  const prior = await client.appBlockPublishRequest.findFirst({
     where: {
       slug,
       status: 'approved',
@@ -7705,12 +7753,25 @@ export async function rejectRequest(params: RejectRequestParams): Promise<void> 
       version: true,
       manifest: true,
       submittedByUserId: true,
+      // A staff on-behalf submit (`fileSummary.onBehalf`) also notifies the app's owner.
+      fileSummary: true,
     },
   });
   if (!row) throw new Error(`publish request ${params.publishRequestId} not found`);
   if (row.status !== 'pending') {
     throw new Error(`cannot reject a request in status ${row.status}`);
   }
+  // A staff on-behalf submit also notifies the app's owner: the owner NOW, read with the decision.
+  const currentOwnerUserId = readOnBehalf(row.fileSummary)
+    ? await currentAppOwner(row.slug).catch((err: unknown) => {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[rejectRequest] current owner not read (id=${params.publishRequestId}); the recorded ` +
+            `owner is notified: ${err instanceof Error ? err.message : String(err)}`
+        );
+        return undefined;
+      })
+    : undefined;
   const hadReviewPreview =
     typeof row.deployState === 'string' && row.deployState.startsWith('preview-');
 
@@ -7787,24 +7848,140 @@ export async function rejectRequest(params: RejectRequestParams): Promise<void> 
     row.manifest && typeof row.manifest === 'object'
       ? (row.manifest as Record<string, unknown>)
       : {};
+  // A rejected STAFF SUBMIT ON THE OWNER'S BEHALF withdraws the platform update it carried, so
+  // the owner's checkout is no longer offered it. Before the notifications, which say whether it
+  // was withdrawn.
+  const onBehalf = readOnBehalf(row.fileSummary);
+  const updateWithdrawn = onBehalf
+    ? await withdrawRejectedPlatformUpdate({
+        platformUpdateId: onBehalf.platformUpdateId,
+        reviewerUserId: params.reviewerUserId,
+        publishRequestId: params.publishRequestId,
+      })
+    : false;
+  await notifyReviewOutcome({
+    outcome: 'rejected',
+    publishRequestId: params.publishRequestId,
+    submittedByUserId: row.submittedByUserId,
+    fileSummary: row.fileSummary,
+    currentOwnerUserId,
+    updateWithdrawn,
+    attribution: { kind: 'moderator', requestId: params.publishRequestId },
+    details: {
+      slug: row.slug,
+      name: typeof rejectManifest.name === 'string' ? rejectManifest.name : null,
+      version: row.version,
+      reason,
+    },
+  });
+}
+
+/**
+ * Withdraw (`superseded`, by the rejecting moderator) the platform update a rejected on-behalf
+ * request carried, through the platform-update record's own supersede. POST-COMMIT and
+ * best-effort: the reject has landed, so a failure here is logged and never fails it. `true` when
+ * the update is withdrawn (now or already); `false` when it could not be (it was merged into the
+ * owner's app already, or the table is unavailable).
+ */
+async function withdrawRejectedPlatformUpdate(args: {
+  platformUpdateId: string;
+  reviewerUserId: number;
+  publishRequestId: string;
+}): Promise<boolean> {
   try {
-    await notifyAppBlockSubmitter({
-      type: 'app-block-rejected',
-      userId: row.submittedByUserId,
-      key: `app-block-rejected:${params.publishRequestId}`,
-      attribution: { kind: 'moderator', requestId: params.publishRequestId },
-      details: {
-        slug: row.slug,
-        name: typeof rejectManifest.name === 'string' ? rejectManifest.name : null,
-        version: row.version,
-        reason,
-      },
-    });
+    await supersedePlatformUpdate({ staffUserId: args.reviewerUserId, id: args.platformUpdateId });
+    return true;
   } catch (err) {
     // eslint-disable-next-line no-console
     console.warn(
-      `[rejectRequest] submitter notification failed (id=${params.publishRequestId}); ` +
-        `reject stands: ${err instanceof Error ? err.message : String(err)}`
+      `[rejectRequest] platform update ${args.platformUpdateId} not withdrawn ` +
+        `(id=${args.publishRequestId}); reject stands: ` +
+        (err instanceof Error ? err.message : String(err))
     );
+    return false;
   }
+}
+
+/**
+ * The app's owner now, resolved as `submitVersion` and `approveRequest` resolve it
+ * (`AppBlock.app.userId`, through the listing's canonical owner); `undefined` when the app or its
+ * owner is not found.
+ */
+async function currentAppOwner(slug: string): Promise<number | undefined> {
+  const { dbRead } = await import('~/server/db/client');
+  const block = await dbRead.appBlock.findFirst({
+    where: { blockId: slug },
+    select: { id: true, app: { select: { userId: true } } },
+  });
+  if (!block) return undefined;
+  return resolveAppTermsOwner(block.id, block.app?.userId);
+}
+
+/**
+ * The review outcome's notifications, POST-COMMIT and best-effort: the SUBMITTER always
+ * (`app-block-approved` / `app-block-rejected`), and — for a staff submit on the owner's behalf
+ * (`fileSummary.onBehalf`) — the app's OWNER as well (`app-platform-update-approved` /
+ * `-rejected`, naming the staff member). The owner is the app's owner NOW (`currentOwnerUserId`,
+ * read at the decision), not the one recorded at submit: after an ownership transfer only the new
+ * owner is told. The recorded owner is used only when the current one was not read. Each send is
+ * wrapped on its own, so neither a failure of one nor of both can fail or roll back the decision,
+ * and one failing does not cost the other.
+ */
+async function notifyReviewOutcome(args: {
+  outcome: 'approved' | 'rejected';
+  publishRequestId: string;
+  submittedByUserId: number;
+  fileSummary: unknown;
+  /** The app's owner at the decision; `undefined` when it was not read. */
+  currentOwnerUserId: number | undefined;
+  /** A reject only: the platform update the on-behalf request carried was withdrawn. */
+  updateWithdrawn?: boolean;
+  attribution: AppReviewAttribution;
+  details: AppBlockModerationNotificationDetails;
+}): Promise<void> {
+  const fn = args.outcome === 'approved' ? 'approveRequest' : 'rejectRequest';
+  const verb = args.outcome === 'approved' ? 'approve' : 'reject';
+  const send = async (
+    who: string,
+    opts: Parameters<typeof notifyAppBlockSubmitter>[0]
+  ): Promise<void> => {
+    try {
+      await notifyAppBlockSubmitter(opts);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[${fn}] ${who} notification failed (id=${args.publishRequestId}); ` +
+          `${verb} stands: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  };
+
+  const submitterType = args.outcome === 'approved' ? 'app-block-approved' : 'app-block-rejected';
+  await send('submitter', {
+    type: submitterType,
+    userId: args.submittedByUserId,
+    key: `${submitterType}:${args.publishRequestId}`,
+    attribution: args.attribution,
+    details: args.details,
+  });
+
+  const onBehalf = readOnBehalf(args.fileSummary);
+  if (!onBehalf) return;
+  // After an ownership transfer the recorded owner is the former one: only the current is told.
+  const ownerUserId = args.currentOwnerUserId ?? onBehalf.ownerUserId;
+  if (ownerUserId === args.submittedByUserId) return;
+  const ownerType =
+    args.outcome === 'approved' ? 'app-platform-update-approved' : 'app-platform-update-rejected';
+  await send('owner', {
+    type: ownerType,
+    userId: ownerUserId,
+    key: `${ownerType}:${args.publishRequestId}`,
+    attribution: args.attribution,
+    details: {
+      ...args.details,
+      updateId: onBehalf.platformUpdateId,
+      byUsername: onBehalf.staffUsername ?? 'Civitai staff',
+      ...(args.updateWithdrawn ? { updateWithdrawn: true } : {}),
+    },
+  });
 }

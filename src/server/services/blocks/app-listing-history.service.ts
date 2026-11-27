@@ -10,6 +10,7 @@ import { reviewUserChipSelect } from '~/server/selectors/review-user-chip.select
 import { latestBuildAttemptSignals } from '~/server/services/blocks/build-attempts.service';
 import type { BuildAttemptSignals } from '~/shared/constants/app-block-build.constants';
 import { redactDeployDetailForAuthor } from '~/shared/utils/review-boot-check';
+import { staffSubmissionOf, type StaffSubmission } from '~/shared/utils/publish-request-on-behalf';
 import { isDecidedReviewStatus } from '~/shared/utils/app-review-thread';
 import {
   canonicalOwnerWhereBranches,
@@ -123,6 +124,11 @@ export type ListingHistoryEntry = {
    * authorization boundary: the procs are still the gate and are unchanged.
    */
   canWithdraw: boolean;
+  /**
+   * A `version` entry Civitai staff submitted on the owner's behalf (a platform update): who
+   * filed it, for the "Staff submission" label. `null` for every other entry.
+   */
+  staffSubmission: StaffSubmission | null;
   /**
    * May THIS caller open the review conversation on this request? Server-computed for the same
    * reason as `canWithdraw`: the thread admits the app's current OWNER only (and moderators, on
@@ -331,6 +337,7 @@ export async function listListingHistory(opts: {
             deployState: true,
             deployDetail: true,
             deployUpdatedAt: true,
+            fileSummary: true,
             reviewedBy: { select: reviewUserChipSelect },
           },
         })
@@ -375,6 +382,7 @@ export async function listListingHistory(opts: {
         buildSignals: null,
         deployUpdatedAt: null,
         canWithdraw: canWithdrawRequest(r.status, r.submittedByUserId, opts.userId),
+        staffSubmission: null,
         canConverse: canConverseOnHistoryEntry(r.status, access.role),
       })
     ),
@@ -391,6 +399,7 @@ export async function listListingHistory(opts: {
         deployState: string | null;
         deployDetail: string | null;
         deployUpdatedAt: Date | null;
+        fileSummary?: unknown;
         reviewedBy: ReviewerRow;
       }) => ({
         id: r.id,
@@ -408,6 +417,7 @@ export async function listListingHistory(opts: {
         buildSignals: isAuthorFailure(r) ? signalsById.get(r.id) ?? null : null,
         deployUpdatedAt: r.deployUpdatedAt,
         canWithdraw: canWithdrawRequest(r.status, r.submittedByUserId, opts.userId),
+        staffSubmission: staffSubmissionOf(r.fileSummary),
         canConverse: canConverseOnHistoryEntry(r.status, access.role),
       })
     ),

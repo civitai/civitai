@@ -817,6 +817,99 @@ describe('staff platform updates', () => {
       );
     });
 
+    it('🔴 the on-behalf submit’s own params (onBehalf + submittedOnBehalf): queued, and its approve ships nothing', async () => {
+      // What `submitPlatformUpdateOnBehalf` hands `submitVersion`: a bundle carrying ANOTHER
+      // update's base file (apu_int is unshipped and absent from it), filed by a moderator for
+      // the app's owner.
+      const onBehalf = {
+        platformUpdateId: 'apu_staff_submit',
+        staffUsername: 'mod-ana',
+        ownerUserId: PU_AUTHOR,
+        ownerUsername: 'owner-olga',
+      };
+      dbMock.dbRead.appBlock.findFirst.mockResolvedValue({
+        id: PU_APP,
+        appId: 'appblk-int',
+        app: { userId: PU_AUTHOR },
+      });
+      const result = await puSubmit(
+        { 'src/a.ts': PU_BASE_TEXT },
+        { submittedByUserId: 8001, submittedOnBehalf: true, onBehalf }
+      );
+      expect(result.publishRequestId).toMatch(/^pubreq_/);
+      const fileSummary = createdFileSummary();
+      expect(fileSummary.platformUpdatesMissing).toEqual({
+        ...PU_RECORD('override'),
+        via: 'on-behalf',
+      });
+      expect(fileSummary.onBehalf).toEqual({ ...onBehalf, staffUserId: 8001 });
+
+      // The approve step reads that same fileSummary: nothing is marked shipped, even for bytes
+      // that DO contain apu_int.
+      const { markShippedPlatformUpdates } = await import(
+        '~/server/services/blocks/platform-update-bundle-check'
+      );
+      const readFiles = async () => new Map([['src/a.ts', Buffer.from(PU_UPDATE_TEXT)]]);
+      const shippedWrites = () =>
+        (dbMock.dbWrite.$executeRaw.mock.calls as unknown[][]).filter(([strings]) =>
+          (strings as string[]).join('?').includes('shipped_in_publish_request_id')
+        );
+      dbMock.dbWrite.$executeRaw.mockClear();
+      const args = { appBlockId: PU_APP, publishRequestId: result.publishRequestId, readFiles };
+      expect(await markShippedPlatformUpdates({ ...args, fileSummary })).toEqual([]);
+      expect(shippedWrites()).toHaveLength(0);
+      // Control: the same bytes approved as the owner's own build ship it.
+      const { onBehalf: _staff, ...ownerSummary } = fileSummary;
+      expect(await markShippedPlatformUpdates({ ...args, fileSummary: ownerSummary })).toEqual([
+        'apu_int',
+      ]);
+      expect(shippedWrites()).toHaveLength(1);
+    });
+
+    it('🔴 re-approving a reset-to-pending clone of an on-behalf request ships nothing; an ordinary clone still ships', async () => {
+      // A moderator's reset-to-pending clones the approved request as the OWNER's
+      // (`resetOnsiteListingToPending` writes `ownerCopyOf(fileSummary)`), but the bytes are still
+      // the staff build: only an owner's own build ships an update.
+      const onBehalf = {
+        platformUpdateId: 'apu_staff_submit',
+        staffUsername: 'mod-ana',
+        ownerUserId: PU_AUTHOR,
+        ownerUsername: 'owner-olga',
+      };
+      dbMock.dbRead.appBlock.findFirst.mockResolvedValue({
+        id: PU_APP,
+        appId: 'appblk-int',
+        app: { userId: PU_AUTHOR },
+      });
+      const result = await puSubmit(
+        { 'src/a.ts': PU_BASE_TEXT },
+        { submittedByUserId: 8001, submittedOnBehalf: true, onBehalf }
+      );
+      const fileSummary = createdFileSummary();
+      const { ownerCopyOf } = await import('~/shared/utils/publish-request-on-behalf');
+      const clone = ownerCopyOf(fileSummary);
+
+      const { markShippedPlatformUpdates } = await import(
+        '~/server/services/blocks/platform-update-bundle-check'
+      );
+      const readFiles = async () => new Map([['src/a.ts', Buffer.from(PU_UPDATE_TEXT)]]);
+      const shippedWrites = () =>
+        (dbMock.dbWrite.$executeRaw.mock.calls as unknown[][]).filter(([strings]) =>
+          (strings as string[]).join('?').includes('shipped_in_publish_request_id')
+        );
+      dbMock.dbWrite.$executeRaw.mockClear();
+      const args = { appBlockId: PU_APP, publishRequestId: result.publishRequestId, readFiles };
+      // Bytes that DO contain apu_int: the clone's re-approve still marks nothing.
+      expect(await markShippedPlatformUpdates({ ...args, fileSummary: clone })).toEqual([]);
+      expect(shippedWrites()).toHaveLength(0);
+      // Control: a reset clone of an ordinary (owner) request ships it.
+      const { onBehalf: _staff, ...ownerSummary } = fileSummary;
+      expect(
+        await markShippedPlatformUpdates({ ...args, fileSummary: ownerCopyOf(ownerSummary) })
+      ).toEqual(['apu_int']);
+      expect(shippedWrites()).toHaveLength(1);
+    });
+
     it('submittedOnBehalf from a submitter who is not a moderator is refused before anything', async () => {
       const err = await puRejection(
         puSubmit(
