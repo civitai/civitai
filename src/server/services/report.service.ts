@@ -301,6 +301,15 @@ const validateReportCreation = async ({
   });
 
   if (!existingReport) return null;
+  // A person's report is filed afresh rather than folded into a closed report the system filed: a
+  // dismissed system filing is never reopened by a fold, so it would keep every later report from a queue.
+  if (
+    userId !== constants.system.user.id &&
+    existingReport.userId === constants.system.user.id &&
+    (existingReport.status === ReportStatus.Actioned ||
+      existingReport.status === ReportStatus.Unactioned)
+  )
+    return null;
 
   const { id, alsoReportedBy, previouslyReviewedCount } = existingReport;
   // if alsoReportedBy includes the userId, then do nothing

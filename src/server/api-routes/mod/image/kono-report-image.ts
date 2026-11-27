@@ -5,17 +5,17 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { createReport } from '~/server/services/report.service';
 import { withDistributedLock } from '~/server/utils/distributed-lock';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
-import { ReportReason, ReportStatus } from '~/shared/utils/prisma/enums';
+import { ReportReason } from '~/shared/utils/prisma/enums';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 
 const KNIGHTS_REPORT_VIOLATION = 'Knights players reported this image';
-const OPEN_STATUSES = [ReportStatus.Pending, ReportStatus.Processing];
 
 // The caller names the image only: reason, details and reporter are fixed here.
 const schema = z.object({ imageId: z.number().int().positive() }).strict();
 
 // Knights files this when its players pull an image, token-authenticated, server to server.
-// Idempotent per image: while a report this route filed is open, a repeat call returns it unchanged.
+// Idempotent per image: once this route has filed on an image, a repeat call returns that report
+// unchanged, whatever a moderator has since done with it.
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
@@ -35,7 +35,6 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
         where: {
           reason: ReportReason.TOSViolation,
           userId: constants.system.user.id,
-          status: { in: OPEN_STATUSES },
           image: { imageId },
           details: { path: ['violation'], equals: KNIGHTS_REPORT_VIOLATION },
         },
