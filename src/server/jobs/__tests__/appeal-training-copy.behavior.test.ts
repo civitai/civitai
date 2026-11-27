@@ -75,6 +75,7 @@ beforeAll(async () => {
       "resolvedReason" text
     );
     CREATE TABLE "CsamReport" ("id" serial PRIMARY KEY, "userId" integer, "images" jsonb NOT NULL DEFAULT '[]');
+    CREATE TABLE "User" ("id" integer PRIMARY KEY, "deletedAt" timestamp(3), "meta" jsonb);
     CREATE TABLE "ModActivity" (
       "id" serial PRIMARY KEY, "userId" integer, "activity" text NOT NULL, "entityType" text,
       "entityId" integer, "createdAt" timestamp(3) NOT NULL DEFAULT now()
@@ -96,7 +97,7 @@ beforeEach(async () => {
   noLabels.mockClear();
   await holder.db.exec(
     `TRUNCATE "AppealDecisionRecord", "AppealTrainingObjectDeletion", "Image", "CsamReport",
-       training_labels, "Appeal", "ModActivity" RESTART IDENTITY`
+       training_labels, "Appeal", "ModActivity", "User" RESTART IDENTITY`
   );
 });
 
@@ -852,16 +853,39 @@ describe('records removed on erasure or on request', () => {
   };
   const removedKeys = (store: ReturnType<typeof fakeStore>) =>
     store.remove.mock.calls.flatMap(([keys]) => keys).sort();
+  const deletedUser = (id: number, daysAgo: number | null, imageRemoval: 'grace' | 'immediate') =>
+    holder.db.query(
+      `INSERT INTO "User" ("id", "deletedAt", "meta") VALUES ($1, now() - make_interval(days => $2), $3)`,
+      [id, daysAgo, JSON.stringify({ imageRemoval })]
+    );
 
   it("deletes an erased account's records and copies, and keeps another account's", async () => {
     await ownedRecord(1, 9);
     await ownedRecord(2, 10);
+    await deletedUser(9, 0, 'immediate');
     await modActivity('user', 9, 'deleteAccount');
     const store = fakeStore();
 
     expect((await sweepExcludedRecords(store)).swept).toBe(1);
     expect((await states()).map((row) => row.appealId)).toEqual([2]);
     expect(removedKeys(store)).toEqual(['k-1']);
+  });
+
+  it('waits out the grace a restore can undo, and keeps a restored account', async () => {
+    await ownedRecord(1, 9);
+    await ownedRecord(2, 10);
+    await ownedRecord(3, 11);
+    await ownedRecord(4, 12);
+    await deletedUser(9, 2, 'grace'); // inside the grace
+    await deletedUser(10, null, 'grace'); // restored: no deletedAt
+    await deletedUser(11, 8, 'grace'); // past the grace
+    await deletedUser(12, 0, 'immediate');
+    for (const id of [9, 10, 11, 12]) await modActivity('user', id, 'deleteAccount');
+    const store = fakeStore();
+
+    expect((await sweepExcludedRecords(store)).swept).toBe(2);
+    expect((await states()).map((row) => row.appealId)).toEqual([1, 2]);
+    expect(removedKeys(store)).toEqual(['k-3', 'k-4']);
   });
 
   it('keeps the records of an account that was deleted any other way', async () => {
@@ -946,6 +970,14 @@ describe('records removed on erasure or on request', () => {
     expect(await removeErasedOwnerRecords(9, store)).toEqual({ removed: 1, objects: 0 });
     expect(await states()).toEqual([]);
     expect(await tombstones()).toEqual(['k-1']);
+    // The key names the appeal and image: logged hashed, beside the owner hash.
+    const [logged, ...more] = vi.mocked(loggingMock.logToAxiom).mock.calls.map(([entry]) => entry);
+    expect(more).toEqual([]);
+    expect(logged).toMatchObject({
+      message: expect.stringContaining(`(owner ${ownerHashOf(9)})`),
+      details: { keys: [expect.stringMatching(/^[0-9a-f]{16}$/)] },
+    });
+    expect(JSON.stringify(logged)).not.toContain('k-1');
   });
 });
 

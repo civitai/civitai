@@ -55,7 +55,8 @@ export type ImageModActivity = {
     | 'retractedMedia:view'
     // A version showcase removal: the version it was removed from.
     | `versionShowcaseRemove:${number}`
-    | ReturnType<typeof shownActivity>;
+    | ReturnType<typeof shownActivity>
+    | 'likenessRequest';
 };
 
 type ArticleModActivity = {
@@ -283,6 +284,19 @@ type ModActivity = {
 // `MODERATOR_TAKEDOWN_ACTIVITIES` in `src/server/jobs/image-ingestion.ts`, where a suppressed row means a
 // takedown demoted to a delete-without-blob-retraction. That demotion is reproducible locally and cannot
 // happen in production — do not diagnose one from the other.
+/**
+ * Marks images removed on a likeness request. The appeal-decision-records sweep deletes their appeal
+ * training copies by this row; the moderator app's `recordLikenessRequest` writes the same row.
+ */
+export async function trackLikenessRequests(userId: number, imageIds: number[]) {
+  if (!imageIds.length) return;
+  await trackModActivity(userId, {
+    entityType: 'image',
+    entityId: imageIds,
+    activity: 'likenessRequest',
+  });
+}
+
 export async function trackModActivity(
   userId: number,
   input: ModActivity,

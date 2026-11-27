@@ -577,14 +577,16 @@ describe('user.delete — appeal training copies', () => {
       .filter((entry) => entry.name === 'mod-delete-appeal-copies-failed');
   const deleted = [{ swept: 0, labels: 0, keys: [] }];
 
-  it("removes the erased account's appeal records once the account is deleted", async () => {
+  it("removes an immediately erased account's appeal records once the account is deleted", async () => {
     const order: string[] = [];
     deleteUser.mockImplementationOnce(async () => (order.push('deleteUser'), {}));
     vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation(
       (async () => (order.push('appeal'), deleted)) as never
     );
 
-    expect((await call({ userId: String(TARGET), username: NAME })).status).toBe(200);
+    expect(
+      (await call({ userId: String(TARGET), username: NAME, removeImages: true })).status
+    ).toBe(200);
     const [sql, ...more] = recordDeletes();
     expect(more).toEqual([]);
     expect(sql.values).toContainEqual([TARGET]);
@@ -593,7 +595,16 @@ describe('user.delete — appeal training copies', () => {
   });
 
   it('does not touch them when the deletion is refused', async () => {
-    expect((await call({ userId: String(TARGET), username: 'someone_else' })).status).toBe(400);
+    expect(
+      (await call({ userId: String(TARGET), username: 'someone_else', removeImages: true })).status
+    ).toBe(400);
+    expect(recordDeletes()).toEqual([]);
+  });
+
+  it('leaves them to the nightly sweep for a grace deletion, which a restore can undo', async () => {
+    expect(
+      (await call({ userId: String(TARGET), username: NAME, removeImages: false })).status
+    ).toBe(200);
     expect(recordDeletes()).toEqual([]);
   });
 
@@ -601,7 +612,11 @@ describe('user.delete — appeal training copies', () => {
     setEnv({ APPEAL_OWNER_HASH_KEY: 'test-owner-hash-key' });
     vi.mocked(dbMock.dbWrite.$queryRaw).mockRejectedValue(new Error('db down'));
 
-    const { status, body } = await call({ userId: String(TARGET), username: NAME });
+    const { status, body } = await call({
+      userId: String(TARGET),
+      username: NAME,
+      removeImages: true,
+    });
 
     expect(status).toBe(200);
     expect(body).toEqual({ deleted: true, userId: TARGET, auditRecorded: true });

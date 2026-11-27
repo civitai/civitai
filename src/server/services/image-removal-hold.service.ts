@@ -1,4 +1,5 @@
 import {
+  comparableReasons,
   getLatestApprovedImageAppeals,
   holdSameReasonRemovals,
   type HeldRemoval,
@@ -11,13 +12,7 @@ import { hasModeratorGrant } from '~/server/services/moderator-grants';
 
 export type { HeldRemoval };
 
-// 'other' says nothing about what the image showed, so two removals filed under it cannot be told apart.
-// A likeness request says who asked, not what the image showed, and was filed under 'other' until now.
-export const COMPARABLE_REASONS: ReadonlySet<string> = new Set(
-  Object.values(ViolationType).filter(
-    (v) => v !== ViolationType.Other && v !== ViolationType.LikenessRequest
-  )
-);
+export const COMPARABLE_REASONS = comparableReasons(Object.values(ViolationType));
 
 /**
  * Holds each removal that repeats the reason the image's approved appeal overturned, for a moderator

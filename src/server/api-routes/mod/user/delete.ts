@@ -141,19 +141,22 @@ export default defineModeratorEndpoint('user.delete', {
       throw e;
     }
 
-    // Best-effort, like the audit below: the nightly appeal-decision-records sweep removes the same
-    // records by this endpoint's ModActivity row. Logged by owner hash, never the erased id.
-    try {
-      await removeErasedOwnerRecords(input.userId);
-    } catch (e) {
-      logToAxiom({
-        type: 'error',
-        name: 'mod-delete-appeal-copies-failed',
-        // In the message: the dataset has no free field for a hash.
-        message: `owner ${appealOwnerHash(input.userId) ?? '(no hash key)'}: ${
-          (e as Error).message
-        }`,
-      });
+    // Only an immediate removal: a grace deletion can be restored, and the nightly
+    // appeal-decision-records sweep removes its records once the grace has passed. Best-effort, like
+    // the audit below; the sweep also retries this by the audit row. Logged by owner hash, never the id.
+    if (input.removeImages) {
+      try {
+        await removeErasedOwnerRecords(input.userId);
+      } catch (e) {
+        logToAxiom({
+          type: 'error',
+          name: 'mod-delete-appeal-copies-failed',
+          // In the message: the dataset has no free field for a hash.
+          message: `owner ${appealOwnerHash(input.userId) ?? '(no hash key)'}: ${
+            (e as Error).message
+          }`,
+        });
+      }
     }
 
     // 🔴 THE SPOKE DELIBERATELY DOES NOT LOG THIS ONE — see `deleteAccount` in

@@ -1,4 +1,4 @@
-import type { VIOLATION_TYPES } from '$lib/violations';
+import { violationUserMessage, type VIOLATION_TYPES } from '$lib/violations';
 
 /**
  * Canned reasons whose `message` is sent verbatim to the user. Retool held these in `Function`
@@ -130,7 +130,7 @@ export const TOS_REASONS: CannedReason[] = [
   },
   {
     label: 'Likeness/DMCA',
-    message: 'Person depicted has requested to have images taken down',
+    message: violationUserMessage('likenessRequest'),
     // Its own type: the appeal training copies of a request-removed image are deleted by it.
     violation: 'likenessRequest',
     // 9.3(b)(i) and §12 are the real citation, but the modal anchors at section level and neither is

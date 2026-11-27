@@ -78,6 +78,7 @@ beforeAll(async () => {
       "resolvedReason" text
     );
     CREATE TABLE "CsamReport" ("id" serial PRIMARY KEY, "userId" integer, "images" jsonb NOT NULL DEFAULT '[]');
+    CREATE TABLE "User" ("id" integer PRIMARY KEY, "deletedAt" timestamp(3), "meta" jsonb);
     CREATE TABLE "ModActivity" (
       "id" serial PRIMARY KEY, "userId" integer, "activity" text NOT NULL, "entityType" text,
       "entityId" integer, "createdAt" timestamp(3) NOT NULL DEFAULT now()
@@ -111,7 +112,7 @@ beforeEach(async () => {
   holder.ch = null;
   await holder.db.exec(
     `TRUNCATE "AppealDecisionRecord", "Image", "CsamReport", training_labels, label_store.subject,
-       label_store.change, "ModActivity" RESTART IDENTITY CASCADE`
+       label_store.change, "ModActivity", "User" RESTART IDENTITY CASCADE`
   );
 });
 

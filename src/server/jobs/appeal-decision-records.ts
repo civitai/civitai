@@ -1,3 +1,4 @@
+import { BLOCKED_IMAGE_RETENTION_DAYS } from '@civitai/shared/job-queue';
 import { newS3Client } from '~/utils/s3-client-factory';
 import type { S3Client } from '@aws-sdk/client-s3';
 import { DeleteObjectsCommand, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
@@ -17,6 +18,7 @@ import { createJob } from './job';
 const REMOVAL_LABEL_WINDOW = Prisma.raw(`make_interval(days => 30)`);
 const RESTORED_LEVEL_WINDOW = Prisma.raw(`make_interval(days => 90)`);
 const RECORD_RETENTION = Prisma.raw(`make_interval(years => 2)`);
+const ERASURE_GRACE = Prisma.raw(`make_interval(days => ${BLOCKED_IMAGE_RETENTION_DAYS})`);
 const BATCH = 5000;
 
 // Training labels this job appends; the sweep removes any whose image becomes excluded.
@@ -104,7 +106,10 @@ async function deleteRecords(where: Prisma.Sql, alsoLabelWhere: Prisma.Sql = Pri
  */
 export async function removeErasedOwnerRecords(userId: number, store?: AppealTrainingStore | null) {
   const { swept, keys } = await deleteRecords(ownersRecord(Prisma.raw('r'), [userId]));
-  return { removed: swept, objects: await discardTrainingObjects(store, keys) };
+  return {
+    removed: swept,
+    objects: await discardTrainingObjects(store, keys, appealOwnerHash(userId)),
+  };
 }
 
 /**
@@ -228,6 +233,13 @@ const forgetOrphanKey = (key: string) => dbWrite.$executeRaw`
 const ownerHash = (key: string, userId: number) =>
   createHmac('sha256', key).update(String(userId)).digest('hex');
 
+/** A training object key, opaque in logs. */
+const keyHash = (key: string) =>
+  createHmac('sha256', env.APPEAL_OWNER_HASH_KEY ?? 'appeal-training-key')
+    .update(key)
+    .digest('hex')
+    .slice(0, 16);
+
 /** The opaque owner id records carry, for logs that must not name an erased account. */
 export const appealOwnerHash = (userId: number) => ownerHashesOf([userId])[0] ?? null;
 
@@ -245,10 +257,18 @@ async function reportedOwnerHashes() {
   return ownerHashesOf(owners.map((o) => o.userId));
 }
 
+/**
+ * Accounts deleted through the moderator endpoint that stay deleted: at once for an immediate
+ * removal, otherwise once the grace a restore can undo has passed. A restore clears `deletedAt`.
+ */
 async function erasedOwnerIds() {
   const owners = await dbWrite.$queryRaw<{ userId: number }[]>`
-    SELECT DISTINCT "entityId" AS "userId" FROM "ModActivity"
-    WHERE "entityType" = 'user' AND activity = ${ERASURE_ACTIVITY} AND "entityId" IS NOT NULL
+    SELECT DISTINCT m."entityId" AS "userId" FROM "ModActivity" m
+    LEFT JOIN "User" u ON u.id = m."entityId"
+    WHERE m."entityType" = 'user' AND m.activity = ${ERASURE_ACTIVITY} AND m."entityId" IS NOT NULL
+      AND (u.id IS NULL OR (u."deletedAt" IS NOT NULL AND (
+        u.meta->>'imageRemoval' = 'immediate' OR u."deletedAt" <= now() - ${ERASURE_GRACE}
+      )))
   `;
   return owners.map((o) => o.userId);
 }
@@ -256,7 +276,8 @@ async function erasedOwnerIds() {
 /** Deletes training objects; keys it could not delete are kept for the next sweep to retry. */
 async function discardTrainingObjects(
   store: AppealTrainingStore | null | undefined,
-  keys: string[]
+  keys: string[],
+  owner?: string | null
 ) {
   keys = [...new Set(keys)];
   if (!keys.length) return 0;
@@ -272,8 +293,11 @@ async function discardTrainingObjects(
     logToAxiom({
       type: 'error',
       name: JOB_LOG_NAME,
-      message: 'Could not delete training objects; queued for retry',
-      details: { keys, error: (e as Error).message },
+      // A key names its appeal and image, so only its hash is logged; the queue holds the key.
+      message: `Could not delete training objects; queued for retry${
+        owner ? ` (owner ${owner})` : ''
+      }`,
+      details: { keys: keys.map(keyHash), error: (e as Error).message },
     });
     await dbWrite.$executeRaw`
       INSERT INTO "AppealTrainingObjectDeletion" (key)

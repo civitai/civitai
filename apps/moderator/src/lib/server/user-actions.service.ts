@@ -46,7 +46,7 @@ import {
   type MemorialState,
   type MemorialTribute,
 } from '@civitai/shared/memorial';
-import { recordLikenessRequest, recordModActivity } from './mod-activity';
+import { recordModActivity } from './mod-activity';
 import { recordUserActivity } from './user-activity';
 import { responseMayHaveLanded, restErrorReason } from './rest-error-reason';
 import { invalidateUserSessions } from './sessions';
@@ -1693,17 +1693,14 @@ export async function removeImages(input: {
       return Promise.all(
         chunk
           .filter((id) => !heldIds.has(id))
-          .flatMap((id) => [
+          .map((id) =>
             recordModActivity({
               userId: input.moderatorId,
               entityType: 'image',
               entityId: id,
               activity: 'bulkRemove',
-            }),
-            ...(input.violationType === 'likenessRequest'
-              ? [recordLikenessRequest(input.moderatorId, id)]
-              : []),
-          ])
+            })
+          )
       ).then(() => undefined);
     }
   );

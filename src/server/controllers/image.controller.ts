@@ -7,7 +7,9 @@ import {
   ImageSort,
   NotificationCategory,
   SearchIndexUpdateQueueAction,
+  ViolationType,
 } from '~/server/common/enums';
+import { trackLikenessRequests } from '~/server/services/moderator.service';
 import { mapToViolationType, tosReasonUserMessage } from '~/server/common/tos-reasons';
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { dbRead } from '~/server/db/client';
@@ -295,6 +297,8 @@ export const setTosViolationHandler = async ({
 
     if (!held) {
       if (written.underReview.has(id)) logNoticeUnderReview([{ id, userId: image.userId }]);
+      if (violationType === ViolationType.LikenessRequest)
+        await trackLikenessRequests(user.id, [id]);
       // Update all reports with this comment id to actioned
       const affectedReports = await updateImageReportStatusByReason({
         id,

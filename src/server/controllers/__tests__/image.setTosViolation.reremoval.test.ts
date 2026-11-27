@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProtectedContext } from '~/server/createContext';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { Prisma } from '@prisma/client';
 import { FEEDBACK_CAPTURE_OWNER_ID } from '@civitai/shared/feedback-capture';
 import type * as ImageService from '~/server/services/image.service';
 import type * as NotificationService from '~/server/services/notification.service';
@@ -119,5 +120,43 @@ describe('setTosViolationHandler on a feedback page capture', () => {
   it("tells an ordinary image's owner (control)", async () => {
     await removeAs(9);
     expect(notify).toHaveBeenCalledWith(expect.objectContaining({ userId: 9 }));
+  });
+});
+
+// The appeal-decision-records sweep deletes the appeal training copies of an image by this row.
+describe('setTosViolationHandler on a likeness request', () => {
+  const likenessMarks = () =>
+    vi
+      .mocked(dbMock.dbWrite.$executeRaw)
+      .mock.calls.map(([strings, ...values]) =>
+        Prisma.sql(strings as unknown as readonly string[], ...values)
+      )
+      .filter(
+        (sql) => sql.text.includes('"ModActivity"') && sql.values.includes('likenessRequest')
+      );
+  const removeAs = (violationType: string) =>
+    setTosViolationHandler({ input: { id: 50, violationType } as never, ctx }).catch(
+      () => undefined
+    );
+
+  it('marks the removed image', async () => {
+    canConfirmReRemoval.mockResolvedValue(true);
+
+    await removeAs('likenessRequest');
+
+    const [mark, ...more] = likenessMarks();
+    expect(more).toEqual([]);
+    expect(mark.values).toEqual(expect.arrayContaining([2, 'image', [50]]));
+  });
+
+  it('marks nothing while the removal is held, or for another reason', async () => {
+    canConfirmReRemoval.mockResolvedValue(false);
+    holdRemovals.mockResolvedValue({ held: [{ imageId: 50, created: true }], proceed: [] });
+    await removeAs('likenessRequest');
+    canConfirmReRemoval.mockResolvedValue(true);
+    await removeAs('realPerson');
+
+    expect(likenessMarks()).toEqual([]);
+    expect(reportsActioned).toHaveBeenCalledTimes(1); // the realPerson removal went through
   });
 });

@@ -88,6 +88,17 @@ export function overturnedRemovalLabel(
 }
 
 /**
+ * Reasons that say nothing about what the image showed: 'other' is a catch-all, and a likeness
+ * request says who asked. Two removals filed under them cannot be told apart.
+ */
+const UNCOMPARABLE_REASONS: ReadonlySet<string> = new Set(['other', 'likenessRequest']);
+
+/** The reasons `isSameRemovalReason` can tell apart, out of an app's violation list. */
+export function comparableReasons(violationTypes: readonly string[]): ReadonlySet<string> {
+  return new Set(violationTypes.filter((v) => !UNCOMPARABLE_REASONS.has(v)));
+}
+
+/**
  * Whether a new removal repeats the overturned one. A reason not in `knownReasons` (none chosen, a
  * catch-all, free text, or the lookup failed) cannot be shown to differ, so it counts as the same.
  */

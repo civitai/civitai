@@ -26,7 +26,7 @@ const VIOLATION_WEIGHTS: Record<ViolationType, number> = {
   [ViolationType.NonAi]: HALF,
   [ViolationType.MindAlteredNsfw]: HALF,
   [ViolationType.Spam]: HALF,
-  // A request someone else made; it was under `other` until it had a type of its own.
+  // A request someone else made, not a finding against the owner.
   [ViolationType.LikenessRequest]: 0,
   [ViolationType.Other]: 0,
 };
