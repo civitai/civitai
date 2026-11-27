@@ -590,24 +590,27 @@ function ImageDetail2Content({ deferredSsr }: { deferredSsr?: boolean }) {
                               <DownloadImage src={image.url} type={image.type} name={image.name}>
                                 {({ onClick: download, isLoading: downloading, progress }) => (
                                   <>
-                                    <LegacyActionIcon
-                                      {...sharedActionIconProps}
-                                      className={clsx(
-                                        sharedActionIconProps.className,
-                                        '@max-md:hidden'
-                                      )}
-                                      onClick={download}
-                                      loading={downloading && progress === 0}
-                                    >
-                                      {downloading && progress > 0 && (
-                                        <RingProgress
-                                          size={36}
-                                          sections={[{ value: progress, color: 'blue' }]}
-                                          thickness={4}
-                                        />
-                                      )}
-                                      {!downloading && <IconDownload {...sharedIconProps} />}
-                                    </LegacyActionIcon>
+                                    {/* `url` is null when the media is withheld from this viewer. */}
+                                    {image.url && (
+                                      <LegacyActionIcon
+                                        {...sharedActionIconProps}
+                                        className={clsx(
+                                          sharedActionIconProps.className,
+                                          '@max-md:hidden'
+                                        )}
+                                        onClick={download}
+                                        loading={downloading && progress === 0}
+                                      >
+                                        {downloading && progress > 0 && (
+                                          <RingProgress
+                                            size={36}
+                                            sections={[{ value: progress, color: 'blue' }]}
+                                            thickness={4}
+                                          />
+                                        )}
+                                        {!downloading && <IconDownload {...sharedIconProps} />}
+                                      </LegacyActionIcon>
+                                    )}
                                     <ShareButton
                                       url={imageShareUrl}
                                       title={title}
