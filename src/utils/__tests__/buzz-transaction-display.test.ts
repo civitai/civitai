@@ -57,4 +57,11 @@ describe('transaction display type', () => {
     expect(getTransactionBadgeLabel({ type: TransactionType.AppAuthorFee })).toBe('App Author Fee');
     expect(getTransactionBadgeLabel({ type: TransactionType.Tip })).toBe('Tip');
   });
+
+  it('offers Fee as a filter that queries the Fee type (sticker placements are stored as Fee)', () => {
+    const option = TRANSACTION_TYPE_FILTER_OPTIONS.find(
+      (o) => getServerTransactionType(o.value) === TransactionType.Fee
+    );
+    expect(option).toEqual({ value: 'Fee', label: 'Fee' });
+  });
 });

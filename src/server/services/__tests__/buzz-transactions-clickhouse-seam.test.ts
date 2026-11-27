@@ -175,6 +175,23 @@ describe('getUserBuzzTransactionsMulti — the ClickHouse type seam', () => {
     for (const q of sql) expect(q).toContain("type IN ('appAuthorFee','28','unknown_28')");
   });
 
+  it('the /user/transactions "Fee" choice reaches ClickHouse as the Fee type', async () => {
+    const option = TRANSACTION_TYPE_FILTER_OPTIONS.find((o) => o.label === 'Fee');
+    expect(option).toBeDefined();
+    const input = getUserBuzzTransactionsMultiSchema.parse({
+      ...WINDOW,
+      accountTypes: [...WINDOW.accountTypes],
+      type: getServerTransactionType(option!.value),
+    });
+    expect(input.type).toBe(TransactionType.Fee);
+
+    await getUserBuzzTransactionsMulti({ ...input, accountId: ACCOUNT_ID });
+
+    const sql = sentSql();
+    expect(sql.length).toBeGreaterThan(0);
+    for (const q of sql) expect(q).toMatch(/type IN \('fee','25'/);
+  });
+
   it('keeps the filter out of the SQL entirely when no type is asked for', async () => {
     await getUserBuzzTransactionsMulti({
       accountId: ACCOUNT_ID,
