@@ -104,8 +104,8 @@ const MARKS: (Mark & { marked: boolean })[] = [
     setup: `INSERT INTO "ImageCdnModeratorDelete" ("imageId", url, "userId", "csamReview") VALUES ($id + 1000, '$url', 1, true)`,
     marked: true,
   },
-  // By the Moderation Lead's ruling of 2026-11-27, a copy listed on a CSAM report withholds from
-  // the owner whatever its report's state; only the owner's own row's listing does not.
+  // A copy listed on a CSAM report withholds from the owner whatever its report's state; only the
+  // owner's own row's listing does not (civitai/civitai#10672).
   {
     label: 'moderated + a url copy deleted for CSAM review, listed on a sent, verified report',
     blockedFor: 'moderated',

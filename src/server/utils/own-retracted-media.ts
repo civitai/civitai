@@ -45,7 +45,8 @@ export const ownRetractedMediaViewer = (
  * `/api/retracted-media/own/[imageId]`: the signed-in owner's own blocked image or video, from
  * storage, since the public CDN stops serving a blocked image's url. The browser names an image id;
  * the key comes from the row, only for an image `readMedia` leaves this owner, and the bytes come
- * through this server, so the storage URL never leaves it. A refusal answers as a missing image.
+ * through this server, so the storage URL never leaves it. A refusal of the image itself (not
+ * owned, not allowed, held) answers 404, as a missing image.
  * The page's other gate, `image.get`'s held level (`withoutHeldFromViewer`), applies here too.
  */
 export async function serveOwnRetractedMedia(

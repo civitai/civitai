@@ -905,7 +905,7 @@ describe('getOwnRetractedMedia', () => {
 
   // Whatever row shape makes the moderator route refuse a moderator without the CSAM grant (and
   // serve one with it), the owner route refuses too, except where the mark is the image's own
-  // listing on a CSAM report, which its owner keeps by ruling.
+  // listing on a CSAM report, which its owner keeps (civitai/civitai#10672).
   describe('refuses the owner whatever the moderator route keeps to the CSAM grant', () => {
     const target = { id: 990900000, url: 'key-990900000' };
     const OWNER = 990910000;
@@ -920,7 +920,7 @@ describe('getOwnRetractedMedia', () => {
     afterEach(async () => {
       await pg.exec(csamCaseCleanupSql(target));
     });
-    /** The one divergence the ruling allows: the target's own row listed on a CSAM report. */
+    /** The one allowed divergence: the target's own row listed on a CSAM report. */
     const ownListed = async () =>
       (
         await pg.query<{ listed: boolean }>(
