@@ -106,7 +106,6 @@
       name="status"
       value={d.verdict}
       disabled={!!unwiredReason}
-      title={unwiredReason ?? undefined}
     >
       {d.label}
     </TriageKeyButton>

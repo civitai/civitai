@@ -1838,8 +1838,8 @@ it had before its port. What differs from an `ids` batch:
   query where Node, caching, would not.
 - `requiringMeta` reaches getAllImages on every legacy shape (the handler spreads it in `data`):
   `i."blockedFor" = 'AiNotVerified'` after the visibility gates (Node drops those gates for it on the
-  red domain only, and this route passes none), so a signed-out page is empty and an owner sees only
-  their own AiNotVerified-blocked images.
+  red domain only, and this route passes no domain), so a signed-out page is empty and an owner sees
+  only their own AiNotVerified-blocked images.
 
 An `ids` batch is `getAllImages` itself, not the feed: the same page query as image.getInfinite's
 Postgres arm (`ImagesQuery.Build`), with the batch as `i."id" = ANY(…)` and the request's period
@@ -2076,8 +2076,10 @@ domain cap.
    (`readTurfRankPage` / `readMyTurfPage`) or is filtered by `turfHiddenIds` (`fillTurfPage`).
 3. **Routing.** `requiresImageDbPath`: a `postId`, `postIds`, `collectionId`, `reactions`, `imageId`,
    `ids`, `hidden`, a `modelId` without a version, `prioritizedUserIds` with a model, or `publishedOnly`
-   with a `userId` take `getAllImages`; a `hubId` always takes the feed; everything else takes the feed
-   when `image-index-feed` is on.
+   or `requiringMeta` with a `userId` take `getAllImages`; a `hubId` always takes the feed; everything
+   else takes the feed when `image-index-feed` is on. `requiringMeta` reaches every `getAllImages` call
+   (this page; the gallery's page, pinned and sponsored posts): `i."blockedFor" = 'AiNotVerified'`
+   after the visibility gates, which the red domain (the request's board color) leaves out for it.
 4. **Gates** (not for a moderator): `isModelGalleryWithheld` (a taken-down model, except to its owner)
    and `getHeldGalleryLevel` (the held level of a minor or SFW-only model), both over the models the
    request selects by (`resolveImageModelIds`: the named model, the version's, the post's version's).

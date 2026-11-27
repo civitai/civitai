@@ -1558,6 +1558,59 @@
         ]
       },
       {
+        "id": 8044,
+        "name": "golden-8044.png",
+        "url": "00000000-0000-4000-8000-000000008044",
+        "nsfwLevel": 32,
+        "width": 832,
+        "height": 1216,
+        "hash": "UGOLDEN8044",
+        "hideMeta": false,
+        "hasMeta": true,
+        "hasPositivePrompt": true,
+        "onSite": false,
+        "remixOfId": null,
+        "createdAt": {
+          "$date": "2026-06-06T17:00:00.000Z"
+        },
+        "sortAt": {
+          "$date": "2026-06-06T18:00:00.000Z"
+        },
+        "mimeType": "image/png",
+        "type": "image",
+        "metadata": {
+          "width": 832,
+          "height": 1216,
+          "hash": "UGOLDEN8044"
+        },
+        "ingestion": "Blocked",
+        "blockedFor": "AiNotVerified",
+        "scannedAt": {
+          "$date": "2026-06-06T17:01:00.000Z"
+        },
+        "needsReview": null,
+        "userId": 1002,
+        "postId": 7030,
+        "postTitle": "Golden post 7030",
+        "index": 3,
+        "publishedAt": {
+          "$date": "2026-06-06T18:00:00.000Z"
+        },
+        "unpublishedAt": null,
+        "modelVersionId": null,
+        "model3dId": null,
+        "availability": "Public",
+        "minor": false,
+        "poi": false,
+        "acceptableMinor": false,
+        "restricted": false,
+        "_resources": [],
+        "_tags": [
+          502,
+          521
+        ]
+      },
+      {
         "id": 8101,
         "name": "golden-8101.png",
         "url": "00000000-0000-4000-8000-000000008101",
@@ -2603,6 +2656,10 @@
       {
         "id": 6501,
         "modelId": 5006
+      },
+      {
+        "id": 6701,
+        "modelId": 5007
       }
     ],
     "models": [
@@ -2649,6 +2706,14 @@
       {
         "id": 5006,
         "userId": 1001,
+        "mode": null,
+        "minor": false,
+        "sfwOnly": false,
+        "galleryLevel": null
+      },
+      {
+        "id": 5007,
+        "userId": 1002,
         "mode": null,
         "minor": false,
         "sfwOnly": false,

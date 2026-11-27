@@ -196,9 +196,12 @@ describe('setAssociatedResources and articles the editor cannot list', () => {
        VALUES (201, $1, ${ARTICLES.live.id}, 'Suggested', 0), (202, $1, ${ARTICLES.draft.id}, 'Suggested', 1)`,
       [OTHER_MODEL]
     );
-    await setAssociatedResources({ fromId: OTHER_MODEL, type: 'Suggested', associations: [] }, {
-      id: MODEL_OWNER,
-    } as SessionUser);
+    await setAssociatedResources(
+      { fromId: OTHER_MODEL, type: 'Suggested', associations: [], browsingLevel: 31 },
+      {
+        id: MODEL_OWNER,
+      } as SessionUser
+    );
     expect(await ids()).toEqual([ARTICLES.draft.id]);
   });
 });

@@ -29,7 +29,12 @@ import {
   minorContentRestrictedSql,
 } from '~/server/utils/minor-content-gate.sql';
 import { OWNER_HIDDEN_REVIEWS, isHeldForReview } from '~/server/common/owner-hidden-reviews';
-import { OWNER_MEDIA_EXEMPT_BLOCKS, hasBlockMarker } from '~/server/common/image-block-marker';
+import {
+  OWNER_MEDIA_EXEMPT_BLOCKS,
+  OWNER_MEDIA_REVIEWED_BLOCKS,
+  hasBlockMarker,
+} from '~/server/common/image-block-marker';
+import { ownerCsamMarkedSql } from '@civitai/shared/retracted-media-tier';
 import {
   PRIOR_BLOCKED_FOR_KEY,
   PRIOR_INGESTION_KEY,
@@ -93,13 +98,43 @@ export const hasBlockMarkerSql = (alias = 'i') => {
 };
 
 /** SQL twin of `ownerMediaAllowed`, never NULL. */
-export const ownerMediaAllowedSql = (alias = 'i') => {
+export const ownerMediaAllowedSql = (
+  alias = 'i',
+  { reviewedBlocks = false }: { reviewedBlocks?: boolean } = {}
+) => {
   const t = Prisma.raw(`"${alias}"`);
+  if (reviewedBlocks)
+    return Prisma.sql`(CASE
+    WHEN ${t}."blockedFor" IS NOT NULL
+      THEN ${t}."blockedFor" IN (${Prisma.join(OWNER_MEDIA_EXEMPT_BLOCKS)}) OR (
+        NOT EXISTS (
+          SELECT 1 FROM unnest(string_to_array(${t}."blockedFor", ',')) AS ob_reason(value)
+          WHERE btrim(ob_reason.value) NOT IN (${Prisma.join(OWNER_MEDIA_REVIEWED_BLOCKS)})
+        )
+        AND cardinality(string_to_array(${t}."blockedFor", ',')) > 0
+        AND ${t}."ingestion" = ${ImageIngestionStatus.Blocked}::"ImageIngestionStatus"
+        AND NOT ${Prisma.raw(ownerCsamMarkedSql(alias))}
+      )
+    ELSE ${t}."ingestion" <> ${ImageIngestionStatus.Blocked}::"ImageIngestionStatus"
+  END)`;
   return Prisma.sql`(CASE
     WHEN ${t}."blockedFor" IS NOT NULL
       THEN ${t}."blockedFor" IN (${Prisma.join(OWNER_MEDIA_EXEMPT_BLOCKS)})
     ELSE ${t}."ingestion" <> ${ImageIngestionStatus.Blocked}::"ImageIngestionStatus"
   END)`;
+};
+
+/**
+ * `ownerCsamMarkedSql` as a select column for `ownerMediaAllowed`'s `ownerCsamMarked`: read only for
+ * `viewerId`'s own Blocked image under a block that is not exempt, NULL (withheld) for every other row.
+ */
+export const ownerCsamMarkedColumnSql = (viewerId: number, alias = 'i') => {
+  const t = Prisma.raw(`"${alias}"`);
+  return Prisma.sql`(CASE WHEN ${t}."userId" = ${viewerId}
+      AND ${t}."ingestion" = ${ImageIngestionStatus.Blocked}::"ImageIngestionStatus"
+      AND ${t}."blockedFor" IS NOT NULL
+      AND ${t}."blockedFor" NOT IN (${Prisma.join(OWNER_MEDIA_EXEMPT_BLOCKS)})
+    THEN ${Prisma.raw(ownerCsamMarkedSql(alias))} END)`;
 };
 
 /**

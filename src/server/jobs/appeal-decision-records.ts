@@ -378,15 +378,20 @@ const COPY_LABELS: string[] = [
 const RATED_COPY_LABELS: string[] = [ViolationType.RealPerson, 'poi'];
 const SCANNER_COPY_RATINGS: string[] = ['pg', 'pg13', 'pg-13'];
 
+/** `TagSource.SpineRating` as `get_tag_on_image_attributes` packs it (migration 20271208140000). */
+const SPINE_RATING_SOURCE_CODE = 10;
 /**
- * Whether a `TagsOnImageNew` row is a rating the image scan stored. The scan writes a
- * `TagSource.SpineRating` tag, but `get_tag_on_image_attributes` has no code for that source and
- * packs it as 0, so it is read as an automated tag with source bits 0. A tag a user added is
- * source 1. Give SpineRating its own code and this is the one place to switch to it.
+ * Whether a `TagsOnImageNew` row is a rating the image scan stored: its `SpineRating` source code,
+ * or any automated source-0 row. Rows written before the scan sources had codes packed every one of
+ * them as source 0, so a legacy Hive or AiRecognition label is read as a rating too: the copy rule
+ * then skips the record, and a downvote never deletes it (both fail closed).
  */
 export const isScannerRatingRow = (row: Prisma.Sql) => Prisma.sql`(
-  ((${row}.attributes >> 12)::integer & 15) = 0
-  AND ((${row}.attributes >> 11)::integer & 1) = 1
+  ((${row}.attributes >> 12)::integer & 15) = ${SPINE_RATING_SOURCE_CODE}
+  OR (
+    ((${row}.attributes >> 12)::integer & 15) = 0
+    AND ((${row}.attributes >> 11)::integer & 1) = 1
+  )
 )`;
 
 /** The ratings the image scan stored for an image, as tag names. */

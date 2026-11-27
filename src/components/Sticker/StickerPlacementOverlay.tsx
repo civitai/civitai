@@ -17,8 +17,10 @@ import {
   peekToggleCorner,
 } from '~/components/Sticker/peek-toggle-corner';
 import { StickerPlacementActions } from '~/components/Sticker/StickerPlacementActions';
+import { StickerPendingBar } from '~/components/Sticker/StickerPendingBar';
 import { StickerPlacementHoverCard } from '~/components/Sticker/StickerPlacementHoverCard';
 import { freeMarkerVisible } from '~/components/Sticker/free-marker';
+import { rotateSize } from '~/shared/utils/canvas-utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
   STILL_STICKER_TREATMENT,
@@ -35,6 +37,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type KeyboardEvent,
   type ReactElement,
 } from 'react';
 
@@ -46,6 +49,12 @@ import {
  * so a gap measured to the pixel is a gap the sticker moves into.
  */
 const CONTROL_GAP_PX = 14;
+
+/** Height reserved for the crowded-image bar, which wraps to two rows on a phone. */
+const PENDING_BAR_STRIP_PX = 96;
+
+/** Clearance above a video's own controls, which run along the bottom edge. */
+const VIDEO_CONTROLS_CLEARANCE_PX = 64;
 
 /** Shared so the two in-box marks cannot drift apart in size or weight. */
 const PLACEMENT_MARK_CLASS =
@@ -92,6 +101,7 @@ export function StickerPlacementOverlay({
   paced = true,
   step = null,
   takenCorners,
+  isVideo = false,
   hiddenIds,
   bindPose,
 }: {
@@ -102,6 +112,8 @@ export function StickerPlacementOverlay({
   bindPose?: (id: number) => (node: HTMLElement | null) => void;
   /** Corners another decoration draws in, which the peek toggle keeps out of. */
   takenCorners?: PeekToggleCorner[];
+  /** A video draws its own controls along the bottom edge, which the bar keeps clear of. */
+  isVideo?: boolean;
   viewerId?: number;
   className?: string;
   /**
@@ -381,9 +393,39 @@ export function StickerPlacementOverlay({
   // unmounted either, which would drop the measurements that position them.
   const peekStyle: CSSProperties | undefined = peek ? { visibility: 'hidden' } : undefined;
 
-  if (!placements.length) return null;
-
+  // Counted over what is drawn, so a history replay does not offer stickers not yet shown.
   const visible = step == null ? ordered : ordered.slice(0, step + 1);
+  const ownerPending = interactive
+    ? visible.filter((placement) => placement.isPending && placement.ownerId === viewerId)
+    : [];
+  const crowded = ownerPending.length >= 2;
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const selected = crowded
+    ? ownerPending.find((placement) => placement.id === selectedId)
+    : undefined;
+  // If both strips are blocked the bar stays at the bottom; covered stickers stay
+  // reachable by keyboard and the queue.
+  const barEdge = (() => {
+    if (!crowded || controlBox.height <= 0) return 'bottom' as const;
+    const reaches = (edge: 'top' | 'bottom') =>
+      ownerPending.some(({ id, data }) => {
+        const box = stickerBoxes[id];
+        if (!box) return false;
+        const half = rotateSize(box.width, box.height, data.rotation).height / 2;
+        const centre = data.y * controlBox.height;
+        return edge === 'bottom'
+          ? centre + half >
+              controlBox.height - PENDING_BAR_STRIP_PX - (isVideo ? VIDEO_CONTROLS_CLEARANCE_PX : 0)
+          : centre - half < PENDING_BAR_STRIP_PX;
+      });
+    if (isVideo) return reaches('top') ? ('bottom' as const) : ('top' as const);
+    return reaches('bottom') && !reaches('top') ? ('top' as const) : ('bottom' as const);
+  })();
+  useEffect(() => {
+    if (selectedId != null && !selected) setSelectedId(null);
+  }, [selectedId, selected]);
+
+  if (!placements.length) return null;
 
   // The owner's approve/decline, drawn in their own layer below so they out-rank
   // every placed sticker and not just the one they belong to; isolation would cap
@@ -393,7 +435,16 @@ export function StickerPlacementOverlay({
     visible
       .filter((placement) => placement.isPending && placement.ownerId === viewerId)
       .map(({ data }) => data),
-    takenCorners
+    crowded
+      ? [
+          ...(takenCorners ?? []),
+          // On a video the bottom corners are the player's controls, so the pill
+          // keeps the top and the bar makes room for it.
+          ...(barEdge === 'top' && !isVideo
+            ? (['top-left', 'top-right'] as const)
+            : (['bottom-left', 'bottom-right'] as const)),
+        ]
+      : takenCorners
   );
 
   return (
@@ -523,6 +574,20 @@ export function StickerPlacementOverlay({
             <div
               key={placement.id}
               ref={placement.isPending ? pendingRef(placement.id) : bindPose?.(placement.id)}
+              {...(crowded && placement.isPending && isOwner
+                ? {
+                    role: 'button',
+                    tabIndex: 0,
+                    'aria-pressed': selectedId === placement.id,
+                    'aria-label': `Select ${art.name}`,
+                    onClick: () => setSelectedId(selectedId === placement.id ? null : placement.id),
+                    onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => {
+                      if (event.key !== 'Enter' && event.key !== ' ') return;
+                      event.preventDefault();
+                      setSelectedId(selectedId === placement.id ? null : placement.id);
+                    },
+                  }
+                : null)}
               className={clsx(
                 'absolute',
                 interactive && 'pointer-events-auto',
@@ -566,7 +631,10 @@ export function StickerPlacementOverlay({
               {placement.isPending && (
                 <span
                   className={clsx(
-                    'pointer-events-none absolute rounded border-2 border-dashed border-yellow-6',
+                    'pointer-events-none absolute rounded border-2 border-yellow-6',
+                    selectedId === placement.id && crowded
+                      ? 'border-solid bg-yellow-6/20'
+                      : 'border-dashed',
                     // Inside the artwork's own box on a card, outside it in the
                     // detail view. A card draws this inside two `overflow-hidden`
                     // layers over `object-fit: cover` media, so an outset ring on
@@ -660,7 +728,7 @@ export function StickerPlacementOverlay({
             box: controlBox,
           });
 
-          if (isOwner && stickerExtent > 0)
+          if (isOwner && stickerExtent > 0 && !crowded)
             pendingControls.push(
               <div key={placement.id}>
                 {/* ⚠️ Known wrong, and left wrong deliberately.
@@ -762,13 +830,30 @@ export function StickerPlacementOverlay({
       {/* Outside the isolated layer so these out-rank every placed sticker, not
           just the one they belong to. Below the draft on purpose
           (DRAFT_STICKER_Z > PENDING_CONTROL_Z): whatever is under the cursor wins. */}
-      {pendingControls.length > 0 && (
+      {(pendingControls.length > 0 || crowded) && (
         <div
           className="pointer-events-none absolute inset-0 overflow-hidden"
           style={{ zIndex: PENDING_CONTROL_Z }}
         >
           <div className="pointer-events-none absolute inset-0" style={peekStyle}>
             {pendingControls}
+            {crowded && (
+              <StickerPendingBar
+                count={ownerPending.length}
+                selected={selected}
+                selectedName={selected ? artwork.get(selected.data.cosmeticId)?.name : undefined}
+                onClear={() => setSelectedId(null)}
+                edge={barEdge}
+                lifted={isVideo}
+                clearPill={
+                  isVideo && barEdge === 'top'
+                    ? toggleCorner.endsWith('left')
+                      ? 'left'
+                      : 'right'
+                    : undefined
+                }
+              />
+            )}
           </div>
           <Button
             size="sm"

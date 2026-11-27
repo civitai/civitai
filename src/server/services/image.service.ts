@@ -99,6 +99,7 @@ import {
   unblockedMetadataSql,
   scanKeepsRowSql,
   blockedMediaListConditions,
+  ownerCsamMarkedColumnSql,
 } from '~/server/common/image-visibility';
 import {
   BLOCKED_IMAGE_DELETE_QUEUE,
@@ -4707,6 +4708,8 @@ export async function filterPinnedImagesToVersion<T extends { id: number }>(
 
 type GetImageRaw = GetAllImagesRaw & {
   reactions?: ReviewReactions[];
+  /** `ownerCsamMarkedSql`, read only with `ownerReviewedBlocks`, for the viewer's own blocked image. */
+  ownerCsamMarked?: boolean | null;
   reviewId: number | null;
   dealId: number | null;
   sellerId: number | null;
@@ -4722,6 +4725,7 @@ export const getImage = async ({
   isModerator,
   ownerSeesHeld = false,
   shownReviewImageLevels,
+  ownerReviewedBlocks = false,
 }: GetImageInput & {
   userId?: number;
   isModerator?: boolean;
@@ -4729,6 +4733,8 @@ export const getImage = async ({
   ownerSeesHeld?: boolean;
   /** `imageVisibilityConditions`' `shownReviewImageLevels`: the image page's read only. */
   shownReviewImageLevels?: number;
+  /** Read `ownerCsamMarked` for `ownerMediaAllowed`'s `reviewedBlocks` (the `ownerBlockedMedia` flag). */
+  ownerReviewedBlocks?: boolean;
 }) => {
   const AND = [
     Prisma.sql`i.id = ${id}`,
@@ -4768,7 +4774,12 @@ export const getImage = async ({
       i.minor,
       i.poi,
       i."acceptableMinor",
-      ${imageRestrictedSql()} AS "restricted",
+      ${imageRestrictedSql()} AS "restricted",${
+    ownerReviewedBlocks && userId
+      ? Prisma.sql`
+      ${ownerCsamMarkedColumnSql(userId)} AS "ownerCsamMarked",`
+      : Prisma.empty
+  }
       (
         CASE
           WHEN i.meta IS NULL OR jsonb_typeof(i.meta) = 'null' OR i."hideMeta" THEN FALSE

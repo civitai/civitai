@@ -432,17 +432,12 @@ func (in *InfiniteInput) parseHub(m map[string]any) error {
 			}
 		}
 	}
-	if in.HubID != 0 && in.rawDBPath() {
+	if in.HubID != 0 && in.dbPath() {
+		// The schema's superRefine reads requiresImageDbPath on the input as sent (before the
+		// handler withdraws a foreign `publishedOnly`).
 		return fallback.NewfSafe("input-invalid", "hubId", "hubId beside a Postgres-path input")
 	}
 	return nil
-}
-
-// rawDBPath is requiresImageDbPath on the input as sent, for the inputs ParseInfiniteWith reads (the
-// schema's superRefine): dbPath, plus `requiringMeta` beside a `userId`. `hidden` and `imageId` fall
-// back before this is read.
-func (in *InfiniteInput) rawDBPath() bool {
-	return in.dbPath() || (in.RequiringMeta && in.UserID != 0)
 }
 
 // withoutKey is list without key (a copy).
@@ -643,14 +638,15 @@ func ownScope(viewerID int, viewerUsername string, userID int, username string) 
 	return username != "" && viewerUsername != "" && strings.EqualFold(username, viewerUsername)
 }
 
-// dbPath is requiresImageDbPath for the supported inputs: a post's media, several posts' media
-// (`postIds`), a collection, reactions, ids, a model without a version (the feed has no model
-// dimension), prioritizedUserIds with a model or version scope, or `publishedOnly` beside a
-// `userId` (the own-content submit pickers; read on the input after the handler's withdrawal,
-// withPublishedOnlyScoped). Every other shape it lists falls
-// back in parsing.
+// dbPath is requiresImageDbPath for the supported inputs: `requiringMeta` beside a `userId` (the feed
+// has no filter for metadata-blocked images), a post's media, several posts' media (`postIds`), a
+// collection, reactions, ids, a model without a version (the feed has no model dimension),
+// prioritizedUserIds with a model or version scope, or `publishedOnly` beside a `userId` (the
+// own-content submit pickers; the handler reads it after its withdrawal, withPublishedOnlyScoped, the
+// schema's hub check before it). `hidden` and `imageId` fall back in parsing.
 func (in *InfiniteInput) dbPath() bool {
-	return in.PostID != 0 || len(in.PostIDs) > 0 || in.CollectionID != 0 || len(in.Reactions) > 0 || len(in.IDs) > 0 ||
+	return (in.RequiringMeta && in.UserID != 0) ||
+		in.PostID != 0 || len(in.PostIDs) > 0 || in.CollectionID != 0 || len(in.Reactions) > 0 || len(in.IDs) > 0 ||
 		(in.ModelID != 0 && in.ModelVersionID == 0) ||
 		(in.prioritized() && (in.ModelID != 0 || in.ModelVersionID != 0)) ||
 		(in.PublishedOnly && in.UserID != 0)
@@ -1165,6 +1161,11 @@ func ServeInfinite(ctx context.Context, d *InfiniteDeps, req InfiniteRequest) (*
 		IDs:               in.IDs,
 		NewCreators:       in.NewCreators,
 		NewCreatorUserIDs: board,
+		// getAllImages reads both from the input the handler spreads (`domain:
+		// getRequestBoardDomainColor(ctx.req)`). On the feed path the mapper refuses `requiringMeta`
+		// before any hydrate, so only the Postgres page reads them.
+		RequiringMeta: in.RequiringMeta,
+		Domain:        req.BoardColor,
 	}
 	if viewer.ID != 0 {
 		// `userId && reactions?.length`: signed out, the input still routes to Postgres but adds no
