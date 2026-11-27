@@ -240,6 +240,10 @@ const keyHash = (key: string) =>
     .digest('hex')
     .slice(0, 16);
 
+/** An error message with any training object key in it replaced by its hash. */
+const withKeysHashed = (message: string, keys: string[]) =>
+  keys.reduce((text, key) => text.split(key).join(keyHash(key)), message);
+
 /** The opaque owner id records carry, for logs that must not name an erased account. */
 export const appealOwnerHash = (userId: number) => ownerHashesOf([userId])[0] ?? null;
 
@@ -297,7 +301,7 @@ async function discardTrainingObjects(
       message: `Could not delete training objects; queued for retry${
         owner ? ` (owner ${owner})` : ''
       }`,
-      details: { keys: keys.map(keyHash), error: (e as Error).message },
+      details: { keys: keys.map(keyHash), error: withKeysHashed((e as Error).message, keys) },
     });
     await dbWrite.$executeRaw`
       INSERT INTO "AppealTrainingObjectDeletion" (key)
@@ -443,8 +447,13 @@ export function createAppealTrainingStore({
             Delete: { Objects: keys.slice(i, i + 1000).map((Key) => ({ Key })), Quiet: true },
           })
         );
+        // Codes only: a key names its appeal and image, and this message is logged.
         if (Errors?.length)
-          throw new Error(`delete failed: ${Errors.map((e) => e.Key).join(', ')}`);
+          throw new Error(
+            `delete failed for ${Errors.length} objects: ${[
+              ...new Set(Errors.map((e) => e.Code ?? 'unknown')),
+            ].join(', ')}`
+          );
       }
     },
   };

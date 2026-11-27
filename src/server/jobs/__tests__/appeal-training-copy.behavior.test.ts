@@ -981,6 +981,21 @@ describe('records removed on erasure or on request', () => {
     });
     expect(JSON.stringify(logged)).not.toContain('k-1');
   });
+
+  it('logs no raw key when the failure message names one', async () => {
+    await ownedRecord(1, 9);
+    const store = fakeStore();
+    store.remove.mockRejectedValueOnce(new Error('delete failed: k-1'));
+
+    await removeErasedOwnerRecords(9, store);
+
+    const logged = vi.mocked(loggingMock.logToAxiom).mock.calls.map(([entry]) => entry);
+    expect(logged).toHaveLength(1);
+    expect(JSON.stringify(logged)).not.toContain('k-1');
+    expect(logged[0]).toMatchObject({
+      details: { error: expect.stringMatching(/^delete failed: [0-9a-f]{16}$/) },
+    });
+  });
 });
 
 describe('createAppealTrainingStore', () => {
@@ -1039,7 +1054,9 @@ describe('createAppealTrainingStore', () => {
     });
     const keys = Array.from({ length: 2500 }, (_, i) => `k-${i}`);
 
-    await expect(store.remove(keys)).rejects.toThrow(/k-1500/);
+    // A count, never the key: a key names its appeal and image, and the message is logged.
+    const error = await store.remove(keys).catch((e: Error) => e);
+    expect(error).toEqual(new Error('delete failed for 1 objects: unknown'));
 
     const sent = target.send.mock.calls.map(
       ([c]) => (c.input as { Delete: { Objects: { Key: string }[] } }).Delete.Objects
@@ -1082,7 +1099,9 @@ describe('createAppealTrainingStore', () => {
       targetBucket: 'training',
     });
 
-    await expect(store.remove(['a', 'b'])).rejects.toThrow(/b/);
+    await expect(store.remove(['a', 'b'])).rejects.toThrow(
+      new Error('delete failed for 1 objects: AccessDenied')
+    );
 
     expect(source.send).not.toHaveBeenCalled();
     expect(target.send.mock.calls.map(([c]) => [c.constructor.name, c.input])).toEqual([

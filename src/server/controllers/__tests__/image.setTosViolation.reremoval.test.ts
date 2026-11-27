@@ -149,6 +149,24 @@ describe('setTosViolationHandler on a likeness request', () => {
     expect(mark.values).toEqual(expect.arrayContaining([2, 'image', [50]]));
   });
 
+  it('still actions reports and runs the removal effects when the mark fails', async () => {
+    canConfirmReRemoval.mockResolvedValue(true);
+    const executeRaw = vi.mocked(dbMock.dbWrite.$executeRaw);
+    executeRaw.mockImplementation((async (_strings: unknown, ...values: unknown[]) => {
+      if (values.includes('likenessRequest')) throw new Error('db down');
+      return 0;
+    }) as never);
+
+    try {
+      await removeAs('likenessRequest');
+    } finally {
+      executeRaw.mockImplementation((async () => 0) as never);
+    }
+
+    expect(likenessMarks()).toHaveLength(1);
+    expect(reportsActioned).toHaveBeenCalledTimes(1);
+  });
+
   it('marks nothing while the removal is held, or for another reason', async () => {
     canConfirmReRemoval.mockResolvedValue(false);
     holdRemovals.mockResolvedValue({ held: [{ imageId: 50, created: true }], proceed: [] });

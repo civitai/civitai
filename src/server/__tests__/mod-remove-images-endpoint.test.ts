@@ -193,6 +193,17 @@ describe('/api/mod/remove-images likeness requests', () => {
     expect(mark.values).toEqual(expect.arrayContaining([9, 'image', [11, 13]]));
   });
 
+  it('still sends the removal events and succeeds when the mark fails', async () => {
+    handleBlockImages.mockResolvedValue([{ id: 11, userId: 3, nsfwLevel: 1 }]);
+    vi.mocked(dbMock.dbWrite.$executeRaw).mockRejectedValueOnce(new Error('db down'));
+
+    const res = await call({ imageIds: [11], moderatorId: 9, violationType: 'likenessRequest' });
+
+    expect(likenessMarks()).toHaveLength(1);
+    expect(trackImages).toHaveBeenCalledTimes(1);
+    expect(res.status).toHaveBeenCalledWith(200);
+  });
+
   it('marks nothing for any other reason', async () => {
     handleBlockImages.mockResolvedValue([{ id: 11, userId: 3, nsfwLevel: 1 }]);
 
