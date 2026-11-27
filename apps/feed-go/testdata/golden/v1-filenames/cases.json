@@ -1,0 +1,552 @@
+{
+  "node": "v24.21.0",
+  "replace": [
+    {
+      "value": "Café v2",
+      "search": "CAFÉ",
+      "result": " v2"
+    },
+    {
+      "value": "ÖL Model",
+      "search": "öl",
+      "result": " Model"
+    },
+    {
+      "value": "Straße v1",
+      "search": "STRASSE",
+      "result": "Straße v1"
+    },
+    {
+      "value": "STRASSE v1",
+      "search": "straße",
+      "result": "STRASSE v1"
+    },
+    {
+      "value": "Σίσυφος v1",
+      "search": "σίσυφοσ",
+      "result": " v1"
+    },
+    {
+      "value": "ΣΊΣΥΦΟΣ v1",
+      "search": "σίσυφος",
+      "result": " v1"
+    },
+    {
+      "value": "kelvin 3",
+      "search": "Kelvin",
+      "result": "kelvin 3"
+    },
+    {
+      "value": "Kelvin 3",
+      "search": "kelvin",
+      "result": "Kelvin 3"
+    },
+    {
+      "value": "ſpring v1",
+      "search": "spring",
+      "result": "ſpring v1"
+    },
+    {
+      "value": "İstanbul v1",
+      "search": "istanbul",
+      "result": "İstanbul v1"
+    },
+    {
+      "value": "ıstanbul v1",
+      "search": "ISTANBUL",
+      "result": "ıstanbul v1"
+    },
+    {
+      "value": "Ｍｏｄｅｌ v1",
+      "search": "ｍｏｄｅｌ",
+      "result": " v1"
+    },
+    {
+      "value": "Модель v3 модель",
+      "search": "МОДЕЛЬ",
+      "result": " v3 "
+    },
+    {
+      "value": "模型 v1",
+      "search": "模型",
+      "result": " v1"
+    },
+    {
+      "value": "🐱cat v1 🐱CAT",
+      "search": "🐱cat",
+      "result": " v1 "
+    },
+    {
+      "value": "ǅemal v1",
+      "search": "ǆemal",
+      "result": " v1"
+    },
+    {
+      "value": "ᾳ v1",
+      "search": "ᾼ",
+      "result": "ᾳ v1"
+    },
+    {
+      "value": "ﬁle v1",
+      "search": "FILE",
+      "result": "ﬁle v1"
+    },
+    {
+      "value": "aaa",
+      "search": "aa",
+      "result": "a"
+    },
+    {
+      "value": "x",
+      "search": "",
+      "result": "x"
+    }
+  ],
+  "naming": [
+    {
+      "model": {
+        "name": "Café Model",
+        "type": "Checkpoint"
+      },
+      "version": {
+        "name": "CAFÉ MODEL v2"
+      },
+      "files": [
+        {
+          "id": 7100,
+          "name": "model.safetensors",
+          "overrideName": null,
+          "type": "Model",
+          "metadata": {
+            "format": "SafeTensor",
+            "size": "pruned",
+            "fp": "fp16"
+          }
+        },
+        {
+          "id": 7101,
+          "name": "model.safetensors",
+          "overrideName": null,
+          "type": "Model",
+          "metadata": {
+            "format": "SafeTensor",
+            "size": "full",
+            "fp": "fp32"
+          }
+        },
+        {
+          "id": 7102,
+          "name": "data.zip",
+          "overrideName": null,
+          "type": "Training Data",
+          "metadata": {}
+        }
+      ],
+      "names": [
+        "cafModel_v2_pruned_fp16.safetensors",
+        "cafModel_v2_full_fp32.safetensors",
+        "cafModel_v2_trainingData.zip"
+      ]
+    },
+    {
+      "model": {
+        "name": "Σίσυφος",
+        "type": "Checkpoint"
+      },
+      "version": {
+        "name": "ΣΊΣΥΦΟΣ XL"
+      },
+      "files": [
+        {
+          "id": 7110,
+          "name": "model.safetensors",
+          "overrideName": null,
+          "type": "Model",
+          "metadata": {
+            "format": "SafeTensor",
+            "size": "pruned",
+            "fp": "fp16"
+          }
+        },
+        {
+          "id": 7111,
+          "name": "model.safetensors",
+          "overrideName": null,
+          "type": "Model",
+          "metadata": {
+            "format": "SafeTensor",
+            "size": "full",
+            "fp": "fp32"
+          }
+        },
+        {
+          "id": 7112,
+          "name": "data.zip",
+          "overrideName": null,
+          "type": "Training Data",
+          "metadata": {}
+        }
+      ],
+      "names": [
+        "model_pruned_fp16.safetensors",
+        "model_full_fp32.safetensors",
+        "data.zip"
+      ]
+    },
+    {
+      "model": {
+        "name": "Straße",
+        "type": "Checkpoint"
+      },
+      "version": {
+        "name": "STRASSE v1"
+      },
+      "files": [
+        {
+          "id": 7120,
+          "name": "model.safetensors",
+          "overrideName": null,
+          "type": "Model",
+          "metadata": {
+            "format": "SafeTensor",
+            "size": "pruned",
+            "fp": "fp16"
+          }
+        },
+        {
+          "id": 7121,
+          "name": "model.safetensors",
+          "overrideName": null,
+          "type": "Model",
+          "metadata": {
+            "format": "SafeTensor",
+            "size": "full",
+            "fp": "fp32"
+          }
+        },
+        {
+          "id": 7122,
+          "name": "data.zip",
+          "overrideName": null,
+          "type": "Training Data",
+          "metadata": {}
+        }
+      ],
+      "names": [
+        "straE_strasseV1_pruned_fp16.safetensors",
+        "straE_strasseV1_full_fp32.safetensors",
+        "straE_strasseV1_trainingData.zip"
+      ]
+    },
+    {
+      "model": {
+        "name": "Модель",
+        "type": "Checkpoint"
+      },
+      "version": {
+        "name": " модель　v3 "
+      },
+      "files": [
+        {
+          "id": 7130,
+          "name": "model.safetensors",
+          "overrideName": null,
+          "type": "Model",
+          "metadata": {
+            "format": "SafeTensor",
+            "size": "pruned",
+            "fp": "fp16"
+          }
+        },
+        {
+          "id": 7131,
+          "name": "model.safetensors",
+          "overrideName": null,
+          "type": "Model",
+          "metadata": {
+            "format": "SafeTensor",
+            "size": "full",
+            "fp": "fp32"
+          }
+        },
+        {
+          "id": 7132,
+          "name": "data.zip",
+          "overrideName": null,
+          "type": "Training Data",
+          "metadata": {}
+        }
+      ],
+      "names": [
+        "model_pruned_fp16.safetensors",
+        "model_full_fp32.safetensors",
+        "data.zip"
+      ]
+    },
+    {
+      "model": {
+        "name": "模型",
+        "type": "Checkpoint"
+      },
+      "version": {
+        "name": "模型 v1"
+      },
+      "files": [
+        {
+          "id": 7140,
+          "name": "model.safetensors",
+          "overrideName": null,
+          "type": "Model",
+          "metadata": {
+            "format": "SafeTensor",
+            "size": "pruned",
+            "fp": "fp16"
+          }
+        },
+        {
+          "id": 7141,
+          "name": "model.safetensors",
+          "overrideName": null,
+          "type": "Model",
+          "metadata": {
+            "format": "SafeTensor",
+            "size": "full",
+            "fp": "fp32"
+          }
+        },
+        {
+          "id": 7142,
+          "name": "data.zip",
+          "overrideName": null,
+          "type": "Training Data",
+          "metadata": {}
+        }
+      ],
+      "names": [
+        "model_pruned_fp16.safetensors",
+        "model_full_fp32.safetensors",
+        "data.zip"
+      ]
+    },
+    {
+      "model": {
+        "name": "🐱 Cat",
+        "type": "Checkpoint"
+      },
+      "version": {
+        "name": "🐱 CAT v2"
+      },
+      "files": [
+        {
+          "id": 7150,
+          "name": "model.safetensors",
+          "overrideName": null,
+          "type": "Model",
+          "metadata": {
+            "format": "SafeTensor",
+            "size": "pruned",
+            "fp": "fp16"
+          }
+        },
+        {
+          "id": 7151,
+          "name": "model.safetensors",
+          "overrideName": null,
+          "type": "Model",
+          "metadata": {
+            "format": "SafeTensor",
+            "size": "full",
+            "fp": "fp32"
+          }
+        },
+        {
+          "id": 7152,
+          "name": "data.zip",
+          "overrideName": null,
+          "type": "Training Data",
+          "metadata": {}
+        }
+      ],
+      "names": [
+        "Cat_v2_pruned_fp16.safetensors",
+        "Cat_v2_full_fp32.safetensors",
+        "Cat_v2_trainingData.zip"
+      ]
+    },
+    {
+      "model": {
+        "name": "Ｍｏｄｅｌ",
+        "type": "VAE"
+      },
+      "version": {
+        "name": "ｍｏｄｅｌ fp16"
+      },
+      "files": [
+        {
+          "id": 7160,
+          "name": "model.safetensors",
+          "overrideName": null,
+          "type": "Model",
+          "metadata": {
+            "format": "SafeTensor",
+            "size": "pruned",
+            "fp": "fp16"
+          }
+        },
+        {
+          "id": 7161,
+          "name": "model.safetensors",
+          "overrideName": null,
+          "type": "Model",
+          "metadata": {
+            "format": "SafeTensor",
+            "size": "full",
+            "fp": "fp32"
+          }
+        },
+        {
+          "id": 7162,
+          "name": "data.zip",
+          "overrideName": null,
+          "type": "Training Data",
+          "metadata": {}
+        }
+      ],
+      "names": [
+        "model_pruned_fp16.safetensors",
+        "model_full_fp32.safetensors",
+        "data.zip"
+      ]
+    },
+    {
+      "model": {
+        "name": "Kelvin",
+        "type": "Checkpoint"
+      },
+      "version": {
+        "name": "Kelvin v1"
+      },
+      "files": [
+        {
+          "id": 7170,
+          "name": "model.safetensors",
+          "overrideName": null,
+          "type": "Model",
+          "metadata": {
+            "format": "SafeTensor",
+            "size": "pruned",
+            "fp": "fp16"
+          }
+        },
+        {
+          "id": 7171,
+          "name": "model.safetensors",
+          "overrideName": null,
+          "type": "Model",
+          "metadata": {
+            "format": "SafeTensor",
+            "size": "full",
+            "fp": "fp32"
+          }
+        },
+        {
+          "id": 7172,
+          "name": "data.zip",
+          "overrideName": null,
+          "type": "Training Data",
+          "metadata": {}
+        }
+      ],
+      "names": [
+        "kelvin_ElvinV1_pruned_fp16.safetensors",
+        "kelvin_ElvinV1_full_fp32.safetensors",
+        "kelvin_ElvinV1_trainingData.zip"
+      ]
+    },
+    {
+      "model": {
+        "name": "Ölbild",
+        "type": "TextualInversion"
+      },
+      "version": {
+        "name": "ÖLBILD neg",
+        "trainedWords": [
+          "ölbild"
+        ]
+      },
+      "files": [
+        {
+          "id": 7180,
+          "name": "model.pt",
+          "overrideName": null,
+          "type": "Model",
+          "metadata": {
+            "format": "SafeTensor",
+            "size": "pruned",
+            "fp": "fp16"
+          }
+        },
+        {
+          "id": 7181,
+          "name": "negative.pt",
+          "overrideName": null,
+          "type": "Negative",
+          "metadata": {
+            "format": "SafeTensor",
+            "size": "pruned",
+            "fp": "fp16"
+          }
+        }
+      ],
+      "names": [
+        "ölbild.pt",
+        "ölbild-neg.pt"
+      ]
+    },
+    {
+      "model": {
+        "name": "ǅemal",
+        "type": "Checkpoint"
+      },
+      "version": {
+        "name": "ǆemal "
+      },
+      "files": [
+        {
+          "id": 7190,
+          "name": "model.safetensors",
+          "overrideName": null,
+          "type": "Model",
+          "metadata": {
+            "format": "SafeTensor",
+            "size": "pruned",
+            "fp": "fp16"
+          }
+        },
+        {
+          "id": 7191,
+          "name": "model.safetensors",
+          "overrideName": null,
+          "type": "Model",
+          "metadata": {
+            "format": "SafeTensor",
+            "size": "full",
+            "fp": "fp32"
+          }
+        },
+        {
+          "id": 7192,
+          "name": "data.zip",
+          "overrideName": null,
+          "type": "Training Data",
+          "metadata": {}
+        }
+      ],
+      "names": [
+        "Emal_pruned_fp16.safetensors",
+        "Emal_full_fp32.safetensors",
+        "Emal_trainingData.zip"
+      ]
+    }
+  ]
+}

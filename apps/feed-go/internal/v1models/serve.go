@@ -109,6 +109,7 @@ func ServeDetail(ctx context.Context, d *Deps, req DetailRequest) (*Answer, erro
 	// listing is applied to the built body as to a cached one.
 	body, err := shapeModel(res.items[0], shapeOptions{
 		level: level, detail: true, downloadBase: d.Config.BaseURL, imageLocation: d.Config.ImageLocation,
+		unicodeNames: d.misses(req.Serving).filename,
 	})
 	if err != nil {
 		return nil, err
@@ -322,6 +323,7 @@ func ServeList(ctx context.Context, d *Deps, users UsernameResolver, req ListReq
 	opts := shapeOptions{
 		level: level, downloadBase: origin, nsfwImagePassthrough: in.Nsfw && !req.RegionRestricted,
 		primaryFileOnly: in.PrimaryFileOnly, imageLocation: d.Config.ImageLocation, listing: listing,
+		unicodeNames: raw.misses.filename,
 	}
 	shaped := make([]any, 0, len(items))
 	for _, it := range items {

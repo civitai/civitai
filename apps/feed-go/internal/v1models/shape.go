@@ -13,6 +13,9 @@ import (
 // shapeOptions are what differs between the two.
 type shapeOptions struct {
 	level int
+	// unicodeNames: a file name over a non-ASCII model or version name is computed (nameModel.unicode)
+	// instead of falling back; missServe.filename.
+	unicodeNames bool
 	// detail: the `[id]` shaper (removeEmpty per version, removeEmpty file metadata, pinned per-file
 	// download URLs, images without `id`, includeImages by TakenDown only).
 	detail bool

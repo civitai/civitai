@@ -19,7 +19,7 @@ const (
 	KeyDataForModel        = "packed:caches:data-for-model-2"
 	KeyModelTags           = "packed:caches:model-tags"
 	KeyBasicTags           = "packed:caches:basic-tags"
-	KeyFilesForVersion     = "packed:caches:files-for-model-version-2"
+	KeyFilesForVersion     = hydrate.KeyVersionFiles
 	KeyPaidAccessVersion   = "packed:caches:paid-access:ModelVersion"
 	KeyMetricPrivacy       = "packed:caches:user-metric-privacy-defaults"
 	KeyMembershipValid     = "packed:caches:creator-membership-valid"

@@ -214,9 +214,9 @@ func TestEveryGoldenFixtureHasASignature(t *testing.T) {
 	if seenPinned != len(pinned) {
 		t.Errorf("%d pinned fixtures found, want %d (one was renamed or removed)", seenPinned, len(pinned))
 	}
-	// 28 list fixtures in v1-models/, 5 in v1-models-headers/.
-	if unsupported != 33 {
-		t.Errorf("%d v1-models list fixtures, want 33", unsupported)
+	// 29 list fixtures in v1-models/, 5 in v1-models-headers/.
+	if unsupported != 34 {
+		t.Errorf("%d v1-models list fixtures, want 34", unsupported)
 	}
 	// Positive control on the count of distinct shapes: the fixtures exist to cover different shapes,
 	// so far more than one distinct signature must come out (a constant signature would pass every

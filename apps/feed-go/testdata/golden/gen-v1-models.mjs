@@ -989,6 +989,30 @@ fx('fallback-list-favorites', list('favorites=false'), baseWorld(), {
   fx('list-cache-misses-computed', list('limit=5'), w, { config: { serveDataMiss: true } });
 }
 
+// The same world with version 6981's files entry absent (`coldFiles`, computed with
+// filesForModelVersionCache's lookup over the ModelFile / ModelFileHash rows the Go harness builds
+// from `world.files`) and version 6982's past its day (`staleFiles`, revalidated by the same lookup).
+// Node's answer is the same world's.
+{
+  const w = baseWorld();
+  addModel(
+    w,
+    modelRow(5981, { cursorId: '9|9|5981' }),
+    [version(6981, { trainedWords: ['cold'] })],
+    {
+      files: { 6981: [file(7981, 6981)] },
+      images: { 6981: [image(8981, 6981)] },
+    }
+  );
+  addModel(w, modelRow(5982, { cursorId: '8|8|5982' }), [version(6982)], {
+    files: { 6982: [file(7982, 6982)] },
+  });
+  w.coldModelData = [5981];
+  w.coldFiles = [6981];
+  w.staleFiles = [6982];
+  fx('list-files-misses-computed', list('limit=5'), w, { config: { serveDataMiss: true } });
+}
+
 // --- writing -------------------------------------------------------------------------------------
 
 /** The world's cache values under their real keys, as the Node app writes them. */
@@ -1022,8 +1046,13 @@ function redisEntries(w) {
     record('packed:caches:paid-access:ModelVersion', id, v);
   for (const [id, v] of Object.entries(w.images))
     record('packed:caches:images-for-model-version-2', id, v);
-  for (const [id, v] of Object.entries(w.files))
+  for (const [id, v] of Object.entries(w.files)) {
+    if ((w.coldFiles ?? []).includes(Number(id))) continue;
     record('packed:caches:files-for-model-version-2', id, v);
+    // A stale entry: cachedAt past filesForModelVersionCache's day (CacheTTL.day) before the request.
+    if ((w.staleFiles ?? []).includes(Number(id)))
+      out[`packed:caches:files-for-model-version-2:${id}`].value.cachedAt = STALE_AT;
+  }
   for (const [id, v] of Object.entries(w.imageTags))
     record('packed:caches:tag-ids-for-images', id, v);
   for (const [id, v] of Object.entries(w.metricPrivacy))

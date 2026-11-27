@@ -6,9 +6,9 @@
 // over getModelsRaw: one model statement on the replica, then the per-id caches the Node path reads
 // (model data, model tags, version files, showcase images, paid access, creators, metric privacy) and
 // a few small replica reads. A miss Node would fill from the database falls back, except where its
-// miss path is ported here (DESIGN.md §16.7, Deps.misses); of those, the model data and model tags
-// are written back on a public request, as model.getAll writes them, where FEED_GO_CACHE_WRITEBACK
-// lists them. Nothing else is written.
+// miss path is ported here (DESIGN.md §16.7, Deps.misses); of those, the model data, model tags and
+// version files are written back on a public request, as Node writes them, where
+// FEED_GO_CACHE_WRITEBACK lists them. Nothing else is written.
 package v1models
 
 import (
@@ -80,6 +80,15 @@ type Config struct {
 	// version-showcase miss Node's fetch would look up (a debounce marker; a lag-flagged version, on
 	// the primary) is decided here instead of falling back (`v1-models-showcase-miss`).
 	ServeShowcaseMiss bool
+	// ServeFilesMiss is FEED_GO_V1_MODELS_SERVE_FILES_MISS (default off): on a public request, a
+	// version-files miss is computed and a stale entry revalidated as Node's fetch does
+	// (hydrate.Sources.ComputeVersionFiles) instead of falling back (`v1-models-files-miss`,
+	// `v1-models-files-stale`).
+	ServeFilesMiss bool
+	// ServeFilename is FEED_GO_V1_MODELS_SERVE_FILENAME (default off): on a public request, a file
+	// name over a non-ASCII model or version name is computed with the Node engine's tables
+	// (jscanon.json) instead of falling back (`v1-models-filename`).
+	ServeFilename bool
 	// AnswerNotFound is FEED_GO_V1_MODELS_ANSWER_NOT_FOUND (default off): a public `[id]` request whose
 	// model statement returns no row, with the model's lag flag read clean, is answered with Node's
 	// 404 (Answer.Absent) instead of falling back (`v1-models-not-found`). Any other not-found answer
@@ -93,24 +102,29 @@ type missServe struct {
 	// tag-name entry; showcase: a version-showcase miss Node's fetch would look up
 	// (hydrate.Sources.ShowcaseStateReadThrough).
 	data, tags, tagNameStale, showcase bool
+	// files: a version-files miss or stale entry (hydrate.Sources.ComputeVersionFiles); filename: a
+	// file name over non-ASCII text (nameModel.unicode), which reads nothing.
+	files, filename bool
 	// write: a computed entry Node would write back is written, for each cache FEED_GO_CACHE_WRITEBACK
 	// lists. A shadow sample writes nothing: Node answered it, and wrote its own entries.
 	write bool
 }
 
-// misses is the request's missServe: on a public request each miss its switch turns on (each needs
-// the miss computation, Config.ComputeMisses); in a shadow sample every one, whenever the miss
-// computation is on, so the shadow compares a computed answer before it is served.
+// misses is the request's missServe: on a public request each miss its switch turns on (each cache
+// miss needs the miss computation, Config.ComputeMisses; the file name reads nothing); in a shadow
+// sample every cache miss whenever the miss computation is on, and the file name always, so the
+// shadow compares a computed answer before it is served.
 func (d *Deps) misses(serving bool) missServe {
 	c := d.Config.ComputeMisses
 	if serving {
 		return missServe{
 			data: c && d.Config.ServeDataMiss, tags: c && d.Config.ServeTagsMiss,
 			tagNameStale: c && d.Config.ServeTagNameStale, showcase: c && d.Config.ServeShowcaseMiss,
+			files: c && d.Config.ServeFilesMiss, filename: d.Config.ServeFilename,
 			write: true,
 		}
 	}
-	return missServe{data: c, tags: c, tagNameStale: c, showcase: c}
+	return missServe{data: c, tags: c, tagNameStale: c, showcase: c, files: c, filename: true}
 }
 
 // Deps are what the port reads.
