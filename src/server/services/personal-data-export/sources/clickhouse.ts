@@ -204,8 +204,16 @@ export const USER_JOB_TYPES: ReadonlySet<string> = new Set(
     'seedAudio',
     'soniloAudio',
     'TextToSpeech',
-    // Chat: the job record only, never message text (this table carries none).
+    // Chat: the job record only, never message text (this table carries none), and the web tools
+    // a chat calls.
     'chatCompletion',
+    'webSearch',
+    'webScrape',
+    // Submitted only for a user's own request: an App Block run or a sticker the user placed
+    // (customComfy), and captioning of the user's own training dataset or an App Block step
+    // (MediaCaptioning). The job record only.
+    'customComfy',
+    'MediaCaptioning',
   ].map((t) => t.toLowerCase())
 );
 

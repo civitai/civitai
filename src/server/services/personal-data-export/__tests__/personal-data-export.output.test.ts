@@ -387,6 +387,7 @@ describe('ClickHouse', () => {
       row('gen-case', 'comfyimagegen'),
       row('chat', 'chatCompletion'),
       row('train', 'AIToolkitTrainingEpoch'),
+      row('caption', 'MediaCaptioning'),
       row('scan', 'CivitaiImageScanning'),
       row('hash', 'MediaHash'),
       row('future', 'SomeNewSystemJob'),
@@ -413,8 +414,8 @@ describe('ClickHouse', () => {
       .trim()
       .split('\n')
       .map((l) => (JSON.parse(l) as { jobId: string }).jobId);
-    expect(ids).toEqual(['gen', 'gen-case', 'chat', 'train']);
-    expect(jobs.rows).toBe(4);
+    expect(ids).toEqual(['gen', 'gen-case', 'chat', 'train', 'caption']);
+    expect(jobs.rows).toBe(5);
     expect(jobs.leftOut).toBeUndefined();
     expect(jobs.description).toMatch(/runs itself .* not included/);
   });
