@@ -1,25 +1,17 @@
-import { isSongsOwnCover } from '@civitai/db-queries/profile-picture-clear';
-import { NsfwLevel } from '~/server/common/enums';
-import { judgeRatingFloor, RATING_LEVELS } from '~/server/common/judge-rating';
+import {
+  songScanLevel,
+  TRACK_LYRICS_ENTITY_TYPE,
+  TRACK_LYRICS_LANGUAGE_ENTITY_TYPE,
+} from '@civitai/db-queries/profile-picture-clear';
+import { judgeRatingFloor } from '~/server/common/judge-rating';
 import { hasBlockMarker } from '~/server/common/image-block-marker';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
 
-// Defined here, not beside the scan submits: those sit in an import cycle this module must stay out
-// of, since the image scan pipeline re-rates a song from here.
-export const TRACK_LYRICS_ENTITY_TYPE = 'TrackLyrics';
-/** A song's lyrics profanity verdict: its own row, as EntityModeration is one row per entity. */
-export const TRACK_LYRICS_LANGUAGE_ENTITY_TYPE = 'TrackLyricsLanguage';
+export { TRACK_LYRICS_ENTITY_TYPE, TRACK_LYRICS_LANGUAGE_ENTITY_TYPE };
 
-const asRating = (level: unknown) =>
-  typeof level === 'number' && RATING_LEVELS.includes(level) ? level : NsfwLevel.PG;
-
-/**
- * A song's level (docs/features/music.md "A song's rating"): the highest of PG, its lyrics and title
- * text scan, its lyrics profanity, and its own cover's rating. Only a text-scan verdict rates, not an
- * XGuard one (no result version); a cover rates once scanned, and not while it carries a block.
- */
+/** A song's level from its own scans (`songScanLevel`), read from the primary. */
 export async function songLevel(song: { id: number; userId: number }) {
   const [verdicts, track] = await Promise.all([
     // primary: re-rated right after one of these verdicts was written
@@ -47,21 +39,7 @@ export async function songLevel(song: { id: number; userId: number }) {
     }),
   ]);
 
-  const levels = (verdicts ?? []).map(({ entityType, nsfwLevel, result }) =>
-    entityType === TRACK_LYRICS_LANGUAGE_ENTITY_TYPE ||
-    (result as { version?: unknown } | null)?.version != null
-      ? asRating(nsfwLevel)
-      : NsfwLevel.PG
-  );
-  const cover = track?.coverImage;
-  if (
-    cover &&
-    isSongsOwnCover(cover, song) &&
-    cover.ingestion === ImageIngestionStatus.Scanned &&
-    !hasBlockMarker(cover)
-  )
-    levels.push(asRating(cover.nsfwLevel));
-  return Math.max(NsfwLevel.PG, ...levels);
+  return songScanLevel(song, verdicts ?? [], track?.coverImage);
 }
 
 /** Reads before giving up on a level another writer keeps moving: a race, not a loop. */

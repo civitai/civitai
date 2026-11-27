@@ -109,7 +109,8 @@ beforeEach(async () => {
       "resolvedTextHash" TEXT, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     ALTER TABLE "EntityModeration" ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'Pending',
-      ADD COLUMN IF NOT EXISTS blocked BOOLEAN;
+      ADD COLUMN IF NOT EXISTS blocked BOOLEAN, ADD COLUMN IF NOT EXISTS "nsfwLevel" INTEGER,
+      ADD COLUMN IF NOT EXISTS result JSONB;
     CREATE TABLE IF NOT EXISTS "UserStrike" ("userId" INTEGER, points INTEGER, status TEXT, "voidedAt" TIMESTAMP, "expiresAt" TIMESTAMP);
     INSERT INTO "User" (id, username) VALUES (${OWNER}, 'owner'), (${OTHER}, 'other'), (${MOD}, 'mod');
     INSERT INTO "Image" (id, url, type, ingestion, "userId", "nsfwLevel", "postId", metadata, "createdAt") VALUES
@@ -228,6 +229,31 @@ describe('the Disputes tab', () => {
     });
   });
 
+  it("gives the scan level from the song's lyrics, language and own cover, none before its scan", async () => {
+    // Unscanned extras rate nothing: a clean scanned song is PG.
+    expect((await disputes(WITH_GRANT)).items[0]).toMatchObject({ id: DISPUTE, scanLevel: 1 });
+
+    await db.exec(`
+      INSERT INTO "EntityModeration" ("entityType", "entityId", "nsfwLevel", result, status) VALUES
+        ('TrackLyrics', ${SONG}, 4, '{"version": 2}', 'Succeeded'),
+        ('TrackLyricsLanguage', ${SONG}, 2, NULL, 'Succeeded'),
+        ('TrackLyrics', ${SCANNING_SONG}, 16, '{"version": 2}', 'Succeeded');
+      INSERT INTO "Image" (id, url, type, ingestion, "userId", "nsfwLevel", "postId", "createdAt") VALUES
+        (830, 'cover-key', 'image', 'Scanned', ${OWNER}, 8, NULL, '2026-11-01');
+      INSERT INTO "Track" ("imageId", "coverImageId") VALUES (${SONG}, 830);
+    `);
+    const rows = (await disputes(WITH_GRANT)).items;
+    expect(rows.find((r) => r.id === DISPUTE)?.scanLevel).toBe(8);
+    expect(rows.find((r) => r.id === SCANNING_DISPUTE)?.scanLevel).toBeNull();
+
+    // A blocked cover and an XGuard-only lyrics verdict (no result version) rate nothing.
+    await db.exec(`
+      UPDATE "Image" SET "blockedFor" = 'tos' WHERE id = 830;
+      UPDATE "EntityModeration" SET result = '{}' WHERE "entityType" = 'TrackLyrics' AND "entityId" = ${SONG};
+    `);
+    expect((await disputes(WITH_GRANT)).items[0]?.scanLevel).toBe(2);
+  });
+
   it('sends a withheld song with nothing but the dispute id, song id and wait', async () => {
     const row = (await disputes(WITHOUT_GRANT)).items.find((r) => r.id === WITHHELD_DISPUTE);
     expect(row).toMatchObject({
@@ -241,6 +267,7 @@ describe('the Disputes tab', () => {
       currentLevel: null,
       suggestedLevel: null,
       songLevel: null,
+      scanLevel: null,
       earlier: null,
       state: null,
       disputes: null,

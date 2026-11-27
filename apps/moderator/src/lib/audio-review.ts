@@ -1,4 +1,4 @@
-import { browsingLevels, getBrowsingLevelLabel, NsfwLevel } from '@civitai/shared';
+import { browsingLevels, getBrowsingLevelLabel } from '@civitai/shared';
 import { removedKind, removedTitle, type RemovedState } from '$lib/image-review';
 import { plural } from '$lib/format';
 import { VIOLATION_LABELS } from '$lib/violations';
@@ -227,10 +227,6 @@ export const songActivityText = (a: { plays: number; likes: number; comments: nu
     .map((part) => part.replace(/^\d+/, (n) => Number(n).toLocaleString('en-US')))
     .join(' · ');
 
-/** The level a song's own scans give it when they pass it (the main app's `apply-song-scan.ts`
- *  stores PG for every clean song): nothing stores it per song. */
-export const SONG_SCAN_LEVEL = NsfwLevel.PG;
-
 /** The open song's details, with what `tab` shows beyond the shared cards. */
 export const songDetailsUrl = (imageId: number, tab: AudioTab) =>
   `/audio-review/details/${imageId}?tab=${tab}`;
@@ -446,6 +442,8 @@ export type SongDisputeRow = {
   currentLevel: number | null;
   suggestedLevel: number | null;
   songLevel: number | null;
+  /** The level the song's own scans give it (lyrics and title, language, its cover), once scanned. */
+  scanLevel: number | null;
   message: string | null;
   state: DisputeSongState | null;
   /** `RatingReview.status`: Pending, or the ruling's Actioned (approved) / Unactioned (rejected). */

@@ -1,5 +1,11 @@
 import { sql } from '@civitai/db/kysely';
-import { playerSongCoverText, songsOwnCoverText } from '@civitai/db-queries/profile-picture-clear';
+import {
+  playerSongCoverText,
+  songScanLevel,
+  songsOwnCoverText,
+  TRACK_LYRICS_ENTITY_TYPE,
+  TRACK_LYRICS_LANGUAGE_ENTITY_TYPE,
+} from '@civitai/db-queries/profile-picture-clear';
 import { storedSongDurationSec } from '@civitai/shared';
 import { songNeverReviewable, songScanStateOf } from '@civitai/shared/rating-review';
 import {
@@ -1181,7 +1187,13 @@ export async function getSongDisputes({
       's.ingestion',
       sql<string | null>`s.metadata->>'title'`.as('title'),
       's.scanJobs',
+      's.userId as songUserId',
       'c.id as coverId',
+      'c.userId as coverUserId',
+      'c.postId as coverPostId',
+      'c.ingestion as coverIngestion',
+      'c.nsfwLevel as coverNsfwLevel',
+      'c.blockedFor as coverBlockedFor',
       sql<string | null>`CASE WHEN ${sql.raw(songsOwnCoverText('c', 's'))} AND ${sql.raw(
         playerSongCoverText('c')
       )} THEN c.url END`.as('coverUrl'),
@@ -1197,7 +1209,7 @@ export async function getSongDisputes({
   if (status !== 'pending') disputes.reverse();
 
   const songIds = [...new Set(disputes.map((d) => d.songId))];
-  const [history, withheldList, coversWithheld] = await Promise.all([
+  const [history, withheldList, coversWithheld, verdicts] = await Promise.all([
     songIds.length
       ? dbRead
           .selectFrom('RatingReview')
@@ -1210,8 +1222,18 @@ export async function getSongDisputes({
       : [],
     songIds.length ? withheldImageIds(user, songIds) : [],
     withheldCovers(disputes, user),
+    songIds.length
+      ? dbRead
+          .selectFrom('EntityModeration')
+          .select(['entityId', 'entityType', 'nsfwLevel', 'result'])
+          .where('entityType', 'in', [TRACK_LYRICS_ENTITY_TYPE, TRACK_LYRICS_LANGUAGE_ENTITY_TYPE])
+          .where('entityId', 'in', songIds)
+          .execute()
+      : [],
   ]);
   const withheld = new Set(withheldList);
+  const verdictsOf = new Map<number, (typeof verdicts)[number][]>();
+  for (const v of verdicts) verdictsOf.set(v.entityId, [...(verdictsOf.get(v.entityId) ?? []), v]);
   const historyOf = new Map<number, (typeof history)[number][]>();
   for (const h of history) historyOf.set(h.entityId, [...(historyOf.get(h.entityId) ?? []), h]);
   const ruling = (h: {
@@ -1267,6 +1289,7 @@ export async function getSongDisputes({
         currentLevel: null,
         suggestedLevel: null,
         songLevel: null,
+        scanLevel: null,
         message: null,
         earlier: null,
         ruling: null,
@@ -1282,6 +1305,22 @@ export async function getSongDisputes({
       currentLevel: d.currentLevel,
       suggestedLevel: d.suggestedLevel,
       songLevel: d.nsfwLevel,
+      scanLevel:
+        state === 'reviewed'
+          ? songScanLevel(
+              { userId: d.songUserId! },
+              verdictsOf.get(d.songId) ?? [],
+              d.coverId == null
+                ? null
+                : {
+                    userId: d.coverUserId!,
+                    postId: d.coverPostId,
+                    ingestion: d.coverIngestion!,
+                    nsfwLevel: d.coverNsfwLevel!,
+                    blockedFor: d.coverBlockedFor,
+                  }
+            )
+          : null,
       message: d.userComment || null,
       earlier: earlier ? ruling(earlier) : null,
       ruling:

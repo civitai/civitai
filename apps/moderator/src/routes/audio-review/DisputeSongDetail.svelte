@@ -14,7 +14,6 @@
     songActivityText,
     songRatingLabel,
     SONG_RATING_LEVELS,
-    SONG_SCAN_LEVEL,
     type SongDetails,
     type SongDisputeRow,
   } from '$lib/audio-review';
@@ -252,9 +251,9 @@
           'blue'
         )}
         {@render levelCard(
-          'Scan default',
-          row.state === 'reviewed' ? level(SONG_SCAN_LEVEL) : '—',
-          row.state === 'reviewed' ? 'what the scan gave it' : 'no scan verdict'
+          'Scan level',
+          row.scanLevel != null ? level(row.scanLevel) : '—',
+          row.scanLevel != null ? "from the song's own scans" : 'no scan verdict'
         )}
       </div>
 
