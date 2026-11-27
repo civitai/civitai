@@ -47,6 +47,7 @@ const {
   itemForToken,
   itemWithheld,
   mediaForToken,
+  skipCard,
   sourceOrder,
 } = await import('../scan-label.service');
 
@@ -59,6 +60,7 @@ const MIGRATIONS = [
   '20261022140000_scan_label_outcomes',
   '20261023130000_scan_label_reasons_copy',
   '20261128120000_scan_label_claim_token',
+  '20271208120000_scan_label_claim_released',
 ].map((name) =>
   readFileSync(
     join(
@@ -82,7 +84,7 @@ beforeEach(async () => {
     CREATE TABLE "Image" (
       "id" INTEGER PRIMARY KEY, "url" TEXT NOT NULL DEFAULT 'u', "type" TEXT NOT NULL DEFAULT 'image',
       "name" TEXT, "width" INTEGER, "height" INTEGER, "pHash" BIGINT,
-      "userId" INTEGER NOT NULL DEFAULT 0
+      "userId" INTEGER NOT NULL DEFAULT 0, "ingestion" TEXT NOT NULL DEFAULT 'Scanned'
     );
     CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "username" TEXT);
   `);
@@ -834,7 +836,7 @@ describe('an item whose image is withheld from the claimer', () => {
   beforeEach(async () => {
     // The shared withhold rule's tables, beside the queue's own.
     await pg.exec(`
-      ALTER TABLE "Image" ADD COLUMN "mimeType" TEXT, ADD COLUMN ingestion TEXT NOT NULL DEFAULT 'Scanned',
+      ALTER TABLE "Image" ADD COLUMN "mimeType" TEXT,
         ADD COLUMN "needsReview" TEXT, ADD COLUMN "blockedFor" TEXT,
         ADD COLUMN minor BOOLEAN NOT NULL DEFAULT false,
         ADD COLUMN "acceptableMinor" BOOLEAN NOT NULL DEFAULT false,
@@ -901,7 +903,7 @@ describe('an item whose image is withheld from the claimer', () => {
 describe('itemWithheld', () => {
   beforeEach(async () => {
     await pg.exec(`
-      ALTER TABLE "Image" ADD COLUMN "mimeType" TEXT, ADD COLUMN ingestion TEXT NOT NULL DEFAULT 'Scanned',
+      ALTER TABLE "Image" ADD COLUMN "mimeType" TEXT,
         ADD COLUMN "needsReview" TEXT, ADD COLUMN "blockedFor" TEXT,
         ADD COLUMN minor BOOLEAN NOT NULL DEFAULT false,
         ADD COLUMN "acceptableMinor" BOOLEAN NOT NULL DEFAULT false,
@@ -918,5 +920,98 @@ describe('itemWithheld', () => {
     await pg.query(`INSERT INTO "Image" (id, url, "blockedFor") VALUES (99, 'key-1', 'CSAM')`);
     expect(await itemWithheld(item, false)).toBe(true);
     expect(await itemWithheld(item, true)).toBe(false);
+  });
+});
+
+describe('a card its moderator cannot use', () => {
+  const claimRow = async (itemId: number, userId: number) =>
+    (
+      await pg.query<{ expiresAt: Date; releasedAt: Date | null }>(
+        `SELECT "expiresAt", "releasedAt" FROM "ScanLabelClaim" WHERE "itemId" = $1 AND "userId" = $2`,
+        [itemId, userId]
+      )
+    ).rows[0];
+
+  it('skipped: records nothing, goes to another moderator next, and never back to the skipper', async () => {
+    const skipped = await seedItem(1, { flaggedAt: '2026-10-13T09:00:00Z' });
+    const other = await seedItem(2, { flaggedAt: '2026-10-13T07:00:00Z' });
+    const card = (await claimNext(granted(1), {}, NOW))!;
+    expect(card.itemId).toBe(skipped);
+
+    expect(await skipCard(card.token, 1, later(1000))).toBe(true);
+    expect(await item(skipped)).toMatchObject({ votes: 0, blockVotes: 0, status: 'open' });
+    const { rows: votes } = await pg.query(`SELECT 1 FROM "ScanLabelVote"`);
+    expect(votes).toHaveLength(0);
+
+    expect((await claimNext(granted(1), {}, later(2000)))!.itemId).toBe(other);
+    expect((await claimNext(granted(2), {}, later(2000)))!.itemId).toBe(skipped);
+    // Long after every lease has run out, it still never comes back to the skipper.
+    await castVote({ itemId: other, userId: 1, choice: KEEP, msOnItem: 1 }, later(3000));
+    expect(await claimNext(granted(1), {}, later(10 * LEASE_MS))).toBeNull();
+  });
+
+  it('skip releases nothing for a token that is not the moderator’s own claim', async () => {
+    await seedItem(1);
+    const card = (await claimNext(granted(1), {}, NOW))!;
+    expect(await skipCard(card.token, 2, later(1000))).toBe(false);
+    expect((await claimRow(card.itemId, 1)).releasedAt).toBeNull();
+  });
+
+  // Red before the fix, for every moderator, grant or not. Control: the Scanned item is claimed.
+  it('whose image is blocked is never claimed, nor counted as open', async () => {
+    await seedItem(1, { votes: 2, flaggedAt: '2026-10-13T09:00:00Z' });
+    await pg.query(`UPDATE "Image" SET ingestion = 'Blocked' WHERE id = 1`);
+    const scanned = await seedItem(2, { flaggedAt: '2026-10-13T07:00:00Z' });
+    expect((await claimNext(granted(1), {}, NOW))!.itemId).toBe(scanned);
+    expect(await claimNext(granted(2), { day: '2026-10-13' }, NOW)).toMatchObject({
+      itemId: scanned,
+    });
+    expect(await getCounters(3, {}, NOW)).toMatchObject({ openInFilter: 1 });
+  });
+
+  describe('whose media is refused to its holder', () => {
+    const WITHOUT_GRANT = { userId: 1, csamReview: false };
+    beforeEach(async () => {
+      await pg.exec(`
+        ALTER TABLE "Image" ADD COLUMN "mimeType" TEXT,
+          ADD COLUMN "needsReview" TEXT, ADD COLUMN "blockedFor" TEXT,
+          ADD COLUMN minor BOOLEAN NOT NULL DEFAULT false,
+          ADD COLUMN "acceptableMinor" BOOLEAN NOT NULL DEFAULT false,
+          ADD COLUMN "nsfwLevel" INTEGER NOT NULL DEFAULT 0,
+          ADD COLUMN "nsfwLevelLocked" BOOLEAN NOT NULL DEFAULT false, ADD COLUMN "postId" INTEGER;
+        ALTER TABLE "User" ADD COLUMN meta JSONB;
+        ${WITHHOLD_TABLES}
+      `);
+    });
+
+    // The drop is what frees the slot: without it the refused holder's lease keeps the last slot
+    // until it runs out, and no one can vote the item in the meantime.
+    it('is dropped: its slot frees at once and it never comes back to the holder', async () => {
+      const refused = await seedItem(1, { votes: 2 });
+      const next = await seedItem(2, { flaggedAt: '2026-10-13T07:00:00Z' });
+      const card = (await claimNext(WITHOUT_GRANT, {}, NOW))!;
+      expect(card.itemId).toBe(refused);
+      expect(await claimNext(granted(2), {}, later(1000))).toMatchObject({ itemId: next });
+
+      await pg.query(`INSERT INTO "Image" (id, url, "blockedFor") VALUES (99, 'key-1', 'CSAM')`);
+      expect(await mediaForToken(card.token, WITHOUT_GRANT, later(2000))).toBeNull();
+      expect(await claimRow(refused, 1)).toMatchObject({ releasedAt: later(2000) });
+      expect(await claimNext(granted(3), {}, later(3000))).toMatchObject({ itemId: refused });
+
+      // Even once nothing withholds it, the holder is not served it again.
+      await pg.query(`DELETE FROM "Image" WHERE id = 99`);
+      expect((await claimNext(WITHOUT_GRANT, {}, later(4000)))?.itemId).toBe(next);
+    });
+
+    it('is not dropped when the refusal is only a lost slot, which a reload can win back', async () => {
+      await seedItem(1, { votes: 2 });
+      const card = (await claimNext(WITHOUT_GRANT, {}, NOW))!;
+      // The lease runs out and another moderator takes the last slot.
+      expect(await claimNext(granted(2), {}, later(LEASE_MS + 1))).toMatchObject({
+        itemId: card.itemId,
+      });
+      expect(await mediaForToken(card.token, WITHOUT_GRANT, later(LEASE_MS + 2))).toBeNull();
+      expect((await claimRow(card.itemId, 1)).releasedAt).toBeNull();
+    });
   });
 });

@@ -2,7 +2,8 @@ import { sql, type ExpressionBuilder, type Kysely, type Transaction } from 'kyse
 import type { DB } from '@civitai/db-schema/kysely';
 import { moderatorWithheldSql } from '@civitai/shared/retracted-media-tier';
 import { dbRead, dbWrite } from './db';
-import { listWithheldIds } from './retracted-media';
+import { listWithheldIds, restrictedImageIds } from './retracted-media';
+import { logToAxiom } from './axiom';
 import {
   BLOCK_MAJORITY,
   CSAM_HOLD_REASON,
@@ -47,8 +48,20 @@ type Db = Kysely<DB> | Transaction<DB>;
 /** Control items are a blind calibration sample: their flag version must never be a way to pick them. */
 const CONTROL_SOURCE = 'control-sample';
 
+/** Open items whose image is not blocked. Shared by the claim and the counters, so "Open in this
+ *  view" counts only what can be claimed. */
 function openItems(db: Db, filters: ScanLabelFilters) {
-  let q = db.selectFrom('ScanLabelItem as i').where('i.status', '=', 'open');
+  let q = db
+    .selectFrom('ScanLabelItem as i')
+    .where('i.status', '=', 'open')
+    .where(({ exists, selectFrom }) =>
+      exists(
+        selectFrom('Image as ci')
+          .select(sql`1`.as('one'))
+          .whereRef('ci.id', '=', 'i.imageId')
+          .where('ci.ingestion', '<>', 'Blocked')
+      )
+    );
   if (filters.day) {
     const { start, end } = dayBounds(filters.day);
     q = q.where('i.firstFlaggedAt', '>=', start).where('i.firstFlaggedAt', '<', end);
@@ -196,30 +209,92 @@ export async function itemWithheld(itemId: number, csamReview: boolean): Promise
   return (await listWithheldIds([row.imageId], { csamReview }, 'scan-label-vote')).has(row.imageId);
 }
 
-/** The media of a card, served exactly while the moderator's vote on it would still land, and
- *  never when its image is withheld from them. */
-export async function mediaForToken(
+/**
+ * Releases this moderator's claim on an item they have not voted on: the slot frees at once, and
+ * `releasedAt` keeps the item out of their own queue for good. Other moderators are unaffected, and
+ * nothing is recorded against the item. True when a claim was released.
+ */
+async function releaseClaim(itemId: number, userId: number, now: Date): Promise<boolean> {
+  const released = await dbWrite
+    .updateTable('ScanLabelClaim')
+    .set({ expiresAt: now, releasedAt: now })
+    .where('itemId', '=', itemId)
+    .where('userId', '=', userId)
+    .executeTakeFirst();
+  return released.numUpdatedRows > 0n;
+}
+
+/** Skip: release the claim the card's token holds, so the next load serves another card. A token
+ *  that is not this moderator's live claim (another's, or already voted with) releases nothing. */
+export async function skipCard(token: string, userId: number, now = new Date()): Promise<boolean> {
+  const claim = await dbWrite
+    .selectFrom('ScanLabelClaim')
+    .select('itemId')
+    .where('token', '=', token)
+    .where('userId', '=', userId)
+    .executeTakeFirst();
+  return !!claim && releaseClaim(claim.itemId, userId, now);
+}
+
+type MediaRefusal =
+  | VoteRefusal
+  | 'not-yours'
+  | 'image-missing'
+  | 'withheld'
+  | 'withheld-read-failed';
+
+/** Refusals that will not clear for this moderator, so their card is dropped rather than served
+ *  again on the next load. A failed read may clear, so it only refuses. */
+const DROPPED: ReadonlySet<MediaRefusal> = new Set(['image-missing', 'withheld']);
+
+async function cardMedia(
   token: string,
   { userId, csamReview }: Claimer,
-  now = new Date()
-): Promise<CardMedia | null> {
+  now: Date
+): Promise<
+  { itemId: number | null; media: CardMedia } | { itemId: number | null; refused: MediaRefusal }
+> {
   const itemId = await itemForToken(token, userId);
-  if (itemId === null) return null;
+  if (itemId === null) return { itemId, refused: 'not-yours' };
   const item = await dbWrite
     .selectFrom('ScanLabelItem')
     .select(['votes', 'status'])
     .where('id', '=', itemId)
     .executeTakeFirst();
-  if (await voteRefusal(dbWrite, item, itemId, userId, now)) return null;
+  const refusal = await voteRefusal(dbWrite, item, itemId, userId, now);
+  if (refusal) return { itemId, refused: refusal };
   const row = await dbWrite
     .selectFrom('ScanLabelItem as i')
     .innerJoin('Image as img', 'img.id', 'i.imageId')
     .select(['img.id', 'img.url', 'img.type', 'img.name'])
     .where('i.id', '=', itemId)
     .executeTakeFirst();
-  if (!row) return null;
-  const withheld = await listWithheldIds([row.id], { csamReview }, 'scan-label-media');
-  return withheld.has(row.id) ? null : { url: row.url, type: String(row.type), name: row.name };
+  if (!row) return { itemId, refused: 'image-missing' };
+  const withheld = await restrictedImageIds([row.id], { csamReview }).catch(() => null);
+  if (!withheld) return { itemId, refused: 'withheld-read-failed' };
+  if (withheld.has(row.id)) return { itemId, refused: 'withheld' };
+  return { itemId, media: { url: row.url, type: String(row.type), name: row.name } };
+}
+
+/** The media of a card, served exactly while the moderator's vote on it would still land, and
+ *  never when its image is withheld from them. A card whose image is gone or withheld is dropped
+ *  from their queue. Each refusal is logged by reason, with ids only. */
+export async function mediaForToken(
+  token: string,
+  claimer: Claimer,
+  now = new Date()
+): Promise<CardMedia | null> {
+  const result = await cardMedia(token, claimer, now);
+  if ('media' in result) return result.media;
+  const { itemId, refused } = result;
+  const dropped =
+    itemId !== null && DROPPED.has(refused) && (await releaseClaim(itemId, claimer.userId, now));
+  void logToAxiom({
+    name: 'scan-label-media-refused',
+    type: 'info',
+    payload: { reason: refused, itemId, userId: claimer.userId, dropped },
+  });
+  return null;
 }
 
 const MAX_CLAIM_ATTEMPTS = 20;
@@ -241,6 +316,21 @@ function inSource(source: QueueSource) {
       source === 'upload' ? uploadScanned : eb.not(uploadScanned),
     ]);
   };
+}
+
+/** Not an item this moderator skipped or had dropped: `releasedAt` on their claim. */
+function notReleasedBy(userId: number) {
+  return (eb: ExpressionBuilder<DB & { i: DB['ScanLabelItem'] }, 'i'>) =>
+    eb.not(
+      eb.exists(
+        eb
+          .selectFrom('ScanLabelClaim as rc')
+          .select(sql`1`.as('one'))
+          .whereRef('rc.itemId', '=', 'i.id')
+          .where('rc.userId', '=', userId)
+          .where('rc.releasedAt', 'is not', null)
+      )
+    );
 }
 
 function notVotedBy(userId: number) {
@@ -307,6 +397,7 @@ export async function claimNext(
         let q = openItems(trx, filters)
           .select(['i.id', 'i.votes'])
           .where(notVotedBy(userId))
+          .where(notReleasedBy(userId))
           .where(notWithheld(csamReview))
           .where(
             (eb) =>

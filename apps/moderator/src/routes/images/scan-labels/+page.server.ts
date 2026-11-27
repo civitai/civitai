@@ -17,6 +17,7 @@ import {
   isControlFlaggerVersion,
   itemForToken,
   getVotedItemOwner,
+  skipCard,
   type VoteChoice,
 } from '$lib/server/scan-label.service';
 import {
@@ -90,7 +91,16 @@ const HOLD_FAILED =
 
 const STALE_PAGE = 'This page is out of date. Reload it to keep voting.';
 
+const skipSchema = z.object({ token: z.string().uuid() });
+
 export const actions: Actions = {
+  // Records no vote: releases the card's claim, and the reload serves the next one.
+  skip: async ({ request, locals }) => {
+    const input = parseForm(skipSchema, await request.formData());
+    if (typeof input === 'string') return fail(400, { error: STALE_PAGE });
+    await skipCard(input.token, locals.user.id);
+    return { skipped: true };
+  },
   vote: async (event) => {
     const { request, locals } = event;
     const form = await request.formData();
