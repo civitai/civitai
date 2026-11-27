@@ -191,11 +191,9 @@ func (q *ImagesQuery) Build() Built {
 
 	if !q.IsModerator {
 		and = append(and, `((p."availability" != 'Private' AND i."ingestion" != 'Blocked') OR p."userId" = `+q.viewerArg(a)+`)`)
-		if q.ViewerID != 0 {
-			and = append(and, `(i."blockedFor" IS NULL OR i."userId" = `+a.add(q.ViewerID)+`)`)
-		} else {
-			and = append(and, `(i."blockedFor" IS NULL)`)
-		}
+		// blockedMediaListConditions({ userId: ownerId }): the owner keeps a blocked image, and any of
+		// their own, only where ownerMediaAllowed allows it (#10505).
+		and = append(and, hydrate.BlockedMediaListSQL(q.ViewerID, false, a.add)...)
 	}
 	if q.DisablePoi {
 		and = append(and, `(i."poi" != TRUE OR p."userId" = `+q.viewerArg(a)+`)`)

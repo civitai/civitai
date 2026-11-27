@@ -582,8 +582,8 @@ describe('buildStickerAutoTrackWorkflow', () => {
       }[]
     ).find((s) => s.name === 'track')!.input.workflow;
 
-  it('tracks with the node pack layer its install step builds on the same image', () => {
-    const [install, track] = buildStickerAutoTrackWorkflow({
+  it('tracks in one step on the image that ships the pack, with no layer to build', () => {
+    const steps = buildStickerAutoTrackWorkflow({
       videoAir: 'air',
       pose,
       startMs: 0,
@@ -591,16 +591,14 @@ describe('buildStickerAutoTrackWorkflow', () => {
     }) as unknown as {
       $type: string;
       name: string;
-      input: { comfyImage: string; nodepacks?: string[]; resources?: unknown[] };
+      input: { comfyImage: string; resources: unknown[] };
     }[];
-    expect(install).toMatchObject({ $type: 'comfyNodepackSnapshot', name: 'install' });
-    expect(install.input.nodepacks).toEqual([expect.stringContaining('civitai-sticker-track@')]);
-    expect(track).toMatchObject({ $type: 'customComfy', name: 'track' });
-    expect(track.input.comfyImage).toBe(install.input.comfyImage);
-    expect(track.input.resources?.[0]).toEqual({
-      $ref: install.name,
-      path: 'output.results[0].layerAir',
-    });
+    expect(steps).toHaveLength(1);
+    expect(steps[0]).toMatchObject({ $type: 'customComfy', name: 'track' });
+    expect(steps[0].input.comfyImage).toMatch(/civitai-spine-comfy@/);
+    expect(steps[0].input.resources).not.toContainEqual(
+      expect.objectContaining({ $ref: expect.anything() })
+    );
   });
 
   it('also segments whatever is under the sticker, in pixels of the loaded frame', () => {

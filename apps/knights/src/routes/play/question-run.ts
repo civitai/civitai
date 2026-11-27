@@ -1,7 +1,7 @@
 export type RunCue = 'question-time' | 'questions-done' | null;
 
 /** How long Question time stays up before the first question of a run, unless the player starts sooner. */
-export const QUESTION_TIME_MS = 3000;
+export const QUESTION_TIME_MS = 5000;
 /** How long the "Questions done" banner sits over the first rating after a run, unless the player votes sooner. */
 export const QUESTIONS_DONE_MS = 2500;
 

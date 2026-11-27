@@ -195,6 +195,20 @@ const sqlShowcaseCurated = `SELECT 1 FROM "ModelVersionShowcaseItem" WHERE "mode
 // "computed"; a failed query "error"), except under a Go-first probe (WithPresence), which counts
 // nothing there.
 func (s *Sources) ShowcaseState(ctx context.Context, r *ShowcaseRead, ids []int) (Showcase, error) {
+	return s.showcaseState(ctx, r, ids, false)
+}
+
+// ShowcaseStateReadThrough is ShowcaseState read the way Node's fetch reads the missed versions
+// (the v1 models routes with FEED_GO_V1_MODELS_SERVE_SHOWCASE_MISS): a bust's debounce marker is a
+// miss like any other, which Node's fetch looks up (without writing it back), and a version a recent
+// write flagged is looked up on the primary (Compute.Primary), as getDbWithoutLagBatch reads it.
+// Without a primary a flagged version still leaves the answer ShowcaseUnknown. Everything else is
+// ShowcaseState's: a failed GET or lag-flag read, a stale entry, the precedence, and nothing written.
+func (s *Sources) ShowcaseStateReadThrough(ctx context.Context, r *ShowcaseRead, ids []int) (Showcase, error) {
+	return s.showcaseState(ctx, r, ids, true)
+}
+
+func (s *Sources) showcaseState(ctx context.Context, r *ShowcaseRead, ids []int, readThrough bool) (Showcase, error) {
 	curated, missing, held, stale, failed := r.classify(ids)
 	if failed != nil {
 		return ShowcaseCurated, fmt.Errorf("version showcase cache read: %w", failed)
@@ -202,20 +216,24 @@ func (s *Sources) ShowcaseState(ctx context.Context, r *ShowcaseRead, ids []int)
 	if curated || len(missing) == 0 {
 		return showcaseOf(curated, false, stale), nil
 	}
-	if held {
+	if held && !readThrough {
 		return ShowcaseUnknown, nil
 	}
 	if s == nil || s.Compute == nil || s.Replica == nil {
 		return ShowcaseUnknown, nil
 	}
 	flagged, err := s.lagFlagged(ctx, "modelVersion", missing)
-	if flagged {
+	if flagged && (!readThrough || s.Compute.Primary == nil) {
 		return ShowcaseUnknown, nil
 	}
-	if err != nil {
+	if err != nil && !flagged {
 		return ShowcaseCurated, fmt.Errorf("version showcase lag flag read: %w", err)
 	}
-	found, err := s.showcaseRowExists(ctx, missing)
+	db := s.Replica
+	if flagged {
+		db = s.Compute.Primary
+	}
+	found, err := showcaseRowExists(ctx, db, missing)
 	if presenceOf(ctx) == nil {
 		if err != nil {
 			s.Compute.observe(MissVersionShowcase, "error", len(missing))
@@ -229,9 +247,10 @@ func (s *Sources) ShowcaseState(ctx context.Context, r *ShowcaseRead, ids []int)
 	return showcaseOf(found, false, stale), nil
 }
 
-// showcaseRowExists runs sqlShowcaseCurated over ids on the replica: whether any has a row.
-func (s *Sources) showcaseRowExists(ctx context.Context, ids []int) (bool, error) {
-	rows, err := s.Replica.Query(ctx, sqlShowcaseCurated, ids)
+// showcaseRowExists runs sqlShowcaseCurated over ids on db (the replica, or the primary for a
+// flagged version read through): whether any has a row.
+func showcaseRowExists(ctx context.Context, db Querier, ids []int) (bool, error) {
+	rows, err := db.Query(ctx, sqlShowcaseCurated, ids)
 	if err != nil {
 		return false, err
 	}

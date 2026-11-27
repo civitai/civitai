@@ -49,14 +49,9 @@ func (q assocImageQuery) build() (string, []any) {
 		}
 		and = append(and, `(`+strings.Join(or, " OR ")+`)`)
 	}
-	// imageBlockedForConditions: nothing for a moderator.
-	if !q.IsModerator {
-		if q.ViewerID != 0 {
-			and = append(and, `(i."blockedFor" IS NULL OR i."userId" = `+bind(q.ViewerID)+`)`)
-		} else {
-			and = append(and, `(i."blockedFor" IS NULL)`)
-		}
-	}
+	// imageBlockedForConditions({ userId, isModerator }): nothing for a moderator; the owner keeps a
+	// blocked image only where ownerMediaAllowed allows it (#10505). No ownerMediaSql here, as in Node.
+	and = append(and, hydrate.ImageBlockedForSQL(q.ViewerID, q.IsModerator, bind)...)
 	// `if (browsingLevel) browsingLevel = onlySelectableLevels(browsingLevel)`, then the not-pending
 	// branch: `browsingLevel || allBrowsingLevelsFlag`.
 	level := q.Level & table.Levels.All

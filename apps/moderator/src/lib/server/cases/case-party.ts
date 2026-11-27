@@ -2,6 +2,7 @@ import type { Kysely } from 'kysely';
 import { sql } from 'kysely';
 import type { CasePartyActionInput, CasePartyViewInput } from '@civitai/moderation';
 import {
+  isTerminalState,
   processDefinitionSchema,
   type ProcessDefinition,
 } from '@civitai/moderation/process-definition';
@@ -180,12 +181,20 @@ export async function casePartyAction(input: CasePartyActionInput, deps: CasePar
         }),
       })
       .execute();
-    if (action.moveTo)
+    if (action.moveTo) {
+      // case-tick stops the clocks of a case once decided_at is set.
+      const terminal = isTerminalState(def, action.moveTo);
+      const reopened = !terminal && isTerminalState(def, current.state);
       await tx
         .updateTable('case_record')
-        .set({ state: action.moveTo, updated_at: sql`now()` })
+        .set({
+          state: action.moveTo,
+          updated_at: sql`now()`,
+          ...(terminal ? { decided_at: at.toISOString() } : reopened ? { decided_at: null } : {}),
+        })
         .where('id', '=', party.caseId)
         .execute();
+    }
     return { recorded: action.records, state: action.moveTo ?? current.state };
   });
 }
@@ -200,7 +209,7 @@ function actionOpenIn(
   state: string
 ) {
   if (action.from) return action.from.includes(state);
-  return !def.states.find((s) => s.id === state)?.terminal;
+  return !isTerminalState(def, state);
 }
 
 // Per ip, and per party for actions (keys `party:<id>`). An unresolved ip is left to the main app's limit.

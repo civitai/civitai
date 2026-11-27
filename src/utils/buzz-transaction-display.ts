@@ -47,6 +47,7 @@ export const TRANSACTION_TYPE_FILTER_OPTIONS: { value: string; label: string }[]
   typeFilter(TransactionType.Donation),
   typeFilter(TransactionType.Bid),
   typeFilter(TransactionType.Redeemable),
+  typeFilter(TransactionType.Fee),
   typeFilter(TransactionType.AppAuthorFee),
 ];
 

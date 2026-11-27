@@ -254,6 +254,7 @@ jobs:
       # functions in the module differ in either direction.
       FUZZ_TARGETS: >-
         internal/registry:FuzzNext:200000
+        internal/cache:FuzzReadReply:200000
     steps:
       - uses: actions/checkout@v7
 

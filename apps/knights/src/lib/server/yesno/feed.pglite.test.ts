@@ -3,7 +3,7 @@ import type { Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
 import { createQueueDb } from '../../../test/pglite-kysely';
-import { seedImage, seedPlayer } from '../../../test/seed';
+import { hideTagGroups, seedImage, seedPlayer } from '../../../test/seed';
 import { ensureVotePartitions } from '../queue/queue.service';
 import { pickYesNo } from './feed';
 import { importYesNo, type YesNoRow } from './import';
@@ -330,5 +330,26 @@ describe('stretches', () => {
     const last = (await pick(1, { stretch: 3 }))!;
     expect(last.prompt).toBe('Question v2?');
     expect(last.banner).toBeNull();
+  });
+});
+
+describe('a player who hides a tag group', () => {
+  it('is not asked the questions on its topic, even about an image without its tags', async () => {
+    const ids = await seed([
+      row('cuts', 10, { axis: 'violence' }),
+      row('body', 11, { axis: 'subject_state' }),
+      row('nude', 12, { axis: 'sexual' }),
+    ]);
+    await seedPlayer(pg, 1);
+    await seedPlayer(pg, 2);
+    await hideTagGroups(pg, 1, ['gore']);
+
+    const offer = await pick(1, { force: true });
+    expect(offer?.prompt).toBe('Question nude?');
+    await answer(1, offer!.itemId);
+    expect(await pick(1, { force: true })).toBeNull();
+
+    // Another player who hides nothing is still asked them.
+    expect((await pick(2, { force: true, exclude: [ids.nude] }))?.prompt).toBe('Question body?');
   });
 });

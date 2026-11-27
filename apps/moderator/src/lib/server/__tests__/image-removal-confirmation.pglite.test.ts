@@ -113,8 +113,10 @@ CREATE TABLE "Appeal" (
 CREATE TABLE "AppealDecisionRecord" ("appealId" INTEGER UNIQUE, "removalLabel" TEXT);
 CREATE TABLE "ModActivity" (id SERIAL PRIMARY KEY, "userId" INTEGER, "entityType" TEXT, "entityId" INTEGER, activity TEXT, "createdAt" TIMESTAMP(3) DEFAULT now());
 CREATE TYPE "ReportStatus" AS ENUM ('Pending', 'Processing', 'Actioned', 'Unactioned');
-CREATE TABLE "Report" (id INTEGER PRIMARY KEY, status "ReportStatus" NOT NULL);
+CREATE TABLE "Report" (id INTEGER PRIMARY KEY, status "ReportStatus" NOT NULL, reason TEXT NOT NULL DEFAULT 'NSFW');
+CREATE TABLE "ImageReport" ("imageId" INTEGER NOT NULL, "reportId" INTEGER NOT NULL);
 INSERT INTO "Report" (id, status) VALUES (7, 'Pending'), (8, 'Processing');
+INSERT INTO "ImageReport" ("imageId", "reportId") VALUES (50, 7), (50, 8);
 `;
 
 const REQUESTER = 2;
@@ -528,6 +530,109 @@ describe('deciding a held removal', () => {
     expect(setReportStatus).toHaveBeenCalledWith(
       expect.objectContaining({ fromStatuses: ['Pending', 'Processing'] })
     );
+  });
+
+  it('actions only the kept reports that are on this image', async () => {
+    await db.exec(`
+      INSERT INTO "Report" (id, status) VALUES (9, 'Pending');
+      INSERT INTO "ImageReport" ("imageId", "reportId") VALUES (51, 9);
+    `);
+    await approve();
+    const { held } = await blockImage({
+      imageId: IMAGE,
+      userId: REQUESTER,
+      violationType: 'animatedMinorNsfw',
+      reportIds: [7, 9],
+    });
+
+    await confirmRemoval({ id: held!.confirmationId, userId: CONFIRMER });
+
+    expect(setReportStatus.mock.calls.map(([a]) => a.id)).toEqual([7]);
+  });
+
+  const fileSinceHold = () =>
+    db.exec(`
+      INSERT INTO "Report" (id, status, reason) VALUES (10, 'Pending', 'TOSViolation'), (11, 'Pending', 'NSFW');
+      INSERT INTO "ImageReport" ("imageId", "reportId") VALUES (50, 10), (50, 11);
+    `);
+  const actioned = () => setReportStatus.mock.calls.map(([a]) => a.id);
+
+  it.each(['api.removeImages', 'site.setTosViolation'])(
+    'held from %s, also actions a TOS report filed since the hold, but no other new report',
+    async (source) => {
+      await approve();
+      const { held } = await blockImage({
+        imageId: IMAGE,
+        userId: REQUESTER,
+        violationType: 'animatedMinorNsfw',
+        reportIds: [7, 8],
+        source,
+      });
+      await fileSinceHold();
+
+      await confirmRemoval({ id: held!.confirmationId, userId: CONFIRMER });
+
+      expect(actioned()).toEqual([7, 8, 10]);
+    }
+  );
+
+  it('on a moderator block, leaves a TOS report filed since the hold for review', async () => {
+    const id = await hold();
+    await fileSinceHold();
+
+    await confirmRemoval({ id, userId: CONFIRMER });
+
+    expect(actioned()).toEqual([7, 8]);
+  });
+
+  it('voided because a ban removed the image meanwhile: closes the kept reports unpaid, no others', async () => {
+    await approve();
+    const { held } = await blockImage({
+      imageId: IMAGE,
+      userId: REQUESTER,
+      violationType: 'animatedMinorNsfw',
+      reportIds: [7, 8],
+      source: 'api.removeImages',
+    });
+    await fileSinceHold();
+    await db.query(
+      `UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'moderated' WHERE id = $1`,
+      [IMAGE]
+    );
+    await db.query(
+      `INSERT INTO "User" ("id", "bannedAt") SELECT "userId", now() FROM "Image" WHERE id = $1
+       ON CONFLICT ("id") DO UPDATE SET "bannedAt" = now()`,
+      [IMAGE]
+    );
+
+    expect(await confirmRemoval({ id: held!.confirmationId, userId: CONFIRMER })).toMatchObject({
+      status: 'Void',
+    });
+
+    expect(
+      setReportStatus.mock.calls.map(([a]) => [a.id, (a as { noReward?: boolean }).noReward])
+    ).toEqual([
+      [7, true],
+      [8, true],
+    ]);
+  });
+
+  it('stays Pending, its reports untouched, when the payout read for a voided confirm fails', async () => {
+    const id = await hold();
+    await db.query(
+      `UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'moderated' WHERE id = $1`,
+      [IMAGE]
+    );
+    // The banned-owner read is the only query on the Void path that reads "bannedAt".
+    await db.exec(`ALTER TABLE "User" RENAME COLUMN "bannedAt" TO "bannedAtGone"`);
+
+    await expect(confirmRemoval({ id, userId: CONFIRMER })).rejects.toThrow(/bannedAt/);
+
+    await db.exec(`ALTER TABLE "User" RENAME COLUMN "bannedAtGone" TO "bannedAt"`);
+    expect(await confirmations()).toEqual([
+      expect.objectContaining({ status: 'Pending', decidedById: null }),
+    ]);
+    expect(setReportStatus).not.toHaveBeenCalled();
   });
 
   it('runs the removal once when two moderators confirm', async () => {
