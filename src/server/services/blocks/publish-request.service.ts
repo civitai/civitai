@@ -255,6 +255,15 @@ export type SubmitVersionParams = {
    * Absent or false: such a bundle is refused (`PlatformUpdateMissingRefusal`).
    */
   allowUnmergedPlatformUpdate?: boolean;
+  /**
+   * A STAFF SUBMIT ON THE OWNER'S BEHALF of one platform update (a moderator only; no route passes
+   * it). Its bundle is the approved version plus that one update, so it lacks every other
+   * unshipped update by construction: it is never refused for them, and what it left out is
+   * recorded for the moderator (`fileSummary.platformUpdatesMissing`, via `on-behalf`). Its approve
+   * ships nothing (an update ships only in an owner's build): that reads the request's
+   * `fileSummary.onBehalf` record, which the on-behalf submit writes.
+   */
+  submittedOnBehalf?: boolean;
 };
 
 export type SubmitVersionResult = {
@@ -1165,7 +1174,10 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     githubOidcToken,
     sdkFloorOverride,
     allowUnmergedPlatformUpdate,
+    submittedOnBehalf,
   } = params;
+  if (submittedOnBehalf && !submitterIsModerator)
+    throw new Error('only a moderator can submit on behalf of an app owner');
 
   const { assertAcceptedAppDeveloperTerms } = await import('./app-developer-terms.service');
   await assertAcceptedAppDeveloperTerms(submittedByUserId);
@@ -1482,12 +1494,17 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     platformUpdatesMissingRecord,
     platformUpdateMissingAdvisories,
   } = await import('./platform-update-bundle-check');
+  const platformUpdatesVia = submittedOnBehalf === true ? 'on-behalf' : 'override';
   const platformUpdatesMissing = await assertBundleHasPlatformUpdates({
     appBlockId: existingApp?.id ?? null,
     readFiles: (paths) => readBundleFiles(bundleBuffer, paths),
-    allow: allowUnmergedPlatformUpdate === true,
+    allow: allowUnmergedPlatformUpdate === true || submittedOnBehalf === true,
   });
-  const platformUpdatesRecorded = platformUpdatesMissingRecord(platformUpdatesMissing, 'override');
+  const platformUpdatesRecorded = platformUpdatesMissingRecord(
+    platformUpdatesMissing.missing,
+    platformUpdatesVia,
+    platformUpdatesMissing
+  );
 
   // GITHUB ACTIONS OIDC — verified HERE: after the validation gates above and before the first
   // side effect (the upload), so a refused token leaves nothing behind. The token is present only
@@ -1769,7 +1786,11 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     advisories: [
       ...advisories,
       ...sdkFloorAdvisories(sdkFloor.lockfile, sdkFloor.below),
-      ...platformUpdateMissingAdvisories(platformUpdatesMissing, 'override'),
+      ...platformUpdateMissingAdvisories(
+        platformUpdatesMissing.missing,
+        platformUpdatesVia,
+        platformUpdatesMissing
+      ),
     ],
   };
 }
@@ -2644,14 +2665,14 @@ export async function recordPendingFromPush(args: {
   const { checkPlatformUpdates, platformUpdatesMissingRecord, platformUpdateMissingAdvisories } =
     await import('./platform-update-bundle-check');
   let pushMissing: MissingPlatformUpdate[] = [];
+  let pushTruncated = false;
   try {
-    pushMissing =
-      (
-        await checkPlatformUpdates({
-          appBlockId: args.appBlockId,
-          readFiles: (paths) => readForgejoFilesAtRef(args.slug, args.sha, paths),
-        })
-      )?.missing ?? [];
+    const pushCheck = await checkPlatformUpdates({
+      appBlockId: args.appBlockId,
+      readFiles: (paths) => readForgejoFilesAtRef(args.slug, args.sha, paths),
+    });
+    pushMissing = pushCheck?.missing ?? [];
+    pushTruncated = pushCheck?.truncated === true;
   } catch (err) {
     console.warn(
       `[recordPendingFromPush] platform-update check failed for ${args.slug}@${
@@ -2659,7 +2680,9 @@ export async function recordPendingFromPush(args: {
       }; recorded without it: ${err instanceof Error ? err.message : String(err)}`
     );
   }
-  const pushPlatformUpdates = platformUpdatesMissingRecord(pushMissing, 'push');
+  const pushPlatformUpdates = platformUpdatesMissingRecord(pushMissing, 'push', {
+    truncated: pushTruncated,
+  });
 
   // Supersede any OTHER still-pending request for this slug (older sha or a
   // dev submitVersion) so the partial unique index (one pending per slug)
@@ -2781,7 +2804,7 @@ export async function recordPendingFromPush(args: {
 
   return {
     publishRequestId,
-    advisories: platformUpdateMissingAdvisories(pushMissing, 'push'),
+    advisories: platformUpdateMissingAdvisories(pushMissing, 'push', { truncated: pushTruncated }),
   };
 }
 
@@ -5177,18 +5200,6 @@ async function approveRequestUnderClaim(
       priorListing,
     })
   );
-  // STAFF PLATFORM UPDATES — this request is approved now: every unshipped update the approved
-  // bytes contain is marked shipped by it, so no later submit is checked for it. Re-checked here
-  // against these bytes; the submit-time answer is not reused. Never throws (a failure leaves the
-  // updates unshipped). See `platform-update-bundle-check.ts`.
-  {
-    const { markShippedPlatformUpdates } = await import('./platform-update-bundle-check');
-    await markShippedPlatformUpdates({
-      appBlockId,
-      publishRequestId: request.id,
-      readFiles: (paths) => readBundleFiles(bundleBuffer, paths),
-    });
-  }
   // A held version must not build, deploy or be announced; a moderator clears the hold first.
   // The suspended block stops only the on-site runtime, so the live pointer comes down too.
   if (lateHoldIds.length) {
@@ -5227,6 +5238,22 @@ async function approveRequestUnderClaim(
       lateHoldIds,
       liveNote,
     };
+  }
+
+  // STAFF PLATFORM UPDATES — this version is going live now (a late hold returned above, leaving
+  // it pending; the re-approve after the hold is cleared runs this): every unshipped update the
+  // approved bytes contain is marked shipped by it, so no later submit is checked for it.
+  // Re-checked here against these bytes; the submit-time answer is not reused. A staff on-behalf
+  // request ships nothing: only an owner's build does. Never throws (a failure leaves the updates
+  // unshipped). See `platform-update-bundle-check.ts`.
+  {
+    const { markShippedPlatformUpdates } = await import('./platform-update-bundle-check');
+    await markShippedPlatformUpdates({
+      appBlockId,
+      publishRequestId: request.id,
+      fileSummary: request.fileSummary,
+      readFiles: (paths) => readBundleFiles(bundleBuffer, paths),
+    });
   }
 
   // (6a) VERSION TAG — an annotated `v<version>` on the approved commit (or, when that tag

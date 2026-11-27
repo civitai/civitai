@@ -285,9 +285,38 @@ export type PlatformUpdateChange =
  * refuse or that escapes the tree, and anything a source repo never holds
  * ({@link sourceRepoNeverHolds}: env files, keys, credentials, dependencies, build output),
  * in ANY letter case (`.ENV`, `.Env.local`, `Node_Modules/…`): a checkout on a case-insensitive
- * file system reads those as the lowercase name. The shared lists themselves (fork seed, App
- * Assistant export) are unchanged.
+ * file system reads those as the lowercase name. Also anything under a folder the CLI's package
+ * drops at every depth ({@link CLI_PACKAGE_DROPPED_DIRS}: `src/build/…`, `packages/x/coverage/…`).
+ * The shared lists themselves (fork seed, App Assistant export) are unchanged.
  */
+/**
+ * Directory names the CLI's packager (`civitai/cli` `internal/pkgzip`, `excludedDirs`) drops at
+ * EVERY depth: VCS metadata, dependency installs, build output and tooling caches. A platform
+ * update under one of them could never reach a submitted bundle, so the submit check would refuse
+ * every bundle of the app until staff withdrew it. Platform updates only: the shared source-repo
+ * lists ({@link sourceRepoNeverHolds}) match build output at the top level alone.
+ */
+const CLI_PACKAGE_DROPPED_DIRS = new Set([
+  '.git',
+  '.hg',
+  '.svn',
+  'node_modules',
+  '.venv',
+  'venv',
+  '.pnpm-store',
+  'dist',
+  'build',
+  'out',
+  '.next',
+  '.vite',
+  '.cache',
+  'coverage',
+  '.pytest_cache',
+  '.mypy_cache',
+  '.ruff_cache',
+  '.turbo',
+]);
+
 export function platformUpdatePathRefusal(path: string): string | null {
   if (!path || path.length > 400) return 'is empty or too long';
   // eslint-disable-next-line no-control-regex
@@ -297,6 +326,14 @@ export function platformUpdatePathRefusal(path: string): string | null {
     return 'is not a relative repo path';
   if (sourceRepoNeverHolds(path) || sourceRepoNeverHolds(path.toLowerCase()))
     return 'is a file a source repo never holds';
+  // Every directory on the path (not the file's own name), in any letter case.
+  if (
+    path
+      .split('/')
+      .slice(0, -1)
+      .some((dir) => CLI_PACKAGE_DROPPED_DIRS.has(dir.toLowerCase()))
+  )
+    return "is in a folder the app's package always leaves out";
   return null;
 }
 

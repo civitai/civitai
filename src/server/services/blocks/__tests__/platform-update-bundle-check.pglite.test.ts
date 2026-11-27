@@ -342,6 +342,105 @@ describe('checkPlatformUpdates', () => {
     });
   });
 
+  it('🔴 an update whose commits cannot be read is reported missing (never thrown), and logged', async () => {
+    const shaIn = staffCommit({ 'src/a.ts': UPDATE_TEXT });
+    await addUpdate({
+      id: 'apu_lost',
+      commitSha: 'f'.repeat(40),
+      paths: [{ path: 'src/legacy.ts', operation: 'delete' }],
+      at: '2027-01-01T00:00:00Z',
+    });
+    await addUpdate({
+      id: 'apu_ok',
+      commitSha: shaIn,
+      paths: [{ path: 'src/a.ts', operation: 'update' }],
+      at: '2027-01-02T00:00:00Z',
+    });
+    const v = version({ 'src/a.ts': UPDATE_TEXT });
+    expect(await checkPlatformUpdates({ appBlockId: APP, readFiles: v.readFiles })).toEqual({
+      contained: ['apu_ok'],
+      missing: [
+        {
+          id: 'apu_lost',
+          reason: 'Fix the deprecated SDK call',
+          by: 'mod-jane',
+          paths: ['src/legacy.ts'],
+          unreadable: true,
+        },
+      ],
+    });
+    await vi.waitFor(() =>
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: 'bundle check: an update could not be read; reported missing',
+          appBlockId: APP,
+          updateId: 'apu_lost',
+        }),
+        'webhooks'
+      )
+    );
+    // The submit: refused with the escape named, and the override still applies.
+    await expect(
+      assertBundleHasPlatformUpdates({ appBlockId: APP, readFiles: v.readFiles, allow: false })
+    ).rejects.toThrow(
+      'apu_lost by mod-jane ("Fix the deprecated SDK call"): src/legacy.ts [its files could not be ' +
+        'read from the source repo; Civitai staff can withdraw it]. Merge it into the app'
+    );
+    expect(
+      (
+        await assertBundleHasPlatformUpdates({
+          appBlockId: APP,
+          readFiles: v.readFiles,
+          allow: true,
+        })
+      ).missing
+    ).toHaveLength(1);
+  });
+
+  it('🔴 checks at most the cap, the OLDEST first; past it the check says truncated and logs', async () => {
+    const cap = bundleCheck.PLATFORM_UPDATE_CHECK_CAP;
+    expect(cap).toBe(100);
+    // cap + 2 updates, created a day apart: the two newest are past the cap.
+    for (let i = 0; i < cap + 2; i++)
+      await addUpdate({
+        id: `apu_${String(i).padStart(3, '0')}`,
+        commitSha: staffCommit({ 'src/a.ts': UPDATE_TEXT }),
+        paths: [{ path: 'src/a.ts', operation: 'update' }],
+        at: new Date(Date.UTC(2027, 0, 1) + i * 86_400_000).toISOString(),
+      });
+    const v = version({ 'src/a.ts': BASE_TEXT });
+    const check = await checkPlatformUpdates({ appBlockId: APP, readFiles: v.readFiles });
+    expect(check?.truncated).toBe(true);
+    expect(check?.missing.map((m) => m.id)).toHaveLength(cap);
+    expect(check?.missing[0].id).toBe('apu_000');
+    expect(check?.missing[cap - 1].id).toBe(`apu_${String(cap - 1).padStart(3, '0')}`);
+    await vi.waitFor(() =>
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: 'bundle check: more unshipped updates than the cap',
+          appBlockId: APP,
+          cap,
+        }),
+        'webhooks'
+      )
+    );
+    const err = (await assertBundleHasPlatformUpdates({
+      appBlockId: APP,
+      readFiles: v.readFiles,
+      allow: false,
+    }).catch((e: unknown) => e)) as bundleCheck.PlatformUpdateMissingRefusal;
+    expect(err).toBeInstanceOf(bundleCheck.PlatformUpdateMissingRefusal);
+    expect(err.message).toContain(
+      '(only the oldest 100 unshipped platform updates were checked; more may be missing). Merge them'
+    );
+    expect(err.details.truncated).toBe(true);
+    // Positive control: at exactly the cap, not truncated.
+    await pg.query(`DELETE FROM app_platform_updates WHERE id IN ('apu_100', 'apu_101')`);
+    const atCap = await checkPlatformUpdates({ appBlockId: APP, readFiles: v.readFiles });
+    expect(atCap?.missing).toHaveLength(cap);
+    expect(atCap).not.toHaveProperty('truncated');
+  });
+
   it('is off with the flag off, and for a first version (no app): no query, no read', async () => {
     const sha = staffCommit({ 'src/a.ts': UPDATE_TEXT });
     await addUpdate({
@@ -386,7 +485,7 @@ describe('checkPlatformUpdates', () => {
           readFiles: v.readFiles,
           allow: false,
         })
-      ).toEqual([]);
+      ).toEqual({ missing: [], truncated: false });
       await vi.waitFor(() => expect(logged() - before).toBe(1), { timeout: 10_000 });
     } finally {
       await noTable.close();
@@ -416,6 +515,7 @@ describe('markShippedPlatformUpdates (approve)', () => {
       await markShippedPlatformUpdates({
         appBlockId: APP,
         publishRequestId: 'pubreq_v2',
+        fileSummary: null,
         readFiles: v.readFiles,
       })
     ).toEqual(['apu_in']);
@@ -433,6 +533,47 @@ describe('markShippedPlatformUpdates (approve)', () => {
     });
   });
 
+  it('🔴 only an owner build ships: approving a staff on-behalf request marks nothing', async () => {
+    const sha = staffCommit({ 'src/a.ts': UPDATE_TEXT });
+    await addUpdate({
+      id: 'apu_behalf',
+      commitSha: sha,
+      paths: [{ path: 'src/a.ts', operation: 'update' }],
+    });
+    const v = version({ 'src/a.ts': UPDATE_TEXT });
+    const onBehalf = {
+      files: [],
+      onBehalf: {
+        platformUpdateId: 'apu_behalf',
+        staffUserId: MOD,
+        staffUsername: 'mod-jane',
+        ownerUserId: 7101,
+        ownerUsername: 'owner-olga',
+      },
+    };
+    expect(
+      await markShippedPlatformUpdates({
+        appBlockId: APP,
+        publishRequestId: 'pubreq_staff',
+        fileSummary: onBehalf,
+        readFiles: v.readFiles,
+      })
+    ).toEqual([]);
+    expect((await shippedColumn()).map((r) => r.shipped)).toEqual([null]);
+    // No check ran for it at all.
+    expect(v.calls).toEqual([]);
+    // The owner's own approved build of the same bytes ships it.
+    expect(
+      await markShippedPlatformUpdates({
+        appBlockId: APP,
+        publishRequestId: 'pubreq_owner',
+        fileSummary: { files: [] },
+        readFiles: v.readFiles,
+      })
+    ).toEqual(['apu_behalf']);
+    expect((await shippedColumn()).map((r) => r.shipped)).toEqual(['pubreq_owner']);
+  });
+
   it('keeps the request that shipped an update first', async () => {
     const sha = staffCommit({ 'src/a.ts': UPDATE_TEXT });
     await addUpdate({
@@ -444,6 +585,7 @@ describe('markShippedPlatformUpdates (approve)', () => {
     await markShippedPlatformUpdates({
       appBlockId: APP,
       publishRequestId: 'pubreq_first',
+      fileSummary: null,
       readFiles: v.readFiles,
     });
     // A second approve does not see it (shipped) and does not overwrite it.
@@ -451,6 +593,7 @@ describe('markShippedPlatformUpdates (approve)', () => {
       await markShippedPlatformUpdates({
         appBlockId: APP,
         publishRequestId: 'pubreq_second',
+        fileSummary: null,
         readFiles: v.readFiles,
       })
     ).toEqual([]);
@@ -485,6 +628,7 @@ describe('markShippedPlatformUpdates (approve)', () => {
       markShippedPlatformUpdates({
         appBlockId: APP,
         publishRequestId: 'pubreq_x',
+        fileSummary: null,
         readFiles: v.readFiles,
       })
     ).resolves.toEqual([]);

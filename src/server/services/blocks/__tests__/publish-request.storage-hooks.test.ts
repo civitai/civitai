@@ -804,6 +804,48 @@ describe('staff platform updates', () => {
       ]);
     });
 
+    it('🔴 a staff on-behalf submit is never refused: recorded via on-behalf, with an advisory', async () => {
+      const result = await puSubmit({ 'src/a.ts': PU_BASE_TEXT }, { submittedOnBehalf: true });
+      expect(result.publishRequestId).toMatch(/^pubreq_/);
+      expect(createdFileSummary().platformUpdatesMissing).toEqual({
+        ...PU_RECORD('override'),
+        via: 'on-behalf',
+      });
+      expect(result.advisories.map((a) => a.code)).toContain('platform-update-missing');
+      expect((await reviewLines(createdFileSummary()))[0]?.heading).toBe(
+        "Missing platform updates (Civitai staff submission on the owner's behalf)"
+      );
+    });
+
+    it('submittedOnBehalf from a submitter who is not a moderator is refused before anything', async () => {
+      const err = await puRejection(
+        puSubmit(
+          { 'src/a.ts': PU_UPDATE_TEXT },
+          { submittedOnBehalf: true, submitterIsModerator: false }
+        )
+      );
+      expect(err?.message).toBe('only a moderator can submit on behalf of an app owner');
+      expect(updateQueries()).toHaveLength(0);
+      expect(dbMock.dbWrite.appBlockPublishRequest.create).not.toHaveBeenCalled();
+    });
+
+    it('🔴 an update whose commit cannot be read refuses as missing, not a read error; the override queues it', async () => {
+      pu.trees.delete(`${FORGEJO_SOURCE_ORG}@${PU_UPDATE_SHA}`);
+      const err = await puRejection(puSubmit({ 'src/a.ts': PU_UPDATE_TEXT }));
+      expect(err?.code).toBe('platform_update_missing');
+      expect(err?.details).toEqual({ updates: [{ ...PU_MISSING[0], unreadable: true }] });
+      expect(err?.message).toContain('Civitai staff can withdraw it');
+      const result = await puSubmit(
+        { 'src/a.ts': PU_UPDATE_TEXT },
+        { allowUnmergedPlatformUpdate: true }
+      );
+      expect(result.publishRequestId).toMatch(/^pubreq_/);
+      expect(createdFileSummary().platformUpdatesMissing).toEqual({
+        via: 'override',
+        updates: [{ id: 'apu_int', by: 'mod-jane', paths: ['src/a.ts'], unreadable: true }],
+      });
+    });
+
     it('accepts a bundle that has the update’s exact file, and records nothing', async () => {
       const result = await puSubmit({ 'src/a.ts': PU_UPDATE_TEXT });
       expect(result.publishRequestId).toMatch(/^pubreq_/);

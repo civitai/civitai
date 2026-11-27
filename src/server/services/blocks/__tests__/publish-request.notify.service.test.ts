@@ -514,8 +514,11 @@ describe('approveRequest — staff platform updates', () => {
       )
       .map(([, publishRequestId, ids]) => [ids, publishRequestId]);
 
-  const approve = async () => {
-    db.read.appBlockPublishRequest.findUnique.mockResolvedValueOnce(pendingApproveRow());
+  const approve = async (row: Record<string, unknown> = {}) => {
+    db.read.appBlockPublishRequest.findUnique.mockResolvedValueOnce({
+      ...pendingApproveRow(),
+      ...row,
+    });
     db.read.appBlock.findFirst.mockResolvedValueOnce(existingAppBlock());
     return approveRequest({ publishRequestId: 'req_appr_1', reviewerUserId: 9 });
   };
@@ -566,6 +569,85 @@ describe('approveRequest — staff platform updates', () => {
 
   it('🔴 marks shipped, by this request, only the updates the approved bundle contains', async () => {
     await setBundle({ 'src/a.ts': UPDATE_TEXT });
+    await approve();
+    expect(shippedWrites()).toEqual([[['apu_in'], 'req_appr_1']]);
+  });
+
+  it('🔴 only an owner build ships: approving a staff on-behalf request marks nothing', async () => {
+    await setBundle({ 'src/a.ts': UPDATE_TEXT });
+    const result = await approve({
+      fileSummary: {
+        files: [],
+        onBehalf: {
+          platformUpdateId: 'apu_in',
+          staffUserId: 9,
+          staffUsername: 'mod-jane',
+          ownerUserId: SUBMITTER,
+          ownerUsername: 'owner',
+        },
+      },
+    });
+    expect(result.publishRequestId).toBe('req_appr_1');
+    expect(shippedWrites()).toEqual([]);
+    // The same bytes approved as the owner's own build do ship it (the control).
+    await approve({ fileSummary: { files: [] } });
+    expect(shippedWrites()).toEqual([[['apu_in'], 'req_appr_1']]);
+  });
+
+  it('🔴 a version a late hold re-suspends is not live: nothing is marked shipped', async () => {
+    await setBundle({ 'src/a.ts': UPDATE_TEXT });
+    // A hold placed after the approve's claim: open holds are read again inside the final
+    // transaction, after the code is committed, and that one was never shown.
+    const commitFiles = vi.mocked(forgejo.commitFiles);
+    const lateHold = {
+      id: 77,
+      slug: 'cool-app',
+      publishRequestId: 'req_appr_1',
+      requestKind: 'onsite',
+      placedByUserId: 9,
+      placedByUsername: 'mod',
+      placedByLabel: null,
+      reason: 'late hold for the test',
+      createdAt: new Date(),
+      clearedAt: null,
+      clearedByUserId: null,
+      clearedKind: null,
+      clearedReason: null,
+    };
+    const txQueryRaw = vi.fn(async (sql: unknown) =>
+      commitFiles.mock.calls.length > 0 &&
+      (sql as { join?: (s: string) => string }).join?.('?').includes('app_publish_request_holds')
+        ? [lateHold]
+        : []
+    );
+    const original = db.write.$transaction.getMockImplementation();
+    db.write.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) =>
+      fn({
+        ...db.write,
+        // The late-hold rollback puts the store listing back.
+        appListing: { ...db.write.appListing, update: vi.fn(async () => ({})) },
+        $queryRaw: txQueryRaw,
+        $executeRaw: async () => 0,
+        $executeRawUnsafe: async () => 0,
+      })
+    );
+    try {
+      const result = await approve();
+      expect(result.lateHoldIds).toEqual([77]);
+      expect(shippedWrites()).toEqual([]);
+      // The check itself never ran: it runs only once the version goes live. (The first case in
+      // this block is the positive control: the same bundle, no hold, is marked.)
+      expect(
+        (db.write.$queryRaw.mock.calls as unknown[][]).filter(([sql]) => isUpdateQuery(sql))
+      ).toHaveLength(0);
+    } finally {
+      if (original) db.write.$transaction.mockImplementation(original);
+    }
+  });
+
+  it('marks the readable contained update even when another update cannot be read', async () => {
+    trees.delete(`${FORGEJO_SOURCE_ORG}@${OUT_SHA}`);
+    await setBundle({ 'src/a.ts': UPDATE_TEXT, 'src/new.ts': 'export {};\n' });
     await approve();
     expect(shippedWrites()).toEqual([[['apu_in'], 'req_appr_1']]);
   });

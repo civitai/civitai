@@ -40,6 +40,29 @@ describe('reviewPlatformUpdatesLines', () => {
     ]);
   });
 
+  it('labels a staff on-behalf submission, marks an unreadable update and a capped check', () => {
+    expect(
+      reviewPlatformUpdatesLines({
+        platformUpdatesMissing: {
+          via: 'on-behalf',
+          updates: [
+            { id: 'apu_4', by: 'mod-jane', paths: ['a.ts'], unreadable: true },
+            { id: 'apu_5', by: 'mod-ana', paths: ['b.ts'] },
+          ],
+          truncated: true,
+        },
+      })
+    ).toEqual([
+      {
+        key: 'platform-updates',
+        heading: "Missing platform updates (Civitai staff submission on the owner's behalf)",
+        value:
+          'apu_4 by mod-jane: a.ts (could not be read); apu_5 by mod-ana: b.ts; ' +
+          'more unshipped updates were not checked',
+      },
+    ]);
+  });
+
   it('shows nothing when nothing is recorded or the record is malformed', () => {
     expect(reviewPlatformUpdatesLines({ files: [] })).toEqual([]);
     expect(reviewPlatformUpdatesLines(null)).toEqual([]);

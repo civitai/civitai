@@ -10,6 +10,8 @@ export const PLATFORM_UPDATES_OVERRIDE_LABEL =
   'Missing platform updates (submitted with --allow-unmerged-platform-update)';
 export const PLATFORM_UPDATES_PUSH_LABEL =
   'Missing platform updates (git push, recorded without them)';
+export const PLATFORM_UPDATES_ON_BEHALF_LABEL =
+  "Missing platform updates (Civitai staff submission on the owner's behalf)";
 
 export type ReviewPlatformUpdatesLine = {
   key: 'platform-updates';
@@ -17,19 +19,25 @@ export type ReviewPlatformUpdatesLine = {
   value: string;
 };
 
-type Entry = { id: string; by: string | null; paths: string[] };
+type Entry = { id: string; by: string | null; paths: string[]; unreadable: boolean };
 
 function entries(raw: unknown): Entry[] {
   if (!Array.isArray(raw)) return [];
   const out: Entry[] = [];
   for (const e of raw) {
     if (!e || typeof e !== 'object') continue;
-    const { id, by, paths } = e as { id?: unknown; by?: unknown; paths?: unknown };
+    const { id, by, paths, unreadable } = e as {
+      id?: unknown;
+      by?: unknown;
+      paths?: unknown;
+      unreadable?: unknown;
+    };
     if (typeof id !== 'string' || !Array.isArray(paths)) continue;
     out.push({
       id,
       by: typeof by === 'string' ? by : null,
       paths: paths.filter((p): p is string => typeof p === 'string'),
+      unreadable: unreadable === true,
     });
   }
   return out;
@@ -42,14 +50,21 @@ export function reviewPlatformUpdatesLines(fileSummary: unknown): ReviewPlatform
   if (!rec || typeof rec !== 'object') return [];
   const list = entries((rec as { updates?: unknown }).updates);
   if (!list.length) return [];
-  const via = (rec as { via?: unknown }).via;
-  return [
-    {
-      key: 'platform-updates',
-      heading: via === 'push' ? PLATFORM_UPDATES_PUSH_LABEL : PLATFORM_UPDATES_OVERRIDE_LABEL,
-      value: list
-        .map((e) => `${e.id} by ${e.by ?? 'Civitai staff'}: ${e.paths.join(', ')}`)
-        .join('; '),
-    },
-  ];
+  const { via, truncated } = rec as { via?: unknown; truncated?: unknown };
+  const heading =
+    via === 'push'
+      ? PLATFORM_UPDATES_PUSH_LABEL
+      : via === 'on-behalf'
+      ? PLATFORM_UPDATES_ON_BEHALF_LABEL
+      : PLATFORM_UPDATES_OVERRIDE_LABEL;
+  const value =
+    list
+      .map(
+        (e) =>
+          `${e.id} by ${e.by ?? 'Civitai staff'}: ${e.paths.join(', ')}${
+            e.unreadable ? ' (could not be read)' : ''
+          }`
+      )
+      .join('; ') + (truncated === true ? '; more unshipped updates were not checked' : '');
+  return [{ key: 'platform-updates', heading, value }];
 }

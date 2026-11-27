@@ -66,6 +66,70 @@ describe('pathHoldsUpdate', () => {
     expect(pathHoldsUpdate({ want: b(want), base: b(BASE), have: b(BASE) })).toBe(false);
   });
 
+  // The update's change is COUNTED: lines it adds and lines it removes, each with its number of
+  // copies. Each case below read "contained" under a set-of-lines rule.
+  describe('counted changes (added and removed lines)', () => {
+    const holds = (want: string, base: string | null, have: string) =>
+      pathHoldsUpdate({ want: b(want), base: base === null ? null : b(base), have: b(have) });
+
+    it('a remove-only update whose removed line the owner kept is missing', () => {
+      const base = 'keep\nbad call\n';
+      const want = 'keep\n';
+      // The owner's other edits make the file differ from the base, but the bad line is still there.
+      expect(holds(want, base, 'keep\nbad call\nowner edit\n')).toBe(false);
+      // Positive control: removed, with the owner's edit beside it.
+      expect(holds(want, base, 'keep\nowner edit\n')).toBe(true);
+    });
+
+    it('a replacement whose old line the owner kept beside the new one is missing', () => {
+      const base = 'a\nold();\nz\n';
+      const want = 'a\nnew();\nz\n';
+      expect(holds(want, base, 'a\nold();\nnew();\nz\n')).toBe(false);
+      expect(holds(want, base, 'a\nnew();\nz\nowner\n')).toBe(true);
+    });
+
+    it('an added copy of a line the base already has must be there as a copy', () => {
+      const base = 'init();\nrun();\n';
+      const want = 'init();\nrun();\ninit();\n';
+      // One `init();` (the base's): the update's second copy was never added.
+      expect(holds(want, base, 'init();\nrun();\nowner();\n')).toBe(false);
+      expect(holds(want, base, 'init();\nrun();\nowner();\ninit();\n')).toBe(true);
+    });
+
+    it('a reorder-only update holds with the exact bytes alone', () => {
+      const base = 'first\nsecond\n';
+      const want = 'second\nfirst\n';
+      expect(holds(want, base, want)).toBe(true);
+      // The owner's other edits beside the base order: nothing shows the reorder was taken.
+      expect(holds(want, base, 'first\nsecond\nowner\n')).toBe(false);
+      // Even with the update's order and an owner edit: a reorder is never hand-merged.
+      expect(holds(want, base, 'second\nfirst\nowner\n')).toBe(false);
+      // Blank-line-only change: also exact bytes only.
+      expect(holds('first\n\nsecond\n', base, 'first\nsecond\nowner\n')).toBe(false);
+    });
+
+    it('a hand-merge with extra owner edits on both sides of the update holds', () => {
+      const base = 'import a;\nold();\nend();\n';
+      const want = 'import a;\nimport b;\nnew();\nend();\n';
+      const have = '// owner\nimport a;\nimport b;\nimport own;\nnew();\nown();\nend();\n';
+      expect(holds(want, base, have)).toBe(true);
+    });
+
+    it('CRLF against LF holds (line endings are not a change)', () => {
+      const base = 'a\nold\n';
+      const want = 'a\nnew\n';
+      expect(holds(want, base, 'a\r\nnew\r\nowner\r\n')).toBe(true);
+      expect(holds(want, base, 'a\r\nold\r\nnew\r\n')).toBe(false);
+    });
+
+    it('a line removed from two copies to one: the owner may keep one, not two', () => {
+      const base = 'x();\nx();\ny();\n';
+      const want = 'x();\ny();\n';
+      expect(holds(want, base, 'x();\ny();\nowner\n')).toBe(true);
+      expect(holds(want, base, 'x();\nx();\ny();\nowner\n')).toBe(false);
+    });
+  });
+
   it('a non-text file must match exactly', () => {
     const want = Buffer.concat([NOT_UTF8, b('v2')]);
     expect(pathHoldsUpdate({ want, base: NOT_UTF8, have: Buffer.from(want) })).toBe(true);

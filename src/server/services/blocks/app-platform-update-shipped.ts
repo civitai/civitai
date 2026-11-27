@@ -43,6 +43,15 @@ export type UnshippedPlatformUpdate = {
   by: string | null;
 };
 
+/**
+ * The most unshipped updates one check reads: the OLDEST (they have waited longest), and the
+ * check says `truncated` past it (`platform-update-bundle-check.ts`).
+ */
+export const PLATFORM_UPDATE_CHECK_CAP = 100;
+
+/** The oldest unshipped updates, at most the cap; `truncated` when the app has more. */
+export type UnshippedPlatformUpdates = { updates: UnshippedPlatformUpdate[]; truncated: boolean };
+
 type UnshippedRow = {
   id: string;
   slug: string;
@@ -60,12 +69,13 @@ type UnshippedRow = {
  * The app's updates no approved version has shipped yet, oldest first: every status but
  * `superseded` (`merged` included: a client's report is not proof the bundle holds it), and only
  * those whose author is staff now ({@link isVerifiedStaff}), the updates a client is offered to
- * merge. ONE query, on the primary (an update pushed moments ago counts).
- * `null` when the table or the `shipped` columns are missing: the check is off.
+ * merge. ONE query, on the primary (an update pushed moments ago counts). At most
+ * `PLATFORM_UPDATE_CHECK_CAP` rows, the oldest (the longest unshipped); one more is read only to
+ * say `truncated`. `null` when the table or the `shipped` columns are missing: the check is off.
  */
 export async function listUnshippedPlatformUpdates(
   appBlockId: string
-): Promise<UnshippedPlatformUpdate[] | null> {
+): Promise<UnshippedPlatformUpdates | null> {
   let rows: UnshippedRow[];
   try {
     rows = (await dbWrite.$queryRaw(
@@ -77,13 +87,14 @@ export async function listUnshippedPlatformUpdates(
         WHERE u."app_block_id" = ${appBlockId}
           AND u."status" <> 'superseded'
           AND u."shipped_in_publish_request_id" IS NULL
-        ORDER BY u."created_at" ASC, u."id" ASC LIMIT 100`
+        ORDER BY u."created_at" ASC, u."id" ASC LIMIT ${PLATFORM_UPDATE_CHECK_CAP + 1}`
     )) as UnshippedRow[];
   } catch (err) {
     if (isMissingTableError(err) || isMissingColumnError(err)) return null;
     throw err;
   }
-  return rows.flatMap((row) =>
+  const truncated = rows.length > PLATFORM_UPDATE_CHECK_CAP;
+  const updates = rows.slice(0, PLATFORM_UPDATE_CHECK_CAP).flatMap((row) =>
     isVerifiedStaff(row)
       ? [
           {
@@ -98,6 +109,7 @@ export async function listUnshippedPlatformUpdates(
         ]
       : []
   );
+  return { updates, truncated };
 }
 
 /**
