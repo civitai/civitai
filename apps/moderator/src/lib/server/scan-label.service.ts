@@ -759,8 +759,8 @@ const claimableAt = (now: Date) => (eb: ExpressionBuilder<DB, 'ScanLabelItem'>) 
 /**
  * Decides, as a block, every open item whose image the sweep itself blocked. That image is blocked
  * now, so a further vote could not change the outcome, and it can no longer be shown to cast one.
- * Also picks up items blocked before this rule, on the next sweep. An item the sweep skipped
- * ('already-blocked', 'image-missing') stays open: closing those is separate work.
+ * Also picks up items blocked before this rule, on the next sweep. An 'already-blocked' item, its
+ * image blocked outside the queue, stays open: closing those is separate work.
  */
 async function decideBlockedMajorities() {
   await dbWrite
