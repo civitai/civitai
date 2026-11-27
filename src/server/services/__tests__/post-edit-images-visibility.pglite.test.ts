@@ -250,8 +250,8 @@ describe('getPostEditImages: blocked images', () => {
     ]);
   });
 
-  // Legal's condition: no owner payload names a safety block reason. Only an owner-actionable
-  // hold (OWNER_MEDIA_EXEMPT_BLOCKS) keeps its reason, matched exactly.
+  // civitai/civitai#10663: no payload the owner receives names a block reason they cannot act on.
+  // Only an owner-actionable hold (OWNER_MEDIA_EXEMPT_BLOCKS) keeps its reason, matched exactly.
   it("names only an owner-actionable reason in the owner's editor load", async () => {
     const reasons = Object.fromEntries(
       (await blockedPostRows(owner)).map(({ id, blockedFor }) => [id, blockedFor])

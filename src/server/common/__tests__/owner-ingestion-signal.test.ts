@@ -4,8 +4,7 @@ import { ownerIngestionSignalData } from '~/server/common/image-block-marker';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { editorBlockNotice, isImageShownBlocked } from '~/shared/utils/image-blocked';
 
-// Legal's condition: nothing names a safety block reason to the owner. The signal payload is
-// something the owner receives, so only an owner-actionable reason may ride on it.
+// civitai/civitai#10663: no payload the owner receives names a block reason they cannot act on.
 describe('ownerIngestionSignalData', () => {
   it.each([BlockedReason.CSAM, BlockedReason.Moderated, 'TOS', 'some future reason'])(
     'drops the %s reason and keeps the blocked state',

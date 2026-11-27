@@ -492,6 +492,7 @@ export async function blockImageFromRating({
 /** Never throws: tells the owner's open page the image is Blocked, so its card stops pending. */
 async function signalHardBlock(imageId: number) {
   try {
+    // primary: the scan can land seconds after the upload, before the replica has the row.
     const row = await dbWrite.image.findUnique({
       where: { id: imageId },
       select: { userId: true },

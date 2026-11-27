@@ -1,6 +1,7 @@
 // No Prisma imports: profile-picture.servable.ts uses it under suites that mock `@prisma/client`.
-import { BlockedReason, NsfwLevel } from '~/server/common/enums';
+import { NsfwLevel } from '~/server/common/enums';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import { isOwnerExemptBlock, ownerVisibleBlockedFor } from '~/shared/utils/image-blocked';
 
 /**
  * Whether an image carries a block. A scan error or a rescan request moves `ingestion` off
@@ -18,12 +19,7 @@ export function hasBlockMarker(image: {
   );
 }
 
-/**
- * The block reasons that leave an image's media with its owner: a hold the owner clears by adding
- * metadata, not a safety block. An allow-list, so any other reason, including one added later,
- * refuses the owner the media.
- */
-export const OWNER_MEDIA_EXEMPT_BLOCKS: readonly string[] = [BlockedReason.AiNotVerified];
+export { OWNER_MEDIA_EXEMPT_BLOCKS, ownerVisibleBlockedFor } from '~/shared/utils/image-blocked';
 
 /**
  * Whether an image's owner may be served its media: it carries no block, or only an exempt one.
@@ -34,7 +30,7 @@ export function ownerMediaAllowed(image: {
   ingestion: ImageIngestionStatus | string;
   blockedFor: string | null;
 }) {
-  if (image.blockedFor != null) return OWNER_MEDIA_EXEMPT_BLOCKS.includes(image.blockedFor);
+  if (image.blockedFor != null) return isOwnerExemptBlock(image.blockedFor);
   return image.ingestion !== ImageIngestionStatus.Blocked;
 }
 
@@ -55,11 +51,6 @@ export function blockLeavesMedia(
   if (actsAsModerator) return true;
   if (viewerId != null && image.userId === viewerId) return ownerMediaAllowed(image);
   return !hasBlockMarker(image);
-}
-
-/** The block reason an image's owner may see: only one they can act on (`OWNER_MEDIA_EXEMPT_BLOCKS`). */
-export function ownerVisibleBlockedFor(blockedFor?: string | null): string | null {
-  return blockedFor != null && OWNER_MEDIA_EXEMPT_BLOCKS.includes(blockedFor) ? blockedFor : null;
 }
 
 /**
