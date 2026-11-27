@@ -620,6 +620,8 @@ describe('verdicts', () => {
       });
     });
 
+    // Invariant guard, not regression coverage: this was already the answer before devalue answers were
+    // decoded. It pins that a format split between the legs is still compared as text.
     it('a devalue control against a superjson candidate is a mismatch at $.result.data, kind type', async () => {
       shadowOn();
       replies.node.body = NODE_DEVALUE;
