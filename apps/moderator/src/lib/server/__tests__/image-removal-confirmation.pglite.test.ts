@@ -557,21 +557,24 @@ describe('deciding a held removal', () => {
     `);
   const actioned = () => setReportStatus.mock.calls.map(([a]) => a.id);
 
-  it('on a path that settles TOS reports, also actions one filed since the hold, but no other new report', async () => {
-    await approve();
-    const { held } = await blockImage({
-      imageId: IMAGE,
-      userId: REQUESTER,
-      violationType: 'animatedMinorNsfw',
-      reportIds: [7, 8],
-      source: 'api.removeImages',
-    });
-    await fileSinceHold();
+  it.each(['api.removeImages', 'site.setTosViolation'])(
+    'held from %s, also actions a TOS report filed since the hold, but no other new report',
+    async (source) => {
+      await approve();
+      const { held } = await blockImage({
+        imageId: IMAGE,
+        userId: REQUESTER,
+        violationType: 'animatedMinorNsfw',
+        reportIds: [7, 8],
+        source,
+      });
+      await fileSinceHold();
 
-    await confirmRemoval({ id: held!.confirmationId, userId: CONFIRMER });
+      await confirmRemoval({ id: held!.confirmationId, userId: CONFIRMER });
 
-    expect(actioned()).toEqual([7, 8, 10]);
-  });
+      expect(actioned()).toEqual([7, 8, 10]);
+    }
+  );
 
   it('on a moderator block, leaves a TOS report filed since the hold for review', async () => {
     const id = await hold();
