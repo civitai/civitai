@@ -181,6 +181,22 @@ The `Music` type is offered in the create form and the type filter only with the
 order: deploy, apply the enum migration (`20271120150000_collection_type_music`) by hand, then turn
 the flag on, so no playlist row exists before every reader can decode the value.
 
+## On the post page and in the post editor
+
+- **Post page card** (`PostSongTile`, Pencil `WgLlp`): the cover and title open the song's detail
+  view; the length and play count (one read for the post's songs) sit under the title, with the play
+  button beside it. Its waveform is the global player's (`SongWaveform`, the same decoded peaks),
+  shows the player's progress while the song is the one loaded, and seeks it; clicking along a song
+  that is not loaded starts it from there.
+- **Generation data** (the (i) popover and the detail view, `SongMeta`): the style prompt, the model
+  (the resource, else the ecosystem's name) and the seed. Lyrics show in the player; the generator's
+  `duration` is a cap rather than the song's length, so neither is listed.
+- **Editor card**: the genre select sits in the cover column above "Allow remixes". The song's tags
+  sit in the row images use for theirs: its rating badge (not clickable: scans and disputes set a
+  song's level), "+ Tag" with the song-tag suggestions, and chips removed with their ×; at most
+  `SONG_TAG_LIMIT`, and never a genre's name. The song's reaction count shows in the details under its
+  title, not on its cover, which takes no reactions of its own.
+
 ## The song menu
 
 A song's ⋯ menu (`SongContextMenu`, Pencil `rUDmm`) is its own, not the image menu. It is used on the

@@ -130,6 +130,7 @@ import { RemixSourcesCard } from '~/components/RemixGallery/RemixSourcesCard';
 import { CustomCard } from './CustomCard';
 import { SongDetails } from './SongDetails';
 import { SongMedia } from './SongMedia';
+import { SongGenreSelect, SongTags } from './SongGenreTags';
 import { SongRemixSwitch } from './SongRemixSwitch';
 import { useDeletePostImage } from './useDeletePostImage';
 
@@ -846,11 +847,11 @@ function EditDetail() {
           {(!showPreview || hasSimpleMeta) && (
             <div className={`flex w-full flex-col gap-3 ${!showPreview ? '@sm:w-4/12' : ''}`}>
               {!showPreview && <PostImage />}
-              {/* 8px under the player, against the column's 12px, so it reads as the cover's. */}
               {!showPreview && isAudio && (
-                <div className="-mt-1">
+                <>
+                  <SongGenreSelect image={image} />
                   <SongRemixSwitch image={image} />
-                </div>
+                </>
               )}
               {!showPreview && <StorylineCaption />}
               {/* Directly under the image. The wrapper is `flex-row-reverse`, so
@@ -985,9 +986,10 @@ function EditDetail() {
 
             {/* #endregion */}
 
-            {/* The preview layout has no cover column; the switch keeps its own card there. */}
+            {/* The preview layout has no cover column; genre and switch keep their own card there. */}
             {isAudio && showPreview && (
-              <CustomCard>
+              <CustomCard className="flex flex-col gap-3">
+                <SongGenreSelect image={image} />
                 <SongRemixSwitch image={image} />
               </CustomCard>
             )}
@@ -1284,6 +1286,12 @@ function EditDetail() {
         {/*
  // #region [tags]
  */}
+        {isAudio && (
+          <>
+            <Divider />
+            <SongTags image={image} />
+          </>
+        )}
         {!isAudio && (!!image.tags?.length || isScanned) && (
           <>
             <Divider />
@@ -1475,12 +1483,7 @@ function PostImage() {
       <SongMedia
         image={{ ...image, url }}
         className={showPreview ? 'p-3' : undefined}
-        coverOverlay={
-          <>
-            {reactionCount}
-            {menu}
-          </>
-        }
+        coverOverlay={menu}
       />
     );
 

@@ -206,7 +206,7 @@ describe('a song in the post editor', () => {
   test('hides the sections that cannot apply to a song', async () => {
     const card = await renderCard(song());
     expect(sectionTitles(card)).not.toContain('Thumbnail');
-    await expect.element(page.getByText('PG', { exact: true })).not.toBeInTheDocument();
+    // The song's own tag row stands in for the image tags: its rating badge, no votable tags.
     await expect.element(page.getByText('votable tags')).not.toBeInTheDocument();
     await expect.element(page.getByText('Seed', { exact: true })).not.toBeInTheDocument();
     await openSongMenu();
@@ -214,6 +214,14 @@ describe('a song in the post editor', () => {
     await expect
       .element(page.getByRole('menuitem', { name: 'Edit image' }))
       .not.toBeInTheDocument();
+  });
+
+  test("shows the song's reactions once, in its details, not as a badge on its cover", async () => {
+    await renderCard(song({ reactionCount: 3 }));
+    await expect.element(page.getByLabelText('3 reactions')).toBeVisible();
+    expect(page.getByLabelText('3 reactions').all()).toHaveLength(1);
+    const details = page.getByText('Made on Civitai').element().parentElement;
+    expect(details?.contains(page.getByLabelText('3 reactions').element())).toBe(true);
   });
 
   test('an untitled song invites a title', async () => {
@@ -307,13 +315,11 @@ describe('a song in the post editor', () => {
     await expect
       .element(page.getByText("Locked · the generator's timestamps drive synced lyrics"))
       .toBeVisible();
-    // The title, genre and tag fields are the card's only text inputs: no lyric line is editable.
-    expect(
-      page
-        .getByRole('textbox')
-        .all()
-        .map((box) => box.element().getAttribute('aria-label'))
-    ).toEqual(['Song title', 'Genre', 'Add a tag']);
+    // The title and genre are the card's only text inputs (the tag field opens from + Tag):
+    // no lyric line is editable.
+    expect(page.getByRole('textbox').all()).toHaveLength(2);
+    await expect.element(page.getByRole('textbox', { name: 'Song title' })).toBeVisible();
+    await expect.element(page.getByRole('textbox', { name: 'Genre' })).toBeVisible();
   });
 
   test('a song without lyrics shows no lyrics block', async () => {

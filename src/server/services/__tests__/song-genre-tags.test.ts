@@ -223,7 +223,9 @@ beforeAll(async () => {
       "fromTagId" int NOT NULL, "toTagId" int NOT NULL, type text NOT NULL, "createdAt" timestamp
     );
   `);
-  const INT4_OID = 23;
+  // Prisma binds a JS integer as int8, so a function with no bigint overload (left, make_interval)
+  // fails in the app; binding int4 here would hide that.
+  const INT8_OID = 20;
   // The pool clients. Nothing may use them while the genre transaction holds the Track row, and a
   // song's Track row is written only on that transaction's client.
   const run = async (strings: TemplateStringsArray, ...values: unknown[]) => {
@@ -232,7 +234,7 @@ beforeAll(async () => {
       throw new Error('the pool was used while the genre transaction was open');
     if (/(INSERT INTO|UPDATE) "Track"/.test(sql.text))
       throw new Error("a song's Track row is written on the genre transaction's client");
-    const paramTypes = sql.values.map((v) => (Number.isInteger(v) ? INT4_OID : 0));
+    const paramTypes = sql.values.map((v) => (Number.isInteger(v) ? INT8_OID : 0));
     return db.query(sql.text, sql.values, { paramTypes });
   };
   dbMock.dbWrite.$queryRaw.mockImplementation(
