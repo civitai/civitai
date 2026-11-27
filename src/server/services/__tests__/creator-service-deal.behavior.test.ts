@@ -2225,7 +2225,7 @@ describe('the finals gate and dispute resolution', () => {
     if (!imageGone) return;
     expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
     expect((await deal(id)).status).toBe('Disputed');
-    expect((await disputeRow(id)).disputeReason).toBe(escrow.FINAL_SCAN_FAILED);
+    expect((await disputeRow(id)).disputeReason).toBe(escrow.FINAL_IMAGE_GONE);
   });
 
   describe('a release while our own scan-copy delete is settling', () => {
@@ -2251,11 +2251,11 @@ describe('the finals gate and dispute resolution', () => {
       expect(await escrow.sweepServiceDealReleases()).toEqual({ considered: 1, released: 1 });
     });
 
-    it('holds as before once the settle window has passed', async () => {
+    it('holds, its image gone, once the settle window has passed', async () => {
       const id = await settling(SCAN_COPY_SETTLE_WINDOW_MINUTES + 1);
       expect(await escrow.sweepServiceDealReleases()).toEqual({ considered: 1, released: 0 });
       expect((await deal(id)).status).toBe('Disputed');
-      expect((await disputeRow(id)).disputeReason).toBe(escrow.FINAL_SCAN_FAILED);
+      expect((await disputeRow(id)).disputeReason).toBe(escrow.FINAL_IMAGE_GONE);
     });
   });
 

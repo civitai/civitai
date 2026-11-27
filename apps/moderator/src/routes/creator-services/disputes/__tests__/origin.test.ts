@@ -18,7 +18,13 @@ const event = (
 });
 
 describe('disputeOrigin', () => {
-  it('labels the two system holds and shows no text or code for them', () => {
+  it('labels the system holds and shows no text or code for them', () => {
+    expect(disputeOrigin({ disputeReason: 'final_image_gone', cancellationReason: null })).toEqual({
+      label: 'An image a final file was scanned with is gone',
+      system: true,
+      text: null,
+      code: null,
+    });
     expect(
       disputeOrigin({ disputeReason: 'seller_unavailable', cancellationReason: null })
     ).toEqual({
