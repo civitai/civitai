@@ -196,7 +196,7 @@ describe('getAssociatedResourcesSimple article side', () => {
   });
 });
 
-// The article listing's browsing-level rule (getArticles), as linked models follow it since #10680.
+// Linked articles follow the article listing's browsing-level rule (articleWithinBrowsingLevel).
 describe('getAssociatedResourcesSimple article browsing level', () => {
   const listed = async (viewer: ArticleReader, browsingLevel: number) =>
     (
@@ -246,7 +246,8 @@ describe('setAssociatedResources and articles the editor cannot list', () => {
     expect(await ids()).toEqual([ARTICLES.draft.id]);
   });
 
-  // The editor drops every link; OWNER wrote the articles. Deletes rows, so these run last.
+  // Drops every link: deletes LEVEL_MODEL's rows, so the browsing-level reads above must run before
+  // these, and the two calls in the first test run in order. OWNER wrote the articles.
   const savedLevelLinks = async (fromId: number, editor: number, browsingLevel: number) => {
     await setAssociatedResources({ fromId, type: 'Suggested', associations: [], browsingLevel }, {
       id: editor,

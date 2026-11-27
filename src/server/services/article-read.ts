@@ -57,8 +57,9 @@ export function canReadArticle(article: ReadableArticle, viewer: ArticleReader) 
 }
 
 /**
- * getArticles' browsing-level rule: the level must intersect the article's, except that its author
- * and moderators also see it unrated (nsfwLevel 0).
+ * The level must intersect the article's; an unrated article (nsfwLevel 0) is also visible to its
+ * author and moderators, as in getArticles' `pending` listing (article.service.ts). Change the two
+ * together.
  */
 export function articleWithinBrowsingLevel(
   article: { nsfwLevel: number; userId: number | null },
