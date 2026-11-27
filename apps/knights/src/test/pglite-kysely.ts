@@ -58,7 +58,7 @@ export const IMAGE_GATE_REVOKES_MIGRATION = migrationPath(
 );
 
 /** The migration carrying the current "KnightsImageGate" SQL. */
-export const IMAGE_GATE_MIGRATION = migrationPath('20271202120000_knights_image_gate_shared_file');
+export const IMAGE_GATE_MIGRATION = migrationPath('20271207120000_knights_image_gate_mod_review');
 
 /** Owns the tables and applies the image gate migration, as the tables' owner does in production. Not a superuser. */
 export const TABLE_OWNER = 'knights_table_owner';
@@ -137,7 +137,7 @@ CREATE TABLE "CsamReport" (
   "details" JSONB NOT NULL DEFAULT '{}',
   "images" JSONB NOT NULL DEFAULT '[]'
 );
-CREATE TABLE "ImageCdnModeratorDelete" ("imageId" INTEGER PRIMARY KEY, "url" TEXT NOT NULL, "csamReview" BOOLEAN NOT NULL DEFAULT true);
+CREATE TABLE "ImageCdnModeratorDelete" ("imageId" INTEGER PRIMARY KEY, "url" TEXT NOT NULL, "userId" INTEGER, "csamReview" BOOLEAN NOT NULL DEFAULT true);
 CREATE TABLE "Model" (
   "id" INTEGER PRIMARY KEY,
   "minor" BOOLEAN NOT NULL DEFAULT false,

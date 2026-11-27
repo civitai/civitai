@@ -169,6 +169,29 @@ describe('creating tag review items', () => {
     expect(await items()).toEqual([]);
   });
 
+  // Row 101 is a copy on image 100's stored url: its state withholds 100 from anyone without the CSAM grant.
+  const copy = (needsReview: string, blockedFor: string) =>
+    `INSERT INTO "Post" (id, "publishedAt") VALUES (101, '2020-01-01');
+     INSERT INTO "Image" (id, url, "nsfwLevel", "postId", "pHash", "needsReview", "blockedFor")
+     VALUES (101, 'key-100', 4, 101, 77, ${needsReview}, ${blockedFor})`;
+  it.each([
+    ['in the CSAM queue', copy(`'csam'`, 'NULL')],
+    ['blocked as CSAM', copy('NULL', `'Other,CSAM'`)],
+    [
+      'whose hash is blocked as CSAM',
+      `${copy('NULL', 'NULL')}; INSERT INTO "BlockedImage" (hash, reason) VALUES (77, 'CSAM')`,
+    ],
+    [
+      'with a CSAM vote',
+      `${copy('NULL', 'NULL')}; INSERT INTO "ScanLabelItem" (id, "imageId") VALUES (1, 101);
+       INSERT INTO "ScanLabelVote" ("itemId", "userId", block, reason) VALUES (1, 9, true, 'csam-realistic')`,
+    ],
+  ])('creates nothing for an image on the url of a copy %s', async (_, change) => {
+    await pg.exec(change);
+    expect(await run()).toMatchObject({ created: 0 });
+    expect(await items()).toEqual([]);
+  });
+
   it('reaches every flagged row over successive runs when one run reads one page', async () => {
     for (const id of [101, 102]) {
       await seedImage(pg, id, { nsfwLevel: X });

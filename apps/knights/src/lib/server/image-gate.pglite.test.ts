@@ -159,10 +159,11 @@ describe('"KnightsImageGate"', () => {
       sweepServable: true,
       skillCheckEligible: true,
       skillCheckLasting: true,
+      modReviewContent: true,
     });
   });
 
-  it('never puts an image out of a column for one reason alone, and every column but sweepServable implies servable', async () => {
+  it('never puts an image out of a column for one reason alone, and every column but sweepServable and modReviewContent implies servable', async () => {
     const reasonsOut = new Map<ImageGateColumn, Set<string>>(
       IMAGE_GATE_COLUMNS.map((c) => [c, new Set()])
     );
@@ -179,6 +180,7 @@ describe('"KnightsImageGate"', () => {
         if (answers[column]) expect(answers.servable).toBe(true);
       if (answers.servable && !answers.skillCheckEligible) outWhileServable.add(label);
       if (answers.servable) expect(answers.sweepServable).toBe(true);
+      if (answers.modReviewContent) expect(answers.sweepServable).toBe(true);
     }
     for (const column of IMAGE_GATE_COLUMNS)
       expect(reasonsOut.get(column)?.size).toBeGreaterThanOrEqual(2);
@@ -342,6 +344,7 @@ describe('"KnightsImageGate" on a file another image row shares', () => {
     sweepServable: false,
     skillCheckEligible: false,
     skillCheckLasting: false,
+    modReviewContent: false,
   };
 
   /** Image 2 is clean; image 3 is on image 2's stored url and gets the state `apply` gives it. */
@@ -379,6 +382,54 @@ describe('"KnightsImageGate" on a file another image row shares', () => {
       expect((await fromTables([2])).get(2)).toEqual(OUT);
     }
   );
+
+  const withheldOnly: [string, (id: number) => Promise<unknown>][] = [
+    [
+      'blocked as CSAM in a list of reasons',
+      (id) => pg.query(`UPDATE "Image" SET "blockedFor"='Other,CSAM' WHERE id=$1`, [id]),
+    ],
+    [
+      'under a CSAM hash block',
+      async (id) => {
+        await pg.query(`UPDATE "Image" SET "pHash"=77 WHERE id=$1`, [id]);
+        await pg.query(`INSERT INTO "BlockedImage" (hash, reason) VALUES (77, 'CSAM')`);
+      },
+    ],
+    [
+      'carrying a CSAM vote',
+      async (id) => {
+        await pg.query(`INSERT INTO "ScanLabelItem" (id, "imageId") VALUES (1, $1)`, [id]);
+        await pg.query(
+          `INSERT INTO "ScanLabelVote" ("itemId", "userId", block, reason) VALUES (1, 9, true, 'csam-realistic')`
+        );
+      },
+    ],
+  ];
+
+  it.each(withheldOnly)(
+    'keeps an image out of modReviewContent, and only that column, when a row on its file is %s',
+    async (_l, apply) => {
+      await seedSharedFile(apply);
+      for (const answers of [await fromView([2]), await fromTables([2])])
+        expect(answers.get(2)).toMatchObject({ servable: true, modReviewContent: false });
+    }
+  );
+
+  it('answers differently without the withheld leg (the cases above can fail)', async () => {
+    const full = imageGateViewSql();
+    const leg = 'sb.hash = mw."pHash"';
+    expect(full.split(leg).length - 1).toBe(1);
+    const mutant = full.split(leg).join(`false AND ${leg}`);
+    await pg.exec(`CREATE VIEW "KnightsImageGateMutant" AS ${mutant};
+      GRANT SELECT ON "KnightsImageGateMutant" TO ${KNIGHTS_APP_ROLE};`);
+    try {
+      await seedSharedFile(withheldOnly[1][1]);
+      expect((await fromView([2], 'KnightsImageGateMutant')).get(2)?.modReviewContent).toBe(true);
+      expect((await fromView([2])).get(2)?.modReviewContent).toBe(false);
+    } finally {
+      await pg.exec('DROP VIEW "KnightsImageGateMutant"');
+    }
+  });
 
   it('keeps serving an image whose file a clean row shares, or whose held neighbour is on another file', async () => {
     await seedSharedFile(async () => undefined);
