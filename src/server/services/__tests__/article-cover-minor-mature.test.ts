@@ -435,8 +435,6 @@ describe('the article page under the report-listed rule', () => {
   );
 });
 
-// An article whose cover is missing can be public, so the legacy key of a cover a reader cannot see
-// must go with it, from the feed and from the article page.
 describe('the legacy cover key of a cover a reader cannot see', () => {
   const unseen: [string, ReturnType<typeof cover>][] = [
     ['NotFound', { ...cover(1, false), ingestion: 'NotFound' }],

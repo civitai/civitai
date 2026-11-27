@@ -1,6 +1,6 @@
 /**
- * Why an article's safety scan could not finish, in the words its owner is shown; null when nothing
- * did. A missing image never hides an article by itself, so it is only noted beside a failure.
+ * Why an article's safety scan could not finish, in the words its owner is shown. A missing image
+ * never hides an article by itself, so it is only noted beside a failure.
  */
 export function articleIngestionErrorReason({
   errorImages,
