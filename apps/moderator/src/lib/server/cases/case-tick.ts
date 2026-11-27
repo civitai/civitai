@@ -140,7 +140,9 @@ export async function caseTick({
           ? `Takedown clocks: ${lines.length} case threshold${
               lines.length === 1 ? '' : 's'
             } crossed`
-          : 'Takedown clocks: no clock check completed for over 2 hours',
+          : `Takedown clocks: no clock check completed for over ${
+              CASE_TICK_MAX_GAP_MS / 36e5
+            } hours`,
         [...gapNote, ...lines.map((l) => l.text)].join('\n')
       );
     }
@@ -151,7 +153,6 @@ export async function caseTick({
   return result;
 }
 
-/** The heartbeat in the main DB's KeyValue table, one row under a fixed key. */
 export const keyValueHeartbeat = (mainDb: Kysely<DB>): CaseTickDeps['heartbeat'] => ({
   read: async () => {
     const row = await mainDb

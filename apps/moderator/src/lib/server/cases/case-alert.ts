@@ -1,4 +1,5 @@
 import { sendEmailStrict } from '@civitai/email';
+import { escapeHtml } from '@civitai/shared/html-escape';
 import { env } from '$env/dynamic/private';
 
 /** The moderation alert inbox, shared by intake and the tick. */
@@ -10,10 +11,7 @@ export async function caseAlert(subject: string, text: string, template: string)
     to,
     subject,
     text,
-    html: `<pre>${text.replace(
-      /[&<>]/g,
-      (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[ch]!)
-    )}</pre>`,
+    html: `<pre>${escapeHtml(text)}</pre>`,
     tags: { template, mailClass: 'transactional' },
   });
 }

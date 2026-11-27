@@ -65,7 +65,7 @@ describe('caseTick', () => {
     const { pg, file, alerts, deps, heartbeat } = await setup();
     const late = await file('2026-11-20T10:00:00Z');
     const lateMinor = await file('2026-11-20T11:00:00Z', true);
-    const notYet = await file('2026-11-21T23:00:00Z'); // due 11-23T23:00Z
+    const notYet = await file('2026-11-21T23:00:00Z');
 
     const first = await caseTick(deps('2026-11-23T12:00:00Z'));
     expect(first).toEqual({ evaluated: 3, alerted: 2, overdue: 2 });
@@ -92,7 +92,7 @@ describe('caseTick', () => {
 
   it('alerts every clock kind in deadline-first order, at the exact moment it is due', async () => {
     const { pg, file, alerts, deps } = await setup();
-    const c = await file('2026-11-21T12:00:00Z'); // due 11-23T12:00Z
+    const c = await file('2026-11-21T12:00:00Z');
     await pg.query(
       "UPDATE case_record SET warn_at = '2026-11-23T06:00:00Z', restore_earliest_at = '2026-11-23T11:00:00Z', restore_latest_at = '2026-11-23T11:30:00Z' WHERE public_ref = $1",
       [c.publicRef]
@@ -162,6 +162,18 @@ describe('caseTick', () => {
     expect(sent).toHaveLength(1);
   });
 
+  it('still alerts when the heartbeat cannot be read', async () => {
+    const { file, alerts, deps } = await setup();
+    const late = await file('2026-11-20T10:00:00Z');
+    const d = deps('2026-11-23T12:00:00Z');
+    const broken = {
+      ...d,
+      heartbeat: { ...d.heartbeat, read: () => Promise.reject(new Error('main DB down')) },
+    };
+    expect(await caseTick(broken)).toMatchObject({ alerted: 1 });
+    expect(alerts[0].text).toContain(late.publicRef);
+  });
+
   it('reports a gap in the schedule even when no case is late', async () => {
     const { alerts, deps } = await setup();
     const start = Date.parse('2026-11-23T08:00:00Z');
@@ -192,7 +204,7 @@ describe('caseTick', () => {
   it('puts the gap note first when a gap and a late case come together', async () => {
     const { file, alerts, deps } = await setup();
     await caseTick(deps('2026-11-22T00:00:00Z'));
-    const late = await file('2026-11-20T10:00:00Z'); // due 11-22T10:00Z
+    const late = await file('2026-11-20T10:00:00Z');
     await caseTick(deps('2026-11-22T12:00:00Z'));
     const lines = alerts[0].text.split('\n');
     expect(lines[0]).toContain('No clock check completed from 2026-11-22T00:00:00.000Z');

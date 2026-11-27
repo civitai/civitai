@@ -2,6 +2,7 @@ import type { Kysely } from 'kysely';
 import { sql } from 'kysely';
 import type { CasePartyActionInput, CasePartyViewInput } from '@civitai/moderation';
 import {
+  isTerminalState,
   processDefinitionSchema,
   type ProcessDefinition,
 } from '@civitai/moderation/process-definition';
@@ -181,11 +182,9 @@ export async function casePartyAction(input: CasePartyActionInput, deps: CasePar
       })
       .execute();
     if (action.moveTo) {
-      // A terminal state ends the case, so it is decided now; otherwise the clocks would keep running.
-      // Moving out of a terminal state reopens it, so that decision is cleared and the clocks resume.
-      const isTerminal = (id: string) => !!def.states.find((st) => st.id === id)?.terminal;
-      const terminal = isTerminal(action.moveTo);
-      const reopened = !terminal && isTerminal(current.state);
+      // case-tick stops the clocks of a case once decided_at is set.
+      const terminal = isTerminalState(def, action.moveTo);
+      const reopened = !terminal && isTerminalState(def, current.state);
       await tx
         .updateTable('case_record')
         .set({
@@ -210,7 +209,7 @@ function actionOpenIn(
   state: string
 ) {
   if (action.from) return action.from.includes(state);
-  return !def.states.find((s) => s.id === state)?.terminal;
+  return !isTerminalState(def, state);
 }
 
 // Per ip, and per party for actions (keys `party:<id>`). An unresolved ip is left to the main app's limit.
