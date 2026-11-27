@@ -355,9 +355,6 @@ async function acceptImageUnder(
               : sql<boolean>`CASE WHEN "nsfwLevel" >= 4 THEN FALSE ELSE TRUE END`,
           }
         : {}),
-      ...(nr && ['minor', 'poi', 'newUser', 'bestiality'].includes(nr)
-        ? { scannedAt: sql`now()` }
-        : {}),
     })
     .where('id', '=', imageId)
     .where('blockedFor', 'is distinct from', BLOCKED_REASON_CSAM)
