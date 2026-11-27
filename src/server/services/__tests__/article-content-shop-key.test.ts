@@ -1,12 +1,15 @@
 import { serverCopyTablesSql } from '@civitai/db-queries/test/image-uses';
 import { PGlite } from '@electric-sql/pglite';
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as DbLagHelpers from '~/server/db/db-lag-helpers';
 import type * as RedisCaches from '~/server/redis/caches';
 import type * as ImageService from '~/server/services/image.service';
-import { ARTICLE_CONTENT_IMAGE_UNAVAILABLE_MESSAGE } from '~/server/services/image-url-ownership';
+import {
+  ARTICLE_CONTENT_IMAGE_UNAVAILABLE_MESSAGE,
+  UNRECORDED_KEYS_ACCEPTED_UNTIL,
+} from '~/server/services/image-url-ownership';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -73,6 +76,11 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
+  // The content keys have no issue record; pin the clock inside the window that accepts them.
+  vi.useFakeTimers({
+    toFake: ['Date'],
+    now: UNRECORDED_KEYS_ACCEPTED_UNTIL.getTime() - 86_400_000,
+  });
   createManyAndReturn.mockClear();
   enqueueImageIngestion.mockClear();
   // The shop-key and image-ownership lookups run on PGlite; the other raw queries get fixed answers.
@@ -93,6 +101,10 @@ beforeEach(() => {
       image: { findMany: async () => [], createManyAndReturn },
       imageConnection: { upsert: vi.fn(), findMany: async () => [], deleteMany: vi.fn() },
     })) as never);
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe('linkArticleContentImages', () => {
