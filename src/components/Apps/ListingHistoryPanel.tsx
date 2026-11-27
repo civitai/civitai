@@ -23,7 +23,7 @@ import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { ReviewerByline, type DecisionReviewerView } from '~/components/Apps/ReviewerByline';
-import { isDecidedReviewStatus, reviewThreadDeveloperUrl } from '~/shared/utils/app-review-thread';
+import { reviewThreadDeveloperUrl } from '~/shared/utils/app-review-thread';
 
 /**
  * The authoring page's **History** tab — one listing's full publish-request stream.
@@ -111,6 +111,11 @@ export type ListingHistoryEntry = {
    * need not spell it; treated as `false` when absent, which is the safe direction.
    */
   canWithdraw?: boolean;
+  /**
+   * The server's verdict on whether the review conversation is open to the caller: the app's
+   * current owner, on a decided request. An editor sees this history but not the thread.
+   */
+  canConverse?: boolean;
 };
 
 function formatWhen(value: string | Date | null | undefined): string {
@@ -284,9 +289,7 @@ export function ListingHistoryPanelView({
               withdrawEnabled={withdrawEnabled}
               deployStatus={chip}
               conversationHref={
-                conversationEnabled && isDecidedReviewStatus(e.status)
-                  ? reviewThreadDeveloperUrl(e.id)
-                  : undefined
+                conversationEnabled && e.canConverse ? reviewThreadDeveloperUrl(e.id) : undefined
               }
             />
             {below}
