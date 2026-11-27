@@ -32,6 +32,7 @@ const {
   copyRejectedForTraining,
   isAppealTrainingConfigured,
   createAppealTrainingStore,
+  removeErasedOwnerRecords,
   sweepExcludedRecords,
 } = await import('~/server/jobs/appeal-decision-records');
 
@@ -74,6 +75,11 @@ beforeAll(async () => {
       "resolvedReason" text
     );
     CREATE TABLE "CsamReport" ("id" serial PRIMARY KEY, "userId" integer, "images" jsonb NOT NULL DEFAULT '[]');
+    CREATE TABLE "User" ("id" integer PRIMARY KEY, "deletedAt" timestamp(3), "meta" jsonb);
+    CREATE TABLE "ModActivity" (
+      "id" serial PRIMARY KEY, "userId" integer, "activity" text NOT NULL, "entityType" text,
+      "entityId" integer, "createdAt" timestamp(3) NOT NULL DEFAULT now()
+    );
     CREATE TABLE training_labels (
       url text, label text, "createdAt" timestamp, source text, reason text, old_label text
     );
@@ -91,7 +97,7 @@ beforeEach(async () => {
   noLabels.mockClear();
   await holder.db.exec(
     `TRUNCATE "AppealDecisionRecord", "AppealTrainingObjectDeletion", "Image", "CsamReport",
-       training_labels RESTART IDENTITY`
+       training_labels, "Appeal", "ModActivity", "User" RESTART IDENTITY`
   );
 });
 
@@ -824,6 +830,176 @@ describe('sweepExcludedRecords and the training bucket', () => {
   });
 });
 
+describe('records removed on erasure or on request', () => {
+  const appeal = (id: number, userId: number) =>
+    holder.db.query(
+      `INSERT INTO "Appeal" ("id", "userId", "entityType", "entityId") VALUES ($1, $2, 'Image', $1)`,
+      [id, userId]
+    );
+  const modActivity = (entityType: string, entityId: number, activity: string) =>
+    holder.db.query(
+      'INSERT INTO "ModActivity" ("userId", "entityType", "entityId", activity) VALUES (1, $1, $2, $3)',
+      [entityType, entityId, activity]
+    );
+  const ownedRecord = async (appealId: number, userId: number) => {
+    await record({
+      appealId,
+      imageId: 100 + appealId,
+      state: 'copied',
+      key: `k-${appealId}`,
+      userId,
+    });
+    await appeal(appealId, userId);
+  };
+  const removedKeys = (store: ReturnType<typeof fakeStore>) =>
+    store.remove.mock.calls.flatMap(([keys]) => keys).sort();
+  const deletedUser = (id: number, daysAgo: number | null, imageRemoval?: 'grace' | 'immediate') =>
+    holder.db.query(
+      `INSERT INTO "User" ("id", "deletedAt", "meta") VALUES ($1, now() - make_interval(days => $2), $3)`,
+      [id, daysAgo, JSON.stringify({ imageRemoval })]
+    );
+
+  it("deletes an erased account's records and copies, and keeps another account's", async () => {
+    await ownedRecord(1, 9);
+    await ownedRecord(2, 10);
+    await deletedUser(9, 0, 'immediate');
+    await modActivity('user', 9, 'deleteAccount');
+    const store = fakeStore();
+
+    expect((await sweepExcludedRecords(store)).swept).toBe(1);
+    expect((await states()).map((row) => row.appealId)).toEqual([2]);
+    expect(removedKeys(store)).toEqual(['k-1']);
+  });
+
+  it('waits out the grace a restore can undo, and keeps a restored account', async () => {
+    await ownedRecord(1, 9);
+    await ownedRecord(2, 10);
+    await ownedRecord(3, 11);
+    await ownedRecord(4, 12);
+    await ownedRecord(5, 13);
+    await ownedRecord(6, 14);
+    await deletedUser(9, 2, 'grace'); // inside the grace
+    await deletedUser(10, null, 'grace'); // restored: no deletedAt
+    await deletedUser(11, 8, 'grace'); // past the grace
+    await deletedUser(12, 0, 'immediate');
+    await deletedUser(13, null, 'immediate'); // restored, meta still naming the old removal
+    await deletedUser(14, 0); // no choice recorded: immediate, as for the account's images
+    for (const id of [9, 10, 11, 12, 13, 14]) await modActivity('user', id, 'deleteAccount');
+    const store = fakeStore();
+
+    expect((await sweepExcludedRecords(store)).swept).toBe(3);
+    expect((await states()).map((row) => row.appealId)).toEqual([1, 2, 5]);
+    expect(removedKeys(store)).toEqual(['k-3', 'k-4', 'k-6']);
+  });
+
+  it('keeps the records of an account that was deleted any other way', async () => {
+    await ownedRecord(1, 9);
+    await modActivity('user', 9, 'removeContent');
+    await modActivity('image', 9, 'deleteAccount');
+
+    expect((await sweepExcludedRecords(fakeStore())).swept).toBe(0);
+    expect((await states()).map((row) => row.appealId)).toEqual([1]);
+  });
+
+  it('finds an erased account by owner hash when its appeal row is gone', async () => {
+    await record({ appealId: 1, imageId: 101, state: 'copied', key: 'k-1', withImage: false });
+    await record({ appealId: 2, imageId: 102, state: 'copied', key: 'k-2', withImage: false });
+    await holder.db.query(
+      'UPDATE "AppealDecisionRecord" SET "ownerHash" = $1 WHERE "appealId" = 1',
+      [ownerHashOf(9)]
+    );
+    await holder.db.query(
+      'UPDATE "AppealDecisionRecord" SET "ownerHash" = $1 WHERE "appealId" = 2',
+      [ownerHashOf(10)]
+    );
+    await modActivity('user', 9, 'deleteAccount');
+    const store = fakeStore();
+
+    expect((await sweepExcludedRecords(store)).swept).toBe(1);
+    expect((await states()).map((row) => row.appealId)).toEqual([2]);
+    expect(removedKeys(store)).toEqual(['k-1']);
+  });
+
+  it('deletes the records of an image removed on a likeness request, never a realPerson removal', async () => {
+    await record({
+      appealId: 1,
+      imageId: 101,
+      removalLabel: 'realPerson',
+      state: 'copied',
+      key: 'k-1',
+    });
+    await record({
+      appealId: 2,
+      imageId: 102,
+      removalLabel: 'realPerson',
+      state: 'copied',
+      key: 'k-2',
+    });
+    await record({
+      appealId: 3,
+      imageId: 103,
+      removalLabel: 'likenessRequest',
+      state: 'copied',
+      key: 'k-3',
+    });
+    await modActivity('image', 102, 'likenessRequest');
+    // Same id, other entity: a user 101 marked so must not reach image 101.
+    await modActivity('user', 101, 'likenessRequest');
+    const store = fakeStore();
+
+    expect((await sweepExcludedRecords(store)).swept).toBe(2);
+    expect((await states()).map((row) => row.appealId)).toEqual([1]);
+    expect(removedKeys(store)).toEqual(['k-2', 'k-3']);
+  });
+
+  it("removes an erased account's records on the endpoint's call, rows before objects", async () => {
+    await ownedRecord(1, 9);
+    await ownedRecord(2, 10);
+    const store = fakeStore();
+    let recordsWhenObjectsWent: number[] = [];
+    store.remove.mockImplementationOnce(async () => {
+      recordsWhenObjectsWent = (await states()).map((row) => row.appealId);
+    });
+
+    expect(await removeErasedOwnerRecords(9, store)).toEqual({ removed: 1, objects: 1 });
+    expect(recordsWhenObjectsWent).toEqual([2]);
+    expect(removedKeys(store)).toEqual(['k-1']);
+  });
+
+  it('keeps the rows deleted and queues the copy when the object delete fails', async () => {
+    await ownedRecord(1, 9);
+    const store = fakeStore();
+    store.remove.mockRejectedValueOnce(new Error('denied'));
+
+    expect(await removeErasedOwnerRecords(9, store)).toEqual({ removed: 1, objects: 0 });
+    expect(await states()).toEqual([]);
+    expect(await tombstones()).toEqual(['k-1']);
+    // The key names the appeal and image: logged hashed, beside the owner hash.
+    const [logged, ...more] = vi.mocked(loggingMock.logToAxiom).mock.calls.map(([entry]) => entry);
+    expect(more).toEqual([]);
+    expect(logged).toMatchObject({
+      message: expect.stringContaining(`(owner ${ownerHashOf(9)})`),
+      details: { keys: [expect.stringMatching(/^[0-9a-f]{16}$/)] },
+    });
+    expect(JSON.stringify(logged)).not.toContain('k-1');
+  });
+
+  it('logs no raw key when the failure message names one', async () => {
+    await ownedRecord(1, 9);
+    const store = fakeStore();
+    store.remove.mockRejectedValueOnce(new Error('delete failed: k-1'));
+
+    await removeErasedOwnerRecords(9, store);
+
+    const logged = vi.mocked(loggingMock.logToAxiom).mock.calls.map(([entry]) => entry);
+    expect(logged).toHaveLength(1);
+    expect(JSON.stringify(logged)).not.toContain('k-1');
+    expect(logged[0]).toMatchObject({
+      details: { error: expect.stringMatching(/^delete failed: [0-9a-f]{16}$/) },
+    });
+  });
+});
+
 describe('createAppealTrainingStore', () => {
   const clients = () => {
     const bytes = new Uint8Array([1, 2, 3]);
@@ -880,7 +1056,9 @@ describe('createAppealTrainingStore', () => {
     });
     const keys = Array.from({ length: 2500 }, (_, i) => `k-${i}`);
 
-    await expect(store.remove(keys)).rejects.toThrow(/k-1500/);
+    // A count, never the key: a key names its appeal and image, and the message is logged.
+    const error = await store.remove(keys).catch((e: Error) => e);
+    expect(error).toEqual(new Error('delete failed for 1 objects: unknown'));
 
     const sent = target.send.mock.calls.map(
       ([c]) => (c.input as { Delete: { Objects: { Key: string }[] } }).Delete.Objects
@@ -923,7 +1101,9 @@ describe('createAppealTrainingStore', () => {
       targetBucket: 'training',
     });
 
-    await expect(store.remove(['a', 'b'])).rejects.toThrow(/b/);
+    await expect(store.remove(['a', 'b'])).rejects.toThrow(
+      new Error('delete failed for 1 objects: AccessDenied')
+    );
 
     expect(source.send).not.toHaveBeenCalled();
     expect(target.send.mock.calls.map(([c]) => [c.constructor.name, c.input])).toEqual([

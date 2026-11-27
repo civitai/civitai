@@ -25,6 +25,7 @@ export const VIOLATION_TYPES = [
   'hate',
   'non-ai',
   'spam',
+  'likenessRequest',
   'other',
 ] as const;
 
@@ -50,6 +51,7 @@ export const VIOLATION_LABELS: Record<(typeof VIOLATION_TYPES)[number], string> 
   hate: 'Hate Speech/Extreme Political',
   'non-ai': 'Non-AI Content',
   spam: 'Spam',
+  likenessRequest: 'Likeness/DMCA request',
   other: 'Other',
 };
 
@@ -59,6 +61,7 @@ const USER_FACING_REASONS: Partial<Record<(typeof VIOLATION_TYPES)[number], stri
   schoolNsfw:
     'School settings are moderated more strictly, and this was removed under that stricter standard',
   minorViolence: 'Violence against, or implied harm to, characters who appear young is not allowed',
+  likenessRequest: 'Person depicted has requested to have images taken down',
 };
 
 export function violationUserMessage(violationType: string): string {
@@ -70,7 +73,7 @@ export function violationUserMessage(violationType: string): string {
 }
 
 /**
- * The pair every removal action posts. `violationType` is a ClickHouse enum on the other side, so an
+ * The pair every removal action posts. `violationType` is an enum at `/api/mod/remove-images`, so an
  * unrecognised value is refused rather than forwarded as free text — a removal filed under nothing is
  * indistinguishable from one nobody classified.
  */

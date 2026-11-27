@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProtectedContext } from '~/server/createContext';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { Prisma } from '@prisma/client';
 import { FEEDBACK_CAPTURE_OWNER_ID } from '@civitai/shared/feedback-capture';
 import type * as ImageService from '~/server/services/image.service';
 import type * as NotificationService from '~/server/services/notification.service';
@@ -119,5 +120,79 @@ describe('setTosViolationHandler on a feedback page capture', () => {
   it("tells an ordinary image's owner (control)", async () => {
     await removeAs(9);
     expect(notify).toHaveBeenCalledWith(expect.objectContaining({ userId: 9 }));
+  });
+});
+
+// The appeal-decision-records sweep deletes the appeal training copies of an image by this row.
+describe('setTosViolationHandler on a likeness request', () => {
+  const likenessMarks = () =>
+    vi
+      .mocked(dbMock.dbWrite.$executeRaw)
+      .mock.calls.map(([strings, ...values]) =>
+        Prisma.sql(strings as unknown as readonly string[], ...values)
+      )
+      .filter(
+        (sql) => sql.text.includes('"ModActivity"') && sql.values.includes('likenessRequest')
+      );
+  const removeAs = (violationType: string) =>
+    setTosViolationHandler({ input: { id: 50, violationType } as never, ctx }).catch(
+      () => undefined
+    );
+
+  it('marks the removed image', async () => {
+    canConfirmReRemoval.mockResolvedValue(true);
+
+    await removeAs('likenessRequest');
+
+    const [mark, ...more] = likenessMarks();
+    expect(more).toEqual([]);
+    expect(mark.values).toEqual(expect.arrayContaining([2, 'image', [50]]));
+  });
+
+  it('still actions reports and runs the removal effects when the mark fails', async () => {
+    canConfirmReRemoval.mockResolvedValue(true);
+    const executeRaw = vi.mocked(dbMock.dbWrite.$executeRaw);
+    executeRaw.mockImplementation((async (_strings: unknown, ...values: unknown[]) => {
+      if (values.includes('likenessRequest')) throw new Error('db down');
+      return 0;
+    }) as never);
+
+    try {
+      await removeAs('likenessRequest');
+    } finally {
+      executeRaw.mockImplementation((async () => 0) as never);
+    }
+
+    expect(likenessMarks()).toHaveLength(3); // every try
+    expect(reportsActioned).toHaveBeenCalledTimes(1);
+  });
+
+  it('marks an image the block left held for review', async () => {
+    canConfirmReRemoval.mockResolvedValue(true);
+    const queryRaw = vi.mocked(dbMock.dbWrite.$queryRaw);
+    queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
+      strings.join('').includes('AS held')
+        ? [{ id: 50, held: true, removedForCsam: false, underReview: true, pHash: null }]
+        : []) as never);
+
+    try {
+      await removeAs('likenessRequest');
+    } finally {
+      queryRaw.mockImplementation((async () => []) as never);
+    }
+
+    expect(likenessMarks()).toHaveLength(1);
+    expect(reportsActioned).not.toHaveBeenCalled(); // held: the rest of the effects wait
+  });
+
+  it('marks nothing while the removal is held, or for another reason', async () => {
+    canConfirmReRemoval.mockResolvedValue(false);
+    holdRemovals.mockResolvedValue({ held: [{ imageId: 50, created: true }], proceed: [] });
+    await removeAs('likenessRequest');
+    canConfirmReRemoval.mockResolvedValue(true);
+    await removeAs('realPerson');
+
+    expect(likenessMarks()).toEqual([]);
+    expect(reportsActioned).toHaveBeenCalledTimes(1); // the realPerson removal went through
   });
 });

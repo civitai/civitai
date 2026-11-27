@@ -78,6 +78,10 @@ export const TOS_REASONS = [
     value: ViolationType.Spam,
   },
   {
+    label: 'Likeness/DMCA request',
+    value: ViolationType.LikenessRequest,
+  },
+  {
     label: 'Other',
     value: ViolationType.Other,
   },
@@ -130,6 +134,8 @@ const USER_FACING_REASONS: Partial<Record<ViolationType, string>> = {
     'School settings are moderated more strictly, and this was removed under that stricter standard',
   [ViolationType.MinorViolence]:
     'Violence against, or implied harm to, characters who appear young is not allowed',
+  // A request, not a finding against the owner; the moderator app's canned sentence.
+  [ViolationType.LikenessRequest]: 'Person depicted has requested to have images taken down',
 };
 
 /** The wording for a violation shown back to the person it happened to. Falls back to the raw enum

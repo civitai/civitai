@@ -14,6 +14,10 @@ export function imageRemovalMode(removeImages?: boolean): ImageRemovalMode {
   return removeImages === false ? 'grace' : 'immediate';
 }
 
+/** `imageRemovalMode` read back from a deleted account's row (`u`): true for 'immediate'. */
+export const immediateRemovalSql = (u: Prisma.Sql) =>
+  Prisma.sql`(${u}.meta->>'imageRemoval' IS NULL OR ${u}.meta->>'imageRemoval' = 'immediate')`;
+
 /**
  * `Image.metadata` keys the grace block writes so `restoreUser` can undo exactly what it did.
  * `blockedFor = 'moderated'` is what a moderator block writes too, so it cannot tell the two

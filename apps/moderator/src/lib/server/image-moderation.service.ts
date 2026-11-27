@@ -14,7 +14,12 @@ import {
 } from '@civitai/shared/account-deletion-grace';
 import { dbRead, dbWrite } from './db';
 import { dropBlockedImageDeleteQueue, restartBlockedImageDeleteClock } from './blocked-image-queue';
-import { insertModActivity, insertModActivityBatch, recordModActivity } from './mod-activity';
+import {
+  insertModActivity,
+  insertModActivityBatch,
+  recordLikenessRequest,
+  recordModActivity,
+} from './mod-activity';
 import { syncSearchIndex } from './search-index';
 import { upsertTagsOnImageNew } from './tags-on-image.service';
 import {
@@ -608,8 +613,11 @@ export async function blockImage({
       ])
       .where('id', '=', imageId)
       .executeTakeFirst();
-    if (prior?.removed)
+    if (prior?.removed) {
+      // Removed for another reason: the request still stands, so its copies go.
+      if (violationType === 'likenessRequest') await recordLikenessRequest(userId, imageId);
       return { alreadyRemoved: true, ...(prior.ownerBanned && { unpaid: true as const }) };
+    }
     unpaid = !!prior?.bannedOwnerBlocked;
   }
 
@@ -698,6 +706,9 @@ export async function blockImage({
   });
   const blockRow = { ...img, pHash: state?.pHash ?? null };
   if (!updated) {
+    // Already removed: the request still stands, so its copies go (applyBlockSideEffects marks a
+    // fresh block).
+    if (violationType === 'likenessRequest') await recordLikenessRequest(userId, imageId);
     // Removed for CSAM already: a re-block repeats only its CSAM entry, which is how a moderator
     // retries one that failed (CSAM_BLOCKLIST_RETRY). A failure again throws as on a first block.
     // A TOS entry is best-effort, with no retry to honour.

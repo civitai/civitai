@@ -338,14 +338,30 @@ function applyImageUpdate(sql: string, values: unknown[]) {
   return touched;
 }
 
+/** A value-free fragment (`immediateRemovalSql`) inlined into the text, as Postgres receives it. */
+function inlineFragments(strings: TemplateStringsArray, raw: unknown[]) {
+  const values: unknown[] = [];
+  let sql = strings[0];
+  raw.forEach((v, i) => {
+    const fragment = v as { sql?: unknown; values?: unknown[] } | null;
+    if (typeof fragment?.sql === 'string' && fragment.values?.length === 0)
+      sql += fragment.sql + strings[i + 1];
+    else {
+      values.push(v);
+      sql += '?' + strings[i + 1];
+    }
+  });
+  return { sql, values };
+}
+
 function seed(next: Record<number, Fixture>) {
   fixtures = next;
   const newestFirst = Object.keys(fixtures)
     .map(Number)
     .sort((a, b) => fixtures[b].deletedAt.getTime() - fixtures[a].deletedAt.getTime());
 
-  mockDbRead.$queryRaw.mockImplementation((strings: TemplateStringsArray, ...values: unknown[]) => {
-    const sql = strings.join('?');
+  mockDbRead.$queryRaw.mockImplementation((strings: TemplateStringsArray, ...raw: unknown[]) => {
+    const { sql, values } = inlineFragments(strings, raw);
     const ascending = sql.includes('ORDER BY u."deletedAt" ASC');
     const [bound, mark] = values.filter((v): v is Date => v instanceof Date);
     const limit = values[values.length - 1] as number;
@@ -397,76 +413,71 @@ function seed(next: Record<number, Fixture>) {
     );
   });
 
-  mockDbWrite.$queryRaw.mockImplementation(
-    (strings: TemplateStringsArray, ...values: unknown[]) => {
-      const sql = strings.join('?');
+  mockDbWrite.$queryRaw.mockImplementation((strings: TemplateStringsArray, ...raw: unknown[]) => {
+    const { sql, values } = inlineFragments(strings, raw);
 
-      if (sql.includes('UPDATE "Image"')) return Promise.resolve(applyImageUpdate(sql, values));
-      if (sql.includes('DELETE FROM "Post"')) return Promise.resolve(deletePosts(sql, values));
+    if (sql.includes('UPDATE "Image"')) return Promise.resolve(applyImageUpdate(sql, values));
+    if (sql.includes('DELETE FROM "Post"')) return Promise.resolve(deletePosts(sql, values));
 
+    const userId = values[0] as number;
+    const fixture = fixtures[userId];
+    const gated = sql.includes('u."deletedAt" IS NOT NULL');
+
+    if (sql.includes('"hasImages"')) {
+      const state = { stillDeleted: !fixture.restored, hasImages: fixture.images.length > 0 };
+      if (fixture.restoredAfterCheck) fixture.restored = true;
+      return Promise.resolve([state]);
+    }
+    if (sql.includes('"hasPending"'))
+      return Promise.resolve([{ hasPending: pendingImages(sql, values, fixture).length > 0 }]);
+    if (sql.includes('"stillDeleted"')) {
+      const checks = (batchChecks[userId] = (batchChecks[userId] ?? 0) + 1);
+      if (fixture.restoreAfterBatches != null && checks > fixture.restoreAfterBatches)
+        fixture.restored = true;
+      if (fixture.graceAfterBatches != null && checks > fixture.graceAfterBatches)
+        fixture.primaryMeta = { imageRemoval: 'grace' };
+      const state = {
+        stillDeleted: !fixture.restored && passesPrimaryChoice(sql, fixture),
+      };
+      if (fixture.restoredAfterCheck) fixture.restored = true;
+      return Promise.resolve([state]);
+    }
+    if (sql.includes('FROM "Image" i')) {
+      const limit = values[values.length - 1] as number;
+      imageLimits.push(limit);
+      if (gated && (fixture.restored || !passesPrimaryChoice(sql, fixture)))
+        return Promise.resolve([]);
+      const images = pendingImages(sql, values, fixture);
+      const page = images.slice(0, limit).map((id) => ({
+        id,
+        wasBlocked: ingestionOf(fixture, id) === 'Blocked',
+      }));
+      pagedImageIds.push(...page.map((row) => row.id));
+      for (const id of fixture.blockAfterRead ?? []) (fixture.ingestion ??= {})[id] = 'Blocked';
+      return Promise.resolve(page);
+    }
+    if (sql.includes('FROM "Post"'))
+      return Promise.resolve((fixture.posts ?? []).map((id) => ({ id })));
+
+    throw new Error(`unexpected dbWrite read: ${sql}`);
+  });
+
+  mockDbWrite.$executeRaw.mockImplementation((strings: TemplateStringsArray, ...raw: unknown[]) => {
+    const { sql, values } = inlineFragments(strings, raw);
+
+    if (sql.includes('INSERT INTO "JobQueue"')) {
       const userId = values[0] as number;
       const fixture = fixtures[userId];
-      const gated = sql.includes('u."deletedAt" IS NOT NULL');
-
-      if (sql.includes('"hasImages"')) {
-        const state = { stillDeleted: !fixture.restored, hasImages: fixture.images.length > 0 };
-        if (fixture.restoredAfterCheck) fixture.restored = true;
-        return Promise.resolve([state]);
-      }
-      if (sql.includes('"hasPending"'))
-        return Promise.resolve([{ hasPending: pendingImages(sql, values, fixture).length > 0 }]);
-      if (sql.includes('"stillDeleted"')) {
-        const checks = (batchChecks[userId] = (batchChecks[userId] ?? 0) + 1);
-        if (fixture.restoreAfterBatches != null && checks > fixture.restoreAfterBatches)
-          fixture.restored = true;
-        if (fixture.graceAfterBatches != null && checks > fixture.graceAfterBatches)
-          fixture.primaryMeta = { imageRemoval: 'grace' };
-        const state = {
-          stillDeleted: !fixture.restored && passesPrimaryChoice(sql, fixture),
-        };
-        if (fixture.restoredAfterCheck) fixture.restored = true;
-        return Promise.resolve([state]);
-      }
-      if (sql.includes('FROM "Image" i')) {
-        const limit = values[values.length - 1] as number;
-        imageLimits.push(limit);
-        if (gated && (fixture.restored || !passesPrimaryChoice(sql, fixture)))
-          return Promise.resolve([]);
-        const images = pendingImages(sql, values, fixture);
-        const page = images.slice(0, limit).map((id) => ({
-          id,
-          wasBlocked: ingestionOf(fixture, id) === 'Blocked',
-        }));
-        pagedImageIds.push(...page.map((row) => row.id));
-        for (const id of fixture.blockAfterRead ?? []) (fixture.ingestion ??= {})[id] = 'Blocked';
-        return Promise.resolve(page);
-      }
-      if (sql.includes('FROM "Post"'))
-        return Promise.resolve((fixture.posts ?? []).map((id) => ({ id })));
-
-      throw new Error(`unexpected dbWrite read: ${sql}`);
+      if (sql.includes('u."deletedAt" IS NOT NULL') && fixture.restored) return Promise.resolve(0);
+      const excluded = sql.includes('IS DISTINCT FROM') ? (values[1] as string) : null;
+      const eligible = fixture.images.filter(
+        (id) => ingestionOf(fixture, id) === 'Blocked' && blockedForOf(fixture, id) !== excluded
+      );
+      return Promise.resolve(eligible.filter((id) => enqueueBlockedDelete(fixture, id)).length);
     }
-  );
 
-  mockDbWrite.$executeRaw.mockImplementation(
-    (strings: TemplateStringsArray, ...values: unknown[]) => {
-      const sql = strings.join('?');
-
-      if (sql.includes('INSERT INTO "JobQueue"')) {
-        const userId = values[0] as number;
-        const fixture = fixtures[userId];
-        if (sql.includes('u."deletedAt" IS NOT NULL') && fixture.restored)
-          return Promise.resolve(0);
-        const excluded = sql.includes('IS DISTINCT FROM') ? (values[1] as string) : null;
-        const eligible = fixture.images.filter(
-          (id) => ingestionOf(fixture, id) === 'Blocked' && blockedForOf(fixture, id) !== excluded
-        );
-        return Promise.resolve(eligible.filter((id) => enqueueBlockedDelete(fixture, id)).length);
-      }
-
-      throw new Error(`unexpected dbWrite write: ${sql}`);
-    }
-  );
+    throw new Error(`unexpected dbWrite write: ${sql}`);
+  });
 
   /** `deletePostRows`: its id list comes first; the first number after it is the owner the job's
    *  condition names (the child-safety case's parameters are text). */
