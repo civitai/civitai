@@ -22,6 +22,7 @@ const ALLOWED_VALUES = [
   'ctx.user.isModerator && !!ctx.features?.csamReports',
   '!!getFeatureFlags({ user, req }).csamReports',
   '!!getFeatureFlags({ user: ctx.actor, req: ctx.req }).csamReports',
+  '!!flags.csamReports',
   'input.csamReview',
   // A token route's request schema: the moderator app forwards its moderator's grant, fail-closed.
   // WebhookEndpoint routes only: in a session or tRPC input a client would assert its own grant.
@@ -87,7 +88,44 @@ function settingViolations(files: string[], allowed: string[]) {
   return found;
 }
 
-const violations = () => settingViolations(walk(ROOT), ALLOWED_VALUES);
+/**
+ * A destructure binding `csamReview` by shorthand, with what it reads from: `{ csamReview } = req.query`
+ * hands a request's own claim to a writer and has no `csamReview:` or `csamReview =` to check.
+ */
+const SHORTHAND_DESTRUCTURE = /\{([^{}]*)\}(?:\s*:\s*\{[^{}]*\})?\s*=(?![=>])\s*([^;\n]*)/g;
+const SHORTHAND = /(?:^|[{,])\s*(?:\.\.\.)?csamReview\s*(?:[,}]|$)/;
+
+/** A default `{}` for a parameter, or a token route's schema parse (the forwarded-grant rule decides it). */
+function shorthandSourceAllowed(rhs: string, source: string) {
+  if (/^\{\s*\}/.test(rhs)) return true;
+  return (
+    /^\w+\.parse\(req\.(?:body|query)\)/.test(rhs) &&
+    FORWARDED_GRANT.test(source) &&
+    mayNameForwardedGrant(source)
+  );
+}
+
+/** The shorthand destructures in `source` that read `csamReview` from anything else. */
+function shorthandViolations(source: string) {
+  const found: string[] = [];
+  for (const match of source.matchAll(SHORTHAND_DESTRUCTURE)) {
+    if (SHORTHAND.test(match[1]) && !shorthandSourceAllowed(match[2].trim(), source))
+      found.push(match[0].replace(/\s+/g, ' ').trim());
+  }
+  return found;
+}
+
+const violations = () => {
+  const files = [...walk(ROOT), ...walk(PAGES)];
+  return [
+    ...settingViolations(files, ALLOWED_VALUES),
+    ...[...files, ...walk(MODERATOR_APP)].flatMap((file) =>
+      shorthandViolations(readFileSync(file, 'utf8')).map(
+        (found) => `${path.relative(REPO, file)}: ${found}`
+      )
+    ),
+  ];
+};
 
 /**
  * Whether a file that names a forwarded-grant schema may: only a token route, whose default export is
@@ -98,14 +136,16 @@ function mayNameForwardedGrant(source: string) {
   return /\bexport\s+default\s+WebhookEndpoint\(/.test(source);
 }
 
+/** Whether a file other than the schemas' home names a forwarded-grant schema where it may not. */
+function namesForwardedGrantWrongly(source: string) {
+  return FORWARDED_GRANT.test(source) && !mayNameForwardedGrant(source);
+}
+
 function forwardedGrantViolations() {
   return [...walk(ROOT), ...walk(PAGES), ...walk(MODERATOR_APP)]
     .map((file) => [path.relative(REPO, file).split(path.sep).join('/'), file] as const)
     .filter(([rel]) => rel !== FORWARDED_GRANT_HOME)
-    .filter(([, file]) => {
-      const source = readFileSync(file, 'utf8');
-      return FORWARDED_GRANT.test(source) && !mayNameForwardedGrant(source);
-    })
+    .filter(([, file]) => namesForwardedGrantWrongly(readFileSync(file, 'utf8')))
     .map(([rel]) => rel);
 }
 
@@ -120,6 +160,13 @@ describe('no-hardcoded-withheld-grant', () => {
 
   it('names a forwarded-grant schema only in a WebhookEndpoint route', () => {
     expect(forwardedGrantViolations()).toEqual([]);
+  });
+
+  it('scans src/pages', () => {
+    expect(
+      walk(PAGES).filter((file) => new RegExp(SETTING.source).test(readFileSync(file, 'utf8')))
+        .length
+    ).toBeGreaterThan(0);
   });
 
   it('scans the routes that name a forwarded-grant schema, and the moderator app', () => {
@@ -145,12 +192,32 @@ describe('no-hardcoded-withheld-grant', () => {
       `export const h = WebhookEndpoint(() => forwardedCsamGrantInBody);`,
     ],
   ])('control: refuses %s', (_, source) => {
-    expect(FORWARDED_GRANT.test(source) && !mayNameForwardedGrant(source)).toBe(true);
+    expect(namesForwardedGrantWrongly(source)).toBe(true);
   });
 
   it('control: accepts a WebhookEndpoint route', () => {
     const source = `const s = z.object({ csamReview: forwardedCsamGrantInQuery });\nexport default WebhookEndpoint(async function h() {});`;
-    expect(FORWARDED_GRANT.test(source) && !mayNameForwardedGrant(source)).toBe(false);
+    expect(namesForwardedGrantWrongly(source)).toBe(false);
+  });
+
+  it.each([
+    ['a request query', `const { ids, csamReview } = req.query;`],
+    ['a request body over lines', `const {\n  ids,\n  csamReview,\n} = req.body;`],
+    ['a parse outside a token route', `const { csamReview } = schema.parse(req.query);`],
+    ['a spread', `const { ...csamReview } = input;`],
+  ])('control: refuses a shorthand destructure from %s', (_, source) => {
+    expect(shorthandViolations(source)).toHaveLength(1);
+  });
+
+  it.each([
+    ['a parameter default', `function f({ csamReview }: { csamReview: boolean } = {}) {}`],
+    [
+      'a token route parse',
+      `const s = z.object({ csamReview: forwardedCsamGrantInQuery });\nconst { csamReview } = s.parse(req.query);\nexport default WebhookEndpoint(async function h() {});`,
+    ],
+    ['an object built from a checked value', `const csamReview = false;\nf({ csamReview });`],
+  ])('control: accepts %s', (_, source) => {
+    expect(shorthandViolations(source)).toEqual([]);
   });
 
   it.each(['true', 'locals.user.isModerator', "url.searchParams.get('csamReview') === 'true'"])(

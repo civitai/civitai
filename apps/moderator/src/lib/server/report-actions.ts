@@ -213,7 +213,7 @@ export function reportModerationActions(pagePath: string) {
         csamReview: holdsCsamReview(locals.user),
       });
       if (!result.ok) return scopedFail('images', result.error);
-      return { success: true, imageResult: `Updated ${input.imageIds.length} images.` };
+      return { success: true, imageResult: `Updated ${result.count} images.` };
     },
 
     // Retool's SendNotification2 / PostNotification / SendCorrectNotif — three call sites, one action.

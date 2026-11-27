@@ -13,7 +13,7 @@ import {
 
 // The `/admin` gate already admits only the admin role. Each action checks again, so moving or
 // regranting the page cannot widen who may override a hold.
-// isSuper implies the CSAM grant by design (access.ts allows()).
+// Checked explicitly so the release stays gated if the grant is ever split from admin.
 const isAdmin = (locals: App.Locals) => isSuper(locals.user) && holdsCsamReview(locals.user);
 
 export const load: PageServerLoad = async ({ locals }) => {
