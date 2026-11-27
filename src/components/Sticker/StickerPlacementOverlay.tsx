@@ -845,7 +845,13 @@ export function StickerPlacementOverlay({
                 onClear={() => setSelectedId(null)}
                 edge={barEdge}
                 lifted={isVideo}
-                clearPill={isVideo && barEdge === 'top'}
+                clearPill={
+                  isVideo && barEdge === 'top'
+                    ? toggleCorner.endsWith('left')
+                      ? 'left'
+                      : 'right'
+                    : undefined
+                }
               />
             )}
           </div>

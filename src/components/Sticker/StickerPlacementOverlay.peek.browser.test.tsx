@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from 'vitest';
+import { describe, expect, onTestFinished, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import type * as StickerUtil from '~/components/Sticker/sticker.util';
 import type * as TrpcModule from '~/utils/trpc';
@@ -279,7 +279,7 @@ const cluster = Array.from({ length: 8 }, (_, i) =>
 /** The harness loads no Tailwind; these are the utilities layout relies on. */
 const CROWDED_LAYOUT = `
   .absolute{position:absolute} .inset-0{inset:0} .inset-x-0{left:0;right:0}
-  .inset-x-2{left:8px;right:8px} .bottom-2{bottom:8px} .bottom-16{bottom:64px} .right-44{right:176px} .top-1{top:4px} .bottom-1{bottom:4px}
+  .inset-x-2{left:8px;right:8px} .bottom-2{bottom:8px} .bottom-16{bottom:64px} .right-44{right:176px} .left-44{left:176px} .top-1{top:4px} .bottom-1{bottom:4px}
   .flex{display:flex} .flex-col{flex-direction:column} .flex-wrap{flex-wrap:wrap}
   .items-center{align-items:center} .justify-between{justify-content:space-between}
   .pointer-events-none{pointer-events:none} .pointer-events-auto{pointer-events:auto}
@@ -434,8 +434,11 @@ describe('many pending stickers on one image', () => {
     expect(await visibility('Review all')).toBe('hidden');
   });
 
-  test('at phone width the bar and its buttons stay inside the image', async () => {
+  // Crowded layout only: the harness loads no Tailwind, so max-sm wrapping is not exercised.
+  test('the bar and its buttons stay inside the image box', async () => {
+    const { innerWidth, innerHeight } = window;
     await page.viewport(390, 800);
+    onTestFinished(() => page.viewport(innerWidth, innerHeight));
     renderWithProviders(crowdedStage(cluster), { user: { id: 7 } });
     await select(0);
 
@@ -494,6 +497,35 @@ describe('the bar keeps clear of stickers and the Hide controls pill', () => {
     const pill = rectOf(page.getByRole('button', { name: 'Hide controls' }).element());
     expect(overlaps(pill, controls)).toBe(false);
     expect(overlaps(pill, bar)).toBe(false);
+  });
+
+  test('on a video, the pill falls back to the top-left and the bar leaves that side', async () => {
+    // Out of the top strip (so the bar stays on top) but near the top-right corner.
+    renderWithProviders(crowdedStage([...cluster.slice(0, 7), pendingAt(8, 0.9, 0.35)], true), {
+      user: { id: 7 },
+    });
+    await select(0);
+
+    const pill = rectOf(page.getByRole('button', { name: 'Hide controls' }).element());
+    const bar = rectOf(page.getByRole('group', { name: 'Pending stickers' }).element());
+    const stage = rectOf(page.getByTestId('stage').element());
+    expect(pill.left - stage.left).toBeLessThan(stage.width / 2);
+    expect(overlaps(pill, bar)).toBe(false);
+  });
+
+  test('Enter and Space select a pending sticker from the keyboard', async () => {
+    renderWithProviders(crowdedStage(cluster), { user: { id: 7 } });
+    await expect.element(stickerButtons().nth(1)).toBeInTheDocument();
+
+    (stickerButtons().nth(1).element() as HTMLElement).focus();
+    await userEvent.keyboard('{Enter}');
+    await expect.element(stickerButtons().nth(1)).toHaveAttribute('aria-pressed', 'true');
+    await expect.element(page.getByTestId('acting-on')).toHaveTextContent('2');
+
+    (stickerButtons().nth(3).element() as HTMLElement).focus();
+    await userEvent.keyboard(' ');
+    await expect.element(stickerButtons().nth(3)).toHaveAttribute('aria-pressed', 'true');
+    await expect.element(page.getByTestId('acting-on')).toHaveTextContent('4');
   });
 
   test('a sticker at the bottom edge is still selectable', async () => {

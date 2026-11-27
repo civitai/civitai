@@ -14,7 +14,7 @@ export function StickerPendingBar({
   onClear,
   edge = 'bottom',
   lifted = false,
-  clearPill = false,
+  clearPill,
   style,
 }: {
   count: number;
@@ -24,8 +24,8 @@ export function StickerPendingBar({
   edge?: 'top' | 'bottom';
   /** Sit above a video's controls when on the bottom edge. */
   lifted?: boolean;
-  /** Leave the top-right corner to the Hide controls pill. */
-  clearPill?: boolean;
+  /** Leave the named top corner to the Hide controls pill. */
+  clearPill?: 'left' | 'right';
   style?: CSSProperties;
 }) {
   // Escape only while focus is inside the bar, and only when there is a
@@ -45,7 +45,11 @@ export function StickerPendingBar({
       onKeyDown={onKeyDown}
       className={clsx(
         'pointer-events-auto absolute flex flex-wrap items-center justify-between gap-2 rounded-md bg-dark-8/90 px-2 py-1.5 text-white',
-        clearPill ? 'left-2 right-44' : 'inset-x-2',
+        clearPill === 'right'
+          ? 'left-2 right-44'
+          : clearPill === 'left'
+          ? 'left-44 right-2'
+          : 'inset-x-2',
         edge === 'top' ? 'top-2' : lifted ? 'bottom-16' : 'bottom-2'
       )}
       style={style}
