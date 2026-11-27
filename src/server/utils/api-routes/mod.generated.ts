@@ -66,6 +66,7 @@ export const routes: ApiRoutes = {
   'homeblock/delete': () => import('~/server/api-routes/mod/homeblock/delete'),
   'homeblock/reorder': () => import('~/server/api-routes/mod/homeblock/reorder'),
   'homeblock/update': () => import('~/server/api-routes/mod/homeblock/update'),
+  'image/kono-report-image': () => import('~/server/api-routes/mod/image/kono-report-image'),
   'image/kono-set-nsfw-level': () => import('~/server/api-routes/mod/image/kono-set-nsfw-level'),
   'image/report-csam': () => import('~/server/api-routes/mod/image/report-csam'),
   'image/set-nsfw-level': () => import('~/server/api-routes/mod/image/set-nsfw-level'),
