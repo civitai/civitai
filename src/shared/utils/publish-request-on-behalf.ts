@@ -1,13 +1,10 @@
 /**
- * The `fileSummary.onBehalf` record of a STAFF SUBMIT ON THE OWNER'S BEHALF, read back (pure).
+ * The `fileSummary.onBehalf` record of a STAFF SUBMIT ON THE OWNER'S BEHALF, read back (pure). The
+ * one reader of that record: every consumer goes through this module.
  *
  * Written only by `submitVersion` when `app-platform-update-submit.service.ts` files a platform
  * update for an app's owner: the request's submitter (`submittedByUserId`) is the moderator, and
  * this names the owner it was filed for. Never written from anything a client sent.
- *
- * Read through {@link readOnBehalf} by the review-outcome notifications (the owner is told as well
- * as the submitting moderator) and the owner's submission lists (the request is the owner's work,
- * listed for them and labelled as a staff submission).
  */
 
 export type OnBehalfRecord = {
@@ -21,16 +18,31 @@ export type OnBehalfRecord = {
 const str = (v: unknown) => (typeof v === 'string' && v ? v : null);
 const int = (v: unknown) => (typeof v === 'number' && Number.isInteger(v) ? v : null);
 
+/** The raw `onBehalf` object, or `null` when there is none. */
+function onBehalfObject(fileSummary: unknown): Record<string, unknown> | null {
+  if (!fileSummary || typeof fileSummary !== 'object') return null;
+  const rec = (fileSummary as { onBehalf?: unknown }).onBehalf;
+  return rec && typeof rec === 'object' ? (rec as Record<string, unknown>) : null;
+}
+
+/**
+ * Whether the request is a staff submit on the owner's behalf at all: any `onBehalf` object
+ * counts, including one {@link readOnBehalf} cannot fully parse. For the checks that must not
+ * treat such a request as the owner's own (its approve ships no platform update; a pending one
+ * refuses a second staff submit as a staff submission).
+ */
+export function hasOnBehalfRecord(fileSummary: unknown): boolean {
+  return onBehalfObject(fileSummary) !== null;
+}
+
 /**
  * The record, or `null` when the request was not a staff submit on the owner's behalf. A record
  * without its update id or its owner is treated as absent: nothing it would drive can be done
  * without them.
  */
 export function readOnBehalf(fileSummary: unknown): OnBehalfRecord | null {
-  if (!fileSummary || typeof fileSummary !== 'object') return null;
-  const rec = (fileSummary as { onBehalf?: unknown }).onBehalf;
-  if (!rec || typeof rec !== 'object') return null;
-  const r = rec as Record<string, unknown>;
+  const r = onBehalfObject(fileSummary);
+  if (!r) return null;
   const platformUpdateId = str(r.platformUpdateId);
   const ownerUserId = int(r.ownerUserId);
   if (!platformUpdateId || ownerUserId === null) return null;

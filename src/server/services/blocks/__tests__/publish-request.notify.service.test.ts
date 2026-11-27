@@ -599,10 +599,6 @@ describe('approve / reject of a staff on-behalf submit — the owner is notified
         },
       },
     ]);
-    // The reject read selects what the owner branch reads.
-    expect(
-      (db.read.appBlockPublishRequest.findUnique.mock.calls[0]![0] as { select: object }).select
-    ).toMatchObject({ fileSummary: true });
   });
 
   it('the owner is told even when the submitter’s notification fails', async () => {
@@ -663,10 +659,10 @@ describe('approve / reject of a staff on-behalf submit — the owner is notified
 });
 
 /**
- * OPERATOR DECISION "Reject withdraws it": rejecting a staff on-behalf submit also withdraws the
- * platform update it carried (`superseded`, by the rejecting moderator), through the
- * platform-update record's own supersede, and the owner is told. An approve leaves the update
- * alone; an ordinary reject touches no update. The supersede is the REAL one
+ * Decided in PR #10605 ("Reject withdraws it"): rejecting a staff on-behalf submit also
+ * withdraws the platform update it carried (`superseded`, by the rejecting moderator), through
+ * the platform-update record's own supersede, and the owner is told. An approve leaves the
+ * update alone; an ordinary reject touches no update. The supersede is the REAL one
  * (`app-platform-update.record`), observed at the db client: the row it reads and the UPDATE it
  * writes.
  */

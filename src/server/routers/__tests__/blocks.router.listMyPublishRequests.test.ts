@@ -101,6 +101,8 @@ beforeEach(() => {
   mockDbRead.blockUserSubscription.groupBy.mockResolvedValue([]);
   mockDbRead.appListing.findMany.mockResolvedValue([]);
   mockDbRead.appListingModerationEvent.findMany.mockResolvedValue([]);
+  // The caller owns no app unless a case says so (the staff on-behalf read is then skipped).
+  mockDbRead.appBlock.findMany.mockResolvedValue([]);
 });
 
 describe('listMyPublishRequests — P4 owner-control augmentation', () => {
@@ -937,22 +939,21 @@ describe('listMyPublishRequests — staff submissions on the owner’s behalf', 
     appBlock: { id: 'block-a', manifest: PAGE_MANIFEST, _count: { userSubscriptions: 0 } },
   });
 
-  it('queries the on-behalf rows for the caller’s OWN apps and the caller as recorded owner', async () => {
-    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([]);
-    const caller = blocksRouter.createCaller(fakeCtx(owner) as never);
-    await caller.listMyPublishRequests();
+  beforeEach(() => {
+    // The caller owns block-a.
+    mockDbRead.appBlock.findMany.mockResolvedValue([{ id: 'block-a' }]);
+  });
 
-    const wheres = mockDbRead.appBlockPublishRequest.findMany.mock.calls.map(
-      (c) => (c[0] as { where: unknown }).where
-    );
-    expect(wheres).toEqual([
-      { submittedByUserId: 7 },
-      {
-        submittedByUserId: { not: 7 },
-        appBlock: { app: { userId: 7 } },
-        fileSummary: { path: ['onBehalf', 'ownerUserId'], equals: 7 },
-      },
+  it('a caller who owns no app is listed only their own submissions, with no on-behalf read', async () => {
+    mockDbRead.appBlock.findMany.mockResolvedValue([]);
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
+      row('req-own', '2026-01-01', null),
     ]);
+    const caller = blocksRouter.createCaller(fakeCtx(owner) as never);
+    const rows = await caller.listMyPublishRequests();
+
+    expect(rows.map((r) => r.id)).toEqual(['req-own']);
+    expect(mockDbRead.appBlockPublishRequest.findMany).toHaveBeenCalledTimes(1);
   });
 
   it('lists the owner’s own and the staff submission, newest first, labelling only the staff one', async () => {
@@ -976,6 +977,8 @@ describe('listMyPublishRequests — staff submissions on the owner’s behalf', 
         row('req-other-owner', '2026-03-01', onBehalf(999)),
         row('req-collab', '2026-03-02', { files: [], added: [], removed: [], changed: [] }),
         row('req-own', '2026-01-01', onBehalf(7)),
+        // Records this caller as owner, but on an app they do not own (now).
+        { ...row('req-other-app', '2026-03-03', onBehalf(7)), appBlockId: 'block-z' },
       ]);
     const caller = blocksRouter.createCaller(fakeCtx(owner) as never);
     const rows = await caller.listMyPublishRequests();

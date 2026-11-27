@@ -349,7 +349,13 @@ let replicaApproved: Record<string, ApprovedRow> | null;
 /** Pending publish requests by slug (the database allows one per app). */
 let pending: Record<string, { id: string; submittedByUserId: number; fileSummary: unknown }>;
 /** Publish requests filed by a staff on-behalf submit (`fileSummary.onBehalf`), on the primary. */
-let filed: Array<{ id: string; slug: string; status: string; fileSummary: unknown }>;
+let filed: Array<{
+  id: string;
+  slug: string;
+  status: string;
+  fileSummary: unknown;
+  appBlockId?: string;
+}>;
 
 function installModelReads() {
   const shape = (b: (typeof blocks)[number]) => ({
@@ -393,7 +399,9 @@ function installModelReads() {
           .reverse()
           .find(
             (r) =>
-              statuses.includes(r.status) && onBehalfIdOf(r.fileSummary) === w.fileSummary!.equals
+              (!w.appBlockId || r.appBlockId === w.appBlockId) &&
+              statuses.includes(r.status) &&
+              onBehalfIdOf(r.fileSummary) === w.fileSummary!.equals
           );
         return hit ? { id: hit.id, status: hit.status } : null;
       }
@@ -1466,6 +1474,7 @@ describe('submit on the owner’s behalf', () => {
       filed.push({
         id: publishRequestId,
         slug: SLUG,
+        appBlockId: 'ab_app',
         status: 'pending',
         fileSummary: { files: [], onBehalf: { ...params.onBehalf, staffUserId: MOD } },
       });
@@ -1564,6 +1573,7 @@ describe('submit on the owner’s behalf', () => {
     expect(params).toEqual({
       submittedByUserId: MOD,
       submitterIsModerator: true,
+      submittedOnBehalf: true,
       onBehalf: {
         platformUpdateId: pushed.id,
         staffUsername: 'mod-ana',
@@ -1685,6 +1695,22 @@ describe('submit on the owner’s behalf', () => {
         'package.json; the owner has to merge this update and submit it themselves',
     });
     expect(calls).toEqual([]);
+  });
+
+  it('a staff submission already pending for the app: a second update is refused as such', async () => {
+    approvedBuild();
+    const first = await pushAsMod();
+    const second = await pushAsMod(MOD, 'A second fix');
+    const { calls, deps } = recordingSubmit();
+    await submitSvc.submitPlatformUpdateOnBehalf({ staffUserId: MOD, id: first.id }, deps);
+    await expect(
+      submitSvc.submitPlatformUpdateOnBehalf({ staffUserId: MOD, id: second.id }, deps)
+    ).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message:
+        'A staff submission for this app is already waiting for review; retry after it is reviewed.',
+    });
+    expect(calls).toHaveLength(1);
   });
 
   it('a withdrawn update is refused', async () => {

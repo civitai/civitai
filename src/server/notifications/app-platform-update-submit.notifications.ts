@@ -69,7 +69,6 @@ export const appPlatformUpdateSubmitNotifications = createNotificationProcessor(
   'app-platform-update-approved': {
     displayName: 'A staff platform update to your app was approved',
     category: NotificationCategory.System,
-    // A new version of the recipient's own app goes live: they must always be told.
     toggleable: false,
     defaultEmail: true,
     prepareMessage: (notification) => {
@@ -106,7 +105,6 @@ export const appPlatformUpdateSubmitNotifications = createNotificationProcessor(
   'app-platform-update-submitted': {
     displayName: 'Civitai staff submitted an update to your app for review',
     category: NotificationCategory.System,
-    // A new version of the recipient's own app is in review: they must always be told.
     toggleable: false,
     prepareMessage: (notification) => {
       const details = notification.details as AppPlatformUpdateSubmittedNotificationDetails;

@@ -38,6 +38,7 @@ import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { isMissingTableError } from '~/server/services/blocks/app-access.service';
 import {
+  MANIFEST_PATH,
   PLATFORM_AUTHOR,
   PLATFORM_UPDATE_REASON_MAX,
   PlatformUpdatePlanError,
@@ -80,8 +81,7 @@ export {
   type UpdateRow,
 } from '~/server/services/blocks/app-platform-update.record';
 
-/** The app's manifest, at the root of its source repo. */
-export const MANIFEST_PATH = 'block.manifest.json';
+export { MANIFEST_PATH };
 
 async function tableAvailable(): Promise<boolean> {
   try {

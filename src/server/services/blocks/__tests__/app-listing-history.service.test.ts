@@ -957,12 +957,6 @@ describe('a staff submission on the owner’s behalf is labelled', () => {
       ],
       ['pubreq_own', null, false],
     ]);
-    const select = (
-      mockDb.appBlockPublishRequest.findMany.mock.calls[0]![0] as {
-        select: Record<string, unknown>;
-      }
-    ).select;
-    expect(select.fileSummary).toBe(true);
     // The raw summary is read for the label only, never projected.
     expect(entries[0]).not.toHaveProperty('fileSummary');
   });

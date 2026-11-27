@@ -27,9 +27,24 @@ describe('reviewOnBehalfLine', () => {
     expect(
       reviewOnBehalfLine({
         ...files,
-        onBehalf: { staffUserId: 8001, staffUsername: null, ownerUserId: 7101, ownerUsername: '' },
+        onBehalf: {
+          platformUpdateId: 'apu_1',
+          staffUserId: 8001,
+          staffUsername: null,
+          ownerUserId: 7101,
+          ownerUsername: '',
+        },
       })
-    ).toEqual({ heading: 'Staff submission', value: 'submitted by user 8001 for user 7101' });
+    ).toEqual({
+      heading: 'Staff submission',
+      value: 'submitted by user 8001 for user 7101 (platform update apu_1)',
+    });
+    expect(
+      reviewOnBehalfLine({
+        ...files,
+        onBehalf: { platformUpdateId: 'apu_1', ownerUserId: 7101 },
+      })?.value
+    ).toBe('submitted by an unknown account for user 7101 (platform update apu_1)');
   });
 
   it('nothing for an ordinary submit', () => {

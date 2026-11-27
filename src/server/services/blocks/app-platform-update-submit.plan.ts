@@ -14,9 +14,12 @@
  */
 
 import semver from 'semver';
-import { gitBlobSha, type BlobTree } from '~/server/services/blocks/app-source-repo.plan';
-
-export const MANIFEST_PATH = 'block.manifest.json';
+import type { PlatformUpdatePath } from '~/server/services/blocks/app-platform-update.record';
+import {
+  MANIFEST_PATH,
+  gitBlobSha,
+  type BlobTree,
+} from '~/server/services/blocks/app-source-repo.plan';
 
 /** The refusal when the app already has a pending publish request (one per app). */
 export const OWNER_PENDING_REFUSAL =
@@ -26,8 +29,6 @@ export const OWNER_PENDING_REFUSAL =
 /** The refusal when a staff submit of this app is already waiting for review. */
 export const STAFF_PENDING_REFUSAL =
   'A staff submission for this app is already waiting for review; retry after it is reviewed.';
-
-export type UpdatePath = { path: string; operation: 'create' | 'update' | 'delete' };
 
 export class OnBehalfPlanError extends Error {
   constructor(message: string) {
@@ -46,7 +47,7 @@ export class OnBehalfPlanError extends Error {
 export function planOnBehalfFiles(args: {
   approved: ReadonlyMap<string, Buffer>;
   baseTree: BlobTree;
-  paths: readonly UpdatePath[];
+  paths: readonly PlatformUpdatePath[];
   updateFiles: ReadonlyMap<string, Buffer>;
 }): Map<string, Buffer> {
   const conflicts: string[] = [];

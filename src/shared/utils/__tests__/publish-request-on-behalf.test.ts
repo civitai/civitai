@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  hasOnBehalfRecord,
   readOnBehalf,
   staffSubmissionLabel,
   staffSubmissionOf,
@@ -29,6 +30,14 @@ describe('readOnBehalf', () => {
   ])('is null for %s', (_case, summary) => {
     expect(readOnBehalf(summary)).toBeNull();
     expect(staffSubmissionOf(summary)).toBeNull();
+  });
+
+  it('hasOnBehalfRecord: any onBehalf object counts, even one readOnBehalf cannot parse', () => {
+    expect(hasOnBehalfRecord({ ...files, onBehalf: REC })).toBe(true);
+    expect(hasOnBehalfRecord({ ...files, onBehalf: { ownerUserId: '7101' } })).toBe(true);
+    expect(readOnBehalf({ ...files, onBehalf: { ownerUserId: '7101' } })).toBeNull();
+    for (const summary of [null, files, { ...files, onBehalf: 'yes' }, { onBehalf: null }])
+      expect(hasOnBehalfRecord(summary)).toBe(false);
   });
 
   it('labels a staff submission, naming the staff member or the team', () => {

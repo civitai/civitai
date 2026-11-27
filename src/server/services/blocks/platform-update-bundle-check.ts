@@ -45,6 +45,7 @@
  * paths some update touches.
  */
 import { logToAxiom } from '~/server/logging/client';
+import { hasOnBehalfRecord } from '~/shared/utils/publish-request-on-behalf';
 import type { Advisory } from './submit-advisories';
 import { missingUpdatePaths } from './platform-update-containment';
 // The cap is a constant of the shipped module (its query's LIMIT); that module imports nothing
@@ -347,14 +348,11 @@ export async function assertBundleHasPlatformUpdates(
 }
 
 /**
- * A STAFF SUBMIT ON THE OWNER'S BEHALF: its `fileSummary` carries the `onBehalf` record that
- * submit writes (any object there counts, so a record this reader cannot fully parse still does).
+ * A STAFF SUBMIT ON THE OWNER'S BEHALF ({@link hasOnBehalfRecord}: any `onBehalf` object counts).
  * Its approval ships no update: only an owner's own build does.
  */
 export function isStaffOnBehalfSubmission(fileSummary: unknown): boolean {
-  if (!fileSummary || typeof fileSummary !== 'object') return false;
-  const rec = (fileSummary as { onBehalf?: unknown }).onBehalf;
-  return !!rec && typeof rec === 'object';
+  return hasOnBehalfRecord(fileSummary);
 }
 
 /**

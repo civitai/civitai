@@ -15,7 +15,7 @@
  *
  * AUDIT. The publish request itself is the record of the submit: `fileSummary.onBehalf` names the
  * update, and `submittedByUserId` / `createdAt` say who and when. "Already submitted" is read from
- * there ({@link activeSubmission}). Every submit is also logged.
+ * there ({@link activeSubmission}). A successful submit is also logged.
  *
  * THE UPDATE'S STATUS. A submit leaves it `pending`: the owner's own checkout still has to merge
  * it, or their next submit would ship without it. If the review REJECTS the on-behalf request,
@@ -31,7 +31,6 @@ import JSZip from 'jszip';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
-  MANIFEST_PATH,
   OWNER_PENDING_REFUSAL,
   OnBehalfPlanError,
   STAFF_PENDING_REFUSAL,
@@ -41,8 +40,10 @@ import {
   withManifestVersion,
 } from '~/server/services/blocks/app-platform-update-submit.plan';
 import { readRows, resolveApp } from '~/server/services/blocks/app-platform-update.service';
-import { treeFromMap } from '~/server/services/blocks/app-source-repo.plan';
+import { MANIFEST_PATH, treeFromMap } from '~/server/services/blocks/app-source-repo.plan';
 import { FORGEJO_SOURCE_ORG } from '~/server/services/blocks/forgejo-orgs';
+import { Limiter } from '~/server/utils/concurrency-helpers';
+import { hasOnBehalfRecord } from '~/shared/utils/publish-request-on-behalf';
 import type {
   SubmitVersionParams,
   SubmitVersionResult,
@@ -84,43 +85,57 @@ async function pendingRefusal(slug: string): Promise<TRPCError | null> {
     select: { id: true, fileSummary: true },
   });
   if (!pending) return null;
-  const onBehalf =
-    pending.fileSummary &&
-    typeof pending.fileSummary === 'object' &&
-    (pending.fileSummary as { onBehalf?: unknown }).onBehalf;
   return new TRPCError({
     code: 'CONFLICT',
-    message: onBehalf ? STAFF_PENDING_REFUSAL : OWNER_PENDING_REFUSAL,
+    message: hasOnBehalfRecord(pending.fileSummary) ? STAFF_PENDING_REFUSAL : OWNER_PENDING_REFUSAL,
   });
 }
 
 /**
- * The newest on-behalf publish request filed for update `updateId` that is still pending or was
+ * The newest on-behalf publish request filed for the update that is still pending or was
  * approved, or `null`. A rejected or withdrawn one does not count: the update may be submitted
- * again. Read on the primary: the last submit may have been a moment ago.
+ * again. Read on the primary: the last submit may have been a moment ago. Scoped to the update's
+ * app, so the JSON filter runs over that app's requests only.
  */
-async function activeSubmission(updateId: string): Promise<{ id: string; status: string } | null> {
+async function activeSubmission(update: {
+  id: string;
+  appBlockId: string;
+}): Promise<{ id: string; status: string } | null> {
   // primary: guards the submit below; a request filed a moment ago may not be on the replica.
   return dbWrite.appBlockPublishRequest.findFirst({
     where: {
+      appBlockId: update.appBlockId,
       status: { in: ['pending', 'approved'] },
-      fileSummary: { path: ['onBehalf', 'platformUpdateId'], equals: updateId },
+      fileSummary: { path: ['onBehalf', 'platformUpdateId'], equals: update.id },
     },
     orderBy: { createdAt: 'desc' },
     select: { id: true, status: true },
   });
 }
 
+/** Blob reads one submit runs at once. */
+const BLOB_READ_CONCURRENCY = 5;
+
 /** The bytes of `paths` in the source repo at `ref`, and the whole tree there. */
 async function sourceFilesAt(slug: string, ref: string, paths: readonly string[]) {
   const forgejo = await import('~/server/services/blocks/forgejo.service');
   const tree = await forgejo.listRepoTreeAtRef(slug, ref, FORGEJO_SOURCE_ORG);
-  const files = new Map<string, Buffer>();
-  for (const path of paths) {
+  const present = paths.flatMap((path) => {
     const sha = tree.get(path);
-    if (sha) files.set(path, await forgejo.getBlobContent(slug, sha, FORGEJO_SOURCE_ORG));
-  }
-  return { tree: treeFromMap(tree), files };
+    return sha ? [{ path, sha }] : [];
+  });
+  // One blob per task; `process` flattens each task's array of entries into one list.
+  const read = await Limiter({ limit: BLOB_READ_CONCURRENCY, batchSize: 1 }).process(
+    present,
+    (batch) =>
+      Promise.all(
+        batch.map(
+          async ({ path, sha }) =>
+            [path, await forgejo.getBlobContent(slug, sha, FORGEJO_SOURCE_ORG)] as const
+        )
+      )
+  );
+  return { tree: treeFromMap(tree), files: new Map<string, Buffer>(read) };
 }
 
 /** A ZIP of `files`, deterministic (sorted, zeroed timestamps), as the bundle reconstruct builds. */
@@ -156,7 +171,7 @@ export async function submitPlatformUpdateOnBehalf(
   if (update.status === 'superseded')
     throw new TRPCError({ code: 'CONFLICT', message: 'This update was withdrawn' });
 
-  const prior = await activeSubmission(update.id);
+  const prior = await activeSubmission(update);
   if (prior)
     throw new TRPCError({
       code: 'CONFLICT',
@@ -240,6 +255,10 @@ export async function submitPlatformUpdateOnBehalf(
       bundleBuffer,
       submittedByUserId: args.staffUserId,
       submitterIsModerator: true,
+      // Never refused for the app's other unshipped updates (its bundle lacks them by
+      // construction); recorded via `on-behalf` instead. `onBehalf` keeps its approve from
+      // marking anything shipped.
+      submittedOnBehalf: true,
       onBehalf: {
         platformUpdateId: update.id,
         staffUsername: staff.username ?? null,

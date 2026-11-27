@@ -26,10 +26,6 @@ export const platformUpdateLog = (
 export const platformUpdatesUnavailable = () =>
   new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Platform updates are not available' });
 
-// ---------------------------------------------------------------------------
-// The table (raw SQL; a missing table reads as "off")
-// ---------------------------------------------------------------------------
-
 export type UpdateRow = {
   id: string;
   appBlockId: string;

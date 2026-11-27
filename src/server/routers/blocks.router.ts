@@ -3880,6 +3880,30 @@ export const blocksRouter = router({
         },
       },
     } as const;
+    // A STAFF SUBMIT ON THE VIEWER'S BEHALF (`fileSummary.onBehalf`): its submitter is the
+    // moderator, but the version is the viewer's app's, so it is listed for them too.
+    // 🔴 Gated on BOTH the app's current owner (the block's OAuth client) and the owner the
+    // request recorded, in the query and again on the rows, so no other app's request can reach
+    // this list. Read by the viewer's own app ids, so it is an index read per app.
+    const onBehalfForViewer = async () => {
+      const ownApps = await dbRead.appBlock.findMany({
+        where: { app: { userId: viewerId } },
+        select: { id: true },
+      });
+      const ownAppIds = ownApps.map((b: { id: string }) => b.id);
+      if (ownAppIds.length === 0) return { ownAppIds, rows: [] };
+      const rows = await dbRead.appBlockPublishRequest.findMany({
+        where: {
+          appBlockId: { in: ownAppIds },
+          submittedByUserId: { not: viewerId },
+          fileSummary: { path: ['onBehalf', 'ownerUserId'], equals: viewerId },
+        },
+        orderBy: { submittedAt: 'desc' },
+        take: 100,
+        select,
+      });
+      return { ownAppIds, rows };
+    };
     const [submitted, onBehalfOfViewer] = await Promise.all([
       dbRead.appBlockPublishRequest.findMany({
         where: { submittedByUserId: viewerId },
@@ -3887,28 +3911,18 @@ export const blocksRouter = router({
         take: 100,
         select,
       }),
-      // A STAFF SUBMIT ON THE VIEWER'S BEHALF (`fileSummary.onBehalf`): its submitter is the
-      // moderator, but the version is the viewer's app's, so it is listed for them too.
-      // 🔴 Gated on BOTH the app's current owner (the block's OAuth client) and the owner the
-      // request recorded, in the query and again below, so no other app's request can reach
-      // this list. The viewer's own submissions are excluded here and de-duplicated anyway.
-      dbRead.appBlockPublishRequest.findMany({
-        where: {
-          submittedByUserId: { not: viewerId },
-          appBlock: { app: { userId: viewerId } },
-          fileSummary: { path: ['onBehalf', 'ownerUserId'], equals: viewerId },
-        },
-        orderBy: { submittedAt: 'desc' },
-        take: 100,
-        select,
-      }),
+      onBehalfForViewer(),
     ]);
     const seen = new Set(submitted.map((r: { id: string }) => r.id));
+    const ownAppIds = new Set(onBehalfOfViewer.ownAppIds);
     const rows = [
       ...submitted,
-      ...onBehalfOfViewer.filter(
-        (r: { id: string; fileSummary: unknown }) =>
-          !seen.has(r.id) && readOnBehalf(r.fileSummary)?.ownerUserId === viewerId
+      ...onBehalfOfViewer.rows.filter(
+        (r: { id: string; appBlockId: string | null; fileSummary: unknown }) =>
+          !seen.has(r.id) &&
+          r.appBlockId !== null &&
+          ownAppIds.has(r.appBlockId) &&
+          readOnBehalf(r.fileSummary)?.ownerUserId === viewerId
       ),
     ]
       .sort(

@@ -316,7 +316,6 @@ export async function listListingHistory(opts: {
             deployState: true,
             deployDetail: true,
             deployUpdatedAt: true,
-            // Read for `fileSummary.onBehalf` only (the staff-submission label); never projected.
             fileSummary: true,
             reviewedBy: { select: reviewUserChipSelect },
           },
