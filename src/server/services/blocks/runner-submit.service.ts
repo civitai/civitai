@@ -8,6 +8,7 @@ import {
   type BlockTokenClaims,
 } from '~/server/middleware/block-scope.middleware';
 import { resolveCanonicalListingOwner } from '~/server/services/blocks/app-access.service';
+import { claimOnce } from '~/server/redis/claim-once';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { RUNNER_TOKEN_LIFETIME_SECONDS } from '~/server/services/block-token.service';
 import type { RunnerBindingHashes, RunnerSlot } from '~/server/services/blocks/runner-binding';
@@ -84,8 +85,9 @@ const runnerRevokedKey = (userId: number, clientId: string) =>
   `${REDIS_KEYS.BLOCKS.RUNNER_REVOKED}:${userId}:${clientId}` as const;
 
 /**
- * Refuse runner submits for (user, client) with a token minted at or before now, for longer than
- * such a token lives. The live consent read at submit is the primary control.
+ * Mark (user, client) revoked: submits with a token minted at or before now are refused until such
+ * tokens have expired (TTL = token lifetime + 60s). The authorization's revokedAt re-read at submit
+ * is the primary control.
  */
 export async function markRunnerClientRevoked(userId: number, clientId: string): Promise<void> {
   await redis.set(runnerRevokedKey(userId, clientId), String(Math.floor(Date.now() / 1000)), {
@@ -183,8 +185,9 @@ export async function prepareRunnerSubmit(
  * ledger still allows one live attempt per run.
  */
 export async function claimRunnerSubmitJti(jti: string): Promise<boolean> {
-  const key = `${REDIS_KEYS.BLOCKS.RUNNER_SUBMIT_JTI}:${jti}` as const;
   // Past the token's lifetime: the verifier still accepts it within its clock tolerance.
-  const set = await redis.set(key, '1', { NX: true, EX: RUNNER_TOKEN_LIFETIME_SECONDS + 60 });
-  return set !== null;
+  return claimOnce(
+    `${REDIS_KEYS.BLOCKS.RUNNER_SUBMIT_JTI}:${jti}`,
+    RUNNER_TOKEN_LIFETIME_SECONDS + 60
+  );
 }

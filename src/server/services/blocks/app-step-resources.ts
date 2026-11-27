@@ -12,7 +12,7 @@ import {
 import { MEDIA_INPUT_NAMES as COMFY_MEDIA_INPUT_NAMES } from '~/server/services/blocks/inline-comfy.service';
 import { WORKFLOW_ARGUMENTS_REF } from '~/server/services/blocks/workflow-graph';
 import { BLOB_KEY_RE } from '~/server/services/blocks/media-input-reference';
-import { isWeightFile } from '~/server/services/huggingface.service';
+import { isWeightFile } from '~/server/common/weight-file';
 import { capsGenerationOutput } from '~/server/services/orchestrator/form-graph/output-restrictions';
 import {
   canAccessGenerationResource,

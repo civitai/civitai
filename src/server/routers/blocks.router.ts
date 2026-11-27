@@ -1806,9 +1806,7 @@ async function reserveBlockBuzzSpendForClaims(
   runner?: RunnerSubmit
 ): Promise<BlockBuzzReservation> {
   if (claims.mintOrigin !== 'runner') return reservePlatformAndConsentLegs(claims, userId, cost);
-  // Only the customComfy arm passes the runner context; submitWorkflow refuses every other kind.
   if (!runner) refuseRunnerSubmit(claims.runId, 'kind');
-  // The ledger first: a refused attempt touches no Redis leg.
   const leg = await reserveRunnerLeg(claims, userId, cost, runner);
   try {
     return { ...(await reservePlatformAndConsentLegs(claims, userId, cost)), runner: leg };
@@ -2055,8 +2053,8 @@ async function refundBlockBuzzReservation(
   cost: number
 ): Promise<boolean> {
   if (reservation.runner) {
-    // The ledger first: only the writer that moves the attempt refunds the Redis legs. A lost
-    // transition means another writer did; a failed one leaves both counting (the safe side).
+    // Only the writer that moves the attempt to refunded refunds the Redis legs; a failed move
+    // leaves both counting (the safe side).
     if (!(await refundRunnerLeg(reservation.runner))) return false;
   }
   await refundBlockBuzzSpend(reservation.key, cost);
@@ -12063,6 +12061,19 @@ async function submitCustomComfyWorkflow(opts: {
   // persisted in the settle record below. This is what makes adding the third
   // reservation safe (it can't over-count the session for the 25h TTL).
   let devSessionReserve: { sessionId: string; cost: number } | null = null;
+  // The app and dev-session legs are refunded only when the reservation's were (a runner attempt
+  // another writer moved keeps every leg counting).
+  const refundAllLegs = async () => {
+    if (!(await refundBlockBuzzReservation(reservation, ceiling))) return;
+    if (appSpendReserve) {
+      const { refundAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
+      await refundAppSpend(appSpendReserve.key, appSpendReserve.cost);
+    }
+    if (devSessionReserve) {
+      const { refundDevSessionBuzz } = await import('~/server/services/blocks/dev-tunnel.service');
+      await refundDevSessionBuzz(devSessionReserve.sessionId, devSessionReserve.cost);
+    }
+  };
   // Not for a runner: a runner run is no dev session, and its attempt row names no such leg.
   if (!runner) {
     const { getActiveDevTunnel, reserveDevSessionBuzz } = await import(
@@ -12080,11 +12091,7 @@ async function submitCustomComfyWorkflow(opts: {
         // above (the session reserve rolled ITSELF back on deny) and the G8
         // per-app reservation (present only for non-dev tokens; a token with
         // `dev !== true` can still have an active dev tunnel). Then fail-snapshot.
-        const refunded = await refundBlockBuzzReservation(reservation, ceiling);
-        if (refunded && appSpendReserve) {
-          const { refundAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
-          await refundAppSpend(appSpendReserve.key, appSpendReserve.cost);
-        }
+        await refundAllLegs();
         // No money moved → release the idempotency claim so a genuine retry runs.
         if (genClaimKey) await releaseGenIdempotency(genClaimKey);
         return {
@@ -12140,18 +12147,7 @@ async function submitCustomComfyWorkflow(opts: {
         return false;
       });
     if (!moved) {
-      if (await refundBlockBuzzReservation(reservation, ceiling)) {
-        if (appSpendReserve) {
-          const { refundAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
-          await refundAppSpend(appSpendReserve.key, appSpendReserve.cost);
-        }
-        if (devSessionReserve) {
-          const { refundDevSessionBuzz } = await import(
-            '~/server/services/blocks/dev-tunnel.service'
-          );
-          await refundDevSessionBuzz(devSessionReserve.sessionId, devSessionReserve.cost);
-        }
-      }
+      await refundAllLegs();
       if (genClaimKey) await releaseGenIdempotency(genClaimKey);
       throw new TRPCError({ code: 'CONFLICT', message: 'runner attempt is no longer reserved' });
     }
@@ -12206,18 +12202,7 @@ async function submitCustomComfyWorkflow(opts: {
       });
       throw e;
     }
-    const refunded = await refundBlockBuzzReservation(reservation, ceiling);
-    if (refunded && appSpendReserve) {
-      const { refundAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
-      await refundAppSpend(appSpendReserve.key, appSpendReserve.cost);
-    }
-    // F4 — mirror the daily/app refund for the dev-session reservation so a failed
-    // submit doesn't permanently burn the session ceiling. Best-effort; present
-    // only when an active dev tunnel was reserved above.
-    if (refunded && devSessionReserve) {
-      const { refundDevSessionBuzz } = await import('~/server/services/blocks/dev-tunnel.service');
-      await refundDevSessionBuzz(devSessionReserve.sessionId, devSessionReserve.cost);
-    }
+    await refundAllLegs();
     // No resolved submit → no money moved; release the idempotency claim so a
     // genuine retry can re-run (orchestrator externalId dedupe still covers a retry
     // that DID create a workflow server-side despite a lost response).
@@ -12250,7 +12235,20 @@ async function submitCustomComfyWorkflow(opts: {
           logRunnerLedgerError('adopt', attemptId, error);
           return false;
         }));
-    // Neither move landed: the attempt stays in its current state and keeps counting.
+    if (moved || adopted) {
+      logToAxiom({
+        name: 'runner-submit',
+        type: 'info',
+        payload: {
+          outcome: 'submitted',
+          runId: runner?.runId,
+          attemptId,
+          workflowId: snapshot.workflowId,
+        },
+      });
+    }
+    // Adopted: alarmed as the sweeper race. Unrecorded (neither move landed): the attempt stays in
+    // its current state and keeps counting.
     if (!moved) {
       logToAxiom({
         name: adopted ? 'runner-attempt-adopted' : 'runner-attempt-unrecorded',

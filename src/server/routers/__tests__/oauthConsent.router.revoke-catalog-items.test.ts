@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as ApiKeySpend from '~/server/http/orchestrator/api-key-spend';
+import { BLOCK_TOKEN_LIFETIMES_SECONDS } from '~/server/services/block-token-lifetimes';
 import type * as SubListingService from '~/server/services/blocks/app-sub-listing.service';
 import type * as OrchestratorCivitai from '~/server/services/orchestrator/civitai';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -128,7 +129,7 @@ describe('oauthConsent.revokeApp', () => {
     );
     expect(call).toBeDefined();
     expect(Number(call![1])).toBeGreaterThanOrEqual(before);
-    expect(call![2]).toEqual({ EX: 240 });
+    expect(call![2]).toEqual({ EX: BLOCK_TOKEN_LIFETIMES_SECONDS.runner + 60 });
   });
 
   it('still revokes when the revocation marker cannot be written', async () => {

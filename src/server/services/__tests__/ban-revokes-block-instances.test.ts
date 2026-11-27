@@ -75,15 +75,9 @@ import { BlockRegistry } from '~/server/services/block-registry.service';
 import { BlockRevocation } from '~/server/services/block-revocation.service';
 import { revokeBlockInstancesForPublisher } from '~/server/services/blocks/publisher-ban-revocation.service';
 
-// The ban leg revokes recipe-runner authorizations through kyselyDb; this suite never reads them.
-vi.mock('~/server/db/kyselyDb', async () => {
-  const { pgliteKysely } = await import('~/__tests__/pglite-kysely');
-  return {
-    kyselyWrite: pgliteKysely(() => {
-      throw new Error('no ledger database in this suite');
-    }),
-  };
-});
+vi.mock('~/server/db/kyselyDb', async () =>
+  (await import('~/__tests__/mocks/no-ledger-kysely')).noLedgerKyselyDb()
+);
 
 const { toggleBan } = await import('~/server/services/user.service');
 const { BanReasonCode } = await import('~/server/common/enums');

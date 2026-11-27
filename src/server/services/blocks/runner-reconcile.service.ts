@@ -14,8 +14,13 @@ import {
   type RunnerAttemptRow,
   type RunnerAttemptState,
 } from '~/server/services/blocks/runner-ledger.service';
-import { appBlockTag, orchestratorBlockStatus } from '~/server/services/blocks/workflow.service';
+import {
+  appBlockTag,
+  orchestratorBlockStatus,
+  TERMINAL_SNAPSHOT_STATUSES,
+} from '~/server/services/blocks/workflow.service';
 import { isWorkflowOwnedBy } from '~/server/services/orchestrator/assert-workflow-owner';
+import { systemOrchestratorToken } from '~/server/services/orchestrator/system-token';
 import { cancelWorkflow, getWorkflow } from '~/server/services/orchestrator/workflows';
 
 // The recipe runner's ledger jobs. Runner tokens cannot poll, and a runner submit writes no settle
@@ -28,10 +33,12 @@ export const RUNNER_ATTEMPT_STALE_MS =
 export const RUNNER_UNKNOWN_ALARM_MS = 60 * 60 * 1000;
 const BATCH = 200;
 const CANCEL_MARKER_TTL_SECONDS = 60 * 60;
-/** A held row is GET again after this: each GET wakes the workflow's grain and its recovery paths. */
+/** A held row is polled again after this; each poll wakes the workflow's recovery paths. */
 const HELD_BACKOFF_SECONDS = 15 * 60;
 /** A running row waits this long before its next GET, so rows past a full batch rotate in. */
 const RUNNING_BACKOFF_SECONDS = 60;
+/** An alarmed `unknown` row is pushed this far forward; with the hour threshold it re-alarms every 6h. */
+const UNKNOWN_REALARM_SECONDS = 5 * 60 * 60;
 
 export interface RunnerReconcileDeps {
   /** The workflow, or null when the orchestrator has none by that id. */
@@ -43,23 +50,17 @@ export interface RunnerReconcileDeps {
   reverseAuthorFee(workflowId: string, terminalStatus: string): Promise<unknown>;
 }
 
-function systemToken(): string {
-  const token = env.ORCHESTRATOR_ACCESS_TOKEN;
-  if (!token) throw new Error('ORCHESTRATOR_ACCESS_TOKEN is not configured');
-  return token;
-}
-
 const liveDeps: RunnerReconcileDeps = {
   getWorkflow: async (workflowId) => {
     try {
-      return await getWorkflow({ token: systemToken(), path: { workflowId } });
+      return await getWorkflow({ token: systemOrchestratorToken(), path: { workflowId } });
     } catch (error) {
       if (error instanceof TRPCError && error.code === 'NOT_FOUND') return null;
       throw error;
     }
   },
   cancelWorkflow: (workflowId) =>
-    cancelWorkflow({ workflowId, token: systemToken(), throwOnError: true }),
+    cancelWorkflow({ workflowId, token: systemOrchestratorToken(), throwOnError: true }),
   markWorkflowStatus: async (workflowId, status) => {
     const { updateBlockWorkflowStatus } = await import(
       '~/server/services/blocks/block-workflows.service'
@@ -144,12 +145,7 @@ async function reconcileAttempt(
   const status = orchestratorBlockStatus(workflow);
   const cost = workflow.cost?.total;
   const actual = Math.ceil(typeof cost === 'number' && cost > 0 ? cost : 0);
-  if (
-    status !== 'succeeded' &&
-    status !== 'failed' &&
-    status !== 'expired' &&
-    status !== 'canceled'
-  ) {
+  if (!TERMINAL_SNAPSHOT_STATUSES.has(status)) {
     const observed = Math.max(actual, liveCustomComfyCost(workflow));
     if (observed > row.reservedAmount) await cancelOverCeiling(deps, row, observed);
     await touchRunnerAttempt(db, row.attemptId, 'submitted', RUNNING_BACKOFF_SECONDS);
@@ -240,7 +236,7 @@ function liveCustomComfyCost(workflow: Workflow): number {
 /**
  * Release attempts a submit stalled on. `reserved` (never sent) -> `refunded`. `submitting` (may
  * have been sent) -> `unknown`, never refunded. Alarms on every `unknown` older than an hour,
- * which is resolved by hand.
+ * which is resolved by hand, then again every six hours while it stays `unknown`.
  */
 export async function sweepRunnerAttempts(db: Kysely<DB>, now = new Date()) {
   const stale = new Date(now.getTime() - RUNNER_ATTEMPT_STALE_MS);
@@ -272,6 +268,9 @@ export async function sweepRunnerAttempts(db: Kysely<DB>, now = new Date()) {
   });
   if (held.length > 0) {
     alarm('runner-attempt-unknown-stale', { attemptIds: held.map((r) => r.attemptId) });
+    for (const row of held) {
+      await touchRunnerAttempt(db, row.attemptId, 'unknown', UNKNOWN_REALARM_SECONDS);
+    }
   }
   return { refunded, unknown, unknownStale: held.length };
 }

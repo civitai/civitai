@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
-import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
+import { systemOrchestratorToken } from '~/server/services/orchestrator/system-token';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 
 // Every read is on the PRIMARY: a refund decides from these rows whether money is still owed, and a
@@ -169,8 +169,7 @@ export type OrchestratorWorkflowCharges =
 export async function getOrchestratorWorkflowCharges(
   workflowId: string
 ): Promise<OrchestratorWorkflowCharges> {
-  const token = env.ORCHESTRATOR_ACCESS_TOKEN;
-  if (!token) throw new Error('ORCHESTRATOR_ACCESS_TOKEN is not configured');
+  const token = systemOrchestratorToken();
   try {
     const workflow = await getWorkflow({ token, path: { workflowId } });
     return {

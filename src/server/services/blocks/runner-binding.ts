@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import * as z from 'zod';
+import { isWeightFile } from '~/server/common/weight-file';
 import { SOURCE_IMAGE_URL_MAX } from '~/server/schema/blocks/civitai-image-url';
 import { canonicalJson } from '~/server/services/blocks/block-quote-grant.service';
 import { getRecipe, type RunnerSlotType } from '~/server/services/blocks/recipes';
@@ -96,6 +97,8 @@ const CONTROL_CHAR = /[\u0000-\u001f\u007f]/;
 // The image CDN's own path shape: /<account key>/<image uuid>/[<transform>/]<file>.<image ext>.
 // Narrower than `isCivitaiHostedImageUrl` (any civitai host, any path), which would let a slot
 // point the worker at a model download.
+// One host, deliberately: never widen it from CIVITAI_IMAGE_HOSTS or imageCdnHosts() without an
+// auth review.
 const IMAGE_CDN_HOST = 'image.civitai.com';
 const IMAGE_CDN_PATH =
   /^\/[A-Za-z0-9_-]{22}\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/(?:[^/]+\/)?[^/]+\.(?:jpe?g|png|webp)$/i;
@@ -118,12 +121,11 @@ function isImageCdnUrl(value: string): boolean {
     IMAGE_CDN_PATH.test(url.pathname)
   );
 }
-const MODEL_FILE = /\.(safetensors|sft|ckpt|pt|pth|bin|gguf|onnx)$/i;
 
 function slotValueAllowed(value: unknown, type: RunnerSlotType): boolean {
   if (typeof value !== 'string' || value.length === 0) return false;
   // A model is never a free slot: an AIR or a weights file name is refused whatever the type.
-  if (/urn:air:/i.test(value) || MODEL_FILE.test(value)) return false;
+  if (/urn:air:/i.test(value) || isWeightFile(value)) return false;
   if (type === 'image') return value.length <= SOURCE_IMAGE_URL_MAX && isImageCdnUrl(value);
   // An embedding reference loads a model through the text encoder.
   if (/embedding:/i.test(value)) return false;

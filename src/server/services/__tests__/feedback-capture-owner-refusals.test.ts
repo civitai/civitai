@@ -2,15 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { FEEDBACK_CAPTURE_OWNER_ID } from '@civitai/shared/feedback-capture';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
-// The ban leg revokes recipe-runner authorizations through kyselyDb; this suite never reads them.
-vi.mock('~/server/db/kyselyDb', async () => {
-  const { pgliteKysely } = await import('~/__tests__/pglite-kysely');
-  return {
-    kyselyWrite: pgliteKysely(() => {
-      throw new Error('no ledger database in this suite');
-    }),
-  };
-});
+vi.mock('~/server/db/kyselyDb', async () =>
+  (await import('~/__tests__/mocks/no-ledger-kysely')).noLedgerKyselyDb()
+);
 
 /** The feedback capture account is never banned or muted: acting on it acts on nobody. */
 
