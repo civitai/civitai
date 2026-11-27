@@ -467,6 +467,7 @@ function ImageContent({
             <ImageStickerOverlay
               imageId={image.id}
               wearsHat={showEventCosmetics && !!image.eventDecoration}
+              isVideo={image.type === 'video'}
             />
           )}
           {safe && active && takesHats(image) && <HatTurfDetailLayer imageId={image.id} />}
