@@ -781,12 +781,15 @@ describe('a block majority the sweep acted on', () => {
     await vote(it1, 11, true);
     await vote(it1, 12, true, '2026-10-13T10:01:00Z');
     await applyMajorityBlocks({}, deps());
-    expect(await item(it1)).toMatchObject({
+    const decided = await item(it1);
+    expect(decided).toMatchObject({
       status: 'decided',
       outcome: 'block',
-      unanimous: true,
+      unanimous: false,
       votes: 2,
     });
+    // The day the block landed, not the sweep's.
+    expect(decided.decidedAt).toEqual(decided.actionedAt);
     expect(await claimNext(third, {}, at('2026-10-13T10:02:00Z'))).toBeNull();
   });
 
@@ -808,5 +811,16 @@ describe('a block majority the sweep acted on', () => {
     );
     expect(await applyMajorityBlocks({}, deps())).toEqual({ blocked: [], skipped: [], failed: [] });
     expect(await item(it1)).toMatchObject({ status: 'decided', outcome: 'block' });
+  });
+
+  it('leaves an item whose block failed open, for the next sweep to retry', async () => {
+    const it1 = await seedItem(1);
+    await vote(it1, 11, true);
+    await vote(it1, 12, true, '2026-10-13T10:01:00Z');
+    const failing = vi.fn(async () => {
+      throw new Error('upstream down');
+    });
+    expect((await applyMajorityBlocks({}, deps(failing))).failed).toHaveLength(1);
+    expect(await item(it1)).toMatchObject({ status: 'open', actionedAt: null });
   });
 });

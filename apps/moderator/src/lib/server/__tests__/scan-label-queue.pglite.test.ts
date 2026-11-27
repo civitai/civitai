@@ -989,6 +989,13 @@ describe('a card its moderator cannot use', () => {
     // What the cached open count subtracts, by the same rule the claim applies.
     expect(await countBlockedOpen({})).toBe(1);
     expect(await countBlockedOpen({ day: '2026-10-12' })).toBe(0);
+    // Waiting for the blocked count, which a page load never does. A filter no other test counts:
+    // the slow count's rate limit is per instance.
+    const day = { day: '2026-10-13' };
+    expect(await getCounters(3, day, NOW, undefined, 10_000)).toMatchObject({ openInFilter: 2 });
+    // No redis here, so nothing was stored: a second load inside the TTL must not start another
+    // slow count, and shows the plain count instead.
+    expect(await getCounters(3, day, NOW, undefined, 10_000)).toMatchObject({ openInFilter: 3 });
   });
 
   describe('whose media is refused to its holder', () => {

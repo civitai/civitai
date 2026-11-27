@@ -16,7 +16,9 @@ const {
   isControlFlaggerVersion,
   itemForToken,
   itemWithheld,
+  skipCard,
 } = vi.hoisted(() => ({
+  skipCard: vi.fn(),
   itemForToken: vi.fn(),
   itemWithheld: vi.fn(),
   getVotedItemOwner: vi.fn(),
@@ -46,6 +48,7 @@ vi.mock('$lib/server/scan-label.service', () => ({
   isControlFlaggerVersion,
   itemForToken,
   itemWithheld,
+  skipCard,
 }));
 
 const { actions, load } = await import('../scan-labels/+page.server');
@@ -346,5 +349,24 @@ describe('load', () => {
       { day: undefined, flaggerVersion: 'scan@1' }
     );
     expect(data.version).toBe('scan@1');
+  });
+});
+
+describe('skip action', () => {
+  it('releases the card’s claim and records no vote', async () => {
+    skipCard.mockResolvedValue(true);
+    expect(await actions.skip(event({ token: TOKEN }))).toEqual({ skipped: true });
+    expect(skipCard).toHaveBeenCalledExactlyOnceWith(TOKEN, 7);
+    expect(castVote).not.toHaveBeenCalled();
+  });
+
+  it('refuses a token that released nothing, so the page says so before it reloads', async () => {
+    skipCard.mockResolvedValue(false);
+    expect(await actions.skip(event({ token: TOKEN }))).toMatchObject({ status: 409 });
+  });
+
+  it('refuses a malformed token without touching the claim', async () => {
+    expect(await actions.skip(event({ token: 'nope' }))).toMatchObject({ status: 400 });
+    expect(skipCard).not.toHaveBeenCalled();
   });
 });

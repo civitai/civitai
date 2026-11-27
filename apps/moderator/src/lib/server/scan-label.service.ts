@@ -630,24 +630,35 @@ const queueCount = createCache({
   fetch: async (args: CountArgs) => ({ n: await countOf(queueItems(dbRead, filtersOf(args))) }),
   ttlSeconds: 60,
 });
+const BLOCKED_COUNT_TTL_S = 15 * 60;
+/** When this instance last started the slow count, per filter: a rate limit, not a cached value. */
+const blockedFillStartedAt = new Map<string, number>();
 const blockedCount = createCache({
   name: 'scan-label-blocked-open-count:v1',
-  fetch: async (args: CountArgs) => ({ n: await countBlockedOpen(filtersOf(args)) }),
-  ttlSeconds: 15 * 60,
+  fetch: async (args: CountArgs) => {
+    // With redis down nothing is stored, so every load would start another scan: at most one per
+    // instance per TTL. A null is not cached, so the next instance or window fills it.
+    const key = `${args.day}|${args.flaggerVersion}`;
+    const last = blockedFillStartedAt.get(key) ?? 0;
+    if (Date.now() - last < BLOCKED_COUNT_TTL_S * 1000) return null;
+    blockedFillStartedAt.set(key, Date.now());
+    return { n: await countBlockedOpen(filtersOf(args)) };
+  },
+  ttlSeconds: BLOCKED_COUNT_TTL_S,
 });
 
 /** How long a page load waits for a cached value. A miss starts the fill and returns null; the fill
  *  runs on, so the next load reads it. */
 const CACHE_READ_WAIT_MS = 50;
 
-function withoutWaiting<T>(value: Promise<T>): Promise<T | null> {
+function withoutWaiting<T>(value: Promise<T>, waitMs: number): Promise<T | null> {
   const settled = value.catch((e) => {
     console.error('scan label count fill failed', e);
     return null;
   });
   return Promise.race([
     settled,
-    new Promise<null>((resolve) => setTimeout(() => resolve(null), CACHE_READ_WAIT_MS)),
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), waitMs)),
   ]);
 }
 
@@ -658,13 +669,14 @@ export async function getCounters(
   userId: number,
   filters: ScanLabelFilters,
   now: Date = new Date(),
-  db: Kysely<DB> = dbWrite
+  db: Kysely<DB> = dbWrite,
+  countWaitMs = CACHE_READ_WAIT_MS
 ): Promise<ScanLabelCounters> {
   const today = utcDayStart(now);
   const countArgs = { day: filters.day ?? '', flaggerVersion: filters.flaggerVersion ?? '' };
   const [open, blocked, mine, quota, decided] = await Promise.all([
     queueCount.get(countArgs),
-    withoutWaiting(blockedCount.get(countArgs)),
+    withoutWaiting(blockedCount.get(countArgs), countWaitMs),
     db
       .selectFrom('ScanLabelVote')
       .select((eb) => eb.fn.countAll<string>().as('n'))
@@ -749,14 +761,16 @@ const claimableAt = (now: Date) => (eb: ExpressionBuilder<DB, 'ScanLabelItem'>) 
  * vote could not change the outcome, and the image can no longer be shown to cast one. Also picks up
  * items acted on before this rule, on the next sweep.
  */
-async function decideBlockedMajorities(now: Date) {
+async function decideBlockedMajorities() {
   await dbWrite
     .updateTable('ScanLabelItem')
     .set({
       status: 'decided',
       outcome: 'block',
-      unanimous: sql<boolean>`"blockVotes" = "votes"`,
-      decidedAt: now,
+      // Unanimous means all VOTES_PER_ITEM agreed; a decision on fewer votes is not.
+      unanimous: false,
+      // When the block landed, so an item acted on before this rule keeps its own day.
+      decidedAt: sql<Date>`"actionedAt"`,
     })
     .where('status', '=', 'open')
     // `votes` first, so the queue index serves it: a block majority needs that many votes.
@@ -876,7 +890,7 @@ export async function applyMajorityBlocks(
         .catch(() => undefined);
     }
   }
-  await decideBlockedMajorities(clock());
+  await decideBlockedMajorities();
   return result;
 }
 

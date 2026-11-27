@@ -20,12 +20,12 @@
   const fail = () => (failed = true);
   const markReady = () => (ready = true);
 
-  // Svelte does not replay <video> events from before hydration, so read where it already got to.
+  // Svelte does not replay <video> events from before hydration, so read whether it already has a
+  // frame. Not `networkState`: a new <video> reads NETWORK_NO_SOURCE until its source selection
+  // starts a task later, so it would mark every client-rendered card failed.
   let video = $state<HTMLVideoElement | null>(null);
   $effect(() => {
-    if (!video) return;
-    if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) ready = true;
-    if (video.networkState === HTMLMediaElement.NETWORK_NO_SOURCE) failed = true;
+    if (video && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) ready = true;
   });
 </script>
 

@@ -97,17 +97,37 @@ describe('Scan Labels card media', () => {
     expect(img?.getAttribute('onerror')).toBe('this.__e=event');
   });
 
-  // A <video> error is not replayed, so the component reads the state it reached before mounting.
-  it('says a video failed to load when it had no playable source before mounting', () => {
+  // A browser reports a new <video> as NETWORK_NO_SOURCE until source selection starts, a task later.
+  // Every card after the first mounts client-side, so reading that as failure would fail them all.
+  it('does not take a new video’s NETWORK_NO_SOURCE for a failure', () => {
     const proto = HTMLMediaElement.prototype;
-    const NO_SOURCE = { configurable: true, get: () => HTMLMediaElement.NETWORK_NO_SOURCE };
-    Object.defineProperty(proto, 'networkState', NO_SOURCE);
+    const own = Object.getOwnPropertyDescriptor(proto, 'networkState');
+    Object.defineProperty(proto, 'networkState', {
+      configurable: true,
+      get: () => HTMLMediaElement.NETWORK_NO_SOURCE,
+    });
     try {
       const { target, app } = mount('video');
-      expect(status(target)).toBe('Video failed to load');
+      expect(status(target)).toBe('Loading video...');
       svelte.unmount(app);
     } finally {
-      delete (proto as { networkState?: number }).networkState;
+      if (own) Object.defineProperty(proto, 'networkState', own);
+    }
+  });
+
+  it('shows a video that already has a frame when it mounts as ready', () => {
+    const proto = HTMLMediaElement.prototype;
+    const own = Object.getOwnPropertyDescriptor(proto, 'readyState');
+    Object.defineProperty(proto, 'readyState', {
+      configurable: true,
+      get: () => HTMLMediaElement.HAVE_ENOUGH_DATA,
+    });
+    try {
+      const { target, app } = mount('video');
+      expect(status(target)).toBeUndefined();
+      svelte.unmount(app);
+    } finally {
+      if (own) Object.defineProperty(proto, 'readyState', own);
     }
   });
 
