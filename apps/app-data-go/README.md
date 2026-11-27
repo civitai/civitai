@@ -71,6 +71,12 @@ is its `401`/`503`. A shared or signed-out read's refusal is counted by reason i
 "Metrics"), and a block token the hub did not exchange is logged with `read=refused` (`read=rest` with
 the flag off, where the read falls back to REST).
 
+**The shared cache (off by default, `APP_DATA_CACHE_URL`).** One valkey instance holds the exchanged
+block and hub tokens, the overlays and the private streams' snapshots, sealed and under HMAC'd names,
+so a restart starts warm: a block token is not spent again, and a private stream resumes from its
+cursor, answered only once the adapter's first poll since is in. It fails open: any error or timeout
+is a miss, and a breaker stops asking a valkey that is down. See [CACHE-DESIGN.md](CACHE-DESIGN.md).
+
 ## Layout
 
 | Package             | What                                                                                      |
@@ -79,6 +85,7 @@ the flag off, where the read falls back to REST).
 | `internal/api`      | the HTTP surface, the fallback decision                                                   |
 | `internal/session`  | per-token streams: lazy open, idle, age and expiry close, caps, the cache                 |
 | `internal/exchange` | the RFC 8693 token exchange at the hub, as this service's relay client; the block cache   |
+| `internal/cache`    | the optional shared cache (valkey, fail open): its RESP client, seals, breaker, contents  |
 | `internal/registry` | the registry HTTP binding consumer, a byte-identical copy of app-index-go's (CI compares) |
 | `internal/rest`     | the document-store REST read                                                              |
 | `internal/urn`      | the collection schema URN, pinned to the adapter's by golden vectors                      |

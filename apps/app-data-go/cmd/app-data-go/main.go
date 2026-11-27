@@ -22,6 +22,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/collectors"
 
 	"github.com/civitai/civitai/apps/app-data-go/internal/api"
+	"github.com/civitai/civitai/apps/app-data-go/internal/cache"
 	"github.com/civitai/civitai/apps/app-data-go/internal/config"
 	"github.com/civitai/civitai/apps/app-data-go/internal/exchange"
 	"github.com/civitai/civitai/apps/app-data-go/internal/metrics"
@@ -97,6 +98,11 @@ func run(log *slog.Logger) error {
 		return sum.Streams, sum.Live, sum.Records, sum.Bytes
 	}
 	m = metrics.New(reg, stats)
+	// The shared cache (CACHE-DESIGN.md): nil, and nothing wired to it, when APP_DATA_CACHE_URL is unset.
+	store, err := openCache(cfg, m, reg)
+	if err != nil {
+		return err
+	}
 
 	srv := &api.Server{
 		REST: &rest.Client{BaseURL: cfg.RESTURL, MaxRecords: cfg.MaxRecords,
@@ -132,6 +138,13 @@ func run(log *slog.Logger) error {
 				Observe: m.ObserveBlockExchange(log.With("component", "block-exchange"), cfg.Writes)}
 		}
 		srv.Exchangeable = router.Accepts
+		// What a stream's open and its re-check exchange with: the router itself, unless the cache
+		// stands in front of it (cache.Tokens: a hub token's exchange is answered from the cache only
+		// within the re-check window; a re-check always asks the hub).
+		open := cacheHooks{exchange: router.Exchange}
+		if store != nil {
+			open = withCache(store, router, cfg, m)
+		}
 		// One budget over every stream this process opens, private, level and per-viewer
 		// (config.DefaultCacheBudgetBytes).
 		budget := session.NewBudget(cfg.MaxSubscriptions, cfg.CacheBudgetBytes)
@@ -143,7 +156,9 @@ func run(log *slog.Logger) error {
 			MaxRecords: cfg.MaxRecords, MaxBytes: cfg.MaxBytes, MaxOverlayBytes: cfg.MaxOverlayBytes,
 			Budget: budget, Reserve: cfg.PrivateReserve(),
 			Cooldown: streamCooldown, NotPrivateCooldown: notPrivateCooldown,
-			Exchange: router.Exchange, ExpiryMargin: expiryMargin, Recheck: tokenRecheck,
+			Exchange: open.exchange, ExchangeFresh: open.fresh, Forget: open.forget,
+			Snapshots: open.snapshots, OverlayStore: open.overlays, Resumed: open.resumed,
+			ExpiryMargin: expiryMargin, Recheck: tokenRecheck,
 			Opened: m.StreamsOpened.Inc,
 			Closed: func(reason string) { m.StreamsClosed.WithLabelValues(reason).Inc() },
 			// Read-your-writes; zero with the writes off, which turns all of it off (session.Options).
@@ -233,7 +248,7 @@ func run(log *slog.Logger) error {
 		IdleTimeout:       100 * time.Second,
 	}
 	log.Info("app-data-go starting", "addr", cfg.Addr, "registry", cfg.RegistryURL != "", "block_exchange", cfg.BlockExchange,
-		"writes", cfg.Writes, "shared_reads", cfg.SharedReads, "service_client", cfg.Service != nil, "forward_region", cfg.ForwardRegion,
+		"writes", cfg.Writes, "shared_reads", cfg.SharedReads, "service_client", cfg.Service != nil, "forward_region", cfg.ForwardRegion, "cache", cfg.Cache != nil,
 		"max_streams", cfg.MaxStreams, "max_streams_per_token", cfg.MaxStreamsPerToken,
 		"max_subscriptions", cfg.MaxSubscriptions, "cache_budget_bytes", cfg.CacheBudgetBytes)
 
@@ -257,6 +272,52 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	return nil
+}
+
+// openCache is the shared cache when cfg names one, its series registered on reg; nil otherwise. It
+// connects to nothing: the first operation dials.
+func openCache(cfg *config.Config, m *metrics.Metrics, reg prometheus.Registerer) (*cache.Cache, error) {
+	if cfg.Cache == nil {
+		return nil, nil
+	}
+	resp, err := cache.ParseURL(cfg.Cache.URL)
+	if err != nil {
+		return nil, err // config validated it; never reached
+	}
+	resp.Password = cfg.Cache.Password
+	store, err := cache.New(resp, cfg.Cache.Key, cache.Options{Timeout: cfg.Cache.Timeout,
+		Observe: func(kind cache.Kind, op, outcome string) { m.ObserveCache(string(kind), op, outcome) }})
+	if err != nil {
+		return nil, err // config validated the key's length; never reached
+	}
+	m.EnableCache(reg, store.BreakerOpen)
+	return store, nil
+}
+
+// cacheHooks are the private streams' session.Options that the cache sets; the zero value but
+// exchange is no cache.
+type cacheHooks struct {
+	exchange, fresh func(context.Context, string) (exchange.Token, error)
+	forget          func([32]byte)
+	snapshots       session.Snapshots
+	overlays        session.OverlayStore
+	resumed         func(string)
+}
+
+// withCache puts store in front of router: the hub-token exchange (cache.Tokens), the block
+// exchange's claim (cache.Blocks, with the block exchange on), the snapshots, and the overlays (with
+// the writes on).
+func withCache(store *cache.Cache, router *exchange.Router, cfg *config.Config, m *metrics.Metrics) cacheHooks {
+	tokens := &cache.Tokens{C: store, Exchange: router.Exchange, Recheck: tokenRecheck, Margin: expiryMargin}
+	h := cacheHooks{exchange: tokens.Open, fresh: tokens.Fresh, forget: tokens.Forget,
+		snapshots: cache.Snapshots{C: store}, resumed: m.ObserveResume}
+	if cfg.Writes {
+		h.overlays = cache.Overlays{C: store, Max: cfg.MaxRecords}
+	}
+	if router.Blocks != nil {
+		router.Blocks.Shared = &cache.Blocks{C: store}
+	}
+	return h
 }
 
 // serviceSource is the level streams' service token and its invalidation, minted as cfg.Service at

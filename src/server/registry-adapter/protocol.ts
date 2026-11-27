@@ -145,8 +145,9 @@ export interface AdapterContext {
    */
   reader?: (PrincipalToken & { subject: string }) | null;
   /**
-   * The request's `meta` (spec rule 10). Only the level feed reads it, to route and bind a
-   * subscription (`level-feed.ts`); no other stream does.
+   * The request's `meta` (spec rule 10). The level feed reads it, to route and bind a subscription
+   * (`level-feed.ts`); the private feed reads only its `sync` (`private-feed.ts`, THE FIRST POLL'S
+   * SYNC), which neither routes nor binds anything.
    */
   meta?: RequestMeta;
   /**

@@ -614,7 +614,10 @@ Answer: **no, not without routing**. The fix:
 is a snapshot read from the store at that moment (`DESIGN.md:30-36`), holding every committed write and
 carrying heads that meet any earlier floor. A block token whose one exchange was spent on the dead
 replica cannot open a stream: the read answers `401 block_token_spent`, and the SDK gets a fresh block
-token from its host and retries once.
+token from its host and retries once. With the shared cache on ([CACHE-DESIGN.md](CACHE-DESIGN.md)) the
+exchanges, each private stream's snapshot and the overlays survive it: a block token is not spent
+again, and a private stream resumes from its snapshot, answered only once the adapter's first poll
+since is in.
 
 **The contract a client may rely on:** a write acknowledged by this service is in the store; a read
 through this service on the same token afterwards returns it (with the floors, also after routing
