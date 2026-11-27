@@ -131,15 +131,19 @@ type Thumbnail struct {
 	Height any
 	// Servable is a "blockMarked" field that is exactly false; true, null or no field is not servable.
 	Servable bool
-	// OwnerMediaAllowed is an "ownerMediaAllowed" field that is exactly true.
+	// OwnerMediaAllowed is an "ownerMediaAllowed" field that is exactly true: whether the creator may
+	// be served a block-marked thumbnail (ownerMediaAllowed, src/server/common/image-block-marker.ts).
+	// false, null or no field (an entry Node cached before it read the field) is not allowed.
 	OwnerMediaAllowed bool
 }
 
 // sqlThumbnailMiss is the thumbnail cache's two lookups as one statement (thumbnailRowsSql over the
-// videos' thumbnailId): every row, with its block marker as "blockMarked".
+// videos' thumbnailId): every row, with its block marker as "blockMarked" and the owner's rule as
+// "ownerMediaAllowed".
 var sqlThumbnailMiss = `
 		SELECT t.id, t.url, t.width, t.height, t."nsfwLevel", cast(t.metadata->'parentId' as int) "parentId",
-			` + HasBlockMarkerSQL("t") + ` AS "blockMarked"
+			` + HasBlockMarkerSQL("t") + ` AS "blockMarked",
+			` + OwnerMediaAllowedSQL("t") + ` AS "ownerMediaAllowed"
 		FROM "Image" t
 		WHERE t.id IN (
 			SELECT cast(metadata->'thumbnailId' as int) FROM "Image" WHERE id = ANY($1::int[]) AND type = 'video'
@@ -177,7 +181,9 @@ func (s *Sources) thumbnailsFrom(ctx context.Context, videoIDs []int, got map[in
 func thumbFrom(m map[string]any) Thumbnail {
 	n, ok := Int(m["nsfwLevel"])
 	marked, isBool := m["blockMarked"].(bool)
-	return Thumbnail{URL: m["url"], NsfwLevel: n, HasNsfwKey: ok, Width: Wire(m["width"]), Height: Wire(m["height"]), Servable: isBool && !marked}
+	ownerAllowed, _ := m["ownerMediaAllowed"].(bool)
+	return Thumbnail{URL: m["url"], NsfwLevel: n, HasNsfwKey: ok, Width: Wire(m["width"]), Height: Wire(m["height"]),
+		Servable: isBool && !marked, OwnerMediaAllowed: ownerAllowed}
 }
 
 // Metrics is one image's metric counts (MetricService over `metrics:Image:<id>` hashes).
