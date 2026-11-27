@@ -4,6 +4,8 @@ const svc = vi.hoisted(() => ({
   retire: vi.fn(),
   unretire: vi.fn(),
   reword: vi.fn(),
+  keep: vi.fn(),
+  remove: vi.fn(),
   items: vi.fn(),
   axes: vi.fn(),
 }));
@@ -12,10 +14,12 @@ vi.mock('$lib/server/knights/yesno-question.service', () => ({
   retireYesNoQuestion: svc.retire,
   unretireYesNoQuestion: svc.unretire,
   rewordYesNoQuestion: svc.reword,
+  keepReportedQuestion: svc.keep,
+  removeReportedQuestion: svc.remove,
   getYesNoQuestionItems: svc.items,
   getYesNoAxes: svc.axes,
   yesNoQuestionImageIds: vi.fn(async () => []),
-  YESNO_QUESTION_STATUSES: ['open', 'closed', 'all'],
+  YESNO_QUESTION_STATUSES: ['open', 'reported', 'closed', 'all'],
 }));
 vi.mock('$lib/server/knights/yesno-reference.service', () => ({
   addYesNoReference: vi.fn(),
@@ -83,6 +87,19 @@ describe('Knights of New Order question actions', () => {
     });
   });
 
+  it('keeps and removes a reported question as the acting moderator', async () => {
+    svc.keep.mockResolvedValueOnce({ ok: true });
+    expect(await actions.keepReported(formEvent({ id: '12' }))).toEqual({
+      success: true,
+      agreed: undefined,
+    });
+    expect(svc.keep).toHaveBeenCalledWith({ id: 12, by: 77 });
+
+    svc.remove.mockResolvedValueOnce({ ok: false, error: 'Only a reported question can be kept or removed.' });
+    expect(await actions.removeReported(formEvent({ id: '12' }))).toMatchObject({ status: 409 });
+    expect(svc.remove).toHaveBeenCalledWith({ id: 12, by: 77 });
+  });
+
   it('restores a question as the acting moderator', async () => {
     svc.unretire.mockResolvedValueOnce({ ok: true });
     await actions.unretireQuestion(formEvent({ id: '12' }));
@@ -120,6 +137,8 @@ describe('Knights of New Order questions tab load', () => {
   });
 
   it('labels the axes once and passes an unknown axis from the URL through', async () => {
+    expect((await loadQuestions('&status=reported')).questionQueue.filters.status).toBe('reported');
+    svc.items.mockClear();
     const data = await loadQuestions('&axis=knights.yesno.gone&status=closed');
     expect(data.questionQueue.axes).toEqual([{ key: 'knights.yesno.violence', label: 'violence' }]);
     expect(data.questionQueue.filters).toEqual({ axis: 'knights.yesno.gone', status: 'closed' });

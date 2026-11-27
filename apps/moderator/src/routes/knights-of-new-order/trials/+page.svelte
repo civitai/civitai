@@ -35,6 +35,7 @@
     (
       [
         { value: 'open', label: 'Open' },
+        { value: 'reported', label: 'Reported' },
         { value: 'closed', label: 'Closed' },
         { value: 'all', label: 'All' },
       ] as const
@@ -211,7 +212,8 @@
   <p class="mb-3 text-sm text-dark-2">
     The yes/no questions players are asked, one per image and question. Retire one that makes no sense
     for its image, or reword it (which retires it and opens a new question); answers already given
-    stay recorded, and pending ones become inconclusive and earn no gold. Search by image URL, by
+    stay recorded, and pending ones become inconclusive and earn no gold. A question enough players
+    reported waits under Reported, served to nobody: keep it to serve it again, or remove it. Search by image URL, by
     image id or a number in the question, or by words in the question.
   </p>
   <div class="mb-3 flex flex-wrap items-center gap-2">

@@ -34,6 +34,8 @@ import {
 import {
   getYesNoAxes,
   getYesNoQuestionItems,
+  keepReportedQuestion,
+  removeReportedQuestion,
   retireYesNoQuestion,
   rewordYesNoQuestion,
   unretireYesNoQuestion,
@@ -77,6 +79,8 @@ const forms = {
   deleteYesNo: z.object({ id: int4Id }),
   retireQuestion: z.object({ id: int4Id, note: z.string().trim() }),
   unretireQuestion: z.object({ id: int4Id }),
+  keepReported: z.object({ id: int4Id }),
+  removeReported: z.object({ id: int4Id }),
   rewordQuestion: z.object({ id: int4Id, prompt: z.string().trim(), note: z.string().trim() }),
   add: z.object({ image: imageRef, level, explanation: why }),
   update: z.object({ id: int4Id, level, explanation: why }),
@@ -284,6 +288,19 @@ export const actions: Actions = {
       'restore the question',
       ({ id }) => unretireYesNoQuestion({ id, by: event.locals.user!.id }),
       ({ id }) => yesNoQuestionImageIds(id)
+    ),
+  // Keeping serves the image again, so it is refused when the image is withheld from the moderator, as a restore is.
+  keepReported: (event) =>
+    run(
+      event,
+      forms.keepReported,
+      'keep the question',
+      ({ id }) => keepReportedQuestion({ id, by: event.locals.user!.id }),
+      ({ id }) => yesNoQuestionImageIds(id)
+    ),
+  removeReported: (event) =>
+    run(event, forms.removeReported, 'remove the question', ({ id }) =>
+      removeReportedQuestion({ id, by: event.locals.user!.id })
     ),
   rewordQuestion: (event) =>
     run(

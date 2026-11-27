@@ -10,19 +10,21 @@
   import { FormState } from '$lib/form-state.svelte';
   import { LINK_CLASS } from '$lib/format';
   import { NOTE_MAX, YESNO_PROMPT_MAX } from '$lib/knights/trials-limits';
+  import { ReportEntity, reportActionPath, reportStatusVariant } from '$lib/reports';
   import type { YesNoQuestionItem } from '$lib/server/knights/yesno-question.service';
   import TrialMedia from './TrialMedia.svelte';
 
   let { item }: { item: YesNoQuestionItem & { restricted: boolean } } = $props();
 
   const isOpen = $derived(item.status === 'Open');
+  const reported = $derived(item.reported);
   const pending = $derived(
     item.voteCount === 0
       ? 'Nobody has answered it yet.'
       : `Of its ${item.voteCount} ${item.voteCount === 1 ? 'answer' : 'answers'}, any still pending become inconclusive and earn no gold; answers already given stay recorded as data.`
   );
 
-  type Mode = 'retire' | 'reword' | null;
+  type Mode = 'retire' | 'reword' | 'keep' | 'remove' | null;
   let mode = $state<Mode>(null);
   let confirming = $state<Mode>(null);
   let note = $state('');
@@ -41,6 +43,10 @@
     onSuccess: () => finish('Question reworded'),
   });
   const restore = new FormState({ reload: true, onSuccess: () => toast.success('Question restored') });
+  const keep = new FormState({ reload: true, onSuccess: () => toast.success('Question kept') });
+  const remove = new FormState({ reload: true, onSuccess: () => toast.success('Question removed') });
+  let keepForm: HTMLFormElement | undefined = $state();
+  let removeForm: HTMLFormElement | undefined = $state();
 
   function close() {
     mode = null;
@@ -53,8 +59,15 @@
     close();
     toast.success(message);
   }
+  const forms = $derived({ retire: retireForm, reword: rewordForm, keep: keepForm, remove: removeForm });
+  const TITLES = {
+    retire: 'Retire this question?',
+    reword: 'Reword this question?',
+    keep: 'Keep this question?',
+    remove: 'Remove this question?',
+  } as const;
   function confirmed() {
-    const form = confirming === 'retire' ? retireForm : rewordForm;
+    const form = confirming ? forms[confirming] : undefined;
     confirming = null;
     form?.requestSubmit();
   }
@@ -94,6 +107,39 @@
     {/if}
 
     {#if restore.error}<ErrorAlert message={restore.error} />{/if}
+    {#if keep.error}<ErrorAlert message={keep.error} />{/if}
+    {#if remove.error}<ErrorAlert message={remove.error} />{/if}
+
+    {#if reported}
+      <div class="flex flex-col gap-1 rounded-md border border-dark-4 p-3 text-xs text-dark-2" data-testid="question-reports">
+        <p class="text-sm text-dark-0">
+          Reported by {reported.reporters.length}
+          {reported.reporters.length === 1 ? 'player' : 'players'}: {reported.image} image, {reported.question} question
+        </p>
+        <p>Players {reported.reporters.map((id) => `#${id}`).join(', ')}</p>
+        {#if reported.pull}
+          <p class="flex flex-wrap items-center gap-2">
+            The image is out of every Knights question and Acolyte pair until this is kept.
+            {#if reported.pull.reportId}
+              <a href={reportActionPath(ReportEntity.Image, reported.pull.reportId)} class={LINK_CLASS}
+                >Image report #{reported.pull.reportId}</a
+              >
+              {#if reported.pull.reportStatus}
+                <Badge variant={reportStatusVariant(reported.pull.reportStatus)}>{reported.pull.reportStatus}</Badge>
+              {/if}
+            {:else}
+              <span>Its image report is not filed yet; Knights files it on its next run.</span>
+            {/if}
+          </p>
+        {/if}
+      </div>
+      <form bind:this={keepForm} method="POST" action="?/keepReported" use:enhance={keep.enhance} hidden>
+        <input type="hidden" name="id" value={item.id} />
+      </form>
+      <form bind:this={removeForm} method="POST" action="?/removeReported" use:enhance={remove.enhance} hidden>
+        <input type="hidden" name="id" value={item.id} />
+      </form>
+    {/if}
 
     {#if mode === 'retire'}
       {#if retire.error}<ErrorAlert message={retire.error} />{/if}
@@ -172,7 +218,16 @@
       </form>
     {:else}
       <div class="flex flex-wrap gap-2">
-        {#if isOpen}
+        {#if reported}
+          {#if !item.restricted}
+            <Button size="sm" variant="outline" disabled={keep.submitting} onclick={() => (confirming = 'keep')}
+              >Keep</Button
+            >
+          {/if}
+          <Button size="sm" variant="outline" disabled={remove.submitting} onclick={() => (confirming = 'remove')}
+            >Remove</Button
+          >
+        {:else if isOpen}
           {#if !item.restricted}
             <Button size="sm" variant="outline" onclick={() => (mode = 'reword')}>Reword</Button>
           {/if}
@@ -202,22 +257,33 @@
 <AlertDialog.Root bind:open={() => confirming !== null, (open) => !open && (confirming = null)}>
   <AlertDialog.Content>
     <AlertDialog.Header>
-      <AlertDialog.Title
-        >{confirming === 'reword' ? 'Reword this question?' : 'Retire this question?'}</AlertDialog.Title
-      >
+      <AlertDialog.Title>{confirming ? TITLES[confirming] : ''}</AlertDialog.Title>
       <AlertDialog.Description>
-        {#if confirming === 'reword'}
+        {#if confirming === 'keep'}
+          Players are served this question for image #{item.imageId} again and its reports are resolved.
+          {#if reported?.pull}The image comes back into every Knights question and Acolyte pair.{/if}
+        {:else if confirming === 'remove'}
+          This question for image #{item.imageId} is closed for good, with no label and nothing written back.
+          {#if reported?.pull}The image stays out of Knights.{/if}
+          {pending}
+        {:else if confirming === 'reword'}
           This question is retired and a new one with the new words replaces it for image #{item.imageId}.
         {:else}
           Players stop seeing this question for image #{item.imageId}.
         {/if}
-        {pending}
+        {#if confirming === 'retire' || confirming === 'reword'}{pending}{/if}
       </AlertDialog.Description>
     </AlertDialog.Header>
     <AlertDialog.Footer>
       <AlertDialog.Cancel>Cancel</AlertDialog.Cancel>
-      <AlertDialog.Action variant="destructive" onclick={confirmed}
-        >{confirming === 'reword' ? 'Reword' : 'Retire'}</AlertDialog.Action
+      <AlertDialog.Action variant={confirming === 'keep' ? 'default' : 'destructive'} onclick={confirmed}
+        >{confirming === 'reword'
+          ? 'Reword'
+          : confirming === 'keep'
+            ? 'Keep'
+            : confirming === 'remove'
+              ? 'Remove'
+              : 'Retire'}</AlertDialog.Action
       >
     </AlertDialog.Footer>
   </AlertDialog.Content>

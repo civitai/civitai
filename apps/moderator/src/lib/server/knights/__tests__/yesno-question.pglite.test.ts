@@ -25,6 +25,8 @@ vi.mock('../../db', () => ({
 const {
   getYesNoAxes,
   getYesNoQuestionItems,
+  keepReportedQuestion,
+  removeReportedQuestion,
   retireYesNoQuestion,
   rewordYesNoQuestion,
   unretireYesNoQuestion,
@@ -122,6 +124,13 @@ beforeAll(async () => {
   await db.exec(
     readFileSync(path.join(MIGRATIONS, '20261210120000_knights_v2_tables', 'migration.sql'), 'utf8')
   );
+  await db.exec(
+    readFileSync(
+      path.join(MIGRATIONS, '20271208120000_knights_question_report', 'migration.sql'),
+      'utf8'
+    )
+  );
+  await db.exec(`CREATE TABLE "Report" ("id" INTEGER PRIMARY KEY, "status" TEXT NOT NULL);`);
   dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
 });
 
@@ -131,7 +140,8 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.exec(
-    `DELETE FROM "KnightsVote"; DELETE FROM "KnightsQueueItem"; DELETE FROM "KnightsQuestion"; DELETE FROM "Image"; DELETE FROM "Post";
+    `DELETE FROM "KnightsQuestionReport"; DELETE FROM "KnightsImagePull"; DELETE FROM "Report";
+     DELETE FROM "KnightsVote"; DELETE FROM "KnightsQueueItem"; DELETE FROM "KnightsQuestion"; DELETE FROM "Image"; DELETE FROM "Post";
      SELECT setval(pg_get_serial_sequence('"KnightsQueueItem"', 'id'), 1000);
      INSERT INTO "Post" ("id","publishedAt") VALUES (1,'2020-01-01'), (2,'2020-01-01'), (3,'2020-01-01');
      INSERT INTO "Image" ("id","url","name","postId") VALUES (1,'k1','a.png',1), (2,'k2',NULL,2), (3,'k3',NULL,3);
@@ -485,5 +495,126 @@ describe('rewordYesNoQuestion', () => {
     expect(await rewordTo(2, 'Other?', 'n')).toMatchObject({ ok: false });
     expect((await row(1)).status).toBe('Open');
     expect((await db.query(`SELECT 1 FROM "KnightsQueueItem"`)).rows).toHaveLength(2);
+  });
+});
+
+describe('reported questions', () => {
+  const report = (itemId: number, playerId: number, reason: 'image' | 'question', imageId = 1) =>
+    db.query(
+      `INSERT INTO "KnightsQuestionReport" ("playerId","itemId","reason","questionKey","imageId") VALUES ($1,$2,$3,$4,$5)`,
+      [playerId, itemId, reason, AXIS, imageId]
+    );
+  const pullImage = (imageId: number, reportId: number | null) =>
+    db.query(
+      `INSERT INTO "KnightsImagePull" ("imageId","reason","reportId") VALUES ($1,'players-reported',$2)`,
+      [imageId, reportId]
+    );
+  const reports = async (itemId: number) =>
+    (
+      await db.query<{ resolvedBy: number | null; resolved: boolean }>(
+        `SELECT "resolvedBy", "resolvedAt" IS NOT NULL AS resolved FROM "KnightsQuestionReport" WHERE "itemId" = $1 ORDER BY "playerId"`,
+        [itemId]
+      )
+    ).rows;
+  const openPulls = async () =>
+    (
+      await db.query<{ imageId: number }>(
+        `SELECT "imageId" FROM "KnightsImagePull" WHERE "resolvedAt" IS NULL ORDER BY "imageId"`
+      )
+    ).rows.map((r) => r.imageId);
+
+  beforeEach(async () => {
+    await seedItem(1, { imageId: 1, status: 'Reported', voteCount: 1 });
+    await seedItem(2, { imageId: 2, status: 'Reported' });
+    await seedItem(3, { imageId: 3 });
+    await seedItem(4, { imageId: 3, status: 'Closed', reason: 'retired' });
+    for (const [player, reason] of [
+      [10, 'image'],
+      [11, 'image'],
+      [12, 'question'],
+    ] as const)
+      await report(1, player, reason);
+    await report(2, 13, 'question', 2);
+    await pullImage(1, 55);
+    await db.query(`INSERT INTO "Report" ("id","status") VALUES (55,'Pending')`);
+  });
+
+  it('are listed on their own, with the reason counts, the reporters and the main-app report of an image pull', async () => {
+    const { items, total } = await getYesNoQuestionItems({ page: 1, status: 'reported' });
+    expect(total).toBe(2);
+    expect(items.map((i) => i.id)).toEqual([2, 1]);
+    expect(items[1].reported).toEqual({
+      image: 2,
+      question: 1,
+      reporters: [10, 11, 12],
+      pull: { reportId: 55, reportStatus: 'Pending' },
+    });
+    expect(items[0].reported).toEqual({
+      image: 0,
+      question: 1,
+      reporters: [13],
+      pull: null,
+    });
+  });
+
+  it('are neither open nor closed', async () => {
+    const ids = async (status: 'open' | 'closed') =>
+      (await getYesNoQuestionItems({ page: 1, status })).items.map((i) => i.id);
+    expect(await ids('open')).toEqual([3]);
+    expect(await ids('closed')).toEqual([4]);
+    expect((await getYesNoQuestionItems({ page: 1, status: 'open' })).items[0].reported).toBeNull();
+  });
+
+  it('shows an image pull the main app has no report for yet', async () => {
+    await db.query(`UPDATE "KnightsImagePull" SET "reportId" = NULL`);
+    const { items } = await getYesNoQuestionItems({ page: 1, status: 'reported' });
+    expect(items[1].reported?.pull).toEqual({ reportId: null, reportStatus: null });
+  });
+
+  it('keep opens the question again, resolves its reports and keeps the image', async () => {
+    expect(await keepReportedQuestion({ id: 1, by: MOD, now: NOW })).toEqual({ ok: true });
+
+    expect(await row(1)).toMatchObject({
+      status: 'Open',
+      reason: null,
+      resolvedAt: null,
+      meta: { moderation: { action: 'kept', by: MOD, note: '', at: NOW.toISOString() } },
+    });
+    expect(await reports(1)).toEqual([
+      { resolvedBy: MOD, resolved: true },
+      { resolvedBy: MOD, resolved: true },
+      { resolvedBy: MOD, resolved: true },
+    ]);
+    expect(await openPulls()).toEqual([]);
+    expect(await reports(2)).toEqual([{ resolvedBy: null, resolved: false }]);
+  });
+
+  it('remove closes the question for good with no label: pending answers inconclusive, reports resolved, the image stays pulled', async () => {
+    await vote(1, 20);
+    expect(await removeReportedQuestion({ id: 1, by: MOD, now: NOW })).toEqual({ ok: true });
+
+    expect(await row(1)).toMatchObject({
+      status: 'Closed',
+      reason: 'report-removed',
+      meta: { moderation: { action: 'removed', by: MOD } },
+    });
+    expect(
+      (await db.query(`SELECT "resolvedValue" FROM "KnightsQueueItem" WHERE id = 1`)).rows
+    ).toEqual([{ resolvedValue: null }]);
+    expect(await verdicts(1)).toEqual(['inconclusive']);
+    expect((await reports(1)).every((r) => r.resolved && r.resolvedBy === MOD)).toBe(true);
+    expect(await openPulls()).toEqual([1]);
+    expect(await unretireYesNoQuestion({ id: 1, by: MOD, now: NOW })).toMatchObject({ ok: false });
+  });
+
+  it('keep and remove refuse a question that is not reported', async () => {
+    expect(await keepReportedQuestion({ id: 3, by: MOD, now: NOW })).toMatchObject({ ok: false });
+    expect(await removeReportedQuestion({ id: 3, by: MOD, now: NOW })).toMatchObject({
+      ok: false,
+    });
+    expect(await removeReportedQuestion({ id: 999, by: MOD, now: NOW })).toMatchObject({
+      ok: false,
+    });
+    expect(await row(3)).toMatchObject({ status: 'Open' });
   });
 });
