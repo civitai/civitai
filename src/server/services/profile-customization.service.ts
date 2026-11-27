@@ -11,7 +11,9 @@ import {
   profilePinnedItemsLimit,
   showcaseItemSchema,
 } from '~/server/schema/user-profile.schema';
-import { isMemberTier, isMemberTierCached } from '~/server/services/subscriptions.service';
+import { CacheTTL } from '~/server/common/constants';
+import { isMemberTier, profileMemberTierKey } from '~/server/services/subscriptions.service';
+import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import { ownerMediaAllowed } from '~/server/common/image-block-marker';
 import { isImageOwner } from '~/server/services/util.service';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
@@ -24,6 +26,16 @@ import { servableArticleImage } from '~/shared/utils/article-card-image';
 import { isRestrictedImage } from '~/shared/utils/restricted-image';
 
 const MEMBERS_ONLY = 'Page backgrounds and card colours are for members';
+
+/**
+ * `isMemberTier` for a profile's visitors, cached so a popular profile does not query
+ * subscriptions on every view. A subscription change busts it; a membership override granted or
+ * revoked shows within the TTL. Writes check `isMemberTier` itself.
+ */
+const isMemberTierCached = async (userId: number) =>
+  !!(await fetchThroughCache(profileMemberTierKey(userId), () => isMemberTier(userId), {
+    ttl: CacheTTL.sm,
+  }));
 
 const backgroundImageSelect = {
   id: true,

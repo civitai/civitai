@@ -7,7 +7,7 @@ import {
   profileCardInk,
   themePanel,
 } from '~/components/Profile/profile-card-color';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { Flags } from '~/shared/utils/flags';
 import { trpc } from '~/utils/trpc';
 
@@ -17,14 +17,15 @@ import { trpc } from '~/utils/trpc';
  * within the viewer's browsing level; there is no blur to reveal it behind.
  */
 export function ProfilePageCustomization({ userId }: { userId: number }) {
-  const features = useFeatureFlags();
+  // Without flags (outside the provider) it fails closed: no customisation.
+  const redesign = !!useOptionalFeatureFlags()?.profileRedesign;
   const browsingLevel = useBrowsingLevelDebounced();
   const scheme = useComputedColorScheme('dark');
   const { data } = trpc.userProfile.customization.useQuery(
     { userId, browsingLevel },
-    { enabled: !!features.profileRedesign }
+    { enabled: redesign }
   );
-  if (!features.profileRedesign || !data) return null;
+  if (!redesign || !data) return null;
 
   const background =
     data.background && Flags.intersects(browsingLevel, data.background.nsfwLevel)
