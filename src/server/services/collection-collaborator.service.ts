@@ -168,7 +168,8 @@ export async function inviteCollaborator({
 
   if (
     permission.collectionMode === CollectionMode.Bookmark ||
-    permission.collectionMode === CollectionMode.Contest
+    permission.collectionMode === CollectionMode.Contest ||
+    permission.collectionMode === CollectionMode.Folder
   ) {
     throw throwBadRequestError('This collection does not support collaborators.');
   }
@@ -290,7 +291,11 @@ export async function respondToInvite({
     select: { mode: true, read: true, write: true },
   });
   if (!collection) throw throwBadRequestError('Invite not found.');
-  if (collection.mode === CollectionMode.Bookmark || collection.mode === CollectionMode.Contest) {
+  if (
+    collection.mode === CollectionMode.Bookmark ||
+    collection.mode === CollectionMode.Contest ||
+    collection.mode === CollectionMode.Folder
+  ) {
     throw throwBadRequestError('This collection does not support collaborators.');
   }
 

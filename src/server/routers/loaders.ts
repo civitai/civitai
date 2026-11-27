@@ -121,6 +121,8 @@ export const routers = {
   referral: () => import('~/server/routers/referral.router').then((m) => m.referralRouter),
   userProfile: () =>
     import('~/server/routers/user-profile.router').then((m) => m.userProfileRouter),
+  profileFolders: () =>
+    import('~/server/routers/profile-folders.router').then((m) => m.profileFoldersRouter),
   cosmetic: () => import('~/server/routers/cosmetic.router').then((m) => m.cosmeticRouter),
   event: () => import('~/server/routers/event.router').then((m) => m.eventRouter),
   hatTurf: () => import('~/server/routers/hat-turf.router').then((m) => m.hatTurfRouter),

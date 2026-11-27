@@ -2584,6 +2584,11 @@ export type CollectionItem = {
   rejectionReason: CollectionItemRejectionReason | null;
   rejectionDetail: string | null;
   tagId: number | null;
+  /**
+   * Folders only: when the owner showcased this item; null = not showcased. Ordered oldest first.
+   * Partial index "CollectionItem_showcase_idx" lives only in its migration.
+   */
+  showcasedAt: Timestamp | null;
 };
 export type CollectionItemScore = {
   userId: number;
@@ -6901,6 +6906,10 @@ export type UserProfile = {
   profileSectionsSettings: Generated<unknown>;
   showcaseItems: Generated<unknown>;
   showcaseSections: Generated<unknown>;
+  /**
+   * Profile folder rows: [{ id, name, folders: [{ id, hidden? }] }]. Not part of the general profile read.
+   */
+  folderRows: unknown | null;
   backgroundImageId: number | null;
   sfwBackgroundImageId: number | null;
   /**

@@ -9,6 +9,9 @@ import { logToAxiom } from '~/server/logging/client';
 import { contentRestriction } from '~/server/common/content-restriction';
 import { OnboardingSteps } from '~/server/common/enums';
 import { isAccountMuted } from '~/server/services/account-standing.service';
+import type { FolderWriteAccess } from '~/server/services/profile-folder-guard';
+import { earnsCollectCredit } from '~/server/services/profile-folder-guard';
+import { saveItemCredit } from '~/server/services/collect-credit';
 import { Flags } from '~/shared/utils/flags';
 import { collectedContentReward, firstDailyPostReward } from '~/server/rewards';
 import type { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
@@ -56,6 +59,7 @@ import {
   getUserCollectionPermissionsByIds,
   getUserCollectionsWithPermissions,
   removeCollectionItem,
+  removeCollectionItems,
   removeContributorFromCollection,
   saveItemInCollections,
   setCollectionArchived,
@@ -79,6 +83,7 @@ import { addPostImage, createPost, deletePost } from '~/server/services/post.ser
 import { createPostOwnerCheck } from '~/server/services/image.service';
 import {
   throwAuthorizationError,
+  throwBadRequestError,
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
@@ -315,6 +320,11 @@ export const getCollectionByIdHandler = async ({
   }
 };
 
+const folderAccessFrom = (ctx: ProtectedContext): FolderWriteAccess => ({
+  foldersEnabled: !!ctx.features.profileFolders,
+  session: { muted: ctx.user.muted, mutedAt: ctx.user.mutedAt },
+});
+
 export const saveItemHandler = async ({
   ctx,
   input,
@@ -331,32 +341,39 @@ export const saveItemHandler = async ({
         isModerator: user.isModerator,
         csamReview: !!ctx.features?.csamReports,
         canAccessUserChallenges: ctx.features.userChallenges,
+        folderAccess: folderAccessFrom(ctx),
       },
     });
+    const credited = await earnsCollectCredit({
+      collectionIds: [
+        ...input.collections.map((c) => c.collectionId),
+        ...(input.removeFromCollectionIds ?? []),
+      ],
+      foldersEnabled: !!ctx.features.profileFolders,
+    });
 
-    if (status === 'added' && input.type) {
-      const entityId = [input.articleId, input.modelId, input.postId, input.imageId].find(
-        isDefined
+    const credit = saveItemCredit({
+      credited,
+      status,
+      type: input.type,
+      entityId: [input.articleId, input.modelId, input.postId, input.imageId].find(isDefined),
+      imageId: input.imageId,
+    });
+    if (credit.rewardEntityId && input.type)
+      await collectedContentReward.apply(
+        { collectorId: user.id, entityType: input.type, entityId: credit.rewardEntityId },
+        { ip }
       );
 
-      if (entityId) {
-        await collectedContentReward.apply(
-          { collectorId: user.id, entityType: input.type, entityId },
-          { ip }
-        );
-      }
-    }
-
     // nb: this will count in review / rejected additions
-    if (input.type === 'Image' && !!input.imageId) {
+    if (credit.imageMetric && input.imageId)
       await updateEntityMetric({
         ctx,
         entityType: 'Image',
         entityId: input.imageId,
         metricType: 'Collection',
-        amount: status === 'added' ? 1 : -1,
+        amount: credit.imageMetric,
       });
-    }
 
     if (input.type === 'Model' && input.modelId && input.removeFromCollectionIds?.length) {
       // letting this run in the background to avoid blocking the response
@@ -414,11 +431,16 @@ export const bulkSaveItemsHandler = async ({
         isModerator,
         csamReview: !!ctx.features?.csamReports,
         canAccessUserChallenges: ctx.features.userChallenges,
+        folderAccess: folderAccessFrom(ctx),
       },
       permissions,
     });
 
-    for (const imgId of resp.imageIds) {
+    const credited = await earnsCollectCredit({
+      collectionIds: [input.collectionId],
+      foldersEnabled: !!ctx.features.profileFolders,
+    });
+    for (const imgId of credited ? resp.imageIds : []) {
       await updateEntityMetric({
         ctx,
         entityType: 'Image',
@@ -867,12 +889,17 @@ export const removeCollectionItemHandler = async ({
   ctx: ProtectedContext;
 }) => {
   const { user } = ctx;
+  const { itemId, itemIds, ...others } = input;
+  const args = {
+    ...others,
+    userId: user.id,
+    isModerator: user.isModerator,
+    folderAccess: folderAccessFrom(ctx),
+  };
   try {
-    return await removeCollectionItem({
-      ...input,
-      userId: user.id,
-      isModerator: user.isModerator,
-    });
+    if (itemId != null) return await removeCollectionItem({ ...args, itemId });
+    if (!itemIds?.length) throw throwBadRequestError('Pass itemId or itemIds');
+    return await removeCollectionItems({ ...args, itemIds });
   } catch (error) {
     throw throwDbError(error);
   }

@@ -138,7 +138,7 @@ export type CollectionReadConfiguration = "Private" | "Public" | "Unlisted";
 
 export type CollectionType = "Model" | "Article" | "Post" | "Image" | "Model3D";
 
-export type CollectionMode = "Contest" | "Bookmark";
+export type CollectionMode = "Contest" | "Bookmark" | "Folder";
 
 export type CollectionItemStatus = "ACCEPTED" | "REVIEW" | "REJECTED";
 
@@ -4071,6 +4071,7 @@ export interface CollectionItem {
   tagId: number | null;
   tag?: Tag | null;
   scores?: CollectionItemScore[];
+  showcasedAt: Date | null;
 }
 
 export interface CollectionItemScore {
@@ -6252,6 +6253,7 @@ export interface UserProfile {
   profileSectionsSettings: JsonValue;
   showcaseItems: JsonValue;
   showcaseSections: JsonValue;
+  folderRows: JsonValue | null;
   backgroundImageId: number | null;
   backgroundImage?: Image | null;
   sfwBackgroundImageId: number | null;

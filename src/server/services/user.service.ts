@@ -260,6 +260,7 @@ import {
 } from '~/server/events/showcase-hat';
 import { asJsonbObject, asJsonbObjectSql } from '~/server/utils/jsonb-object';
 import { postHoldsHeldTextSql } from '~/server/services/post-text-hold';
+import { folderRowsWithoutNames } from '~/server/schema/profile-folders.schema';
 
 export const getUsersByIds = async (userIds: number[]) => {
   const users = await dbRead.user.findMany({
@@ -572,6 +573,7 @@ export type ProfileClearSnapshot = {
     location: string | null;
     showcaseSections: Prisma.JsonValue;
     showcaseItems: Prisma.JsonValue;
+    folderRows: Prisma.JsonValue;
     about: string | null;
   };
 };
@@ -585,11 +587,12 @@ const PROFILE_CLEAR_SNAPSHOT_SELECT = {
   location: true,
   showcaseSections: true,
   showcaseItems: true,
+  folderRows: true,
   about: true,
 } as const;
 
 /**
- * Mod-driven: clear the named public profile fields (location/bio/message/showcaseSections/about) on
+ * Mod-driven: clear the named public profile fields (location/bio/message/showcaseSections/folderRows/about) on
  * UserProfile. Throws on an empty list. No-op if no UserProfile row exists yet.
  *
  * Clearing bio/message also clears its SFW (civitai.com) override — otherwise the
@@ -631,6 +634,14 @@ export async function clearUserProfileFields({
   if (fields.includes('showcaseSections')) data.showcaseSections = [];
   if (fields.includes('about')) data.about = null;
   const updated = await dbWrite.$transaction(async (tx) => {
+    if (fields.includes('folderRows')) {
+      // Row names are the text; which folders the owner hid is not, so a clear keeps it.
+      const stored = await tx.userProfile.findUnique({
+        where: { userId },
+        select: { folderRows: true },
+      });
+      data.folderRows = folderRowsWithoutNames(stored?.folderRows);
+    }
     const { count } = await tx.userProfile.updateMany({ where: { userId }, data });
     if (count > 0)
       await trackModActivity(

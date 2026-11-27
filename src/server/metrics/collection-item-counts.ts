@@ -16,6 +16,7 @@ const log = createLogger('metrics:collection-item-counts');
 // written without one for a while.
 // itemCount: the collection's items.
 // Both count ACCEPTED rows only: a rejected or in-review item is in no one's collection publicly.
+// collectedCount skips profile folders: an owner filing their own work is not someone collecting it.
 const COUNTS = {
   Article: { column: 'articleId', metric: 'collectedCount', distinct: true },
   Model: { column: 'modelId', metric: 'collectedCount', distinct: true },
@@ -37,6 +38,7 @@ export function collectionItemCountSql(entityType: CollectionItemCountEntity) {
       JOIN "Collection" c ON c.id = ci."collectionId"
       WHERE ci."${column}" = ANY($1::int[])
         AND ci.status = 'ACCEPTED'
+        AND c.mode IS DISTINCT FROM 'Folder'
         AND ${COLLECTOR} IS NOT NULL
         AND ${COLLECTOR} <> ALL($2::int[])
       GROUP BY 1`

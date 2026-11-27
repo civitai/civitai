@@ -3,18 +3,26 @@ import { IconCheck } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useState } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { useQueryArticles } from '~/components/Article/article.utils';
 import { useQueryImages } from '~/components/Image/image.utils';
 import { useQueryModels } from '~/components/Model/model.utils';
-import { ImageSort, ModelSort } from '~/server/common/enums';
+import { ArticleSort, ImageSort, ModelSort } from '~/server/common/enums';
 import type { ShowcaseItemSchema } from '~/server/schema/user-profile.schema';
 import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 
-type Kind = 'Image' | 'Model';
+type Kind = 'Image' | 'Model' | 'Article';
+
+const kindLabels: Record<Kind, string> = {
+  Image: 'Your images',
+  Model: 'Your models',
+  Article: 'Your articles',
+};
 type Tile = { entityType: Kind; entityId: number; url?: string; type?: MediaType; name?: string };
 
 /**
- * The owner's own images and models, newest first, to add to or take off their showcase with one
- * tap each. Full at the limit: the rest are disabled, never swapped in for an older item.
+ * The owner's own images, models and (where offered) articles, newest first, to add to or take off
+ * a list with one tap each. Full at the limit: the rest are disabled, never swapped in for an
+ * older item.
  */
 export function ShowcaseOwnItemsPicker({
   userId,
@@ -22,14 +30,18 @@ export function ShowcaseOwnItemsPicker({
   selected,
   limit,
   onToggle,
+  kinds = ['Image', 'Model'],
+  fullMessage = `Your showcase is full (${limit}). Remove an item above to add another.`,
 }: {
   userId: number;
   username: string;
   selected: ShowcaseItemSchema[];
   limit: number;
   onToggle: (item: ShowcaseItemSchema) => void;
+  kinds?: Kind[];
+  fullMessage?: string;
 }) {
-  const [kind, setKind] = useState<Kind>('Image');
+  const [kind, setKind] = useState<Kind>(kinds[0]);
   const images = useQueryImages(
     {
       userId,
@@ -45,10 +57,22 @@ export function ShowcaseOwnItemsPicker({
     { username, sort: ModelSort.Newest, period: MetricTimeframe.AllTime, limit: 24 },
     { enabled: kind === 'Model' }
   );
+  const articles = useQueryArticles(
+    { username, sort: ArticleSort.Newest, period: MetricTimeframe.AllTime, limit: 24 },
+    { enabled: kind === 'Article', applyHiddenPreferences: false }
+  );
 
-  const query = kind === 'Image' ? images : models;
+  const query = kind === 'Image' ? images : kind === 'Model' ? models : articles;
   const tiles: Tile[] =
-    kind === 'Image'
+    kind === 'Article'
+      ? articles.articles.map((article) => ({
+          entityType: 'Article',
+          entityId: article.id,
+          url: article.coverImage?.url,
+          type: article.coverImage?.type as MediaType | undefined,
+          name: article.title,
+        }))
+      : kind === 'Image'
       ? images.images.map((image) => ({
           entityType: 'Image',
           entityId: image.id,
@@ -69,18 +93,17 @@ export function ShowcaseOwnItemsPicker({
 
   return (
     <Stack gap="xs">
-      <SegmentedControl
-        size="xs"
-        value={kind}
-        onChange={(value) => setKind(value as Kind)}
-        data={[
-          { value: 'Image', label: 'Your images' },
-          { value: 'Model', label: 'Your models' },
-        ]}
-      />
+      {kinds.length > 1 && (
+        <SegmentedControl
+          size="xs"
+          value={kind}
+          onChange={(value) => setKind(value as Kind)}
+          data={kinds.map((value) => ({ value, label: kindLabels[value] }))}
+        />
+      )}
       {full && (
         <Text size="xs" c="dimmed">
-          Your showcase is full ({limit}). Remove an item above to add another.
+          {fullMessage}
         </Text>
       )}
       {query.isLoading ? (
@@ -89,7 +112,11 @@ export function ShowcaseOwnItemsPicker({
         </Center>
       ) : tiles.length === 0 ? (
         <Text size="sm" c="dimmed" ta="center" py="md">
-          {kind === 'Image' ? 'You have no published images yet.' : 'You have no models yet.'}
+          {kind === 'Image'
+            ? 'You have no published images yet.'
+            : kind === 'Model'
+            ? 'You have no models yet.'
+            : 'You have no articles yet.'}
         </Text>
       ) : (
         <SimpleGrid cols={{ base: 3, sm: 6 }} spacing={6}>

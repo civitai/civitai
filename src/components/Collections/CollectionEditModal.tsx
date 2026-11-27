@@ -260,7 +260,8 @@ function CollectionEditForm({ collectionId }: { collectionId?: number }) {
                   data={[
                     ...Object.values(CollectionMode)
                       .map((value) =>
-                        [CollectionMode.Bookmark].some((v) => v === value)
+                        // Folders are created from the profile, never here.
+                        [CollectionMode.Bookmark, CollectionMode.Folder].some((v) => v === value)
                           ? undefined
                           : {
                               value,

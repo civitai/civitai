@@ -1,4 +1,5 @@
 import { dbWrite } from '~/server/db/client';
+import { folderRowsText } from '~/server/schema/profile-folders.schema';
 import { showcaseSectionsText } from '~/server/schema/user-profile.schema';
 import { registerTextScanProfile } from '~/server/services/text-scan/profiles';
 import {
@@ -20,6 +21,7 @@ registerTextScanProfile({
         sfwBio: true,
         sfwMessage: true,
         showcaseSections: true,
+        folderRows: true,
         about: true,
       },
     });
@@ -38,6 +40,7 @@ registerTextScanProfile({
               text: scamTextFromHtml(row.sfwMessage),
             },
             { heading: 'Showcase sections', text: showcaseSectionsText(row.showcaseSections) },
+            { heading: 'Folder rows', text: folderRowsText(row.folderRows) },
             { heading: 'About', text: scamTextFromHtml(row.about) },
           ]),
         ])

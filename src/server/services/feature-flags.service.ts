@@ -682,6 +682,8 @@ const featureFlags = createFeatureFlags({
   profileShowcases: { availability: ['mod'], fliptKey: 'profile-showcases' },
   // The redesigned profile page.
   profileRedesign: { availability: ['mod'], fliptKey: 'profile-redesign' },
+  // Profile folders: creators file their own models, images and articles into folders.
+  profileFolders: { availability: ['mod'], fliptKey: 'profile-folders' },
   // Creators curate a model version's showcase per site and feature community images in it.
   modelVersionShowcase: { availability: ['mod'], fliptKey: 'model-version-showcase' },
   // Kill switch for serving curated version showcases (the flag above gates curating). Read with no

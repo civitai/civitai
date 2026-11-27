@@ -724,6 +724,7 @@ export type CollectionType = (typeof CollectionType)[keyof typeof CollectionType
 export const CollectionMode = {
   Contest: 'Contest',
   Bookmark: 'Bookmark',
+  Folder: 'Folder',
 } as const;
 
 export type CollectionMode = (typeof CollectionMode)[keyof typeof CollectionMode];

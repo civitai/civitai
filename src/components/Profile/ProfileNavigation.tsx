@@ -7,6 +7,7 @@ import {
   IconBookmark,
   IconCategory,
   IconCube,
+  IconFolder,
   IconId,
   IconLayoutList,
   IconPencilMinus,
@@ -63,7 +64,10 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
   const { data: user, isLoading: userLoading } = trpc.userProfile.get.useQuery({ username });
   const { count: achievementCount } = useProfileAchievements(user?.id);
 
-  const activePath = router.pathname.split('/').pop() || overviewPath;
+  // A folder's own page sits under the Folders tab.
+  const activePath = router.pathname.includes('/folders')
+    ? 'folders'
+    : router.pathname.split('/').pop() || overviewPath;
   const baseUrl = `/user/${username}`;
 
   const opts: Record<string, DataItem> = {
@@ -71,6 +75,12 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
       url: `${baseUrl}/`,
       icon: (props) => <IconAssembly {...props} />,
       label: 'Overview',
+    },
+    folders: {
+      url: `${baseUrl}/folders`,
+      icon: (props) => <IconFolder {...props} />,
+      label: 'Folders',
+      disabled: !features.profileRedesign || !features.profileFolders,
     },
     about: {
       url: `${baseUrl}/about`,

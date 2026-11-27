@@ -34,13 +34,14 @@ const BUST_PATTERN = /\bbustContestCollectionItemsCache(ForItems)?\s*\(/g;
 const TTL = 'bounded by the cache TTL (CONTEST_COLLECTION_ITEMS_TTL)';
 const LEDGER: Record<string, { writes: number; busts: number; why: string }> = {
   'src/server/services/collection.service.ts': {
-    writes: 12,
-    busts: 9,
+    writes: 14,
+    busts: 10,
     why:
       'every write busts: saveItemInCollections (insert, auto-feature tombstone, delete: one bust ' +
       'for the image after the transaction), upsertCollection (nested initial item), ' +
       'updateCollectionItemsStatus (by item id), bulkSaveItems (insert, and the unpaid-entry ' +
-      'rollback delete), removeCollectionItem (tombstone + delete, image collections), setItemScore, ' +
+      'rollback delete), removeCollectionItem and removeCollectionItems (tombstone + delete, image ' +
+      'collections), setItemScore, ' +
       'removeEntityFromAllCollections (images), setCollectionItemsTag',
   },
   'src/server/services/challenge.service.ts': {
@@ -106,6 +107,11 @@ const LEDGER: Record<string, { writes: number; busts: number; why: string }> = {
     writes: 2,
     busts: 0,
     why: `collection-wide deletes on one board collection, by predicate: ${TTL}`,
+  },
+  'src/server/services/profile-folder-showcase.service.ts': {
+    writes: 2,
+    busts: 0,
+    why: 'showcasedAt on profile-folder items only; folders are never contests, so no cached entry changes',
   },
   'src/server/services/user.service.ts': {
     writes: 2,
