@@ -148,6 +148,7 @@ import {
 import {
   associatedModelVisibilitySelect,
   canListAssociatedModel,
+  type AssociatedModelAddons,
   type AssociatedModelVisibility,
 } from '~/server/services/associated-model-visibility';
 import { readModelWithDetailsViaKysely } from '~/server/services/model-details.reads';
@@ -6271,7 +6272,12 @@ export const setModelsCategory = async ({
 
 // #region [associated models]
 export const getAssociatedResourcesSimple = async (
-  { fromId, type, browsingLevel, disableMinor }: GetAssociatedResourcesInput,
+  {
+    fromId,
+    type,
+    browsingLevel,
+    disableMinor,
+  }: GetAssociatedResourcesInput & AssociatedModelAddons,
   viewer?: ArticleReader,
   modelViewer?: ArticleReader
 ) => {
@@ -6324,7 +6330,14 @@ function associatedModelItem<T extends AssociatedModelVisibility & ModelSfwFaceS
 }
 
 export const setAssociatedResources = async (
-  { fromId, type, associations, reciprocal, browsingLevel }: SetAssociatedResourcesInput,
+  {
+    fromId,
+    type,
+    associations,
+    reciprocal,
+    browsingLevel,
+    disableMinor,
+  }: SetAssociatedResourcesInput & AssociatedModelAddons,
   user?: SessionUser,
   modelViewer?: ArticleReader
 ) => {
@@ -6353,7 +6366,10 @@ export const setAssociatedResources = async (
   // from them), so its absence from the payload is not a removal.
   const existingAssociations = fromModel.associations
     .filter((x) => !x.toArticle || canReadArticle(x.toArticle, user))
-    .filter((x) => !x.toModel || canListAssociatedModel(x.toModel, modelViewer, browsingLevel))
+    .filter(
+      (x) =>
+        !x.toModel || canListAssociatedModel(x.toModel, modelViewer, browsingLevel, disableMinor)
+    )
     .map((x) => x.id);
   const existingModelTargets = new Set(
     fromModel.associations.map((x) => x.toModelId).filter(isDefined)

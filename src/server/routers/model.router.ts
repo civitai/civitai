@@ -133,6 +133,12 @@ import {
 import { isModelDeletedOrTakenDown } from '~/server/utils/model-withheld';
 import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
 import { ownerOrModeratorViewer } from '~/server/auth/full-user-credential';
+import type { AssociatedModelAddons } from '~/server/services/associated-model-visibility';
+import type { Context } from '~/server/createContext';
+import { getBrowsingSettingAddons } from '~/server/services/system-cache';
+import { requestServableLevels } from '~/server/utils/browsing-level';
+import { actsAsModerator } from '~/server/utils/image-media-visibility';
+import { resolveStrictestPoiMinor } from '~/shared/constants/browsing-settings-addons';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { readModelPoiAndOwnerViaKysely } from '~/server/services/hot-reads-6.reads';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -267,6 +273,24 @@ const modelFileUrlsForOwner = ownerOnlyFileUrls<Awaited<ReturnType<typeof getMod
     };
   },
 });
+
+/**
+ * Resolved on the server, never read from the input. The list is asked for at every level, so this
+ * is on if it is on at any level the request may be served, as the image gallery resolves it.
+ */
+async function resolveAssociatedModelAddons(
+  ctx: Pick<
+    Context,
+    'user' | 'features' | 'req' | 'apiKeyId' | 'apiKeyType' | 'subject' | 'tokenScope'
+  >
+): Promise<AssociatedModelAddons> {
+  const { disableMinor } = resolveStrictestPoiMinor(
+    await getBrowsingSettingAddons(),
+    requestServableLevels(ctx),
+    { isModerator: actsAsModerator(ctx) }
+  );
+  return { disableMinor };
+}
 
 export const modelRouter = router({
   getById: publicProcedure
@@ -474,14 +498,22 @@ export const modelRouter = router({
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getAssociatedResourcesSchema)
     .use(associationSourceVisible)
-    .query(({ input, ctx }) =>
-      getAssociatedResourcesSimple(input, ctx.user, ownerOrModeratorViewer(ctx))
+    .query(async ({ input, ctx }) =>
+      getAssociatedResourcesSimple(
+        { ...input, ...(await resolveAssociatedModelAddons(ctx)) },
+        ctx.user,
+        ownerOrModeratorViewer(ctx)
+      )
     ),
   setAssociatedResources: guardedProcedure
     .meta({ requiredScope: TokenScope.ModelsWrite })
     .input(setAssociatedResourcesSchema)
-    .mutation(({ input, ctx }) =>
-      setAssociatedResources(input, ctx.user, ownerOrModeratorViewer(ctx))
+    .mutation(async ({ input, ctx }) =>
+      setAssociatedResources(
+        { ...input, ...(await resolveAssociatedModelAddons(ctx)) },
+        ctx.user,
+        ownerOrModeratorViewer(ctx)
+      )
     ),
   rescan: moderatorProcedure.input(getByIdSchema).mutation(({ input }) => rescanModel(input)),
   getModelsByHash: protectedProcedure

@@ -82,7 +82,7 @@ beforeAll(async () => {
     );
     INSERT INTO "User" (id, username) VALUES (${FROM_OWNER}, 'from-owner'), (${ITEM_OWNER}, 'item-owner');
   `);
-  for (const fromId of [FROM, 101, 102]) {
+  for (const fromId of [FROM, 101, 102, 103, 104]) {
     await h.pg.query(
       `INSERT INTO "Model" (id, name, "nsfwLevel", "userId", status, availability, poi) VALUES ($1, 'from', 1, $2, 'Published', 'Public', false)`,
       [fromId, FROM_OWNER]
@@ -232,5 +232,21 @@ describe('setAssociatedResources model side', () => {
       fromOwner
     );
     expect(await remaining(102)).toEqual([]);
+  });
+
+  it('with minor content off, keeps a minor-flagged link the editor did not list', async () => {
+    const save = (fromId: number, disableMinor?: boolean) =>
+      setAssociatedResources(
+        { fromId, type: 'Suggested', associations: [], browsingLevel: ALL, disableMinor },
+        fromOwner,
+        fromOwner
+      );
+    await link(103, [MODELS.minor.id]);
+    await save(103, true);
+    expect(await remaining(103)).toEqual([MODELS.minor.id]);
+
+    await link(104, [MODELS.minor.id]);
+    await save(104);
+    expect(await remaining(104)).toEqual([]);
   });
 });

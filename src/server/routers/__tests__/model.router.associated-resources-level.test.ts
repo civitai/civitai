@@ -1,6 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import '~/__tests__/mocks/logging.mock';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as HotReads6 from '@civitai/db-queries/hot-reads-6';
 import { NsfwLevel, OnboardingSteps } from '~/server/common/enums';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
@@ -20,7 +21,8 @@ const ITEM_OWNER = 20;
 const PG_MODEL = 11;
 const X_MODEL = 12;
 const PRIVATE_MODEL = 13;
-const linkedModel = (id: number, nsfwLevel: number, availability = 'Public') => ({
+const MINOR_MODEL = 14;
+const linkedModel = (id: number, nsfwLevel: number, availability = 'Public', minor = false) => ({
   id,
   toArticle: null,
   toModel: {
@@ -34,7 +36,7 @@ const linkedModel = (id: number, nsfwLevel: number, availability = 'Public') => 
     availability,
     mode: null,
     poi: false,
-    minor: false,
+    minor,
     sfwName: null,
   },
 });
@@ -79,6 +81,14 @@ function listedIds(
     .then((items) => items.map(({ item }) => item.id));
 }
 
+// The site's addon rules turn minor content off at every level. Read once per process (memoised),
+// so it holds for the whole file.
+beforeAll(() => {
+  redisMock.sysRedis.get.mockResolvedValue(
+    JSON.stringify([{ type: 'none', nsfwLevels: [], disableMinor: true }]) as never
+  );
+});
+
 beforeEach(() => {
   vi.clearAllMocks();
   dbMock.dbWrite.modelAssociations.findMany.mockResolvedValue([
@@ -116,15 +126,38 @@ describe('model.getAssociatedResourcesSimple owner view', () => {
   });
 });
 
+describe('model.getAssociatedResourcesSimple minor content', () => {
+  const minorIds = (user: { id: number; isModerator?: boolean }) => {
+    dbMock.dbWrite.modelAssociations.findMany.mockResolvedValue([
+      linkedModel(PG_MODEL, NsfwLevel.PG),
+      linkedModel(MINOR_MODEL, NsfwLevel.PG, 'Public', true),
+    ] as never);
+    return listedIds(user, true);
+  };
+
+  it('with minor content off by the site rules, hides a minor-flagged model', async () => {
+    expect(await minorIds(signedIn(5))).toEqual([PG_MODEL]);
+  });
+
+  it('shows it to its owner and to moderators', async () => {
+    expect(await minorIds(signedIn(ITEM_OWNER))).toContain(MINOR_MODEL);
+    expect(await minorIds({ ...signedIn(9), isModerator: true })).toContain(MINOR_MODEL);
+  });
+});
+
 describe('model.setAssociatedResources', () => {
   const FROM_OWNER = 5;
-  const removedIds = async (canViewNsfw: boolean) => {
+  const removedIds = async (
+    canViewNsfw: boolean,
+    linked = linkedModel(X_MODEL, NsfwLevel.X),
+    credential?: Record<string, unknown>
+  ) => {
     dbMock.dbWrite.model.findUnique.mockResolvedValue({
       userId: FROM_OWNER,
-      associations: [{ ...linkedModel(X_MODEL, NsfwLevel.X), id: 1, toModelId: X_MODEL }],
+      associations: [{ ...linked, id: 1, toModelId: linked.toModel.id }],
     } as never);
     dbMock.dbWrite.$transaction.mockResolvedValue([] as never);
-    await caller(signedIn(FROM_OWNER), canViewNsfw).setAssociatedResources({
+    await caller(signedIn(FROM_OWNER), canViewNsfw, credential).setAssociatedResources({
       fromId: 1,
       type: 'Suggested',
       associations: [],
@@ -141,5 +174,21 @@ describe('model.setAssociatedResources', () => {
 
   it('a save on the mature domain removes a mature link its editor showed', async () => {
     expect(await removedIds(true)).toEqual([1]);
+  });
+
+  it('with minor content off by the site rules, a save keeps a minor-flagged link', async () => {
+    expect(await removedIds(true, linkedModel(MINOR_MODEL, NsfwLevel.PG, 'Public', true))).toEqual(
+      []
+    );
+  });
+
+  it("a save on a scoped key keeps a link to the caller's own private model", async () => {
+    const ownPrivate = linkedModel(PRIVATE_MODEL, NsfwLevel.PG, 'Private');
+    ownPrivate.toModel.userId = FROM_OWNER;
+    expect(await removedIds(true, ownPrivate)).toEqual([1]);
+    vi.clearAllMocks();
+    expect(
+      await removedIds(true, ownPrivate, { ...scopedKey, tokenScope: TokenScope.ModelsWrite })
+    ).toEqual([]);
   });
 });

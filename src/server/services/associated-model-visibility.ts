@@ -51,3 +51,5 @@ export function canListAssociatedModel(
     canViewPoiModel(model.poi, model.userId, viewer)
   );
 }
+
+export type AssociatedModelAddons = { disableMinor?: boolean };
