@@ -96,11 +96,7 @@ describe('the carousel’s main <img> requests the URL the shell preloads', () =
   });
 });
 
-/**
- * `image.get` serves a blocked image to its owner with `url` null: the row and its notice, never
- * the media. The slide stands in `WithheldMedia` for it rather than handing the null to `EdgeMedia`,
- * which draws a broken image. The guard is stubbed to "show", as the owner sees their own image.
- */
+// A null `url` (a block, to its owner) must not reach `EdgeMedia`, which draws a broken image.
 describe('a slide whose media the server withheld', () => {
   test.each(['image', 'video'] as const)('a %s with no url shows WithheldMedia', async (type) => {
     await page.viewport(1200, 800);
