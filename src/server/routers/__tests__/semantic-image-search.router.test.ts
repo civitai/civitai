@@ -155,7 +155,6 @@ describe('semanticImageSearch router', () => {
   it.each([
     [true, true, [55]],
     [true, false, undefined],
-    [false, true, undefined],
   ])(
     'with moreLikeThis %s and moreLikeThisSteer %s, passes the preferred tag as %s',
     async (mltOn, steerOn, passed) => {
@@ -167,6 +166,24 @@ describe('semanticImageSearch router', () => {
       expect(h.search.mock.calls[0][0].input.preferTagIds).toEqual(passed);
     }
   );
+
+  // Without its flag the image id was the only input, so dropping it would answer an empty query.
+  it.each([
+    [false, 'refuses'],
+    [true, 'serves'],
+  ])('with moreLikeThis %s, %s a search by image', async (mltOn) => {
+    h.flagOn = true;
+    h.mltOn = mltOn;
+    h.steerOn = true;
+    const search = caller().search({ imageId: 3 });
+    if (mltOn) {
+      await search;
+      expect(h.search.mock.calls[0][0].input.imageId).toBe(3);
+    } else {
+      await expect(search).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(h.search).not.toHaveBeenCalled();
+    }
+  });
 
   it('serves both with the flag', async () => {
     h.flagOn = true;
@@ -380,6 +397,22 @@ describe('semanticImageSearch.searchVideos', () => {
     await caller().searchVideos({ query: 'fox' });
     expect(h.search).toHaveBeenCalledTimes(1);
     expect(h.search).toHaveBeenCalledWith(expect.objectContaining({ collection: 'videos' }));
+  });
+
+  it.each([
+    [false, 'refuses'],
+    [true, 'serves'],
+  ])('with moreLikeThis %s, %s a search by image, as search does', async (mltOn) => {
+    h.videoOn = true;
+    h.mltOn = mltOn;
+    const search = caller().searchVideos({ imageId: 3 });
+    if (mltOn) {
+      await search;
+      expect(h.search.mock.calls[0][0].input.imageId).toBe(3);
+    } else {
+      await expect(search).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(h.search).not.toHaveBeenCalled();
+    }
   });
 
   it('refuses a search by model version without imageSearchResources, as search does', async () => {
