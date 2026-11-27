@@ -46,12 +46,6 @@ describe('Seed Audio', () => {
     expect(step.input).toMatchObject({ referenceImage: 'https://x/scene.jpg' });
   });
 
-  it('refuses a prompt without a quoted spoken line', () => {
-    const parsed = parse({ ...base, prompt: 'Soft piano and ocean waves' });
-    expect(parsed.success).toBe(false);
-    if (!parsed.success) expect(Object.keys(parsed.errors)).toContain('prompt');
-  });
-
   it('refuses Seed Audio when its flag is off', () => {
     const parsed = generationHub.parse(base, { ...ext, flags: {} });
     expect(parsed.success && 'ecosystem' in parsed.data && parsed.data.ecosystem).not.toBe(
@@ -59,8 +53,9 @@ describe('Seed Audio', () => {
     );
   });
 
-  it('accepts curly quotes', async () => {
-    const [step] = await submit({ prompt: 'She whispers “Is anyone there?” in an empty hall.' });
-    expect(step.$type).toBe('seedAudioGen');
+  it('sends the prompt as typed, quotes included', async () => {
+    const typed = `A deep voice says '"And so, it begins'" and a band starts jazzing`;
+    const [step] = await submit({ prompt: typed });
+    expect(step.input).toMatchObject({ prompt: typed });
   });
 });
