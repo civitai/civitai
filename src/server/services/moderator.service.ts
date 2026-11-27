@@ -33,6 +33,8 @@ type ModelModActivity = {
     | 'rejectLockReview'
     // A ruling on a restricted-verdict lead in Needs review (`restrictedNsfwVerdict:keep`).
     | `restrictedNsfwVerdict:${'keep' | 'dismiss' | 'rateNsfw' | 'autoApply'}`
+    // A moderator closed a held detection on a flag the model already carries (`textScanRedetection:closed:minor`).
+    | `textScanRedetection:closed:${'minor' | 'poi'}`
     // A moderator's model save added or removed one locked property (`lockProperty:poi`).
     | `lockProperty:${string}`
     | `unlockProperty:${string}`;
