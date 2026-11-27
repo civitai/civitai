@@ -134,6 +134,7 @@ async function listArticle(image: ReturnType<typeof cover>, viewer: Viewer) {
       user: { id: OWNER, profilePictureId: null },
       userCosmetics: [],
       cursorV: 1,
+      cover: 'cover-key',
     },
   ]);
   dbMock.dbRead.image.findMany.mockImplementation((async (args: { select?: { minor?: boolean } }) =>
@@ -445,7 +446,7 @@ describe('the legacy cover key of a cover a reader cannot see', () => {
 
   it.each(unseen)('🔴 is dropped for a stranger when the cover is %s', async (_, image) => {
     expect((await detailArticle(image, viewers['a stranger'], 'coverImage')).cover).toBeNull();
-    expect((await listArticle(image, viewers['a stranger']))?.cover ?? null).toBeNull();
+    expect(await listArticle(image, viewers['a stranger'])).toHaveProperty('cover', null);
   });
 
   it.each(unseen)('is kept for the owner when the cover is %s', async (_, image) => {
@@ -456,6 +457,10 @@ describe('the legacy cover key of a cover a reader cannot see', () => {
 
   it('is kept for a stranger when the cover is shown (control)', async () => {
     expect((await detailArticle(cover(1, false), viewers['a stranger'], 'coverImage')).cover).toBe(
+      'cover-key'
+    );
+    expect(await listArticle(cover(1, false), viewers['a stranger'])).toHaveProperty(
+      'cover',
       'cover-key'
     );
   });

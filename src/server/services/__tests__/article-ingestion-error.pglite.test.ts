@@ -385,7 +385,7 @@ describe('a rescan of an article at Error that has no recorded episode', () => {
 describe('an image whose upload is missing', () => {
   const MISSING = { ingestion: 'NotFound' };
 
-  it('no longer keeps an article in an Error episode hidden, and tells nobody', async () => {
+  it('ends an Error episode it is the only problem in, and tells nobody', async () => {
     await seed({ ingestion: 'Error', metadata: EPISODE, content: MISSING });
 
     const after = await recompute();
