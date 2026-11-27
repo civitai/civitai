@@ -1,5 +1,9 @@
 import { TRPCError } from '@trpc/server';
 import type { AssistantSaveResult } from '~/server/services/blocks/app-source-repo.service';
+import {
+  missingUpdatePaths,
+  utf8TextOf,
+} from '~/server/services/blocks/platform-update-containment';
 import type { SessionUser } from '~/types/session';
 
 /**
@@ -130,11 +134,6 @@ const DISABLED: Answer = {
 const SLUG_RE = /^[a-z][a-z0-9-]{1,38}[a-z0-9]$/;
 const COMMIT_SHA_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 
-function textOf(content: Buffer): string | null {
-  const text = content.toString('utf8');
-  return Buffer.from(text, 'utf8').equals(content) ? text : null;
-}
-
 async function gate(
   userId: number,
   deps: RunnerPlatformUpdateDeps
@@ -174,7 +173,7 @@ async function readFiles(
     if (!blobSha) return { text: null, binary: false };
     const content = await deps.blob(app, blobSha);
     bytes += content.byteLength;
-    const text = textOf(content);
+    const text = utf8TextOf(content);
     return { text, binary: text === null };
   };
   const files: RunnerPlatformUpdateFile[] = [];
@@ -259,16 +258,11 @@ export type ResolveAnswer =
   | { resolved: false; reason: 'incomplete'; paths: string[] }
   | { resolved: false; reason: string };
 
-function linesOf(text: string): string[] {
-  return text.split(/\r?\n/);
-}
-
 /**
- * The paths of `update` whose change the tree at `sha` does not hold. A path holds it when its blob
- * is the update's own (or, for a delete, the path is gone). A path whose blob differs (the owner's
- * changes merged with the update's) holds it when it is text on every side and has every non-blank
- * line the update adds to its base; when the update only removes lines, when it differs from the
- * base at all. A file that is not text on some side must be exactly the update's.
+ * The paths of `update` whose change the tree at `sha` does not hold, by the shared predicate
+ * (`pathHoldsUpdate` in `platform-update-containment.ts`, the one the submit and approve checks
+ * use): the update's own blob (equal blob ids are equal bytes), a delete with the path gone, or a
+ * hand-merged text file with every line the update adds and none it removes, counted.
  */
 export async function missingPaths(
   app: string,
@@ -281,34 +275,18 @@ export async function missingPaths(
     deps.treeAt(app, update.commitSha),
     deps.treeAt(app, update.baseCommitSha),
   ]);
-  const text = async (blobSha: string | undefined) =>
-    blobSha ? textOf(await deps.blob(app, blobSha)) : '';
-  const missing: string[] = [];
-  for (const { path } of update.paths) {
+  const read = async (blobSha: string | undefined) => (blobSha ? deps.blob(app, blobSha) : null);
+  return missingUpdatePaths(update.paths, async (path) => {
     const want = target.get(path);
     const have = saved.get(path);
-    if (want === undefined) {
-      if (have !== undefined) missing.push(path);
-      continue;
+    // Equal blob ids are equal bytes: one read, and the predicate's exact-bytes clause holds.
+    if (want !== undefined && have === want) {
+      const bytes = await read(want);
+      return { want: bytes, base: null, have: bytes };
     }
-    if (have === want) continue;
-    if (have === undefined) {
-      missing.push(path);
-      continue;
-    }
-    const was = base.get(path);
-    const [w, h, b] = [await text(want), await text(have), await text(was)];
-    if (w === null || h === null || b === null) {
-      missing.push(path);
-      continue;
-    }
-    const baseLines = new Set(linesOf(b));
-    const added = linesOf(w).filter((line) => line.trim() !== '' && !baseLines.has(line));
-    const savedLines = new Set(linesOf(h));
-    if (added.length ? added.some((line) => !savedLines.has(line)) : have === was)
-      missing.push(path);
-  }
-  return missing;
+    const [w, b, h] = await Promise.all([read(want), read(base.get(path)), read(have)]);
+    return { want: w, base: b, have: h };
+  });
 }
 
 /**

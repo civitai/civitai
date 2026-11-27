@@ -5390,6 +5390,10 @@ model AppPlatformUpdate {
   resolvedAt       DateTime? @map("resolved_at") @db.Timestamptz(6)
   createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt        DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  // Set at approve: the approved request whose bundle first contained the update (migration
+  // `20271206120000_app_platform_updates_shipped`, applied by hand).
+  shippedInPublishRequestId String?   @map("shipped_in_publish_request_id")
+  shippedAt                 DateTime? @map("shipped_at") @db.Timestamptz(6)
 
   @@index([appBlockId, status, createdAt(sort: Desc)], map: "app_platform_updates_app_status_idx")
   @@unique([slug, commitSha], map: "app_platform_updates_slug_commit_idx")

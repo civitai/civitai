@@ -409,6 +409,30 @@ describe('answerPlatformUpdateResolve', () => {
     expect(seen.resolved).toEqual([{ id: 'apu_1', outcome: 'merged', mergeCommitSha: MERGED }]);
   });
 
+  // The shared predicate (`platform-update-containment.ts`) counts what the update removes too.
+  it('a hand-merged file that kept the line the update replaces does not hold it', async () => {
+    const KEPT_BOTH = '7'.repeat(40);
+    const { deps, seen } = fakes({
+      save: async () => ({ kind: 'committed', sha: KEPT_BOTH, branch: 'main', conflict: false }),
+      treeAt: async (_slug, ref) =>
+        ref === KEPT_BOTH
+          ? new Map([
+              // `{"v":1}` (the base's) kept beside the update's `{"v":2}`.
+              ['package.json', 'blob-pkg-kept-both'],
+              ['src/new.ts', 'blob-new'],
+            ])
+          : trees.get(ref) ?? new Map(),
+      blob: async (_slug, sha) =>
+        Buffer.from(sha === 'blob-pkg-kept-both' ? '{"v":1}\n{"v":2}\n' : blobs.get(sha)!, 'utf8'),
+    });
+    expect((await answerPlatformUpdateResolve(USER, body, deps)).json).toEqual({
+      resolved: false,
+      reason: 'incomplete',
+      paths: ['package.json'],
+    });
+    expect(seen.resolved).toEqual([]);
+  });
+
   it('a file still as the update was cut from does not hold it; a binary file must be exactly the update’s', async () => {
     const STALE = '8'.repeat(40);
     const binaryBlobs = new Map([

@@ -10595,7 +10595,7 @@ export const blocksRouter = router({
       const { recordPendingFromPush } = await import(
         '~/server/services/blocks/publish-request.service'
       );
-      const { publishRequestId } = await recordPendingFromPush({
+      const { publishRequestId, advisories } = await recordPendingFromPush({
         slug,
         sha,
         appBlockId: block.id,
@@ -10609,6 +10609,8 @@ export const blocksRouter = router({
         version: newVersion,
         sha,
         status: 'pending' as const,
+        // Never refuses: e.g. the commit lacks a staff platform update (recorded for the moderator).
+        advisories: advisories ?? [],
       };
     }),
 

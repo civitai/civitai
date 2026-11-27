@@ -1,5 +1,6 @@
 import JSZip from 'jszip';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as FliptClient from '~/server/flipt/client';
 import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
 // Publish paths here run as a developer who accepted the App Developer Terms; a test that needs the
 // refusal overrides the stub.
@@ -33,6 +34,8 @@ const { mockNotify, db, s3, holder } = vi.hoisted(() => {
   const makeDb = () => ({
     // `approveRequest`'s pre-flight probes the media-split table; no row reads as absent.
     $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => []),
+    // The staff platform-update shipped write (approve): see the describe at the end.
+    $executeRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => 0),
     // The storage-migration approve gate (`reserveStorageMigrationRuns`): no open run.
     $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) =>
       fn({
@@ -112,6 +115,19 @@ vi.mock('~/server/services/blocks/app-block-notify', () => ({
   notifyAppBlockSubmitter: mockNotify,
 }));
 vi.mock('~/server/db/client', () => ({ dbRead: db.read, dbWrite: db.write }));
+// Only the staff platform-updates flag is answered here (off unless the describe at the end turns
+// it on); every other flag reads as it did before.
+const puFlag = vi.hoisted(() => ({ on: false }));
+vi.mock('~/server/flipt/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof FliptClient>();
+  return {
+    ...actual,
+    isFlipt: async (...args: Parameters<typeof actual.isFlipt>) =>
+      args[0] === actual.FLIPT_FEATURE_FLAGS.APP_BLOCKS_PLATFORM_UPDATES
+        ? puFlag.on
+        : actual.isFlipt(...args),
+  };
+});
 vi.mock('~/env/server', () => ({
   env: {
     FORGEJO_BASE_URL: 'https://forgejo.example',
@@ -442,5 +458,226 @@ describe('rejectRequest — submitter notification (post-commit, best-effort)', 
     ).rejects.toThrow();
     expect(db.read.appBlockPublishRequest.findUnique).not.toHaveBeenCalled();
     expect(mockNotify).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// STAFF PLATFORM UPDATES at approve (`platform-update-bundle-check.ts`), through this file's
+// approve harness: the approve re-checks the bytes it approves and marks shipped, by this request,
+// exactly the unshipped updates those bytes contain.
+//
+// 🔴 THE REGRESSION: at origin/main nothing marks an update shipped, so with the submit check
+// every later submit of the app would be checked for it forever, and an owner's own later edit to
+// the same lines would be refused.
+// ---------------------------------------------------------------------------
+
+const forgejo = await import('~/server/services/blocks/forgejo.service');
+const { FORGEJO_SOURCE_ORG } = await import('~/server/services/blocks/forgejo-orgs');
+
+describe('approveRequest — staff platform updates', () => {
+  const BASE_SHA = 'b'.repeat(40);
+  const IN_SHA = 'c'.repeat(40);
+  const OUT_SHA = 'e'.repeat(40);
+  const BASE_TEXT = 'export const a = 1;\n';
+  const UPDATE_TEXT = 'export const a = 1;\nexport const staffFix = true;\n';
+  const trees = new Map<string, Map<string, string>>();
+  const blobs = new Map<string, Buffer>();
+  let savedZip: Uint8Array = holder.zipBytes;
+
+  const row = (id: string, commitSha: string, path: string, operation = 'update') => ({
+    id,
+    slug: 'cool-app',
+    reason: 'Fix it',
+    baseCommitSha: BASE_SHA,
+    commitSha,
+    paths: [{ path, operation }],
+    staffUsername: 'mod-jane',
+    staffIsModerator: true,
+    staffBannedAt: null,
+    staffDeletedAt: null,
+  });
+  const isUpdateQuery = (sql: unknown) => JSON.stringify(sql).includes('app_platform_updates');
+
+  async function setBundle(files: Record<string, string>) {
+    const zip = new JSZip();
+    zip.file('block.manifest.json', JSON.stringify({ name: 'Cool App', scopes: [] }));
+    zip.file('index.html', '<html></html>');
+    for (const [p, c] of Object.entries(files)) zip.file(p, c);
+    holder.zipBytes = await zip.generateAsync({ type: 'uint8array' });
+  }
+
+  /** The `shipped` UPDATEs approve ran: [ids, publishRequestId]. */
+  const shippedWrites = () =>
+    (db.write.$executeRaw.mock.calls as unknown[][])
+      .filter(([strings]) =>
+        (strings as string[]).join('?').includes('shipped_in_publish_request_id')
+      )
+      .map(([, publishRequestId, ids]) => [ids, publishRequestId]);
+
+  const approve = async (row: Record<string, unknown> = {}) => {
+    db.read.appBlockPublishRequest.findUnique.mockResolvedValueOnce({
+      ...pendingApproveRow(),
+      ...row,
+    });
+    db.read.appBlock.findFirst.mockResolvedValueOnce(existingAppBlock());
+    return approveRequest({ publishRequestId: 'req_appr_1', reviewerUserId: 9 });
+  };
+
+  beforeEach(() => {
+    savedZip = holder.zipBytes;
+    puFlag.on = true;
+    blobs.clear();
+    blobs.set('blob-base', Buffer.from(BASE_TEXT));
+    blobs.set('blob-in', Buffer.from(UPDATE_TEXT));
+    blobs.set('blob-out', Buffer.from('export {};\n'));
+    trees.clear();
+    trees.set(`${FORGEJO_SOURCE_ORG}@${BASE_SHA}`, new Map([['src/a.ts', 'blob-base']]));
+    trees.set(`${FORGEJO_SOURCE_ORG}@${IN_SHA}`, new Map([['src/a.ts', 'blob-in']]));
+    trees.set(
+      `${FORGEJO_SOURCE_ORG}@${OUT_SHA}`,
+      new Map([
+        ['src/a.ts', 'blob-base'],
+        ['src/new.ts', 'blob-out'],
+      ])
+    );
+    vi.mocked(forgejo.listRepoTreeAtRef).mockImplementation(async (_slug, ref, org) => {
+      const tree = trees.get(`${org ?? 'build'}@${ref}`);
+      if (!tree) throw new Error(`no tree ${org ?? 'build'}@${ref}`);
+      return tree;
+    });
+    vi.mocked(forgejo.getBlobContent).mockImplementation(async (_slug, sha) => {
+      const blob = blobs.get(sha);
+      if (!blob) throw new Error(`no blob ${sha}`);
+      return blob;
+    });
+    const rows = [
+      row('apu_in', IN_SHA, 'src/a.ts'),
+      row('apu_out', OUT_SHA, 'src/new.ts', 'create'),
+    ];
+    db.write.$queryRaw.mockImplementation(async (sql: unknown) => (isUpdateQuery(sql) ? rows : []));
+    db.write.$executeRaw.mockResolvedValue(1);
+  });
+
+  afterEach(() => {
+    holder.zipBytes = savedZip;
+    puFlag.on = false;
+    vi.mocked(forgejo.listRepoTreeAtRef).mockImplementation(async () => new Map());
+    vi.mocked(forgejo.getBlobContent).mockImplementation(async () => Buffer.from(''));
+    db.write.$queryRaw.mockImplementation(async () => []);
+    db.write.$executeRaw.mockImplementation(async () => 0);
+  });
+
+  it('🔴 marks shipped, by this request, only the updates the approved bundle contains', async () => {
+    await setBundle({ 'src/a.ts': UPDATE_TEXT });
+    await approve();
+    expect(shippedWrites()).toEqual([[['apu_in'], 'req_appr_1']]);
+  });
+
+  it('🔴 only an owner build ships: approving a staff on-behalf request marks nothing', async () => {
+    await setBundle({ 'src/a.ts': UPDATE_TEXT });
+    const result = await approve({
+      fileSummary: {
+        files: [],
+        onBehalf: {
+          platformUpdateId: 'apu_in',
+          staffUserId: 9,
+          staffUsername: 'mod-jane',
+          ownerUserId: SUBMITTER,
+          ownerUsername: 'owner',
+        },
+      },
+    });
+    expect(result.publishRequestId).toBe('req_appr_1');
+    expect(shippedWrites()).toEqual([]);
+    // The same bytes approved as the owner's own build do ship it (the control).
+    await approve({ fileSummary: { files: [] } });
+    expect(shippedWrites()).toEqual([[['apu_in'], 'req_appr_1']]);
+  });
+
+  it('🔴 a version a late hold re-suspends is not live: nothing is marked shipped', async () => {
+    await setBundle({ 'src/a.ts': UPDATE_TEXT });
+    // A hold placed after the approve's claim: open holds are read again inside the final
+    // transaction, after the code is committed, and that one was never shown.
+    const commitFiles = vi.mocked(forgejo.commitFiles);
+    const lateHold = {
+      id: 77,
+      slug: 'cool-app',
+      publishRequestId: 'req_appr_1',
+      requestKind: 'onsite',
+      placedByUserId: 9,
+      placedByUsername: 'mod',
+      placedByLabel: null,
+      reason: 'late hold for the test',
+      createdAt: new Date(),
+      clearedAt: null,
+      clearedByUserId: null,
+      clearedKind: null,
+      clearedReason: null,
+    };
+    const txQueryRaw = vi.fn(async (sql: unknown) =>
+      commitFiles.mock.calls.length > 0 &&
+      (sql as { join?: (s: string) => string }).join?.('?').includes('app_publish_request_holds')
+        ? [lateHold]
+        : []
+    );
+    const original = db.write.$transaction.getMockImplementation();
+    db.write.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) =>
+      fn({
+        ...db.write,
+        // The late-hold rollback puts the store listing back.
+        appListing: { ...db.write.appListing, update: vi.fn(async () => ({})) },
+        $queryRaw: txQueryRaw,
+        $executeRaw: async () => 0,
+        $executeRawUnsafe: async () => 0,
+      })
+    );
+    try {
+      const result = await approve();
+      expect(result.lateHoldIds).toEqual([77]);
+      expect(shippedWrites()).toEqual([]);
+      // The check itself never ran: it runs only once the version goes live. (The first case in
+      // this block is the positive control: the same bundle, no hold, is marked.)
+      expect(
+        (db.write.$queryRaw.mock.calls as unknown[][]).filter(([sql]) => isUpdateQuery(sql))
+      ).toHaveLength(0);
+    } finally {
+      if (original) db.write.$transaction.mockImplementation(original);
+    }
+  });
+
+  it('marks the readable contained update even when another update cannot be read', async () => {
+    trees.delete(`${FORGEJO_SOURCE_ORG}@${OUT_SHA}`);
+    await setBundle({ 'src/a.ts': UPDATE_TEXT, 'src/new.ts': 'export {};\n' });
+    await approve();
+    expect(shippedWrites()).toEqual([[['apu_in'], 'req_appr_1']]);
+  });
+
+  it('marks nothing when the approved bundle contains none of them', async () => {
+    await setBundle({ 'src/a.ts': BASE_TEXT });
+    const result = await approve();
+    expect(result.publishRequestId).toBe('req_appr_1');
+    expect(shippedWrites()).toEqual([]);
+    // Positive control: the check ran against the record.
+    expect(
+      (db.write.$queryRaw.mock.calls as unknown[][]).filter(([sql]) => isUpdateQuery(sql))
+    ).toHaveLength(1);
+  });
+
+  it('with the flag off, marks nothing and the approve stands', async () => {
+    puFlag.on = false;
+    await setBundle({ 'src/a.ts': UPDATE_TEXT });
+    const result = await approve();
+    expect(result.publishRequestId).toBe('req_appr_1');
+    expect(shippedWrites()).toEqual([]);
+  });
+
+  it('never fails the approve: an unreadable source repo marks nothing', async () => {
+    trees.delete(`${FORGEJO_SOURCE_ORG}@${IN_SHA}`);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    await setBundle({ 'src/a.ts': UPDATE_TEXT });
+    const result = await approve();
+    expect(result.publishRequestId).toBe('req_appr_1');
+    expect(shippedWrites()).toEqual([]);
+    warn.mockRestore();
   });
 });

@@ -37,7 +37,6 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import { isMissingTableError } from '~/server/services/blocks/app-access.service';
 import {
@@ -55,8 +54,10 @@ import {
 } from '~/server/services/blocks/app-source-repo.plan';
 import { FORGEJO_SOURCE_ORG } from '~/server/services/blocks/forgejo-orgs';
 import { newAppPlatformUpdateId } from '~/server/utils/app-block-ids';
+import { isVerifiedStaff } from '~/server/services/blocks/app-platform-update-shipped';
 
-export const PLATFORM_UPDATES_FLAG = FLIPT_FEATURE_FLAGS.APP_BLOCKS_PLATFORM_UPDATES;
+// The switch lives in its own small module so the submit path can read it without loading this one.
+export { PLATFORM_UPDATES_FLAG, isPlatformUpdatesEnabled } from './app-platform-update-flag';
 
 /** The most file changes one update may carry. */
 export const PLATFORM_UPDATE_MAX_CHANGES = 100;
@@ -69,11 +70,6 @@ export type PlatformUpdatePath = { path: string; operation: 'create' | 'update' 
 
 /** The app's manifest, at the root of its source repo. */
 export const MANIFEST_PATH = 'block.manifest.json';
-
-/** The global switch. Off, absent or Flipt unreachable ⇒ off. */
-export async function isPlatformUpdatesEnabled(): Promise<boolean> {
-  return isFlipt(PLATFORM_UPDATES_FLAG).catch(() => false);
-}
 
 const log = (type: 'info' | 'warning' | 'error', message: string, data: Record<string, unknown>) =>
   logToAxiom({ name: 'app-platform-update', type, message, ...data }, 'webhooks');
@@ -204,7 +200,7 @@ export function ownerView(row: UpdateRow): OwnerPlatformUpdate {
     status: row.status,
     by: {
       username: row.staffUsername ?? null,
-      verifiedStaff: row.staffIsModerator === true && !row.staffBannedAt && !row.staffDeletedAt,
+      verifiedStaff: isVerifiedStaff(row),
     },
     createdAt: new Date(row.createdAt).toISOString(),
   };
