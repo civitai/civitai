@@ -1,4 +1,7 @@
+import { reviewCopyImageSql } from '@civitai/db-queries/content-deletion';
 import { Prisma } from '@prisma/client';
+import { sql } from 'kysely';
+import { toPrismaSql } from '~/server/db/prisma-sql-kysely';
 import { finalCsamHeldSql } from '~/server/services/creator-service-deal-file-held-sql';
 import { shownReviewSql } from '~/server/services/creator-service-deal-review-publish';
 import { viewableServiceOfferingSql } from '~/server/services/creator-service-offering-viewable-sql';
@@ -51,9 +54,9 @@ export const notHeldReviewCopySql = Prisma.sql`NOT EXISTS (
  * True in SQL when image `i` is attached to no service review. A review image is the seller's work:
  * it is viewed and reported, never collected, reacted to, commented on, remixed or made a cover.
  */
-export const notReviewImageSql = Prisma.sql`NOT EXISTS (
-  SELECT 1 FROM "ServiceDealReviewImage" ri WHERE ri."imageId" = i."id"
-)`;
+export const notReviewImageSql = Prisma.sql`NOT ${toPrismaSql(
+  reviewCopyImageSql(sql.ref('i.id'))
+)}`;
 
 /**
  * True in SQL when image `i` is shown on its review at `levels`: the offering is one a visitor may open

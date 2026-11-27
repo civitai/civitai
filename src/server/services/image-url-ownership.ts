@@ -1,10 +1,12 @@
-import { storedKeySql } from '@civitai/db-queries/content-deletion';
+import { reviewCopyImageSql, storedKeySql } from '@civitai/db-queries/content-deletion';
 import { Prisma } from '@prisma/client';
+import { sql } from 'kysely';
 import { TRPCError } from '@trpc/server';
 import type { NextApiResponse } from 'next';
 import { clickhouse } from '~/server/clickhouse/client';
 import { escapeClickhouseString } from '~/server/clickhouse/escape';
 import { dbWrite } from '~/server/db/client';
+import { toPrismaSql } from '~/server/db/prisma-sql-kysely';
 import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
 import { registerCounterWithLabels } from '~/server/prom/client';
@@ -179,14 +181,9 @@ export function keysInTextWithin(text: string, budget?: DecodeBudget): string[] 
 /** The key a stored shop artwork value names, normalised as `storedUrlsFor` normalises a url. */
 export const keyIn = (column: string) => Prisma.raw(storedKeySql(column));
 
-/**
- * True in SQL when the "Image" row aliased `image` is a service review's copy of a deal file: an
- * object the server made, so no client names its key as a new row's image, its buyer included.
- */
+/** True in SQL when the "Image" row aliased `image` is a service review's copy (`reviewCopyImageSql`). */
 export const reviewCopySql = (image: string) =>
-  Prisma.sql`EXISTS (SELECT 1 FROM "ServiceDealReviewImage" ri WHERE ri."imageId" = ${Prisma.raw(
-    image
-  )}.id)`;
+  toPrismaSql(reviewCopyImageSql(sql.ref(`${image}.id`)));
 
 /** Cosmetics outside the shop (event badges and the like) hold no artwork a buyer paid for. */
 const soldInShop = Prisma.sql`EXISTS (SELECT 1 FROM "CosmeticShopItem" s WHERE s."cosmeticId" = "Cosmetic".id)`;
@@ -243,7 +240,7 @@ export async function assertClientImageUrlsUsable({
   if (!shopArtwork) {
     const owned = await db.$queryRaw<unknown[]>`
       SELECT 1 FROM "Image" WHERE url = ANY(${keys}::text[])
-        AND ("userId" <> ${userId} OR ${reviewCopySql('"Image"')}) LIMIT 1
+        AND ("userId" <> ${userId} OR ${reviewCopySql('Image')}) LIMIT 1
     `;
     if (owned.length) throw imageUrlUnavailableError();
     return;
@@ -271,7 +268,7 @@ async function keysOnOtherRows({
 }) {
   const rows = await db.$queryRaw<{ key: string }[]>`
     SELECT url AS key FROM "Image" WHERE url = ANY(${keys}::text[])
-      AND (${shopRow !== undefined} OR "userId" <> ${userId} OR ${reviewCopySql('"Image"')})
+      AND (${shopRow !== undefined} OR "userId" <> ${userId} OR ${reviewCopySql('Image')})
     UNION ALL
     SELECT ${keyIn(`"data"->>'url'`)} FROM "Cosmetic" WHERE ${keyIn(
     `"data"->>'url'`
@@ -565,9 +562,9 @@ export async function keyIssuers({
   }
   const candidates = [...new Set([...urlsByKey.values()].flat())];
   const rows = await db.$queryRaw<{ url: string; reviewCopy: boolean }[]>`
-    SELECT url, ${reviewCopySql('"Image"')} AS "reviewCopy" FROM "Image"
+    SELECT url, ${reviewCopySql('Image')} AS "reviewCopy" FROM "Image"
     WHERE url = ANY(${candidates}::text[])
-      AND ("userId" = ANY(${allowed}::int[]) OR ${reviewCopySql('"Image"')})
+      AND ("userId" = ANY(${allowed}::int[]) OR ${reviewCopySql('Image')})
   `;
   const named = (urlSet: Set<string>) => (k: string) =>
     urlsByKey.get(k)!.some((u) => urlSet.has(u));

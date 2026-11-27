@@ -564,6 +564,13 @@ export const DEAL_FILE_IMAGE_USES = {
  */
 export const IMAGE_USES_WITHOUT_RELATION = { ...DEAL_FILE_IMAGE_USES };
 
+/**
+ * True in SQL when the image whose id is `id` is a service review's copy of a deal file: an object
+ * the server made for one review, never reused anywhere else.
+ */
+export const reviewCopyImageSql = (id: RawBuilder<unknown> | ReturnType<typeof sql.ref>) =>
+  sql<boolean>`EXISTS (SELECT 1 FROM "ServiceDealReviewImage" ri WHERE ri."imageId" = ${id})`;
+
 /** True in SQL when a deal file points at the image whose id is `id`. */
 export const dealFileImageSql = (id: RawBuilder<unknown> | ReturnType<typeof sql.ref>) =>
   sql<boolean>`(${sql.join(

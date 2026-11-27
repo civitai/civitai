@@ -386,21 +386,26 @@ describe("a service review copy's key", () => {
       }
     );
 
-  beforeEach(() =>
+  const givenCopy = (ownerId: number) =>
     holder.db.exec(`
-      INSERT INTO "Image" ("userId", url) VALUES (${CALLER}, '${COPY_KEY}');
+      INSERT INTO "Image" ("userId", url) VALUES (${ownerId}, '${COPY_KEY}');
       INSERT INTO "ServiceDealReviewImage" ("reviewId", "imageId")
         SELECT 1, id FROM "Image" WHERE url = '${COPY_KEY}';
-    `)
-  );
+    `);
 
-  it('is refused as a new image to its own buyer and to a moderator', async () => {
+  it('is refused as a new image to its own buyer', async () => {
+    await givenCopy(CALLER);
     expect(await usable(COPY_KEY, CALLER)).toBe('refused');
     expect(await usable(`https://cdn.example/x/${COPY_KEY}/original=true`, CALLER)).toBe('refused');
+  });
+
+  it('is refused to a moderator whose own row it is', async () => {
+    await givenCopy(MODERATOR);
     expect(await usable(COPY_KEY, MODERATOR)).toBe('refused');
   });
 
   it("leaves the buyer's ordinary own upload usable (control)", async () => {
+    await givenCopy(CALLER);
     expect(await usable(OWN_KEY, CALLER)).toBe('accepted');
   });
 });

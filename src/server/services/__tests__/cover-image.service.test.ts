@@ -166,11 +166,14 @@ describe('resolveCoverImageId — an image restricted by its base model', () => 
     dbWriteMock.image.findUnique.mockResolvedValue({
       nsfwLevel: 1,
       modelRestricted: false,
-      serviceDealReviewImage: { imageId: 42 },
     } as never);
-    await expect(productionCoverImageDeps.assertUsableAsCover(42)).rejects.toThrow(
-      COVER_IMAGE_UNAVAILABLE_MESSAGE
-    );
+    dbWriteMock.$queryRaw.mockImplementationOnce((async (strings: TemplateStringsArray) =>
+      [...strings].join('').includes('ServiceDealReviewImage')
+        ? [{ dealFileImage: true }]
+        : []) as never);
+    await expect(productionCoverImageDeps.assertUsableAsCover(42)).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
   });
 
   it('runs the same check on a reused row that is not the current cover', async () => {

@@ -1,13 +1,14 @@
 import { TRPCError } from '@trpc/server';
 import { sql } from 'kysely';
-import { dealFileImageSql } from '@civitai/db-queries/content-deletion';
+import { dealFileImageSql, reviewCopyImageSql } from '@civitai/db-queries/content-deletion';
 import { dbWrite } from '~/server/db/client';
 import { kyselyOver } from '~/server/db/prisma-kysely';
 
 /**
  * Refuses images a deal file points at (`DEAL_FILE_IMAGE_USES`): a deal file's scan copy is what
  * its file is checked against, never user content, so a user neither attaches one anywhere nor
- * deletes it. `act` names what was refused.
+ * deletes it. A use also refuses a service review's copy of a deal file, which serves its review
+ * only. `act` names what was refused.
  */
 export async function assertNotDealFileImages(
   ids: number[],
@@ -19,7 +20,9 @@ export async function assertNotDealFileImages(
   // primary: a copy recorded moments ago must already refuse.
   const { rows } = await sql<{ dealFileImage: boolean }>`
     SELECT true AS "dealFileImage" FROM unnest(${ids}::int[]) AS t(id)
-    WHERE ${dealFileImageSql(sql.ref('t.id'))}
+    WHERE (${dealFileImageSql(sql.ref('t.id'))}${
+    act === 'used here' ? sql` OR ${reviewCopyImageSql(sql.ref('t.id'))}` : sql``
+  })
       ${
         ownerId === undefined
           ? sql``
