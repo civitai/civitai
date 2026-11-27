@@ -35,7 +35,10 @@ const reportNames = (named: boolean) =>
  */
 const separateTx = () => {
   const tx = {
-    userProfile: { updateMany: vi.fn(async () => ({ count: 1 })) },
+    userProfile: {
+      updateMany: vi.fn(async () => ({ count: 1 })),
+      findUnique: vi.fn(async () => stored),
+    },
     userLink: { deleteMany: vi.fn(async () => ({ count: 1 })) },
     $executeRaw: vi.fn(async () => 1),
   };
@@ -55,7 +58,7 @@ const stored = {
   location: 'l',
   showcaseSections: [{ key: 'k' }],
   showcaseItems: [{ entityType: 'Model', entityId: 1 }],
-  folderRows: [{ id: 'r', name: 'row text', folders: [] }],
+  folderRows: [{ id: 'r', name: 'row text', folders: [{ id: 10 }, { id: 11, hidden: true }] }],
   about: 'a',
 };
 const ALL_FIELDS: ProfileClearField[] = [
@@ -100,12 +103,14 @@ describe('clearUserProfileFields', () => {
     });
   });
 
-  it('clears folder row names when they are named, and archives them first', async () => {
+  it('clears folder row names when they are named, keeping hidden folders hidden, and archives them first', async () => {
     reportNames(true);
     await clear();
     expect(db.userProfile.updateMany).toHaveBeenCalledWith({
       where: { userId: USER },
-      data: expect.objectContaining({ folderRows: [] }),
+      data: expect.objectContaining({
+        folderRows: [{ id: 'r', name: '', folders: [{ id: 10 }, { id: 11, hidden: true }] }],
+      }),
     });
     expect(db.userProfile.findUnique).toHaveBeenCalledWith(
       expect.objectContaining({ select: expect.objectContaining({ folderRows: true }) })
@@ -140,8 +145,9 @@ describe('clearUserProfileFields', () => {
       .mockResolvedValue(edited as never);
     await clear();
     expect(archive.mock.calls.map(([s]) => s.profile?.bio)).toEqual(['b', 'edited']);
-    // Read, archive, read (changed), archive, read (settled), then clear.
-    expect(db.userProfile.findUnique).toHaveBeenCalledTimes(3);
+    // Read, archive, read (changed), archive, read (settled), then the clear's own read of the
+    // folder rows it rewrites.
+    expect(db.userProfile.findUnique).toHaveBeenCalledTimes(4);
     expect(db.userProfile.updateMany).toHaveBeenCalledTimes(1);
   });
 

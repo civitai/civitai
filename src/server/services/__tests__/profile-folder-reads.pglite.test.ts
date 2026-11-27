@@ -34,6 +34,7 @@ const STRANGER = 6;
 const FOLDER = 10;
 const PRIVATE_FOLDER = 11;
 const COLLECTION = 12;
+const UNLISTED_FOLDER = 13;
 
 beforeAll(async () => {
   pg = new PGlite();
@@ -75,8 +76,9 @@ beforeEach(async () => {
   await pg.exec(`DELETE FROM "CollectionItem"; DELETE FROM "Collection";`);
   await pg.query(
     `INSERT INTO "Collection" (id, "userId", mode, read) VALUES
-       ($1, $4, 'Folder', 'Public'), ($2, $4, 'Folder', 'Private'), ($3, $4, NULL, 'Public')`,
-    [FOLDER, PRIVATE_FOLDER, COLLECTION, OWNER]
+       ($1, $4, 'Folder', 'Public'), ($2, $4, 'Folder', 'Private'), ($3, $4, NULL, 'Public'),
+       ($5, $4, 'Folder', 'Unlisted')`,
+    [FOLDER, PRIVATE_FOLDER, COLLECTION, OWNER, UNLISTED_FOLDER]
   );
 });
 
@@ -114,6 +116,12 @@ describe('getProfileFolder', () => {
     await item(1, 'modelId');
     const folder = await getProfileFolder({ folderId: FOLDER, userId: OWNER, viewerId: STRANGER });
     expect(folder).toMatchObject({ id: FOLDER, isOwner: false, counts: { Model: 1, total: 1 } });
+  });
+
+  it('opens an unlisted folder for a visitor who has its link', async () => {
+    await expect(
+      getProfileFolder({ folderId: UNLISTED_FOLDER, userId: OWNER, viewerId: STRANGER })
+    ).resolves.toMatchObject({ id: UNLISTED_FOLDER, isOwner: false });
   });
 
   it('hides a private folder from a visitor but not from its owner or a moderator', async () => {

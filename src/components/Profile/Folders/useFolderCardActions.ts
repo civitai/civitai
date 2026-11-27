@@ -1,12 +1,12 @@
 import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { openFolderEditModal } from '~/components/Profile/Folders/folder-dialogs';
+import { rowsWithFolderToggled } from '~/components/Profile/Folders/folder-rows';
 import type { FolderCardActions } from '~/components/Profile/Folders/FolderCard';
 import type { FolderRowSchema } from '~/server/schema/profile-folders.schema';
 import type { ProfileFolderRow } from '~/server/services/profile-folders.service';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-/** The owner's folder card menu: edit, hide or show on the profile, delete. */
 export function useFolderCardActions({
   user,
   rows,
@@ -41,15 +41,7 @@ export function useFolderCardActions({
   return {
     onEdit: (folder) => openFolderEditModal({ folder, user }),
     onToggleHidden: (folder) => {
-      // Rows as shown, with this folder flipped; an unplaced folder is placed where it shows.
-      const next: FolderRowSchema[] = rows.map((row, i) => ({
-        id: row.id ?? `top${i}`,
-        name: row.name,
-        folders: row.folders.map((f) => ({
-          id: f.id,
-          ...((f.id === folder.id ? !folder.hidden : f.hidden) ? { hidden: true } : {}),
-        })),
-      }));
+      const next = rowsWithFolderToggled(rows, folder);
       setRows.mutate({ rows: next, ...(storedRows ? { ifUnchangedFrom: storedRows } : {}) });
     },
     onDelete: (folder) =>

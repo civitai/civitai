@@ -6,7 +6,6 @@ import { folderItemCover } from '~/components/Profile/Folders/folder.utils';
 import { Flags } from '~/shared/utils/flags';
 import { MediaType } from '~/shared/utils/prisma/enums';
 
-/** A small picture for an item, blurred to its hash where the viewer blurs that level. */
 export function FolderThumb({ item }: { item: FolderItem }) {
   const { blurLevels } = useBrowsingLevelContext();
   const cover = folderItemCover(item);

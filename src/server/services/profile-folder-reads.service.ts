@@ -2,12 +2,9 @@ import { sql } from 'kysely';
 import { kyselyRead, kyselyWrite } from '~/server/db/kyselyDb';
 import { profileFolderLimits } from '~/server/schema/profile-folders.schema';
 import type { FolderItemType } from '~/server/services/profile-folder-guard';
+import { isCollectionReadShared } from '~/server/services/collection-item-access';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
-import {
-  CollectionMode,
-  CollectionReadConfiguration,
-  CollectionType,
-} from '~/shared/utils/prisma/enums';
+import { CollectionMode, CollectionType } from '~/shared/utils/prisma/enums';
 
 export type FolderItemRef = { type: FolderItemType; id: number };
 export type FolderCounts = { Model: number; Image: number; Article: number; total: number };
@@ -113,11 +110,7 @@ export async function getProfileFolder({
     .where('userId', '=', userId)
     .where('mode', '=', CollectionMode.Folder)
     .executeTakeFirst();
-  const visible =
-    !!folder &&
-    (seesAll ||
-      folder.read === CollectionReadConfiguration.Public ||
-      folder.read === CollectionReadConfiguration.Unlisted);
+  const visible = !!folder && (seesAll || isCollectionReadShared(folder.read));
   if (!folder || !visible) throw throwNotFoundError('Folder not found');
 
   const summary = (await getFolderSummaries([folder.id])).get(folder.id);

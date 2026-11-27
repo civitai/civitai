@@ -7,7 +7,6 @@ export const profileFolderLimits = {
   rowName: 60,
   foldersPerRow: 12,
   showcase: 8,
-  /** The most items the owner's folder editor lists. */
   editorItems: 1000,
   name: 30,
   description: 300,
@@ -59,6 +58,10 @@ export type GetProfileFolderInput = z.infer<typeof getProfileFolderInput>;
 
 export const getFolderItemsInput = z.object({ folderId: z.number().int().positive() });
 export type GetFolderItemsInput = z.infer<typeof getFolderItemsInput>;
+
+/** Stored rows with every row name blanked: the order, grouping and hidden folders stay. */
+export const folderRowsWithoutNames = (rows: unknown): FolderRowSchema[] =>
+  ((rows ?? []) as FolderRowSchema[]).map((row) => ({ ...row, name: '' }));
 
 export const folderRowsText = (rows: unknown) =>
   ((rows ?? []) as FolderRowSchema[])

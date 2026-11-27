@@ -11,6 +11,7 @@ import { OnboardingSteps } from '~/server/common/enums';
 import { isAccountMuted } from '~/server/services/account-standing.service';
 import type { FolderWriteAccess } from '~/server/services/profile-folder-guard';
 import { earnsCollectCredit } from '~/server/services/profile-folder-guard';
+import { saveItemCredit } from '~/server/services/collect-credit';
 import { Flags } from '~/shared/utils/flags';
 import { collectedContentReward, firstDailyPostReward } from '~/server/rewards';
 import type { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
@@ -351,29 +352,28 @@ export const saveItemHandler = async ({
       foldersEnabled: !!ctx.features.profileFolders,
     });
 
-    if (status === 'added' && input.type && credited) {
-      const entityId = [input.articleId, input.modelId, input.postId, input.imageId].find(
-        isDefined
+    const credit = saveItemCredit({
+      credited,
+      status,
+      type: input.type,
+      entityId: [input.articleId, input.modelId, input.postId, input.imageId].find(isDefined),
+      imageId: input.imageId,
+    });
+    if (credit.rewardEntityId && input.type)
+      await collectedContentReward.apply(
+        { collectorId: user.id, entityType: input.type, entityId: credit.rewardEntityId },
+        { ip }
       );
 
-      if (entityId) {
-        await collectedContentReward.apply(
-          { collectorId: user.id, entityType: input.type, entityId },
-          { ip }
-        );
-      }
-    }
-
     // nb: this will count in review / rejected additions
-    if (input.type === 'Image' && !!input.imageId && credited) {
+    if (credit.imageMetric && input.imageId)
       await updateEntityMetric({
         ctx,
         entityType: 'Image',
         entityId: input.imageId,
         metricType: 'Collection',
-        amount: status === 'added' ? 1 : -1,
+        amount: credit.imageMetric,
       });
-    }
 
     if (input.type === 'Model' && input.modelId && input.removeFromCollectionIds?.length) {
       // letting this run in the background to avoid blocking the response

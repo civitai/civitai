@@ -13,7 +13,6 @@ import { assertFolderWriteAllowed } from '~/server/services/profile-folder-guard
 import type { CreateFolderInput } from '~/server/schema/profile-folders.schema';
 import { profileFolderLimits } from '~/server/schema/profile-folders.schema';
 import { withDistributedLock } from '~/server/utils/distributed-lock';
-import { Limiter } from '~/server/utils/concurrency-helpers';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { newTagNames } from '~/server/services/new-tag-names';
 import { getAutoFeatureUserId, isAutoFeaturedRow } from '~/server/common/auto-feature';
@@ -4416,19 +4415,7 @@ export const removeCollectionItem = async ({
   }
 
   let isOwner = false;
-  const tableKey =
-    collectionType === CollectionType.Model
-      ? 'Model'
-      : collectionType === CollectionType.Article
-      ? 'Article'
-      : collectionType === CollectionType.Image
-      ? 'Image'
-      : collectionType === CollectionType.Post
-      ? 'Post'
-      : collectionType === CollectionType.Model3D
-      ? 'Model3D'
-      : null;
-
+  const tableKey = collectionItemTable(collectionType);
   if (!tableKey) throw throwNotFoundError('Unable to determine collection type');
 
   const [item] = await dbRead.$queryRaw<{ userId: number }[]>`
@@ -4913,23 +4900,102 @@ export async function createFolder({
   return created;
 }
 
+/** The table a collection item of `type` points at, or null for a type items cannot have. */
+function collectionItemTable(type: CollectionType) {
+  const tables: Partial<
+    Record<CollectionType, 'Model' | 'Article' | 'Image' | 'Post' | 'Model3D'>
+  > = {
+    [CollectionType.Model]: 'Model',
+    [CollectionType.Article]: 'Article',
+    [CollectionType.Image]: 'Image',
+    [CollectionType.Post]: 'Post',
+    [CollectionType.Model3D]: 'Model3D',
+  };
+  return tables[type] ?? null;
+}
+
 /**
- * Removes several items of one collection. Each goes through `removeCollectionItem`, so each keeps
- * its own authorization; the caller's permissions on the collection are read once.
+ * Removes several items of one collection (a folder's "move"), with the same checks per item as
+ * `removeCollectionItem`, read in one query each instead of per item. Every item is checked
+ * before anything is written, so one refused item removes none.
  */
 export async function removeCollectionItems({
   itemIds,
-  ...input
+  userId,
+  collectionId,
+  type,
+  isModerator,
+  folderAccess,
 }: Omit<Parameters<typeof removeCollectionItem>[0], 'itemId' | 'permissions'> & {
   itemIds: number[];
 }) {
   const permissions = await getUserCollectionPermissionsById({
-    id: input.collectionId,
-    userId: input.userId,
-    isModerator: input.isModerator,
+    id: collectionId,
+    userId,
+    isModerator,
   });
-  const removed = await Limiter({ batchSize: 1, limit: 10 }).process(itemIds, ([itemId]) =>
-    removeCollectionItem({ ...input, itemId, permissions })
-  );
-  return removed[removed.length - 1];
+  await assertFolderWriteAllowed({
+    collectionIds: [collectionId],
+    collections: [{ id: collectionId, mode: permissions.collectionMode, userId }],
+    userId,
+    access: folderAccess,
+  });
+
+  const collectionType = permissions.collectionType ?? type;
+  if (!collectionType) {
+    throw throwBadRequestError('Item type is required to remove an item from this collection');
+  }
+  const tableKey = collectionItemTable(collectionType);
+  if (!tableKey) throw throwNotFoundError('Unable to determine collection type');
+
+  const ids = [...new Set(itemIds)];
+  const items = await dbRead.$queryRaw<{ id: number; userId: number }[]>`
+    SELECT id, "userId" FROM "${Prisma.raw(tableKey)}" WHERE id IN (${Prisma.join(ids)})
+  `;
+  const ownerOf = new Map(items.map((item) => [item.id, item.userId]));
+  if (ids.some((id) => !ownerOf.has(id))) throw throwNotFoundError('Item not found');
+
+  const idColumn = Prisma.raw(`"${tableKey.toLowerCase()}Id"`);
+  // primary: decides what this removal deletes.
+  const rows = await dbWrite.$queryRaw<
+    { id: number; itemId: number; addedById: number | null; note: string | null }[]
+  >`
+    SELECT id, ${idColumn} AS "itemId", "addedById", note
+    FROM "CollectionItem"
+    WHERE "collectionId" = ${collectionId} AND ${idColumn} IN (${Prisma.join(ids)})
+  `;
+
+  // The single remove's rule, per item: the item's owner, whoever added every one of its rows, a
+  // manager or a moderator.
+  for (const id of ids) {
+    const itemRows = rows.filter((row) => row.itemId === id);
+    const addedByCaller = itemRows.length > 0 && itemRows.every((row) => row.addedById === userId);
+    if (ownerOf.get(id) !== userId && !addedByCaller && !permissions.manage && !isModerator)
+      throw throwAuthorizationError(
+        'You do not have permission to remove items from this collection.'
+      );
+  }
+
+  if (rows.length) {
+    // As in `removeCollectionItem`: an automatically featured row is rejected, not deleted.
+    const autoFeatureUserId = await getAutoFeatureUserId();
+    const isAuto = (row: (typeof rows)[number]) => isAutoFeaturedRow(row, autoFeatureUserId);
+    const tombstoneIds = rows.filter(isAuto).map((row) => row.id);
+    const deletableIds = rows.filter((row) => !isAuto(row)).map((row) => row.id);
+    if (tombstoneIds.length)
+      await dbWrite.collectionItem.updateMany({
+        where: { id: { in: tombstoneIds } },
+        data: {
+          status: CollectionItemStatus.REJECTED,
+          reviewedById: userId,
+          reviewedAt: new Date(),
+        },
+      });
+    if (deletableIds.length)
+      await dbWrite.collectionItem.deleteMany({ where: { id: { in: deletableIds } } });
+    if (tableKey === 'Image')
+      await bustContestCollectionItemsCache([...new Set(rows.map((row) => row.itemId))]);
+  }
+
+  return { collectionId, itemId: ids[ids.length - 1], type: collectionType };
 }

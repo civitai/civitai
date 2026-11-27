@@ -36,10 +36,6 @@ export type FolderCardActions = {
   onDelete: (folder: ProfileFolder) => void;
 };
 
-/**
- * A folder on the profile: its name and description, the items its card shows (showcased, else
- * newest) one at a time as full cards, and a numbered strip to jump between them.
- */
 export function FolderCard({
   folder,
   user,

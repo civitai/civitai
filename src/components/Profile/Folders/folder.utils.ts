@@ -106,7 +106,6 @@ type FolderItemOf<I, M, A> =
 
 export type FolderItem = ReturnType<typeof useFolderItems>['items'][number];
 
-/** The picture that stands for an item on a thumbnail. */
 export function folderItemCover(item: FolderItem) {
   if (item.type === 'Image') return item.data;
   if (item.type === 'Model') return item.data.images?.[0];

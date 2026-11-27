@@ -189,7 +189,6 @@ function UserFolderPage() {
   );
 }
 
-/** Up to twelve of each type, stacked, each with a way to the full list. */
 function AllView({
   folderId,
   counts,
