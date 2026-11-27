@@ -1463,6 +1463,41 @@ export async function keepAliveDevTunnelAtHost(
 }
 
 /**
+ * True when `host` is the host of a session the platform opened and that is live right now: a dev
+ * tunnel (`dev-<16hex>.<APPS_DOMAIN>`) or an App Assistant direct preview (a session label under
+ * APP_ASSISTANT_PREVIEW_DOMAIN). Read for block CORS (`block-scope.middleware.ts`), so an app
+ * running in its preview can call the block REST routes as the published app does.
+ *
+ * An exact lookup, never a domain-suffix match: the host must have a session's shape, its host
+ * record (`hostKey`, written by `persistSession` and deleted by `teardownSession`) must name a
+ * session, and that session's record must still carry this same host and be inside its hard cap.
+ * The shape check comes first, so an arbitrary origin costs no Redis read. Fails closed: a read
+ * error, a missing or foreign record and an expired one all answer false. Never throws.
+ *
+ * A direct session host is that session's credential: callers must not log it in full
+ * (`previewHostHash`).
+ */
+export async function isActiveSessionHost(host: string): Promise<boolean> {
+  const domains = sessionHostDomains();
+  if (!sessionHostKind(host, domains)) return false;
+  let sessionId: unknown;
+  try {
+    sessionId = await withSysReadDeadline(sysRedis.get(hostKey(host)));
+  } catch {
+    return false;
+  }
+  if (!sessionId || typeof sessionId !== 'string') return false;
+  const read = await readSessionForReap(sessionId);
+  if (read.status !== 'ok') return false;
+  const { session } = read;
+  return (
+    session.host === host &&
+    isValidSessionHost(session, domains) &&
+    session.hardExpiresAt > nowSec()
+  );
+}
+
+/**
  * The session for `userId`'s (user, block) pointer, telling "none" apart from "could not read".
  * Ownership, block and the hard cap are checked as `getActiveDevTunnel` does.
  */

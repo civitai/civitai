@@ -14,6 +14,8 @@ import {
   type AppBlockEndpoint,
 } from '~/server/metrics/app-block-runtime.metrics';
 import { isAppBlocksRuntimeEnabled } from '~/server/services/app-blocks-flag';
+import { sessionHostDomains, sessionHostKind } from '~/server/services/blocks/dev-tunnel-session';
+import { previewHostHash } from '~/server/services/blocks/preview-session-host';
 import { resolveRestApprovalVerdict } from '~/server/services/blocks/block-approval.service';
 import { BlockRevocation } from '~/server/services/block-revocation.service';
 import {
@@ -842,15 +844,80 @@ export const _internalsForTests = {
   resetOriginCache(): void {
     _allowedOriginsCache = null;
     _allowedOriginsInflight = null;
+    _sessionOriginCache.clear();
   },
 };
+
+// Preview origins. An app running in a dev tunnel (`dev-<hex>.<APPS_DOMAIN>`) or an App Assistant
+// direct preview (a session host under APP_ASSISTANT_PREVIEW_DOMAIN) has its own origin, minted
+// per session, which is never in the allowlist above. Such an origin is allowed while the session
+// it names is live, by an exact lookup of the platform's own session record
+// (`isActiveSessionHost`), never by a domain suffix. As for every other allowed origin, CORS only
+// lets the frame READ the answer: the request still needs a bearer token the middleware verifies,
+// and no credentials header is sent.
+//
+// Cached per host, briefly, so a page's burst of preflights costs one Redis read: an ended
+// session can keep CORS for at most SESSION_ORIGIN_ALLOW_TTL_MS (its token is what is revoked;
+// CORS is not the boundary), and a host asked about just before its session was written waits at
+// most SESSION_ORIGIN_DENY_TTL_MS. Bounded, oldest first out, so a flood of distinct
+// session-shaped origins cannot grow it. Kept in memory only: a direct session host is a
+// credential.
+const SESSION_ORIGIN_ALLOW_TTL_MS = 30_000;
+const SESSION_ORIGIN_DENY_TTL_MS = 5_000;
+const SESSION_ORIGIN_CACHE_MAX = 512;
+const _sessionOriginCache = new Map<string, { allowed: boolean; expiresAt: number }>();
+
+async function sessionOriginAllowed(norm: string): Promise<boolean> {
+  let host: string;
+  try {
+    const u = new URL(norm);
+    // A session is only ever served over https on its bare host (no port).
+    if (u.protocol !== 'https:' || u.port) return false;
+    host = u.hostname;
+  } catch {
+    return false;
+  }
+  // Only a session-shaped host is looked up or cached: the routes here also serve browser
+  // integrations from arbitrary origins, which must neither cost a lookup nor push a live
+  // preview out of the cache.
+  if (!sessionHostKind(host, sessionHostDomains())) return false;
+  const now = Date.now();
+  const cached = _sessionOriginCache.get(host);
+  if (cached && cached.expiresAt > now) return cached.allowed;
+  const { isActiveSessionHost } = await import('~/server/services/blocks/dev-tunnel.service');
+  const allowed = await isActiveSessionHost(host).catch(() => false);
+  _sessionOriginCache.delete(host);
+  if (_sessionOriginCache.size >= SESSION_ORIGIN_CACHE_MAX) {
+    const oldest = _sessionOriginCache.keys().next().value;
+    if (oldest !== undefined) _sessionOriginCache.delete(oldest);
+  }
+  _sessionOriginCache.set(host, {
+    allowed,
+    expiresAt: now + (allowed ? SESSION_ORIGIN_ALLOW_TTL_MS : SESSION_ORIGIN_DENY_TTL_MS),
+  });
+  return allowed;
+}
 
 async function originAllowed(origin: string | undefined): Promise<boolean> {
   if (!origin) return false;
   const norm = normalizeOrigin(origin);
   if (!norm) return false;
   const set = await getAllowedOriginsAsync();
-  return set.has(norm);
+  if (set.has(norm)) return true;
+  return sessionOriginAllowed(norm);
+}
+
+/**
+ * An origin as a log line may carry it: a direct-preview session host is that session's
+ * credential, so it is logged only as `previewHostHash`; any other origin as it is.
+ */
+function loggableOrigin(origin: string): string {
+  const norm = normalizeOrigin(origin);
+  if (!norm) return origin;
+  const host = new URL(norm).hostname;
+  return sessionHostKind(host, sessionHostDomains()) === 'direct'
+    ? `<preview session ${previewHostHash(host)}>`
+    : origin;
 }
 
 // Bounded LRU of origins we've already warned about, so a flood of unique
@@ -875,7 +942,8 @@ const BLOCK_CORS_EXPOSE_HEADERS = 'Retry-After, Deprecation, Link';
 /**
  * Sets block-CORS headers when the origin is in the allowlist (union of
  * `BLOCK_ALLOWED_ORIGINS` env CSV + every approved OauthClient's
- * `allowedOrigins[]` — W11 dynamic-lookup landed 2026-05-30).
+ * `allowedOrigins[]` — W11 dynamic-lookup landed 2026-05-30), or when it is the
+ * host of a live dev-tunnel / direct-preview session (`sessionOriginAllowed`).
  *
  * Returns `'handled'` ONLY when we've fully handled the request (block-origin preflight).
  * In every other case — including OPTIONS from origins we don't recognize —
@@ -940,7 +1008,9 @@ async function setBlockCors(
     if (rememberWarnedOrigin(origin)) {
       // eslint-disable-next-line no-console
       console.warn(
-        `[block-scope] rejected CORS preflight from origin "${origin}" — not in OauthClient.allowedOrigins (cache may be stale up to 60s)`
+        `[block-scope] rejected CORS preflight from origin "${loggableOrigin(
+          origin
+        )}" — not in OauthClient.allowedOrigins and not a live preview session (cache may be stale up to 60s)`
       );
     }
   }
