@@ -20,6 +20,7 @@ import { StickerPlacementActions } from '~/components/Sticker/StickerPlacementAc
 import { StickerPendingBar } from '~/components/Sticker/StickerPendingBar';
 import { StickerPlacementHoverCard } from '~/components/Sticker/StickerPlacementHoverCard';
 import { freeMarkerVisible } from '~/components/Sticker/free-marker';
+import { rotateSize } from '~/shared/utils/canvas-utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
   STILL_STICKER_TREATMENT,
@@ -392,7 +393,6 @@ export function StickerPlacementOverlay({
   // unmounted either, which would drop the measurements that position them.
   const peekStyle: CSSProperties | undefined = peek ? { visibility: 'hidden' } : undefined;
 
-  // Per-sticker Approve/Decline pairs pile up on a cluster; crowded images use one bar.
   // Counted over what is drawn, so a history replay does not offer stickers not yet shown.
   const visible = step == null ? ordered : ordered.slice(0, step + 1);
   const ownerPending = interactive
@@ -403,19 +403,15 @@ export function StickerPlacementOverlay({
   const selected = crowded
     ? ownerPending.find((placement) => placement.id === selectedId)
     : undefined;
-  // Bottom, unless an owner-pending sticker reaches into that strip and the top is
-  // clear; a video prefers the top, to stay off its controls, and lifts the bottom
-  // bar above them. If both are blocked, covered stickers stay reachable by
-  // keyboard and the queue.
+  // If both strips are blocked the bar stays at the bottom; covered stickers stay
+  // reachable by keyboard and the queue.
   const barEdge = (() => {
     if (!crowded || controlBox.height <= 0) return 'bottom' as const;
     const reaches = (edge: 'top' | 'bottom') =>
       ownerPending.some(({ id, data }) => {
         const box = stickerBoxes[id];
         if (!box) return false;
-        const radians = (data.rotation * Math.PI) / 180;
-        const half =
-          (box.height * Math.abs(Math.cos(radians)) + box.width * Math.abs(Math.sin(radians))) / 2;
+        const half = rotateSize(box.width, box.height, data.rotation).height / 2;
         const centre = data.y * controlBox.height;
         return edge === 'bottom'
           ? centre + half >
@@ -439,7 +435,6 @@ export function StickerPlacementOverlay({
     visible
       .filter((placement) => placement.isPending && placement.ownerId === viewerId)
       .map(({ data }) => data),
-    // Keep the peek toggle out of the bar's corners.
     crowded
       ? [
           ...(takenCorners ?? []),

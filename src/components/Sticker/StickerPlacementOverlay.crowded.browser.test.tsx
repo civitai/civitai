@@ -112,21 +112,21 @@ describe('many pending stickers on one image', () => {
     renderWithProviders(stage(cluster), { user: { id: 7 } });
 
     await expect.element(page.getByText('Pick a sticker to approve or decline')).toBeVisible();
-    expect(approveButtons()).toHaveLength(0);
+    await expect.poll(() => approveButtons().length).toBe(0);
     expect(stickerButtons().elements()).toHaveLength(8);
 
     await select(2);
 
-    expect(approveButtons()).toHaveLength(1);
+    await expect.poll(() => approveButtons().length).toBe(1);
     await expect.element(page.getByTestId('acting-on')).toHaveTextContent('3');
     await expect.element(stickerButtons().nth(2)).toHaveAttribute('aria-pressed', 'true');
 
     await select(5);
-    expect(approveButtons()).toHaveLength(1);
+    await expect.poll(() => approveButtons().length).toBe(1);
     await expect.element(page.getByTestId('acting-on')).toHaveTextContent('6');
 
     await select(5);
-    expect(approveButtons()).toHaveLength(0);
+    await expect.poll(() => approveButtons().length).toBe(0);
     await expect.element(page.getByText('Pick a sticker to approve or decline')).toBeVisible();
   });
 
@@ -138,7 +138,34 @@ describe('many pending stickers on one image', () => {
 
     await userEvent.keyboard('{Escape}');
 
-    expect(approveButtons()).toHaveLength(0);
+    await expect.poll(() => approveButtons().length).toBe(0);
+  });
+
+  test('Escape with focus outside the bar leaves the selection alone', async () => {
+    renderWithProviders(stage(cluster), { user: { id: 7 } });
+    await select(0);
+    await expect.element(page.getByRole('button', { name: 'Approve' })).toBeInTheDocument();
+    (stickerButtons().nth(1).element() as HTMLElement).focus();
+
+    await userEvent.keyboard('{Escape}');
+
+    await expect.poll(() => approveButtons().length).toBe(1);
+  });
+
+  test('exactly two pending already use the bar; a non-owner sees none', async () => {
+    const view = await renderWithProviders(stage(cluster.slice(0, 2)), { user: { id: 7 } });
+    await expect.element(page.getByText('Pick a sticker to approve or decline')).toBeVisible();
+    await expect.poll(() => approveButtons().length).toBe(0);
+
+    await view.rerender(
+      <div style={{ position: 'relative', width: 390, height: 390 }}>
+        <style>{LAYOUT}</style>
+        <StickerPlacementOverlay placements={cluster} viewerId={99} sticker={sticker} />
+      </div>
+    );
+    await expect
+      .element(page.getByRole('group', { name: 'Pending stickers' }))
+      .not.toBeInTheDocument();
   });
 
   test('links to the received sticker queue', async () => {
@@ -228,7 +255,7 @@ describe('one pending sticker', () => {
     renderWithProviders(stage([cluster[0]]), { user: { id: 7 } });
 
     await expect.element(page.getByRole('button', { name: 'Approve' })).toBeVisible();
-    expect(approveButtons()).toHaveLength(1);
+    await expect.poll(() => approveButtons().length).toBe(1);
     expect(stickerButtons().elements()).toHaveLength(0);
     await expect
       .element(page.getByText('Pick a sticker to approve or decline'))
