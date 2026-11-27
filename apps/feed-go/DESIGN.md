@@ -3856,7 +3856,7 @@ endpoints are captured (`evalcapture.Supported`); every other endpoint is skippe
 | T1 | `shadow` | `compare`: the hand-back branch (result `unsupported` / `deadline`, its reason), the compute-error branch (`go_error`), and after the comparison (its result, header result, diff categories) | the sample's `node` and `responseHeaders` | 1 / the sample's `sampleRate` (the Node sampler's effective rate, below); when absent (an older sampler) or outside (0, 1], 1 / `FEED_GO_EVAL_CAPTURE_SHADOW_RATE` (its configured rate; 0 when unset: unknown) |
 | T2 | `serve-parity` | `replay`, after a compared replay | the replay's `result.data` and picked headers | 1 / `FEED_GO_SERVE_PARITY_SAMPLE_RATE` |
 | T3 | `serve` | the public routes (`serve`, `serveV1Models`), after the answer is written or the request handed back, at `FEED_GO_EVAL_CAPTURE_SERVE_RATE` (default 0: off) | none; the result is `served`, `handback` (with the fallback reason) or `error` | 1 / that rate |
-| T4 | `corpus-only` | the `v1-models-id` shadow handler, for a sample marked `corpusOnly` (below); never computed or compared | none; the result is `corpus-only` | 1 / the sample's `sampleRate`; 0 when absent or outside (0, 1] (the shadow's configured rate is not its rate) |
+| T4 | `corpus-only` | the `v1-models-id` and `infinite` shadow handlers, for a sample marked `corpusOnly` (below); never computed or compared | none; the result is `corpus-only` | 1 / the sample's `sampleRate`; 0 when absent or outside (0, 1] (the shadow's configured rate is not its rate) |
 
 - **Viewer.** The one the computation resolved, read through `auth.WithResolveObserver` (no extra
   store read). A request handed back before anything resolved a viewer is resolved by the tap (T1 on
@@ -3913,6 +3913,22 @@ under the same in-flight cap and per-second bucket, counted `corpus_only` on a 2
 the only first-wave REST endpoint, so the only one sent. A header credential that
 `FEED_GO_SHADOW_V1_MODELS_CREDENTIALS` already mirrors as a described sample stays one.
 
+The tRPC `image.getInfinite` (the same switch, no other): T1 does hold its credentialed requests (a
+tRPC sample forwards the credential as `authorization: present`), but feed-go hands every one back
+(`bearer-*`), so its viewer is never resolved and T1 captures none of them (`unresolved`). With the
+switch above 0, that fraction of the sampled `image.getInfinite` requests carrying exactly one API
+credential is posted to the `infinite` compare path as a corpus-only sample IN PLACE OF its shadow
+sample (one POST per sampled request, as before; the comparison it replaces was a hand-back),
+before the handler runs and whatever Node answers, under the same bounds, counted `corpus_only` on a
+2xx. Sent: `{corpusOnly: true, credential, sampleRate, input, headers}`, `input` the raw tRPC
+`input` (no path); never the key in any form, Authorization, `x-feed-go-credential`, any cookie,
+`node`, `responseHeaders`. A request whose `input` or headers would still hold the key (as written,
+URI-encoded or JSON-escaped) is not sent corpus-only and stays an ordinary shadow sample. Both
+credential kinds at once, or an empty `?token=`, stay ordinary shadow samples too. Feed-go checks and
+records it as below; a tRPC shape never carried the credential class, so it signs exactly as the
+same request with a real credential (and as one with none), the class kept in the case's
+`credential` column.
+
 - **Sent:** `{corpusOnly: true, credential: "header" | "query", sampleRate, input, path, headers}`;
   `input` is the raw query string less every pair named like a credential (`token` in any case or
   escape) or holding the key's text, `headers` only `host`, `cf-ipcountry`, `cf-region-code`,
@@ -3936,7 +3952,8 @@ the only first-wave REST endpoint, so the only one sent. A header credential tha
   reads a pair as URLSearchParams does (escape by escape) when it looks for the key.
 - **Deploy order:** feed-go first, then the Node switch. A feed-go without T4 reads a corpus-only
   sample as one with no `node` (`bad_request`, 400: Node counts it `rejected`), so nothing is stored,
-  but every one is a counted bad request.
+  but every one is a counted bad request. A feed-go with T4 for `[id]` only accepts and discards an
+  `image.getInfinite` one (202, nothing stored, counted `corpus_only` by Node).
 
 **Insert once (the `cases` pin contract).** `cases` is a ReplacingMergeTree versioned by
 `last_seen`: of the rows of one `(endpoint, case_id)`, the newest `last_seen` wins. The harness pins

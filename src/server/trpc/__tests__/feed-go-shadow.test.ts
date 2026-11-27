@@ -1628,6 +1628,170 @@ describe('createFeedGoShadow — image.getInfinite', () => {
     expect(h.outcomes).toEqual(['skipped_no_capture']);
     expect(h.fetchMock).not.toHaveBeenCalled();
   });
+
+  // feed-go DESIGN.md §19.6 T4: a credentialed image.getInfinite request is sent corpus-only in place
+  // of its shadow sample, the credential taken out.
+  describe('corpus-only samples, with FEED_GO_SHADOW_CORPUS_ONLY_RATE', () => {
+    // A distinctive synthetic key: it must appear nowhere in what is sent.
+    const KEY = 'zq7-synthetic-K3y-Inf41'; // gitleaks:allow synthetic test key
+    const keptHeaders = { host: 'civitai.com', 'cf-ipcountry': 'GB', 'x-isuk': 'true' };
+    const keyedHeaders = (extra: Record<string, string> = {}) => ({
+      ...keptHeaders,
+      cookie: '__Secure-civ-token=session-value; theme=dark',
+      ...extra,
+    });
+    const bearer = { authorization: `Bearer ${KEY}` };
+
+    /** Every string the fetch mock was called with: the URL, the headers and the body. */
+    function sentText(h: ReturnType<typeof harness>) {
+      return h.fetchMock.mock.calls
+        .map(([url, init]) =>
+          [url, JSON.stringify(init.headers ?? {}), String(init.body)].join('\n')
+        )
+        .join('\n');
+    }
+
+    it.each([
+      [
+        'an Authorization bearer header',
+        infiniteRequest({ headers: keyedHeaders(bearer) }),
+        'header',
+      ],
+      [
+        'a ?token= key',
+        infiniteRequest({
+          headers: keyedHeaders(),
+          query: { trpc: 'image.getInfinite', input: INPUT, token: KEY },
+        }),
+        'query',
+      ],
+      [
+        'a bearer header and the key under another credential-named query pair',
+        infiniteRequest({
+          headers: keyedHeaders(bearer),
+          query: { trpc: 'image.getInfinite', input: INPUT, apiKey: KEY },
+        }),
+        'header',
+      ],
+    ] as const)(
+      '%s: posted in place of the shadow sample, the credential taken out, no Node answer',
+      async (_name, req, credential) => {
+        const h = harness({ infinite: true, config: { corpusOnlyRate: 0.5 } });
+        // The handler gets no sample: Node's answer is never captured or waited for.
+        expect(h.shadow.begin(req)).toBeUndefined();
+        expect(h.fetchMock).not.toHaveBeenCalled();
+        await h.flush();
+        expect(h.fetchMock).toHaveBeenCalledTimes(1);
+        const [url, init] = h.fetchMock.mock.calls[0];
+        expect(url).toBe(INF_URL);
+        expect(JSON.parse(init.body as string)).toEqual({
+          corpusOnly: true,
+          credential,
+          sampleRate: 0.5,
+          input: INPUT,
+          headers: keptHeaders,
+        });
+        const sent = sentText(h);
+        expect(sent).not.toContain(KEY);
+        expect(sent).not.toContain('session-value');
+        expect(sent).not.toContain('authorization');
+        expect(sent).not.toContain('"node"');
+        expect(h.outcomes).toEqual(['corpus_only']);
+        expect(h.endpoints).toEqual(['infinite']);
+        expect(h.shadow.inFlight()).toBe(0);
+      }
+    );
+
+    /** A credentialed request served as an ordinary shadow sample: what it posted. */
+    async function ordinarySample(h: ReturnType<typeof harness>, req: ReturnType<typeof request>) {
+      const sample = serve(h, req);
+      expect(sample?.endpoint).toBe(
+        req.query.trpc === 'image.getInfinite' ? 'infinite' : 'as-posts'
+      );
+      await h.flush();
+      expect(h.fetchMock).toHaveBeenCalledTimes(1);
+      expect(h.outcomes).toEqual(['sent']);
+      return JSON.parse(h.fetchMock.mock.calls[0][1].body as string) as Record<string, unknown>;
+    }
+
+    it.each([
+      ['off (the default)', {}],
+      ['rate 0', { corpusOnlyRate: 0 }],
+    ] as const)('%s: still an ordinary shadow sample', async (_name, cfg) => {
+      const h = harness({ infinite: true, config: cfg });
+      const body = await ordinarySample(h, infiniteRequest({ headers: keyedHeaders(bearer) }));
+      expect(body).not.toHaveProperty('corpusOnly');
+      expect(body.headers).toEqual({
+        ...keptHeaders,
+        cookie: '__Secure-civ-token=session-value',
+        authorization: 'present',
+      });
+    });
+
+    it('not picked at its rate: an ordinary shadow sample', async () => {
+      // random 0.5: under the base rate 1, not under the corpus-only rate 0.5.
+      const h = harness({ infinite: true, config: { corpusOnlyRate: 0.5 }, random: 0.5 });
+      const body = await ordinarySample(h, infiniteRequest({ headers: keyedHeaders(bearer) }));
+      expect(body).not.toHaveProperty('corpusOnly');
+    });
+
+    it.each([
+      [
+        'a bearer header and a ?token= at once',
+        infiniteRequest({
+          headers: keyedHeaders(bearer),
+          query: { trpc: 'image.getInfinite', input: INPUT, token: KEY },
+        }),
+      ],
+      [
+        'an input that holds the key',
+        infiniteRequest({
+          headers: keyedHeaders(bearer),
+          query: { trpc: 'image.getInfinite', input: `{"json":{"limit":5,"note":"${KEY}"}}` },
+        }),
+      ],
+      [
+        'a kept header that holds the key',
+        infiniteRequest({ headers: { ...keyedHeaders(bearer), host: `${KEY}.example` } }),
+      ],
+      ['image.getImagesAsPostsInfinite', request({ headers: keyedHeaders(bearer) })],
+    ] as const)('%s: not sent corpus-only, an ordinary shadow sample', async (_name, req) => {
+      const h = harness({ infinite: true, config: { corpusOnlyRate: 1 } });
+      const body = await ordinarySample(h, req);
+      expect(body).not.toHaveProperty('corpusOnly');
+      expect((body.headers as Record<string, string>).authorization).toBe('present');
+    });
+
+    it('a request with no credential is an ordinary shadow sample, whatever the rate', async () => {
+      const h = harness({ infinite: true, config: { corpusOnlyRate: 1 } });
+      const body = await ordinarySample(h, infiniteRequest({ headers: keptHeaders }));
+      expect(body).not.toHaveProperty('corpusOnly');
+      expect(body.headers).toEqual(keptHeaders);
+    });
+
+    it('takes the shared in-flight cap and the infinite bucket like a sample', async () => {
+      const full = harness({ infinite: true, config: { corpusOnlyRate: 1, maxInFlight: 1 } });
+      // A gallery sample holds the only slot.
+      expect(full.shadow.begin(request())).toBeDefined();
+      expect(full.shadow.begin(infiniteRequest({ headers: keyedHeaders(bearer) }))).toBeUndefined();
+      await full.flush();
+      expect(full.fetchMock).not.toHaveBeenCalled();
+      expect(full.outcomes).toEqual(['dropped_overload']);
+      expect(full.endpoints).toEqual(['infinite']);
+
+      const h = harness({
+        infinite: true,
+        config: { corpusOnlyRate: 1, maxPerSecond: 1 },
+        now: () => 0,
+      });
+      expect(h.shadow.begin(infiniteRequest({ headers: keyedHeaders(bearer) }))).toBeUndefined();
+      await h.flush();
+      expect(h.shadow.begin(infiniteRequest({ headers: keyedHeaders(bearer) }))).toBeUndefined();
+      await h.flush();
+      expect(h.outcomes).toEqual(['corpus_only', 'dropped_rate_limit']);
+      expect(h.fetchMock).toHaveBeenCalledTimes(1);
+    });
+  });
 });
 
 describe('feedGoV1ShapeClass', () => {

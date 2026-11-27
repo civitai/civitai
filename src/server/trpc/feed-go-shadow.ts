@@ -41,8 +41,9 @@ import { isFeedGoParityReplay } from '~/server/trpc/feed-go-parity-replay';
  *   `?token=`) is mirrored with a description of it in place of the key
  *   (`feed-go-shadow-credential.ts`: the key's `generateSecretHash`, never the key). The list never.
  *   Corpus-only samples (`FEED_GO_SHADOW_CORPUS_ONLY_RATE`, default 0: off; feed-go DESIGN.md §19.6
- *   T4): a further fraction of the `[id]` requests that would be `skipped_credential` is posted with
- *   the credential taken out (`corpusOnly`), for feed-go's eval capture only. See `corpusOnly`.
+ *   T4): a further fraction of the `[id]` requests that would be `skipped_credential`, and of the
+ *   sampled credentialed `image.getInfinite` requests (in place of their shadow sample), is posted
+ *   with the credential taken out (`corpusOnly`), for feed-go's eval capture only. See `corpusOnly`.
  * - `POST /api/search/*` (flag `feed-go-shadow-site-search`): the request's JSON body, the search
  *   call Node made and the backend's 200 body (both captured by the site-search service), and the
  *   answer Node wrote, so feed-go reshapes the same backend answer for its own viewer and compares
@@ -259,8 +260,9 @@ export type FeedGoShadowConfig = {
   v1ModelsQuery?: boolean;
   /**
    * `FEED_GO_SHADOW_CORPUS_ONLY_RATE` (default 0: off; clamped to [0, 1], junk reads 0): the fraction
-   * of sampled `/api/v1/models/[id]` requests carrying an API credential that are posted as
-   * corpus-only samples rather than counted `skipped_credential` (see `corpusOnly`).
+   * of sampled `/api/v1/models/[id]` and `image.getInfinite` requests carrying an API credential that
+   * are posted as corpus-only samples (see `corpusOnly`): an `[id]` one rather than counted
+   * `skipped_credential`, an `image.getInfinite` one in place of its shadow sample.
    */
   corpusOnlyRate?: number;
 };
@@ -550,6 +552,12 @@ function isRestEndpoint(endpoint: FeedGoShadowEndpoint): endpoint is RestEndpoin
   return REST_ENDPOINTS.has(endpoint);
 }
 
+/** The endpoints a corpus-only sample is sent for (`corpusOnly`; feed-go's corpusOnlyEndpoints). */
+const CORPUS_ONLY_ENDPOINTS: ReadonlySet<FeedGoShadowEndpoint> = new Set<FeedGoShadowEndpoint>([
+  'v1-models-id',
+  'infinite',
+]);
+
 /**
  * The header a credentialed `/api/v1/models/[id]` sample carries in place of its key (feed-go's
  * SampleCredentialHeader): the credential's description (`feed-go-shadow-credential.ts`).
@@ -762,6 +770,9 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
       if (input !== undefined && typeof input !== 'string') return undefined;
       if (!route.enabled()) return undefined;
       if (random() >= config.rate) return undefined;
+      // feed-go hands every credentialed tRPC sample back (it never looks the key up), so its eval
+      // capture never holds one: a fraction is sent corpus-only instead, in place of the sample.
+      if (hasApiCredential(req) && corpusOnly(route.endpoint, req)) return undefined;
       const startedAt = epochNow();
       if (!admit(route.endpoint)) return undefined;
       const headers = pickShadowHeaders(req);
@@ -921,29 +932,33 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
   }
 
   /**
-   * A corpus-only sample (feed-go DESIGN.md §19.6 T4) of a credentialed request `beginRest` would
-   * otherwise count `skipped_credential`: `/api/v1/models/[id]` only (the one REST endpoint feed-go's
-   * eval capture takes), at FEED_GO_SHADOW_CORPUS_ONLY_RATE of the sampled ones. Posted to the `[id]`
-   * compare URL as `{corpusOnly, credential, sampleRate, input, path, headers}`:
+   * A corpus-only sample (feed-go DESIGN.md §19.6 T4) of a credentialed request, at
+   * FEED_GO_SHADOW_CORPUS_ONLY_RATE of the sampled ones, for the two endpoints feed-go's eval capture
+   * takes one of (CORPUS_ONLY_ENDPOINTS): `/api/v1/models/[id]`, which `beginRest` would otherwise
+   * count `skipped_credential`, and `image.getInfinite`, whose shadow sample `begin` would otherwise
+   * send. Posted to the endpoint's compare URL as `{corpusOnly, credential, sampleRate, input, path,
+   * headers}` (`[id]`; `input` the query string) or `{corpusOnly, credential, sampleRate, input,
+   * headers}` (`image.getInfinite`; `input` the raw tRPC input):
    *
    * - the credential is taken out of everything sent: no Authorization header and no credential
    *   description, no cookie at all (the session cookie is a credential too), no query pair named
    *   like a credential (`token` in any case or escape) and no pair holding the key's text; only the
    *   headers COPIED_HEADERS names. `credential` is the class it was (`header` / `query`).
    * - Node's answer is never sent and never waited for: the POST is queued now, before the handler
-   *   answers, and the handler's capture and finish never see it (beginRest returns undefined).
-   * - The same bounds as a sample: the in-flight cap and the `[id]` per-second bucket.
+   *   answers, and the handler's capture and finish never see it (the caller returns undefined).
+   * - The same bounds as a sample: the in-flight cap and the endpoint's per-second bucket.
    * - `sampleRate`: FEED_GO_SHADOW_SAMPLE_RATE x this rate x the bucket's admitted share.
    *
-   * True when it took the request (sent, or dropped and counted); false when the caller counts
-   * `skipped_credential`: another route, the rate off or not picked, both credential kinds at once,
-   * or a body that would still hold the key (`leaksSecret` on the encoded input, path and headers,
-   * the last word; the rest of the body is constants and the rate). feed-go checks again and refuses
-   * a sample that still carries any credential (its evalcorpus rules, the authority).
+   * True when it took the request (sent, or dropped and counted); false when the caller goes on as
+   * without it (`[id]`: counts `skipped_credential`; `image.getInfinite`: sends its shadow sample):
+   * another route, the rate off or not picked, both credential kinds at once, or a body that would
+   * still hold the key (`leaksSecret` on the encoded input, path and headers, the last word; the
+   * rest of the body is constants and the rate). feed-go checks again and refuses a sample that still
+   * carries any credential (its evalcorpus rules, the authority).
    */
-  function corpusOnly(endpoint: RestEndpoint, req: ShadowRequestLike): boolean {
+  function corpusOnly(endpoint: FeedGoShadowEndpoint, req: ShadowRequestLike): boolean {
     const rate = config.corpusOnlyRate ?? 0;
-    if (endpoint !== 'v1-models-id' || rate <= 0 || !config.v1ModelsIdUrl) return false;
+    if (!CORPUS_ONLY_ENDPOINTS.has(endpoint) || rate <= 0 || !urlOf(endpoint)) return false;
     if (random() >= rate) return false;
     const credential = credentialClassOf(req);
     if (!credential) return false;
@@ -951,21 +966,33 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
     const q = target.indexOf('?');
     const rawQuery = q < 0 ? '' : target.slice(q + 1);
     const secrets = credentialSecrets(req, rawQuery);
-    const input = stripCredentialPairs(rawQuery, secrets);
-    const path = q < 0 ? target : target.slice(0, q);
     const headers: Record<string, string> = {};
     for (const name of COPIED_HEADERS) {
       const v = headerValue(req.headers[name]);
       if (v) headers[name] = v;
     }
-    // As encoded, and as the reader decodes the query and the path (escape by escape).
-    const probe = [JSON.stringify({ input, path, headers }), decodeQuery(input), decodeQuery(path)];
+    const rest = isRestEndpoint(endpoint);
+    let input: string;
+    let path: string | undefined;
+    let probe: string[];
+    if (rest) {
+      input = stripCredentialPairs(rawQuery, secrets);
+      path = q < 0 ? target : target.slice(0, q);
+      // As encoded, and as the reader decodes the query and the path (escape by escape).
+      probe = [JSON.stringify({ input, path, headers }), decodeQuery(input), decodeQuery(path)];
+    } else {
+      // The tRPC input as the procedure reads it (`req.query.input`, already decoded).
+      const raw = req.query.input;
+      if (raw !== undefined && typeof raw !== 'string') return false;
+      input = raw ?? '';
+      probe = [JSON.stringify({ input, headers }), input];
+    }
     if (probe.some((text) => leaksSecret(text, secrets))) return false;
     const sample: FeedGoShadowSample = {
       endpoint,
       holdsSlot: false,
       input,
-      path,
+      ...(path !== undefined ? { path } : {}),
       headers,
       done: false,
     };
@@ -975,7 +1002,7 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
       credential,
       sampleRate: (sample.sampleRate ?? config.rate) * rate,
       input,
-      path,
+      ...(rest ? { path } : {}),
       headers,
     });
     schedule(() => post(sample, body, 'corpus_only'));

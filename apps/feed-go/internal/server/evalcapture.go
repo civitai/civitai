@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -94,12 +95,16 @@ func (m *Metrics) seedEvalCapture() {
 var EvalCaptureDropReasons = []string{chwrite.ReasonQueueFull, chwrite.ReasonMarshal, chwrite.ReasonHTTP4xx,
 	chwrite.ReasonHTTPOther, chwrite.ReasonHTTP5xx, chwrite.ReasonTransport, chwrite.ReasonShutdown}
 
+// corpusOnlyEndpoints are the endpoints the Node sampler sends corpus-only samples of (T4), and the
+// only ones captureCorpusOnly records: `/api/v1/models/[id]` and the tRPC `image.getInfinite`.
+var corpusOnlyEndpoints = []string{EndpointV1ModelsID, EndpointInfinite}
+
 // evalCaptureEndpoints are the endpoints a source captures: every first-wave endpoint (all are shadowed
 // and have public routes), less the ones serve-parity does not replay; corpus-only only
-// v1-models-id (the one first-wave endpoint the Node sampler sends corpus-only samples of).
+// corpusOnlyEndpoints.
 func evalCaptureEndpoints(source string) []string {
 	if source == evalcapture.SourceCorpusOnly {
-		return []string{EndpointV1ModelsID}
+		return corpusOnlyEndpoints
 	}
 	var out []string
 	for _, e := range evalcorpus.Endpoints {
@@ -227,7 +232,7 @@ func (s *Server) captureShadow(ctx context.Context, endpoint string, req ShadowR
 // captureCorpusOnly is T4: a corpus-only sample of endpoint (ShadowRequest.CorpusOnly), recorded
 // with its credential class and never compared. It returns the status the shadow handler answers:
 //
-//   - 202, discarded, with the capture off or an endpoint it does not capture (not counted);
+//   - 202, discarded, with the capture off or an endpoint outside corpusOnlyEndpoints (not counted);
 //   - 400, refused (counted evalcapture.OutcomeRefused, never recorded), when the sample still
 //     carries a credential (evalcorpus.HasCredential: an Authorization or credential header, a
 //     session cookie, a `token` or credential-named query pair), its credential class is not exactly
@@ -236,10 +241,17 @@ func (s *Server) captureShadow(ctx context.Context, endpoint string, req ShadowR
 //     range: the shadow's configured rate is not this sample's), result corpus-only, no Node answer,
 //     the viewer signed out (or a verified crawler): it carries no cookie and no credential.
 func (s *Server) captureCorpusOnly(ctx context.Context, endpoint string, req ShadowRequest) int {
-	if !s.EvalCapture.on() || !evalcapture.Supported(endpoint) || endpoint != EndpointV1ModelsID {
+	if !s.EvalCapture.on() || !evalcapture.Supported(endpoint) || !slices.Contains(corpusOnlyEndpoints, endpoint) {
 		return http.StatusAccepted
 	}
-	creq := evalcorpus.Request{Endpoint: endpoint, Path: req.Path, Query: req.Input, Headers: req.Headers}
+	// As evalRequest reads a request: a REST sample's input is its query string, a tRPC sample's the
+	// raw `input` (its credential-named keys are Capture's to strip, as for any tRPC capture).
+	creq := evalcorpus.Request{Endpoint: endpoint, Headers: req.Headers}
+	if isRESTEndpoint(endpoint) {
+		creq.Path, creq.Query = req.Path, req.Input
+	} else {
+		creq.Input = req.Input
+	}
 	if (req.Credential != evalcorpus.CredentialHeader && req.Credential != evalcorpus.CredentialQuery) ||
 		carriesJSON(req.Node) || len(req.ResponseHeaders) > 0 || carriesJSON(req.Upstream) || evalcorpus.HasCredential(creq) {
 		s.Metrics.EvalCapture.WithLabelValues(endpoint, evalcapture.SourceCorpusOnly, evalcapture.OutcomeRefused).Inc()
