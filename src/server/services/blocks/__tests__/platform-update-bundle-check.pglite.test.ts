@@ -428,7 +428,7 @@ describe('checkPlatformUpdates', () => {
       appBlockId: APP,
       readFiles: v.readFiles,
       allow: false,
-    }).catch((e: unknown) => e)) as bundleCheck.PlatformUpdateMissingRefusal;
+    }).catch((e: unknown) => e)) as InstanceType<typeof bundleCheck.PlatformUpdateMissingRefusal>;
     expect(err).toBeInstanceOf(bundleCheck.PlatformUpdateMissingRefusal);
     expect(err.message).toContain(
       '(only the oldest 100 unshipped platform updates were checked; more may be missing). Merge them'
