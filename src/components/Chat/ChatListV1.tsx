@@ -99,7 +99,6 @@ export function ChatListV1() {
   const previewBlur = replaceBadWords || domainColor === 'green';
 
   const { data, isLoading } = trpc.chat.getAllByUser.useQuery();
-  // Subscribed (not a one-off getData) so the count repaints when it is refetched.
   const { data: chatCounts } = trpc.chat.getUnreadCount.useQuery(undefined, {
     enabled: !!currentUser,
   });
