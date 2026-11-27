@@ -1,10 +1,11 @@
-/** Why a player reports a yes/no question, in the order the picker lists them. Stored as `KnightsQuestionReport.reason`. */
-export const REPORT_REASONS = [
-  { value: 'image', label: 'Problem with the image' },
-  { value: 'question', label: 'Problem with the question' },
-] as const;
+import {
+  isKnightsReportReason,
+  KNIGHTS_REPORT_REASONS,
+  type KnightsReportReason,
+} from '@civitai/shared/new-order';
 
-export type ReportReason = (typeof REPORT_REASONS)[number]['value'];
+export const REPORT_REASONS = KNIGHTS_REPORT_REASONS;
 
-export const isReportReason = (value: unknown): value is ReportReason =>
-  REPORT_REASONS.some((reason) => reason.value === value);
+export type ReportReason = KnightsReportReason;
+
+export const isReportReason = isKnightsReportReason;

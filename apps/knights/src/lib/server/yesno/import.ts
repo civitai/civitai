@@ -9,6 +9,7 @@ import {
   readWithoutJit,
   REWORD_OF_META_KEY,
   YESNO_QUESTION_MAX,
+  YESNO_REPORTED,
 } from '@civitai/db/knights';
 import { servableImage } from '../image-gate';
 import {
@@ -70,6 +71,9 @@ const utcNow = sql<Date>`(now() AT TIME ZONE 'utc')`;
 
 /** An item the import closed as withdrawn. */
 const retired = sql<SqlBool>`("KnightsQueueItem"."status" = 'Closed' AND "KnightsQueueItem"."reason" = 'retired')`;
+
+/** Players reported it past the threshold: it waits for a moderator, so the file does not rewrite it. */
+const reported = sql<SqlBool>`("KnightsQueueItem"."status" = ${YESNO_REPORTED})`;
 
 /** Closed by a moderator. Unlike other moderated items, the import never reopens it. */
 const moderatorRetired = sql<SqlBool>`("KnightsQueueItem"."reason" IS NOT DISTINCT FROM ${MODERATOR_RETIRED})`;
@@ -318,7 +322,7 @@ export async function importYesNo(
             resolvedAt: sql<Date | null>`CASE WHEN ${retired} THEN NULL ELSE "KnightsQueueItem"."resolvedAt" END`,
           }))
           .where(
-            sql<SqlBool>`"KnightsQueueItem"."voteCount" = 0 AND NOT ${moderatorRetired} AND (${retired} OR NOT ${isModeratedSql} AND
+            sql<SqlBool>`"KnightsQueueItem"."voteCount" = 0 AND NOT ${moderatorRetired} AND NOT ${reported} AND (${retired} OR NOT ${isModeratedSql} AND
               ("KnightsQueueItem"."questionKey", "KnightsQueueItem"."imageId", "KnightsQueueItem"."audience", "KnightsQueueItem"."prompt",
                "KnightsQueueItem"."yesEffect", "KnightsQueueItem"."noEffect", "KnightsQueueItem"."meta")
               IS DISTINCT FROM
@@ -359,7 +363,7 @@ async function countModerated(db: Kysely<DB>, skipped: YesNoRow[]): Promise<numb
     .selectFrom('KnightsQueueItem')
     .select('externalId')
     .where('voteCount', '=', 0)
-    .where(sql<SqlBool>`(${isModeratedSql} OR ${moderatorRetired})`)
+    .where(sql<SqlBool>`(${isModeratedSql} OR ${moderatorRetired} OR ${reported})`)
     .where(
       'externalId',
       'in',
@@ -465,7 +469,11 @@ async function countRefused(db: Kysely<DB>, batch: YesNoRow[]): Promise<number> 
   }).length;
 }
 
-/** Closes open questions the producer withdrew, and their open reworded copies. Unanswered ones just close; answered ones drop their answers' gold like any no-outcome close. */
+/**
+ * Closes open questions the producer withdrew, and their open reworded copies, reported ones included (their reports are
+ * resolved, so a moderator cannot keep them back). Unanswered ones just close; answered ones drop their answers' gold like
+ * any no-outcome close.
+ */
 async function retireWithdrawn(
   db: Kysely<DB>,
   ids: string[],
@@ -479,7 +487,7 @@ async function retireWithdrawn(
     const open = await db
       .selectFrom('KnightsQueueItem')
       .select('id')
-      .where('status', '=', 'Open')
+      .where('status', 'in', ['Open', YESNO_REPORTED])
       .where('audience', 'is not', null)
       .where((eb) => {
         const withdrawn = ids.slice(at, at + batchSize);
@@ -490,7 +498,7 @@ async function retireWithdrawn(
       })
       .execute();
     for (const { id } of open) {
-      if (await closeOpenYesNoItem(db, id, reason, now, meta)) result.retired++;
+      if (await closeOpenYesNoItem(db, id, reason, now, meta, { reported: true })) result.retired++;
     }
   }
 }

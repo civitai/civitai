@@ -154,7 +154,7 @@ describe('the shared image gate on every yes/no path', () => {
 describe('an image players pulled', () => {
   const pull = (imageId: number, resolvedAt: string | null = null) =>
     pg.query(
-      `INSERT INTO "KnightsImagePull" ("imageId","reason","resolvedAt") VALUES ($1,'players-reported',$2)`,
+      `INSERT INTO "KnightsImagePull" ("imageId","itemId","reason","resolvedAt") VALUES ($1,1,'players-reported',$2)`,
       [imageId, resolvedAt]
     );
 

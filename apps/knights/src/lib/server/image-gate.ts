@@ -2,6 +2,7 @@ import { sql, type Expression, type ExpressionBuilder, type SqlBool } from 'kyse
 import type { DB } from '@civitai/db-schema/kysely';
 import {
   modReviewContent as modReviewContentFromTables,
+  noOpenImagePull,
   noOpenImageReport,
   SERVABLE_IMAGE_CONTENT_MARKER,
   servableImage as servableImageFromTables,
@@ -88,10 +89,9 @@ export const servableImageForSweeps = (eb: Builder) =>
 export const modReviewEligibleImage = (_eb: Builder) =>
   sql<SqlBool>`(${imageGate('modReviewContent')} AND ${noOpenImageReport})`;
 
-/** No open "KnightsImagePull" on `img`: players reported the image and no moderator has kept it (`yesno/report.ts`). */
-export const noOpenImagePull = sql<SqlBool>`NOT EXISTS (
-  SELECT 1 FROM "KnightsImagePull" ip WHERE ip."imageId" = img.id AND ip."resolvedAt" IS NULL
-)`;
-
-/** `servableImage` for a yes/no question or an Acolyte pair: the gate, and no open pull of the image. */
+/**
+ * `servableImage` for a yes/no question or an Acolyte pair: the gate, and no open pull of the image (`noOpenImagePull`).
+ * Only those two read the pull; the rating feed does not, and the sweeps read `servableImageForSweeps` on purpose, so a
+ * pull hides questions until a moderator decides and never closes them.
+ */
 export const yesNoServableImage = (eb: Builder) => eb.and([imageGate('servable'), noOpenImagePull]);

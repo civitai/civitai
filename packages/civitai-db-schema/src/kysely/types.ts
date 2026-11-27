@@ -3974,8 +3974,12 @@ export type KnightsHarvestCursor = {
 export type KnightsImagePull = {
   id: Generated<number>;
   imageId: number;
+  itemId: number;
   reason: string;
   reportId: number | null;
+  filing: Generated<string>;
+  attempts: Generated<number>;
+  lastAttemptAt: Timestamp | null;
   createdAt: Generated<Timestamp>;
   resolvedAt: Timestamp | null;
   resolvedBy: number | null;
@@ -4066,6 +4070,7 @@ export type KnightsQuestionReport = {
   createdAt: Generated<Timestamp>;
   resolvedAt: Timestamp | null;
   resolvedBy: number | null;
+  counted: Generated<boolean>;
 };
 export type KnightsQueueItem = {
   id: Generated<number>;

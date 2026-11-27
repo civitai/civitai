@@ -46,7 +46,7 @@ afterAll(async () => {
 });
 beforeEach(async () => {
   await pg.exec(
-    `TRUNCATE "KnightsQueueItem","KnightsVote","Image","Post","NewOrderPlayer","NewOrderSmite","KnightsPlayerDay" RESTART IDENTITY CASCADE; DELETE FROM "KnightsQuestion" WHERE key LIKE 'knights.yesno.%'`
+    `TRUNCATE "KnightsQueueItem","KnightsQuestionReport","KnightsVote","Image","Post","NewOrderPlayer","NewOrderSmite","KnightsPlayerDay" RESTART IDENTITY CASCADE; DELETE FROM "KnightsQuestion" WHERE key LIKE 'knights.yesno.%'`
   );
 });
 
@@ -383,6 +383,38 @@ describe('importYesNo', () => {
         resolvedAt: null,
         meta: { moderation: { action: 'restored', by: 4 }, caseId: 'c1' },
       });
+    });
+
+    it('leaves the words and image of a question players reported as they are, counted as moderated', async () => {
+      await importYesNo(db, load(line({ id: 'a' })));
+      await pg.exec(`UPDATE "KnightsQueueItem" SET "status"='Reported' WHERE "externalId" = 'a'`);
+
+      const again = await importYesNo(db, load(line({ id: 'a', question: 'Is a cap worn?', image: '11' })));
+
+      expect(again).toMatchObject({ updated: 0, moderated: 1 });
+      expect((await items())[0]).toMatchObject({
+        status: 'Reported',
+        prompt: 'Is a hat worn?',
+        imageId: 10,
+      });
+    });
+
+    it('retires a reported question the producer withdrew and resolves its reports, so it cannot be kept back', async () => {
+      await importYesNo(db, load(line({ id: 'a' })));
+      await pg.exec(`UPDATE "KnightsQueueItem" SET "status"='Reported' WHERE "externalId" = 'a'`);
+      await pg.exec(
+        `INSERT INTO "KnightsQuestionReport" ("playerId","itemId","reason","questionKey","imageId")
+         SELECT p, id, 'question', "questionKey", "imageId" FROM "KnightsQueueItem", generate_series(1, 5) p`
+      );
+
+      const result = await importYesNo(db, [], { retire: ['a'] });
+
+      expect(result).toMatchObject({ retired: 1 });
+      expect((await items())[0]).toMatchObject({ status: 'Closed', reason: 'retired' });
+      const open = await pg.query(
+        `SELECT 1 FROM "KnightsQuestionReport" WHERE "resolvedAt" IS NULL`
+      );
+      expect(open.rows).toHaveLength(0);
     });
 
     it('keeps a moderator-retired question closed and counts it as moderated, not unchanged', async () => {

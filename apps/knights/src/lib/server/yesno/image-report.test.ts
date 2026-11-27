@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { reportImageToMainApp } from './image-report';
+import { IMAGE_GONE } from './report';
 
 const fetchMock = vi.fn<typeof fetch>();
 const answer = (body: unknown, status = 200) =>
@@ -34,8 +35,14 @@ describe('reportImageToMainApp', () => {
     expect(await reportImageToMainApp(12)).toBe(31);
   });
 
+  it('answers that no report is needed when the route has no such image', async () => {
+    fetchMock.mockResolvedValue(answer({ error: 'Image not found' }, 404));
+    expect(await reportImageToMainApp(12)).toBe(IMAGE_GONE);
+  });
+
   it.each([
-    ['a refusal', () => answer({ error: 'nope' }, 404)],
+    ['a refusal', () => answer({ error: 'nope' }, 500)],
+    ['a 404 that is not the route (not deployed yet)', () => new Response('<html>', { status: 404 })],
     ['an answer with no report id', () => answer({ created: true })],
     ['a body that is not JSON', () => new Response('<html>', { status: 200 })],
   ])('throws on %s, so the pull is filed again later', async (_case, response) => {

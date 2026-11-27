@@ -7,7 +7,13 @@ import { seedImage, seedPlayer } from '../../../test/seed';
 import { ensureVotePartitions } from '../queue/queue.service';
 import { pickYesNo } from './feed';
 import { importYesNo, type YesNoRow } from './import';
-import { fileOpenImagePulls, recordReport, reportYesNo, type FileImageReport } from './report';
+import {
+  fileOpenImagePulls,
+  IMAGE_GONE,
+  recordReport,
+  reportYesNo,
+  type FileImageReport,
+} from './report';
 import { closeStrandedYesNo } from './sweep';
 import { castYesNoVote } from './vote';
 
@@ -80,6 +86,14 @@ const pulls = async () =>
       `SELECT "imageId", "reportId", "resolvedAt" FROM "KnightsImagePull" ORDER BY id`
     )
   ).rows;
+const filings = async () =>
+  (
+    await pg.query<{ imageId: number; itemId: number; filing: string; attempts: number }>(
+      `SELECT "imageId", "itemId", filing, attempts FROM "KnightsImagePull" ORDER BY id`
+    )
+  ).rows;
+const MINUTE = 60_000;
+const at = (ms: number) => new Date(NOW.getTime() + ms);
 
 beforeAll(async () => {
   ({ pg, db } = await createQueueDb());
@@ -88,7 +102,7 @@ beforeAll(async () => {
 afterAll(() => pg.close());
 beforeEach(async () => {
   await pg.exec(
-    `TRUNCATE "KnightsVote","KnightsQuestionReport","KnightsImagePull","KnightsQueueItem","NewOrderPlayer","Image","Post" RESTART IDENTITY CASCADE; DELETE FROM "KnightsQuestion" WHERE key LIKE 'knights.yesno.%'`
+    `TRUNCATE "KnightsVote","KnightsQuestionReport","KnightsImagePull","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","Image","Post" RESTART IDENTITY CASCADE; DELETE FROM "KnightsQuestion" WHERE key LIKE 'knights.yesno.%'`
   );
   await seedImage(pg, IMAGE, { nsfwLevel: 8 });
   await seedImage(pg, OTHER_IMAGE, { nsfwLevel: 8 });
@@ -124,6 +138,23 @@ describe('a report below the threshold', () => {
     expect(await dealtToFresh()).toEqual(['a', 'b', 'c']);
     expect(await pulls()).toEqual([]);
     expect(fileReport).not.toHaveBeenCalled();
+  });
+
+  it('counts no report from a held or reset-pending player, who still stops being dealt it', async () => {
+    await seedPlayer(pg, 104);
+    await pg.exec(`UPDATE "NewOrderPlayer" SET "payoutBlockedAt" = '2026-12-19' WHERE "userId" = 104`);
+    await seedPlayer(pg, 105);
+    await pg.exec(`INSERT INTO "NewOrderSmite" ("targetPlayerId") VALUES (105), (105), (105)`);
+    await reportBy('a', ['image', 'image', 'image', 'image']);
+    await report(104, 'a', 'image');
+    await report(105, 'a', 'image');
+
+    expect(await statusOf('a')).toBe('Open');
+    expect(await dealt(104)).toBe(ids.b);
+    expect(await dealt(105)).toBe(ids.b);
+
+    await report(106, 'a', 'image');
+    expect(await statusOf('a')).toBe('Reported');
   });
 
   it('counts a repeat report from the same player once', async () => {
@@ -164,6 +195,7 @@ describe('the fifth distinct reporter', () => {
     expect(fileReport).toHaveBeenCalledTimes(1);
     expect(fileReport).toHaveBeenCalledWith(IMAGE);
     expect(await pulls()).toEqual([{ imageId: IMAGE, reportId: 77, resolvedAt: null }]);
+    expect(await filings()).toEqual([{ imageId: IMAGE, itemId: ids.a, filing: 'filed', attempts: 1 }]);
     expect(await statusOf('b')).toBe('Open');
     expect(await dealtToFresh()).toEqual(['c']);
   });
@@ -190,11 +222,67 @@ describe('the fifth distinct reporter', () => {
     );
     logged.mockRestore();
 
-    expect(await fileOpenImagePulls(db, fileReport)).toEqual({ filed: 1, failed: 0 });
+    // Backed off: the next tick, a minute on, leaves it; one past the backoff files it.
+    expect(await fileOpenImagePulls(db, fileReport, { now: at(MINUTE) })).toEqual({
+      filed: 0,
+      failed: 0,
+      notNeeded: 0,
+    });
+    expect(fileReport).toHaveBeenCalledTimes(1);
+    expect(await fileOpenImagePulls(db, fileReport, { now: at(10 * MINUTE) })).toEqual({
+      filed: 1,
+      failed: 0,
+      notNeeded: 0,
+    });
     expect(fileReport).toHaveBeenCalledTimes(2);
     expect(await pulls()).toEqual([{ imageId: IMAGE, reportId: 77, resolvedAt: null }]);
-    expect(await fileOpenImagePulls(db, fileReport)).toEqual({ filed: 0, failed: 0 });
+    expect(await fileOpenImagePulls(db, fileReport, { now: at(60 * MINUTE) })).toEqual({
+      filed: 0,
+      failed: 0,
+      notNeeded: 0,
+    });
     expect(fileReport).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("the tick's filing of image pulls", () => {
+  const pull = (imageId: number, attempts = 0, lastAttemptAt: string | null = null) =>
+    pg.query(
+      `INSERT INTO "KnightsImagePull" ("imageId","itemId","reason","attempts","lastAttemptAt") VALUES ($1,1,'players-reported',$2,$3)`,
+      [imageId, attempts, lastAttemptAt]
+    );
+
+  it('stops filing for an image the main app no longer has', async () => {
+    await pull(700);
+    fileReport.mockResolvedValue(IMAGE_GONE);
+
+    expect(await fileOpenImagePulls(db, fileReport, { now: NOW })).toEqual({
+      filed: 0,
+      failed: 0,
+      notNeeded: 1,
+    });
+    expect(await filings()).toEqual([
+      { imageId: 700, itemId: 1, filing: 'not-needed', attempts: 1 },
+    ]);
+    expect(await fileOpenImagePulls(db, fileReport, { now: at(24 * 60 * MINUTE) })).toEqual({
+      filed: 0,
+      failed: 0,
+      notNeeded: 0,
+    });
+    expect(fileReport).toHaveBeenCalledTimes(1);
+  });
+
+  it('still tries a new pull behind a long backlog of failing ones', async () => {
+    for (let image = 1000; image < 1120; image++) await pull(image, 5, '2026-12-01 00:00:00');
+    await pull(2000);
+    fileReport.mockRejectedValue(new Error('main app down'));
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await fileOpenImagePulls(db, fileReport, { now: NOW, limit: 100 });
+    logged.mockRestore();
+
+    expect(fileReport.mock.calls[0]).toEqual([2000]);
+    expect(fileReport).toHaveBeenCalledTimes(100);
   });
 });
 

@@ -5370,13 +5370,18 @@ export interface KnightsQuestionReport {
   createdAt: Date;
   resolvedAt: Date | null;
   resolvedBy: number | null;
+  counted: boolean;
 }
 
 export interface KnightsImagePull {
   id: number;
   imageId: number;
+  itemId: number;
   reason: string;
   reportId: number | null;
+  filing: string;
+  attempts: number;
+  lastAttemptAt: Date | null;
   createdAt: Date;
   resolvedAt: Date | null;
   resolvedBy: number | null;

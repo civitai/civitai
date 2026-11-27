@@ -57,7 +57,8 @@ export const KNIGHTS_APP_GRANTS: Readonly<Record<string, readonly Privilege[]>> 
 
 /** Column-level UPDATE grants, on top of `KNIGHTS_APP_GRANTS`: the role may set only these columns. */
 export const KNIGHTS_APP_COLUMN_UPDATES: Readonly<Record<string, readonly string[]>> = {
-  KnightsImagePull: ['reportId'],
+  KnightsImagePull: ['reportId', 'filing', 'attempts', 'lastAttemptAt'],
+  KnightsQuestionReport: ['resolvedAt'],
 };
 
 /** Schemas besides "public" the role may use. */
