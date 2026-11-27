@@ -196,10 +196,13 @@
                   type="submit"
                   size="xs"
                   variant="destructive"
-                  disabled={row.requestedById === data.user?.id}
+                  disabled={row.requestedById === data.user?.id ||
+                    (data.user != null && row.joinedByIds.includes(data.user.id))}
                   title={row.requestedById === data.user?.id
                     ? 'You requested this removal; another moderator must confirm it.'
-                    : undefined}
+                    : data.user != null && row.joinedByIds.includes(data.user.id)
+                      ? 'Your removal joined this request; another moderator must confirm it.'
+                      : undefined}
                 >
                   Confirm removal
                 </Button>

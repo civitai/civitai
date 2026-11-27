@@ -54,6 +54,7 @@ export async function getRemovalConfirmations({
       'c.reportIds',
       'c.requestedAt',
       'c.requestedById',
+      'c.joinedByIds',
       'rq.username as requestedByUsername',
       'c.decidedAt',
       'dc.username as decidedByUsername',
@@ -145,6 +146,11 @@ export async function confirmRemoval({
       ok: false,
       error: 'You requested this removal, so another moderator must confirm it.',
     };
+  if (row.joinedByIds.includes(userId))
+    return {
+      ok: false,
+      error: 'Your removal joined this request, so another moderator must confirm it.',
+    };
 
   // Void rather than run: removed meanwhile (running it again would notify the owner twice), or a
   // later appeal was approved, which this request never weighed.
@@ -175,6 +181,7 @@ export async function confirmRemoval({
     .where('id', '=', id)
     .where('status', '=', 'Pending')
     .where('requestedById', '<>', userId)
+    .where(sql<boolean>`NOT (${userId} = ANY("joinedByIds"))`)
     .where('appealId', '=', row.appealId)
     .returning('reportIds')
     .executeTakeFirst();

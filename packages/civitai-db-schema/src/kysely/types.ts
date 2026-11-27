@@ -3768,6 +3768,10 @@ export type ImageRemovalConfirmation = {
   source: string;
   reportIds: Generated<number[]>;
   /**
+   * Moderators whose removal joined this request while Pending; like the requester, they may not confirm it.
+   */
+  joinedByIds: Generated<number[]>;
+  /**
    * Pending | Confirmed | Declined | Void
    */
   status: Generated<string>;
