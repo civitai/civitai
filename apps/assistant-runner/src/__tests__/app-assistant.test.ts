@@ -924,6 +924,67 @@ describe('the runner’s prompt', () => {
   });
 });
 
+/** The chat's own rule on asking, as `defaultRules` writes it. */
+const ASK_CHOICE_SENTENCE =
+  'When the user should pick between directions, call ask_choice instead of listing options in text.';
+
+describe('asking the user on the runner', () => {
+  it('offers ask_choice: options shown end the reply, for the page to show as buttons', async () => {
+    fake.add('my-app');
+    const { tools } = await open();
+    expect(Object.keys(tools.tools)).toContain('ask_choice');
+    expect(
+      await call(tools.tools, 'ask_choice', {
+        question: 'Which layout?',
+        options: [{ label: 'Grid' }, { label: 'List', description: 'One per row' }],
+      })
+    ).toEqual({
+      shown: true,
+      awaitsUser: true,
+      note: 'The options are on screen. Stop and wait for the user to choose; do not list them again.',
+    });
+  });
+
+  it('refuses options the page could not show, without ending the reply', async () => {
+    fake.add('my-app');
+    const { tools } = await open();
+    expect(
+      await call(tools.tools, 'ask_choice', { question: 'Which?', options: [{ label: 'Only' }] })
+    ).toEqual({
+      error: 'options must be an array of 2 to 4 objects, each with a "label" string.',
+      note: 'Nothing was shown. Call ask_choice again with options as an array.',
+    });
+  });
+
+  it('keeps the chat’s ask_choice rule in the system prompt, as the page does', async () => {
+    fake.add('my-app');
+    const { tools } = await open();
+    const system = buildSystemPrompt({
+      now: new Date(),
+      tools: Object.keys(tools.tools),
+      host: { tools: tools.hostTools ?? [], instructs: true },
+      ...(tools.rules ? { rules: tools.rules } : {}),
+    });
+    expect(system).toContain(
+      `- Ask at most one short clarifying question, and only when the request is genuinely ambiguous. ${ASK_CHOICE_SENTENCE}`
+    );
+    expect(system).toContain(
+      'Ask the user only when their request is ambiguous or needs a decision from them, and then ask with ask_choice (2 to 4 options; they can still type their own answer), never with a question typed at the end of your reply.'
+    );
+  });
+
+  it('tells the runner to name the docs page before claiming a platform limit', async () => {
+    fake.add('my-app');
+    const { tools } = await open();
+    const rule =
+      '- Before you tell the user something cannot be done on Civitai, or offer a smaller version because of a platform limit, look it up with read_docs (https://developer.civitai.com/llms.txt lists the pages, or read the reference page for that area) and name the page that shows the limit. If no page shows it, do not claim the limit.';
+    expect(tools.rules?.('DEFAULTS')).toContain(rule);
+    expect(Object.keys(tools.tools)).toContain('read_docs');
+    // The page's assistant has no read_docs, so its rules do not carry it.
+    expect(assistantRules('browser')).not.toContain(rule);
+  });
+});
+
 describe('what the page is told of a call', () => {
   it('carries a command and a result’s first lines, never a file’s contents', async () => {
     fake.add('my-app');
