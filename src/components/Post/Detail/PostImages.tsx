@@ -189,9 +189,9 @@ export function PostImages({
                               gap={4}
                               className={clsx(
                                 'absolute z-10',
-                                // A song's rating sits on its cover, which the tile insets by 16px.
+                                // A song's rating sits on its cover, which the tile insets by 12px, 16px from `sm`.
                                 isSong
-                                  ? 'left-6 top-6'
+                                  ? 'left-4 top-4 sm:left-6 sm:top-6'
                                   : 'left-[max(0.5rem,var(--event-decoration-clear-left,0px))] top-2'
                               )}
                               style={imageMediaHatClearLeft(
@@ -217,6 +217,9 @@ export function PostImages({
                               {isSong ? (
                                 <SongContextMenu
                                   image={image}
+                                  // On the card's own background, not over media: the theme's
+                                  // dimmed text, without the over-image white and shadow.
+                                  className="[&_svg]:stroke-gray-7 [&_svg]:[filter:none] dark:[&_svg]:stroke-dark-1"
                                   leadingMenuItems={<SongMenuItems song={image} list={songList} />}
                                 />
                               ) : (
@@ -242,7 +245,7 @@ export function PostImages({
                             </div>
                             {isSong ? (
                               safe ? (
-                                <PostSongTile song={image} list={songList} coverIds={songIds} />
+                                <PostSongTile song={image} list={songList} songIds={songIds} />
                               ) : (
                                 <div className="h-32">
                                   <MediaHash {...image} />
@@ -302,7 +305,12 @@ export function PostImages({
                               <PostStickerOverlay imageId={image.id} />
                             )}
                           </div>
-                          <div className="flex items-center justify-between gap-2 p-2 empty:hidden">
+                          <div
+                            className={clsx(
+                              'flex items-center justify-between gap-2 p-2 empty:hidden',
+                              isSong && 'border-t border-gray-3 dark:border-dark-4'
+                            )}
+                          >
                             <Reactions
                               entityId={image.id}
                               entityType="image"

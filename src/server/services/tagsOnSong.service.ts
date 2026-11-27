@@ -101,7 +101,7 @@ export async function searchSongTags(prefix: string, limit = 8): Promise<SongTag
   return dbRead.$queryRaw<SongTag[]>`
     SELECT t.id, t.name FROM "Tag" t
     WHERE t.name >= ${lower}::citext AND t.name < ${upper}::citext
-      AND left(t.name::text, ${chars.length}) = ${lower}
+      AND left(t.name::text, ${chars.length}::int) = ${lower}
       AND ${await attachableTagSql('t')}
     ORDER BY t.name
     LIMIT ${limit}

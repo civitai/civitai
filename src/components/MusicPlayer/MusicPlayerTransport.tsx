@@ -8,13 +8,12 @@ import {
   IconRepeatOnce,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
-import type { CSSProperties, PointerEvent } from 'react';
-import { useMemo, useState } from 'react';
-import { resamplePeaks } from '~/components/Audio/resample-peaks';
+import type { PointerEvent } from 'react';
+import { useRef } from 'react';
 import { useAudioPeaks } from '~/components/Audio/useAudioPeaks';
-import { WaveformBars } from '~/components/Audio/WaveformBars';
 import type { MusicAccent } from '~/components/MusicPlayer/music-accent';
 import { seekMusicPlayer } from '~/components/MusicPlayer/MusicPlayerAudio';
+import { SONG_WAVEFORM_PEAKS, SongWaveform } from '~/components/MusicPlayer/SongWaveform';
 import { PlayerTooltip } from '~/components/MusicPlayer/MusicPlayerLayers';
 import { ACCENT_FILL, ACCENT_TEXT } from '~/components/MusicPlayer/music-accent';
 import { accentAt, dimmed } from '~/components/MusicPlayer/MusicPlayerParts';
@@ -23,17 +22,11 @@ import {
   usePlayerTimedComments,
 } from '~/components/MusicPlayer/MusicPlayerTimedComments';
 import { useEdgeUrl } from '~/client-utils/cf-images-utils';
-import { useResizeObserver } from '~/hooks/useResizeObserver';
 import type { MusicTrack } from '~/store/music-player.store';
 import { useMusicPlayerStore, useMusicPlayheadStore } from '~/store/music-player.store';
 import { formatPlaybackTime, playbackProgress, timeFromPointer } from '~/utils/audio-player';
 
 const SEEK_STEP_SECONDS = 5;
-// Decoded once at this resolution, then shown as one bar per WAVEFORM_BAR_PITCH px of the timeline,
-// so a wide screen gets more bars rather than the same bars spread thin.
-const WAVEFORM_PEAKS = 400;
-const WAVEFORM_BAR_PITCH = 6;
-const WAVEFORM_MIN_BARS = 40;
 // The waveform decode downloads the whole song: wait until it has played this long, so skipping
 // through songs costs nothing.
 const WAVEFORM_AFTER_LISTENED_SEC = 1;
@@ -156,12 +149,7 @@ export function Timeline({
 }) {
   const currentTime = useMusicPlayheadStore((s) => s.currentTime);
   const duration = useMusicPlayheadStore((s) => s.duration) || track.durationSec;
-  const [barCount, setBarCount] = useState(100);
-  const sliderRef = useResizeObserver<HTMLDivElement>((entry) =>
-    setBarCount(
-      Math.max(WAVEFORM_MIN_BARS, Math.floor(entry.contentRect.width / WAVEFORM_BAR_PITCH))
-    )
-  );
+  const sliderRef = useRef<HTMLDivElement>(null);
   const { url } = useEdgeUrl(track.url, { type: 'audio' });
   // A song started part-way in (restored after a page load, or started from a comment's or a
   // lyric's time) was chosen, not skipped through: draw it at once, even while paused.
@@ -170,8 +158,7 @@ export function Timeline({
       (s.playback?.listenedSec ?? 0) >= WAVEFORM_AFTER_LISTENED_SEC ||
       (s.playback?.startAtSec ?? 0) > 0
   );
-  const peaks = useAudioPeaks(url, WAVEFORM_PEAKS, sliderRef, { enabled: listened });
-  const bars = useMemo(() => (peaks ? resamplePeaks(peaks, barCount) : null), [peaks, barCount]);
+  const peaks = useAudioPeaks(url, SONG_WAVEFORM_PEAKS, sliderRef, { enabled: listened });
   const progress = playbackProgress(currentTime, duration);
   const played = playing ? ACCENT_FILL : accentAt(50);
   const timedComments = usePlayerTimedComments(track.id);
@@ -212,7 +199,6 @@ export function Timeline({
         aria-valuenow={Math.round(currentTime)}
         aria-valuetext={`${formatPlaybackTime(currentTime)} of ${formatPlaybackTime(duration)}`}
         className="relative flex h-12 w-full min-w-0 cursor-pointer touch-none items-center"
-        style={{ '--waveform-played': played } as CSSProperties}
         onPointerDown={(e) => {
           e.currentTarget.setPointerCapture(e.pointerId);
           seekFromPointer(e);
@@ -227,32 +213,13 @@ export function Timeline({
           e.preventDefault();
         }}
       >
-        {bars ? (
-          <>
-            <WaveformBars
-              peaks={bars}
-              progress={progress}
-              className="justify-between"
-              barClassName="min-w-px max-w-[3px] flex-1 rounded-[2px]"
-              unplayedClassName={unplayed}
-            />
-            <div
-              aria-hidden
-              className={clsx(
-                'absolute inset-y-0 w-0.5',
-                sheet ? 'bg-white' : 'bg-black dark:bg-white'
-              )}
-              style={{ left: `${progress * 100}%` }}
-            />
-          </>
-        ) : (
-          <div className={clsx('h-1 w-full overflow-hidden rounded-full', unplayed)}>
-            <div
-              className="h-full"
-              style={{ width: `${progress * 100}%`, backgroundColor: played }}
-            />
-          </div>
-        )}
+        <SongWaveform
+          peaks={peaks}
+          progress={progress}
+          played={played}
+          unplayedClassName={unplayed}
+          playheadClassName={sheet ? 'bg-white' : 'bg-black dark:bg-white'}
+        />
       </div>
     </div>
   );

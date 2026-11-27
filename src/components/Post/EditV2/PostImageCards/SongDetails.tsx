@@ -1,11 +1,10 @@
 import { Textarea, UnstyledButton } from '@mantine/core';
-import { IconCircleCheck, IconLock, IconPencil } from '@tabler/icons-react';
+import { IconCircleCheck, IconHeart, IconLock, IconPencil } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useRef, useState } from 'react';
 import { usePendingSave, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
 import { POST_TITLE_MAX_LENGTH } from '~/server/common/constants';
 import { audioMetadataSchema } from '~/server/schema/media.schema';
-import { SongGenreTags } from '~/components/Post/EditV2/PostImageCards/SongGenreTags';
 import type { PostEditImageDetail } from '~/server/services/post.service';
 import { formatPlaybackTime } from '~/utils/audio-player';
 import { useDebouncer } from '~/utils/debouncer';
@@ -16,9 +15,9 @@ import { withMetadata } from '~/components/Post/EditV2/PostImageCards/song-metad
 
 export const songDimmed = 'text-gray-6 dark:text-dark-2';
 
-/** A song's title, where it was made, and its lyrics. */
+/** A song's title, where it was made, its reactions once published, and its lyrics. */
 export function SongDetails({ image }: { image: PostEditImageDetail }) {
-  const { id, metadata, meta, resourceHelper, lyrics } = image;
+  const { id, metadata, meta, resourceHelper, lyrics, reactionCount } = image;
   const audio = audioMetadataSchema.partial().safeParse(metadata).data;
 
   const detail = [
@@ -39,9 +38,18 @@ export function SongDetails({ image }: { image: PostEditImageDetail }) {
             Made on Civitai
           </span>
           {detail && <span className={clsx('text-xs', songDimmed)}>{detail}</span>}
+          {/* The song's own reactions: on its cover they read as the cover's, which has none. */}
+          {reactionCount != null && (
+            <span
+              className={clsx('flex items-center gap-1 text-xs', songDimmed)}
+              aria-label={`${reactionCount} reactions`}
+            >
+              <IconHeart size={12} aria-hidden />
+              {reactionCount}
+            </span>
+          )}
         </div>
       </div>
-      <SongGenreTags image={image} />
       {!!lyrics?.length && <SongLyrics lines={lyrics} />}
     </div>
   );
