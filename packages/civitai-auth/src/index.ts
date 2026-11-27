@@ -43,6 +43,7 @@ export {
   spokeCallback,
   spokeAuthorizeUrl,
   spokeReauthResponse,
+  spokeUnavailableResponse,
   spokeSessionCookies,
   isNavigationRequest,
   withSetCookies,

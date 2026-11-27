@@ -375,9 +375,9 @@ async function sessionUser(session: { userId: number; web: WebSession }) {
   const web = { ...session.web };
   if (await isRevoked(web)) return null;
   // Every sheet user is a moderator. Unconfirmed throws, so the route answers 503 and keeps the sheet cookie.
-  const confirmed = await isRevoked.confirmElevated(web);
-  if (confirmed === 'revoked') return null;
-  if (confirmed === 'unavailable') throw new Error('sheet session revocation read unavailable');
+  if ((await isRevoked.confirmElevated(web)) === 'unavailable') {
+    throw new Error('sheet session revocation read unavailable');
+  }
   const user = await (sessions ??= createSessionClient()).getSessionUserById(session.userId);
   return admitsSheetUser(user) && user.id === session.userId ? user : null;
 }

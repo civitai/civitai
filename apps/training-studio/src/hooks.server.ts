@@ -3,6 +3,7 @@ import { dev } from '$app/environment';
 import {
   isNavigationRequest,
   spokeReauthResponse,
+  spokeUnavailableResponse,
   withSetCookies,
   type SessionUser,
 } from '@civitai/auth';
@@ -76,6 +77,7 @@ export const handle: Handle = async ({ event, resolve }) => {
     navigation: isNavigationRequest(event.request),
   });
 
+  if (result.status === 'unavailable') return spokeUnavailableResponse();
   if (result.status === 'login') {
     return new Response(null, { status: 302, headers: { location: result.redirect } });
   }

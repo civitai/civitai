@@ -101,17 +101,20 @@ function flakyStore(fail: 'hang' | 'error', failing: number) {
 // refused (the session is kept), an ordinary one is allowed; one retry after a fast error, none after a timeout.
 describe('a failed revocation read on an elevated session', () => {
   const guardOver = (redis: SessionRegistryRedis) =>
-    createSpokeGuard({ isRevoked: createRevocationCheck({ redis: () => redis, timeoutMs: 20 }) });
+    createSpokeGuard({
+      isRevoked: createRevocationCheck({
+        redis: () => redis,
+        timeoutMs: 20,
+        retryDelayMs: () => 0,
+      }),
+    });
   const check = async (guard: ReturnType<typeof createSpokeGuard>, claims = {}) =>
     guard.check(`civ-token=${await mint(claims)}`, 'http://localhost:3100/x');
 
   it('refuses a moderator request whose read timed out, without a retry', async () => {
     cache.user = { id: 7, username: 'seven', isModerator: true };
     const store = flakyStore('hang', Infinity);
-    expect(await check(guardOver(store.redis))).toMatchObject({
-      status: 'login',
-      reason: 'unavailable',
-    });
+    expect(await check(guardOver(store.redis))).toEqual({ status: 'unavailable' });
     expect(store.rounds()).toBe(1);
   });
 
@@ -123,10 +126,7 @@ describe('a failed revocation read on an elevated session', () => {
   it('refuses an impersonation request whose read timed out', async () => {
     const store = flakyStore('hang', Infinity);
     const claims = { impersonatedBy: 99, impExp: Date.now() + 60_000 };
-    expect(await check(guardOver(store.redis), claims)).toMatchObject({
-      status: 'login',
-      reason: 'unavailable',
-    });
+    expect(await check(guardOver(store.redis), claims)).toEqual({ status: 'unavailable' });
   });
 
   it('retries a fast error once and allows the moderator when the retry answers', async () => {
@@ -139,7 +139,13 @@ describe('a failed revocation read on an elevated session', () => {
   it('refuses the moderator when the retry fails too', async () => {
     cache.user = { id: 7, username: 'seven', isModerator: true };
     const store = flakyStore('error', Infinity);
-    expect(await check(guardOver(store.redis))).toMatchObject({ reason: 'unavailable' });
+    expect(await check(guardOver(store.redis))).toEqual({ status: 'unavailable' });
+    expect(store.rounds()).toBe(2);
+  });
+
+  it('allows an ordinary request after two fast errors', async () => {
+    const store = flakyStore('error', Infinity);
+    expect(await check(guardOver(store.redis))).toMatchObject({ status: 'ok', user: { id: 7 } });
     expect(store.rounds()).toBe(2);
   });
 
@@ -147,7 +153,7 @@ describe('a failed revocation read on an elevated session', () => {
     cache.user = { id: 7, username: 'seven', isModerator: true };
     const store = flakyStore('hang', 1);
     const guard = guardOver(store.redis);
-    expect(await check(guard)).toMatchObject({ reason: 'unavailable' });
+    expect(await check(guard)).toEqual({ status: 'unavailable' });
     expect(await check(guard)).toMatchObject({ status: 'ok', user: { id: 7 } });
   });
 });

@@ -3,7 +3,11 @@ package auth
 import (
 	"context"
 	"errors"
+	"math/rand/v2"
+	"net"
+	"regexp"
 	"strconv"
+	"syscall"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -44,6 +48,8 @@ type Revocation struct {
 	Markers *MarkerCache
 	// OnDegraded is called when the read failed, with the verdict then given from the markers.
 	OnDegraded func(err error, verdict string)
+	// RetryDelay is the backoff before the one retry after a fast error (default 200-500 ms, random).
+	RetryDelay func() time.Duration
 }
 
 // IsRevoked reports whether the session has been signed out, banned or cut.
@@ -52,11 +58,45 @@ func (r *Revocation) IsRevoked(ctx context.Context, c *Claims) bool {
 	return revoked
 }
 
-// Check is IsRevoked that also reports whether the read failed, so the verdict came from the markers.
+// Check is IsRevoked that also reports whether the read failed, so the verdict came from the markers. A
+// read that fails fast on a connection-level error is retried once after RetryDelay, as the package does;
+// one that hit the deadline is not.
 func (r *Revocation) Check(ctx context.Context, c *Claims) (revoked, readFailed bool) {
 	if c.Jti == "" {
 		return false, false
 	}
+	k := revocationKeysOf(c)
+	cmds, err := r.read(ctx, c, k)
+	if err != nil && isFastError(err) {
+		delay := defaultRetryDelay()
+		if r.RetryDelay != nil {
+			delay = r.RetryDelay()
+		}
+		t := time.NewTimer(delay)
+		select {
+		case <-t.C:
+			cmds, err = r.read(ctx, c, k)
+		case <-ctx.Done():
+			t.Stop()
+		}
+	}
+	if err != nil {
+		revoked := r.Markers != nil && r.decideFromMarkers(c, k)
+		verdict := VerdictAllowUnknown
+		if revoked {
+			verdict = VerdictDenyCached
+		}
+		if r.OnDegraded != nil {
+			r.OnDegraded(err, verdict)
+		}
+		return revoked, true
+	}
+	return Decide(c, val(cmds[0]), val(cmds[1]), val(cmds[2]), val(cmds[3]), val(cmds[4]), val(cmds[5])), false
+}
+
+// read is one pipelined round trip, bounded by Timeout, recording what came back in Markers. A non-nil error
+// means the read failed.
+func (r *Revocation) read(ctx context.Context, c *Claims, k revocationKeys) ([6]*redis.StringCmd, error) {
 	timeout := r.Timeout
 	if timeout == 0 {
 		timeout = time.Second // DEFAULT_REVOCATION_READ_TIMEOUT_MS
@@ -64,7 +104,6 @@ func (r *Revocation) Check(ctx context.Context, c *Claims) (revoked, readFailed 
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	k := revocationKeysOf(c)
 	var (
 		state, familyState, all, userCut, impUserCut, impCut *redis.StringCmd
 	)
@@ -86,7 +125,8 @@ func (r *Revocation) Check(ctx context.Context, c *Claims) (revoked, readFailed 
 	// Pipelined returns the FIRST command error, and an absent key (redis.Nil) is one, so a command that
 	// failed after one that found nothing is only visible on the command itself.
 	failed := err != nil && !errors.Is(err, redis.Nil)
-	for _, cmd := range []*redis.StringCmd{state, familyState, all, userCut, impUserCut, impCut} {
+	cmds := [6]*redis.StringCmd{state, familyState, all, userCut, impUserCut, impCut}
+	for _, cmd := range cmds {
 		if cmd == nil {
 			continue
 		}
@@ -112,18 +152,29 @@ func (r *Revocation) Check(ctx context.Context, c *Claims) (revoked, readFailed 
 			m.observeKey(k.impCut, obs(impCut))
 		}
 	}
-	if failed {
-		revoked := r.Markers != nil && r.decideFromMarkers(c, k)
-		verdict := VerdictAllowUnknown
-		if revoked {
-			verdict = VerdictDenyCached
-		}
-		if r.OnDegraded != nil {
-			r.OnDegraded(err, verdict)
-		}
-		return revoked, true
+	if !failed {
+		return cmds, nil
 	}
-	return Decide(c, val(state), val(familyState), val(all), val(userCut), val(impUserCut), val(impCut)), false
+	return cmds, err
+}
+
+// fastErrorText matches the connection-level failures a second attempt can get past (FAST_ERROR_TEXT in
+// packages/civitai-auth/src/revocation-check.ts).
+var fastErrorText = regexp.MustCompile(`(?i)READONLY|NOTMASTER|NOT-MASTER|ECONNRESET|ECONNREFUSED|EPIPE|connection (?:reset|refused|(?:is )?closed)|client is closed|socket closed|broken pipe|use of closed network connection`)
+
+func isFastError(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return false
+	}
+	if errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.EPIPE) ||
+		errors.Is(err, net.ErrClosed) || errors.Is(err, redis.ErrClosed) {
+		return true
+	}
+	return fastErrorText.MatchString(err.Error())
+}
+
+func defaultRetryDelay() time.Duration {
+	return 200*time.Millisecond + time.Duration(rand.Int64N(300))*time.Millisecond
 }
 
 // revocationKeys are the per-claims keys of the read ("" = not read).

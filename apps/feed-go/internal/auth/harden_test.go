@@ -893,3 +893,63 @@ func TestResolveReportsTheCookieSlot(t *testing.T) {
 		t.Fatalf("slots %v, want %v", slots, want)
 	}
 }
+
+// Mod Lead ruling 2026-11-27, as createRevocationCheck: one retry after a fast connection-level error,
+// none after the deadline or any other error.
+func TestIsRevokedRetriesOnceAfterAFastError(t *testing.T) {
+	reset := errors.New("read tcp 10.0.0.1:6379: connection reset by peer")
+	failFirst := func(r *testkit.Redis, n int) {
+		seen := 0
+		r.KeyErr = func(key string) error {
+			if key != "session:token-state" {
+				return nil
+			}
+			seen++
+			if seen <= n {
+				return reset
+			}
+			return nil
+		}
+	}
+	noDelay := func() time.Duration { return 0 }
+
+	r := testkit.NewRedis()
+	r.SetHash("session:token-state", map[string]string{"tok-1": "invalid"})
+	failFirst(r, 1)
+	var d degradedRecorder
+	rev := &Revocation{Redis: r, Markers: NewMarkerCache(0), OnDegraded: d.report, RetryDelay: noDelay}
+	if revoked, failed := rev.Check(context.Background(), revocationClaims()); !revoked || failed {
+		t.Fatalf("reset then answer: revoked=%v failed=%v, want the store's verdict", revoked, failed)
+	}
+	if r.Calls != 2 || len(d.verdicts) != 0 {
+		t.Fatalf("reset then answer: %d round trips, verdicts %v; want 2 and none", r.Calls, d.verdicts)
+	}
+
+	r = testkit.NewRedis()
+	failFirst(r, 2)
+	d = degradedRecorder{}
+	rev = &Revocation{Redis: r, Markers: NewMarkerCache(0), OnDegraded: d.report, RetryDelay: noDelay}
+	if revoked, failed := rev.Check(context.Background(), revocationClaims()); revoked || !failed {
+		t.Fatalf("two resets: revoked=%v failed=%v, want allowed from the markers", revoked, failed)
+	}
+	if r.Calls != 2 {
+		t.Fatalf("two resets: %d round trips, want 2", r.Calls)
+	}
+	d.only(t, "two resets", VerdictAllowUnknown, "connection reset")
+
+	for _, c := range []struct {
+		name    string
+		fail    func(r *testkit.Redis)
+		timeout time.Duration
+	}{
+		{"deadline", func(r *testkit.Redis) { r.Delay = time.Second }, 20 * time.Millisecond},
+		{"other error", func(r *testkit.Redis) { r.Err = testkit.ErrDown }, 0},
+	} {
+		r := testkit.NewRedis()
+		c.fail(r)
+		rev := &Revocation{Redis: r, Timeout: c.timeout, Markers: NewMarkerCache(0), RetryDelay: noDelay}
+		if _, failed := rev.Check(context.Background(), revocationClaims()); !failed || r.Calls != 1 {
+			t.Fatalf("%s: failed=%v after %d round trips, want a failed read and no retry", c.name, failed, r.Calls)
+		}
+	}
+}

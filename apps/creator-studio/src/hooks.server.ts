@@ -1,6 +1,11 @@
 import type { Handle, HandleServerError, ServerInit } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
-import { isNavigationRequest, spokeReauthResponse, withSetCookies } from '@civitai/auth';
+import {
+  isNavigationRequest,
+  spokeReauthResponse,
+  spokeUnavailableResponse,
+  withSetCookies,
+} from '@civitai/auth';
 import { registerEnumArrayTypeParsers } from '@civitai/db/kysely';
 import { guard } from '$lib/server/auth';
 import { dbPool } from '$lib/server/db';
@@ -52,6 +57,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 
   if (result.status !== 'ok') {
     if (OPTIONAL_AUTH_PATHS.has(pathname)) return resolve(event, withVersion);
+    if (result.status === 'unavailable') return spokeUnavailableResponse();
     if (result.status === 'login') {
       return new Response(null, { status: 302, headers: { location: result.redirect } });
     }

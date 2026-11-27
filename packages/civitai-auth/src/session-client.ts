@@ -19,13 +19,14 @@ import type { ElevatedRevocationVerdict } from './revocation-check';
 
 /**
  * Why a token did not resolve to a user. `unavailable`: the hub identity fetch failed (timeout, network,
- * non-ok other than 401/404, unparseable body), or an elevated session's revocation read failed — the session
- * may be fine. `invalid`: everything else,
+ * non-ok other than 401/404, unparseable body) — the session may be fine. `unconfirmed`: a moderator or
+ * impersonation session whose revocation read failed — the session is kept, this request is refused.
+ * `invalid`: everything else,
  * including a token the verifier rejects because the hub's signing keys could not be fetched.
  */
 export type SessionResolution =
   | { user: SessionUser }
-  | { user: null; reason: 'invalid' | 'unavailable' };
+  | { user: null; reason: 'invalid' | 'unavailable' | 'unconfirmed' };
 
 export interface SessionClient {
   /**
@@ -69,7 +70,7 @@ export interface SessionClientConfig {
   isRevoked?: (claims: SessionClaims) => Promise<boolean> | boolean;
   /**
    * Asked once the user is resolved, for a moderator or an impersonation token only: `unavailable` resolves the
-   * request as `unavailable` (the session is kept), `revoked` as `invalid`. Wire `isRevoked.confirmElevated`
+   * request as `unconfirmed` (the session is kept). Wire `isRevoked.confirmElevated`
    * from `createRevocationCheck` alongside `isRevoked`.
    */
   confirmElevatedRevocation?: (claims: SessionClaims) => Promise<ElevatedRevocationVerdict>;
@@ -143,9 +144,9 @@ export function createSessionClient(config: SessionClientConfig = {}): SessionCl
   }
 
   const INVALID: SessionResolution = Object.freeze({ user: null, reason: 'invalid' } as const);
-  const UNAVAILABLE: SessionResolution = Object.freeze({
+  const UNCONFIRMED: SessionResolution = Object.freeze({
     user: null,
-    reason: 'unavailable',
+    reason: 'unconfirmed',
   } as const);
 
   async function resolveSessionUser(token: string): Promise<SessionResolution> {
@@ -203,10 +204,7 @@ export function createSessionClient(config: SessionClientConfig = {}): SessionCl
     if (refusesMemorializedSession(res.user, claims)) return INVALID;
     const elevated = claims.impersonatedBy != null || res.user.isModerator === true;
     if (!elevated || !config.confirmElevatedRevocation) return res;
-    const verdict = await config.confirmElevatedRevocation(claims);
-    if (verdict === 'revoked') return INVALID;
-    if (verdict === 'unavailable') return UNAVAILABLE;
-    return res;
+    return (await config.confirmElevatedRevocation(claims)) === 'unavailable' ? UNCONFIRMED : res;
   }
 
   async function getSessionUser(token: string): Promise<SessionUser | null> {

@@ -14,9 +14,13 @@ import type { SessionClaims } from './types';
 // not the policy). `markerCache: false` (each app maps its SESSION_REVOCATION_CACHE=off|0|false to it) turns
 // the record off and restores the plain fail-open.
 //
-// Elevated sessions (a moderator, or an impersonation token) are the exception: once the user is resolved the
-// session client asks `confirmElevated`, which refuses the request when that session's last read failed. The
-// session itself is untouched, so the next request after the store recovers is answered normally.
+// A read that fails fast on a connection-level error (reset, refused, closed, or a replica answering
+// READONLY / NOT-MASTER during a failover) is retried once after a short backoff; one that hit the deadline
+// or the breaker is not, since a retry would wait again.
+//
+// Elevated sessions (a moderator, or an impersonation token) are the exception to the fallback: once the user
+// is resolved the session client asks `confirmElevated`, which refuses the request when that session's read
+// failed. The session itself is untouched, so the next request after the store recovers is answered normally.
 
 /**
  * The record's size bound, least recently used evicted first. There is no time-based expiry: a held marker
@@ -87,6 +91,8 @@ export interface RevocationCheckConfig {
   ) => void;
   /** Called after every check with its outcome and wall time in seconds. Observability only. */
   onOutcome?: (outcome: RevocationOutcome, seconds: number) => void;
+  /** Backoff before the one retry after a fast error, in ms (default 200-500, random). */
+  retryDelayMs?: () => number;
 }
 
 class RevocationReadTimeout extends Error {
@@ -112,6 +118,21 @@ const reasonOf = (err: unknown): RevocationFailureReason => {
   return reason === 'timeout' || reason === 'breaker-open' ? reason : 'error';
 };
 
+// Connection-level failures that a second attempt on a fresh connection or the new primary can get past.
+const FAST_ERROR_CODES = new Set(['ECONNRESET', 'ECONNREFUSED', 'EPIPE']);
+const FAST_ERROR_TEXT =
+  /READONLY|NOTMASTER|NOT-MASTER|ECONNRESET|ECONNREFUSED|EPIPE|connection (?:reset|refused|(?:is )?closed)|client is closed|socket closed/i;
+
+function isFastError(err: unknown): boolean {
+  if (reasonOf(err) !== 'error') return false;
+  const e = err as { code?: unknown; message?: unknown } | null;
+  if (typeof e?.code === 'string' && FAST_ERROR_CODES.has(e.code)) return true;
+  return typeof e?.message === 'string' && FAST_ERROR_TEXT.test(e.message);
+}
+
+const defaultRetryDelayMs = () => 200 + Math.floor(Math.random() * 300);
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
 const quietly = (fn: () => void) => {
   try {
     fn();
@@ -126,10 +147,10 @@ export interface RevocationCheckCallOptions {
 }
 
 /**
- * `confirmElevated`'s answer: `ok` = the session's last read answered (or it has none on record); `revoked` = the
- * retry found the session revoked; `unavailable` = the read failed and could not be confirmed.
+ * `confirmElevated`'s answer: `ok` = the session's read answered (or it has none on record); `unavailable` = the
+ * read failed, so the session is unconfirmed.
  */
-export type ElevatedRevocationVerdict = 'ok' | 'revoked' | 'unavailable';
+export type ElevatedRevocationVerdict = 'ok' | 'unavailable';
 
 export type RevocationCheck = ((
   claims: SessionClaims,
@@ -137,8 +158,7 @@ export type RevocationCheck = ((
 ) => Promise<boolean>) & {
   /**
    * For a session already checked on this request that turned out to be elevated: pass the same claims object
-   * the check was given. A read that ended in a fast error is retried once; one that hit the deadline or the
-   * open breaker is not, since a retry would wait again.
+   * the check was given.
    */
   confirmElevated: (claims: SessionClaims) => Promise<ElevatedRevocationVerdict>;
 };
@@ -166,6 +186,7 @@ export function createRevocationCheck(config: RevocationCheckConfig): Revocation
     return t ?? revocationReadTimeoutMs();
   };
   const bound = config.bound ?? raceDeadline;
+  const retryDelayMs = config.retryDelayMs ?? defaultRetryDelayMs;
   // Why the read for these claims failed. Each verifyToken call returns its own claims object, so an entry
   // covers that one verification: another request's read of the same token never clears it.
   const failedReads = new WeakMap<SessionClaims, RevocationFailureReason>();
@@ -173,8 +194,16 @@ export function createRevocationCheck(config: RevocationCheckConfig): Revocation
   const check = async (claims: SessionClaims, opts?: RevocationCheckCallOptions) => {
     const started = performance.now();
     const seconds = () => (performance.now() - started) / 1000;
+    const read = () => bound(registryOf().isRevoked(claims), opts?.timeoutMs ?? timeoutOf());
     try {
-      const revoked = await bound(registryOf().isRevoked(claims), opts?.timeoutMs ?? timeoutOf());
+      let revoked: boolean;
+      try {
+        revoked = await read();
+      } catch (err) {
+        if (!isFastError(err)) throw err;
+        await sleep(retryDelayMs());
+        revoked = await read();
+      }
       quietly(() => config.onOutcome?.('hit', seconds()));
       failedReads.delete(claims);
       return revoked;
@@ -191,14 +220,8 @@ export function createRevocationCheck(config: RevocationCheckConfig): Revocation
     }
   };
 
-  const confirmElevated = async (claims: SessionClaims): Promise<ElevatedRevocationVerdict> => {
-    const reason = failedReads.get(claims);
-    if (!reason) return 'ok';
-    if (reason !== 'error') return 'unavailable';
-    if (await check(claims)) return 'revoked';
-    // A failed retry is recorded again; only an answered read clears the record.
-    return failedReads.has(claims) ? 'unavailable' : 'ok';
-  };
+  const confirmElevated = async (claims: SessionClaims): Promise<ElevatedRevocationVerdict> =>
+    failedReads.has(claims) ? 'unavailable' : 'ok';
 
   return Object.assign(check, { confirmElevated });
 }

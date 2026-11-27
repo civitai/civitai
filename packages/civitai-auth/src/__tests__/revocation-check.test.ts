@@ -221,55 +221,84 @@ describe('createRevocationCheck deadline and reporting', () => {
   });
 });
 
-describe('createRevocationCheck confirmElevated', () => {
+// Mod Lead ruling 2026-11-27: one retry after a fast connection-level error, none after the deadline;
+// an elevated session whose read still failed is unconfirmed.
+describe('createRevocationCheck retry and confirmElevated', () => {
   const claimsOf = () => ({ jti: 'j1', sub: '7', signedAt: Date.now() } as never);
   const revokedStore = store({ [SESSION_REGISTRY_KEYS.tokenState]: { j1: 'invalid' } });
-  // `bound` answers each read from `plan` in turn: a reason rejects with it, `read` lets the read through.
-  // markerCache off where the store holds a revocation: the rejected read still runs and would record it.
-  const planned = (plan: Array<'read' | 'error' | 'timeout' | 'breaker-open'>) => {
+  type Step = 'read' | 'reset' | 'readonly' | 'other-error' | 'timeout' | 'breaker-open';
+  // `bound` answers each read from `plan` in turn: `read` lets it through, anything else rejects.
+  const planned = (plan: Step[]) => {
     let calls = 0;
     const bound = (read: Promise<boolean>) => {
       const step = plan[calls++] ?? 'read';
       if (step === 'read') return read;
       read.catch(() => {});
+      if (step === 'reset') return Promise.reject(new Error('Socket closed unexpectedly'));
+      if (step === 'readonly')
+        return Promise.reject(new Error("READONLY You can't write against a read only replica."));
+      if (step === 'other-error') return Promise.reject(new Error('WRONGTYPE Operation'));
       return Promise.reject(Object.assign(new Error(step), { reason: step }));
     };
     return { bound, calls: () => calls };
   };
-
-  it("keeps a failed read unconfirmed when another request's read of the same token answers", async () => {
-    const p = planned(['error', 'read', 'error']);
+  // markerCache off where the store holds a revocation: a rejected read still runs and would record it.
+  const checkOver = (redis: SessionRegistryRedis, plan: Step[], onError = vi.fn()) => {
+    const p = planned(plan);
     const check = createRevocationCheck({
-      redis: () => revokedStore,
+      redis: () => redis,
       bound: p.bound,
       markerCache: false,
+      retryDelayMs: () => 0,
+      onError,
     });
+    return { check, calls: p.calls, onError };
+  };
+
+  it.each<Step>(['reset', 'readonly'])(
+    'retries a %s once and answers from the store, with no degraded verdict',
+    async (first) => {
+      const { check, calls, onError } = checkOver(revokedStore, [first, 'read']);
+      const a = claimsOf();
+      expect(await check(a)).toBe(true);
+      expect(calls()).toBe(2);
+      expect(onError).not.toHaveBeenCalled();
+      expect(await check.confirmElevated(a)).toBe('ok');
+    }
+  );
+
+  it.each<Step>(['timeout', 'breaker-open', 'other-error'])(
+    'does not retry after a %s',
+    async (first) => {
+      const { check, calls, onError } = checkOver(store(), [first, 'read']);
+      const a = claimsOf();
+      expect(await check(a)).toBe(false);
+      expect(calls()).toBe(1);
+      expect(onError).toHaveBeenCalledWith(
+        expect.any(Error),
+        expect.any(String),
+        a,
+        'allow_unknown'
+      );
+      expect(await check.confirmElevated(a)).toBe('unavailable');
+    }
+  );
+
+  it('allows unknown after two fast errors, and leaves the session unconfirmed', async () => {
+    const { check, calls, onError } = checkOver(store(), ['reset', 'reset']);
+    const a = claimsOf();
+    expect(await check(a)).toBe(false);
+    expect(calls()).toBe(2);
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(await check.confirmElevated(a)).toBe('unavailable');
+  });
+
+  it("keeps a failed read unconfirmed when another request's read of the same token answers", async () => {
+    const { check } = checkOver(revokedStore, ['reset', 'reset', 'read']);
     const a = claimsOf();
     const b = claimsOf();
     expect(await check(a)).toBe(false);
     expect(await check(b)).toBe(true);
     expect(await check.confirmElevated(a)).toBe('unavailable');
-  });
-
-  it('does not retry after an open breaker', async () => {
-    const p = planned(['breaker-open']);
-    const check = createRevocationCheck({ redis: () => store(), bound: p.bound });
-    const a = claimsOf();
-    await check(a);
-    expect(await check.confirmElevated(a)).toBe('unavailable');
-    expect(p.calls()).toBe(1);
-  });
-
-  it('answers revoked when the retry after a fast error finds the session revoked', async () => {
-    const p = planned(['error']);
-    const check = createRevocationCheck({
-      redis: () => revokedStore,
-      bound: p.bound,
-      markerCache: false,
-    });
-    const a = claimsOf();
-    expect(await check(a)).toBe(false);
-    expect(await check.confirmElevated(a)).toBe('revoked');
-    expect(p.calls()).toBe(2);
   });
 });
