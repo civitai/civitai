@@ -18,7 +18,10 @@ export type ShadowDiffKind =
   | 'extra_in_candidate'
   /** Same keys and values at the path, in a different order. */
   | 'key_order'
-  /** Structurally equal JSON whose texts still differ (whitespace, number or string escaping). */
+  /**
+   * Structurally equal JSON whose texts still differ (whitespace, number or string escaping). `-0`
+   * against `0` is a `value`: the client decodes the two apart.
+   */
   | 'encoding'
   /** One of the texts is not JSON. */
   | 'unparseable'
@@ -401,6 +404,7 @@ export function firstDiffPath(
 
 /** Where a devalue answer's value sits in the tRPC envelope. */
 const DEVALUE_DATA_PATH = '$.result.data';
+const DEVALUE_ENVELOPE_PREFIX = '{"result":{"data":"';
 
 /**
  * The devalue string of a tRPC answer, when the text is exactly `{"result":{"data":"<string>"}}`
@@ -408,7 +412,9 @@ const DEVALUE_DATA_PATH = '$.result.data';
  * `undefined`. A superjson answer's `data` is an object, so it is never one.
  */
 function devalueData(text: string, budget: ShadowDiffBudget): string | undefined {
-  if (text.length > budget.maxTextLength) return undefined;
+  // The writers' envelope is JSON.stringify's: a superjson answer is turned away without a parse.
+  if (text.length > budget.maxTextLength || !text.startsWith(DEVALUE_ENVELOPE_PREFIX))
+    return undefined;
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);

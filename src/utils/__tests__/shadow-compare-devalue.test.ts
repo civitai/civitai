@@ -123,6 +123,13 @@ describe('devalueAnswerDiff', () => {
       )
     ).toBeUndefined();
     expect(devalueAnswerDiff('<html>Bad gateway</html>', answer(SHARED_USER))).toBeUndefined();
+    // The same envelope written with whitespace is not the writers' bytes: compared as text.
+    expect(
+      devalueAnswerDiff(
+        `{ "result": { "data": ${JSON.stringify(SHARED_USER)} } }`,
+        answer(SHARED_USER)
+      )
+    ).toBeUndefined();
   });
 
   it('a data string devalue cannot decode: kind unparseable at $.result.data', () => {
