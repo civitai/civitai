@@ -9,6 +9,7 @@
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import LinkTabs from '$lib/components/LinkTabs.svelte';
   import { optimisticEnhancer } from '$lib/form-action';
+  import { confirmRemovalRefusal } from '$lib/removal-confirmation';
   import { LINK_CLASS, dateTime } from '$lib/format';
   import { imageLookupUrl, userLookupUrl } from '$lib/entity-url';
   import { VIOLATION_LABELS } from '$lib/violations';
@@ -196,13 +197,8 @@
                   type="submit"
                   size="xs"
                   variant="destructive"
-                  disabled={row.requestedById === data.user?.id ||
-                    (data.user != null && row.joinedByIds.includes(data.user.id))}
-                  title={row.requestedById === data.user?.id
-                    ? 'You requested this removal; another moderator must confirm it.'
-                    : data.user != null && row.joinedByIds.includes(data.user.id)
-                      ? 'Your removal joined this request; another moderator must confirm it.'
-                      : undefined}
+                  disabled={confirmRemovalRefusal(row, data.user?.id) != null}
+                  title={confirmRemovalRefusal(row, data.user?.id) ?? undefined}
                 >
                   Confirm removal
                 </Button>

@@ -1,5 +1,5 @@
 -- Moderators whose removal joined a pending held removal. They may not confirm it, as the requester
--- may not, so a held removal always needs a moderator who had no part in it.
+-- may not.
 --
 -- HAND-APPLIED. Apply BEFORE the release that writes it: the hold's insert sets this column on a join,
 -- and confirming reads it. Code already deployed ignores the column; the default covers its inserts.

@@ -9,6 +9,7 @@ import {
   OPEN_REPORT_STATUSES,
 } from '@civitai/db-queries/image-removal-confirmation';
 import { restrictedImageIds, withheldRow } from './retracted-media';
+import { confirmRemovalRefusal } from '$lib/removal-confirmation';
 
 // Removals held by `holdRemovals` because they repeat the reason an approved appeal overturned. A
 // moderator holding `image.removal.confirm` decides each one on /images/re-removals. Confirming runs
@@ -141,16 +142,8 @@ export async function confirmRemoval({
     .where('id', '=', id)
     .executeTakeFirst();
   if (!row || row.status !== 'Pending') return { ok: false, error: NOT_PENDING };
-  if (row.requestedById === userId)
-    return {
-      ok: false,
-      error: 'You requested this removal, so another moderator must confirm it.',
-    };
-  if (row.joinedByIds.includes(userId))
-    return {
-      ok: false,
-      error: 'Your removal joined this request, so another moderator must confirm it.',
-    };
+  const refusal = confirmRemovalRefusal(row, userId);
+  if (refusal) return { ok: false, error: refusal };
 
   // Void rather than run: removed meanwhile (running it again would notify the owner twice), or a
   // later appeal was approved, which this request never weighed.
