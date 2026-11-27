@@ -43,6 +43,7 @@ vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
 
 import handler from '~/server/api-routes/mod/restore-images';
 import flagHandler from '~/server/api-routes/mod/update-image-flag';
+import { WITHHELD_LOOSENING_REFUSED } from '~/server/services/moderator-withheld.service';
 
 const row = (id: number, blockedFor: string | null, needsReview: string | null = null) => ({
   id,
@@ -170,6 +171,16 @@ describe('/api/mod/restore-images', () => {
     });
   });
 
+  it("skips an image the service's own write refused, and passes the grant down", async () => {
+    found([row(PLAIN, 'moderated')]);
+    h.unblock.mockResolvedValueOnce({ restored: [], kept: [] });
+
+    const body = await restore([PLAIN], { csamReview: false });
+
+    expect(h.unblock.mock.calls[0][0]).toMatchObject({ ids: [PLAIN], csamReview: false });
+    expect(body).toEqual({ images: 0, restored: [], skipped: [PLAIN] });
+  });
+
   it('restores an image nothing withholds without the grant', async () => {
     found([row(PLAIN, 'moderated')]);
 
@@ -181,13 +192,20 @@ describe('/api/mod/restore-images', () => {
 
 describe('/api/mod/update-image-flag', () => {
   const setFlag = async (query: Record<string, string>) => {
-    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() };
+    const res = {
+      status: vi.fn().mockReturnThis(),
+      json: vi.fn(),
+      setHeader: vi.fn(),
+      headersSent: false,
+    };
     await (flagHandler as unknown as (req: NextApiRequest, res: NextApiResponse) => Promise<void>)(
       { method: 'GET', query: { flag: 'minor', ...query } } as unknown as NextApiRequest,
       res as unknown as NextApiResponse
     );
+    lastBody = res.json.mock.calls[0]?.[0];
     return res.status.mock.calls[0]?.[0] as number;
   };
+  let lastBody: unknown;
 
   it.each([
     ['no grant sent', {}],
@@ -198,6 +216,9 @@ describe('/api/mod/update-image-flag', () => {
     async (_l, grant) => {
       expect(await setFlag({ ids: `${PLAIN},${WITHHELD}`, value: 'false', ...grant })).toBe(403);
       expect(h.updateFlag).not.toHaveBeenCalled();
+      // The generic refusal: it names no reason the image is withheld.
+      expect(JSON.stringify(lastBody)).toContain(WITHHELD_LOOSENING_REFUSED);
+      expect(JSON.stringify(lastBody)).not.toMatch(/csam/i);
     }
   );
 

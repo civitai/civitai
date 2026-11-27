@@ -6,7 +6,7 @@ import {
   assertMayLoosenImages,
   forwardedCsamGrantInQuery,
 } from '~/server/services/moderator-withheld.service';
-import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
+import { handleEndpointError, WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { booleanString } from '~/utils/zod-helpers';
 
 const stringToNumberArraySchema = z.string().transform((s) => s.split(',').map(Number));
@@ -31,8 +31,7 @@ export default WebhookEndpoint(async function updateImageFlag(
       message: `Updated ${ids.length} images with flag ${flag} to ${value}`,
     });
   } catch (e) {
-    if (e instanceof TRPCError && e.code === 'FORBIDDEN')
-      return res.status(403).json({ error: e.message });
+    if (e instanceof TRPCError && e.code === 'FORBIDDEN') return handleEndpointError(res, e);
     console.error(e);
     return res.status(500).json({ error: 'Internal server error' });
   }

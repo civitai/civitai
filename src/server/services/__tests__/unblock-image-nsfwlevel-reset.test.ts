@@ -277,6 +277,7 @@ describe('handleUnblockImages — nsfwLevel reset+unlock on unblock (ClickUp 868
 
   it('resets nsfwLevel and clears the lock for Blocked rows, then recomputes', async () => {
     await handleUnblockImages({
+      csamReview: true,
       ids: [128489949],
       moderatorId: undefined,
       removeMinorFlag: false,
@@ -297,13 +298,22 @@ describe('handleUnblockImages — nsfwLevel reset+unlock on unblock (ClickUp 868
 
   // An accept out of the minor queue rewrites "minor", which no trigger watches.
   it('queues the models and articles of the unblocked images', async () => {
-    await handleUnblockImages({ ids: [128489949], moderatorId: undefined } as any);
+    await handleUnblockImages({
+      csamReview: true,
+      ids: [128489949],
+      moderatorId: undefined,
+    } as any);
     expect(queueDocumentsForImageMinorChanges).toHaveBeenCalledWith({ minorImageIds: [128489949] });
   });
 
   it("checks for an earlier review before writing this unblock's own review row", async () => {
     capturedRawInOrder.length = 0;
-    await handleUnblockImages({ ids: [128489949], moderatorId: 9, removeMinorFlag: false } as any);
+    await handleUnblockImages({
+      csamReview: true,
+      ids: [128489949],
+      moderatorId: 9,
+      removeMinorFlag: false,
+    } as any);
 
     const rescan = capturedRawInOrder.findIndex((sql) => sql.includes('FROM "ModActivity" m'));
     const ownReview = capturedRawInOrder.findIndex((sql) =>
@@ -365,7 +375,11 @@ describe('handleUnblockImages and a CSAM block', () => {
   });
 
   it('leaves the CSAM-blocked image alone and unblocks the other', async () => {
-    const result = await handleUnblockImages({ ids: [1, 2], moderatorId: undefined } as any);
+    const result = await handleUnblockImages({
+      csamReview: true,
+      ids: [1, 2],
+      moderatorId: undefined,
+    } as any);
 
     const unblock = dbWrite.$queryRaw.mock.calls.filter(([strings]) =>
       (strings as TemplateStringsArray).join('?').includes('AS "keptBlocked"')
@@ -386,7 +400,11 @@ describe('handleUnblockImages and a CSAM block', () => {
         ? Promise.resolve([{ id: 2 }])
         : passthrough(strings, ...values)) as never);
     try {
-      const result = await handleUnblockImages({ ids: [1, 2], moderatorId: undefined } as any);
+      const result = await handleUnblockImages({
+        csamReview: true,
+        ids: [1, 2],
+        moderatorId: undefined,
+      } as any);
 
       expect(result).toEqual({ restored: [], kept: [] });
       const drops = dbWrite.$executeRaw.mock.calls.filter(([strings]) =>
@@ -426,7 +444,11 @@ describe('handleUnblockImages and a block that put its effects off', () => {
   });
 
   it('drops them unfired', async () => {
-    await handleUnblockImages({ ids: [128489949], moderatorId: undefined } as any);
+    await handleUnblockImages({
+      csamReview: true,
+      ids: [128489949],
+      moderatorId: undefined,
+    } as any);
 
     const drops = dbWrite.$executeRaw.mock.calls.filter(([strings]) =>
       (strings as TemplateStringsArray).join('?').includes('DELETE FROM "ImageDeferredBlockEffect"')
@@ -723,6 +745,7 @@ describe('handleUnblockImages — minor queue Accept truth table', () => {
 
     try {
       await handleUnblockImages({
+        csamReview: true,
         ids: levels.map((_, i) => i + 1),
         moderatorId: undefined,
         removeMinorFlag: false,
@@ -792,7 +815,11 @@ describe('handleUnblockImages while the owner is deleted', () => {
     );
 
     try {
-      const result = await handleUnblockImages({ ids: [1, 2], moderatorId: 9 } as any);
+      const result = await handleUnblockImages({
+        csamReview: true,
+        ids: [1, 2],
+        moderatorId: 9,
+      } as any);
       expect({
         restored: result.restored.map((x) => x.id),
         kept: result.kept.map((x) => x.id),
@@ -926,7 +953,11 @@ describe('handleUnblockImages and the CSAM review flag', () => {
       })) as never
     );
     try {
-      const result = await handleUnblockImages({ ids: [1, 2, 3, 4, 5], moderatorId: 9 } as any);
+      const result = await handleUnblockImages({
+        csamReview: true,
+        ids: [1, 2, 3, 4, 5],
+        moderatorId: 9,
+      } as any);
       const { rows } = await pg.query(
         `SELECT id, "needsReview", "blockedFor", ingestion::text AS ingestion FROM "Image" ORDER BY id`
       );
@@ -1080,7 +1111,11 @@ describe('handleUnblockImages and the feed sort', () => {
 
     try {
       const releasedAt = Date.now();
-      await handleUnblockImages({ ids: [SERVED, NEVER_SHOWN], moderatorId: undefined } as any);
+      await handleUnblockImages({
+        csamReview: true,
+        ids: [SERVED, NEVER_SHOWN],
+        moderatorId: undefined,
+      } as any);
       const after = await sortAt();
       const { rows } = await pg.query<{ needsReview: string | null }>(
         `SELECT "needsReview" FROM "Image" ORDER BY id`
@@ -1094,5 +1129,89 @@ describe('handleUnblockImages and the feed sort', () => {
       if (capture) dbWrite.$queryRaw.mockImplementation(capture);
       await pg.close();
     }
+  });
+});
+
+describe('handleUnblockImages and an image withheld from the moderator', () => {
+  // A CSAM block lands on the url of image 1 after the caller's own check and before the UPDATE.
+  const run = async (csamReview: boolean) => {
+    const pg = new PGlite();
+    await pg.exec(`CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Rescan', 'Error', 'Blocked');
+      ${CSAM_LINK_TABLES_SQL}
+      ${WITHHELD_TABLES_SQL}
+      ALTER TABLE "User" ADD "deletedAt" timestamp, ADD "bannedAt" timestamp;
+      CREATE TYPE "EntityType" AS ENUM ('Image');
+      CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected');
+      CREATE TABLE "Appeal" ("entityType" "EntityType", "entityId" int, status "AppealStatus");
+      CREATE TABLE "Image" (id int PRIMARY KEY, url text NOT NULL, "pHash" bigint, "userId" int,
+      "postId" int, "nsfwLevel" int NOT NULL, "nsfwLevelLocked" boolean NOT NULL DEFAULT false,
+      minor boolean NOT NULL DEFAULT false, "needsReview" text, "blockedFor" text, metadata jsonb,
+      "scannedAt" timestamp, ingestion "ImageIngestionStatus", "scanJobs" jsonb);
+      CREATE TABLE "ModActivity" ("userId" int, "entityType" text, "entityId" int, activity text);
+      CREATE DOMAIN "JobQueueType" AS text;
+      CREATE TABLE "JobQueue" ("entityId" int, "entityType" "EntityType", type "JobQueueType",
+        "createdAt" timestamp(3) NOT NULL DEFAULT now(), PRIMARY KEY ("entityType", "entityId", type));
+      INSERT INTO "User" (id) VALUES (1), (2);
+      INSERT INTO "Appeal" VALUES ('Image', 1, 'Pending');
+      INSERT INTO "Image" (id, url, "userId", "nsfwLevel", "blockedFor", "needsReview", metadata, ingestion) VALUES
+        (1, 'shared', 1, 32, 'moderated', 'appeal', '{}', 'Blocked');`);
+    const raw = pgliteRaw(pg);
+    const capture = dbWrite.$queryRaw.getMockImplementation();
+    const captureExec = dbWrite.$executeRaw.getMockImplementation();
+    dbWrite.$executeRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) =>
+      /INSERT INTO "(ModActivity|JobQueue)"/.test(strings.join(''))
+        ? raw.executeRaw(strings, ...values)
+        : Promise.resolve(0)) as never);
+    dbWrite.$queryRaw.mockImplementation((async (
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) => {
+      if (!/AS "keptBlocked"/.test(strings.join(''))) return [];
+      await pg.exec(
+        `INSERT INTO "Image" (id, url, "userId", "nsfwLevel", "blockedFor", ingestion) VALUES (2, 'shared', 2, 32, 'CSAM', 'Blocked') ON CONFLICT DO NOTHING`
+      );
+      return raw.queryRaw(strings, ...values);
+    }) as never);
+    vi.mocked(dbWrite.appeal.updateManyAndReturn)
+      .mockClear()
+      .mockResolvedValue([] as never);
+    mockFindMany.mockResolvedValue([
+      {
+        id: 1,
+        userId: 1,
+        pHash: null,
+        postId: null,
+        nsfwLevel: 32,
+        blockedFor: 'moderated',
+        needsReview: 'appeal',
+      },
+    ] as never);
+    try {
+      const result = await handleUnblockImages({ ids: [1], moderatorId: 9, csamReview });
+      const { rows } = await pg.query<{ ingestion: string; blockedFor: string | null }>(
+        `SELECT ingestion::text AS ingestion, "blockedFor" FROM "Image" WHERE id = 1`
+      );
+      return {
+        restored: result.restored.map((x) => x.id),
+        row: rows[0],
+        appealClaimed: vi.mocked(dbWrite.appeal.updateManyAndReturn).mock.calls.length > 0,
+      };
+    } finally {
+      if (capture) dbWrite.$queryRaw.mockImplementation(capture);
+      if (captureExec) dbWrite.$executeRaw.mockImplementation(captureExec);
+      await pg.close();
+    }
+  };
+
+  it('is not lifted, and its pending appeal is not approved, without the grant', async () => {
+    expect(await run(false)).toEqual({
+      restored: [],
+      row: { ingestion: 'Blocked', blockedFor: 'moderated' },
+      appealClaimed: false,
+    });
+  });
+
+  it('is lifted, and its appeal approved, for a moderator holding the grant', async () => {
+    expect(await run(true)).toMatchObject({ restored: [1], appealClaimed: true });
   });
 });

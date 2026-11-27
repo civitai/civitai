@@ -64,13 +64,18 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     // Counted and tracked only as the service restored them: it re-checks each image itself, and one
     // it kept blocked (its owner is deleted) is not restored.
     const restoredIds = new Set<number>();
+    const keptIds = new Set<number>();
     for (const chunkIds of chunk(
       candidates.map((x) => x.id),
       batchSize
     )) {
-      const { restored } = await handleUnblockImages({ ids: chunkIds });
+      const { restored, kept } = await handleUnblockImages({ ids: chunkIds, csamReview });
       for (const image of restored) restoredIds.add(image.id);
+      for (const image of kept) keptIds.add(image.id);
     }
+    // Neither restored nor kept: the service's own write found it withheld or CSAM-marked by then.
+    for (const x of candidates)
+      if (!restoredIds.has(x.id) && !keptIds.has(x.id)) skipped.push(x.id);
     const images = candidates.filter((x) => restoredIds.has(x.id));
     if (images.length === 0) {
       return res.status(200).json({ images: 0, restored: [], skipped });
