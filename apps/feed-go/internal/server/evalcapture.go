@@ -23,7 +23,8 @@ import (
 // The eval capture taps (DESIGN.md §19.6), behind FEED_GO_EVAL_CAPTURE (default off: EvalCapture nil,
 // and then no tap does anything, not even a context value). Each tap hands one evalcapture.Sample to
 // EvalCapture.Recorder.Record, which strips, signs, deduplicates and queues it, and counts the outcome
-// in feed_go_eval_capture_total{feed_endpoint, source, outcome}:
+// in feed_go_eval_capture_total{feed_endpoint, source, outcome} (an unresolved one also in
+// feed_go_eval_capture_unresolved_total{feed_endpoint, source, reason}):
 //
 //   - T1, source shadow: every Node shadow sample of a first-wave endpoint, in compare (the fallback,
 //     error and compared branches), with Node's answer.
@@ -37,8 +38,8 @@ import (
 // The viewer is the one the computation resolved (auth.WithResolveObserver: no extra store read). A
 // request whose computation never resolved one (an early hand-back) is resolved in the background
 // (T1 on the sample's own goroutine; T3 on an eval-capture worker), with credentials redacted, so an
-// API key is never looked up for it: such a request is dropped; T4 is how credentialed requests reach
-// the corpus.
+// API key is never looked up for it: such a request is unresolved (reason bearer-token); T4 is how
+// credentialed requests reach the corpus.
 
 // DefaultEvalCaptureWorkers bounds the T3 captures in flight per pod (EvalCapture.Queue's capacity).
 const DefaultEvalCaptureWorkers = 2
@@ -70,7 +71,8 @@ type EvalCapture struct {
 
 func (e *EvalCapture) on() bool { return e != nil && e.Recorder != nil }
 
-// seedEvalCapture: every outcome of every source per endpoint that source can capture reads 0.
+// seedEvalCapture: every outcome of every source per endpoint that source can capture reads 0, and
+// every unresolved reason of every source that resolves a viewer (corpus-only resolves none).
 func (m *Metrics) seedEvalCapture() {
 	for _, source := range evalcapture.Sources {
 		for _, e := range evalCaptureEndpoints(source) {
@@ -79,6 +81,10 @@ func (m *Metrics) seedEvalCapture() {
 			}
 			if source == evalcapture.SourceCorpusOnly {
 				m.EvalCapture.WithLabelValues(e, source, evalcapture.OutcomeRefused)
+				continue
+			}
+			for _, reason := range evalcapture.UnresolvedReasons {
+				m.EvalCaptureUnresolved.WithLabelValues(e, source, reason)
 			}
 		}
 	}
@@ -179,10 +185,16 @@ func evalRequest(endpoint string, u *url.URL, header http.Header, host string) e
 	return req
 }
 
-// recordEval hands one capture to the recorder and counts its outcome.
+// recordEval hands one capture to the recorder and counts its outcome (an unresolved one also by
+// evalcapture.UnresolvedReason of its ViewerErr).
 func (s *Server) recordEval(endpoint string, sample evalcapture.Sample) {
-	if o := s.EvalCapture.Recorder.Record(sample); o != "" {
-		s.Metrics.EvalCapture.WithLabelValues(endpoint, sample.Source, o).Inc()
+	o := s.EvalCapture.Recorder.Record(sample)
+	if o == "" {
+		return
+	}
+	s.Metrics.EvalCapture.WithLabelValues(endpoint, sample.Source, o).Inc()
+	if o == evalcapture.OutcomeUnresolved {
+		s.Metrics.EvalCaptureUnresolved.WithLabelValues(endpoint, sample.Source, evalcapture.UnresolvedReason(sample.ViewerErr)).Inc()
 	}
 }
 
@@ -217,7 +229,7 @@ func (s *Server) captureShadow(ctx context.Context, endpoint string, req ShadowR
 	s.recordEval(endpoint, evalcapture.Sample{
 		Source:  evalcapture.SourceShadow,
 		Request: evalRequest(endpoint, r.URL, r.Header, r.Host),
-		Viewer:  evalViewer(u, verifiedCrawler(r)), ViewerKnown: err == nil,
+		Viewer:  evalViewer(u, verifiedCrawler(r)), ViewerKnown: err == nil, ViewerErr: err,
 		Weight:     rateWeight(sampleRateOr(req.SampleRate, s.EvalCapture.ShadowRate)),
 		ProdResult: out.result, FallbackReason: out.reason, DiffCategories: out.categories, HeaderResult: out.header,
 		NodeBody: req.Node, NodeHeaders: req.ResponseHeaders,
@@ -276,7 +288,7 @@ func (s *Server) captureParity(rep *parityReplay, node []byte, nodeHeaders map[s
 	s.recordEval(rep.endpoint, evalcapture.Sample{
 		Source:  evalcapture.SourceServeParity,
 		Request: evalRequest(rep.endpoint, &rep.url, rep.header, rep.host),
-		Viewer:  rep.viewer, ViewerKnown: rep.viewerKnown,
+		Viewer:  rep.viewer, ViewerKnown: rep.viewerKnown, ViewerErr: rep.viewerErr,
 		Weight:     rateWeight(s.Parity.Rate),
 		ProdResult: out.result, DiffCategories: out.categories, HeaderResult: out.header,
 		NodeBody: node, NodeHeaders: nodeHeaders,
@@ -313,7 +325,7 @@ func (s *Server) sampleServeCapture(r *http.Request, endpoint string, obs *viewe
 	}
 	u, seen, uerr := obs.get()
 	if seen {
-		sample.Viewer, sample.ViewerKnown = evalViewer(u, false), uerr == nil
+		sample.Viewer, sample.ViewerKnown, sample.ViewerErr = evalViewer(u, false), uerr == nil, uerr
 	}
 	// The request's own values, copied: r is not read once the handler returns.
 	var replay *http.Request
@@ -345,7 +357,7 @@ func (s *Server) sampleServeCapture(r *http.Request, endpoint string, obs *viewe
 		}()
 		if replay != nil {
 			// Nothing resolved the viewer: resolve it now, credentials redacted (an API key is never
-			// looked up here; the request is then dropped).
+			// looked up here; the request is then unresolved, reason bearer-token).
 			ctx, cancel := context.WithTimeout(auth.WithRedactedCredentials(s.background()), evalCaptureResolveTimeout)
 			defer cancel()
 			var u *auth.SessionUser
@@ -353,7 +365,7 @@ func (s *Server) sampleServeCapture(r *http.Request, endpoint string, obs *viewe
 			if s.Resolver != nil {
 				u, uerr = s.Resolver.Resolve(ctx, replay.WithContext(ctx))
 			}
-			sample.Viewer, sample.ViewerKnown = evalViewer(u, false), uerr == nil
+			sample.Viewer, sample.ViewerKnown, sample.ViewerErr = evalViewer(u, false), uerr == nil, uerr
 		}
 		s.recordEval(endpoint, sample)
 	}()
