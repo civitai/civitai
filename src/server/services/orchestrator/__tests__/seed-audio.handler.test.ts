@@ -53,8 +53,11 @@ describe('Seed Audio', () => {
     );
   });
 
-  it('sends the prompt as typed, quotes included', async () => {
-    const typed = `A deep voice says '"And so, it begins'" and a band starts jazzing`;
+  // BytePlus refuses a prompt with no speech itself; the form must not refuse it first.
+  it.each([
+    ['no quotes', 'A deep voice says and so it begins, then a band starts jazzing'],
+    ['mixed quotes', `A deep voice says '"And so, it begins'" and a band starts jazzing`],
+  ])('sends a prompt with %s as typed', async (_, typed) => {
     const [step] = await submit({ prompt: typed });
     expect(step.input).toMatchObject({ prompt: typed });
   });
