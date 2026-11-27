@@ -97,6 +97,17 @@ func credentialClass(h map[string]string, rawQuery string) string {
 	return strings.Join(classes, "+")
 }
 
+// hasAPICredentialClass reports whether a credentialClass value names an API credential (header or
+// query, alone or joined with another class).
+func hasAPICredentialClass(class string) bool {
+	for _, c := range strings.Split(class, "+") {
+		if c == CredentialHeader || c == CredentialQuery {
+			return true
+		}
+	}
+	return false
+}
+
 // stripQuery is a raw query string without any pair whose (unescaped) name holds a credential word,
 // the `token` credential among them, in its original order and encoding. dropped reports whether a
 // pair went. A pair whose raw text holds `token` anywhere (`a=1;token=k`, an escaped name) is dropped
