@@ -91,6 +91,7 @@ var orderedCaches = map[string]bool{
 	KeyModelEvents:     true,
 	KeyDataForModel:    true,
 	KeyVersionImages:   true,
+	KeyVersionFiles:    true,
 }
 
 // PackedReader reads `${key}:${id}` msgpack entries. Prefix is CACHE_KEY_NAMESPACE + ":" outside

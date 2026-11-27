@@ -82,6 +82,19 @@ type V1Models struct {
 	// back (`v1-models-showcase-miss`). A shadow sample does so whenever FEED_GO_COMPUTE_MISSES is on.
 	// Needs FEED_GO_COMPUTE_MISSES.
 	ServeShowcaseMiss bool
+	// ServeFilesMiss is FEED_GO_V1_MODELS_SERVE_FILES_MISS (default off): on both public model routes,
+	// a version-files miss is computed with filesForModelVersionCache's lookup, and a stale entry
+	// revalidated as Node's fetch revalidates it (written back, under Node's revalidate lock, when
+	// FEED_GO_CACHE_WRITEBACK lists version-files), instead of falling back (`v1-models-files-miss`,
+	// `v1-models-files-stale`). A shadow sample does so whenever FEED_GO_COMPUTE_MISSES is on, writing
+	// nothing. Needs FEED_GO_COMPUTE_MISSES.
+	ServeFilesMiss bool
+	// ServeFilename is FEED_GO_V1_MODELS_SERVE_FILENAME (default off): on both public model routes, a
+	// download file name whose model or version name holds non-ASCII text is named as Node names it
+	// (the Node engine's case folding and trim, internal/v1models/jscanon.json) instead of falling back
+	// (`v1-models-filename`). A shadow sample always does. Reads nothing, so it needs no miss
+	// computation.
+	ServeFilename bool
 	// AnswerNotFound is FEED_GO_V1_MODELS_ANSWER_NOT_FOUND (default off): a public
 	// `GET /api/v1/models/{id}` request for a model the model statement returns no row for, with the
 	// model's lag flag read clean, is answered here with Node's 404 (outcome `not_found`) instead of
@@ -108,6 +121,8 @@ func LoadV1Models() V1Models {
 		ServeTagsMiss:     boolEnv("FEED_GO_V1_MODELS_SERVE_TAGS_MISS", false),
 		ServeTagNameStale: boolEnv("FEED_GO_V1_MODELS_SERVE_TAG_NAME_STALE", false),
 		ServeShowcaseMiss: boolEnv("FEED_GO_V1_MODELS_SERVE_SHOWCASE_MISS", false),
+		ServeFilesMiss:    boolEnv("FEED_GO_V1_MODELS_SERVE_FILES_MISS", false),
+		ServeFilename:     boolEnv("FEED_GO_V1_MODELS_SERVE_FILENAME", false),
 		AnswerNotFound:    boolEnv("FEED_GO_V1_MODELS_ANSWER_NOT_FOUND", false),
 	}
 	if ms, err := strconv.Atoi(strings.TrimSpace(os.Getenv("MEILI_CALL_TIMEOUT_MS"))); err == nil && ms > 0 {
@@ -144,7 +159,7 @@ func (c V1Models) Validate(bearerAuth bool) error {
 }
 
 // ValidateMisses refuses any of the v1 models miss switches (FEED_GO_V1_MODELS_SERVE_DATA_MISS,
-// _TAGS_MISS, _TAG_NAME_STALE, _SHOWCASE_MISS) without computeMisses (FEED_GO_COMPUTE_MISSES,
+// _TAGS_MISS, _TAG_NAME_STALE, _SHOWCASE_MISS, _FILES_MISS) without computeMisses (FEED_GO_COMPUTE_MISSES,
 // Config.ComputeMisses): with no miss computation every such miss would fall back anyway, so the
 // setting would claim what it cannot do.
 func (c V1Models) ValidateMisses(computeMisses bool) error {
@@ -159,6 +174,7 @@ func (c V1Models) ValidateMisses(computeMisses bool) error {
 		{c.ServeTagsMiss, "FEED_GO_V1_MODELS_SERVE_TAGS_MISS"},
 		{c.ServeTagNameStale, "FEED_GO_V1_MODELS_SERVE_TAG_NAME_STALE"},
 		{c.ServeShowcaseMiss, "FEED_GO_V1_MODELS_SERVE_SHOWCASE_MISS"},
+		{c.ServeFilesMiss, "FEED_GO_V1_MODELS_SERVE_FILES_MISS"},
 	} {
 		if sw.on {
 			return errors.New(sw.name + " is on without FEED_GO_COMPUTE_MISSES: that miss on the v1 model routes is computed by the miss computation that switch turns on")
