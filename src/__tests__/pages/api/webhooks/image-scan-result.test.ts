@@ -570,7 +570,15 @@ describe('image-scan-result webhook - pipeline tests', () => {
         const text = strings.join('');
         if (text.includes('INSERT INTO "Tag"')) throw new Error('Raw query failed. Code: `23502`.');
         if (text.includes('UPDATE "Image"') && text.includes("'{retryCount}'"))
-          return [{ retryCount: 1, mediaType: 'image', userId: 55 }];
+          return [
+            {
+              retryCount: 1,
+              mediaType: 'image',
+              userId: 55,
+              ingestion: ImageIngestionStatus.Error,
+              blockedFor: null,
+            },
+          ];
         return passthrough(query, ...values);
       });
 
@@ -585,7 +593,11 @@ describe('image-scan-result webhook - pipeline tests', () => {
       expect(vi.mocked(signalClient.send)).toHaveBeenCalledWith(
         expect.objectContaining({
           userId: 55,
-          data: expect.objectContaining({ imageId: 14, ingestion: ImageIngestionStatus.Error }),
+          data: expect.objectContaining({
+            imageId: 14,
+            ingestion: ImageIngestionStatus.Error,
+            blockedFor: null,
+          }),
         })
       );
     });
