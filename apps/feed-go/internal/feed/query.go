@@ -51,6 +51,9 @@ type ImagesQuery struct {
 	// 'AiNotVerified'`, after the visibility gates. Node drops those gates for it on the red domain
 	// only, and this route passes no domain, so they stay.
 	RequiringMeta bool
+	// Domain is getAllImages' `domain` (getRequestBoardDomainColor of the request's host; "" when the
+	// caller passes none, as the REST endpoint does). Read only beside RequiringMeta.
+	Domain string
 	// TargetUserID is the creator filter (`userId`, or the id a `username` resolved to):
 	// `i."userId" = <targetUserId>`. getAllImages marks that query personalized, so it is never cached.
 	TargetUserID int
