@@ -162,7 +162,10 @@ describe('getAssociatedResourcesSimple model side', () => {
         stranger,
         stranger
       );
-      const item = items.find((x) => x.item.id === MODELS.faced.id)?.item;
+      const item = items.find(
+        (x) => x.resourceType === 'model' && x.item.id === MODELS.faced.id
+      )?.item;
+      if (item && !('name' in item)) throw new Error('expected a model item');
       return { name: item?.name, keys: Object.keys(item ?? {}).sort() };
     };
     expect((await nameAt(PG)).name).toBe('Safe title');
