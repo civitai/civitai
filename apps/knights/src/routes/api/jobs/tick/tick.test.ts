@@ -18,6 +18,7 @@ const expireBeyondCap = vi.hoisted(() => vi.fn());
 const inquisitorOn = vi.hoisted(() => ({ value: true }));
 const runTagReview = vi.hoisted(() => vi.fn());
 const writeBackTagReviews = vi.hoisted(() => vi.fn());
+const fileOpenImagePulls = vi.hoisted(() => vi.fn());
 vi.mock('$lib/server/db', () => ({ db: {} }));
 const logToAxiom = vi.hoisted(() => vi.fn());
 const buzzConfigured = vi.hoisted(() => vi.fn());
@@ -33,6 +34,8 @@ vi.mock('$lib/server/conversion/label-pass', () => ({ runLabelPass }));
 vi.mock('$lib/server/shop/purchase', () => ({ retryPendingPurchases }));
 vi.mock('$lib/server/shop/main-app', () => ({ getMainAppPort: () => ({}) }));
 vi.mock('$lib/server/yesno/sweep', () => ({ closeStrandedYesNo }));
+vi.mock('$lib/server/yesno/report', () => ({ fileOpenImagePulls }));
+vi.mock('$lib/server/yesno/image-report', () => ({ reportImageToMainApp: vi.fn() }));
 vi.mock('$lib/server/inquisitor/review.service', () => ({
   sweepMissingReviews,
   closeIneligibleReviews,
@@ -74,6 +77,8 @@ const run = () =>
   } as never);
 
 beforeEach(() => {
+  fileOpenImagePulls.mockReset();
+  fileOpenImagePulls.mockResolvedValue({ filed: 0, failed: 0 });
   escalateExpired.mockReset();
   applyPendingResolutions.mockReset();
   closeModeratorRuledItems.mockReset();
@@ -127,6 +132,20 @@ beforeEach(() => {
 });
 
 describe('POST /api/jobs/tick', () => {
+  it('files the main-app report of image pulls that could not be filed, counting failures for the next tick', async () => {
+    escalateExpired.mockResolvedValue({ escalated: 0, toInquisitor: 0, extended: 0 });
+    applyPendingResolutions.mockResolvedValue({ applied: 0 });
+    fileOpenImagePulls.mockResolvedValue({ filed: 2, failed: 1 });
+    const response = await run();
+
+    expect(response.status).toBe(200);
+    expect(fileOpenImagePulls).toHaveBeenCalledTimes(1);
+    expect((await response.json()).imagePullsFiled).toBe(2);
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'knights-tick-item-failures', details: { yesno: 1 } })
+    );
+  });
+
   it('reports both steps when both succeed', async () => {
     escalateExpired.mockResolvedValue({ escalated: 2, toInquisitor: 1, extended: 3 });
     applyPendingResolutions.mockResolvedValue({ applied: 1 });
@@ -150,6 +169,7 @@ describe('POST /api/jobs/tick', () => {
       settledVotes: 0,
       hiddenChecksGraded: 0,
       yesNoClosed: 0,
+      imagePullsFiled: 0,
       tagReviewCreated: 0,
       tagReviewRuled: 0,
       tagReviewWrittenBack: 0,

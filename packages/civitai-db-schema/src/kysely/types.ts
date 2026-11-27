@@ -3971,6 +3971,15 @@ export type KnightsHarvestCursor = {
   lastActivityId: Generated<number>;
   updatedAt: Timestamp;
 };
+export type KnightsImagePull = {
+  id: Generated<number>;
+  imageId: number;
+  reason: string;
+  reportId: number | null;
+  createdAt: Generated<Timestamp>;
+  resolvedAt: Timestamp | null;
+  resolvedBy: number | null;
+};
 export type KnightsInquisitorReview = {
   id: Generated<number>;
   queueItemId: number;
@@ -4046,6 +4055,17 @@ export type KnightsQuestion = {
   threshold: Generated<number>;
   active: Generated<boolean>;
   createdAt: Generated<Timestamp>;
+};
+export type KnightsQuestionReport = {
+  id: Generated<string>;
+  playerId: number;
+  itemId: number;
+  reason: string;
+  questionKey: string;
+  imageId: number;
+  createdAt: Generated<Timestamp>;
+  resolvedAt: Timestamp | null;
+  resolvedBy: number | null;
 };
 export type KnightsQueueItem = {
   id: Generated<number>;
@@ -7394,6 +7414,7 @@ export type DB = {
   KnightsApprenticeAnswer: KnightsApprenticeAnswer;
   KnightsGoldConversion: KnightsGoldConversion;
   KnightsHarvestCursor: KnightsHarvestCursor;
+  KnightsImagePull: KnightsImagePull;
   KnightsInquisitorReview: KnightsInquisitorReview;
   KnightsInquisitorVote: KnightsInquisitorVote;
   KnightsLegacyPlayerDay: KnightsLegacyPlayerDay;
@@ -7401,6 +7422,7 @@ export type DB = {
   KnightsPlayer: KnightsPlayer;
   KnightsPlayerDay: KnightsPlayerDay;
   KnightsQuestion: KnightsQuestion;
+  KnightsQuestionReport: KnightsQuestionReport;
   KnightsQueueItem: KnightsQueueItem;
   KnightsReferenceImage: KnightsReferenceImage;
   KnightsShopItem: KnightsShopItem;

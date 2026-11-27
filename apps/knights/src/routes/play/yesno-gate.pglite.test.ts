@@ -54,7 +54,7 @@ beforeEach(async () => {
   state.config = { share: 1, tagReview: true, stretch: 8, playerDefault: true };
   await resetTagReview(pg, [[10, 'nudity', 'Moderation', X]]);
   await pg.exec(
-    `TRUNCATE "KnightsYesNoReference","KnightsApprenticeAnswer","KnightsPlayer" RESTART IDENTITY CASCADE`
+    `TRUNCATE "KnightsYesNoReference","KnightsApprenticeAnswer","KnightsPlayer","KnightsImagePull" RESTART IDENTITY CASCADE`
   );
   await seedPlayer(pg, PALADIN, 'Paladin');
   await seedPlayer(pg, ACOLYTE, 'Acolyte');
@@ -146,6 +146,33 @@ describe('the shared image gate on every yes/no path', () => {
       tagReview: null,
       prefetch: null,
       acolytePair: null,
+    });
+  });
+});
+
+// The rule: docs/features/knights-yesno-questions.md, "Reports": an image players pulled is out of every yes/no path.
+describe('an image players pulled', () => {
+  const pull = (imageId: number, resolvedAt: string | null = null) =>
+    pg.query(
+      `INSERT INTO "KnightsImagePull" ("imageId","reason","resolvedAt") VALUES ($1,'players-reported',$2)`,
+      [imageId, resolvedAt]
+    );
+
+  it('deals no yes/no on any path while its pull is open, and again once a moderator kept it', async () => {
+    for (const image of [GENERATED_IMAGE, TAG_REVIEW_IMAGE, PAIR_IMAGE]) await pull(image);
+    expect(await dealt()).toEqual({
+      generated: null,
+      tagReview: null,
+      prefetch: null,
+      acolytePair: null,
+    });
+
+    await pg.query(`UPDATE "KnightsImagePull" SET "resolvedAt" = now()`);
+    expect(await dealt()).toEqual({
+      generated: GENERATED_IMAGE,
+      tagReview: TAG_REVIEW_IMAGE,
+      prefetch: 'yesno',
+      acolytePair: pairId,
     });
   });
 });

@@ -8989,6 +8989,37 @@ model KnightsUnsure {
   @@index([yesNoReferenceId])
 }
 
+/// A player's report of a yes/no queue item (`itemId`): `reason` is 'image' or 'question'. Never a vote. `questionKey` and
+/// `imageId` are a snapshot. A moderator's keep or remove of the reported item sets `resolvedAt` and `resolvedBy`.
+model KnightsQuestionReport {
+  id          BigInt    @id @default(autoincrement())
+  playerId    Int
+  itemId      Int
+  reason      String
+  questionKey String
+  imageId     Int
+  createdAt   DateTime  @default(now())
+  resolvedAt  DateTime?
+  resolvedBy  Int?
+
+  @@unique([playerId, itemId])
+  @@index([itemId])
+}
+
+/// An image Knights players reported, out of every yes/no question and Acolyte pair while `resolvedAt` is null (one open
+/// row per image, a partial unique index in the migration). `reportId` is the main-app Report filed for it.
+model KnightsImagePull {
+  id         Int       @id @default(autoincrement())
+  imageId    Int
+  reason     String
+  reportId   Int?
+  createdAt  DateTime  @default(now())
+  resolvedAt DateTime?
+  resolvedBy Int?
+
+  @@index([imageId])
+}
+
 /// A UTC day on which the player voted in the original Knights game, filled once from its vote history. Counted with
 /// `KnightsPlayerDay` toward Paladin's days-played bar; nothing writes it after the backfill.
 model KnightsLegacyPlayerDay {

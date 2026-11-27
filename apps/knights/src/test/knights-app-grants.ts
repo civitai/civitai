@@ -20,6 +20,7 @@ export const KNIGHTS_APP_GRANTS: Readonly<Record<string, readonly Privilege[]>> 
   KnightsApprenticeAnswer: ['SELECT', 'INSERT', 'UPDATE'],
   KnightsGoldConversion: ['SELECT', 'INSERT', 'UPDATE'],
   KnightsHarvestCursor: ['SELECT', 'INSERT', 'UPDATE'],
+  KnightsImagePull: ['SELECT', 'INSERT'],
   KnightsInquisitorReview: ['SELECT', 'INSERT', 'UPDATE'],
   KnightsInquisitorVote: ['SELECT', 'INSERT'],
   KnightsLegacyPlayerDay: ['SELECT'],
@@ -27,6 +28,7 @@ export const KNIGHTS_APP_GRANTS: Readonly<Record<string, readonly Privilege[]>> 
   KnightsPlayer: ['SELECT', 'INSERT', 'UPDATE'],
   KnightsPlayerDay: ['SELECT', 'INSERT', 'UPDATE'],
   KnightsQuestion: ['SELECT', 'INSERT'],
+  KnightsQuestionReport: ['SELECT', 'INSERT'],
   KnightsQueueItem: ['SELECT', 'INSERT', 'UPDATE'],
   KnightsRatingGuideItem: ['SELECT'],
   KnightsReferenceImage: ['SELECT', 'INSERT', 'UPDATE'],
@@ -53,6 +55,11 @@ export const KNIGHTS_APP_GRANTS: Readonly<Record<string, readonly Privilege[]>> 
   'label_store.rule': ['SELECT', 'INSERT'],
 };
 
+/** Column-level UPDATE grants, on top of `KNIGHTS_APP_GRANTS`: the role may set only these columns. */
+export const KNIGHTS_APP_COLUMN_UPDATES: Readonly<Record<string, readonly string[]>> = {
+  KnightsImagePull: ['reportId'],
+};
+
 /** Schemas besides "public" the role may use. */
 export const KNIGHTS_APP_SCHEMAS: readonly string[] = ['label_store'];
 
@@ -69,7 +76,9 @@ export const KNIGHTS_APP_SEQUENCES: readonly string[] = [
   'Feedback_id_seq',
   'KnightsApprenticeAnswer_id_seq',
   'KnightsGoldConversion_id_seq',
+  'KnightsImagePull_id_seq',
   'KnightsInquisitorReview_id_seq',
+  'KnightsQuestionReport_id_seq',
   'KnightsQueueItem_id_seq',
   'KnightsReferenceImage_id_seq',
   'KnightsShopPurchase_id_seq',

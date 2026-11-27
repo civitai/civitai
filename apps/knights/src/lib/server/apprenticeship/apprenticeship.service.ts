@@ -5,7 +5,7 @@ import { getLevelProgression } from '../progression/levels';
 import { grantAcolyteLevelGold } from './level-gold';
 import type { DB } from '@civitai/db-schema/kysely';
 import { readWithoutJit, REFERENCE_POOL, REFERENCE_SOURCE } from '@civitai/db/knights';
-import { servableImage } from '../image-gate';
+import { yesNoServableImage } from '../image-gate';
 import { utc } from '@civitai/db/kysely';
 import { metrics } from '../metrics';
 import { grantRankBadges } from '../progression/badges';
@@ -251,7 +251,7 @@ async function nextYesNo(
       .where('y.active', '=', true)
       .where('q.active', '=', true)
       .where('q.kind', '=', 'bool')
-      .where(servableImage)
+      .where(yesNoServableImage)
       .where(
         seenBy(playerId, 'yesNoReferenceId', {
           id: 'y.id',

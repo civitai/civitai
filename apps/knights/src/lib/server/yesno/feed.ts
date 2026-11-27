@@ -27,6 +27,8 @@ export type YesNoOffer = {
   category: { heading: string };
   /** Set only on the first question of a stretch. */
   banner: { heading: string } | null;
+  /** The player may report it: every question but a tag review item. */
+  reportable: boolean;
 };
 
 function unanswered(
@@ -51,6 +53,18 @@ function unanswered(
               .select(sql<number>`1`.as('one'))
               .whereRef('v.itemId', '=', 'i.id')
               .where('v.playerId', '=', userId)
+          )
+        )
+      )
+      // A player who reported a question is never dealt it again, whatever becomes of the report.
+      .where((eb) =>
+        eb.not(
+          eb.exists(
+            eb
+              .selectFrom('KnightsQuestionReport as qr')
+              .select(sql<number>`1`.as('one'))
+              .whereRef('qr.itemId', '=', 'i.id')
+              .where('qr.playerId', '=', userId)
           )
         )
       )
@@ -209,6 +223,7 @@ export async function pickYesNo(
       height: found.height,
       category: { heading },
       banner: axis === current ? null : { heading },
+      reportable: axis !== TAG_REVIEW_KEY,
     };
   }
   return null;

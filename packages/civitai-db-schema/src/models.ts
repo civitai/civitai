@@ -5360,6 +5360,28 @@ export interface KnightsUnsure {
   createdAt: Date;
 }
 
+export interface KnightsQuestionReport {
+  id: bigint;
+  playerId: number;
+  itemId: number;
+  reason: string;
+  questionKey: string;
+  imageId: number;
+  createdAt: Date;
+  resolvedAt: Date | null;
+  resolvedBy: number | null;
+}
+
+export interface KnightsImagePull {
+  id: number;
+  imageId: number;
+  reason: string;
+  reportId: number | null;
+  createdAt: Date;
+  resolvedAt: Date | null;
+  resolvedBy: number | null;
+}
+
 export interface KnightsLegacyPlayerDay {
   playerId: number;
   day: Date;

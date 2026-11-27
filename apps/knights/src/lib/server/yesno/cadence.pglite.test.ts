@@ -20,7 +20,7 @@ beforeAll(async () => {
 afterAll(() => pg.close());
 beforeEach(async () => {
   await pg.exec(
-    `TRUNCATE "KnightsVote","KnightsUnsure","KnightsQueueItem","NewOrderPlayer","Image","Post" RESTART IDENTITY CASCADE; DELETE FROM "KnightsQuestion" WHERE key LIKE 'knights.yesno.%'`
+    `TRUNCATE "KnightsVote","KnightsUnsure","KnightsQuestionReport","KnightsQueueItem","NewOrderPlayer","Image","Post" RESTART IDENTITY CASCADE; DELETE FROM "KnightsQuestion" WHERE key LIKE 'knights.yesno.%'`
   );
 });
 
@@ -99,6 +99,21 @@ describe('servedHistory', () => {
       { yesno: false, key: 'r9001' },
       { yesno: true, key: `y${first}` },
       { yesno: true, key: `y${second}` },
+    ]);
+  });
+
+  it('counts a reported question as served, like a Not sure', async () => {
+    await seedPlayer(pg, 1);
+    const reported = await yesNoItem(50);
+    await seedSettledVote(pg, { itemId: 9001, playerId: 1, imageId: 10, createdAt: at(1) });
+    await pg.query(
+      `INSERT INTO "KnightsQuestionReport" ("playerId", "itemId", "reason", "questionKey", "imageId", "createdAt") VALUES (1, $1, 'image', 'knights.yesno.violence', 50, $2)`,
+      [reported, at(2)]
+    );
+
+    expect(await servedHistory(db, 1)).toEqual([
+      { yesno: false, key: 'r9001' },
+      { yesno: true, key: `y${reported}` },
     ]);
   });
 

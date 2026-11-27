@@ -40,6 +40,12 @@ export const REFERENCE_STATUS = {
 export const YESNO_QUESTION_MAX = 600;
 /** `reason` of a yes/no item a moderator closed. The import never reopens one. */
 export const MODERATOR_RETIRED = 'moderator-retired';
+/** `status` of a player yes/no item enough players reported: served to nobody until a moderator keeps or removes it. */
+export const YESNO_REPORTED = 'Reported';
+/** `reason` of a reported yes/no item a moderator removed: never served again, and the import never reopens it. */
+export const REPORT_REMOVED = 'report-removed';
+/** `reason` of a "KnightsImagePull": most reports on the pulled question named the image. */
+export const IMAGE_PULL_REPORTED = 'players-reported';
 export const MODERATION_META_KEY = 'moderation';
 export const REWORD_OF_META_KEY = 'rewordOf';
 /** The image's level when a rating item went to the Inquisitors: what "pushed down" was measured from. */

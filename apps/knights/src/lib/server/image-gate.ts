@@ -87,3 +87,11 @@ export const servableImageForSweeps = (eb: Builder) =>
 /** `modReviewEligibleImage`, through the gate: the content half and no open report on the image. */
 export const modReviewEligibleImage = (_eb: Builder) =>
   sql<SqlBool>`(${imageGate('modReviewContent')} AND ${noOpenImageReport})`;
+
+/** No open "KnightsImagePull" on `img`: players reported the image and no moderator has kept it (`yesno/report.ts`). */
+export const noOpenImagePull = sql<SqlBool>`NOT EXISTS (
+  SELECT 1 FROM "KnightsImagePull" ip WHERE ip."imageId" = img.id AND ip."resolvedAt" IS NULL
+)`;
+
+/** `servableImage` for a yes/no question or an Acolyte pair: the gate, and no open pull of the image. */
+export const yesNoServableImage = (eb: Builder) => eb.and([imageGate('servable'), noOpenImagePull]);
