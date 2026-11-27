@@ -545,7 +545,7 @@ func tagLookupRoutes(t *testing.T, fx *goldenFixture) []testkit.Route {
 			var rows [][]any
 			for _, id := range ids {
 				for _, tid := range modelTags[strconv.Itoa(id)].TagIDs {
-					rows = append(rows, []any{int32(id), int32(tid)})
+					rows = append(rows, []any{int64(id), int64(tid)})
 				}
 			}
 			return testkit.NewRows([]string{"modelId", "tagId"}, rows...), nil
@@ -555,7 +555,7 @@ func tagLookupRoutes(t *testing.T, fx *goldenFixture) []testkit.Route {
 			var rows [][]any
 			for _, id := range ids {
 				if tg, ok := tags[strconv.Itoa(id)]; ok {
-					rows = append(rows, []any{int32(id), tg.Name})
+					rows = append(rows, []any{int64(id), tg.Name})
 				}
 			}
 			return testkit.NewRows([]string{"id", "name"}, rows...), nil

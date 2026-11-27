@@ -120,13 +120,10 @@ func (r *OrderedRead) Writable() map[int]bool {
 	if len(r.cmds) == 0 {
 		return nil
 	}
-	now := clock.Now()
-	if r.p.Now != nil {
-		now = r.p.Now()
-	}
 	var out map[int]bool
 	for i, cmd := range r.cmds {
-		if _, st := entryState(cmd, r.ttl, now, decodeOpts{ordered: true}); st == stateAbsent {
+		// The state alone is read: no ttl, so no clock (an entry is an entry, stale or not).
+		if _, st := entryState(cmd, 0, time.Time{}, decodeOpts{ordered: true}); st == stateAbsent {
 			if out == nil {
 				out = map[int]bool{}
 			}

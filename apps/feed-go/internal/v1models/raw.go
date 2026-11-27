@@ -47,9 +47,8 @@ type RawInput struct {
 	EarlyAccess      bool
 	BrowsingLevel    int
 	Now              time.Time
-	// ComputeDataMiss: a model-data cache miss is computed with the cache's lookup (Deps.Sources)
-	// instead of falling back (`v1-models-data-miss`): the list, per Deps.computeDataMiss.
-	ComputeDataMiss bool
+	// misses: the cache misses computed instead of falling back (Deps.misses).
+	misses missServe
 }
 
 // usesBaseModelMetrics is getModelsRaw's useBaseModelMetrics.
