@@ -167,6 +167,24 @@ describe('setTosViolationHandler on a likeness request', () => {
     expect(reportsActioned).toHaveBeenCalledTimes(1);
   });
 
+  it('marks an image the block left held for review', async () => {
+    canConfirmReRemoval.mockResolvedValue(true);
+    const queryRaw = vi.mocked(dbMock.dbWrite.$queryRaw);
+    queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
+      strings.join('').includes('AS held')
+        ? [{ id: 50, held: true, removedForCsam: false, underReview: true, pHash: null }]
+        : []) as never);
+
+    try {
+      await removeAs('likenessRequest');
+    } finally {
+      queryRaw.mockImplementation((async () => []) as never);
+    }
+
+    expect(likenessMarks()).toHaveLength(1);
+    expect(reportsActioned).not.toHaveBeenCalled(); // held: the rest of the effects wait
+  });
+
   it('marks nothing while the removal is held, or for another reason', async () => {
     canConfirmReRemoval.mockResolvedValue(false);
     holdRemovals.mockResolvedValue({ held: [{ imageId: 50, created: true }], proceed: [] });

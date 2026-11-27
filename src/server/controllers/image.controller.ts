@@ -294,11 +294,11 @@ export const setTosViolationHandler = async ({
       { moderatorId: user.id }
     );
     const held = written.held.has(id);
+    // Held or not: the block is written, and a dismissed review must not bring the copy back.
+    if (violationType === ViolationType.LikenessRequest) await trackLikenessRequests(user.id, [id]);
 
     if (!held) {
       if (written.underReview.has(id)) logNoticeUnderReview([{ id, userId: image.userId }]);
-      if (violationType === ViolationType.LikenessRequest)
-        await trackLikenessRequests(user.id, [id]);
       // Update all reports with this comment id to actioned
       const affectedReports = await updateImageReportStatusByReason({
         id,

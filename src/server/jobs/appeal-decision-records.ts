@@ -61,7 +61,6 @@ const ineligibleRecord = (r: Prisma.Sql) => {
 
 /** Written by `/api/mod/user/delete`, the erasure endpoint, and not by self-serve deletion. */
 const ERASURE_ACTIVITY = 'deleteAccount';
-/** Written on an image removed because the person depicted, or a rights holder, asked. */
 
 /** By appeal, or by owner hash for a record whose appeal row is gone. */
 const ownersRecord = (r: Prisma.Sql, userIds: number[]) => Prisma.sql`(
