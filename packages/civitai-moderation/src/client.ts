@@ -5,6 +5,7 @@ import {
   caseIntakeInput,
   casePartyActionInput,
   casePartyViewInput,
+  caseTickInput,
   type CaseIntakeInput,
   type CasePartyActionInput,
   type CasePartyViewInput,
@@ -136,6 +137,9 @@ export function createModeratorClient(config: ModeratorClientConfig = {}) {
       call(MOD_ACTION.casePartyAction, casePartyActionInput.parse(input), {
         timeoutMs: CASE_TIMEOUT_MS,
       }),
+    /** Evaluate every open case's clocks and alert on the thresholds crossed. */
+    caseTick: (): Promise<unknown> =>
+      call(MOD_ACTION.caseTick, caseTickInput.parse({}), { timeoutMs: 2 * 60_000 }),
     /** Set one feedback report's triage status as the moderator queue does. Not retried. */
     feedbackTriage: (input: FeedbackTriageInput): Promise<unknown> =>
       call(MOD_ACTION.feedbackTriage, feedbackTriageInput.parse(input)),

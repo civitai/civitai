@@ -1422,6 +1422,219 @@
         ]
       },
       {
+        "id": 8033,
+        "name": "golden-8033.mp4",
+        "url": "00000000-0000-4000-8000-000000008033",
+        "nsfwLevel": 1,
+        "width": 1280,
+        "height": 720,
+        "hash": "UGOLDEN8033",
+        "hideMeta": false,
+        "hasMeta": true,
+        "hasPositivePrompt": true,
+        "onSite": false,
+        "remixOfId": null,
+        "createdAt": {
+          "$date": "2026-06-06T05:00:00.000Z"
+        },
+        "sortAt": {
+          "$date": "2026-06-06T06:00:00.000Z"
+        },
+        "mimeType": "video/mp4",
+        "type": "video",
+        "metadata": {
+          "width": 1280,
+          "height": 720,
+          "duration": 12,
+          "thumbnailId": 8933
+        },
+        "ingestion": "Scanned",
+        "blockedFor": null,
+        "scannedAt": {
+          "$date": "2026-06-06T05:01:00.000Z"
+        },
+        "needsReview": null,
+        "userId": 1002,
+        "postId": 7020,
+        "postTitle": "Golden post 7020",
+        "index": 2,
+        "publishedAt": {
+          "$date": "2026-06-06T06:00:00.000Z"
+        },
+        "unpublishedAt": null,
+        "modelVersionId": null,
+        "model3dId": null,
+        "availability": "Public",
+        "minor": false,
+        "poi": false,
+        "acceptableMinor": false,
+        "restricted": false,
+        "_resources": [],
+        "_tags": [
+          503,
+          524
+        ]
+      },
+      {
+        "id": 8041,
+        "name": "golden-8041.png",
+        "url": "00000000-0000-4000-8000-000000008041",
+        "nsfwLevel": 1,
+        "width": 832,
+        "height": 1216,
+        "hash": "UGOLDEN8041",
+        "hideMeta": false,
+        "hasMeta": true,
+        "hasPositivePrompt": true,
+        "onSite": false,
+        "remixOfId": null,
+        "createdAt": {
+          "$date": "2026-06-06T17:00:00.000Z"
+        },
+        "sortAt": {
+          "$date": "2026-06-06T18:00:00.000Z"
+        },
+        "mimeType": "image/png",
+        "type": "image",
+        "metadata": {
+          "width": 832,
+          "height": 1216,
+          "hash": "UGOLDEN8041"
+        },
+        "ingestion": "Scanned",
+        "blockedFor": "CSAM",
+        "scannedAt": {
+          "$date": "2026-06-06T17:01:00.000Z"
+        },
+        "needsReview": null,
+        "userId": 1002,
+        "postId": 7030,
+        "postTitle": "Golden post 7030",
+        "index": 0,
+        "publishedAt": {
+          "$date": "2026-06-06T18:00:00.000Z"
+        },
+        "unpublishedAt": null,
+        "modelVersionId": null,
+        "model3dId": null,
+        "availability": "Public",
+        "minor": false,
+        "poi": false,
+        "acceptableMinor": false,
+        "restricted": false,
+        "_resources": [],
+        "_tags": [
+          502,
+          525
+        ]
+      },
+      {
+        "id": 8042,
+        "name": "golden-8042.png",
+        "url": "00000000-0000-4000-8000-000000008042",
+        "nsfwLevel": 1,
+        "width": 832,
+        "height": 1216,
+        "hash": "UGOLDEN8042",
+        "hideMeta": false,
+        "hasMeta": true,
+        "hasPositivePrompt": true,
+        "onSite": false,
+        "remixOfId": null,
+        "createdAt": {
+          "$date": "2026-06-06T17:00:00.000Z"
+        },
+        "sortAt": {
+          "$date": "2026-06-06T18:00:00.000Z"
+        },
+        "mimeType": "image/png",
+        "type": "image",
+        "metadata": {
+          "width": 832,
+          "height": 1216,
+          "hash": "UGOLDEN8042"
+        },
+        "ingestion": "Scanned",
+        "blockedFor": "AiNotVerified",
+        "scannedAt": {
+          "$date": "2026-06-06T17:01:00.000Z"
+        },
+        "needsReview": null,
+        "userId": 1002,
+        "postId": 7030,
+        "postTitle": "Golden post 7030",
+        "index": 1,
+        "publishedAt": {
+          "$date": "2026-06-06T18:00:00.000Z"
+        },
+        "unpublishedAt": null,
+        "modelVersionId": null,
+        "model3dId": null,
+        "availability": "Public",
+        "minor": false,
+        "poi": false,
+        "acceptableMinor": false,
+        "restricted": false,
+        "_resources": [],
+        "_tags": [
+          503,
+          526
+        ]
+      },
+      {
+        "id": 8043,
+        "name": "golden-8043.png",
+        "url": "00000000-0000-4000-8000-000000008043",
+        "nsfwLevel": 1,
+        "width": 832,
+        "height": 1216,
+        "hash": "UGOLDEN8043",
+        "hideMeta": false,
+        "hasMeta": true,
+        "hasPositivePrompt": true,
+        "onSite": false,
+        "remixOfId": null,
+        "createdAt": {
+          "$date": "2026-06-06T17:00:00.000Z"
+        },
+        "sortAt": {
+          "$date": "2026-06-06T18:00:00.000Z"
+        },
+        "mimeType": "image/png",
+        "type": "image",
+        "metadata": {
+          "width": 832,
+          "height": 1216,
+          "hash": "UGOLDEN8043"
+        },
+        "ingestion": "Scanned",
+        "blockedFor": null,
+        "scannedAt": {
+          "$date": "2026-06-06T17:01:00.000Z"
+        },
+        "needsReview": null,
+        "userId": 1002,
+        "postId": 7030,
+        "postTitle": "Golden post 7030",
+        "index": 2,
+        "publishedAt": {
+          "$date": "2026-06-06T18:00:00.000Z"
+        },
+        "unpublishedAt": null,
+        "modelVersionId": null,
+        "model3dId": null,
+        "availability": "Public",
+        "minor": false,
+        "poi": false,
+        "acceptableMinor": false,
+        "restricted": false,
+        "_resources": [],
+        "_tags": [
+          501,
+          520
+        ]
+      },
+      {
         "id": 8101,
         "name": "golden-8101.png",
         "url": "00000000-0000-4000-8000-000000008101",
@@ -2388,6 +2601,10 @@
       },
       {
         "id": 7020,
+        "modelVersionId": null
+      },
+      {
+        "id": 7030,
         "modelVersionId": null
       },
       {

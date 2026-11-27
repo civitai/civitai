@@ -1,6 +1,7 @@
 // No Prisma imports: profile-picture.servable.ts uses it under suites that mock `@prisma/client`.
 import { BlockedReason, NsfwLevel } from '~/server/common/enums';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import { isOwnerExemptBlock, ownerVisibleBlockedFor } from '~/shared/utils/image-blocked';
 
 /**
  * Whether an image carries a block. A scan error or a rescan request moves `ingestion` off
@@ -18,12 +19,7 @@ export function hasBlockMarker(image: {
   );
 }
 
-/**
- * The block reasons that leave an image's media with its owner: a hold the owner clears by adding
- * metadata, not a safety block. An allow-list, so any other reason, including one added later,
- * refuses the owner the media.
- */
-export const OWNER_MEDIA_EXEMPT_BLOCKS: readonly string[] = [BlockedReason.AiNotVerified];
+export { OWNER_MEDIA_EXEMPT_BLOCKS, ownerVisibleBlockedFor } from '~/shared/utils/image-blocked';
 
 /**
  * The block reasons that, with `reviewedBlocks` (the `ownerBlockedMedia` flag), also leave an image's
@@ -61,7 +57,7 @@ export function ownerMediaAllowed(
 ) {
   if (image.blockedFor != null)
     return (
-      OWNER_MEDIA_EXEMPT_BLOCKS.includes(image.blockedFor) ||
+      isOwnerExemptBlock(image.blockedFor) ||
       (reviewedBlocks &&
         image.ingestion === ImageIngestionStatus.Blocked &&
         image.ownerCsamMarked === false &&
@@ -87,4 +83,28 @@ export function blockLeavesMedia(
   if (actsAsModerator) return true;
   if (viewerId != null && image.userId === viewerId) return ownerMediaAllowed(image);
   return !hasBlockMarker(image);
+}
+
+/**
+ * The ingestion signal payload an image's owner receives. A block reason reaches the owner only
+ * when it is one they can act on (`OWNER_MEDIA_EXEMPT_BLOCKS`); every other reason is dropped,
+ * so the blocked state comes from `ingestion` alone.
+ */
+export function ownerIngestionSignalData({
+  imageId,
+  ingestion,
+  blockedFor,
+  nsfwLevel,
+}: {
+  imageId: number;
+  ingestion: ImageIngestionStatus;
+  blockedFor?: string | null;
+  nsfwLevel?: number;
+}) {
+  return {
+    imageId,
+    ingestion,
+    blockedFor: ownerVisibleBlockedFor(blockedFor) ?? undefined,
+    nsfwLevel,
+  };
 }

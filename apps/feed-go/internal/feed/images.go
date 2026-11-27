@@ -422,10 +422,11 @@ func buildImage(r RawImage, hy *Hydrated, viewer Viewer) Image {
 	if d, ok := hy.Decorations[r.ID]; ok {
 		decoration = d
 	}
-	// feedThumbnailFields: the level counts either way; the url only for a servable thumbnail, the
-	// creator or a moderator.
+	// feedThumbnailFields: the level counts either way; the url only for a servable thumbnail, a
+	// moderator, or the creator where ownerMediaAllowed leaves them the media (#10505).
 	var thumbURL any = superjson.Undefined{}
-	if hasThumb && (thumb.Servable || (viewer.ID != 0 && r.UserID == viewer.ID) || viewer.IsModerator) {
+	ownersOwn := viewer.ID != 0 && r.UserID == viewer.ID && thumb.OwnerMediaAllowed
+	if hasThumb && (thumb.Servable || ownersOwn || viewer.IsModerator) {
 		thumbURL = thumb.URL // `thumbnail?.url`: a thumbnail without a url is null, not undefined
 	}
 

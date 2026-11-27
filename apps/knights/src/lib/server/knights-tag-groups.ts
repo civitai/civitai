@@ -1,7 +1,9 @@
 /**
  * Tag groups a player can hide in Knights settings. Never a browsing level or a whole kind of sexual content (Knights
  * exists to rate mature content), nor a tag that only names an orientation. Never reuse a retired key (anime,
- * political): players may still have it stored, and it would hide that group again without their choosing.
+ * political): players may still have it stored, and it would hide that group again without their choosing. `axes` are
+ * the yes/no axes about the group's topic: hiding the group skips them whatever the image is tagged, since their images
+ * often carry none of its tags.
  */
 export const KNIGHTS_TAG_GROUPS = [
   {
@@ -62,6 +64,7 @@ export const KNIGHTS_TAG_GROUPS = [
       { id: 123088, name: 'corpse' },
       { id: 789, name: 'body horror' },
     ],
+    axes: ['violence', 'subject_state'],
   },
 ] as const;
 
@@ -74,4 +77,10 @@ export const isKnightsTagGroupKey = (key: string): key is KnightsTagGroupKey =>
 export const tagIdsOfGroups = (keys: readonly string[]): number[] =>
   KNIGHTS_TAG_GROUPS.filter((group) => keys.includes(group.key)).flatMap((group) =>
     group.tags.map((tag) => tag.id)
+  );
+
+/** The yes/no axes (without the key prefix) that hiding `keys` skips. */
+export const hiddenAxesOf = (keys: readonly string[]): string[] =>
+  KNIGHTS_TAG_GROUPS.filter((group) => keys.includes(group.key)).flatMap((group) =>
+    'axes' in group ? [...group.axes] : []
   );

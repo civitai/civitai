@@ -371,7 +371,6 @@ const KNOWN_UNFIXED_SAME_CLASS: string[] = [
   'mod/reprocess-order.ts',
   'mod/resource-training-v2.ts',
   'mod/scanner-policies/export-dataset.ts',
-  'mod/unblock-images.ts',
   'mod/withdraw-from-bank.ts',
   'testing/blocks.ts',
   'testing/blue-buzz-paid-access.ts',

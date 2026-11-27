@@ -1,6 +1,7 @@
 import { sql } from '@civitai/db/kysely';
 import { KEPT_HIDE_MARKER } from '@civitai/db-queries/pending-deletes';
 import { isFeedbackCaptureOwner } from '@civitai/shared/feedback-capture';
+import { csamBlockedForSql } from '@civitai/shared/retracted-media-tier';
 import { REVIEWS_KEPT_WHEN_LIFTED } from '@civitai/shared/image-review-types';
 import {
   GRACE_PRIOR_BLOCKED_FOR_KEY,
@@ -362,7 +363,7 @@ async function acceptImageUnder(
         : {}),
     })
     .where('id', '=', imageId)
-    .where('blockedFor', 'is distinct from', BLOCKED_REASON_CSAM)
+    .where(sql<boolean>`NOT ${sql.raw(csamBlockedForSql('"Image"'))}`)
     .$if(!clearsCsamReview, (qb) =>
       qb.where('needsReview', 'is distinct from', FLAG_KEPT_THROUGH_BLOCK)
     )

@@ -40,7 +40,10 @@ import { appRateLimitMeta, sendAppRateLimited } from '~/server/utils/app-rate-li
  * ai:write:budgeted claim — a block that wants the budget along with
  * identity asks for both scopes in its manifest.
  *
- * CORS: handled in withBlockScope from BLOCK_ALLOWED_ORIGINS.
+ * CORS: handled in withBlockScope. An allowlisted origin is echoed, and so is an opaque
+ * `Origin: null` (`allowOpaqueOrigin`): unverified blocks are sandboxed without
+ * `allow-same-origin`, so their direct `fetch` sends `Origin: null`. That is safe here
+ * because the Bearer block JWT is the only credential this route reads.
  *
  * ## THIS ROUTE AND `blocks.getMyViewer` ARE TWO FRONT DOORS TO ONE CAPABILITY
  *
@@ -258,4 +261,8 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
   });
 });
 
-export default withBlockScope(baseHandler, { endpoint: 'me', requiredScope: 'user:read:self' });
+export default withBlockScope(baseHandler, {
+  endpoint: 'me',
+  requiredScope: 'user:read:self',
+  allowOpaqueOrigin: true,
+});

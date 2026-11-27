@@ -5,6 +5,7 @@ import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as OrchestratorCivitai from '~/server/services/orchestrator/civitai';
 import type * as SessionInvalidation from '~/server/auth/session-invalidation';
 import { REDIS_KEYS } from '~/server/redis/client';
+import { DOCS_API_KEY_SCOPE } from '~/shared/constants/docs-api-key.constants';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 // A mute ends the generation credentials already issued, so none of them outlives it. App tokens
@@ -30,13 +31,45 @@ const { afterAccountStandingChanged } = await import('~/server/services/account-
 const USER = 42;
 const MUTE = { kind: 'invalidate', caller: 'moderation' } as const;
 const live = new Date(Date.now() + 3_600_000);
+const docs = 'Developer docs (civitai.com)';
 const rows = [
-  { id: 1, key: 'k1', type: 'System', tokenScope: TokenScope.Full, expiresAt: live },
-  { id: 2, key: 'k2', type: 'Access', tokenScope: TokenScope.AIServicesWrite, expiresAt: live },
-  { id: 3, key: 'k3', type: 'Refresh', tokenScope: TokenScope.AIServicesRead, expiresAt: live },
-  { id: 4, key: 'k4', type: 'Access', tokenScope: TokenScope.ModelsRead, expiresAt: live },
-  { id: 5, key: 'k5', type: 'User', tokenScope: TokenScope.AIServicesWrite, expiresAt: null },
-  { id: 6, key: 'k6', type: 'System', tokenScope: TokenScope.Full, expiresAt: null },
+  { id: 1, key: 'k1', name: 'x', type: 'System', tokenScope: TokenScope.Full, expiresAt: live },
+  {
+    id: 2,
+    key: 'k2',
+    name: 'x',
+    type: 'Access',
+    tokenScope: TokenScope.AIServicesWrite,
+    expiresAt: live,
+  },
+  {
+    id: 3,
+    key: 'k3',
+    name: 'x',
+    type: 'Refresh',
+    tokenScope: TokenScope.AIServicesRead,
+    expiresAt: live,
+  },
+  {
+    id: 4,
+    key: 'k4',
+    name: 'x',
+    type: 'Access',
+    tokenScope: TokenScope.ModelsRead,
+    expiresAt: live,
+  },
+  {
+    id: 5,
+    key: 'k5',
+    name: 'x',
+    type: 'User',
+    tokenScope: TokenScope.AIServicesWrite,
+    expiresAt: null,
+  },
+  { id: 6, key: 'k6', name: 'x', type: 'System', tokenScope: TokenScope.Full, expiresAt: null },
+  // The developer docs key, and a personal key that only shares its name.
+  { id: 8, key: 'k8', name: docs, type: 'User', tokenScope: DOCS_API_KEY_SCOPE, expiresAt: live },
+  { id: 9, key: 'k9', name: docs, type: 'User', tokenScope: TokenScope.Full, expiresAt: null },
 ];
 const expiredIds = () =>
   dbMock.dbWrite.apiKey.updateMany.mock.calls.flatMap(
@@ -57,10 +90,10 @@ afterEach(() => {
 });
 
 describe('a mute and the generation credentials already issued', () => {
-  it('expires the generation key and AI Services app tokens, and drops the cached token', async () => {
+  it('expires the generation key, the docs key and AI Services app tokens, and drops the cached token', async () => {
     dbMock.dbWrite.user.findUnique.mockResolvedValue({ muted: true } as never);
     await afterAccountStandingChanged(USER, MUTE);
-    expect(expiredIds().sort()).toEqual([1, 2, 3, 6]);
+    expect(expiredIds().sort()).toEqual([1, 2, 3, 6, 8]);
     expect(redisMock.sysRedis.hDel).toHaveBeenCalledWith(
       REDIS_KEYS.GENERATION.TOKENS_OWNED,
       String(USER)
@@ -73,6 +106,7 @@ describe('a mute and the generation credentials already issued', () => {
     const mintedInBetween = {
       id: 7,
       key: 'k7',
+      name: 'x',
       type: 'System',
       tokenScope: TokenScope.Full,
       expiresAt: live,

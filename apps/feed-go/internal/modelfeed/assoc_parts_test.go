@@ -268,7 +268,8 @@ func TestAssocImageQuerySQL(t *testing.T) {
 	viewer, args := assocImageQuery{VersionIDs: []int{1}, ViewerID: 9, Level: 63, ExcludedTagIDs: []int{4}}.build()
 	for _, want := range []string{
 		`(i."nsfwLevel" != 0 AND NOT EXISTS (SELECT 1 FROM "TagsOnImageDetails" toi WHERE toi."imageId" = i.id AND toi."disabled" = FALSE AND toi."tagId" = ANY($2::int[]) ) OR i."userId" = $3)`,
-		`(i."blockedFor" IS NULL OR i."userId" = $4)`, `(i."nsfwLevel" & $5) != 0`,
+		`(i."blockedFor" IS NULL OR (i."userId" = $4 AND (CASE WHEN "i"."blockedFor" IS NOT NULL THEN "i"."blockedFor" IN ('AiNotVerified') ELSE "i"."ingestion" <> 'Blocked'::"ImageIngestionStatus" END)))`,
+		`(i."nsfwLevel" & $5) != 0`,
 		`OR i."userId" = $6)`, `OR NOT i."modelRestricted" OR i."userId" = $7)`,
 	} {
 		if !strings.Contains(viewer, want) {

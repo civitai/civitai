@@ -2936,9 +2936,9 @@ The public model API: `src/pages/api/v1/models/index.ts` (a `MixedAuthEndpoint`)
 | Query | every key above except those on the right; an empty `query` (falsy: the database path); a truthy `query`, the text search (§16.11); `tag` (ASCII); unknown keys ignored and kept for `nextPage` | a repeated `query`, or a truthy one with no search backend or (serving) `FEED_GO_V1_MODELS_SERVE_QUERY` off (`v1-models-query`), a text query with `page` (Node's 400), a cursor other than decimal digits or an empty `baseModels` value (each `v1-models-query` too), a text search the search guard did not make (`v1-models-query`), invalid UTF-8 (`v1-models-query-encoding`), a failed search (`v1-models-query-search-failed`), a non-ASCII `tag` or a blocked list holding a non-ASCII name (`v1-models-tag`: Go's lowercasing of such text is not always JS's `toLowerCase`), no cached blocked list (`blocked-tags-*`), every other schema key (`v1-models-<key>`: `tagname`, `supportsGeneration`, `checkpointType`, …), a signed-out `favorites`/`hidden` (`v1-models-authed-only`), `limit=0` or over 100 (`v1-models-limit`), the 429 (`v1-models-page-limit`), a Recently Added or unknown sort (`v1-models-sort`), a value `Number()` or zod reads otherwise (`v1-models-input-*`), a cursor Node answers with a 400 or reads through JS's Date parser (`v1-models-cursor`) |
 | Viewer | the list signed out; `[id]` always (it reads no session), and with `FEED_GO_V1_BEARER_AUTH` an API credential on `[id]` that Node answers with the same body (§16.10) | a list session (`v1-models-session`); API credentials (`bearer-token`; on `[id]` with `FEED_GO_V1_BEARER_AUTH`, the cases of §16.10) |
 | Statement | all four FROM forms, every sort but Recently Added, both cursor forms, the period bound, types, base models, username, `tag` (the blocked-name empty page, the Tag lookup, its `EXISTS`), ids, earlyAccess, archived, the addons' POI/minor/tag clauses | a username the replica does not hold (`v1-models-username-miss`) |
-| Caches | every hit; the paid-access and metric-privacy misses (their lookups are plain replica reads); a tag-name miss with `FEED_GO_COMPUTE_MISSES` (tagCache's lookup, §16.7); the showcase images and their tag ids read exactly as model.getAll reads them (`hydrate.Sources.VersionImages`, §16.7) | a model-data miss (`v1-models-data-miss`; on the list computed in the shadow with `FEED_GO_COMPUTE_MISSES` and served with `FEED_GO_V1_MODELS_SERVE_DATA_MISS`, §16.7), a model-tags, files or membership miss (`v1-models-*-miss`), a tag-name miss with `FEED_GO_COMPUTE_MISSES` off, a showcase-images or image-tag-ids miss with it off (`model-images-miss`, `tag-ids-miss`; a failed lookup is `<reason>-failed`), a stale files or tag-name entry Node would revalidate (`v1-models-*-stale`), a gallery-settings key Node would rebuild (`gallery-settings-miss`), a held model whose settings carry no level; where one of those misses is a cache GET that failed (not `redis.Nil`: a transport failure, a shard down), that cache's own read-failure reason instead (`v1-models-data-read-failed`, `v1-models-tags-read-failed`, `v1-models-tag-name-read-failed`, `v1-models-files-read-failed`, `v1-models-membership-read-failed`), so a read failure is never counted as a content miss |
+| Caches | every hit; the paid-access and metric-privacy misses (their lookups are plain replica reads); a tag-name miss with `FEED_GO_COMPUTE_MISSES` (tagCache's lookup, §16.7); the showcase images and their tag ids read exactly as model.getAll reads them (`hydrate.Sources.VersionImages`, §16.7); with `FEED_GO_COMPUTE_MISSES`, in a shadow sample always and on a public request (either route) each behind its own switch (§16.7): a model-data miss (`FEED_GO_V1_MODELS_SERVE_DATA_MISS`), a model-tags miss (`FEED_GO_V1_MODELS_SERVE_TAGS_MISS`), a stale tag name (`FEED_GO_V1_MODELS_SERVE_TAG_NAME_STALE`), a version-showcase miss Node's fetch looks up (`FEED_GO_V1_MODELS_SERVE_SHOWCASE_MISS`, §16.9), a version-files miss or stale entry (`FEED_GO_V1_MODELS_SERVE_FILES_MISS`) | each of those four with its switch off or the miss computation off (`v1-models-data-miss`, `v1-models-tags-miss`, `v1-models-tag-name-stale`, `v1-models-showcase-miss`), a lag-flagged model-data miss where model-data is not written back (`v1-models-data-miss`), a files miss with its switch off (`v1-models-files-miss`), a membership miss (`v1-models-membership-miss`), a tag-name miss with `FEED_GO_COMPUTE_MISSES` off, a showcase-images or image-tag-ids miss with it off (`model-images-miss`, `tag-ids-miss`; a failed lookup is `<reason>-failed`), a stale files entry with its switch off (`v1-models-files-stale`), a gallery-settings key Node would rebuild (`gallery-settings-miss`), a held model whose settings carry no level; where one of those misses is a cache GET that failed (not `redis.Nil`: a transport failure, a shard down), that cache's own read-failure reason instead (`v1-models-data-read-failed`, `v1-models-tags-read-failed`, `v1-models-tag-name-read-failed`, `v1-models-files-read-failed`, `v1-models-membership-read-failed`), so a read failure is never counted as a content miss |
 | Curated showcases | an uncurated version (§16.9) | a curated version (`v1-models-curated-showcase`), a showcase entry the cache does not hold without the miss computation (`v1-models-showcase-miss`; with it, a replica lookup: a row is curated, a failed read `v1-models-showcase-miss-failed`), an uncurated entry past the cache's hour (`v1-models-showcase-stale`); a failed showcase cache GET or a failed lag-flag read (with the computation) is `v1-models-showcase-miss-failed` too |
-| Shaping | both shapers, the file naming over ASCII model names, Training Data files' empty metadata | a name the scheme strips non-ASCII text from (`v1-models-filename`) |
+| Shaping | both shapers, the file naming (over a model or version name with non-ASCII text: in a shadow sample always, on a public request with `FEED_GO_V1_MODELS_SERVE_FILENAME`, §16.7), Training Data files' empty metadata | a name the scheme strips non-ASCII text from, with that switch off (`v1-models-filename`) |
 | Training Data | the listing on both routes (list: in the shaper; `[id]`: after the build or the cache, a body without `modelVersions` gaining an empty one): the candidates, the statement (`internal/v1models/training_data_listing.sql`, Node's rendered text), the predicate, the red-capable host (SERVER_DOMAIN_RED and its aliases, read as Node reads them) | a sample whose Training Data statement hash is missing or is not this build's, or a public request while the Node builds' published rule sets are not exactly this build's (`v1-models-training-data-drift`, below and §16.8), the statement failing (`v1-models-training-data-unread`, see §16.7), a value of a type a jsonb read does not produce, an absolute-form request line (`v1-models-host`: its host replaces the Host header Node reads), a body or row shape the Node code would throw on (`v1-models-training-data`), non-ASCII text in the Host header or the red host list (`v1-models-host`) |
 | Config | | no `NEXT_PUBLIC_IMAGE_LOCATION` or (`[id]`) `NEXTAUTH_URL` (`v1-models-unconfigured-urls`) |
 
@@ -3031,12 +3031,23 @@ decisions' behaviour beyond the golden fixtures.
   whose only session cookie is the legacy next-auth one reads as cookieless here while Node chose its
   credentialed Vary: a `header:vary` mismatch the shadow cannot avoid (the served path sees the real
   Cookie header and computes the same Vary as Node, or falls back on the list);
-- the download file name of a model or version name with non-ASCII text falls back
-  (`v1-models-filename`): `resolveModelFileName` strips the model name out of the version name with
-  `new RegExp(…, 'gi')`, whose case-insensitive match (non-Unicode mode) canonicalizes each UTF-16
-  unit with the engine's `toUpperCase`. That is the running Node build's ICU case table, a newer
-  Unicode version than Go's `unicode` package carries, and a golden fixture pins it for one Node
-  build only; ASCII text, where both agree, is ported;
+- the download file name of a model or version name with non-ASCII text: `resolveModelFileName`
+  strips the model name out of the version name with `new RegExp(…, 'gi')`, whose case-insensitive
+  match (non-Unicode mode) compares each UTF-16 unit's Canonicalize (the engine's `toUpperCase`
+  through its ICU: a newer Unicode than Go's `unicode` package carries), then trims with the
+  engine's whitespace set. Go reads both from `internal/v1models/jscanon.json`, written from the
+  Node engine itself by `testdata/golden/gen-v1-filenames.mjs` (every entry checked there against
+  the RegExp engine), so ASCII text is matched directly and other text by Node's own table.
+  `src/server/services/__tests__/feed-go-js-canonicalize.parity.test.ts` recomputes the table in
+  the Node the app tests run on and fails when a Node upgrade moves it (rerun the generator). Served
+  with `FEED_GO_V1_MODELS_SERVE_FILENAME` (default off; a shadow sample always computes it); off,
+  such a name falls back (`v1-models-filename`). The naming itself is held to the real Node
+  functions by `testdata/golden/v1-filenames/cases.json` (`TestReplaceInsensitiveIsNodes`,
+  `TestResolveFileNameNonASCIIIsNodes`). Known limit: between a Node upgrade that moves a case
+  mapping and the regenerated table's release, a name using that code unit is named by the old
+  table. The other lowercasing steps of the naming (the collision key, the generic-name test, the
+  `-inpainting` check) use Go's `strings.ToLower` on the stored file names, as before: a file name
+  whose JS `toLowerCase` differs from it (e.g. U+0130) can still be named differently;
 - the Training Data statement failing: Node leaves every Training Data file out (fails closed);
   here it falls back (`v1-models-training-data-unread`). Whether Node's own read failed is not
   known here, so answering Node's fail-closed body would differ from Node's whenever only this read
@@ -3046,31 +3057,52 @@ decisions' behaviour beyond the golden fixtures.
 - a cursor timestamp's fraction is padded to three digits before it is read, as parseCursor's
   `normalizeCursorTimestamp` does (`.25` is 250 ms); a date-like token outside that
   `YYYY-MM-DD HH:mm:ss.f` shape keeps dayjs's own reading of the fraction as a millisecond count;
-- the caches are read, and (but for the version images and their tag ids below) never refilled or
-  revalidated, and the answer serves what Node's cache held milliseconds earlier (`stats.*` and
-  `nextCursor` noise on busy lists). A stale entry Node would revalidate falls back. Per cache, a miss:
+- the caches are read, and (but for the version images and their tag ids below, and the model data
+  and model tags a public request writes back) never refilled or revalidated, and the answer serves
+  what Node's cache held milliseconds earlier (`stats.*` and `nextCursor` noise on busy lists). A
+  stale entry Node would revalidate falls back unless its switch is on (tag names, below).
+  The miss switches (each default off, each refused at startup without `FEED_GO_COMPUTE_MISSES`)
+  decide a public request on either route; a shadow sample computes every one of these misses
+  whenever `FEED_GO_COMPUTE_MISSES` (§3.1) is on, and writes nothing, so the shadow compares the
+  computed answer before it is served (`v1models.Deps.misses`). Per cache, a miss:
   - tag names (`basic-tags`): with `FEED_GO_COMPUTE_MISSES` (§3.1) named by tagCache's own lookup on
-    the replica (`SELECT id, name FROM "Tag"`), nothing written back; off, it falls back;
-  - model data (`data-for-model-2`): falls back, except on the list: a shadow sample computes the
-    miss whenever `FEED_GO_COMPUTE_MISSES` (§3.1) is on, so the shadow compares it first, and the
-    public route serves a computed miss only with `FEED_GO_V1_MODELS_SERVE_DATA_MISS` (default off;
-    needs `FEED_GO_COMPUTE_MISSES`, startup refuses it otherwise). There a miss (no key, a bust's
-    debounce marker, an undecodable value) is computed with the cache's own lookup, model.getAll's
+    the replica (`SELECT id, name FROM "Tag"`), nothing written back; off, it falls back. A stale
+    entry (past tagCache's day; staleWhileRevalidate) is named the same way with
+    `FEED_GO_V1_MODELS_SERVE_TAG_NAME_STALE`: that is the answer of the Node reader that wins the
+    revalidate lock (its lookup reads dbRead), where a reader that loses it serves the stale name.
+    Nothing is written or locked: Node's many other tagCache readers keep revalidating the entry.
+    Off, it falls back (`v1-models-tag-name-stale`);
+  - model data (`data-for-model-2`): a miss (no key, a bust's debounce marker, an undecodable value)
+    is computed with `FEED_GO_V1_MODELS_SERVE_DATA_MISS` with the cache's own lookup, model.getAll's
     (`hydrate.Sources.ComputeModelData`: the versions in `(modelId, index)` order, the SHA256 model
-    hashes; a model with no version left out), on the replica, nothing written back. The lookup is
-    lag-aware (Node reads the primary for a model a recent write flagged), so a missed model whose
-    `lag-helper:model:<id>` flag is set still falls back (`v1-models-data-miss`); a flag read that
-    fails (no flag found set) falls back as `v1-models-lag-flag-failed`, a miss that is a failed
-    cache GET as `v1-models-data-read-failed` wherever it falls back, and a failed lookup is
-    `model-data-miss-failed`: a read failure never reads as the content miss. `[id]` keeps falling
-    back. `TestServeListLagFlagReadFailure` pins the read-failure reasons.
+    hashes; a model with no version left out). On a public request with model-data in
+    `FEED_GO_CACHE_WRITEBACK`, each miss Node would write back (no key or an undecodable value;
+    never a debounce marker or a failed GET) is written as model.getAll writes it (Node's bytes, SET
+    NX, a day's EX), and a missed model whose `lag-helper:model:<id>` flag is set is read on the
+    primary (`lagAwareDB`), as Node's lag-aware lookup reads it. Without that write-back (or in a
+    shadow sample) the lookup reads the replica, so a flagged missed model still falls back
+    (`v1-models-data-miss`). A flag read that fails (no flag found set) falls back as
+    `v1-models-lag-flag-failed`, a miss that is a failed cache GET as `v1-models-data-read-failed`
+    wherever it falls back, and a failed lookup is `model-data-miss-failed`: a read failure never
+    reads as the content miss. `TestServeListLagFlagReadFailure` pins the read-failure reasons.
     Evidence: `list-data-miss-computed` (a cold fixture: the record is the lookup's transcription,
     the answer the real handler's), `TestServeListComputesModelDataMiss` (a computed miss gives
-    the bytes a cache hit of the same record gives; off, no computation, or a lag flag: the fallback)
-    and `TestListDataMissShadowAndServeSwitches` (which switch decides a sample and a public request);
-  - model tags (`model-tags`): falls back. Its lookup reads `TagsOnModels` with no ORDER BY, so the
-    tag order Node writes is the replica's row order, which a second read cannot be held to
-    (model.getAll computes it, documenting that order as a divergence, §15.7);
+    the bytes a cache hit of the same record gives; off, no computation, or a lag flag without
+    write-back: the fallback), `TestServeDataMissWrittenBackAndLagAware` (the written bytes are
+    msgpackr's for the same record, a request reading Node's bytes answers identically, a flagged
+    model is read on the primary) and `TestListDataMissShadowAndServeSwitches`;
+  - model tags (`model-tags`): computed with `FEED_GO_V1_MODELS_SERVE_TAGS_MISS` with
+    modelTagCache's lookup on the replica (`hydrate.Sources.ComputeModelTags`; Node's fetch reads
+    dbRead), for the models the data cache answered: `{modelId, tagIds}`, or the notFound marker for
+    a model with no tag. With model-tags in `FEED_GO_CACHE_WRITEBACK` a public request writes each
+    miss Node would write back, as model.getAll writes it. A failed GET among the asked models
+    computes nothing (`v1-models-tags-read-failed`). The lookup has no ORDER BY (Node's findMany
+    sends none), so the tag order is the replica's row order, in Node's own lookup as here; once
+    written, both read the written order. Off, it falls back (`v1-models-tags-miss`). Evidence:
+    `list-cache-misses-computed` (model tags cold, one tag name stale), `TestServeComputesModelTagsMiss`
+    (msgpackr's bytes for the record, a day's EX, Node's bytes and the computed entry answer alike, a
+    debounce marker looked up and not written), `TestServeTagNameStaleNamed`,
+    `TestV1ModelsMissSwitchesAreSeparate`;
   - version images (`images-for-model-version-2`) and their images' tag ids (`tag-ids-for-images`):
     read by model.getAll's own read, `hydrate.Sources.VersionImages` (getImagesForModelVersionCache:
     the appendFn's minor and selectable-level filter, then every remaining image's tag ids, read with
@@ -3086,8 +3118,24 @@ decisions' behaviour beyond the golden fixtures.
     model.getAll), where a Node process that took the lock would answer the revalidated one: with
     the switch off, a busted showcase (an image taken down or edited) can be served until a Node
     reader refreshes the entry, up to the entry's 2-day expiry. Flip it off knowing that;
-  - version files (`files-for-model-version-2`): falls back. Its lookup joins files, hashes and
-    metadata (`fetchModelFilesForCache`); no Go port exists;
+  - version files (`files-for-model-version-2`): with `FEED_GO_V1_MODELS_SERVE_FILES_MISS` a miss
+    (no key, a debounce marker, an undecodable value) is computed with filesForModelVersionCache's
+    lookup on the replica (`hydrate.Sources.ComputeVersionFiles`: `fetchModelFilesForCache`'s
+    `modelFileSelect` columns, the enums as their names, the jsonb metadata parsed in its text's key
+    order and moved last, then the `hashes` relation; no ORDER BY, as Prisma sends none), and a
+    stale entry (past the cache's day; staleWhileRevalidate) is revalidated as Node's fetch
+    revalidates it. With version-files in `FEED_GO_CACHE_WRITEBACK` a public request writes each
+    miss Node would write back (Node's bytes, SET NX, two days' EX, the notFound marker for a
+    version with no file included) and takes Node's revalidate lock (`cache-lock:<key>:<id>`, SET NX
+    EX 10) for a stale entry: won, the entry is looked up and overwritten, then the lock released;
+    held elsewhere, the stale entry is served, as Node's lock loser serves it. Without write-back,
+    or in a shadow sample, every stale entry is looked up and nothing is written or locked. The
+    answers are never kept in process (Node keeps no L1 for this cache). A failed GET in the read
+    computes nothing (`v1-models-files-read-failed`), a failed lookup is
+    `v1-models-files-miss-failed`. Off, both fall back (`v1-models-files-miss`,
+    `v1-models-files-stale`). Evidence: `list-files-misses-computed`, `TestServeComputesVersionFilesMiss`,
+    `TestServeVersionFilesStale`, `hydrate.TestComputeVersionFilesWritesNodesBytes` (msgpackr's
+    bytes for the record and the marker);
   - creator membership (`creator-membership-valid`): falls back. Its origin parses subscription
     products with the app's tier key (as model.getAll's does).
 
@@ -3297,6 +3345,7 @@ from it. The fallback's own Node read takes the lock and rebuilds the entry, so 
 | the read failed (a GET error other than `redis.Nil`) | falls back: a read failure, never reported as a curation | `v1-models-showcase-miss-failed` / `prioritized-showcase-miss-failed` |
 | no key or an undecodable value, with `FEED_GO_COMPUTE_MISSES` on | looked up on the replica, the decision Node's lookup computes: no `ModelVersionShowcaseItem` row that is not removed is uncurated and answered as before; a row (any site, source or `excluded`) falls back as curated; a failed read falls back | `v1-models-curated-showcase` / `prioritized-curated-showcase` for a row; `v1-models-showcase-miss-failed` / `prioritized-showcase-miss-failed` for a failed read |
 | the same with `FEED_GO_COMPUTE_MISSES` off, or with a missed version's lag flag set, or a bust's debounce marker either way | falls back: Node computes the entry from the database (a lag-aware read), so an absence says nothing about the curation | `v1-models-showcase-miss` / `prioritized-showcase-miss` |
+| the model routes only, with `FEED_GO_COMPUTE_MISSES` on and (a public request) `FEED_GO_V1_MODELS_SERVE_SHOWCASE_MISS`, or a shadow sample: a bust's debounce marker, or a missed version's lag flag set | decided as Node's fetch decides it (`hydrate.Sources.ShowcaseStateReadThrough`): a debounce marker is a miss Node looks up (without writing), so it is looked up on the replica like any other; with a lag flag set the versions are looked up on the primary (`MissCompute.Primary`, as `getDbWithoutLagBatch` reads them). A flagged version with no primary configured still falls back | as the computed rows above; `v1-models-showcase-miss` for a flagged version with no primary |
 | the same with `FEED_GO_COMPUTE_MISSES` on and a missed version's lag flag unreadable (none found set) | falls back, nothing looked up: a read failure | `v1-models-showcase-miss-failed` / `prioritized-showcase-miss-failed` |
 | `rows` empty, `cachedAt` older than the hour | falls back: the reader that wins the revalidate lock rebuilds it from the database | `v1-models-showcase-stale` / `prioritized-showcase-stale` |
 

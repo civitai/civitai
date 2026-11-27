@@ -68,13 +68,16 @@ beforeAll(async () => {
       "postId" INTEGER, metadata JSONB NOT NULL DEFAULT '{}', "scanJobs" JSONB, "pHash" BIGINT,
       "tosViolation" BOOLEAN NOT NULL DEFAULT false, url TEXT
     );
-    CREATE TABLE "ImageCdnModeratorDelete" ("imageId" INTEGER PRIMARY KEY, url TEXT NOT NULL, "csamReview" BOOLEAN NOT NULL DEFAULT true);
+    CREATE TABLE "ImageCdnModeratorDelete" ("imageId" INTEGER PRIMARY KEY, url TEXT NOT NULL, "userId" INTEGER, "csamReview" BOOLEAN NOT NULL DEFAULT true);
+    CREATE TABLE "BlockedImage" (hash BIGINT PRIMARY KEY, reason TEXT NOT NULL);
+    CREATE TABLE "ScanLabelItem" (id SERIAL PRIMARY KEY, "imageId" INTEGER NOT NULL);
+    CREATE TABLE "ScanLabelVote" ("itemId" INTEGER NOT NULL, "userId" INTEGER NOT NULL, reason TEXT);
     CREATE TABLE "Post" (id INTEGER PRIMARY KEY, "publishedAt" TIMESTAMP(3), "modelVersionId" INTEGER);
     CREATE TABLE "User" (id INTEGER PRIMARY KEY, "deletedAt" TIMESTAMP, "bannedAt" TIMESTAMP, muted BOOLEAN NOT NULL DEFAULT false);
     CREATE TABLE "Model" (id INTEGER PRIMARY KEY, status TEXT NOT NULL, availability TEXT NOT NULL, "deletedAt" TIMESTAMP);
     CREATE TABLE "ModelVersion" (id INTEGER PRIMARY KEY, "modelId" INTEGER NOT NULL, status TEXT NOT NULL, availability TEXT NOT NULL);
     CREATE TABLE "Tag" (id INTEGER PRIMARY KEY, name TEXT NOT NULL, type TEXT NOT NULL DEFAULT 'Moderation', "nsfwLevel" INTEGER NOT NULL DEFAULT 1);
-    CREATE TABLE "CsamReport" (id SERIAL PRIMARY KEY, "userId" INTEGER, images JSONB NOT NULL DEFAULT '[]', details JSONB);
+    CREATE TABLE "CsamReport" (id SERIAL PRIMARY KEY, "userId" INTEGER, images JSONB NOT NULL DEFAULT '[]', details JSONB, "reportSentAt" TIMESTAMP);
     CREATE TABLE "Report" (id SERIAL PRIMARY KEY, status TEXT NOT NULL);
     CREATE TABLE "ImageReport" ("imageId" INTEGER NOT NULL, "reportId" INTEGER NOT NULL);
     CREATE TABLE "ImageTagForReview" ("imageId" INTEGER NOT NULL, "tagId" INTEGER NOT NULL, PRIMARY KEY ("imageId", "tagId"));
@@ -98,11 +101,11 @@ beforeEach(async () => {
   h.reindexFails = false;
   await pg.exec(`
     TRUNCATE "TagsOnImageNew", "Image", "Post", "Tag", "CsamReport", "Report",
-      "ImageReport", "ModActivity", "ImageTagForReview";
+      "ImageReport", "ModActivity", "ImageTagForReview", "BlockedImage", "ScanLabelItem", "ScanLabelVote";
     INSERT INTO "Post" VALUES (1, now() - interval '1 day');
     INSERT INTO "Tag" VALUES (10, 'flagged', 'Moderation', ${X}), (11, 'other', 'Moderation', ${R}),
       (12, 'same level', 'Moderation', ${X}), (13, 'blocked', 'Moderation', ${BLOCKED});
-    INSERT INTO "Image" (id, "postId", "nsfwLevel") VALUES (100, 1, ${X});
+    INSERT INTO "Image" (id, "postId", "nsfwLevel", url) VALUES (100, 1, ${X}, 'key-100');
   `);
   // Flagged: needsReview set (bit 9). Enabled: no bits.
   await flag(100, 10);
@@ -144,6 +147,10 @@ const guarded = (disable: boolean, extra: { settledAtMinimum?: boolean; tagId?: 
     onlyIfFlagged: true,
     settledAtMinimum: extra.settledAtMinimum ?? false,
   });
+
+const sibling = (needsReview: string, blockedFor: string) =>
+  `INSERT INTO "Image" (id, "postId", url, "pHash", "needsReview", "blockedFor")
+   VALUES (101, 1, 'key-100', 77, ${needsReview}, ${blockedFor})`;
 
 describe('moderateImageTags guarded (Knights write-back)', () => {
   it('keep leaves the tag enabled and no longer flagged, and records moderateTagKono for the player', async () => {
@@ -194,6 +201,18 @@ describe('moderateImageTags guarded (Knights write-back)', () => {
     [
       'under an open report',
       `INSERT INTO "Report" (id, status) VALUES (1, 'Pending'); INSERT INTO "ImageReport" VALUES (100, 1)`,
+    ],
+    // A copy on the same stored url (row 101) withholds the image from anyone without the CSAM grant.
+    ['on the url of a copy in the CSAM queue', sibling(`'csam'`, 'NULL')],
+    ['on the url of a copy blocked as CSAM', sibling('NULL', `'Other,CSAM'`)],
+    [
+      'on the url of a copy whose hash is blocked as CSAM',
+      `${sibling('NULL', 'NULL')}; INSERT INTO "BlockedImage" VALUES (77, 'CSAM')`,
+    ],
+    [
+      'on the url of a copy with a CSAM vote',
+      `${sibling('NULL', 'NULL')}; INSERT INTO "ScanLabelItem" (id, "imageId") VALUES (1, 101);
+       INSERT INTO "ScanLabelVote" VALUES (1, 9, 'csam-realistic')`,
     ],
   ])('is ineligible and changes nothing when the image is %s', async (_, flagIt) => {
     await pg.exec(flagIt);

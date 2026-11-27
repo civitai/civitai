@@ -256,4 +256,8 @@ export const processDefinitionSchema = definitionShape.superRefine((d, ctx) => {
 });
 
 export type ProcessDefinition = z.infer<typeof processDefinitionSchema>;
+
+/** Whether a state ends a case. The case tick checks the same thing in SQL (case-tick.ts). */
+export const isTerminalState = (def: Pick<ProcessDefinition, 'states'>, id: string) =>
+  !!def.states.find((s) => s.id === id)?.terminal;
 export type ProcessEffect = z.infer<typeof effectSchema>;

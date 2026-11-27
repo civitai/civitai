@@ -25,6 +25,7 @@ const definition = processDefinitionSchema.parse({
     { id: 'received', label: 'Received' },
     { id: 'suit-filed', label: 'Suit filed', needsReview: true },
     { id: 'closed', label: 'Closed', terminal: true },
+    { id: 'withdrawn', label: 'Withdrawn', needsReview: true, terminal: true },
   ],
   initialState: 'received',
   publicActions: [
@@ -36,6 +37,24 @@ const definition = processDefinitionSchema.parse({
       fields: [],
       records: 'suit-reported',
       moveTo: 'suit-filed',
+      from: ['received'],
+    },
+    {
+      id: 'reinstate',
+      role: 'claimant',
+      label: 'Reinstate',
+      fields: [],
+      records: 'reinstated',
+      moveTo: 'suit-filed',
+      from: ['withdrawn'],
+    },
+    {
+      id: 'withdraw',
+      role: 'claimant',
+      label: 'Withdraw',
+      fields: [],
+      records: 'withdrawn',
+      moveTo: 'withdrawn',
       from: ['received'],
     },
   ],
@@ -95,7 +114,7 @@ describe('casePartyView', () => {
       state: { id: 'received', terminal: false },
       items: [{ url: 'https://civitai.com/images/7' }],
     });
-    expect(view.actions.map((a) => a.id)).toEqual(['add-info', 'report-suit']);
+    expect(view.actions.map((a) => a.id)).toEqual(['add-info', 'report-suit', 'withdraw']);
     expect(JSON.stringify(view)).not.toContain('claimant@example.com');
   });
 
@@ -153,6 +172,29 @@ describe('casePartyAction', () => {
     expect((await pg.query('SELECT state FROM case_record')).rows).toEqual([
       { state: 'suit-filed' },
     ]);
+  });
+
+  it('decides the case when an action ends it, and only then', async () => {
+    const open = await fileCase();
+    await act(open, 'report-suit');
+    const ended = await fileCase();
+    await act(ended, 'withdraw');
+    const rows = await pg.query<{ public_ref: string; state: string; decided_at: string | null }>(
+      'SELECT public_ref, state, decided_at FROM case_record ORDER BY id'
+    );
+    expect(
+      rows.rows.map((r) => [r.state, r.decided_at && new Date(r.decided_at).toISOString()])
+    ).toEqual([
+      ['suit-filed', null],
+      ['withdrawn', now.toISOString()],
+    ]);
+
+    await act(ended, 'reinstate');
+    const reopened = await pg.query<{ decided_at: string | null }>(
+      'SELECT decided_at FROM case_record WHERE public_ref = $1',
+      [ended.publicRef]
+    );
+    expect(reopened.rows[0].decided_at).toBeNull();
   });
 
   it('adds only items the case does not already have', async () => {

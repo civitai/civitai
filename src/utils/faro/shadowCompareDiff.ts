@@ -293,8 +293,8 @@ class BudgetSpent {
 
 /**
  * The first place two values differ, walked in the control's order, or `null` when they are equal.
- * Throws `BudgetSpent` past the depth or node budget. A pair of objects already being compared is
- * not walked again, so a decoded value whose objects are shared, or circular, costs one visit per
+ * Throws `BudgetSpent` past the depth or node budget. A pair of objects already visited (in progress
+ * or finished) is not walked again, so a decoded value whose objects are shared, or circular, costs one visit per
  * pair; object identity itself is not compared (two bodies that share an object or repeat it decode
  * to the same value).
  */

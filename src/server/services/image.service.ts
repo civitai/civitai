@@ -406,7 +406,7 @@ import { sql, type RawBuilder } from 'kysely';
 import { assertNotDealFileImages } from '~/server/services/deal-file-image';
 import { kyselyOver } from '~/server/db/prisma-kysely';
 import { fromPrismaSql } from '~/server/db/prisma-sql-kysely';
-import { kyselyRead } from '~/server/db/kyselyDb';
+import { kyselyRead, kyselyWrite } from '~/server/db/kyselyDb';
 import { queueOwnerRatingForKnights } from '~/server/services/knights/sources';
 import { readUserIdByUsernameViaKysely } from '~/server/services/hot-reads-6.reads';
 import { MetricService } from '../../../event-engine-common/services/metrics';
@@ -1405,9 +1405,10 @@ export async function handleUnblockImages({
   csamReview,
 }: ImageModerationUnblockSchema) {
   // Re-checked by the UPDATE itself, so a mark that lands after the caller's own check still holds.
-  const notWithheld = Prisma.sql`NOT EXISTS (
-    SELECT 1 FROM "Image" i WHERE i.id = "Image".id
-      AND ${Prisma.raw(moderatorWithheldSql('i', { csamReview }))}
+  // `i` is the target row itself; a self-join would re-read it from the statement's snapshot. The
+  // target takes no alias because the shared SET fragments name "Image".
+  const notWithheld = Prisma.sql`NOT (
+    SELECT ${Prisma.raw(moderatorWithheldSql('i', { csamReview }))} FROM (SELECT "Image".*) i
   )`;
   const found = await dbRead.image.findMany({
     where: { id: { in: imageIds } },
@@ -8701,26 +8702,45 @@ export const toggleImageFlag = async ({
   return true;
 };
 
+/** With `withheldFor`, a row `moderatorWithheldSql` withholds from that caller is left as it is. Returns the ids written. */
 export const updateImagesFlag = async ({
   ids,
   flag,
   value,
-}: Pick<ToggleImageFlagInput, 'flag'> & { ids: number[]; value: boolean }) => {
-  if (ids.length === 0) return false;
+  withheldFor,
+}: Pick<ToggleImageFlagInput, 'flag'> & {
+  ids: number[];
+  value: boolean;
+  withheldFor?: { csamReview: boolean };
+}) => {
+  if (ids.length === 0) return [];
 
-  await dbWrite.image.updateMany({
-    where: { id: { in: ids } },
-    data: { [flag]: value },
-  });
-  await imageMetadataCache.refresh(ids);
-  if (flag === 'minor') await queueDocumentsForImageMinorChanges({ minorImageIds: ids });
+  let written = ids;
+  if (withheldFor) {
+    const rows = await kyselyWrite
+      .updateTable('Image as i')
+      .set({ [flag]: value })
+      .where('i.id', 'in', ids)
+      .where(sql<boolean>`NOT ${sql.raw(moderatorWithheldSql('i', withheldFor))}`)
+      .returning('i.id')
+      .execute();
+    written = rows.map((r) => r.id);
+    if (!written.length) return written;
+  } else {
+    await dbWrite.image.updateMany({
+      where: { id: { in: ids } },
+      data: { [flag]: value },
+    });
+  }
+  await imageMetadataCache.refresh(written);
+  if (flag === 'minor') await queueDocumentsForImageMinorChanges({ minorImageIds: written });
 
   // Ensure we update the search index:
   await imagesMetricsSearchIndex.queueUpdate(
-    ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+    written.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
   );
 
-  return true;
+  return written;
 };
 
 export async function refreshImageResources(imageId: number) {

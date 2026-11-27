@@ -122,7 +122,9 @@ votes, never player rows.
   hidden image stays open for every other player. An image with an enabled tag of a hidden group (`TagsOnImageDetails`) is not served to that
   player anywhere: rating feed, rating vote, late Watch credit, yes/no pick and vote, hidden checks. `servedTo` in
   `queue/vote-record.ts` is that one check, next to the hidden-creator one, and reads the groups inside the query, so it cannot fail
-  open. No group is a browsing level, a whole kind of sexual content or an orientation tag alone (unit tests pin it): Knights is where mature content gets rated. A
+  open. A group can also name yes/no axes about its topic (`axes`: gore covers `violence` and `subject_state`); `pickYesNo` skips
+  those axes for a player who hides it, whatever the image is tagged, since their images often carry none of the group's tags.
+  No group is a browsing level, a whole kind of sexual content or an orientation tag alone (unit tests pin it): Knights is where mature content gets rated. A
   player's own hidden tags on the site never apply, and Acolyte practice is not filtered.
 - A stretch is `KNIGHTS_YESNO_STRETCH` questions of one axis in a row (default 8); the next axis starts with a banner. The player's
   latest yes/no answers in the ledger say where they are in a stretch, so no state is kept. `GET /play/next` hands out up to 10 items at once, so each pick also counts the yes/no questions already handed out ahead of it and not yet on the ledger (`ahead` in `pickYesNo`): the stretch cap and the new-category banner hold across the buffer, and the banner is on the first question of a stretch only.
@@ -190,7 +192,9 @@ and whichever side rules first takes it out of the other's queue. Off unless the
   budget, resuming where the last run stopped (process memory; a restart starts over, and the upsert makes reruns idempotent).
   A row gets an item when its tag is a Moderation tag below Blocked and its image passes `modReviewEligibleImage`
   (`@civitai/db/knights`) on a published post.
-- **Eligibility.** One predicate, `modReviewEligibleImage`, keeps staff-only images away from players. It runs where an item is
+- **Eligibility.** One predicate, `modReviewEligibleImage`, keeps staff-only images away from players: it includes every image a
+  moderator without the CSAM grant may not see (`moderatorWithheldSql`), read by Knights through the gate view's `modReviewContent`
+  column. It runs where an item is
   created, served, voted on and swept, and in the moderator app's write-back guard; an item whose image stops passing it is no
   longer served, its vote is refused and an answered one is swept `unplayable`.
 - **Episodes.** Each time a tag is flagged after a ruling it gets a fresh item (`episode` + 1); while the latest item is open, awaiting

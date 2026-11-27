@@ -585,6 +585,11 @@ func run(log *slog.Logger) error {
 				BaseModelFeedMetrics: cfg.BaseModelFeedMetrics,
 				ComputeMisses:        cfg.ComputeMisses,
 				ServeDataMiss:        mc.ServeDataMiss,
+				ServeTagsMiss:        mc.ServeTagsMiss,
+				ServeTagNameStale:    mc.ServeTagNameStale,
+				ServeShowcaseMiss:    mc.ServeShowcaseMiss,
+				ServeFilesMiss:       mc.ServeFilesMiss,
+				ServeFilename:        mc.ServeFilename,
 				AnswerNotFound:       mc.AnswerNotFound,
 				ResponseCacheTTL:     mc.ResponseCacheTTL,
 				Production:           true,
@@ -621,6 +626,7 @@ func run(log *slog.Logger) error {
 		log.Error("flag not read; every hubId request falls back", "flag", server.UserHubsFlag, "err", err)
 	}
 	srv := &server.Server{
+		Version:          version,
 		Resolver:         resolver,
 		Deps:             deps,
 		Models:           models,
