@@ -1,5 +1,6 @@
 import { CompiledQuery, sql, type Kysely, type RawBuilder } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
+import { browsingLevels } from '@civitai/shared/browsing-levels';
 import { KNIGHTS_VOTE_NSFW_LEVEL_REASON } from '@civitai/shared/new-order';
 import { OWNER_HIDDEN_REVIEWS } from '@civitai/shared/owner-hidden-reviews';
 import { NSFW_LEVEL_BLOCKED } from './pending-deletes.db';
@@ -71,10 +72,8 @@ export const TRACK_LYRICS_ENTITY_TYPE = 'TrackLyrics';
 /** A song's lyrics profanity verdict: its own row, as EntityModeration is one row per entity. */
 export const TRACK_LYRICS_LANGUAGE_ENTITY_TYPE = 'TrackLyricsLanguage';
 
-/** PG, PG-13, R, X and XXX: the levels a song's scans can give it. */
-const SONG_RATING_LEVELS: readonly number[] = [1, 2, 4, 8, 16];
 const asSongRating = (level: unknown) =>
-  typeof level === 'number' && SONG_RATING_LEVELS.includes(level) ? level : 1;
+  typeof level === 'number' && (browsingLevels as readonly number[]).includes(level) ? level : 1;
 
 /**
  * A song's level from its own scans (docs/features/music.md "A song's rating"): the highest of PG,
