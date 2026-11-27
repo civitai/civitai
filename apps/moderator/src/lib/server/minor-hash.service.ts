@@ -781,12 +781,25 @@ const hashBranch = (label: FlagLabel, search: MinorSearch | undefined) => {
 `;
 };
 
+/** The label entry is this detection's own unfinished keep: the flag fields are written but the marker
+ *  stays until the keep completes. Same test as `ownEntry` in the text-scan resolver. `entry` is the
+ *  label's `textScanFlags` entry. */
+const ownUnfinishedKeep = (entry: RawBuilder<unknown>) => sql`(
+  ${entry}->>'workflowId' IS NOT NULL
+  AND ${entry}->>'workflowId' = ${entry}->'redetected'->>'workflowId'
+  AND ${entry}->>'textHash' = ${entry}->'redetected'->>'textHash'
+)`;
+
 const redetectedBranch = (search: MinorSearch | undefined, flag: FlaggedFlag) => sql`
   SELECT m.id AS "modelId",
          l.label::text AS label, 'redetected'::text AS source,
          l.entry->'redetected'->>'textHash' AS "textHash",
          ${redetectedAt} AS "flaggedAt",
-         l.entry->'redetected' AS redetected, NULL::jsonb AS "scanEntry",
+         l.entry->'redetected'
+           || jsonb_build_object('unfinishedKeep', ${ownUnfinishedKeep(
+             sql`l.entry`
+           )}) AS redetected,
+         NULL::jsonb AS "scanEntry",
          l.entry->'appealGranted' AS granted,
          gu.username AS "grantedByUsername", l.entry->'rulings' AS rulings,
          NULL::boolean AS "prevNsfw", NULL::int AS "prevGalleryLevel"
@@ -842,12 +855,15 @@ const inAutoFlaggedSql = (modelId: RawBuilder<unknown>) => sql`EXISTS (
 )`;
 
 /** A held detection waits on a flag the model already carries. Ruling it closes the lead and leaves
- *  the flag alone. Same marker the `redetectedIndexPredicate` tests, narrowed to a set label. */
+ *  the flag alone. Same marker the `redetectedIndexPredicate` tests, narrowed to a set label and not an
+ *  unfinished keep of that same detection (there Keep completes the flag). */
 const mootLeadSql = (modelId: RawBuilder<unknown>) => sql`EXISTS (
   SELECT 1 FROM "Model" m
   WHERE m.id = ${modelId}
-    AND ((m.minor AND m.meta->'textScanFlags'->'minor' ? 'redetected')
-      OR (m.poi AND m.meta->'textScanFlags'->'poi' ? 'redetected'))
+    AND ((m.minor AND m.meta->'textScanFlags'->'minor' ? 'redetected'
+          AND NOT ${ownUnfinishedKeep(sql`(m.meta->'textScanFlags'->'minor')`)})
+      OR (m.poi AND m.meta->'textScanFlags'->'poi' ? 'redetected'
+          AND NOT ${ownUnfinishedKeep(sql`(m.meta->'textScanFlags'->'poi')`)}))
 )`;
 
 /** Needs review lists the model: a held detection, or a file shared with a moderator's minor seed

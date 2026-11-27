@@ -200,7 +200,7 @@
                   {detail}
                 /> · {detectionCopy(detectionKind(detection)).provenance}
               {/snippet}
-              {#if flag.label === 'poi' ? row.poi : row.minor}
+              {#if (flag.label === 'poi' ? row.poi : row.minor) && !detection.unfinishedKeep}
                 <p class="m-0 text-[11px] text-amber-300" data-testid="moot-lead">{MOOT_LEAD_NOTE}</p>
               {/if}
             </FlagVerdictBlock>

@@ -657,6 +657,24 @@ describe('also in Auto-flagged and Needs review', () => {
     expect((await moot())[4]).toBe(true);
   });
 
+  it("is not moot while the label entry is this detection's own unfinished keep", async () => {
+    const moot = async () => {
+      const { items } = await getMinorFlagAppealsForReview({ limit: 50 });
+      return items.find((i) => i.modelId === 4)!.needsReviewMootLead;
+    };
+    const marker = { workflowId: 'w', textHash: 'h' };
+    const setEntry = (entry: Record<string, unknown>) =>
+      db.query(`UPDATE "Model" SET minor = true, meta = $1::jsonb WHERE id = 4`, [
+        JSON.stringify({ textScanFlags: { minor: { ...entry, redetected: marker } } }),
+      ]);
+    // A keep that wrote the flag and left the marker: Keep resumes it and Dismiss refuses.
+    await setEntry({ workflowId: 'w', textHash: 'h' });
+    expect(await moot()).toBe(false);
+    // Control: a flag from another route or an earlier keep, so this lead only closes.
+    await setEntry({ workflowId: 'older', textHash: 'older-h' });
+    expect(await moot()).toBe(true);
+  });
+
   it('drops a hash flag once its review window has closed', async () => {
     await db.query(`UPDATE "Model" SET meta = $1::jsonb WHERE id = 2`, [
       JSON.stringify(snapshot('auto', '2020-01-01T00:00:00Z')),
