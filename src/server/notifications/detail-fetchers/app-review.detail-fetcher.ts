@@ -14,6 +14,11 @@ export const APP_REVIEW_ATTRIBUTED_TYPES = [
  * Resolves the stored `reviewerUserId` into `actor`, the reviewer the byline names and the
  * notification list shows as the avatar. A deleted or missing account resolves to no actor, so
  * the byline falls back to "Civitai App Review".
+ *
+ * The details this returns go to the client verbatim (the notification list and
+ * `/api/notification/getDetails`), so the stored id is removed from every notification in the
+ * batch, resolved or not, and replaced by `reviewedByModerator`, which is all the byline needs to
+ * fall back to the team when there is no actor.
  */
 export const appReviewDetailFetcher = createDetailFetcher({
   types: [...APP_REVIEW_ATTRIBUTED_TYPES],
@@ -25,20 +30,26 @@ export const appReviewDetailFetcher = createDetailFetcher({
           .filter((id): id is number => typeof id === 'number')
       ),
     ];
-    if (userIds.length === 0) return;
 
-    const users = await db.user.findMany({
-      where: { id: { in: userIds }, deletedAt: null },
-      select: simpleUserSelect,
-    });
+    const users =
+      userIds.length === 0
+        ? []
+        : await db.user.findMany({
+            where: { id: { in: userIds }, deletedAt: null },
+            select: simpleUserSelect,
+          });
 
     for (const n of notifications) {
-      const user = users.find((u) => u.id === n.details.reviewerUserId);
-      // The byline and avatar need the name and picture only; the account id stays server-side.
-      if (user) {
-        const { id, ...actor } = user;
-        n.details.actor = actor;
+      const reviewerUserId = n.details.reviewerUserId;
+      if (typeof reviewerUserId === 'number') {
+        const user = users.find((u) => u.id === reviewerUserId);
+        if (user) {
+          const { id, ...actor } = user;
+          n.details.actor = actor;
+        }
+        n.details.reviewedByModerator = true;
       }
+      delete n.details.reviewerUserId;
     }
   },
 });
