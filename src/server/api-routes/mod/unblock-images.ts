@@ -67,12 +67,13 @@ export async function unblockModeratedImages(
   const unblockIds = candidateIds.filter((id) => !withheld.has(id));
 
   console.log(`[unblock-images] Updating ${unblockIds.length} images in the database...`);
-  // The scan read the replica: the primary re-checks every condition.
-  const unblocked: { id: number }[] = [];
+  // The scan read the replica: the primary re-checks every condition. Each slice's follow-ups run
+  // as soon as its UPDATE commits, so a later slice that throws leaves the earlier ones recorded.
+  const unblockedIds: number[] = [];
   for (let i = 0; i < unblockIds.length; i += updateChunk) {
     const ids = unblockIds.slice(i, i + updateChunk);
-    unblocked.push(
-      ...(await dbWrite.$queryRaw<{ id: number }[]>`
+    const written = (
+      await dbWrite.$queryRaw<{ id: number }[]>`
         UPDATE "Image" i SET "blockedFor" = NULL, "updatedAt" = now()
         WHERE i.id = ANY(${ids}::int[])
           AND i."blockedFor" IN ('moderated', 'Moderated')
@@ -81,34 +82,21 @@ export async function unblockModeratedImages(
           AND i.ingestion <> ${ImageIngestionStatus.Blocked}::"ImageIngestionStatus"
           AND NOT ${Prisma.raw(moderatorWithheldSql('i', { csamReview }))}
         RETURNING i.id
-      `)
-    );
+      `
+    ).map((image) => image.id);
+    if (!written.length) continue;
+    // Backstop: trg_blocked_image_delete_queue arms purge on a Blocked row; the update excludes them.
+    await dropBlockedImageDeleteQueue(written);
+    await queueImageSearchIndexUpdate({
+      ids: written,
+      action: SearchIndexUpdateQueueAction.Update,
+    });
+    await trackModActivity(user.id, { entityType: 'image', activity: 'review', entityId: written });
+    unblockedIds.push(...written);
   }
-  const unblockedIds = unblocked.map((image) => image.id);
   console.log(
-    `[unblock-images] DB update complete: cleared ${unblockedIds.length} of ${candidateIds.length} candidates.`
+    `[unblock-images] Cleared ${unblockedIds.length} of ${candidateIds.length} candidates.`
   );
-
-  // Backstop: trg_blocked_image_delete_queue arms purge on a Blocked row; the update above
-  // excludes them.
-  await dropBlockedImageDeleteQueue(unblockedIds);
-
-  // Update search index for the unblocked images
-  console.log(`[unblock-images] Updating search index for ${unblockedIds.length} images...`);
-  await queueImageSearchIndexUpdate({
-    ids: unblockedIds,
-    action: SearchIndexUpdateQueueAction.Update,
-  });
-  console.log(`[unblock-images] Search index update complete.`);
-
-  // Track moderator activity for this batch
-  console.log(`[unblock-images] Tracking moderator activity for user ${user.id}...`);
-  await trackModActivity(user.id, {
-    entityType: 'image',
-    activity: 'review',
-    entityId: unblockedIds,
-  });
-  console.log(`[unblock-images] Moderator activity tracked for user ${user.id}.`);
 
   return { updated: unblockedIds.length, withheld: withheld.size };
 }

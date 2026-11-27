@@ -120,6 +120,29 @@ describe('unblockModeratedImages', () => {
     expect(result).toEqual({ updated: 2, withheld: 1 });
   });
 
+  it('records each slice as it commits, so a later slice that throws leaves the earlier ones audited', async () => {
+    let updates = 0;
+    holder.beforeUpdate = async () => {
+      if (++updates === 2) throw new Error('slice 2 failed');
+    };
+
+    await expect(
+      unblockModeratedImages({ id: 9 }, { csamReview: false, updateChunk: 1 })
+    ).rejects.toThrow('slice 2 failed');
+
+    const activity = vi
+      .mocked(dbMock.dbWrite.$executeRaw)
+      .mock.calls.filter(([strings]) =>
+        (strings as TemplateStringsArray).join('').includes('INSERT INTO "ModActivity"')
+      );
+    expect(activity.map(([, ...values]) => values.at(-1))).toEqual([[PLAIN]]);
+    expect(await blockedFor()).toEqual([
+      [WITHHELD, 'moderated'],
+      [PLAIN, null],
+      [MARKED_MID_RUN, 'moderated'],
+    ]);
+  });
+
   it('clears every one for a moderator holding the grant', async () => {
     const result = await unblockModeratedImages({ id: 9 }, { csamReview: true });
 
