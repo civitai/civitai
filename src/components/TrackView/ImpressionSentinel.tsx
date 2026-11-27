@@ -6,9 +6,10 @@ import type { ImpressionTarget } from '~/components/TrackView/useTrackImpression
  * as a carousel slide whose children are a fragment. It covers its nearest
  * positioned ancestor and takes no pointer events, so it changes neither layout
  * nor hit-testing. The parent must be `position: relative` (or otherwise
- * positioned), or the sentinel measures the wrong box.
+ * positioned), or the sentinel measures the wrong box. A click takes no path
+ * through the sentinel, so clicks are counted on that parent.
  */
 export function ImpressionSentinel({ impressions }: { impressions: ImpressionTarget[] }) {
-  const ref = useTrackImpression<HTMLSpanElement>(impressions);
+  const ref = useTrackImpression<HTMLSpanElement>(impressions, { clicksOnParent: true });
   return <span ref={ref} aria-hidden className="pointer-events-none absolute inset-0" />;
 }

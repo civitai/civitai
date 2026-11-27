@@ -432,7 +432,14 @@ export const useToggleCheckpointCoverageMutation = () => {
  */
 const SHOWCASE_PAGE_SIZE = 50;
 
-export const useModelShowcaseCollection = ({ modelId }: { modelId: number }) => {
+export const useModelShowcaseCollection = ({
+  modelId,
+  withModels = true,
+}: {
+  modelId: number;
+  /** False reads only the collection: its models are a feed load, so fetch them where shown. */
+  withModels?: boolean;
+}) => {
   const queryUtils = trpc.useUtils();
 
   const { data: showcase, isLoading: loadingCollection } =
@@ -451,7 +458,7 @@ export const useModelShowcaseCollection = ({ modelId }: { modelId: number }) => 
       periodMode: 'published',
       limit: SHOWCASE_PAGE_SIZE,
     },
-    { enabled: !loadingCollection && !!showcase?.id, keepPreviousData: true }
+    { enabled: withModels && !loadingCollection && !!showcase?.id, keepPreviousData: true }
   );
 
   const setShowcaseMutation = trpc.model.setCollectionShowcase.useMutation({

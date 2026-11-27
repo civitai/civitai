@@ -35,7 +35,12 @@ const rowCounter = registerCounterWithLabels({
   labelNames: ['outcome'] as const,
 });
 
-export type FeedEventViewer = { userId: number; memberType: string };
+export type FeedEventViewer = {
+  userId: number;
+  memberType: string;
+  /** The personal-hot-lead flag; null when signed out (no cohort). */
+  personalHotLead?: boolean | null;
+};
 
 export type FeedEventRow = {
   time: string;
@@ -52,6 +57,7 @@ export type FeedEventRow = {
   entityId: number;
   position: number;
   seenIds: number[];
+  personalHotLead: boolean | null;
 };
 
 export function parseSampleRate(variantKey: string | undefined): number {
@@ -98,6 +104,7 @@ export function buildFeedEventRow(
     entityId: input.event === 'click' ? input.entityId ?? 0 : 0,
     position: input.event === 'click' ? input.position ?? 0 : 0,
     seenIds: input.event === 'seen' ? input.seenIds ?? [] : [],
+    personalHotLead: viewer.personalHotLead ?? null,
   };
 }
 
@@ -155,7 +162,13 @@ export function feedEventsRecorder(): FeedEventsRecorder {
       }
     }, CONFIG_TTL_MS),
     insert: async (rows) => {
-      await client.insert({ table: FEED_EVENTS_TABLE, values: rows, format: 'JSONEachRow' });
+      // Skipping unknown fields lets rows land, untagged, on a table the cohort DDL has not reached.
+      await client.insert({
+        table: FEED_EVENTS_TABLE,
+        values: rows,
+        format: 'JSONEachRow',
+        clickhouse_settings: { input_format_skip_unknown_fields: 1 },
+      });
     },
   }));
 }

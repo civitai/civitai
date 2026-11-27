@@ -305,6 +305,8 @@ describe('feed cards report impressions', () => {
     ['components/Post/Infinite/PostsCard.tsx', 'PostsCard'],
     ['components/CreatorShop/Storefront/ModelShopCard.tsx', 'ModelShopCard'],
     ['components/Model/ModelCarousel/ModelCarousel.tsx', 'ModelCarouselContent'],
+    ['components/Post/Detail/PostImages.tsx', 'PostImages'],
+    ['components/Model/CollectionShowcase/CollectionShowcase.tsx', 'ShowcaseItem'],
     ['pages/ecosystems/[key]/index.tsx', 'ResourceCard'],
     ['pages/ecosystems/[key]/index.tsx', 'default'],
     ['components/CardTemplates/AspectRatioImageCard.tsx', 'AspectRatioImageCard'],

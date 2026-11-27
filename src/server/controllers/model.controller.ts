@@ -170,7 +170,7 @@ import {
   holdShowcaseImages,
 } from '~/server/services/model.service';
 import { getOfficialModelIds } from '~/server/services/resource-select.service';
-import { buildFliptContext } from '~/server/services/feature-flags.service';
+import { isPersonalHotLeadViewer } from '~/server/services/personal-hot-lead.service';
 import {
   closeAppealsDeletedByOwner,
   closeAppealsOnDeletedModel,
@@ -727,14 +727,7 @@ async function getPersonalLeadIdsForFeed(input: GetAllModelsOutput, ctx: Context
     input.archived
   )
     return [];
-  if (
-    !(await isFlipt(
-      FLIPT_FEATURE_FLAGS.PERSONAL_HOT_LEAD,
-      String(user.id),
-      buildFliptContext(user)
-    ))
-  )
-    return [];
+  if (!(await isPersonalHotLeadViewer(user))) return [];
   return getPersonalLeadModelIds({
     userId: user.id,
     browsingLevel,

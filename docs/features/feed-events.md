@@ -29,14 +29,16 @@ One row per event, for a sample of browser sessions (the share is set in Flipt):
 | filters                        | the filters you set, by name from a fixed list per feed (for example `hidePaid`, `baseModels`, `period`, `browsingLevel`), with the option values the filter controls send |
 | entityType, entityId, position | on a click: what you clicked and where it was in the feed                                                                                                                  |
 | seenIds                        | on a seen row: the items that were on screen                                                                                                                               |
+| personalHotLead                | whether you are in a test of a personalised start to the Hot models feed (true or false), or empty when signed out                                                         |
 
 ## When a row is sent
 
 - **load:** each page of the models, images, posts and articles feeds as it is shown, and search
   pages browsed by filters alone (a search with text in the box is not a feed load).
-- **seen:** an item from one of those feeds that was at least half on screen for a continuous
-  second, the same rule impression counts use. Items are grouped by the page load they came from and
-  each is sent once; one load's items can arrive in more than one row.
+- **seen:** an item from one of those feeds (search results included, when browsed by filters
+  alone) that was at least half on screen for a continuous second, the same rule impression counts
+  use. Items are grouped by the page load they came from and each is sent once; one load's items
+  can arrive in more than one row.
 - **click:** a click on the item's link in its card (a middle-click too). Clicks on a card's
   buttons and menus, or anywhere outside a link, are not recorded. `position` is the item's place
   in the feed as it was sent to your browser, counting from 0.

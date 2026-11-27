@@ -31,7 +31,7 @@ import { AnimatedCount, Metrics } from '~/components/Metrics';
 import { getModelUrl } from '~/utils/string-helpers';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
-export function CollectionShowcase({ modelId, loading }: Props) {
+export function CollectionShowcase({ modelId, loading, open = true }: Props) {
   const {
     items = [],
     collection,
@@ -40,7 +40,7 @@ export function CollectionShowcase({ modelId, loading }: Props) {
     hasNextPage,
     isRefetching,
     refetch,
-  } = useModelShowcaseCollection({ modelId });
+  } = useModelShowcaseCollection({ modelId, withModels: open });
 
   return (
     <div className="relative">
@@ -84,7 +84,12 @@ export function CollectionShowcase({ modelId, loading }: Props) {
   );
 }
 
-type Props = { modelId: number; loading?: boolean };
+type Props = {
+  modelId: number;
+  loading?: boolean;
+  /** Its models are fetched, and counted as a feed load, only while it is shown. */
+  open?: boolean;
+};
 
 function ShowcaseItem({ id, name, images, rank, type, version }: ShowcaseItemProps) {
   const router = useRouter();
@@ -96,6 +101,7 @@ function ShowcaseItem({ id, name, images, rank, type, version }: ShowcaseItemPro
   return (
     <ElementInView
       component={Link}
+      impressions={[{ entityType: 'Model', entityId: id }]}
       className={clsx(
         'flex items-center gap-4 px-3 py-2 no-underline',
         'hover:bg-gray-1 dark:hover:bg-dark-5',

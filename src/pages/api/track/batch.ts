@@ -4,6 +4,8 @@ import { Tracker } from '~/server/clickhouse/client';
 import { awardViewPoints, hattedImpressionEntities } from '~/server/events/points/hooks';
 import { parseTrackBatch } from '~/server/schema/track.schema';
 import { feedEventsRecorder } from '~/server/services/feed-events.service';
+import type { FeedEventViewer } from '~/server/services/feed-events.service';
+import { isPersonalHotLeadViewer } from '~/server/services/personal-hot-lead.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
@@ -67,7 +69,7 @@ export default PublicEndpoint(
     // request would have stamped them. Events are dispatched in array order,
     // preserving the client's emit order.
     const tracker = new Tracker(req, res);
-    let feedViewer: Promise<{ userId: number; memberType: string } | null> | undefined;
+    let feedViewer: Promise<FeedEventViewer | null> | undefined;
     for (const event of events) {
       if (event.kind === 'search') {
         // Fire-and-forget: dispatches the insert without awaiting the round-trip,
@@ -84,13 +86,15 @@ export default PublicEndpoint(
         const getViewer = () =>
           (feedViewer ??= tracker
             .getSession()
-            .then((session) => {
+            .then(async (session) => {
               if (!tracker.isSessionResolved) return null;
               if (!session && readSessionToken(req.cookies, { host: req.headers.host }))
                 return null;
+              const user = session?.user;
               return {
-                userId: session?.user?.id ?? 0,
-                memberType: session?.user?.tier ?? 'undefined',
+                userId: user?.id ?? 0,
+                memberType: user?.tier ?? 'undefined',
+                personalHotLead: user ? await isPersonalHotLeadViewer(user) : null,
               };
             })
             .catch(() => null));
