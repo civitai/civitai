@@ -802,6 +802,10 @@ describe('referee snapshot', () => {
   const strings = new Map<string, string>();
   const hashes = new Map<string, Record<string, string>>();
   let involved: { actors: number[]; owners: number[] };
+  type QueryArg = { query: string; query_params?: { actorShard?: number } };
+  // The settle query runs once per actor shard; the fixture rows are all the first shard's.
+  const firstShard = <T>(params: QueryArg['query_params'], rows: T[]) =>
+    params?.actorShard ? [] : rows;
   const refereeRow = (date: string, points: number) => ({
     ...day(date, 1, 21, 'claimed', 'Yellow', points),
     views: points,
@@ -835,11 +839,11 @@ describe('referee snapshot', () => {
       };
       return tx;
     });
-    ch.query.mockImplementation(async ({ query }: { query: string }) => ({
+    ch.query.mockImplementation(async ({ query, query_params }: QueryArg) => ({
       json: async () =>
         query === eventPointsRefereeUsersSql
           ? [involved]
-          : [refereeRow('2026-11-04', 5), refereeRow('2026-11-05', 3)],
+          : firstShard(query_params, [refereeRow('2026-11-04', 5), refereeRow('2026-11-05', 3)]),
     }));
   });
 
@@ -910,13 +914,13 @@ describe('referee snapshot', () => {
       sourceId: 'crucibleEntry:1',
     };
     const answer = (awards: unknown[]) =>
-      ch.query.mockImplementation(async ({ query }: { query: string }) => ({
+      ch.query.mockImplementation(async ({ query, query_params }: QueryArg) => ({
         json: async () =>
           query === eventPointsRefereeUsersSql
             ? [involved]
             : isCrucibleTeamAwardRowsSql(query)
             ? awards
-            : [refereeRow('2026-11-04', 5), refereeRow('2026-11-05', 3)],
+            : firstShard(query_params, [refereeRow('2026-11-04', 5), refereeRow('2026-11-05', 3)]),
       }));
     const bases = () =>
       Object.fromEntries(
@@ -961,8 +965,9 @@ describe('referee snapshot', () => {
       hours,
     });
     const answer = (rows: ReturnType<typeof hourlyRow>[]) =>
-      ch.query.mockImplementation(async ({ query }: { query: string }) => ({
-        json: async () => (query === eventPointsRefereeUsersSql ? [involved] : rows),
+      ch.query.mockImplementation(async ({ query, query_params }: QueryArg) => ({
+        json: async () =>
+          query === eventPointsRefereeUsersSql ? [involved] : firstShard(query_params, rows),
       }));
     // Each team's [hour index, points] where it earned anything, and how many hours are charted.
     async function chartedHours() {

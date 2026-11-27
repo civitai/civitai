@@ -24,6 +24,11 @@ import {
   eventPointsRefereeSql,
   eventPointsRefereeUsersSql,
 } from '~/server/events/points/referee.sql';
+import {
+  REFEREE_ACTOR_SHARDS,
+  refereeShardMerge,
+  type RefereeRow,
+} from '~/server/events/points/referee-shards';
 import { drainEventPointsPush, markEventPointsDirty } from '~/server/events/points/push';
 import type { EventPointType } from '~/server/events/points/types';
 import { sysRedis } from '~/server/redis/client';
@@ -56,8 +61,8 @@ export const SETTLE_LOCK_S = 45 * 60;
 export const STALE_CUT_ALERT_MS = 2 * 60 * 60 * 1000;
 
 // Named in a failure's message, so the job's log can be joined to system.query_log on the node that ran it.
-const refereeQueryId = (event: RefereeEvent, step: 'users' | 'settle') =>
-  `event-points-referee:${event.name}:${step}:${randomUUID()}`;
+const refereeQueryId = (event: RefereeEvent, step: 'users' | 'settle', shard = '') =>
+  `event-points-referee:${event.name}:${step}:${randomUUID()}${shard}`;
 async function withQueryId<T>(queryId: string, run: () => Promise<T>) {
   try {
     return await run();
@@ -85,22 +90,7 @@ export type RefereeEvent = {
   join?: { claimKey: string; design: string };
 };
 
-export type RefereeRow = {
-  day: string;
-  userId: number;
-  cosmeticId: number;
-  claimKey: string;
-  team: string;
-  points: number;
-  views: number;
-  reactions: number;
-  comments: number;
-  stickers: number;
-  remixes: number;
-  modelLikes: number;
-  // UTC hour (0-23) -> points granted in it.
-  hours: Record<number, number>;
-};
+export type { RefereeRow };
 
 const startOfUtcDay = (time: Date) =>
   new Date(Date.UTC(time.getUTCFullYear(), time.getUTCMonth(), time.getUTCDate()));
@@ -196,7 +186,8 @@ export function refereeQueryParams(
   event: RefereeEvent,
   window: Window,
   liveWeights: Record<string, string> | undefined,
-  restricted: { hidden: RestrictedUser[]; newAccountMinId: number }
+  restricted: { hidden: RestrictedUser[]; newAccountMinId: number },
+  shard = { actorShards: 1, actorShard: 0 }
 ) {
   const types = Object.entries(event.scoring.types).filter(([, rule]) => !!rule);
   return {
@@ -217,6 +208,7 @@ export function refereeQueryParams(
     // Aligned with restrictedUsers: from when each is restricted, in epoch ms (0: the whole season).
     restrictedFrom: restricted.hidden.map((u) => u.fromMs),
     newAccountMinId: restricted.newAccountMinId,
+    ...shard,
   };
 }
 
@@ -298,42 +290,35 @@ export async function queryReferee(
     sysRedis.hGetAll(eventPointKeys(event.name).weights),
     restrictedUsers(event, window, deadline),
   ]);
-  const limit = queryLimit(deadline);
-  const queryId = refereeQueryId(event, 'settle');
-  const result = await withQueryId(queryId, () =>
-    clickhouse!.query({
-      query: eventPointsRefereeSql,
-      format: 'JSONEachRow',
-      query_id: queryId,
-      abort_signal: limit.signal,
-      // A whole-season run on the nightly pass groups every first of the season; spill to disk rather
-      // than fail on memory, and allow it the time.
-      clickhouse_settings: {
-        max_execution_time: limit.seconds,
-        ...LONG_QUERY_PROGRESS_SETTINGS,
-        max_bytes_before_external_group_by: '8000000000',
-        max_bytes_before_external_sort: '8000000000',
-      },
-      query_params: refereeQueryParams(event, window, weights, restricted),
-    })
-  );
-  return (await withQueryId(queryId, () => result.json<RefereeRow>())).map((r) => ({
-    day: String(r.day),
-    userId: Number(r.userId),
-    cosmeticId: Number(r.cosmeticId),
-    claimKey: String(r.claimKey),
-    team: String(r.team),
-    points: Number(r.points),
-    views: Number(r.views),
-    reactions: Number(r.reactions),
-    comments: Number(r.comments),
-    stickers: Number(r.stickers),
-    remixes: Number(r.remixes),
-    modelLikes: Number(r.modelLikes),
-    hours: Object.fromEntries(
-      Object.entries(r.hours ?? {}).map(([hour, points]) => [Number(hour), Number(points)])
-    ),
-  }));
+  const shards = REFEREE_ACTOR_SHARDS;
+  // One after another: run together they would hold as much memory as the single query.
+  const merge = refereeShardMerge();
+  for (let shard = 0; shard < shards; shard++) {
+    const limit = queryLimit(deadline);
+    const queryId = refereeQueryId(event, 'settle', `:${shard + 1}of${shards}`);
+    const result = await withQueryId(queryId, () =>
+      clickhouse!.query({
+        query: eventPointsRefereeSql,
+        format: 'JSONEachRow',
+        query_id: queryId,
+        abort_signal: limit.signal,
+        clickhouse_settings: {
+          max_execution_time: limit.seconds,
+          ...LONG_QUERY_PROGRESS_SETTINGS,
+          // The server's memory is shared with other work: spill a shard's grouping and sorting to
+          // disk well before it could crowd the server.
+          max_bytes_before_external_group_by: '2000000000',
+          max_bytes_before_external_sort: '2000000000',
+        },
+        query_params: refereeQueryParams(event, window, weights, restricted, {
+          actorShards: shards,
+          actorShard: shard,
+        }),
+      })
+    );
+    merge.add(await withQueryId(queryId, () => result.json<Record<string, unknown>>()));
+  }
+  return merge.rows();
 }
 
 // The durable record: one row per hat per day, which the standings, the winner and the per-hat
