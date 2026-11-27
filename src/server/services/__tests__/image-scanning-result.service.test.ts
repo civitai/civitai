@@ -312,8 +312,6 @@ describe('processImageScanningWorkflow', () => {
     expect(mockRecordAudit).not.toHaveBeenCalled();
   });
 
-  // A scan error keeps a Blocked row Blocked; signalling Error would show the owner an
-  // unblocked, failed image until a reload.
   it('signals the state the error write stored, not Error', async () => {
     pipeline.markImageScanError.mockResolvedValue({
       userId: 3,

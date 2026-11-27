@@ -56,3 +56,24 @@ export function blockLeavesMedia(
   if (viewerId != null && image.userId === viewerId) return ownerMediaAllowed(image);
   return !hasBlockMarker(image);
 }
+
+/**
+ * The ingestion signal payload an image's owner receives. A block reason reaches the owner only
+ * when it is one they can act on (`OWNER_MEDIA_EXEMPT_BLOCKS`); every other reason is dropped,
+ * so the blocked state comes from `ingestion` alone.
+ */
+export function ownerIngestionSignalData({
+  imageId,
+  ingestion,
+  blockedFor,
+  nsfwLevel,
+}: {
+  imageId: number;
+  ingestion: ImageIngestionStatus;
+  blockedFor?: string | null;
+  nsfwLevel?: number;
+}) {
+  const ownerBlockedFor =
+    blockedFor != null && OWNER_MEDIA_EXEMPT_BLOCKS.includes(blockedFor) ? blockedFor : undefined;
+  return { imageId, ingestion, blockedFor: ownerBlockedFor, nsfwLevel };
+}

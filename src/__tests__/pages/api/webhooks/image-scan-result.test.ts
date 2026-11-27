@@ -596,7 +596,6 @@ describe('image-scan-result webhook - pipeline tests', () => {
           data: expect.objectContaining({
             imageId: 14,
             ingestion: ImageIngestionStatus.Error,
-            blockedFor: null,
           }),
         })
       );
@@ -624,7 +623,7 @@ describe('image-scan-result webhook - pipeline tests', () => {
                 mediaType: 'image',
                 userId: 55,
                 ingestion: ImageIngestionStatus.Blocked,
-                blockedFor: 'moderated',
+                blockedFor: 'CSAM',
               },
             ];
           return passthrough(query, ...values);
@@ -645,10 +644,11 @@ describe('image-scan-result webhook - pipeline tests', () => {
             data: expect.objectContaining({
               imageId: 15,
               ingestion: ImageIngestionStatus.Blocked,
-              blockedFor: 'moderated',
             }),
           })
         );
+        // The owner is never told a safety block reason.
+        expect(JSON.stringify(vi.mocked(signalClient.send).mock.calls)).not.toContain('CSAM');
         expect(vi.mocked(signalClient.send)).not.toHaveBeenCalledWith(
           expect.objectContaining({
             data: expect.objectContaining({ imageId: 15, ingestion: ImageIngestionStatus.Error }),
@@ -720,6 +720,13 @@ describe('image-scan-result webhook - pipeline tests', () => {
     expect(
       homeBlockLookupsFor(mockDbWrite.$queryRaw.mock.calls, '"CollectionItem"')
     ).toContainEqual([12]);
+    // The owner hears Blocked, never a safety block reason.
+    expect(vi.mocked(signalClient.send)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ imageId: 12, ingestion: ImageIngestionStatus.Blocked }),
+      })
+    );
+    expect(JSON.stringify(vi.mocked(signalClient.send).mock.calls)).not.toContain('CSAM');
   });
 
   it('refreshes the home blocks of a blocked image when an earlier side effect throws', async () => {
@@ -1025,6 +1032,28 @@ describe('image-scan-result webhook - pipeline tests', () => {
         ['anime', 'anime_recognition', 1],
       ]);
       expect(rows.every((row: any) => row.version === '2' && row.entityIds[0] === '42')).toBe(true);
+    });
+
+    it('tells the owner of a rule-blocked image Blocked, without the reason', async () => {
+      vi.spyOn(notificationService, 'createNotification').mockResolvedValueOnce(undefined as never);
+      vi.mocked(getImagesModRules).mockResolvedValueOnce([
+        {
+          id: 9,
+          definition: { type: 'tag', tags: ['teen'], match: 'any' },
+          action: 'Block',
+          reason: 'r',
+        },
+      ] as never);
+
+      await deliver(45, [scanStep(scanOutput()), hashStep]);
+
+      expect(verdictFor(45)?.ingestion).toBe(ImageIngestionStatus.Blocked);
+      const sent = vi
+        .mocked(signalClient.send)
+        .mock.calls.map(([message]: any) => message.data)
+        .filter((data: any) => data.imageId === 45);
+      expect(sent).toEqual([expect.objectContaining({ ingestion: ImageIngestionStatus.Blocked })]);
+      expect(sent[0].blockedFor).toBeUndefined();
     });
 
     it('rates a video by its riskiest frame', async () => {

@@ -1,6 +1,7 @@
 import { poiWords } from '@civitai/mod-utils/prompt-audit/lists';
 import { isMinorRestrictedLevel } from '@civitai/shared/minor-content-gate';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { ownerIngestionSignalData } from '~/server/common/image-block-marker';
 import type { TagType } from '~/shared/utils/prisma/enums';
 import {
   ImageIngestionStatus,
@@ -169,7 +170,8 @@ export const LEGACY_SCAN_LOG: ScanLog = {
  * Push the resolved ingestion state to the uploader's open editor. The editor renders
  * Pending as an in-progress spinner, so any state that LEAVES Pending has to send —
  * Error included, retryable though it is — or the card goes on claiming to analyze
- * until the page is reloaded.
+ * until the page is reloaded. The owner gets only an owner-actionable block reason
+ * (`ownerIngestionSignalData`).
  */
 export async function sendIngestionSignal({
   imageId,
@@ -190,7 +192,7 @@ export async function sendIngestionSignal({
   await signalClient
     .send({
       target: SignalMessages.ImageIngestionStatus,
-      data: { imageId, ingestion, blockedFor, nsfwLevel },
+      data: ownerIngestionSignalData({ imageId, ingestion, blockedFor, nsfwLevel }),
       userId,
     })
     .catch((error) =>
@@ -263,15 +265,15 @@ export function extractFailedSteps(steps: unknown[]): string[] {
 }
 
 /**
- * Flip an image to `Error` (or keep the state `ingestionAfterScanErrorSql` keeps), increment its scan `retryCount`, and stamp a small
+ * Flip an image to `Error` (unless `ingestionAfterScanErrorSql` keeps its state), increment
+ * its scan `retryCount`, and stamp a small
  * `scanJobs.error = { status, failureType, failedSteps, reason, failureClass, at }`
  * so a plain Postgres query can tell WHY a scan errored (and which step) without an
  * orchestrator lookup — and so the `ingest-images` cron can pick a retry ceiling
  * from `failureClass`. retryCount ALWAYS increments: it's the absolute attempt
- * count the per-class ceilings are applied against. Returns the new (post-increment)
- * retryCount, the image's mediaType, the stored ingestion and blockedFor (what the owner's
- * signal must say), and the computed failureClass; all but failureClass are `null` when no
- * row matched (e.g. the image was deleted between scan
+ * count the per-class ceilings are applied against. Returns the new retryCount, mediaType,
+ * userId, the stored ingestion and blockedFor, and the computed failureClass; all but
+ * failureClass are `null` when no row matched (e.g. the image was deleted between scan
  * request and callback).
  */
 export async function markImageScanError({
