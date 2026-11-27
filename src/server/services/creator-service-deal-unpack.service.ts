@@ -22,6 +22,7 @@ import {
   readObject,
   recordFinalScanResult,
   markCopyDeletes,
+  releaseEntryCopies,
   settleCopyDeletes,
   findScanCopyImageId,
 } from '~/server/services/creator-service-deal-file.service';
@@ -915,17 +916,16 @@ export async function deleteEntryScanCopies({ limit = 50 } = {}) {
   let deleted = 0;
   for (const row of rows) {
     try {
+      const released: number[] = [];
       await markCopyDeletes([row.id]);
-      const gone = await deleteImages([row.imageId], {
+      await deleteImages([row.imageId], {
         updatePosts: false,
         actor: { system: 'creator-service-deal-unpack' },
+        onDeleted: releaseEntryCopies([row.id], released),
       });
       // A copy kept for its case stays pointed at, and so does one gone without our delete.
-      const settled = await settleCopyDeletes(
-        [row.id],
-        (gone ?? []).map(({ id }) => id)
-      );
-      if (settled.length) deleted++;
+      await settleCopyDeletes([row.id]);
+      if (released.length) deleted++;
     } catch (error) {
       logUnpack(
         'scan copy delete failed; it will be retried',

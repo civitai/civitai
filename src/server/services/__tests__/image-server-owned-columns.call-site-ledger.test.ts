@@ -820,7 +820,7 @@ const RAW_IMAGE_USE_WRITE_LEDGER: Record<
     writes: ['ServiceDealFile.imageId'],
     decision: 'clears',
   },
-  'src/server/services/creator-service-deal-file.service.ts#settleCopyDeletes': {
+  'src/server/services/creator-service-deal-file.service.ts#releaseEntryCopies': {
     writes: ['ServiceDealFileEntry.imageId'],
     decision: 'clears',
   },

@@ -1,3 +1,4 @@
+import { deleteImagesIn } from '~/server/services/__tests__/deal-file-copy.fake';
 import { constants } from '~/server/common/constants';
 import { readFileSync } from 'fs';
 import { SERVICE_PREVIEW_OVER_LEVEL_REASON } from '~/shared/constants/creator-services.constants';
@@ -1255,9 +1256,7 @@ describe('preview pipeline', () => {
       return { id: row.id };
     });
     // As deleteImages does: the rows it deleted.
-    images.deleteImages.mockImplementation(async (ids: number[]) =>
-      q<{ id: number }>(`DELETE FROM "Image" WHERE id = ANY($1::int[]) RETURNING id`, [ids])
-    );
+    images.deleteImages.mockImplementation(deleteImagesIn(holder.db));
   });
 
   const verdict = (ingestion: string, flags = '') =>
@@ -1554,6 +1553,7 @@ describe('preview pipeline', () => {
     expect(images.deleteImages).toHaveBeenCalledWith([imageId], {
       updatePosts: false,
       actor: { system: 'creator-service-deal-file' },
+      onDeleted: expect.any(Function),
     });
     expect(await fileRow(fileId)).toMatchObject({ imageId: null, scanKey: null });
     expect(await q(`SELECT 1 FROM "Image"`)).toEqual([]);
@@ -1590,13 +1590,38 @@ describe('preview pipeline', () => {
     await files.settlePreviewScans();
     const imageIds = await Promise.all(fileIds.map(async (id) => (await fileRow(id)).imageId));
     const kept = new Set(imageIds.slice(0, BATCH));
-    const realDelete = images.deleteImages.getMockImplementation()!;
-    images.deleteImages.mockImplementation(async (ids: number[]) =>
-      kept.has(ids[0]) ? [] : realDelete(ids)
+    const realDelete = deleteImagesIn(holder.db);
+    images.deleteImages.mockImplementation(async (ids: number[], options: never) =>
+      kept.has(ids[0]) ? [] : realDelete(ids, options)
     );
     expect(await files.deleteScanCopies()).toBe(1);
     expect(await fileRow(fileIds[BATCH])).toMatchObject({ imageId: null, scanKey: null });
     expect((await fileRow(fileIds[0])).imageId).toBe(imageIds[0]);
+  });
+
+  it('clears the pointer of a copy whose delete committed before a crash', async () => {
+    const { fileId } = await waiting();
+    await files.startPreviewScans();
+    await verdict('Scanned');
+    await files.settlePreviewScans();
+    images.deleteImages.mockImplementationOnce(async (ids: number[], options: never) => {
+      await deleteImagesIn(holder.db)(ids, options);
+      throw new Error('stopped after the delete');
+    });
+    expect(await files.deleteScanCopies()).toBe(0);
+    expect(await fileRow(fileId)).toMatchObject({ imageId: null, scanKey: null });
+  });
+
+  it('keeps the pointer of a copy removed some other way, on every run', async () => {
+    const { fileId } = await waiting();
+    await files.startPreviewScans();
+    await verdict('Scanned');
+    await files.settlePreviewScans();
+    const { imageId, scanKey } = await fileRow(fileId);
+    await q(`DELETE FROM "Image" WHERE id = $1`, [imageId]);
+    expect(await files.deleteScanCopies()).toBe(0);
+    expect(await files.deleteScanCopies()).toBe(0);
+    expect(await fileRow(fileId)).toMatchObject({ imageId, scanKey });
   });
 
   it('keeps the pointer when a delete fails, so the copy is retried', async () => {
@@ -1987,9 +2012,7 @@ describe('video previews', () => {
       return { id: row.id };
     });
     // As deleteImages does: the rows it deleted.
-    images.deleteImages.mockImplementation(async (ids: number[]) =>
-      q<{ id: number }>(`DELETE FROM "Image" WHERE id = ANY($1::int[]) RETURNING id`, [ids])
-    );
+    images.deleteImages.mockImplementation(deleteImagesIn(holder.db));
   });
 
   let keys = 0;

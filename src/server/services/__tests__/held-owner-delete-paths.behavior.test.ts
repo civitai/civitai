@@ -361,6 +361,56 @@ describe('deleteImages whose statement fails', () => {
   });
 });
 
+// The deal pipeline lets go of a copy in the delete's own transaction, so a crash cannot strand it.
+describe("deleteImages' onDeleted", () => {
+  const inTransaction = async (run: () => Promise<unknown>) => {
+    const prior = vi.mocked(dbMock.dbWrite.$transaction).getMockImplementation();
+    vi.mocked(dbMock.dbWrite.$transaction).mockImplementation((async (fn: unknown) => {
+      await holder.db.exec('BEGIN');
+      try {
+        const result = await (fn as (tx: unknown) => unknown)(dbMock.dbWrite);
+        await holder.db.exec('COMMIT');
+        return result;
+      } catch (error) {
+        await holder.db.exec('ROLLBACK');
+        throw error;
+      }
+    }) as never);
+    try {
+      return await run();
+    } finally {
+      vi.mocked(dbMock.dbWrite.$transaction).mockImplementation(prior as never);
+    }
+  };
+
+  it('takes the delete back, its file queue with it, when onDeleted fails', async () => {
+    await inTransaction(() =>
+      expect(
+        deleteImages([imageOf(PLAIN)], {
+          actor: { system: 'test' },
+          onDeleted: async () => {
+            throw new Error('record failed');
+          },
+        })
+      ).rejects.toThrow('record failed')
+    );
+    expect(await imageRow(imageOf(PLAIN))).toBeDefined();
+    expect((await holder.db.query(`SELECT type FROM "JobQueue"`)).rows).toEqual([]);
+  });
+
+  it('control: hands onDeleted the rows it deleted, and both stand', async () => {
+    const seen: number[] = [];
+    await inTransaction(() =>
+      deleteImages([imageOf(PLAIN)], {
+        actor: { system: 'test' },
+        onDeleted: async (_, rows) => void seen.push(...rows.map(({ id }) => id)),
+      })
+    );
+    expect(seen).toEqual([imageOf(PLAIN)]);
+    expect(await imageRow(imageOf(PLAIN))).toBeUndefined();
+  });
+});
+
 // An owner deleting their own scanned, unblocked, unflagged, unreported image may leave an object
 // that shop artwork still uses; any other state purges it. Every state is covered through
 // `deleteImages` in moderation-blob-retraction.test.ts; these pin that `deletePost` hands over the
