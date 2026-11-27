@@ -69,7 +69,10 @@ export type ImageFiles = {
 /** The image row, unqualified, holds a CSAM block anywhere in its comma list of block reasons. */
 const CSAM_BLOCKED = sql<boolean>`${sql.raw(csamInBlockedForSql('"blockedFor"'))}`;
 
-/** Not under CSAM review or blocked for CSAM. Read against the image row, unqualified. */
+/**
+ * Not under CSAM review and `blockedFor` not exactly the CSAM reason, read against the image row, unqualified.
+ * Exact on purpose (a listed site in `no-exact-csam-blocked-for`): a purge hold is not widened.
+ */
 const notCsamFlagged = sql<boolean>`"needsReview" IS DISTINCT FROM 'csam' AND "blockedFor" IS DISTINCT FROM 'CSAM'`;
 
 /**

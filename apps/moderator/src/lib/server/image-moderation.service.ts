@@ -63,7 +63,7 @@ import type { DB } from '@civitai/db-schema/kysely';
 const NOT_FLAG_ONLY_REMAINING = sql<boolean>`("needsReview" IS DISTINCT FROM ${FLAG_KEPT_THROUGH_BLOCK} OR "ingestion" <> 'Blocked')`;
 
 const BLOCKED_REASON_MODERATED = 'moderated';
-/** The row holds a CSAM block, anywhere in its comma list of block reasons (main app: `csamBlockedSql`). */
+/** Twin of the main app's `csamBlockedSql`. */
 const CSAM_BLOCKED = sql<boolean>`${sql.raw(csamBlockedForSql('"Image"'))}`;
 
 /**

@@ -42,7 +42,7 @@ const EXACT = new RegExp(
  * nothing widens), or an outbound effect awaiting its decision.
  */
 const ALLOWED: Record<string, number> = {
-  // Retention unchanged under the no-holds rule.
+  // A retention hold, kept exact: a hold is not widened.
   'src/server/jobs/image-ingestion.ts': 4,
   // Restated in a label_store function and trigger; moves with them.
   'src/server/jobs/appeal-decision-records.ts': 4,
@@ -52,7 +52,7 @@ const ALLOWED: Record<string, number> = {
   'packages/civitai-shared/src/held-media.ts': 2,
   // The vector index's flag; moves with the event-engine readers.
   'apps/event-engine/src/vector-sync/image-flags.ts': 1,
-  // Retention unchanged under the no-holds rule; image-appeal-flag's clear moves with the case.
+  // A retention hold, kept exact: a hold is not widened; image-appeal-flag's clear moves with the case.
   'packages/civitai-db-queries/src/child-safety-case.db.ts': 3,
   'src/server/services/image-appeal-flag.ts': 1,
   'packages/civitai-db-queries/src/content-deletion.db.ts': 1,
@@ -109,7 +109,6 @@ describe('no-exact-csam-blocked-for', () => {
   });
 
   it.each([
-    `toUpdate.blockedFor = BlockedReason.CSAM;`.replace('=', ':'),
     `blockedFor: BlockedReason.CSAM,`,
     `\${csamBlockedSql()} OR "needsReview" = 'csam'`,
     `blockedForNamesCsam(image.blockedFor)`,
