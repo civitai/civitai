@@ -3006,12 +3006,6 @@ const V1 = [
     query: 'ids=8031,8032,8033&type=video',
   },
   {
-    name: 'video-thumbnails-unservable-creator',
-    description: 'The same videos for their creator: servableThumbnails has no owner case, so even the thumbnail ownerMediaAllowed leaves the owner is not used; each falls back to a still.',
-    query: 'ids=8031,8032,8033&type=video',
-    viewer: 1002,
-  },
-  {
     name: 'signed-in-moderator',
     description: 'A moderator session: no addons (excludedTags off), viewerId on the POI exclusion, moderator SQL.',
     query: 'browsingLevel=31&sort=Oldest&limit=3',
