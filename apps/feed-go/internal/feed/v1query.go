@@ -195,7 +195,6 @@ func ParseV1(raw string) (*V1Input, error) { return ParseV1With(raw, V1Ports{}) 
 // the supported subset and the shapes ports turns on. Shapes not ported, and every input Node answers
 // with a 400, fall back.
 func ParseV1With(raw string, ports V1Ports) (*V1Input, error) {
-	_ = ports
 	params, err := ParseSearch(raw)
 	if err != nil {
 		return nil, err
@@ -213,9 +212,9 @@ func ParseV1With(raw string, ports V1Ports) (*V1Input, error) {
 	}
 	has := func(k string) bool { _, ok := vals[k]; return ok }
 
-	// Shapes taking a path this service does not port.
+	// Shapes taking a path this service does not port (or ports behind a switch that is off).
 	switch {
-	case has("imageId"):
+	case has("imageId") && !ports.ImageID:
 		return nil, fallback.New("v1-image-id")
 	case has("tags"):
 		return nil, fallback.New("v1-tags")
@@ -248,7 +247,7 @@ func ParseV1With(raw string, ports V1Ports) (*V1Input, error) {
 	}
 	for k, dst := range map[string]*int{
 		"limit": &in.Limit, "page": &in.Page, "postId": &in.PostID, "modelId": &in.ModelID,
-		"modelVersionId": &in.ModelVersionID, "userId": &in.UserID,
+		"modelVersionId": &in.ModelVersionID, "userId": &in.UserID, "imageId": &in.ImageID,
 	} {
 		if err := num(k, dst); err != nil {
 			return nil, err
@@ -262,8 +261,14 @@ func ParseV1With(raw string, ports V1Ports) (*V1Input, error) {
 		// still resolves the username for the hydrate: not ported.
 		return nil, fallback.New("v1-user-zero")
 	}
-	if in.ModelID != 0 && in.ModelVersionID == 0 {
-		// A modelId without a version takes the legacy Postgres path.
+	if has("imageId") && in.ImageID == 0 {
+		// `imageId=0` is falsy to runImageSearch (no legacy path) yet a present key to the feed query
+		// mapper, which refuses it (an empty page, a 400 beside a feed cursor): not ported, so it stays
+		// the shape's fallback with the switch on.
+		return nil, fallback.New("v1-image-id")
+	}
+	if in.ModelID != 0 && in.ModelVersionID == 0 && !ports.ModelOnly {
+		// A modelId without a version takes the legacy Postgres path (served with ports.ModelOnly).
 		return nil, fallback.New("v1-model-only")
 	}
 	if v, ok := vals["username"]; ok {

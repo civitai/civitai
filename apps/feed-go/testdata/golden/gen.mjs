@@ -3222,10 +3222,10 @@ const V1 = [
   { name: 'fallback-image-id', description: '`imageId` with FEED_GO_V1_IMAGES_SERVE_IMAGE_ID off: the shape falls back as before its port.', query: 'imageId=8001', fallback: 'v1-image-id' },
   {
     name: 'fallback-image-id-zero',
-    description: '`imageId=0` is falsy to runImageSearch (no legacy path) but present to the feed mapper (an empty page): not ported.',
+    description: '`imageId=0` with FEED_GO_V1_IMAGES_SERVE_IMAGE_ID on: falsy to runImageSearch (no legacy path) but present to the feed mapper (an empty page), so not ported: the shape’s fallback.',
     query: 'imageId=0',
     goConfig: { serveV1ImageId: true, serveV1ModelOnly: true },
-    fallback: 'v1-image-id-zero',
+    fallback: 'v1-image-id',
   },
   { name: 'fallback-ids-hex', description: '`ids` spelled as Number() reads hex: Node takes it, feed-go reads only plain decimals.', query: 'ids=8001,0x1f43', fallback: 'v1-input-ids' },
   { name: 'fallback-ids-feed-cursor', description: 'A feed cursor on an `ids` batch: getCursor cannot read it (a 400 on Node).', query: 'ids=8001&cursor=feed%3A1%3A2', fallback: 'v1-legacy-cursor' },

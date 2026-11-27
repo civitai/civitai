@@ -488,7 +488,7 @@ func RequestFallbackReasons() map[string][]string {
 		"bearer-token", "v1-images-conditional", "v1-images-session-cookie", "input-unknown-key",
 		"v1-host", "v1-query-encoding", "v1-input-duplicate", "v1-input-number",
 		"v1-input-username", "v1-input-period", "v1-input-type", "v1-input-ids", "v1-input-bool",
-		"v1-image-id", "v1-image-id-zero", "v1-tags", "v1-base-models", "v1-user-zero", "v1-model-only", "v1-sort",
+		"v1-image-id", "v1-tags", "v1-base-models", "v1-user-zero", "v1-model-only", "v1-sort",
 		"v1-with-tags", "v1-cursor", "v1-legacy-cursor", "v1-page-limit",
 	})
 	// The site-search route (sitesearch.go): its region block (no user-agent check: the path is not

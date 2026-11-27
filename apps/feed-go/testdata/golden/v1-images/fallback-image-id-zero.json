@@ -1,6 +1,6 @@
 {
   "name": "fallback-image-id-zero",
-  "description": "`imageId=0` is falsy to runImageSearch (no legacy path) but present to the feed mapper (an empty page): not ported.",
+  "description": "`imageId=0` with FEED_GO_V1_IMAGES_SERVE_IMAGE_ID on: falsy to runImageSearch (no legacy path) but present to the feed mapper (an empty page), so not ported: the shape’s fallback.",
   "now": "2026-06-15T12:00:00.000Z",
   "config": {
     "imageLocation": "https://image.example.test/golden",
@@ -358,6 +358,6 @@
     "usernames": []
   },
   "expect": {
-    "fallback": "v1-image-id-zero"
+    "fallback": "v1-image-id"
   }
 }

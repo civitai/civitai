@@ -534,11 +534,11 @@ func TestServeV1ImagesUnsupportedInputs(t *testing.T) {
 		t.Errorf("signed out, origin form: want the index-feed-unconfigured fallback")
 	}
 	// The legacy-path shapes with their switches on (V1Deps.Ports, which the route's parse reads too)
-	// get past the query to the same configuration check; `imageId=0` keeps a reason of its own.
+	// get past the query to the same configuration check; `imageId=0` keeps the shape's reason.
 	for _, c := range []struct{ target, reason string }{
 		{"/api/v1/images?imageId=5", "index-feed-unconfigured"},
 		{"/api/v1/images?modelId=5", "index-feed-unconfigured"},
-		{"/api/v1/images?imageId=0", "v1-image-id-zero"},
+		{"/api/v1/images?imageId=0", "v1-image-id"},
 	} {
 		reg := prometheus.NewRegistry()
 		up := &v1Upstream{}

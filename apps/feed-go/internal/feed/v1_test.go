@@ -990,7 +990,8 @@ func TestShapeV1CustomThumbnailServable(t *testing.T) {
 
 // The legacy-path shapes behind their own switches (V1Ports): off, each keeps the reason it had before
 // its port, whatever the other switch says; on, it parses. `imageId=0` is falsy in runImageSearch (no
-// legacy path) and present to the feed mapper (an empty page): not ported, under its own reason.
+// legacy path) and present to the feed mapper (an empty page): not ported, so it keeps the shape's
+// reason with the switch on.
 func TestParseV1Ports(t *testing.T) {
 	both := V1Ports{ImageID: true, ModelOnly: true}
 	cases := []struct {
@@ -1002,7 +1003,7 @@ func TestParseV1Ports(t *testing.T) {
 		{"imageId=5", V1Ports{ModelOnly: true}, "v1-image-id"},
 		{"imageId=5", V1Ports{ImageID: true}, ""},
 		{"imageId=5&tags=1", V1Ports{ImageID: true}, "v1-tags"},
-		{"imageId=0", both, "v1-image-id-zero"},
+		{"imageId=0", both, "v1-image-id"},
 		{"imageId=", both, "v1-input-number"},
 		{"imageId=0x10", both, "v1-input-number"},
 		{"imageId=1&imageId=2", both, "v1-input-duplicate"},
@@ -1153,7 +1154,7 @@ func TestImagesQueryImageIDAndRequiringMeta(t *testing.T) {
 		t.Fatalf("image clause binds %v (%v): %s", v, ok, b.SQL)
 	}
 	post, img, excl := strings.Index(b.SQL, `i."postId" = $`), strings.Index(b.SQL, `i.id = $`), strings.Index(b.SQL, `i."userId" != ALL(`)
-	if post < 0 || excl < 0 || !(post < img && img < excl) {
+	if post < 0 || excl < 0 || post >= img || img >= excl {
 		t.Fatalf("clause order post %d, image %d, excluded %d: %s", post, img, excl, b.SQL)
 	}
 	if b.CacheTTL != 0 || b.CacheTags != nil {

@@ -1797,7 +1797,7 @@ compared at `POST /internal/shadow/api/v1/images`. The public route exists but c
 
 | Area | Ported | Falls back (reason) |
 |---|---|---|
-| Query | every member above except those on the right, `ids` (the legacy path, §13.2.1), `withMeta` / `flatMeta`, Next's `req.query` parsing (repeated keys, `Object.keys` order for `nextPage`) | `imageId` (`v1-image-id`) and a `modelId` without a version (`v1-model-only`): the legacy Postgres path; `tags` (`v1-tags`), `baseModels` (`v1-base-models`), `withTags=true` (`v1-with-tags`); any value `Number()` would read differently from a plain integer (`v1-input-number`), an `ids` part that is not a plain decimal from 1 to 2^31-1, or more than 100 parts (`v1-input-ids`: hex, exponents and a `.0` read as integers there), a repeated schema key (`v1-input-duplicate`), a sort the feed does not have (`v1-sort`), `userId=0` (`v1-user-zero`), a malformed escape (`v1-query-encoding`), a key outside the schema other than `token` (`input-unknown-key`, §5.1) |
+| Query | every member above except those on the right, `ids` (the legacy path, §13.2.1), `imageId` and a `modelId` without a version (the legacy path too, each behind its own switch: `FEED_GO_V1_IMAGES_SERVE_IMAGE_ID`, `FEED_GO_V1_IMAGES_SERVE_MODEL_ONLY`, default off), `withMeta` / `flatMeta`, Next's `req.query` parsing (repeated keys, `Object.keys` order for `nextPage`) | `imageId` with its switch off, and `imageId=0` with it on (`v1-image-id`: 0 is falsy to the routing, a present key to the feed mapper); a `modelId` without a version with its switch off (`v1-model-only`); `tags` (`v1-tags`), `baseModels` (`v1-base-models`), `withTags=true` (`v1-with-tags`); any value `Number()` would read differently from a plain integer (`v1-input-number`), an `ids` part that is not a plain decimal from 1 to 2^31-1, or more than 100 parts (`v1-input-ids`: hex, exponents and a `.0` read as integers there), a repeated schema key (`v1-input-duplicate`), a sort the feed does not have (`v1-sort`), `userId=0` (`v1-user-zero`), a malformed escape (`v1-query-encoding`), a key outside the schema other than `token` (`input-unknown-key`, §5.1) |
 | Viewer | signed out; session cookies (the same resolver as §4); a banned session as signed out | API keys / bearer tokens (`bearer-token`); the sampler does not send them at all (§13.4) |
 | Gates | withheld, held level, unknown version / post; the per-post hold on every page | a gallery settings key Node would rebuild (`gallery-settings-miss`); a held model whose settings carry no level (`v1-held-level-unset`) |
 | Pages | the feed's page, its cursor, the empty-page answers (`requiringMeta`, `limit=0`, an empty feed answer); the legacy page (§13.2.1) | a feed failure or a non-200 (`feed-unavailable`, `feed-status`), a refusal Node answers with a 400 (`feed-refused`, `v1-cursor`, `v1-page-limit`), a hydrate that errors or empties the page (`feed-hydrate-error`, `feed-hydrate-empty`: Node retries an empty one on another replica); on the legacy path a cursor that is not a positive integer (`v1-legacy-cursor`) and a query error (`v1-legacy-error`) |
@@ -1807,7 +1807,39 @@ compared at `POST /internal/shadow/api/v1/images`. The public route exists but c
 The endpoint publishes no cosmetics, frames, tags, reactions or event decorations, so this port does
 not read them, and their cache misses (a fallback on the gallery procedure) cost nothing here.
 
-### 13.2.1 The legacy path (`ids`)
+### 13.2.1 The legacy path (`ids`, `imageId`, a model without a version)
+
+runImageSearch's `useLegacyMethod` sends three shapes to `getAllImages` instead of the feed: an `ids`
+batch, a truthy `imageId`, and a truthy `modelId` without a truthy `modelVersionId`
+(`feed.V1Input.Legacy`). `imageId` and the version-less model are served only with their switches on
+(`FEED_GO_V1_IMAGES_SERVE_IMAGE_ID`, `FEED_GO_V1_IMAGES_SERVE_MODEL_ONLY`, default off, mirrored in
+`feed.V1Ports`; the shadow computes what the switches allow too); off, each falls back with the reason
+it had before its port. What differs from an `ids` batch:
+
+- `imageId` adds `i.id = <imageId>` after the post clauses, and makes the query personalized (never
+  cached). It names no model, so no gallery gate runs for it (only `modelId`, `modelVersionId` and
+  `postId` gate); the per-post hold drops the image afterwards if its post's model holds it.
+- A model without a version reads `FROM "ImageResourceNew" irr … JOIN "ModelVersion" mv … WHERE
+  mv."modelId" = <model>`, ordered by `irr."imageId"` (descending; `i."id"` ascending for Oldest),
+  the cursor on that column. The join lists an image once per version of the model it used, so such an
+  image is TWO items (or more) on Node's page, and on this one. The engagement sorts collapse to that
+  order, as Node's are commented out. Its gallery gates (withheld, held level) run first, as for a
+  version. The page is cached 10 minutes under the `images-model:<id>` bust tag in this service's own
+  page cache (only with `IMAGE_QUERY_CACHING` on), as Node caches it in its own.
+  **Cost.** Postgres plans this join by reading every resource row of the model's versions before it
+  sorts and limits (the `ORDER BY … LIMIT` is not pushed into the per-version index scans), so the
+  query's time grows with the model's whole gallery, not with the page. Measured on a production
+  replica (plain `EXPLAIN ANALYZE`, PG level): a model with a few hundred thousand resource rows took
+  about 2-3 s cold and 0.2 s warm; most of the models the route is actually asked for ran past 6 s,
+  and the largest past 20 s (Node's statement timeout, which it answers with an empty page). Past the
+  request budget (`FEED_GO_REQUEST_BUDGET_MS`) the computation is cancelled, its query with it, and
+  the request is handed to Node, which runs the same query again. So this switch moves load off Node
+  only for the models whose page fits the budget, and without the page cache each request runs the
+  query where Node, caching, would not.
+- `requiringMeta` reaches getAllImages on every legacy shape (the handler spreads it in `data`):
+  `i."blockedFor" = 'AiNotVerified'` after the visibility gates (Node drops those gates for it on the
+  red domain only, and this route passes none), so a signed-out page is empty and an owner sees only
+  their own AiNotVerified-blocked images.
 
 An `ids` batch is `getAllImages` itself, not the feed: the same page query as image.getInfinite's
 Postgres arm (`ImagesQuery.Build`), with the batch as `i."id" = ANY(…)` and the request's period
@@ -1937,7 +1969,8 @@ the per-route CPU attribution over the same window.
 - milliseconds between Node's feed call and this one: `membership` / `order` diffs on busy Newest
   pages, `stats.*` value diffs, as in §7;
 - the legacy path reads this service's replica (Node: the DataPacket or the read replica by flag, the
-  primary for a version scope while `image-resource-use-write` is on) and its own page cache;
+  primary for a model or version scope while `image-resource-use-write` is on) and its own page cache
+  (a model scope's page can differ from Node's for up to the 10 minutes either side caches it);
 - `imageMetaCache`: an entry past its 4h TTL is served as it is (Node re-reads the row when it takes
   the refresh lock, which only matters when the meta changed since); a miss is read from the replica
   and not written back, so it stays a miss for the next reader until Node fills it.
