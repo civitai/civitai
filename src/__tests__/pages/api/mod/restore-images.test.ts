@@ -94,7 +94,7 @@ beforeEach(() => {
     kept: [],
   }));
   h.trackImages.mockReset();
-  h.updateFlag.mockReset().mockResolvedValue(true);
+  h.updateFlag.mockReset().mockImplementation(async ({ ids }: { ids: number[] }) => ids);
 });
 
 describe('/api/mod/restore-images', () => {
@@ -224,16 +224,31 @@ describe('/api/mod/update-image-flag', () => {
 
   it('clears it for a moderator holding the grant', async () => {
     expect(await setFlag({ ids: `${WITHHELD}`, value: 'false', csamReview: 'true' })).toBe(200);
-    expect(h.updateFlag).toHaveBeenCalledWith({ ids: [WITHHELD], flag: 'minor', value: false });
+    expect(h.updateFlag).toHaveBeenCalledWith({
+      ids: [WITHHELD],
+      flag: 'minor',
+      value: false,
+      withheldFor: { csamReview: true },
+    });
   });
 
   it('clears it on an image nothing withholds, without the grant', async () => {
     expect(await setFlag({ ids: `${PLAIN}`, value: 'false', csamReview: 'false' })).toBe(200);
-    expect(h.updateFlag).toHaveBeenCalledWith({ ids: [PLAIN], flag: 'minor', value: false });
+    expect(h.updateFlag).toHaveBeenCalledWith({
+      ids: [PLAIN],
+      flag: 'minor',
+      value: false,
+      withheldFor: { csamReview: false },
+    });
   });
 
   it('sets a flag on a withheld image without the grant: setting one loosens nothing', async () => {
     expect(await setFlag({ ids: `${WITHHELD}`, value: 'true' })).toBe(200);
-    expect(h.updateFlag).toHaveBeenCalledWith({ ids: [WITHHELD], flag: 'minor', value: true });
+    expect(h.updateFlag).toHaveBeenCalledWith({
+      ids: [WITHHELD],
+      flag: 'minor',
+      value: true,
+      withheldFor: undefined,
+    });
   });
 });
