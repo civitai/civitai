@@ -23,6 +23,7 @@ type Seed = {
   availability?: string;
   mode?: string | null;
   poi?: boolean;
+  minor?: boolean;
   sfwName?: string | null;
 };
 
@@ -36,6 +37,8 @@ const MODELS = {
   takenDown: { id: 7, mode: 'TakenDown' },
   poi: { id: 8, poi: true },
   faced: { id: 9, sfwName: 'Safe title' },
+  minor: { id: 10, minor: true },
+  unrated: { id: 11, nsfwLevel: 0 },
 } satisfies Record<string, Seed>;
 
 const PG = publicBrowsingLevelsFlag;
@@ -69,7 +72,7 @@ beforeAll(async () => {
       id int PRIMARY KEY, name text NOT NULL, type "ModelType" NOT NULL DEFAULT 'LORA',
       "nsfwLevel" int NOT NULL, "userId" int NOT NULL, status "ModelStatus" NOT NULL,
       availability "Availability" NOT NULL, mode "ModelModifier", poi boolean NOT NULL,
-      "sfwName" text
+      minor boolean NOT NULL DEFAULT false, "sfwName" text
     );
     CREATE TABLE "Article" (id int PRIMARY KEY);
     CREATE TABLE "ModelAssociations" (
@@ -87,8 +90,8 @@ beforeAll(async () => {
   }
   for (const [key, m] of Object.entries(MODELS) as [string, Seed][]) {
     await h.pg.query(
-      `INSERT INTO "Model" (id, name, "nsfwLevel", "userId", status, availability, mode, poi, "sfwName")
-       VALUES ($1, $2, $3, $4, $5::"ModelStatus", $6::"Availability", $7::"ModelModifier", $8, $9)`,
+      `INSERT INTO "Model" (id, name, "nsfwLevel", "userId", status, availability, mode, poi, minor, "sfwName")
+       VALUES ($1, $2, $3, $4, $5::"ModelStatus", $6::"Availability", $7::"ModelModifier", $8, $9, $10)`,
       [
         m.id,
         key,
@@ -98,6 +101,7 @@ beforeAll(async () => {
         m.availability ?? 'Public',
         m.mode ?? null,
         m.poi ?? false,
+        m.minor ?? false,
         m.sfwName ?? null,
       ]
     );
@@ -120,9 +124,17 @@ beforeAll(async () => {
 
 afterAll(() => h?.stop());
 
-const listed = async (viewer: SessionUser | undefined, browsingLevel: number, fromId = FROM) =>
+const listed = async (
+  viewer: SessionUser | undefined,
+  browsingLevel: number,
+  { disableMinor }: { disableMinor?: boolean } = {}
+) =>
   (
-    await getAssociatedResourcesSimple({ fromId, type: 'Suggested', browsingLevel }, viewer, viewer)
+    await getAssociatedResourcesSimple(
+      { fromId: FROM, type: 'Suggested', browsingLevel, disableMinor },
+      viewer,
+      viewer
+    )
   ).map(({ item }) => item.id);
 
 // Visibility rule for linked models set in civitai/civitai#10680.
@@ -134,9 +146,27 @@ describe('getAssociatedResourcesSimple model side', () => {
     expect(await listed(stranger, NsfwLevel.X)).toContain(MODELS.mature.id);
   });
 
-  it('shows a mature model to its owner and moderators at PG', async () => {
-    expect(await listed(itemOwner, PG)).toContain(MODELS.mature.id);
-    expect(await listed(moderator, PG)).toContain(MODELS.mature.id);
+  it('hides a mature model from its owner and moderators at PG too', async () => {
+    expect(await listed(itemOwner, PG)).not.toContain(MODELS.mature.id);
+    expect(await listed(moderator, PG)).not.toContain(MODELS.mature.id);
+    expect(await listed(itemOwner, NsfwLevel.X)).toContain(MODELS.mature.id);
+  });
+
+  it('shows an unrated model to its owner and moderators only', async () => {
+    expect(await listed(itemOwner, PG)).toContain(MODELS.unrated.id);
+    expect(await listed(moderator, PG)).toContain(MODELS.unrated.id);
+    expect(await listed(stranger, ALL)).not.toContain(MODELS.unrated.id);
+    expect(await listed(anon, ALL)).not.toContain(MODELS.unrated.id);
+  });
+
+  it('with minor content off, hides a minor-flagged model from everyone but its owner', async () => {
+    const off = { disableMinor: true };
+    expect(await listed(anon, PG, off)).not.toContain(MODELS.minor.id);
+    expect(await listed(stranger, PG, off)).not.toContain(MODELS.minor.id);
+    expect(await listed(moderator, PG, off)).not.toContain(MODELS.minor.id);
+    expect(await listed(itemOwner, PG, off)).toContain(MODELS.minor.id);
+    expect(await listed(stranger, PG, off)).toContain(MODELS.live.id);
+    expect(await listed(stranger, PG)).toContain(MODELS.minor.id);
   });
 
   it.each(['deleted', 'unpublished', 'draft', 'private', 'takenDown', 'poi'] as const)(

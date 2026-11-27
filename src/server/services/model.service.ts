@@ -6271,7 +6271,7 @@ export const setModelsCategory = async ({
 
 // #region [associated models]
 export const getAssociatedResourcesSimple = async (
-  { fromId, type, browsingLevel }: GetAssociatedResourcesInput,
+  { fromId, type, browsingLevel, disableMinor }: GetAssociatedResourcesInput,
   viewer?: ArticleReader,
   modelViewer?: ArticleReader
 ) => {
@@ -6297,7 +6297,8 @@ export const getAssociatedResourcesSimple = async (
 
   const items = associations
     .map(({ id, toModel, toArticle }) => {
-      if (toModel) return associatedModelItem(id, toModel, modelViewer, browsingLevel);
+      if (toModel)
+        return associatedModelItem(id, toModel, modelViewer, browsingLevel, disableMinor);
       if (!toArticle || !canReadArticle(toArticle, viewer)) return null;
       const { userId, publishedAt, status, ingestion, availability, ...item } = toArticle;
       return { id, item, resourceType: 'article' as const };
@@ -6311,10 +6312,11 @@ function associatedModelItem<T extends AssociatedModelVisibility & ModelSfwFaceS
   id: number,
   model: T,
   viewer: ArticleReader,
-  browsingLevel: number
+  browsingLevel: number,
+  disableMinor?: boolean
 ) {
-  if (!canListAssociatedModel(model, viewer, browsingLevel)) return null;
-  const { userId, status, availability, mode, poi, ...item } = resolveModelFace(
+  if (!canListAssociatedModel(model, viewer, browsingLevel, disableMinor)) return null;
+  const { userId, status, availability, mode, poi, minor, ...item } = resolveModelFace(
     model,
     showsSfwFace(browsingLevel)
   );

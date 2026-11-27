@@ -614,6 +614,7 @@ export type GetAssociatedResourcesInput = z.infer<typeof getAssociatedResourcesS
 export const getAssociatedResourcesSchema = baseQuerySchema.extend({
   fromId: z.number(),
   type: z.enum(AssociationType),
+  disableMinor: z.boolean().optional(),
 });
 
 export type SetAssociatedResourcesInput = z.infer<typeof setAssociatedResourcesSchema>;

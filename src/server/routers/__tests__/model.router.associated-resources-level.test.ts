@@ -34,6 +34,7 @@ const linkedModel = (id: number, nsfwLevel: number, availability = 'Public') => 
     availability,
     mode: null,
     poi: false,
+    minor: false,
     sfwName: null,
   },
 });
