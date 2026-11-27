@@ -12106,6 +12106,8 @@ async function submitCustomComfyWorkflow(opts: {
           },
         };
       }
+      // Below the deny: refundAllLegs reads this when called, and the deny's reserve already rolled
+      // its session leg back, so an assignment above it would refund that leg twice.
       devSessionReserve = { sessionId: devTunnel.sessionId, cost: Math.ceil(ceiling) };
     }
   }
