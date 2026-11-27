@@ -20,7 +20,10 @@ vi.mock('~/utils/s3-utils', () => ({
   getGetUrlByKey,
 }));
 
-const { serveOwnRetractedMedia } = await import('~/server/utils/own-retracted-media');
+const { ownRetractedMediaViewer, serveOwnRetractedMedia } = await import(
+  '~/server/utils/own-retracted-media'
+);
+const { TokenScope } = await import('~/shared/constants/token-scope.constants');
 
 class FakeRes extends Writable {
   statusCode = 200;
@@ -58,16 +61,26 @@ let enabled = true;
 let allowed = true;
 let viewer = { id: 7, impersonated: false, fullScope: true };
 
-async function call(query: Record<string, string> = { imageId: '9' }) {
+/** How the request was signed in: with it, the viewer is the route's own mapping of it. */
+type SignIn = {
+  context?: Record<string, unknown>;
+  query?: Record<string, string>;
+  impersonatedBy?: number;
+};
+
+async function call(query: Record<string, string> = { imageId: '9' }, signIn?: SignIn) {
   const req = Object.assign(new EventEmitter(), {
     method: 'GET',
     url: '/api/retracted-media/own/9',
-    query,
+    query: { ...query, ...signIn?.query },
     headers: {},
+    ...(signIn?.context ? { context: signIn.context } : {}),
   }) as unknown as NextApiRequest;
   const res = new FakeRes();
   await serveOwnRetractedMedia(req, res as unknown as NextApiResponse, {
-    viewer,
+    viewer: signIn
+      ? ownRetractedMediaViewer(req, { id: 7 }, { impersonatedBy: signIn.impersonatedBy })
+      : viewer,
     heldFor,
     enabled: async () => enabled,
     rateLimit: async () => ({ allowed, retryAfterSeconds: 3 }),
@@ -150,16 +163,30 @@ describe('serveOwnRetractedMedia', () => {
     expect((await call({ imageId: 'x' })).statusCode).toBe(400);
   });
 
-  it('refuses a moderator acting as the owner, and a scoped key or app token, reading nothing', async () => {
-    for (const v of [
-      { id: 7, impersonated: true, fullScope: true },
-      { id: 7, impersonated: false, fullScope: false },
-    ]) {
-      viewer = v;
-      const res = await call();
-      expect(res.statusCode).toBe(403);
-      expect(res.headers['cache-control']).toBe('private, no-store');
+  const key = (tokenScope: bigint) => ({
+    context: { apiKeyId: 1, apiKeyType: 'User', subject: { type: 'apiKey', id: 1 }, tokenScope },
+  });
+
+  it('serves a browser session and a full-access key', async () => {
+    for (const signIn of [{}, key(TokenScope.Full)]) {
+      fetchMock.mockClear();
+      expect((await call(undefined, signIn)).statusCode).toBe(200);
     }
+    expect(readMedia).toHaveBeenCalledTimes(2);
+  });
+
+  it.each<[string, SignIn]>([
+    ['a moderator acting as the owner', { impersonatedBy: 1 }],
+    ['a scoped key', key(TokenScope.Full & ~TokenScope.UserRead)],
+    [
+      'an app token',
+      { context: { subject: { type: 'oauth', id: 1 }, tokenScope: TokenScope.Full } },
+    ],
+    ['a query token', { query: { token: 'abc' } }],
+  ])('refuses %s, reading nothing', async (_label, signIn) => {
+    const res = await call(undefined, signIn);
+    expect(res.statusCode).toBe(403);
+    expect(res.headers['cache-control']).toBe('private, no-store');
     expect(readMedia).not.toHaveBeenCalled();
   });
 

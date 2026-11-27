@@ -1,13 +1,18 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { prefixCacheKey } from '@civitai/redis';
-import { RETRACTED_MEDIA_RATE_LIMIT } from '@civitai/shared/retracted-media';
+import {
+  RETRACTED_MEDIA_RATE_LIMIT,
+  retractedMediaOwnRateKey,
+} from '@civitai/shared/retracted-media';
 import { getFeatureFlagsAsync } from '~/server/services/feature-flags.service';
 import { getHeldLevelsByPost } from '~/server/services/model.service';
 import { getOwnRetractedMedia } from '~/server/services/retracted-media.service';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
-import { serveOwnRetractedMedia } from '~/server/utils/own-retracted-media';
+import {
+  ownRetractedMediaViewer,
+  serveOwnRetractedMedia,
+} from '~/server/utils/own-retracted-media';
 import { checkFixedWindow } from '~/server/utils/public-api-rate-limit';
-import { isFullScopeSession } from '~/server/utils/require-full-scope-session';
 import { shownReviewImageLevelsFor } from '~/server/utils/review-image-levels';
 import type { Session, SessionUser } from '~/types/session';
 
@@ -17,15 +22,11 @@ const endpoint = AuthedEndpoint(
   (req: NextApiRequest, res: NextApiResponse, user: SessionUser, session: Session) => {
     const features = getFeatureFlagsAsync({ user, req });
     return serveOwnRetractedMedia(req, res, {
-      viewer: {
-        id: user.id,
-        impersonated: session.impersonatedBy != null,
-        fullScope: isFullScopeSession(req),
-      },
+      viewer: ownRetractedMediaViewer(req, user, session),
       enabled: async () => !!(await features).ownerBlockedMedia,
       rateLimit: () =>
         checkFixedWindow(
-          prefixCacheKey(`retracted-media:own:rate-limit:${user.id}`),
+          prefixCacheKey(retractedMediaOwnRateKey(user.id)),
           RETRACTED_MEDIA_RATE_LIMIT,
           60,
           { failOpen: false }

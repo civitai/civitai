@@ -1191,6 +1191,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
 export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ctx: Context }) => {
   try {
     const ownerBlockedMedia = !!ctx.features?.ownerBlockedMedia;
+    // `ownerCsamMarked` is read by `ownerMediaAllowed` and is not part of the response.
     const [{ ownerCsamMarked, ...image }, eventDecorations] = await Promise.all([
       getImage({
         ...input,
@@ -1231,7 +1232,6 @@ export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ct
       if (blocked) throw throwNotFoundError();
     }
 
-    // `ownerCsamMarked` never leaves the server: it only decides `reviewedBlocks` below.
     const reviewedBlocks =
       ownerBlockedMedia &&
       !actsAsModerator(ctx) &&

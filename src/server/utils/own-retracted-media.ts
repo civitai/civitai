@@ -6,6 +6,7 @@ import {
   RETRACTED_MEDIA_STREAM_MS,
 } from '@civitai/shared/retracted-media';
 import type { OwnRetractedMedia } from '~/server/services/retracted-media.service';
+import { isFullScopeSession } from '~/server/utils/require-full-scope-session';
 import { streamStoredMedia } from '~/server/utils/stream-stored-media';
 import { Flags } from '~/shared/utils/flags';
 
@@ -28,6 +29,17 @@ export type OwnRetractedMediaDeps = {
   /** `getHeldLevelsByPost` for one post: the level its model holds it to, and that model's owner. */
   heldFor: (postId: number) => Promise<{ level: number; ownerId?: number } | undefined>;
 };
+
+/** The route's `viewer`, from the signed-in user and the request that carried their sign-in. */
+export const ownRetractedMediaViewer = (
+  req: NextApiRequest,
+  user: { id: number },
+  session: { impersonatedBy?: unknown }
+): OwnRetractedMediaDeps['viewer'] => ({
+  id: user.id,
+  impersonated: session.impersonatedBy != null,
+  fullScope: isFullScopeSession(req),
+});
 
 /**
  * `/api/retracted-media/own/[imageId]`: the signed-in owner's own blocked image or video, from

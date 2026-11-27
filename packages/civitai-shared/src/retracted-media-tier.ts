@@ -6,7 +6,7 @@ import {
   heldItemImageSql,
   unreadableImageSql,
 } from './held-media';
-import { LISTED_IMAGE_IDS_SQL, heldUrlSql, reportListedUrlSql } from './held-url';
+import { heldUrlSql, reportListedUrlSql } from './held-url';
 import { blockedForSignal, type BlockedForPatterns, type ScannerVerdict } from './media-signals';
 
 /** Whether the retracted-media routes may serve the "Image" row aliased `image` at all, to anyone:
@@ -179,7 +179,7 @@ function buildCsamRestrictedSql(image: string): string {
  * media from its owner: `csamRowSql` on it, csam anywhere in its comma list of block reasons, or the
  * same on one of the other rows on its url, a copy on its url a moderator deleted for CSAM review
  * that no verified report covers (`heldUrlSql` with `owners: false`, a deleted row the sibling scan
- * cannot see), or reported bytes (`reportedCopySql`). A url with `URL_SIBLING_CAP` or more other rows
+ * cannot see), or reported bytes (`reportListedUrlSql`, less this row's own listing). A url with `URL_SIBLING_CAP` or more other rows
  * counts as marked, since the rows past the cap go unread. A NULL reads as marked.
  *
  * Unlike `moderatorWithheldSql`, the row's own listing on a CSAM report does not count, on purpose:
@@ -207,46 +207,15 @@ function buildOwnerCsamMarkedSql(image: string): string {
     OR EXISTS (SELECT 1 FROM (${siblings('os')}) os WHERE COALESCE(${marked('os')}, true))
     OR (SELECT count(*) FROM (${siblings('oc')}) oc) >= ${URL_SIBLING_CAP}
     OR ${heldUrlSql(`${image}."url"`, { owners: false })}
-    OR ${reportedCopySql(image)}
+    OR ${reportListedUrlSql(`${image}."url"`, { exceptImageId: `${image}."id"` })}
   ), true)`;
-}
-
-/**
- * `reportListedUrlSql` for the "Image" row aliased `image`, less its own listing: another row or a
- * moderator-deleted copy on its url is listed on a CSAM report, or a row on its url has the pHash of
- * an image other than this one listed on one, whoever's it is. Built as `reportListedUrlSql` is, so
- * the listed ids read through the primary key and the listed pHashes once per statement.
- */
-function reportedCopySql(image: string): string {
-  const url = `${image}."url"`;
-  const id = `${image}.id`;
-  return `(
-    EXISTS (
-      SELECT 1 FROM "Image" orl_i
-      WHERE orl_i.url = ${url} AND orl_i.id <> ${id} AND orl_i.id IN (${LISTED_IMAGE_IDS_SQL})
-    )
-    OR EXISTS (
-      SELECT 1 FROM "ImageCdnModeratorDelete" orl_d
-      WHERE orl_d.url = ${url} AND orl_d."imageId" IN (${LISTED_IMAGE_IDS_SQL})
-    )
-    OR EXISTS (
-      SELECT 1 FROM "Image" orl_p
-      CROSS JOIN LATERAL jsonb_array_elements(COALESCE((
-        -- Uncorrelated, so it is computed once per statement, not per outer row.
-        SELECT jsonb_agg(jsonb_build_array(orl_x.id, orl_x."pHash")) FROM "Image" orl_x
-        WHERE orl_x.id IN (${LISTED_IMAGE_IDS_SQL}) AND orl_x."pHash" IS NOT NULL
-      ), '[]'::jsonb)) orl_e
-      WHERE orl_p.url = ${url}
-        AND (orl_e ->> 1)::bigint = orl_p."pHash" AND (orl_e ->> 0)::bigint <> ${id}
-    )
-  )`;
 }
 
 const OWNER_CSAM_MARKED_ALIASES = new Set(
   [...buildOwnerCsamMarkedSql('i').matchAll(/(?:FROM|JOIN) "\w+" (\w+)/g)]
     .map((m) => m[1].toLowerCase())
     // Derived-table and function aliases the pattern above does not see.
-    .concat(['om_reason', 'orl_e', 'le', 'listed', 'rl_ids'])
+    .concat(['om_reason', 'rl_e', 'le', 'listed', 'rl_ids'])
 );
 
 /**

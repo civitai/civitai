@@ -141,8 +141,8 @@ export async function viewerCanSeeImageMedia(
   /** `ownerMediaAllowed`'s, and only for the image's owner. */
   { reviewedBlocks = false }: { reviewedBlocks?: boolean } = {}
 ) {
-  // A block refuses the media to everyone but a moderator and, for an exempt block, its owner
-  // (`ownerMediaAllowed`).
+  // A block refuses the media to everyone but a moderator and its owner where `ownerMediaAllowed`
+  // says so (an exempt block, or with `reviewedBlocks` a reviewed one).
   const owner = !!ctx.user && ctx.user.id === image.userId;
   if (
     !actsAsModerator(ctx) &&

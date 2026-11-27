@@ -26,10 +26,9 @@ regexes = [
 ]
 
 [[allowlists]]
-description = "Hand-typed fixture values already in branch history"
+description = "Made-up storage key in a test fixture"
 regexTarget = "secret"
 regexes = [
-  # A made-up storage key in src/server/utils/__tests__/own-retracted-media.test.ts.
   '''^0b9f5a4e-1d2c-4e3f-8a7b-6c5d4e3f2a1b$''',
 ]
 

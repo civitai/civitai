@@ -843,6 +843,14 @@ describe('getOwnRetractedMedia', () => {
   describe('refuses the owner whatever the moderator route keeps to the CSAM grant', () => {
     const target = { id: 990900000, url: 'key-990900000' };
     const OWNER = 990910000;
+    // The target the cases mark, as the url-sharing tests above seed it, for a run without them.
+    beforeAll(async () => {
+      await pg.exec(`
+        INSERT INTO "Image" (id, url, "userId", ingestion, "blockedFor")
+        SELECT ${target.id}, '${target.url}', ${OWNER}, 'Blocked', 'moderated'
+        WHERE NOT EXISTS (SELECT 1 FROM "Image" WHERE id = ${target.id})
+      `);
+    });
     afterEach(async () => {
       await pg.exec(csamCaseCleanupSql(target));
     });
@@ -859,21 +867,24 @@ describe('getOwnRetractedMedia', () => {
       expect(await getOwnRetractedMedia(target.id, OWNER)).not.toBeNull();
     });
 
-    const grantOnly: string[] = [];
-    const listedOnly: string[] = [];
-    it.each(CSAM_RESTRICTION_CASES)('$label', async ({ label, mark }) => {
-      await pg.exec(mark(target));
-      const withheld =
-        (await getRetractedMedia(target.id, { csamReview: false })) === null &&
-        (await getRetractedMedia(target.id, { csamReview: true })) !== null;
-      if (!withheld) return;
-      grantOnly.push(label);
-      if ((await getOwnRetractedMedia(target.id, OWNER)) === null) return;
-      expect({ label, ownListed: await ownListed() }).toEqual({ label, ownListed: true });
-      listedOnly.push(label);
-    });
-
-    it('saw the moderator route keep cases to the grant, and the owner route refuse most', () => {
+    // One test over every case, so the tally does not depend on which tests ran before it.
+    it('refuses every case the moderator route keeps to the grant, but its own listing', async () => {
+      const grantOnly: string[] = [];
+      const listedOnly: string[] = [];
+      for (const { label, mark } of CSAM_RESTRICTION_CASES) {
+        await pg.exec(mark(target));
+        const withheld =
+          (await getRetractedMedia(target.id, { csamReview: false })) === null &&
+          (await getRetractedMedia(target.id, { csamReview: true })) !== null;
+        if (withheld) {
+          grantOnly.push(label);
+          if ((await getOwnRetractedMedia(target.id, OWNER)) !== null) {
+            expect({ label, ownListed: await ownListed() }).toEqual({ label, ownListed: true });
+            listedOnly.push(label);
+          }
+        }
+        await pg.exec(csamCaseCleanupSql(target));
+      }
       expect(grantOnly.length).toBeGreaterThan(5);
       expect(listedOnly.length).toBeLessThan(grantOnly.length);
       expect(listedOnly).toEqual(['its listing on a CSAM report']);
