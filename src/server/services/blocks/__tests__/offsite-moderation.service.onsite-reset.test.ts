@@ -307,7 +307,7 @@ describe('resetOnsiteListingToPending', () => {
     });
   });
 
-  it('a staff on-behalf label on the approved request does not carry onto the owner’s clone', async () => {
+  it('a staff on-behalf label on the approved request does not carry onto the owner’s clone; stagedFromOnBehalf takes its place', async () => {
     mockRead.appBlockPublishRequest.findFirst
       .mockReset()
       .mockResolvedValueOnce({
@@ -332,12 +332,28 @@ describe('resetOnsiteListingToPending', () => {
     });
     const reqArg = mockWrite.appBlockPublishRequest.create.mock.calls[0][0].data;
     expect(reqArg.submittedByUserId).toBe(OWNER);
-    // Every other key is kept as it was.
+    // Every other key is kept as it was; the bytes are still the staff build, so the clone says
+    // which update it was staged from (its re-approve ships nothing).
     expect(reqArg.fileSummary).toEqual({
       files: [{ path: 'index.html', sha: 'aa' }],
       added: ['index.html'],
       sdkFloor: [{ package: '@civitai/app-sdk', installed: '2.4.0', minimum: '2.0.0' }],
+      stagedFromOnBehalf: { platformUpdateId: 'apu_01JABCDEFGHJKMNPQRSTVWXYZ0' },
     });
+  });
+
+  it('CONTROL: an ordinary approved request is cloned with its fileSummary unchanged (no marker)', async () => {
+    const ordinary = { files: [{ path: 'index.html', sha: 'bb' }], added: [], removed: [] };
+    mockRead.appBlockPublishRequest.findFirst
+      .mockReset()
+      .mockResolvedValueOnce({ ...lastApprovedReq, fileSummary: ordinary })
+      .mockResolvedValueOnce(null);
+    await resetOnsiteListingToPending({
+      input: { appListingId: 'apl_1', reason: 'needs another look' },
+      reviewerUserId: MOD,
+    });
+    const reqArg = mockWrite.appBlockPublishRequest.create.mock.calls[0][0].data;
+    expect(reqArg.fileSummary).toEqual(ordinary);
   });
 
   it('NOT_FOUND for a missing listing', async () => {

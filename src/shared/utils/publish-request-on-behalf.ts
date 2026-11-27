@@ -70,16 +70,44 @@ export function staffSubmissionLabel(s: StaffSubmission): string {
 }
 
 /**
- * `fileSummary` without its `onBehalf` record, every other key kept; anything else unchanged. For
- * a copy of a request that is NOT a staff submit on the owner's behalf (a moderator's
- * reset-to-pending clones the approved request as the OWNER's), so the staff label and the
- * reject-withdraws-the-update behaviour do not carry onto it.
+ * What a copy of a staff on-behalf request records in place of its `onBehalf`
+ * (`fileSummary.stagedFromOnBehalf`): its bytes are still the staff build, so its approve must not
+ * ship an update ({@link shipsNoPlatformUpdates}).
  */
-export function withoutOnBehalf(fileSummary: unknown): unknown {
+export type StagedFromOnBehalf = { platformUpdateId: string | null };
+
+function stagedFromOnBehalfObject(fileSummary: unknown): Record<string, unknown> | null {
+  if (!fileSummary || typeof fileSummary !== 'object') return null;
+  const rec = (fileSummary as { stagedFromOnBehalf?: unknown }).stagedFromOnBehalf;
+  return rec && typeof rec === 'object' ? (rec as Record<string, unknown>) : null;
+}
+
+/**
+ * `fileSummary` for a copy of a request filed as the OWNER's (a moderator's reset-to-pending
+ * clones the approved request): its `onBehalf` record is dropped, so the staff label, the
+ * reject-withdraws-the-update behaviour and the owner notification do not carry onto it. When
+ * there was one, `stagedFromOnBehalf` takes its place, because the bytes are still the staff
+ * build. Every other key is kept (a `stagedFromOnBehalf` already there included); anything else is
+ * returned unchanged.
+ */
+export function ownerCopyOf(fileSummary: unknown): unknown {
   if (!fileSummary || typeof fileSummary !== 'object' || Array.isArray(fileSummary))
     return fileSummary;
   if (!('onBehalf' in fileSummary)) return fileSummary;
+  const rec = onBehalfObject(fileSummary);
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { onBehalf: _dropped, ...rest } = fileSummary as Record<string, unknown>;
-  return rest;
+  if (!rec) return rest;
+  const staged: StagedFromOnBehalf = { platformUpdateId: str(rec.platformUpdateId) };
+  return { ...rest, stagedFromOnBehalf: staged };
+}
+
+/**
+ * Whether approving the request ships NO platform update: its bytes are a staff build, either a
+ * staff submit on the owner's behalf ({@link hasOnBehalfRecord}) or a copy of one
+ * (`stagedFromOnBehalf`, {@link ownerCopyOf}). Only an owner's own build ships an update. Any
+ * object under either key counts.
+ */
+export function shipsNoPlatformUpdates(fileSummary: unknown): boolean {
+  return hasOnBehalfRecord(fileSummary) || stagedFromOnBehalfObject(fileSummary) !== null;
 }

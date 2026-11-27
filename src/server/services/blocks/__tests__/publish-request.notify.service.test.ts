@@ -639,6 +639,41 @@ describe('approve / reject of a staff on-behalf submit — the owner is notified
     expect(calls().map((c) => [c.type, c.userId])).toEqual([['app-block-rejected', SUBMITTER]]);
   });
 
+  it('a reset-to-pending clone of an on-behalf request notifies like an owner request and withdraws nothing', async () => {
+    // What `resetOnsiteListingToPending` writes: the owner as submitter, `onBehalf` replaced by
+    // `stagedFromOnBehalf`.
+    const CLONE_SUMMARY = {
+      ...ORDINARY_SUMMARY,
+      stagedFromOnBehalf: { platformUpdateId: 'apu_01JABCDEFGHJKMNPQRSTVWXYZ0' },
+    };
+    holder.platformUpdate = {
+      id: 'apu_01JABCDEFGHJKMNPQRSTVWXYZ0',
+      slug: 'cool-app',
+      status: 'pending',
+    };
+    db.read.appBlockPublishRequest.findUnique.mockResolvedValueOnce({
+      ...pendingApproveRow(),
+      submittedByUserId: OWNER,
+      fileSummary: CLONE_SUMMARY,
+    });
+    db.read.appBlock.findFirst.mockResolvedValueOnce(existingAppBlock());
+    await approveRequest({ publishRequestId: 'req_appr_1', reviewerUserId: 9 });
+    expect(calls().map((c) => [c.type, c.userId])).toEqual([['app-block-approved', OWNER]]);
+
+    mockNotify.mockClear();
+    db.read.appBlockPublishRequest.findUnique.mockResolvedValueOnce(
+      rejectRow(CLONE_SUMMARY, OWNER)
+    );
+    await rejectRequest({
+      publishRequestId: 'req_rej_1',
+      reviewerUserId: 9,
+      rejectionReason: 'Breaks the gallery layout',
+    });
+    expect(calls().map((c) => [c.type, c.userId])).toEqual([['app-block-rejected', OWNER]]);
+    expect(supersedeWrites()).toEqual([]);
+    expect(holder.platformUpdate?.status).toBe('pending');
+  });
+
   it('an on-behalf record naming the submitter themselves sends no second copy', async () => {
     db.read.appBlockPublishRequest.findUnique.mockResolvedValueOnce(
       rejectRow(

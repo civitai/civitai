@@ -15,7 +15,7 @@
  *
  * AUDIT. The publish request itself is the record of the submit: `fileSummary.onBehalf` names the
  * update, and `submittedByUserId` / `createdAt` say who and when. "Already submitted" is read from
- * there ({@link activeSubmission}). A successful submit is also logged.
+ * there ({@link activeSubmission}).
  *
  * THE UPDATE'S STATUS. A submit leaves it `pending`: the owner's own checkout still has to merge
  * it, or their next submit would ship without it. If the review REJECTS the on-behalf request,
@@ -74,10 +74,7 @@ export type SubmitOnBehalfResult = {
   version: string;
 };
 
-/**
- * The pending publish request for `slug` as a refusal, or `null` when there is none. Read on the
- * primary: the owner may have submitted a moment ago.
- */
+/** The pending publish request for `slug` as a refusal, or `null` when there is none. */
 async function pendingRefusal(slug: string): Promise<TRPCError | null> {
   // primary: guards the submit below; the owner may have submitted a moment ago.
   const pending = await dbWrite.appBlockPublishRequest.findFirst({
@@ -94,8 +91,7 @@ async function pendingRefusal(slug: string): Promise<TRPCError | null> {
 /**
  * The newest on-behalf publish request filed for the update that is still pending or was
  * approved, or `null`. A rejected or withdrawn one does not count: the update may be submitted
- * again. Read on the primary: the last submit may have been a moment ago. Scoped to the update's
- * app, so the JSON filter runs over that app's requests only.
+ * again. Scoped to the update's app, so the JSON filter runs over that app's requests only.
  */
 async function activeSubmission(update: {
   id: string;
@@ -255,9 +251,8 @@ export async function submitPlatformUpdateOnBehalf(
       bundleBuffer,
       submittedByUserId: args.staffUserId,
       submitterIsModerator: true,
-      // Never refused for the app's other unshipped updates (its bundle lacks them by
-      // construction); recorded via `on-behalf` instead. `onBehalf` keeps its approve from
-      // marking anything shipped.
+      // The staff bundle lacks the app's other unshipped updates by construction;
+      // submittedOnBehalf waives that check.
       submittedOnBehalf: true,
       onBehalf: {
         platformUpdateId: update.id,

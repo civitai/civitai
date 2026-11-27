@@ -68,7 +68,7 @@ import {
   newAppListingReportId,
   newUlid,
 } from '~/server/utils/app-block-ids';
-import { withoutOnBehalf } from '~/shared/utils/publish-request-on-behalf';
+import { ownerCopyOf } from '~/shared/utils/publish-request-on-behalf';
 
 /**
  * App Store Listings (W13) — P3b OFF-SITE MODERATION service.
@@ -1868,8 +1868,9 @@ export async function resetOnsiteListingToPending(opts: {
           bundleSha256: lastApproved.bundleSha256,
           bundleSizeBytes: lastApproved.bundleSizeBytes,
           // The clone is the OWNER's request: a staff on-behalf label on the approved one
-          // (`fileSummary.onBehalf`) does not carry over.
-          fileSummary: withoutOnBehalf(lastApproved.fileSummary) as Prisma.InputJsonValue,
+          // (`fileSummary.onBehalf`) does not carry over, but its bytes are still the staff
+          // build, so `stagedFromOnBehalf` keeps its re-approve from shipping the update.
+          fileSummary: ownerCopyOf(lastApproved.fileSummary) as Prisma.InputJsonValue,
           manifestDiffSummary: lastApproved.manifestDiffSummary as Prisma.InputJsonValue,
           forgejoCommitSha: lastApproved.forgejoCommitSha,
           // #4059 — carry the client's provenance CLAIM forward, verbatim.

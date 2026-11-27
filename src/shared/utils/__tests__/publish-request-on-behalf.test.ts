@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   hasOnBehalfRecord,
+  ownerCopyOf,
   readOnBehalf,
+  shipsNoPlatformUpdates,
   staffSubmissionLabel,
   staffSubmissionOf,
 } from '~/shared/utils/publish-request-on-behalf';
@@ -47,5 +49,45 @@ describe('readOnBehalf', () => {
     expect(staffSubmissionLabel({ ...s, staffUsername: null })).toBe(
       'Staff submission by Civitai staff (platform update)'
     );
+  });
+
+  it('ownerCopyOf: drops onBehalf for stagedFromOnBehalf, keeps every other key', () => {
+    expect(ownerCopyOf({ ...files, sdkFloor: [], onBehalf: REC })).toEqual({
+      ...files,
+      sdkFloor: [],
+      stagedFromOnBehalf: { platformUpdateId: REC.platformUpdateId },
+    });
+    // A record without a readable update id still marks the copy.
+    expect(ownerCopyOf({ ...files, onBehalf: { ownerUserId: 7101 } })).toEqual({
+      ...files,
+      stagedFromOnBehalf: { platformUpdateId: null },
+    });
+    // A non-object onBehalf is dropped with no marker; an ordinary summary is unchanged.
+    expect(ownerCopyOf({ ...files, onBehalf: 'yes' })).toEqual(files);
+    expect(ownerCopyOf(files)).toBe(files);
+    for (const v of [null, 'x', [1]]) expect(ownerCopyOf(v)).toBe(v);
+    // A copy of a copy keeps the marker.
+    const twice = ownerCopyOf(ownerCopyOf({ ...files, onBehalf: REC }));
+    expect(twice).toEqual({
+      ...files,
+      stagedFromOnBehalf: { platformUpdateId: REC.platformUpdateId },
+    });
+    expect(readOnBehalf(twice)).toBeNull();
+    expect(hasOnBehalfRecord(twice)).toBe(false);
+  });
+
+  it('shipsNoPlatformUpdates: an onBehalf record or a stagedFromOnBehalf marker, nothing else', () => {
+    expect(shipsNoPlatformUpdates({ ...files, onBehalf: REC })).toBe(true);
+    expect(shipsNoPlatformUpdates({ ...files, onBehalf: { ownerUserId: '7101' } })).toBe(true);
+    expect(shipsNoPlatformUpdates(ownerCopyOf({ ...files, onBehalf: REC }))).toBe(true);
+    expect(shipsNoPlatformUpdates({ ...files, stagedFromOnBehalf: {} })).toBe(true);
+    for (const summary of [
+      null,
+      files,
+      { ...files, onBehalf: 'yes' },
+      { ...files, stagedFromOnBehalf: null },
+      { ...files, stagedFromOnBehalf: 'apu_x' },
+    ])
+      expect(shipsNoPlatformUpdates(summary)).toBe(false);
   });
 });

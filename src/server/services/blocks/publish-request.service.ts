@@ -263,13 +263,10 @@ export type SubmitVersionParams = {
    */
   allowUnmergedPlatformUpdate?: boolean;
   /**
-   * A STAFF SUBMIT ON THE OWNER'S BEHALF of one platform update (a moderator only; passed with
-   * `onBehalf` by `app-platform-update-submit.service.ts`, no route passes it). Its bundle is the
-   * approved version plus that one update, so it lacks every other unshipped update by
-   * construction: it is never refused for them, and what it left out is recorded for the
-   * moderator (`fileSummary.platformUpdatesMissing`, via `on-behalf`). Its approve ships nothing
-   * (an update ships only in an owner's build): that reads the request's `fileSummary.onBehalf`
-   * record, which the on-behalf submit writes.
+   * A staff submit on the owner's behalf: its bundle is the approved version plus one update, so
+   * it is never refused for the app's other unshipped updates (recorded as
+   * platformUpdatesMissing with via 'on-behalf'). Its approve ships no update. Moderator only;
+   * passed with onBehalf.
    */
   submittedOnBehalf?: boolean;
   /**

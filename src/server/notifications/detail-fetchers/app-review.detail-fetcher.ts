@@ -14,7 +14,6 @@ export const APP_REVIEW_ATTRIBUTED_TYPES = [
   // NOT `app-listing-hidden`: a takedown names the team only, so its reviewer is never resolved.
 ] as const;
 
-// The owner's copy of a staff on-behalf outcome decides an `AppBlockPublishRequest` too.
 const isBlockType = (type: string) =>
   type.startsWith('app-block-') || type.startsWith('app-platform-update-');
 

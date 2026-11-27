@@ -24,10 +24,10 @@
  *   - Approve (`approveRequest`): once the version goes live (not when a late hold re-suspends
  *     it), the check runs again on the bytes being approved, and every update they contain is
  *     marked shipped by this request ({@link markShippedPlatformUpdates}). The submit-time answer
- *     is not reused. ONLY AN OWNER'S BUILD SHIPS an update: approving a staff on-behalf request
- *     (`fileSummary.onBehalf`, {@link isStaffOnBehalfSubmission}) marks nothing, so the owner's
- *     own next submit is still checked for it. A shipped update is never checked again, so the
- *     owner's later edits to the same files are not refused forever.
+ *     is not reused. ONLY AN OWNER'S BUILD SHIPS an update: approving a staff on-behalf request,
+ *     or a reset-to-pending copy of one ({@link shipsNoPlatformUpdates}), marks nothing, so the
+ *     owner's own next submit is still checked for it. A shipped update is never checked again,
+ *     so the owner's later edits to the same files are not refused forever.
  *
  * An update whose recorded commits cannot be read from the source repo is reported MISSING (with
  * `unreadable`), never thrown: the submit's override still applies, the moderator sees it, an
@@ -45,7 +45,7 @@
  * paths some update touches.
  */
 import { logToAxiom } from '~/server/logging/client';
-import { hasOnBehalfRecord } from '~/shared/utils/publish-request-on-behalf';
+import { shipsNoPlatformUpdates } from '~/shared/utils/publish-request-on-behalf';
 import type { Advisory } from './submit-advisories';
 import { missingUpdatePaths } from './platform-update-containment';
 // The cap is a constant of the shipped module (its query's LIMIT); that module imports nothing
@@ -348,20 +348,12 @@ export async function assertBundleHasPlatformUpdates(
 }
 
 /**
- * A STAFF SUBMIT ON THE OWNER'S BEHALF ({@link hasOnBehalfRecord}: any `onBehalf` object counts).
- * Its approval ships no update: only an owner's own build does.
- */
-export function isStaffOnBehalfSubmission(fileSummary: unknown): boolean {
-  return hasOnBehalfRecord(fileSummary);
-}
-
-/**
  * The approve step, once the version is live: re-checks the approved bytes and marks every update
- * they contain shipped by `publishRequestId`. A staff on-behalf request
- * ({@link isStaffOnBehalfSubmission}) marks nothing and runs no check. An update whose commits
- * cannot be read is not contained, so it stays unshipped. Never throws (an approve never fails
- * over it): a failure is logged and leaves the updates unshipped, so the next submit still checks
- * them. Returns the ids marked.
+ * they contain shipped by `publishRequestId`. A staff build ({@link shipsNoPlatformUpdates}: a
+ * staff on-behalf request or a reset-to-pending copy of one) marks nothing and runs no check. An
+ * update whose commits cannot be read is not contained, so it stays unshipped. Never throws (an
+ * approve never fails over it): a failure is logged and leaves the updates unshipped, so the next
+ * submit still checks them. Returns the ids marked.
  */
 export async function markShippedPlatformUpdates(
   args: {
@@ -375,7 +367,7 @@ export async function markShippedPlatformUpdates(
     markShipped?: (ids: string[], publishRequestId: string) => Promise<number>;
   }
 ): Promise<string[]> {
-  if (isStaffOnBehalfSubmission(args.fileSummary)) return [];
+  if (shipsNoPlatformUpdates(args.fileSummary)) return [];
   try {
     const check = await checkPlatformUpdates(args, deps);
     if (!check?.contained.length) return [];

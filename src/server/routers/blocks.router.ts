@@ -3888,7 +3888,7 @@ export const blocksRouter = router({
     // moderator, but the version is the viewer's app's, so it is listed for them too.
     // 🔴 Gated on BOTH the app's current owner (the block's OAuth client) and the owner the
     // request recorded, in the query and again on the rows, so no other app's request can reach
-    // this list. Read by the viewer's own app ids, so it is an index read per app.
+    // this list.
     const onBehalfForViewer = async () => {
       const ownApps = await dbRead.appBlock.findMany({
         where: { app: { userId: viewerId } },
