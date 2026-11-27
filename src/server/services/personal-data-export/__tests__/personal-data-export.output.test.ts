@@ -3,6 +3,7 @@ import { csvCell, type ExportWriter } from '../output';
 import {
   CH_TABLES,
   USER_BUZZ_ACCOUNT_TYPES,
+  USER_JOB_TYPES,
   exportClickhouse,
   reduceChRow,
   type ClickhouseReader,
@@ -419,6 +420,26 @@ describe('ClickHouse', () => {
     expect(jobs.rows).toBe(5);
     expect(jobs.leftOut).toBeUndefined();
     expect(jobs.description).toMatch(/runs itself .* not included/);
+  });
+
+  it('never lists a job type the site runs on its own', () => {
+    for (const t of [
+      'CivitaiImageScanning',
+      'CivitaiMediaRating',
+      'ConvertImage',
+      'MediaHash',
+      'MediaTagging',
+      'WDTagging',
+      'xGuardModeration',
+      'promptModeration',
+      'AgeClassification',
+      'AudioClassification',
+      'multimodalEmbedding',
+      'watermarkDetection',
+      'ModelPickleScan',
+      'BlobScanGate',
+    ])
+      expect(USER_JOB_TYPES.has(t.toLowerCase()), t).toBe(false);
   });
 
   it("reads only the user's own Buzz accounts, never a club keyed by the same id", async () => {
