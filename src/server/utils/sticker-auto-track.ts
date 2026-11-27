@@ -15,11 +15,13 @@ import { throwRateLimited } from '~/server/utils/rate-limit-error';
 
 // The civitai-sticker-track node pack (our fork of rmatif/comfyui-sticker-track) follows the
 // subject under a sticker and returns a v1 track.
-// Keep COMFY_IMAGE on the image the workers serve: a run pinned to an image they have dropped
-// waits minutes while one is fetched. After changing COMFY_IMAGE or NODE_PACK, submit one run
+// Keep COMFY_IMAGE on the workers' default Comfy image (the one a customComfy job with no
+// comfyImage runs on): a run pinned to any other image waits, sometimes over an hour, for a
+// worker to pull ~30 GB. Omitting comfyImage is not the fix: the install step then falls back to
+// the orchestrator's own default, a different image. After changing COMFY_IMAGE or NODE_PACK, submit one run
 // before deploying and check it succeeds: the first run that built the v2.7.65 layer failed its
 // track step with no reason given, and runs passed once the layer existed.
-const COMFY_IMAGE = 'urn:air:oci:image:ghcr:civitai/civitai-spine-comfy@v2.7.65';
+const COMFY_IMAGE = 'urn:air:oci:image:ghcr:civitai/civitai-spine-comfy@v2.7.66';
 const NODE_PACK = 'urn:air:comfy:nodepack:comfyregistry:civitai/civitai-sticker-track@1.3.0';
 const INSTALL_STEP = 'install';
 const TRACK_STEP = 'track';
