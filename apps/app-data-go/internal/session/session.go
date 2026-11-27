@@ -91,6 +91,36 @@
 // `cursor_expired`, and a head below the one held is treated the same. Neither is a failure: the
 // stream closes with no cooldown, its overlays (numbered in the old order) are dropped, and the read
 // that met it opens a fresh stream once.
+//
+// Everything below is on only with Options.Snapshots set (the shared cache, CACHE-DESIGN.md). Unset,
+// no stream is saved or resumed.
+//
+// THE CONSISTENT CURSOR. A stream's records are complete at a cursor only where the adapter says so:
+// at `Live`, at a `Progress`, and at the last event of a batch, the one event of a poll's changes that
+// carries the poll's new cursor (private-feed.ts sends every other event of the batch with the cursor
+// before it). An event carrying the cursor already held is part of a batch whose end has not arrived,
+// and until it does the records are at no cursor: resuming from the earlier one would miss a `Delete`
+// of an entity the batch upserted.
+//
+// SNAPSHOTS. A live stream's records at its consistent cursor are saved: by Sweep when they changed
+// since the last save, and at an idle close and at shutdown. Each lives at most IdleTTL and never
+// past its exchanged token's expiry. A stream that ended because its token or its data was refused
+// (exchange_refused, revoked, invalid_token, not_private, too_large, malformed, end, cursor_expired,
+// or a classified exchange failure) drops its snapshot; one whose token was refused (exchange_refused,
+// revoked, invalid_token) also drops its token's cached exchange (Forget).
+//
+// RESUME. A stream that opens (never one reopened for a floor) loads its key's snapshot, after its
+// exchange (a refused token loads nothing), and subscribes from the snapshot's cursor, asking the
+// adapter to say when its first poll is sent (request meta `{"sync":1}`). The snapshot's cursor must
+// be this feed's (Accept), as a Live's must, and its records within MaxRecords and MaxBytes. The
+// resumed stream is NOT answered at `Live`: its records are the snapshot's until the first poll's
+// changes arrive, every `Delete` the stream missed among them, so a read waits for the `Progress`
+// naming `{"sync":"done"}`, as a fresh stream's reads wait for `Live`. A Live that does not promise
+// one (`{"sync":"pending"}`: an adapter before it) and a refused cursor (`cursor_expired` or
+// `bad_request`, before the sync) drop the snapshot, and the stream starts over from a fresh snapshot
+// in the same session. The overlays (READ-YOUR-WRITES) stay in memory only: a stream that opens after
+// a restart holds every committed write once it is answered, from its fresh snapshot or its resume's
+// sync.
 package session
 
 import (
@@ -188,6 +218,11 @@ type Subscriber interface {
 	Subscribe(ctx context.Context, schema, token string) (Stream, error)
 }
 
+// ResumeSubscriber also resumes a subscription from a cursor (RESUME).
+type ResumeSubscriber interface {
+	SubscribeFrom(ctx context.Context, schema, token string, meta json.RawMessage, cursor string) (Stream, error)
+}
+
 // MetaSubscriber also opens a subscription naming a request `meta` (Options.SubscribeMeta).
 type MetaSubscriber interface {
 	SubscribeMeta(ctx context.Context, schema, token string, meta json.RawMessage) (Stream, error)
@@ -204,12 +239,73 @@ func (c ClientSubscriber) Subscribe(ctx context.Context, schema, token string) (
 // SubscribeMeta implements MetaSubscriber. The region ctx carries (a stream's, REGION) goes as the
 // subscription's region headers.
 func (c ClientSubscriber) SubscribeMeta(ctx context.Context, schema, token string, meta json.RawMessage) (Stream, error) {
-	s, err := c.Client.Subscribe(ctx, registry.Request{Schema: schema, Token: token, Meta: meta, Headers: RegionOf(ctx).headers()})
+	return c.SubscribeFrom(ctx, schema, token, meta, "")
+}
+
+// SubscribeFrom implements ResumeSubscriber: SubscribeMeta, resumed from cursor ("" is a snapshot).
+func (c ClientSubscriber) SubscribeFrom(ctx context.Context, schema, token string, meta json.RawMessage, cursor string) (Stream, error) {
+	s, err := c.Client.Subscribe(ctx, registry.Request{Schema: schema, Cursor: cursor, Token: token, Meta: meta, Headers: RegionOf(ctx).headers()})
 	if err != nil {
 		return nil, err
 	}
 	return s, nil
 }
+
+// SnapshotKey names one stream's saved snapshot: its token's SHA-256, its schema and its region.
+type SnapshotKey struct {
+	Token  [sha256.Size]byte
+	Schema string
+	Region Region
+}
+
+// Saved is a stream's snapshot (SNAPSHOTS): its records, complete at Cursor.
+type Saved struct {
+	Cursor  string
+	Records []registry.Entity
+}
+
+// Snapshots keeps streams' snapshots (package cache). Every method fails open: a Load that cannot
+// answer is a miss, and a Save or Drop that fails does nothing.
+type Snapshots interface {
+	Load(ctx context.Context, k SnapshotKey) (Saved, bool)
+	Save(ctx context.Context, k SnapshotKey, s Saved, ttl time.Duration)
+	Drop(ctx context.Context, k SnapshotKey)
+}
+
+// The `outcome` of a stream's resume (metrics.ResumeOutcomes): it reached the adapter's sync and
+// serves; its cursor was refused, or its Live promised no sync, so it started over from a fresh
+// snapshot; its snapshot could not be restored (not this feed's cursor, or past the bounds) and was
+// dropped unread.
+const (
+	ResumeSynced        = "synced"
+	ResumeCursorRefused = "cursor_refused"
+	ResumeUnsupported   = "unsupported"
+	ResumeDiscarded     = "discarded"
+)
+
+// syncRequest is the request meta a resume names (RESUME); syncPending and syncDone what the adapter
+// answers in its Live and in the Progress that ends its first poll.
+var syncRequest = json.RawMessage(`{"sync":1}`)
+
+const (
+	syncPending = "pending"
+	syncDone    = "done"
+)
+
+// syncOf is the `sync` a Live or Progress meta names, or "".
+func syncOf(meta json.RawMessage) string {
+	var m struct {
+		Sync string `json:"sync"`
+	}
+	if len(meta) == 0 || json.Unmarshal(meta, &m) != nil {
+		return ""
+	}
+	return m.Sync
+}
+
+// errStartOver ends a resumed subscription that cannot go on: the stream subscribes again without a
+// cursor.
+var errStartOver = errors.New("session: the resume cannot continue; start over")
 
 // EndedError is an `end` that named why the origin ended the stream (its `meta.reason`, e.g. a level
 // stream's `levels_on`). It is ErrEnded.
@@ -418,6 +514,17 @@ type Options struct {
 	// ClassifyExchange, when set, names an Exchange error the manager does not know (EXCHANGE
 	// FAILURES); nil from it, or no ClassifyExchange, leaves it ErrFailed.
 	ClassifyExchange func(err error) *ExchangeFailure
+	// ExchangeFresh, when set, is the exchange a re-check uses (REVOCATION OF THE USER'S TOKEN): the
+	// hub's own answer, never a cached one. Nil is Exchange.
+	ExchangeFresh func(ctx context.Context, subject string) (exchange.Token, error)
+	// Forget, when set, is told the digest of a token the hub or the registry refused (SNAPSHOTS), so
+	// a cache drops the exchange it holds for it.
+	Forget func(token [sha256.Size]byte)
+	// Snapshots, when set, saves streams and resumes them (SNAPSHOTS, RESUME); the Subscriber must be
+	// a ResumeSubscriber for a stream to resume. Nil: nothing is saved or resumed.
+	Snapshots Snapshots
+	// Resumed observes each resume by outcome (Resume*); nil is none.
+	Resumed func(outcome string)
 }
 
 // Budget caps what several managers hold together: the streams (one adapter subscription each) and
@@ -534,6 +641,16 @@ type session struct {
 	// overlayBytes their size, bounded with the records' own bounds.
 	overlays     map[string]overlay
 	overlayBytes int
+	// fresh: never resumed (a stream reopened for a floor wants a fresh snapshot). resumed: subscribed
+	// from a snapshot's cursor and not synced yet (RESUME).
+	fresh, resumed bool
+	// cursor is where the records are complete, unless midBatch (THE CONSISTENT CURSOR); "" before
+	// Live. dirty: the records changed since the last save.
+	cursor   string
+	midBatch bool
+	dirty    bool
+	// onEnd is what the stream's end persists (its snapshot saved, or dropped), run by finish.
+	onEnd func()
 }
 
 // overlay is one acknowledged write (READ-YOUR-WRITES): a record, or a delete marker.
@@ -612,7 +729,7 @@ func (m *Manager) session(k key, token, ip string) (s *session, opened *session,
 		if err := m.room(k); err != nil {
 			return nil, nil, err
 		}
-		s = m.open(k, token, now, nil, ip) //nolint:contextcheck // a stream outlives the read that opened it: it runs on the manager's own context
+		s = m.open(k, token, now, nil, ip, false) //nolint:contextcheck // a stream outlives the read that opened it: it runs on the manager's own context
 		opened = s
 	}
 	s.mu.Lock()
@@ -723,7 +840,7 @@ func (m *Manager) reopen(old *session, token, ip string) (*session, error) {
 	if err := m.room(old.k); err != nil {
 		return nil, err
 	}
-	return m.open(old.k, token, m.opts.Now(), carried, ip), nil
+	return m.open(old.k, token, m.opts.Now(), carried, ip, true), nil
 }
 
 // Ack applies one acknowledged write of token to its open stream of schema. With none open there is
@@ -821,15 +938,15 @@ func (s *session) dropOverlay(k string) {
 }
 
 // open starts a session's stream, holding carried overlays; ip is the address of the viewer whose
-// read opened it (exchange.ClientIP), carried to its exchange. m.mu is held.
-func (m *Manager) open(k key, token string, now time.Time, carried map[string]overlay, ip string) *session {
+// read opened it (exchange.ClientIP), carried to its exchange; fresh never resumes it. m.mu is held.
+func (m *Manager) open(k key, token string, now time.Time, carried map[string]overlay, ip string, fresh bool) *session {
 	delete(m.cooling, k)
 	delete(m.coolCause, k)
 	ctx, cancel := context.WithCancel(WithRegion(exchange.WithClientIP(m.base, ip), k.region))
 	s := &session{
 		k: k, opened: now, lastRead: now, cancel: cancel,
 		live: make(chan struct{}), done: make(chan struct{}), records: map[string]registry.Entity{},
-		overlays: map[string]overlay{},
+		overlays: map[string]overlay{}, fresh: fresh,
 	}
 	for ck, ov := range carried {
 		s.overlays[ck] = ov
@@ -865,7 +982,7 @@ func (m *Manager) read(ctx context.Context, s *session, token string) ([]registr
 		// the previous check's window.
 		s.checking = true
 		s.mu.Unlock()
-		_, err := m.opts.Exchange(ctx, token)
+		_, err := m.exchangeFresh(ctx, token)
 		s.mu.Lock()
 		s.checking, s.checked = false, now()
 		s.mu.Unlock()
@@ -957,19 +1074,46 @@ func (m *Manager) follow(ctx context.Context, s *session, token string) (string,
 		return CloseError, ErrFailed
 	}
 	s.mu.Lock()
+	// A token answered from a cache was last checked when the hub last exchanged its subject: the
+	// re-check counts from then, never from this open.
 	s.expires, s.checked = tok.Expires, m.opts.Now()
+	if !tok.Checked.IsZero() {
+		s.checked = tok.Checked
+	}
 	s.mu.Unlock()
+	cursor := m.restore(ctx, s)
+	for {
+		reason, err := m.stream(ctx, s, token, tok.Access, cursor)
+		if !errors.Is(err, errStartOver) {
+			return reason, err
+		}
+		cursor = ""
+	}
+}
+
+// stream subscribes, from cursor when it is set (RESUME), and reads the subscription until it ends.
+// errStartOver: the resume could not go on, and the snapshot it restored is dropped.
+func (m *Manager) stream(ctx context.Context, s *session, token, access, cursor string) (string, error) {
+	resuming := cursor != ""
 	var st Stream
-	if meta := m.subscribeMeta(token); meta != nil {
+	var err error
+	switch meta := m.subscribeMeta(token); {
+	case resuming:
+		// restore resumes only with a ResumeSubscriber.
+		st, err = m.sub.(ResumeSubscriber).SubscribeFrom(ctx, s.k.schema, access, syncRequest, cursor)
+	case meta != nil:
 		ms, ok := m.sub.(MetaSubscriber)
 		if !ok {
 			return CloseError, ErrFailed
 		}
-		st, err = ms.SubscribeMeta(ctx, s.k.schema, tok.Access, meta)
-	} else {
-		st, err = m.sub.Subscribe(ctx, s.k.schema, tok.Access)
+		st, err = ms.SubscribeMeta(ctx, s.k.schema, access, meta)
+	default:
+		st, err = m.sub.Subscribe(ctx, s.k.schema, access)
 	}
 	if err != nil {
+		if resuming && refusedCursor(err) {
+			return "", m.startOver(ctx, s, ResumeCursorRefused)
+		}
 		return m.classify(err)
 	}
 	defer func() { _ = st.Close() }()
@@ -988,33 +1132,54 @@ func (m *Manager) follow(ctx context.Context, s *session, token string) (string,
 			if errors.Is(err, io.EOF) {
 				return CloseEnd, ErrEnded
 			}
+			if resuming && s.awaitingSync() && refusedCursor(err) {
+				return "", m.startOver(ctx, s, ResumeCursorRefused)
+			}
 			return m.classify(err)
 		}
 		switch ev.Type {
 		case registry.Upsert:
 			// An upsert without a body is the entity deleted (the spec's "Validity" rule 2).
 			if len(ev.Entity.Body) == 0 || string(ev.Entity.Body) == "null" {
-				s.remove(ev.Entity.URN)
-			} else if !s.put(ev.Entity, m.opts.MaxRecords, m.opts.MaxBytes) {
+				s.remove(ev.Entity.URN, ev.Cursor)
+			} else if !s.put(ev.Entity, m.opts.MaxRecords, m.opts.MaxBytes, ev.Cursor) {
 				return CloseTooLarge, ErrTooLarge
 			}
 		case registry.Delete:
-			s.remove(ev.URN)
+			s.remove(ev.URN, ev.Cursor)
 		case registry.Live:
+			// A resumed stream's Live is held to this feed's cursors too.
 			if !m.accepts(ev.Cursor) {
 				return CloseNotPrivate, ErrNotPrivate
+			}
+			if resuming && syncOf(ev.Meta) != syncPending {
+				// An adapter that will not say when its first poll is sent: the snapshot could be
+				// answered before the Deletes it missed arrive. Start over.
+				return "", m.startOver(ctx, s, ResumeUnsupported)
 			}
 			// Before Live: a read answered at Live is answered under this head.
 			if m.writesOn() && !s.observeHead(ev.Meta) {
 				return CloseCursorExpired, ErrCursorExpired
 			}
 			s.observeMeta(ev.Meta)
-			s.markLive()
+			s.complete(ev.Cursor)
+			if !resuming {
+				s.markLive()
+			}
 		case registry.Progress:
 			if m.writesOn() && !s.observeHead(ev.Meta) {
 				return CloseCursorExpired, ErrCursorExpired
 			}
 			s.observeMeta(ev.Meta)
+			s.complete(ev.Cursor)
+			if resuming && s.awaitingSync() && syncOf(ev.Meta) == syncDone {
+				// The first poll's changes are in: the resumed stream holds what a fresh snapshot would.
+				s.mu.Lock()
+				s.resumed = false
+				s.mu.Unlock()
+				s.markLive()
+				m.observeResume(ResumeSynced)
+			}
 		case registry.End:
 			return CloseEnd, endError(ev.Meta)
 		case registry.Malformed:
@@ -1025,6 +1190,88 @@ func (m *Manager) follow(ctx context.Context, s *session, token string) (string,
 			}
 		}
 	}
+}
+
+// refusedCursor reports whether err is the adapter refusing a resume's cursor: `cursor_expired`, or
+// `bad_request` (a cursor it cannot read).
+func refusedCursor(err error) bool {
+	code := registry.CodeOf(err)
+	return code == registry.CursorExpired || code == registry.BadRequest
+}
+
+// awaitingSync reports whether s is a resumed stream not synced yet.
+func (s *session) awaitingSync() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.resumed
+}
+
+// startOver drops what a resume restored, and its snapshot, so the stream subscribes again from a
+// fresh snapshot (errStartOver). The overlays stay: they are this token's acknowledged writes.
+func (m *Manager) startOver(ctx context.Context, s *session, outcome string) error {
+	m.opts.Snapshots.Drop(ctx, s.snapKey())
+	s.mu.Lock()
+	s.records, s.bytes, s.resumed, s.cursor, s.midBatch = map[string]registry.Entity{}, 0, false, "", false
+	// The resumed Live's head was the saved state's: the fresh snapshot names its own.
+	s.head, s.hasHead = 0, false
+	s.mu.Unlock()
+	m.observeResume(outcome)
+	return errStartOver
+}
+
+func (m *Manager) observeResume(outcome string) {
+	if m.opts.Resumed != nil {
+		m.opts.Resumed(outcome)
+	}
+}
+
+// snapKey is s's key in Snapshots.
+func (s *session) snapKey() SnapshotKey {
+	return SnapshotKey{Token: s.k.token, Schema: s.k.schema, Region: s.k.region}
+}
+
+// restore loads s's snapshot into its records (RESUME) and answers the cursor to resume from; "" when
+// there is none to resume.
+func (m *Manager) restore(ctx context.Context, s *session) string {
+	if m.opts.Snapshots == nil || s.fresh {
+		return ""
+	}
+	if _, ok := m.sub.(ResumeSubscriber); !ok || m.opts.SubscribeMeta != nil {
+		// A manager whose subscriptions name a meta of their own is not resumed: the sync request
+		// is the resume's whole meta.
+		return ""
+	}
+	sv, ok := m.opts.Snapshots.Load(ctx, s.snapKey())
+	if !ok {
+		return ""
+	}
+	records := make(map[string]registry.Entity, len(sv.Records))
+	n := 0
+	for _, e := range sv.Records {
+		records[e.URN] = e
+		n += entitySize(e)
+	}
+	if _, dup := records[""]; dup || !m.accepts(sv.Cursor) || len(records) != len(sv.Records) ||
+		len(records) > m.opts.MaxRecords || n > m.opts.MaxBytes {
+		m.opts.Snapshots.Drop(ctx, s.snapKey())
+		m.observeResume(ResumeDiscarded)
+		return ""
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ended {
+		return ""
+	}
+	s.records, s.bytes, s.resumed, s.cursor = records, n, true, sv.Cursor
+	return sv.Cursor
+}
+
+// exchangeFresh is the re-check's exchange (Options.ExchangeFresh).
+func (m *Manager) exchangeFresh(ctx context.Context, subject string) (exchange.Token, error) {
+	if m.opts.ExchangeFresh != nil {
+		return m.opts.ExchangeFresh(ctx, subject)
+	}
+	return m.opts.Exchange(ctx, subject)
 }
 
 // writesOn is the writes flag as the manager sees it (OverlayTTL is set only with it).
@@ -1104,12 +1351,34 @@ func (s *session) observeHead(meta json.RawMessage) bool {
 	return true
 }
 
-func (s *session) put(e registry.Entity, maxRecords, maxBytes int) bool {
+// complete records that the records are complete at cursor (a Live or a Progress; THE CONSISTENT
+// CURSOR).
+func (s *session) complete(cursor string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cursor, s.midBatch = cursor, false
+}
+
+// at records the cursor of an event that changed the records (THE CONSISTENT CURSOR). s.mu is held.
+func (s *session) at(cursor string) {
+	switch cursor {
+	case "":
+		// A snapshot's upsert: complete only at Live.
+	case s.cursor:
+		s.midBatch = true
+	default:
+		s.cursor, s.midBatch = cursor, false
+	}
+	s.dirty = true
+}
+
+func (s *session) put(e registry.Entity, maxRecords, maxBytes int, cursor string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.ended {
 		return true
 	}
+	s.at(cursor)
 	prev, had := s.records[e.URN]
 	if had {
 		s.bytes -= entitySize(prev)
@@ -1122,12 +1391,13 @@ func (s *session) put(e registry.Entity, maxRecords, maxBytes int) bool {
 	return len(s.records) <= maxRecords && s.bytes <= maxBytes
 }
 
-func (s *session) remove(urn string) {
+func (s *session) remove(urn, cursor string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.ended {
 		return
 	}
+	s.at(cursor)
 	if prev, ok := s.records[urn]; ok {
 		s.bytes -= entitySize(prev)
 		delete(s.records, urn)
@@ -1168,6 +1438,7 @@ func (m *Manager) endLocked(s *session, reason string, err error) (Stream, bool)
 		s.mu.Unlock()
 		return nil, false
 	}
+	s.onEnd = m.persistOnEnd(s, reason, err)
 	s.ended, s.err, s.records, s.bytes = true, err, nil, 0
 	s.overlays, s.overlayBytes = nil, 0
 	st := s.stream
@@ -1205,6 +1476,9 @@ func (m *Manager) finish(s *session, st Stream, reason string) {
 	if st != nil {
 		_ = st.Close()
 	}
+	if s.onEnd != nil {
+		s.onEnd()
+	}
 	// Observed before done is closed: a reader woken by done (Read returning the session's error)
 	// then finds the close already counted, never a moment before it.
 	if m.opts.Closed != nil {
@@ -1222,6 +1496,7 @@ func (m *Manager) Sweep() {
 		reason string
 	}
 	var out []closing
+	var saves []func()
 	m.mu.Lock()
 	for _, s := range m.sessions {
 		s.mu.Lock()
@@ -1236,6 +1511,12 @@ func (m *Manager) Sweep() {
 		for k, ov := range s.overlays {
 			if !now.Before(ov.until) {
 				s.dropOverlay(k)
+			}
+		}
+		if m.opts.Snapshots != nil && s.dirty {
+			if save := m.saver(s, now); save != nil {
+				s.dirty = false
+				saves = append(saves, save)
 			}
 		}
 		s.mu.Unlock()
@@ -1255,6 +1536,56 @@ func (m *Manager) Sweep() {
 	for _, c := range out {
 		m.end(c.s, c.reason, ErrClosed)
 	}
+	for _, save := range saves {
+		save()
+	}
+}
+
+// saver is the save of s's snapshot as of now (SNAPSHOTS), or nil when it has none to save: not live,
+// not synced, part-way through a batch, or with no time left. s.mu is held; the save runs without it.
+func (m *Manager) saver(s *session, now time.Time) func() {
+	ttl := m.opts.IdleTTL
+	if !s.expires.IsZero() {
+		ttl = min(ttl, s.expires.Sub(now))
+	}
+	if !s.isLive || s.ended || s.resumed || s.midBatch || ttl <= 0 || !m.accepts(s.cursor) {
+		return nil
+	}
+	saved := Saved{Cursor: s.cursor, Records: make([]registry.Entity, 0, len(s.records))}
+	for _, e := range s.records {
+		saved.Records = append(saved.Records, e)
+	}
+	k := s.snapKey()
+	// The manager's own context: a save at shutdown runs before it is cancelled, and the cache bounds
+	// each call by its own timeout whatever the context.
+	return func() { m.opts.Snapshots.Save(m.base, k, saved, ttl) }
+}
+
+// persistOnEnd is what s's end persists (SNAPSHOTS): an idle close and a shutdown save its snapshot,
+// an end that refused its token or its data drops it, and every other end leaves what is saved. s.mu
+// is held, before its records are dropped.
+func (m *Manager) persistOnEnd(s *session, reason string, err error) func() {
+	if m.opts.Snapshots == nil {
+		return nil
+	}
+	var failure *ExchangeFailure
+	switch {
+	case reason == CloseIdle || reason == CloseShutdown:
+		return m.saver(s, m.opts.Now())
+	case reason == CloseRefused || reason == CloseRevoked || reason == CloseInvalidToken:
+		k := s.snapKey()
+		return func() {
+			m.opts.Snapshots.Drop(m.base, k)
+			if m.opts.Forget != nil {
+				m.opts.Forget(k.Token)
+			}
+		}
+	case reason == CloseNotPrivate || reason == CloseTooLarge || reason == CloseMalformed || reason == CloseEnd ||
+		reason == CloseCursorExpired || errors.As(err, &failure):
+		k := s.snapKey()
+		return func() { m.opts.Snapshots.Drop(m.base, k) }
+	}
+	return nil
 }
 
 // Run sweeps every interval until ctx is done, then closes every stream.

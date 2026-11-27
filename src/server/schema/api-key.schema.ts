@@ -1,5 +1,9 @@
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import * as z from 'zod';
+import {
+  DOCS_API_KEY_NAME_PREFIX,
+  isReservedApiKeyName,
+} from '~/shared/constants/docs-api-key.constants';
 
 export const getApiKeyInputSchema = z.object({ id: z.number() });
 export type GetAPIKeyInput = z.infer<typeof getApiKeyInputSchema>;
@@ -75,7 +79,13 @@ export {
 export const addApiKeyInputSchema = z.object({
   // Server-authoritative bound matching the UI input's maxLength (the name can be
   // seeded via the account deeplink, which bypasses the input's keystroke limit).
-  name: z.string().trim().max(64),
+  name: z
+    .string()
+    .trim()
+    .max(64)
+    .refine((name) => !isReservedApiKeyName(name), {
+      message: `Key names starting with "${DOCS_API_KEY_NAME_PREFIX}" are reserved for the developer docs`,
+    }),
   // A number on the wire (JSON has no bigint), a bigint once parsed. Every bit is below 2^53.
   tokenScope: z
     .number()

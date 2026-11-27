@@ -172,7 +172,8 @@ REST. The hub still verifies every token it is sent.
   (`app_data_block_exchanges_total{outcome="unverifiable"}`).
 
 **Once per block token.** The hub claims each block token's `jti` and refuses a second exchange of it
-as a replay, so `exchange.BlockCache` sits in front of the block exchange:
+as a replay, so `exchange.BlockCache` sits in front of the block exchange (and, with the shared cache
+on, the issued token is saved in valkey for a restarted process: [CACHE-DESIGN.md](CACHE-DESIGN.md)):
 
 - **Issued:** the token is handed to every stream of that block token (one per collection read)
   until it expires; concurrent opens share one call.
@@ -579,7 +580,9 @@ the stream cap binds; `app_data_block_exchanges_total` (the hub exchange rate); 
 
 ## Not built
 
-- Resuming a stream from its cursor (see "Token lifetime").
+- Resuming a stream from its cursor at its token's expiry (see "Token lifetime"). A private stream
+  is resumed from a saved snapshot across a restart, with the shared cache on
+  ([CACHE-DESIGN.md](CACHE-DESIGN.md), "The resume algorithm").
 - A block-token stream outliving its block token's one exchange (see "Block tokens": the next read
   is REST's).
 - Any write path (P3b; proposed in [WRITES-DESIGN.md](WRITES-DESIGN.md)), the app SDK serving side of P4 (a browser calling this service, which needs a

@@ -55,6 +55,7 @@ import {
   getImagesCardFooterHeight,
   isImagesCardFooterOneRow,
 } from '~/components/Image/Infinite/images-card-footer';
+import { isImageShownBlocked } from '~/shared/utils/image-blocked';
 import classes from './ImagesCard.module.scss';
 
 // Only feeds with songs, behind the music flag, load the Song Card and the player store it uses.
@@ -103,7 +104,7 @@ function ImagesCardContent({
   const image = useImageStore(data);
   const storyline = useStorylineForPost(image.postId);
 
-  const isBlocked = image.ingestion === ImageIngestionStatus.Blocked || !!image.blockedFor;
+  const isBlocked = isImageShownBlocked(image);
   const isPending = image.ingestion === ImageIngestionStatus.Pending;
   const isScanned = image.ingestion === ImageIngestionStatus.Scanned;
   const isModerator = currentUser?.isModerator;

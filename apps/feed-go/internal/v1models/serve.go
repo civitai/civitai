@@ -91,7 +91,7 @@ func ServeDetail(ctx context.Context, d *Deps, req DetailRequest) (*Answer, erro
 	res, err := d.getModelsWithVersions(ctx, withVersionsInput{
 		raw: RawInput{
 			IDs: []int{id}, Sort: SortHighestRated, Archived: true, Period: "AllTime", PeriodMode: "published",
-			BrowsingLevel: level,
+			BrowsingLevel: level, misses: d.misses(req.Serving),
 		},
 		ignoreAddons: true,
 	})
@@ -109,6 +109,7 @@ func ServeDetail(ctx context.Context, d *Deps, req DetailRequest) (*Answer, erro
 	// listing is applied to the built body as to a cached one.
 	body, err := shapeModel(res.items[0], shapeOptions{
 		level: level, detail: true, downloadBase: d.Config.BaseURL, imageLocation: d.Config.ImageLocation,
+		unicodeNames: d.misses(req.Serving).filename,
 	})
 	if err != nil {
 		return nil, err
@@ -172,19 +173,9 @@ type ListRequest struct {
 	// Serving: a public request, not a shadow sample. A text query is answered serving only with
 	// Config.ServeQuery (FEED_GO_V1_MODELS_SERVE_QUERY); a sample is computed whenever a search
 	// backend is configured (the Node sampler sends one only with FEED_GO_SHADOW_V1_MODELS_QUERY).
-	// A model-data miss is computed serving only with Config.ServeDataMiss
-	// (FEED_GO_V1_MODELS_SERVE_DATA_MISS); a sample computes it whenever the miss computation is on
-	// (Config.ComputeMisses), so the shadow compares it before it is served.
+	// The cache misses are computed per Deps.misses: serving, each behind its own switch; a sample
+	// whenever the miss computation is on (Config.ComputeMisses).
 	Serving bool
-}
-
-// computeDataMiss is whether the list computes a model-data miss: serving, only with
-// Config.ServeDataMiss; in a shadow sample, whenever the miss computation is on.
-func (d *Deps) computeDataMiss(serving bool) bool {
-	if serving {
-		return d.Config.ServeDataMiss
-	}
-	return d.Config.ComputeMisses
 }
 
 // UsernameResolver is the `username` filter's user lookup on the replica.
@@ -292,7 +283,7 @@ func ServeList(ctx context.Context, d *Deps, users UsernameResolver, req ListReq
 		Take: in.Limit, Cursor: in.Cursor, Archived: in.Archived, DisablePoi: true, TargetUserID: target, TagID: tagID,
 		Types: in.Types, BaseModels: in.BaseModels, Sort: in.Sort, Period: in.Period, PeriodMode: in.PeriodMode,
 		IDs: in.IDs, EarlyAccess: in.EarlyAccess, BrowsingLevel: level,
-		ComputeDataMiss: d.computeDataMiss(req.Serving),
+		misses: d.misses(req.Serving),
 	}
 	if text != nil {
 		if len(text.ids) == 0 {
@@ -332,6 +323,7 @@ func ServeList(ctx context.Context, d *Deps, users UsernameResolver, req ListReq
 	opts := shapeOptions{
 		level: level, downloadBase: origin, nsfwImagePassthrough: in.Nsfw && !req.RegionRestricted,
 		primaryFileOnly: in.PrimaryFileOnly, imageLocation: d.Config.ImageLocation, listing: listing,
+		unicodeNames: raw.misses.filename,
 	}
 	shaped := make([]any, 0, len(items))
 	for _, it := range items {

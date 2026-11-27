@@ -78,7 +78,7 @@ var (
 		"as-posts": EndpointAsPosts, "infinite": EndpointInfinite, "model-getall": EndpointModelGetAll,
 		"v1-models": EndpointV1ModelsID, "v1-models-headers": EndpointV1ModelsID,
 	}
-	otherDirs = []string{"devalue", "metrics", "model-assoc", "region-blocked", "site-search", "v1-images"}
+	otherDirs = []string{"devalue", "metrics", "model-assoc", "region-blocked", "site-search", "v1-filenames", "v1-images"}
 )
 
 // goldenMinSigned is, per directory, how many fixtures at least must get a signature (the counts on
@@ -214,9 +214,9 @@ func TestEveryGoldenFixtureHasASignature(t *testing.T) {
 	if seenPinned != len(pinned) {
 		t.Errorf("%d pinned fixtures found, want %d (one was renamed or removed)", seenPinned, len(pinned))
 	}
-	// 27 list fixtures in v1-models/, 5 in v1-models-headers/.
-	if unsupported != 32 {
-		t.Errorf("%d v1-models list fixtures, want 32", unsupported)
+	// 29 list fixtures in v1-models/, 5 in v1-models-headers/.
+	if unsupported != 34 {
+		t.Errorf("%d v1-models list fixtures, want 34", unsupported)
 	}
 	// Positive control on the count of distinct shapes: the fixtures exist to cover different shapes,
 	// so far more than one distinct signature must come out (a constant signature would pass every

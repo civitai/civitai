@@ -19,7 +19,7 @@ const (
 	KeyDataForModel        = "packed:caches:data-for-model-2"
 	KeyModelTags           = "packed:caches:model-tags"
 	KeyBasicTags           = "packed:caches:basic-tags"
-	KeyFilesForVersion     = "packed:caches:files-for-model-version-2"
+	KeyFilesForVersion     = hydrate.KeyVersionFiles
 	KeyPaidAccessVersion   = "packed:caches:paid-access:ModelVersion"
 	KeyMetricPrivacy       = "packed:caches:user-metric-privacy-defaults"
 	KeyMembershipValid     = "packed:caches:creator-membership-valid"
@@ -43,13 +43,19 @@ type modelTag struct {
 
 // computeDataMisses answers the ids dataForModelsCache holds no entry for (no key, a bust's debounce
 // marker, an undecodable value) as Node's fetch does: its lookupFn's queries
-// (hydrate.Sources.ComputeModelData), on the replica. Node's lookup is lag-aware: a model a recent
-// write flagged is read on the primary, so a missed model whose lag flag is set still falls back
-// (`v1-models-data-miss`), as does every miss without the miss computation (FEED_GO_COMPUTE_MISSES).
-// A flag read that fails (no flag found set) falls back as `v1-models-lag-flag-failed`, and a miss
-// that is a failed cache GET (failed) as `v1-models-data-read-failed` wherever it would otherwise fall
-// back as a miss: a read failure is never reported as a content miss. Nothing is written back.
-func (d *Deps) computeDataMisses(ctx context.Context, ids []int, entries map[int]hydrate.OrderedEntry, failed map[int]error) error {
+// (hydrate.Sources.ComputeModelData). Node's lookup is lag-aware: a model a recent write flagged is
+// read on the primary. So a missed model whose lag flag is set is looked up only where this service
+// reads the primary for it too: a public request (m.write) with model-data written back
+// (FEED_GO_CACHE_WRITEBACK), whose lookup reads the primary for a flagged model (lagAwareDB);
+// anywhere else it still falls back (`v1-models-data-miss`), as does every miss without the miss
+// computation. A flag read that fails (no flag found set) falls back as `v1-models-lag-flag-failed`,
+// and a miss that is a failed cache GET (failed) as `v1-models-data-read-failed` wherever it would
+// otherwise fall back as a miss: a read failure is never reported as a content miss. On a public
+// request the misses Node would write back (writable: no key, or an undecodable value; never a
+// debounce marker or a failed GET) are written, as model.getAll writes them; a shadow sample
+// writes nothing.
+func (d *Deps) computeDataMisses(ctx context.Context, ids []int, entries map[int]hydrate.OrderedEntry, failed map[int]error,
+	writable map[int]bool, m missServe) error {
 	var missed []int
 	for _, id := range ids {
 		if _, ok := entries[id]; !ok {
@@ -62,14 +68,18 @@ func (d *Deps) computeDataMisses(ctx context.Context, ids []int, entries map[int
 	if d.Sources == nil || d.Sources.Compute == nil {
 		return dataMiss(missed, failed)
 	}
+	readsPrimary := m.write && d.Sources.WritesBack(hydrate.MissModelData)
 	flagged, err := d.Sources.ModelLagFlagged(ctx, missed)
-	if flagged {
+	if flagged && !readsPrimary {
 		return dataMiss(missed, failed)
 	}
-	if err != nil {
+	if err != nil && !flagged {
 		return fallback.Wrap("v1-models-lag-flag-failed", err)
 	}
-	computed, ok, err := d.Sources.ComputeModelData(ctx, missed)
+	if !m.write {
+		writable = nil
+	}
+	computed, ok, err := d.Sources.ComputeModelData(ctx, missed, writable)
 	if err != nil {
 		return err
 	}
@@ -121,13 +131,15 @@ func firstFailed(ids []int, failed map[int]error) error {
 }
 
 // modelData is dataForModelsCache.fetch with its appendFn: each model's record, its `tags` replaced
-// by modelTagCache's (whose own appendFn names them from tagCache). A model-tags miss falls back; a
-// model-data miss falls back unless computeMiss, when it is computed (computeDataMisses; DESIGN.md
-// §16.7). A tag the tag cache does not hold is named by tagCache's own lookup on the replica with
-// Config.ComputeMisses (FEED_GO_COMPUTE_MISSES), else falls back. Where a read would fall back on
-// content (a miss, a stale entry) and any of its GETs failed (hydrate.OrderedRead.Failed), the
-// reason is that cache's `-read-failed` one.
-func (d *Deps) modelData(ctx context.Context, ids []int, computeMiss bool) (map[int]*modelData, error) {
+// by modelTagCache's (whose own appendFn names them from tagCache). Each miss is computed where m
+// says (missServe; DESIGN.md §16.7), else falls back: a model-data miss (computeDataMisses), a
+// model-tags miss (computeTagsMisses), a stale tag name (named by tagCache's lookup on the replica
+// with m.tagNameStale, as the Node reader that wins the revalidate lock names it). A tag the tag
+// cache does not hold is named by tagCache's own lookup on the replica with Config.ComputeMisses
+// (FEED_GO_COMPUTE_MISSES), else falls back. Where a read would fall back on content (a miss, a
+// stale entry) and any of its GETs failed (hydrate.OrderedRead.Failed), the reason is that cache's
+// `-read-failed` one.
+func (d *Deps) modelData(ctx context.Context, ids []int, m missServe) (map[int]*modelData, error) {
 	ids = hydrate.Unique(ids)
 	b := hydrate.NewBatch()
 	data := d.Packed.QueueOrdered(b, KeyDataForModel, ids, 0)
@@ -135,8 +147,13 @@ func (d *Deps) modelData(ctx context.Context, ids []int, computeMiss bool) (map[
 	b.Exec(ctx)
 	dataEntries, tagEntries := data.Entries(), tags.Entries()
 	dataFailed, tagsFailed := data.Failed(), tags.Failed()
-	if computeMiss {
-		if err := d.computeDataMisses(ctx, ids, dataEntries, dataFailed); err != nil {
+	if m.data {
+		if err := d.computeDataMisses(ctx, ids, dataEntries, dataFailed, data.Writable(), m); err != nil {
+			return nil, err
+		}
+	}
+	if m.tags {
+		if err := d.computeTagsMisses(ctx, ids, dataEntries, tagEntries, tagsFailed, tags.Writable(), m); err != nil {
 			return nil, err
 		}
 	}
@@ -212,6 +229,11 @@ func (d *Deps) modelData(ctx context.Context, ids []int, computeMiss bool) (map[
 			continue
 		}
 		if e.Stale {
+			if m.tagNameStale && d.Config.ComputeMisses {
+				// Revalidated as the Node reader that wins the lock revalidates it: looked up below.
+				missed = append(missed, id)
+				continue
+			}
 			if err := firstFailed(tagIDs, namesFailed); err != nil && !d.Config.ComputeMisses {
 				return nil, fallback.Wrap("v1-models-tag-name-read-failed", err)
 			}
@@ -244,6 +266,48 @@ func (d *Deps) modelData(ctx context.Context, ids []int, computeMiss bool) (map[
 		out[modelID].tags = tags
 	}
 	return out, nil
+}
+
+// computeTagsMisses answers the model-tags misses (no key, a debounce marker, an undecodable value)
+// of the models the data cache answered with a record (tagsRead: the ids modelTagCache.fetch is
+// asked for), with modelTagCache's lookup on the replica, as Node's fetch reads it
+// (hydrate.Sources.ComputeModelTags): each model's `{modelId, tagIds}` record, or its notFound marker
+// for a model with no tag. On a public request (m.write) the misses Node would write back are
+// written where FEED_GO_CACHE_WRITEBACK lists model-tags. A failed GET among the asked ids leaves
+// everything uncomputed: modelData then falls back as `v1-models-tags-read-failed`. Without the miss
+// computation nothing is computed (modelData falls back as `v1-models-tags-miss`). The lookup has no
+// ORDER BY (Node's findMany sends none), so a model's tag order is the replica's row order, here as
+// in Node's own lookup.
+func (d *Deps) computeTagsMisses(ctx context.Context, ids []int, dataEntries, tagEntries map[int]hydrate.OrderedEntry,
+	failed map[int]error, writable map[int]bool, m missServe) error {
+	for _, id := range ids {
+		if _, ok := dataEntries[id]; !ok {
+			return nil // a model-data miss left: the request falls back on it, so nothing is looked up
+		}
+	}
+	asked := tagsRead(ids, dataEntries)
+	var missed []int
+	for _, id := range asked {
+		if _, ok := tagEntries[id]; !ok {
+			missed = append(missed, id)
+		}
+	}
+	if len(missed) == 0 || firstFailed(asked, failed) != nil || d.Sources == nil || d.Sources.Compute == nil {
+		return nil
+	}
+	if !m.write {
+		writable = nil
+	}
+	computed, ok, err := d.Sources.ComputeModelTags(ctx, missed, writable)
+	if err != nil || !ok {
+		return err
+	}
+	for _, id := range missed {
+		if e, ok := computed[id]; ok {
+			tagEntries[id] = e
+		}
+	}
+	return nil
 }
 
 // lookupTagNames is tagCache's lookupFn on the replica (dbRead), reduced to the name this endpoint
@@ -423,7 +487,7 @@ func (d *Deps) versionParts(ctx context.Context, raws []*rawItem, in RawInput, n
 		}
 		p.images[vid] = imgs
 	}
-	if err := curatedShowcaseGuard(ctx, d.Sources, showcaseRead, listed); err != nil {
+	if err := curatedShowcaseGuard(ctx, d.Sources, showcaseRead, listed, in.misses.showcase); err != nil {
 		return nil, err
 	}
 	p.showsImage = d.showcaseFilter(ctx, in)
@@ -431,6 +495,11 @@ func (d *Deps) versionParts(ctx context.Context, raws []*rawItem, in RawInput, n
 	// Files, then the linked VAE versions' primary files.
 	p.files = map[int][]superjson.Object{}
 	fileEntries, filesFailed := filesRead.Entries(), filesRead.Failed()
+	if in.misses.files {
+		if err := d.computeFilesMisses(ctx, versionIDs, fileEntries, filesFailed, filesRead.Writable(), in.misses); err != nil {
+			return nil, err
+		}
+	}
 	for _, vid := range versionIDs {
 		e, ok := fileEntries[vid]
 		if !ok {
@@ -498,6 +567,58 @@ func (d *Deps) versionParts(ctx context.Context, raws []*rawItem, in RawInput, n
 		}
 	}
 	return p, nil
+}
+
+// computeFilesMisses answers the version-files entries the read left unanswered (no key, a bust's
+// debounce marker, an undecodable value) and revalidates the stale ones (past the cache's day,
+// staleWhileRevalidate), as filesForModelVersionCache.fetch does, with its lookup on the replica
+// (hydrate.Sources.ComputeVersionFiles: Node's lookup reads dbRead). On a public request (m.write)
+// with version-files written back, the misses Node would write back are written and each stale entry
+// is revalidated under Node's revalidate lock; a stale entry whose lock another reader holds is
+// served as it is, as Node's lock loser serves it. A failed GET anywhere in the read leaves
+// everything uncomputed (versionParts then falls back as `v1-models-files-read-failed`): a read
+// failure is never answered as a content miss. Without the miss computation nothing is computed.
+func (d *Deps) computeFilesMisses(ctx context.Context, ids []int, entries map[int]hydrate.OrderedEntry, failed map[int]error,
+	writable map[int]bool, m missServe) error {
+	if firstFailed(ids, failed) != nil || d.Sources == nil || d.Sources.Compute == nil {
+		return nil
+	}
+	var missing, stale []int
+	seen := make(map[int]bool, len(ids))
+	for _, id := range ids {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		e, ok := entries[id]
+		switch {
+		case !ok:
+			missing = append(missing, id)
+		case e.Stale:
+			stale = append(stale, id)
+		}
+	}
+	if len(missing)+len(stale) == 0 {
+		return nil
+	}
+	if !m.write {
+		writable = nil
+	}
+	computed, ok, err := d.Sources.ComputeVersionFiles(ctx, missing, stale, writable, m.write)
+	if err != nil || !ok {
+		return err
+	}
+	for id, e := range computed {
+		entries[id] = e
+	}
+	for _, id := range stale {
+		if e := entries[id]; e.Stale {
+			// Another reader holds the revalidate lock: served as Node's lock loser serves it.
+			e.Stale = false
+			entries[id] = e
+		}
+	}
+	return nil
 }
 
 // numberOf reads a cached number (an integer or a float) as a float64.
@@ -707,11 +828,17 @@ func (d *Deps) showcaseFilter(ctx context.Context, in RawInput) func(superjson.O
 // marker, Object.keys of Node's answer) is uncurated: a fresh uncurated entry, or, for a version with
 // no usable entry and the miss computation on, no row on the replica (hydrate.Sources.ShowcaseState;
 // a failed query, a failed cache GET or a failed lag-flag read is v1-models-showcase-miss-failed, never
-// a curation or a miss). Not gated on Node's
+// a curation or a miss). With readThrough (missServe.showcase) a miss Node's fetch would look up is
+// decided as Node decides it (hydrate.Sources.ShowcaseStateReadThrough: a debounce marker looked up,
+// a lag-flagged version on the primary). Not gated on Node's
 // `model-version-showcase-serve` flag: off, a fallback here is only a lost answer, never a different
 // one (DESIGN.md §16.9).
-func curatedShowcaseGuard(ctx context.Context, s *hydrate.Sources, r *hydrate.ShowcaseRead, listed []int) error {
-	st, err := s.ShowcaseState(ctx, r, listed)
+func curatedShowcaseGuard(ctx context.Context, s *hydrate.Sources, r *hydrate.ShowcaseRead, listed []int, readThrough bool) error {
+	state := s.ShowcaseState
+	if readThrough {
+		state = s.ShowcaseStateReadThrough
+	}
+	st, err := state(ctx, r, listed)
 	if err != nil {
 		return fallback.Wrap("v1-models-showcase-miss-failed", err)
 	}

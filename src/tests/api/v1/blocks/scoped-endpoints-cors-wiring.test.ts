@@ -299,16 +299,12 @@ const ENDPOINTS: Array<{ module: string; requiredScope: string; allowOpaqueOrigi
     requiredScope: 'social:tip:self',
     allowOpaqueOrigin: true,
   },
-  // 🔴 ALSO found ABSENT by the derived check, and the reason `allowOpaqueOrigin`
-  // is a per-entry field: `me.ts` declares `requiredScope: 'user:read:self'` and
-  // does NOT opt into opaque origins, so an UNVERIFIED block's direct fetch of the
-  // viewer self-read 405s on the preflight. Recorded as-is rather than "fixed"
-  // here — changing a live route's CORS posture is a behaviour change that belongs
-  // in its own change with its own reasoning, not a side effect of widening a
-  // ledger. The pin is what makes the current posture visible and a silent flip
-  // loud. (me.ts's own header says "CORS: handled in withBlockScope from
-  // BLOCK_ALLOWED_ORIGINS", which is consistent with omission rather than intent.)
-  { module: '~/pages/api/v1/blocks/me', requiredScope: 'user:read:self', allowOpaqueOrigin: false },
+  // ALSO found ABSENT by the derived check. `me.ts` was recorded here with
+  // `allowOpaqueOrigin: false`, which made an unverified block's direct fetch of
+  // the viewer self-read fail its preflight. It now opts in like every other block
+  // route (`no-opaque-origin-refusing-block-route` requires it): the Bearer block
+  // JWT is its only credential.
+  { module: '~/pages/api/v1/blocks/me', requiredScope: 'user:read:self', allowOpaqueOrigin: true },
   // The WORKFLOW surface. Same opaque-origin argument as the shared writes, and it
   // bites hardest of all here: a block whose catalog renders but whose Generate
   // button 405s on the preflight is the most confusing failure this platform can
@@ -452,9 +448,8 @@ describe('scoped block endpoints — opaque-origin CORS wiring', () => {
 
       ENDPOINTS.forEach(({ module, requiredScope, allowOpaqueOrigin }, i) => {
         const opts = captured[i];
-        // Pinned per entry, not asserted uniformly true: every route here EXCEPT
-        // me.ts opts in, and an unverified (opaque-origin) block's direct fetch of
-        // one that stops opting in 405s on the CORS preflight again.
+        // Pinned per entry: an unverified (opaque-origin) block's direct fetch of
+        // a route that stops opting in 405s on the CORS preflight again.
         expect(opts.allowOpaqueOrigin ?? false, `${module} allowOpaqueOrigin`).toBe(
           allowOpaqueOrigin
         );

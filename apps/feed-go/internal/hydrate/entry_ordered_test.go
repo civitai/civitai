@@ -120,7 +120,8 @@ func TestOrderedCacheEntry(t *testing.T) {
 // added to or dropped from the set fails here until this list says so. A read queued on one of them
 // decodes ordered; any other key does not.
 func TestOrderedCaches(t *testing.T) {
-	want := []string{KeyCosmetics, KeyDataForModel, KeyImageEvents, KeyModelEvents, KeyProfilePictures, KeyUserCosmetics, KeyVersionImages}
+	want := []string{KeyCosmetics, KeyDataForModel, KeyImageEvents, KeyModelEvents, KeyProfilePictures, KeyUserCosmetics, KeyVersionImages,
+		KeyVersionFiles}
 	got := make([]string, 0, len(orderedCaches))
 	for k, on := range orderedCaches {
 		if on {

@@ -38,7 +38,7 @@ import (
 const (
 	goldenDir = "../../testdata/golden/v1-models"
 	// The fixture count gen-v1-models.mjs writes: fewer found means the glob matched the wrong place.
-	goldenMin = 40
+	goldenMin = 42
 )
 
 type goldenEntry struct {
@@ -58,8 +58,10 @@ type goldenFixture struct {
 		// SERVER_DOMAIN_RED and its aliases, as the Node golden test sets them.
 		ServerDomainRed        string `json:"serverDomainRed"`
 		ServerDomainRedAliases string `json:"serverDomainRedAliases"`
-		// ServeDataMiss is FEED_GO_V1_MODELS_SERVE_DATA_MISS (with the miss computation on): a fixture
-		// whose `coldModelData` records are computed by dataForModelsCache's lookup.
+		// ServeDataMiss is the miss computation on (FEED_GO_COMPUTE_MISSES, which a shadow sample
+		// computes every v1 models miss under, and FEED_GO_V1_MODELS_SERVE_DATA_MISS): a fixture whose
+		// `coldModelData` records are computed by dataForModelsCache's lookup, `coldModelTags` by
+		// modelTagCache's and `staleTags` named by tagCache's.
 		ServeDataMiss bool `json:"serveDataMiss"`
 	} `json:"config"`
 	Request struct {
@@ -405,7 +407,8 @@ func goldenSetup(t *testing.T, fx *goldenFixture) *goldenEnv {
 	}}
 
 	if fx.Config.ServeDataMiss {
-		env.db.Routes = append(modelDataLookupRoutes(t, fx), env.db.Routes...)
+		lookups := append(append(modelDataLookupRoutes(t, fx), tagLookupRoutes(t, fx)...), filesLookupRoutes(t, fx)...)
+		env.db.Routes = append(lookups, env.db.Routes...)
 	}
 	packed := &hydrate.PackedReader{Redis: cache, Now: nowFn}
 	sources := &hydrate.Sources{Packed: packed, Cache: cache, Replica: env.db}
@@ -520,6 +523,118 @@ func modelDataLookupRoutes(t *testing.T, fx *goldenFixture) []testkit.Route {
 				}
 			}
 			return testkit.NewRows([]string{"modelId", "hash"}, rows...), nil
+		}},
+	}
+}
+
+// tagLookupRoutes answer modelTagCache's lookup (TagsOnModels: each requested model's
+// `world.modelTags` tag ids, in record order) and tagCache's name lookup (each requested tag of
+// `world.tags`): the rows those records were written from (gen-v1-models.mjs).
+func tagLookupRoutes(t *testing.T, fx *goldenFixture) []testkit.Route {
+	t.Helper()
+	var modelTags map[string]struct {
+		TagIDs []int `json:"tagIds"`
+	}
+	fx.world(t, "modelTags", &modelTags)
+	var tags map[string]struct {
+		Name string `json:"name"`
+	}
+	fx.world(t, "tags", &tags)
+	return []testkit.Route{
+		{Match: `FROM "TagsOnModels" WHERE "modelId" = ANY`, Rows: func(args []any) (*testkit.Rows, error) {
+			ids, _ := args[0].([]int)
+			var rows [][]any
+			for _, id := range ids {
+				for _, tid := range modelTags[strconv.Itoa(id)].TagIDs {
+					rows = append(rows, []any{int64(id), int64(tid)})
+				}
+			}
+			return testkit.NewRows([]string{"modelId", "tagId"}, rows...), nil
+		}},
+		{Match: `SELECT id, name FROM "Tag" WHERE id = ANY`, Rows: func(args []any) (*testkit.Rows, error) {
+			ids, _ := args[0].([]int)
+			var rows [][]any
+			for _, id := range ids {
+				if tg, ok := tags[strconv.Itoa(id)]; ok {
+					rows = append(rows, []any{int64(id), tg.Name})
+				}
+			}
+			return testkit.NewRows([]string{"id", "name"}, rows...), nil
+		}},
+	}
+}
+
+// filesLookupRoutes answer filesForModelVersionCache's lookup (its ModelFile and ModelFileHash reads)
+// with the rows each requested version's `world.files` record was written from: the files in record
+// order, `metadata` as the JSON text of the record's own (its key order kept, as the jsonb text
+// Prisma parses), the hashes in record order.
+func filesLookupRoutes(t *testing.T, fx *goldenFixture) []testkit.Route {
+	t.Helper()
+	var records map[string]struct {
+		Files []map[string]json.RawMessage `json:"files"`
+	}
+	fx.world(t, "files", &records)
+	cols := []string{"id", "url", "sizeKB", "name", "overrideName", "type", "visibility", "pickleScanResult",
+		"pickleScanMessage", "virusScanResult", "virusScanMessage", "scannedAt", "modelVersionId", "metadata"}
+	column := func(col string, raw json.RawMessage) any {
+		if string(raw) == "null" || raw == nil {
+			return nil
+		}
+		if col == "metadata" {
+			return string(raw)
+		}
+		var v any
+		_ = json.Unmarshal(raw, &v)
+		switch x := revive(v).(type) {
+		case float64:
+			if col == "sizeKB" {
+				return x
+			}
+			return int64(x)
+		default:
+			return x
+		}
+	}
+	type hash struct {
+		fileID    int64
+		typ, hash string
+	}
+	var hashes []hash
+	for _, r := range records {
+		for _, f := range r.Files {
+			var id int64
+			_ = json.Unmarshal(f["id"], &id)
+			var hs []struct{ Type, Hash string }
+			_ = json.Unmarshal(f["hashes"], &hs)
+			for _, h := range hs {
+				hashes = append(hashes, hash{id, h.Type, h.Hash})
+			}
+		}
+	}
+	return []testkit.Route{
+		{Match: `FROM "ModelFile"` + "\n" + `WHERE "modelVersionId" = ANY`, Rows: func(args []any) (*testkit.Rows, error) {
+			ids, _ := args[0].([]int)
+			var rows [][]any
+			for _, id := range ids {
+				for _, f := range records[strconv.Itoa(id)].Files {
+					row := make([]any, len(cols))
+					for i, c := range cols {
+						row[i] = column(c, f[c])
+					}
+					rows = append(rows, row)
+				}
+			}
+			return testkit.NewRows(cols, rows...), nil
+		}},
+		{Match: `type::text AS type, hash::text AS hash FROM "ModelFileHash"`, Rows: func(args []any) (*testkit.Rows, error) {
+			ids := argIDs(args)
+			var rows [][]any
+			for _, h := range hashes {
+				if ids[int(h.fileID)] {
+					rows = append(rows, []any{h.fileID, h.typ, h.hash})
+				}
+			}
+			return testkit.NewRows([]string{"fileId", "type", "hash"}, rows...), nil
 		}},
 	}
 }

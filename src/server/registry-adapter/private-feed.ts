@@ -65,6 +65,15 @@
  * THE CURRENT MAJOR. Beside the head, a served stream's `meta` names `currentMajor`
  * (`CollectionStream.currentMajor`): on `live`, as the first poll resolved it, then in a `progress`
  * whenever a poll resolves another. A stream that holds nothing names none.
+ *
+ * THE FIRST POLL'S SYNC. A subscription whose request `meta` names `sync: 1` (a consumer resuming from
+ * a cursor it saved: app-data-go's warm restart) is told when it holds everything: `live` names
+ * `sync: 'pending'`, and after the first poll's changes (every `Delete` the cursor missed among them)
+ * a `progress` names `sync: 'done'`, beside the head and current major when the stream is served,
+ * whether or not anything changed. Until then a resumed consumer holds only what it saved, which a
+ * refusal since may have revoked: the spec's `live` on a resume says the cursor held, not that the
+ * changes since have arrived. Without `sync` nothing differs. The request's `meta` is not part of the
+ * cursor's binding (`requestBinding`), so asking for it never expires a cursor.
  */
 import type { Audience } from '~/server/registry-adapter/audience';
 import { audienceAdmits, contextAudience } from '~/server/registry-adapter/audience';
@@ -229,6 +238,9 @@ export const privateMeta = (
         ...(head !== undefined ? headMeta(head) : {}),
         ...(currentMajor !== undefined ? { currentMajor } : {}),
       };
+/** Whether a subscription asked to be told when its first poll is sent (THE FIRST POLL'S SYNC). */
+export const asksSync = (ctx: Pick<AdapterContext, 'meta'>): boolean => ctx.meta?.sync === 1;
+
 /** The cursor of a private stream that holds nothing; it names no stored state. */
 export const PRIVATE_EMPTY_CURSOR = `${STATE_FORMAT}.empty`;
 const CURSOR_RE = /^p1\.([0-9a-f]{32})$/;
@@ -474,6 +486,8 @@ export function createPrivateDocFeed(opts: PrivateFeedOptions) {
     let state = loaded;
     let position = cursor;
     let pending: Awaited<ReturnType<typeof advance>> | null = first;
+    // THE FIRST POLL'S SYNC: owed after the first poll's changes, when asked for.
+    let syncOwed = asksSync(ctx);
     // The head `live` carried (the loaded state's), then the last one a `progress` carried; and the
     // current major beside it (the first poll's, which `live` carried).
     let sentHead = loaded.head ?? null;
@@ -515,12 +529,21 @@ export function createPrivateDocFeed(opts: PrivateFeedOptions) {
         }
       }
       // After the poll's changes, so a consumer holds all of them when it reads the head. A new
-      // current major (a major approved since) is sent the same way, beside the head.
-      if (head !== null && (head !== sentHead || current !== sentCurrent)) {
+      // current major (a major approved since) is sent the same way, beside the head; so is the
+      // first poll's sync, when it is owed (THE FIRST POLL'S SYNC).
+      const moved = head !== null && (head !== sentHead || current !== sentCurrent);
+      if (moved || syncOwed) {
         if (ctx.signal.aborted) return;
-        sentHead = head;
-        sentCurrent = current;
-        yield { progress: position, meta: privateMeta(head, current) as EventMeta };
+        if (moved) {
+          sentHead = head;
+          sentCurrent = current;
+        }
+        const meta: EventMeta = {
+          ...(head !== null ? privateMeta(head, current) : {}),
+          ...(syncOwed ? { sync: 'done' } : {}),
+        };
+        syncOwed = false;
+        yield { progress: position, meta };
       }
       await opts.sleep(opts.pollMs, ctx.signal);
     }
@@ -554,7 +577,9 @@ export function createPrivateDocFeed(opts: PrivateFeedOptions) {
       // `live` carries the head of the state the cursor names: what the consumer holds once it is
       // live. The first poll's changes, and its head, follow it. Beside the head, `currentMajor` as
       // the first poll resolved it.
-      const liveMeta = privateMeta(state.head, first.current);
+      // A subscription that asked for the sync is told here that one follows the first poll.
+      const served = privateMeta(state.head, first.current);
+      const liveMeta = asksSync(ctx) ? { ...served, sync: 'pending' } : served;
       return Object.assign(follow(schema, cursor, state, first, ctx, audience), {
         ...(liveMeta !== undefined ? { liveMeta } : {}),
       });

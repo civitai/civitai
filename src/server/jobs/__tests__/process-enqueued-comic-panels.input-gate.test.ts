@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /** The queued comic panel job re-checks its stored reference images before it submits. */
@@ -32,6 +32,7 @@ vi.mock('~/utils/signal-client', () => ({
 }));
 
 import { processEnqueuedComicPanelsJob } from '~/server/jobs/process-enqueued-comic-panels';
+import { UNRECORDED_KEYS_ACCEPTED_UNTIL } from '~/server/services/image-url-ownership';
 import { GENERATION_IMAGE_UNAVAILABLE_MESSAGE } from '~/server/services/generation-input-urls';
 import { ComicPanelStatus } from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
@@ -101,10 +102,19 @@ function givenPrivateImageOf(owner: number) {
 const run = () => processEnqueuedComicPanelsJob.run({}).result;
 
 beforeEach(() => {
+  // The panels' keys have no issue record; pin the clock inside the window that accepts them.
+  vi.useFakeTimers({
+    toFake: ['Date'],
+    now: UNRECORDED_KEYS_ACCEPTED_UNTIL.getTime() - 86_400_000,
+  });
   vi.clearAllMocks();
   dbMock.dbWrite.$queryRaw.mockReset();
   h.getSessionUserById.mockResolvedValue({ tier: undefined });
   resetEnv();
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe('process-enqueued-comic-panels: reference image re-check', () => {

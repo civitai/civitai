@@ -164,7 +164,8 @@ message strings and the fact that the 5s abort is the only one on this path.
 await signalClient
   .send({
     target: SignalMessages.ImageIngestionStatus,
-    data: { imageId: image.id, ingestion: outcome.ingestion, blockedFor: outcome.blockedFor },
+    // Shaped: the owner gets only an owner-actionable block reason.
+    data: ownerIngestionSignalData({ imageId: image.id, ingestion: outcome.ingestion, blockedFor: outcome.blockedFor }),
     userId: image.userId,
   })
   .catch((error) =>

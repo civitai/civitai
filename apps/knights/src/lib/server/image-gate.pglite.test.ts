@@ -1,6 +1,6 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { readFileSync } from 'node:fs';
-import { sql, type Kysely } from 'kysely';
+import { sql, type Kysely, type RawBuilder, type SqlBool } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
 import { readWithoutJit } from '@civitai/db/knights';
@@ -20,6 +20,7 @@ import {
 } from '../../test/skill-check-exclusions';
 import {
   IMAGE_GATE_COLUMNS,
+  imageGate,
   imageGateColumns,
   imageGateViewSql,
   type ImageGateColumn,
@@ -338,6 +339,53 @@ describe('the image gate migration', () => {
   });
 });
 
+/** Image 2 is clean; image 3 is on image 2's stored url and gets the state `apply` gives it. */
+async function seedSharedFile(apply: (id: number) => Promise<unknown>) {
+  await seedImage(pg, 2);
+  await seedImage(pg, 3);
+  await pg.query(`UPDATE "Image" SET url='key-2' WHERE id=3`);
+  await apply(3);
+}
+
+const heldSiblings: [string, (id: number) => Promise<unknown>][] = [
+  [
+    'in the CSAM queue',
+    (id) => pg.query(`UPDATE "Image" SET "needsReview"='csam' WHERE id=$1`, [id]),
+  ],
+  ['blocked as CSAM', (id) => pg.query(`UPDATE "Image" SET "blockedFor"='CSAM' WHERE id=$1`, [id])],
+  [
+    'listed on a CsamReport',
+    (id) =>
+      pg.query(
+        `INSERT INTO "CsamReport" ("images") VALUES (jsonb_build_array(jsonb_build_object('id',$1::int)))`,
+        [id]
+      ),
+  ],
+];
+
+const withheldOnly: [string, (id: number) => Promise<unknown>][] = [
+  [
+    'blocked as CSAM in a list of reasons',
+    (id) => pg.query(`UPDATE "Image" SET "blockedFor"='Other,CSAM' WHERE id=$1`, [id]),
+  ],
+  [
+    'under a CSAM hash block',
+    async (id) => {
+      await pg.query(`UPDATE "Image" SET "pHash"=77 WHERE id=$1`, [id]);
+      await pg.query(`INSERT INTO "BlockedImage" (hash, reason) VALUES (77, 'CSAM')`);
+    },
+  ],
+  [
+    'carrying a CSAM vote',
+    async (id) => {
+      await pg.query(`INSERT INTO "ScanLabelItem" (id, "imageId") VALUES (1, $1)`, [id]);
+      await pg.query(
+        `INSERT INTO "ScanLabelVote" ("itemId", "userId", block, reason) VALUES (1, 9, true, 'csam-realistic')`
+      );
+    },
+  ],
+];
+
 describe('"KnightsImageGate" on a file another image row shares', () => {
   const OUT: Answers = {
     servable: false,
@@ -347,33 +395,6 @@ describe('"KnightsImageGate" on a file another image row shares', () => {
     modReviewContent: false,
   };
 
-  /** Image 2 is clean; image 3 is on image 2's stored url and gets the state `apply` gives it. */
-  async function seedSharedFile(apply: (id: number) => Promise<unknown>) {
-    await seedImage(pg, 2);
-    await seedImage(pg, 3);
-    await pg.query(`UPDATE "Image" SET url='key-2' WHERE id=3`);
-    await apply(3);
-  }
-
-  const heldSiblings: [string, (id: number) => Promise<unknown>][] = [
-    [
-      'in the CSAM queue',
-      (id) => pg.query(`UPDATE "Image" SET "needsReview"='csam' WHERE id=$1`, [id]),
-    ],
-    [
-      'blocked as CSAM',
-      (id) => pg.query(`UPDATE "Image" SET "blockedFor"='CSAM' WHERE id=$1`, [id]),
-    ],
-    [
-      'listed on a CsamReport',
-      (id) =>
-        pg.query(
-          `INSERT INTO "CsamReport" ("images") VALUES (jsonb_build_array(jsonb_build_object('id',$1::int)))`,
-          [id]
-        ),
-    ],
-  ];
-
   it.each(heldSiblings)(
     'puts an image out of every column when a row on its file is %s',
     async (_l, apply) => {
@@ -382,29 +403,6 @@ describe('"KnightsImageGate" on a file another image row shares', () => {
       expect((await fromTables([2])).get(2)).toEqual(OUT);
     }
   );
-
-  const withheldOnly: [string, (id: number) => Promise<unknown>][] = [
-    [
-      'blocked as CSAM in a list of reasons',
-      (id) => pg.query(`UPDATE "Image" SET "blockedFor"='Other,CSAM' WHERE id=$1`, [id]),
-    ],
-    [
-      'under a CSAM hash block',
-      async (id) => {
-        await pg.query(`UPDATE "Image" SET "pHash"=77 WHERE id=$1`, [id]);
-        await pg.query(`INSERT INTO "BlockedImage" (hash, reason) VALUES (77, 'CSAM')`);
-      },
-    ],
-    [
-      'carrying a CSAM vote',
-      async (id) => {
-        await pg.query(`INSERT INTO "ScanLabelItem" (id, "imageId") VALUES (1, $1)`, [id]);
-        await pg.query(
-          `INSERT INTO "ScanLabelVote" ("itemId", "userId", block, reason) VALUES (1, 9, true, 'csam-realistic')`
-        );
-      },
-    ],
-  ];
 
   it.each(withheldOnly)(
     'keeps an image out of modReviewContent, and only that column, when a row on its file is %s',
@@ -515,5 +513,95 @@ describe('"KnightsImageGate" on a file another image row shares', () => {
     } finally {
       await pg.exec('DROP VIEW "KnightsImageGateMutant"');
     }
+  });
+});
+
+describe('imageGate, the way Knights reads the gate', () => {
+  /** Each column for each image as `gate` answers it on `Image as img` joined to `Post as p`, as the Knights role. */
+  async function throughGate(
+    ids: number[],
+    gate: (column: ImageGateColumn) => RawBuilder<SqlBool> = imageGate
+  ): Promise<Map<number, Answers>> {
+    const rows = await readWithoutJit(db, (q) =>
+      q
+        .selectFrom('Image as img')
+        .innerJoin('Post as p', 'p.id', 'img.postId')
+        .select(['img.id', ...IMAGE_GATE_COLUMNS.map((column) => gate(column).as(column))])
+        .where('img.id', 'in', ids)
+        .execute()
+    );
+    return new Map(rows.map(({ id, ...answers }) => [id, answers as unknown as Answers]));
+  }
+
+  const fixtures: [string, () => Promise<unknown>, number[]][] = [
+    ...allCases().map(([label, apply]): [string, () => Promise<unknown>, number[]] => [
+      label,
+      () => seedPair(apply),
+      [1, 2],
+    ]),
+    ...[...heldSiblings, ...withheldOnly].map(
+      ([label, apply]): [string, () => Promise<unknown>, number[]] => [
+        `with a row on its file ${label}`,
+        () => seedSharedFile(apply),
+        [2, 3],
+      ]
+    ),
+  ];
+
+  it.each(fixtures)(
+    'answers every column as the view does for an image %s',
+    async (_l, seed, ids) => {
+      await seed();
+      expect(await throughGate(ids)).toEqual(await fromView(ids));
+    }
+  );
+
+  it('answers differently when the gate is not read for the image itself (the check above can fail)', async () => {
+    const anyImage = (column: ImageGateColumn) =>
+      sql<SqlBool>`EXISTS (SELECT 1 FROM "KnightsImageGate" g WHERE g.${sql.raw(
+        `"${column}"`
+      )} OFFSET 0)`;
+    await seedPair((id) => pg.query(`UPDATE "Post" SET "publishedAt"=NULL WHERE id=$1`, [id]));
+    expect(await throughGate([1, 2], anyImage)).not.toEqual(await fromView([1, 2]));
+  });
+
+  /** The aliases scanned outside any subplan in the plan of a read of `column` through `gate`. */
+  async function topLevelScans(
+    column: ImageGateColumn,
+    gate: (column: ImageGateColumn) => RawBuilder<SqlBool> = imageGate
+  ): Promise<string[]> {
+    type Node = { Alias?: string; 'Parent Relationship'?: string; Plans?: Node[] };
+    const { rows } = await readWithoutJit(db, (q) =>
+      sql<{ 'QUERY PLAN': [{ Plan: Node }] }>`EXPLAIN (FORMAT JSON, COSTS OFF)
+        SELECT img.id FROM "Image" img JOIN "Post" p ON p.id = img."postId" WHERE ${gate(
+          column
+        )}`.execute(q)
+    );
+    const aliases: string[] = [];
+    const walk = (node: Node) => {
+      if (node['Parent Relationship'] === 'SubPlan' || node['Parent Relationship'] === 'InitPlan')
+        return;
+      if (node.Alias) aliases.push(node.Alias);
+      node.Plans?.forEach(walk);
+    };
+    walk(rows[0]['QUERY PLAN'][0].Plan);
+    return aliases.sort();
+  }
+
+  it.each(IMAGE_GATE_COLUMNS)(
+    'reads %s in a subplan per image, never joined to the outer query',
+    async (column) => {
+      await seedImage(pg, 1);
+      expect(await topLevelScans(column)).toEqual(['img', 'p']);
+    }
+  );
+
+  it('joins the view into the outer query without the fence (the check above can fail)', async () => {
+    const unfenced = (column: ImageGateColumn) =>
+      sql<SqlBool>`EXISTS (SELECT 1 FROM "KnightsImageGate" g WHERE g."imageId" = img.id AND g.${sql.raw(
+        `"${column}"`
+      )})`;
+    await seedImage(pg, 1);
+    expect((await topLevelScans('servable', unfenced)).length).toBeGreaterThan(2);
   });
 });
