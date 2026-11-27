@@ -145,6 +145,11 @@ import {
   associatedResourceSelect,
   modelWithDetailsSelect,
 } from '~/server/selectors/model.selector';
+import {
+  associatedModelVisibilitySelect,
+  canListAssociatedModel,
+  type AssociatedModelVisibility,
+} from '~/server/services/associated-model-visibility';
 import { readModelWithDetailsViaKysely } from '~/server/services/model-details.reads';
 import { readModelsWithVersionsStats } from '~/server/services/hot-reads-11.reads';
 import { readSimpleModelWithOwner } from '~/server/services/hot-reads-12.reads';
@@ -355,6 +360,7 @@ import {
   pickCoverImageId,
   resolveModelFace,
   showsSfwFace,
+  type ModelSfwFaceSource,
 } from '~/shared/utils/model-sfw-face';
 import { isModelWithheld } from '~/shared/utils/model-withhold';
 import {
@@ -6265,7 +6271,7 @@ export const setModelsCategory = async ({
 
 // #region [associated models]
 export const getAssociatedResourcesSimple = async (
-  { fromId, type }: GetAssociatedResourcesInput,
+  { fromId, type, browsingLevel }: GetAssociatedResourcesInput,
   viewer?: ArticleReader
 ) => {
   const associations = await dbWrite.modelAssociations.findMany({
@@ -6274,7 +6280,7 @@ export const getAssociatedResourcesSimple = async (
     select: {
       id: true,
       toModel: {
-        select: associatedResourceSelect,
+        select: { ...associatedResourceSelect, ...associatedModelVisibilitySelect, sfwName: true },
       },
       toArticle: {
         select: {
@@ -6290,7 +6296,7 @@ export const getAssociatedResourcesSimple = async (
 
   const items = associations
     .map(({ id, toModel, toArticle }) => {
-      if (toModel) return { id, item: toModel, resourceType: 'model' as const };
+      if (toModel) return associatedModelItem(id, toModel, viewer, browsingLevel);
       if (!toArticle || !canReadArticle(toArticle, viewer)) return null;
       const { userId, publishedAt, status, ingestion, availability, ...item } = toArticle;
       return { id, item, resourceType: 'article' as const };
@@ -6300,8 +6306,22 @@ export const getAssociatedResourcesSimple = async (
   return items;
 };
 
+function associatedModelItem<T extends AssociatedModelVisibility & ModelSfwFaceSource>(
+  id: number,
+  model: T,
+  viewer: ArticleReader,
+  browsingLevel: number
+) {
+  if (!canListAssociatedModel(model, viewer, browsingLevel)) return null;
+  const { userId, status, availability, mode, poi, ...item } = resolveModelFace(
+    model,
+    showsSfwFace(browsingLevel)
+  );
+  return { id, item, resourceType: 'model' as const };
+}
+
 export const setAssociatedResources = async (
-  { fromId, type, associations, reciprocal }: SetAssociatedResourcesInput,
+  { fromId, type, associations, reciprocal, browsingLevel }: SetAssociatedResourcesInput,
   user?: SessionUser
 ) => {
   const fromModel = await dbWrite.model.findUnique({
@@ -6310,7 +6330,12 @@ export const setAssociatedResources = async (
       userId: true,
       associations: {
         where: { type },
-        select: { id: true, toModelId: true, toArticle: { select: articleReadSelect } },
+        select: {
+          id: true,
+          toModelId: true,
+          toModel: { select: associatedModelVisibilitySelect },
+          toArticle: { select: articleReadSelect },
+        },
         orderBy: { index: 'asc' },
       },
     },
@@ -6324,6 +6349,7 @@ export const setAssociatedResources = async (
   // is not a removal.
   const existingAssociations = fromModel.associations
     .filter((x) => !x.toArticle || canReadArticle(x.toArticle, user))
+    .filter((x) => !x.toModel || canListAssociatedModel(x.toModel, user, browsingLevel))
     .map((x) => x.id);
   const existingModelTargets = new Set(
     fromModel.associations.map((x) => x.toModelId).filter(isDefined)
