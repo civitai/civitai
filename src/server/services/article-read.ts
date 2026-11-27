@@ -58,8 +58,8 @@ export function canReadArticle(article: ReadableArticle, viewer: ArticleReader) 
 
 /**
  * The level must intersect the article's; an unrated article (nsfwLevel 0) is also visible to its
- * author and moderators, as in getArticles' `pending` listing (article.service.ts). Change the two
- * together.
+ * author and moderators. Mirrors canListAssociatedModel for linked models; getArticles applies the
+ * unrated exception only under `pending` (article.service.ts).
  */
 export function articleWithinBrowsingLevel(
   article: { nsfwLevel: number; userId: number | null },
