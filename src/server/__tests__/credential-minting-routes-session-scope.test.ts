@@ -87,12 +87,18 @@ const routes: {
   handler: Handler;
   minted: () => unknown;
   query?: Record<string, string>;
+  /** Sent on every call, e.g. the one Origin a route serves. */
+  headers?: Record<string, string>;
+  /** Refuses every bearer credential, even a full-scope personal key. */
+  sessionOnly?: boolean;
 }[] = [
   {
     name: 'GET /api/user/orchestrator-key',
     path: '/api/user/orchestrator-key',
     handler: (await import('~/pages/api/user/orchestrator-key')).default as unknown as Handler,
     minted: () => mintApiKey,
+    headers: { origin: 'https://developer.civitai.com' },
+    sessionOnly: true,
   },
   {
     name: 'GET /api/training-studio/host',
@@ -172,6 +178,7 @@ async function call(
     url,
     headers: {
       host: 'civitai.com',
+      ...route.headers,
       ...(authorization ? { authorization } : {}),
       ...extraHeaders,
     },
@@ -233,11 +240,13 @@ describe.each(routes)('$name credential requirements', (route) => {
     expect(route.minted()).toHaveBeenCalledTimes(1);
   });
 
-  it('serves a personal API key holding the full scope', async () => {
+  it(`${
+    route.sessionOnly ? 'refuses' : 'serves'
+  } a personal API key holding the full scope`, async () => {
     bearerSession.mockResolvedValue(personalKey(TokenScope.Full));
     const { status } = await call(route, { authorization: 'Bearer personal-full' });
-    expect(status).toBe(200);
-    expect(route.minted()).toHaveBeenCalledTimes(1);
+    expect(status).toBe(route.sessionOnly ? 403 : 200);
+    expect(route.minted()).toHaveBeenCalledTimes(route.sessionOnly ? 0 : 1);
   });
 
   it('refuses a personal API key with a reduced scope', async () => {
@@ -280,8 +289,11 @@ describe.each(routes)('$name credential requirements', (route) => {
 describe('the minted credential is still returned to an allowed caller', () => {
   it('returns the new key from orchestrator-key', async () => {
     hubSession.current = { user: USER };
-    dbMock.dbWrite.apiKey.deleteMany.mockResolvedValue({ count: 0 });
-    expect((await call(routes[0])).body).toEqual({ key: 'minted-api-key' });
+    expect((await call(routes[0])).body).toEqual({
+      key: 'minted-api-key',
+      name: 'Developer docs (civitai.com)',
+      expiresAt: expect.any(String),
+    });
   });
 
   it('returns the token from training-studio/host', async () => {

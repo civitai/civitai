@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import { sql, type Kysely, type Transaction } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { slotOf, unit } from '../hidden/hidden.service';
+import { hiddenAxesOf } from '../knights-tag-groups';
+import { hiddenTagGroups } from '../player-prefs';
 import { servedTo } from '../queue/queue.service';
 import { stagesWorkedBy } from '../queue/ranks';
 import { isRank } from '../ranks';
@@ -162,6 +164,7 @@ export async function pickYesNo(
     if (unit(digest, 0) >= input.share) return null;
   }
 
+  const hiddenAxes = new Set(hiddenAxesOf(await hiddenTagGroups(db, input.userId)).map(axisKey));
   const axes = (
     await db
       .selectFrom('KnightsQuestion')
@@ -173,6 +176,7 @@ export async function pickYesNo(
       .execute()
   )
     .map((q) => q.key)
+    .filter((key) => !hiddenAxes.has(key))
     // The tag review axis follows its own switch; every other axis follows the share.
     .filter((key) => (key === TAG_REVIEW_KEY ? input.tagReview === true : input.share > 0));
   if (axes.length === 0) return null;
