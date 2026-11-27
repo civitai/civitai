@@ -13,23 +13,16 @@
  * that request is left exactly as it was: the update stays on its branch and reaches the app
  * through the owner's next submit. Nothing here withdraws or edits a publish request.
  *
- * AUDIT. The publish request itself is the record of the submit: `fileSummary.onBehalf` names the
- * update, and `submittedByUserId` / `createdAt` say who and when. "Already submitted" is read from
- * there ({@link activeSubmission}).
- *
  * THE UPDATE'S STATUS. A submit leaves it `pending`: the owner's own checkout still has to merge
  * it, or their next submit would ship without it. If the review REJECTS the on-behalf request,
  * `rejectRequest` withdraws the update (`superseded`, by the rejecting moderator), so it is no
  * longer offered to the owner's checkout. An approve leaves it as it is.
  *
- * 🔴 Dark until migration `20271205140000_app_platform_updates` is applied by hand AND the
- * `app-blocks-platform-updates` flag is on (checked at the router).
+ * Dark until migration `20271205140000_app_platform_updates` is applied by hand.
  */
 
 import { TRPCError } from '@trpc/server';
-import JSZip from 'jszip';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { logToAxiom } from '~/server/logging/client';
 import {
   OWNER_PENDING_REFUSAL,
   OnBehalfPlanError,
@@ -39,8 +32,14 @@ import {
   planOnBehalfFiles,
   withManifestVersion,
 } from '~/server/services/blocks/app-platform-update-submit.plan';
+import { isVerifiedStaff } from '~/server/services/blocks/app-platform-update-shipped';
+import {
+  platformUpdateLog as log,
+  platformUpdatesUnavailable as unavailable,
+} from '~/server/services/blocks/app-platform-update.record';
 import { readRows, resolveApp } from '~/server/services/blocks/app-platform-update.service';
 import { MANIFEST_PATH, treeFromMap } from '~/server/services/blocks/app-source-repo.plan';
+import { deterministicBundleZip } from '~/server/services/blocks/bundle-zip';
 import { FORGEJO_SOURCE_ORG } from '~/server/services/blocks/forgejo-orgs';
 import { Limiter } from '~/server/utils/concurrency-helpers';
 import { hasOnBehalfRecord } from '~/shared/utils/publish-request-on-behalf';
@@ -48,12 +47,6 @@ import type {
   SubmitVersionParams,
   SubmitVersionResult,
 } from '~/server/services/blocks/publish-request.service';
-
-const log = (type: 'info' | 'warning' | 'error', message: string, data: Record<string, unknown>) =>
-  logToAxiom({ name: 'app-platform-update', type, message, ...data }, 'webhooks');
-
-const unavailable = () =>
-  new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Platform updates are not available' });
 
 export type SubmitOnBehalfDeps = {
   /** `submitVersion`; passed in so its storage-heavy pipeline is not run by this module's tests. */
@@ -73,6 +66,9 @@ export type SubmitOnBehalfResult = {
   publishRequestId: string;
   version: string;
 };
+
+export const AUTHOR_NOT_STAFF_REFUSAL =
+  "This update's author is no longer verified Civitai staff; withdraw it or push a new one";
 
 /** The pending publish request for `slug` as a refusal, or `null` when there is none. */
 async function pendingRefusal(slug: string): Promise<TRPCError | null> {
@@ -134,19 +130,12 @@ async function sourceFilesAt(slug: string, ref: string, paths: readonly string[]
   return { tree: treeFromMap(tree), files: new Map<string, Buffer>(read) };
 }
 
-/** A ZIP of `files`, deterministic (sorted, zeroed timestamps), as the bundle reconstruct builds. */
-async function zipOf(files: ReadonlyMap<string, Buffer>): Promise<Buffer> {
-  const zip = new JSZip();
-  for (const path of [...files.keys()].sort())
-    zip.file(path, files.get(path)!, { date: new Date(0) });
-  return Buffer.from(await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' }));
-}
-
 /**
  * Submit the app's approved version with platform update `id` applied, for review, on the owner's
  * behalf. Refuses: an account that is not a moderator (re-checked in the database); an unknown or
- * withdrawn update; one already submitted and still pending or approved; an app with a pending
- * publish request; an update that does not apply to the approved version.
+ * withdrawn update; one whose author is no longer verified staff; one already submitted and still
+ * pending or approved; an app with a pending publish request; an update that does not apply to the
+ * approved version.
  */
 export async function submitPlatformUpdateOnBehalf(
   args: { staffUserId: number; id: string },
@@ -166,6 +155,10 @@ export async function submitPlatformUpdateOnBehalf(
   if (!update) throw new TRPCError({ code: 'NOT_FOUND', message: 'Update not found' });
   if (update.status === 'superseded')
     throw new TRPCError({ code: 'CONFLICT', message: 'This update was withdrawn' });
+  // The author must be staff NOW, as every owner-facing path requires: a de-staffed, banned or
+  // deleted author's update is never offered to the owner, so it is never filed for them either.
+  if (!isVerifiedStaff(update))
+    throw new TRPCError({ code: 'FORBIDDEN', message: AUTHOR_NOT_STAFF_REFUSAL });
 
   const prior = await activeSubmission(update);
   if (prior)
@@ -233,7 +226,9 @@ export async function submitPlatformUpdateOnBehalf(
     version = onBehalfVersion(manifestVersion, approvedVersions);
     assertAboveApproved(version, approvedVersions);
     files.set(MANIFEST_PATH, withManifestVersion(manifestFile, version));
-    bundleBuffer = await zipOf(files);
+    bundleBuffer = await deterministicBundleZip(
+      [...files].map(([path, content]) => ({ path, content }))
+    );
   } catch (err) {
     if (err instanceof OnBehalfPlanError)
       throw new TRPCError({ code: 'CONFLICT', message: err.message, cause: err });

@@ -1723,4 +1723,57 @@ describe('submit on the owner’s behalf', () => {
     ).rejects.toMatchObject({ code: 'CONFLICT', message: 'This update was withdrawn' });
     expect(calls).toEqual([]);
   });
+
+  describe('🔴 the update’s AUTHOR must be verified staff now (PR #10605)', () => {
+    const AUTHOR_REFUSAL = {
+      code: 'FORBIDDEN',
+      message:
+        "This update's author is no longer verified Civitai staff; withdraw it or push a new one",
+    };
+
+    it('an author who is no longer a moderator: refused, nothing filed, nobody told', async () => {
+      approvedBuild();
+      const pushed = await pushAsMod(EX_MOD);
+      await pg.query(`UPDATE "User" SET "isModerator" = false WHERE id = $1`, [EX_MOD]);
+      const { calls, deps } = recordingSubmit();
+      createNotification.mockClear();
+
+      await expect(
+        submitSvc.submitPlatformUpdateOnBehalf({ staffUserId: MOD, id: pushed.id }, deps)
+      ).rejects.toMatchObject(AUTHOR_REFUSAL);
+      expect(calls).toEqual([]);
+      expect(filed).toEqual([]);
+      expect(createNotification).not.toHaveBeenCalled();
+      expect((await updateRows())[0]).toMatchObject({ status: 'pending' });
+
+      // Positive control: the same submit by the same moderator proceeds once the author is
+      // staff again.
+      await pg.query(`UPDATE "User" SET "isModerator" = true WHERE id = $1`, [EX_MOD]);
+      await submitSvc.submitPlatformUpdateOnBehalf({ staffUserId: MOD, id: pushed.id }, deps);
+      expect(calls).toHaveLength(1);
+    });
+
+    it('an author who is banned now, though still flagged a moderator: refused', async () => {
+      approvedBuild();
+      const pushed = await pushAsMod(EX_MOD);
+      await pg.query(`UPDATE "User" SET "bannedAt" = now() WHERE id = $1`, [EX_MOD]);
+      const { calls, deps } = recordingSubmit();
+      await expect(
+        submitSvc.submitPlatformUpdateOnBehalf({ staffUserId: MOD, id: pushed.id }, deps)
+      ).rejects.toMatchObject(AUTHOR_REFUSAL);
+      expect(calls).toEqual([]);
+      expect(filed).toEqual([]);
+    });
+
+    it('an author who is deleted now: refused', async () => {
+      approvedBuild();
+      const pushed = await pushAsMod(EX_MOD);
+      await pg.query(`UPDATE "User" SET "deletedAt" = now() WHERE id = $1`, [EX_MOD]);
+      const { calls, deps } = recordingSubmit();
+      await expect(
+        submitSvc.submitPlatformUpdateOnBehalf({ staffUserId: MOD, id: pushed.id }, deps)
+      ).rejects.toMatchObject(AUTHOR_REFUSAL);
+      expect(calls).toEqual([]);
+    });
+  });
 });

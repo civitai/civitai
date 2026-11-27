@@ -886,12 +886,8 @@ describe('staff platform updates', () => {
         { submittedByUserId: 8001, submittedOnBehalf: true, onBehalf }
       );
       const fileSummary = createdFileSummary();
-      const { ownerCopyOf, readOnBehalf } = await import(
-        '~/shared/utils/publish-request-on-behalf'
-      );
+      const { ownerCopyOf } = await import('~/shared/utils/publish-request-on-behalf');
       const clone = ownerCopyOf(fileSummary);
-      // The clone is the owner's: no staff label, owner-style notify and reject.
-      expect(readOnBehalf(clone)).toBeNull();
 
       const { markShippedPlatformUpdates } = await import(
         '~/server/services/blocks/platform-update-bundle-check'

@@ -674,6 +674,76 @@ describe('approve / reject of a staff on-behalf submit — the owner is notified
     expect(holder.platformUpdate?.status).toBe('pending');
   });
 
+  describe('after an ownership transfer, only the CURRENT owner is told (PR #10605)', () => {
+    const NEW_OWNER = 7202;
+    /** The app as it is now: the block's owner moved from OWNER to `userId`. */
+    const transferredTo = (userId: number) =>
+      db.read.appBlock.findFirst.mockResolvedValue({
+        ...existingAppBlock(),
+        app: { ...existingAppBlock().app, userId },
+      });
+
+    it('approve: the owner outcome goes to the new owner, never the recorded one', async () => {
+      transferredTo(NEW_OWNER);
+      db.read.appBlockPublishRequest.findUnique.mockResolvedValueOnce({
+        ...pendingApproveRow(),
+        submittedByUserId: MODERATOR,
+        fileSummary: ON_BEHALF_SUMMARY,
+      });
+      await approveRequest({ publishRequestId: 'req_appr_1', reviewerUserId: 9 });
+      expect(calls().map((c) => [c.type, c.userId])).toEqual([
+        ['app-block-approved', MODERATOR],
+        ['app-platform-update-approved', NEW_OWNER],
+      ]);
+    });
+
+    it('reject: the owner outcome goes to the new owner, never the recorded one', async () => {
+      transferredTo(NEW_OWNER);
+      db.read.appBlockPublishRequest.findUnique.mockResolvedValueOnce(rejectRow(ON_BEHALF_SUMMARY));
+      await rejectRequest({
+        publishRequestId: 'req_rej_1',
+        reviewerUserId: 9,
+        rejectionReason: 'Breaks the gallery layout',
+      });
+      expect(calls().map((c) => [c.type, c.userId])).toEqual([
+        ['app-block-rejected', MODERATOR],
+        ['app-platform-update-rejected', NEW_OWNER],
+      ]);
+    });
+
+    it('a transfer to the submitting moderator sends no second copy', async () => {
+      transferredTo(MODERATOR);
+      db.read.appBlockPublishRequest.findUnique.mockResolvedValueOnce(rejectRow(ON_BEHALF_SUMMARY));
+      await rejectRequest({
+        publishRequestId: 'req_rej_1',
+        reviewerUserId: 9,
+        rejectionReason: 'Breaks the gallery layout',
+      });
+      expect(calls().map((c) => [c.type, c.userId])).toEqual([['app-block-rejected', MODERATOR]]);
+    });
+
+    it('the current owner unreadable: the recorded owner is told, and the reject stands', async () => {
+      db.read.appBlock.findFirst.mockRejectedValue(new Error('replica down'));
+      db.read.appBlockPublishRequest.findUnique.mockResolvedValueOnce(rejectRow(ON_BEHALF_SUMMARY));
+      await expect(
+        rejectRequest({
+          publishRequestId: 'req_rej_1',
+          reviewerUserId: 9,
+          rejectionReason: 'Breaks the gallery layout',
+        })
+      ).resolves.toBeUndefined();
+      expect(calls().map((c) => [c.type, c.userId])).toEqual([
+        ['app-block-rejected', MODERATOR],
+        ['app-platform-update-rejected', OWNER],
+      ]);
+    });
+
+    afterEach(() => {
+      db.read.appBlock.findFirst.mockReset();
+      db.read.appBlock.findFirst.mockResolvedValue(null);
+    });
+  });
+
   it('an on-behalf record naming the submitter themselves sends no second copy', async () => {
     db.read.appBlockPublishRequest.findUnique.mockResolvedValueOnce(
       rejectRow(

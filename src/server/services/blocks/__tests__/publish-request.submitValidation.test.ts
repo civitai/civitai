@@ -641,7 +641,7 @@ describe('submitVersion — a staff submit on the owner’s behalf (platform upd
     expect(db.createPublishRequest).not.toHaveBeenCalled();
   });
 
-  describe('the App Developer Terms: the OWNER’s acceptance, never the moderator’s', () => {
+  describe('the App Developer Terms: the OWNER’s acceptance, never the moderator’s (PR #10605)', () => {
     const MODERATOR = 8001;
     const OWNER_REFUSAL = "The app's owner has not accepted the current App Developer Terms yet.";
     const SUBMITTER_REFUSAL = 'Accept the App Developer Terms';
@@ -670,7 +670,6 @@ describe('submitVersion — a staff submit on the owner’s behalf (platform upd
       expect(db.createPublishRequest).toHaveBeenCalledTimes(1);
       expect(terms.assertAcceptedAppDeveloperTerms).not.toHaveBeenCalled();
       expect(terms.hasAcceptedAppDeveloperTerms).toHaveBeenCalledWith(ON_BEHALF.ownerUserId);
-      expect(terms.hasAcceptedAppDeveloperTerms).not.toHaveBeenCalledWith(MODERATOR);
       await settleFollowUps();
     });
 

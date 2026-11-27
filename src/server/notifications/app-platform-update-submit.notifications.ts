@@ -14,8 +14,6 @@ import { OWNER_SUBMISSIONS_URL } from '~/server/notifications/app-listing.notifi
  *
  * Like `app-platform-update`, it names the staff member (operator decision). Imperative: emitted
  * directly via `createNotification`, so no `prepareQuery` and no notifications-DB migration.
- * Registered in utils.notifications.ts. -submitted is emitted by appPlatformUpdates.submitOnBehalf
- * (flag-gated); -approved/-rejected by publish-request.service notifyReviewOutcome.
  */
 
 export type AppPlatformUpdateSubmittedNotificationDetails = {
