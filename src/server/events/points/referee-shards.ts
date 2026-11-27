@@ -7,11 +7,9 @@
 // once per actor shard and summing the rows per (day, hat) gives the single query's answer, while
 // each run holds only its shard's share of the season's firsts in memory.
 
-// Shards per settle. The hourly run reads the whole season of non-daily types too, so it is split as
-// well; the whole-season run adds every daily row of the season on top. Each shard rescans the ledger,
-// so more shards cost time against REFEREE_CLICKHOUSE_BUDGET_S.
+// Shards per settle, hourly and whole-season alike: both read the whole season of non-daily types.
+// Each shard rescans the ledger, so more shards cost time against REFEREE_CLICKHOUSE_BUDGET_S.
 export const REFEREE_ACTOR_SHARDS = 4;
-export const REFEREE_FULL_ACTOR_SHARDS = 8;
 
 export type RefereeRow = {
   day: string;

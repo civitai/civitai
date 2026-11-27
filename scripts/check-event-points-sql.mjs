@@ -221,8 +221,8 @@ async function run(query, recomputeFrom, shards = 1, params = PARAMS) {
   return { rows, shared: [...seen.values()].filter((n) => n > 1).length };
 }
 
-// A generated season, built in ClickHouse from hashes of numbers() (a literal this size takes the
-// server minutes to analyze): many actors and hats, removals and re-adds, turf players, exclusions and
+// A generated season, built in ClickHouse from hashes of numbers() (a literal this size is slow
+// for the server to analyze): many actors and hats, removals and re-adds, turf players, exclusions and
 // a cap that bites, so the split cuts across every rule. Deterministic, so a failure reproduces.
 const generatedLedger = `
   event_point_events AS (

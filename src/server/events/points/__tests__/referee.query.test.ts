@@ -16,9 +16,7 @@ vi.mock('~/server/clickhouse/client', () => ({
 const { queryReferee, REFEREE_CLICKHOUSE_BUDGET_S, refereeWindow, runEventPointsReferee } =
   await import('~/server/events/points/referee');
 const { eventSeasonKeys, LIVE_BUCKET_MS } = await import('~/server/events/points/keys');
-const { REFEREE_ACTOR_SHARDS, REFEREE_FULL_ACTOR_SHARDS } = await import(
-  '~/server/events/points/referee-shards'
-);
+const { REFEREE_ACTOR_SHARDS } = await import('~/server/events/points/referee-shards');
 const { eventPointsRefereeSql, eventPointsRefereeUsersSql } = await import(
   '~/server/events/points/referee.sql'
 );
@@ -273,8 +271,8 @@ describe('referee reads only the scored types', () => {
   });
 });
 
-// The settle query runs once per actor shard (see referee-shards.ts); a shard skipped, run twice, or
-// run beside another loses points or holds the memory the split exists to save.
+// The settle query runs once per actor shard (see referee-shards.ts). A shard skipped or run twice
+// loses or double counts points; shards run together hold the memory the split exists to save.
 describe('referee actor shards', () => {
   const SHARD =
     /^\s*AND cityHash64\(actorId\) % \{actorShards:UInt32\} = \{actorShard:UInt32\}\s*$/m;
@@ -291,10 +289,11 @@ describe('referee actor shards', () => {
   });
 
   it.each([
-    ['the nightly whole-season run', '2026-11-05T03:07:00.000Z', REFEREE_FULL_ACTOR_SHARDS],
-    ['a run after the season has ended', '2026-12-01T12:07:00.000Z', REFEREE_FULL_ACTOR_SHARDS],
-    ['an hourly run', '2026-11-05T12:07:00.000Z', REFEREE_ACTOR_SHARDS],
-  ])('%s runs each of its shards once, one at a time', async (_, at, shards) => {
+    ['the nightly whole-season run', '2026-11-05T03:07:00.000Z'],
+    ['a run after the season has ended', '2026-12-01T12:07:00.000Z'],
+    ['an hourly run', '2026-11-05T12:07:00.000Z'],
+  ])('%s runs each shard once, one at a time', async (_, at) => {
+    const shards = REFEREE_ACTOR_SHARDS;
     redisMock.sysRedis.hGetAll.mockResolvedValue({});
     query.mockClear();
     let running = 0;

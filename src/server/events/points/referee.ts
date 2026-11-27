@@ -26,7 +26,6 @@ import {
 } from '~/server/events/points/referee.sql';
 import {
   REFEREE_ACTOR_SHARDS,
-  REFEREE_FULL_ACTOR_SHARDS,
   refereeShardMerge,
   type RefereeRow,
 } from '~/server/events/points/referee-shards';
@@ -285,11 +284,7 @@ export async function queryReferee(
     sysRedis.hGetAll(eventPointKeys(event.name).weights),
     restrictedUsers(event, window, deadline),
   ]);
-  // A window from the season's start reads the whole season of daily rows too.
-  const shards =
-    window.recomputeFrom.getTime() === window.start.getTime()
-      ? REFEREE_FULL_ACTOR_SHARDS
-      : REFEREE_ACTOR_SHARDS;
+  const shards = REFEREE_ACTOR_SHARDS;
   // One after another: run together they would hold as much memory as the single query.
   const merge = refereeShardMerge();
   for (let shard = 0; shard < shards; shard++) {
