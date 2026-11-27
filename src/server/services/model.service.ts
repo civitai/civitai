@@ -6276,12 +6276,7 @@ export const setModelsCategory = async ({
 
 // #region [associated models]
 export const getAssociatedResourcesSimple = async (
-  {
-    fromId,
-    type,
-    browsingLevel,
-    disableMinor,
-  }: GetAssociatedResourcesInput & AssociatedModelAddons,
+  { fromId, type, browsingLevel, ...addons }: GetAssociatedResourcesInput & AssociatedModelAddons,
   viewer?: ArticleReader,
   modelViewer?: ArticleReader
 ) => {
@@ -6306,8 +6301,7 @@ export const getAssociatedResourcesSimple = async (
 
   const items = associations
     .map(({ id, toModel, toArticle }) => {
-      if (toModel)
-        return associatedModelItem(id, toModel, modelViewer, browsingLevel, disableMinor);
+      if (toModel) return associatedModelItem(id, toModel, modelViewer, browsingLevel, addons);
       if (
         !toArticle ||
         !canReadArticle(toArticle, viewer) ||
@@ -6327,13 +6321,11 @@ function associatedModelItem<T extends AssociatedModelVisibility & ModelSfwFaceS
   model: T,
   viewer: ArticleReader,
   browsingLevel: number,
-  disableMinor?: boolean
+  addons: AssociatedModelAddons
 ) {
-  if (!canListAssociatedModel(model, viewer, browsingLevel, disableMinor)) return null;
-  const { userId, status, availability, mode, poi, minor, ...item } = resolveModelFace(
-    model,
-    showsSfwFace(browsingLevel)
-  );
+  if (!canListAssociatedModel(model, viewer, browsingLevel, addons)) return null;
+  const { userId, status, availability, mode, poi, minor, tagsOnModels, ...item } =
+    resolveModelFace(model, showsSfwFace(browsingLevel));
   return { id, item, resourceType: 'model' as const };
 }
 
@@ -6344,7 +6336,7 @@ export const setAssociatedResources = async (
     associations,
     reciprocal,
     browsingLevel,
-    disableMinor,
+    ...addons
   }: SetAssociatedResourcesInput & AssociatedModelAddons,
   user?: SessionUser,
   modelViewer?: ArticleReader
@@ -6380,8 +6372,7 @@ export const setAssociatedResources = async (
           articleWithinBrowsingLevel(x.toArticle, user, browsingLevel))
     )
     .filter(
-      (x) =>
-        !x.toModel || canListAssociatedModel(x.toModel, modelViewer, browsingLevel, disableMinor)
+      (x) => !x.toModel || canListAssociatedModel(x.toModel, modelViewer, browsingLevel, addons)
     )
     .map((x) => x.id);
   const existingModelTargets = new Set(

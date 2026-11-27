@@ -113,24 +113,37 @@ export function resolveBrowsingSettingsAddons(
 }
 
 /**
- * The poi/minor exclusions for a response that is not resolved at one viewer's own level: on for
- * each one if it is on at ANY level a viewer within `levels` could browse at, so the answer is never
- * looser than what the client would resolve for that viewer, whatever shape the rules take.
+ * The poi/minor/tag exclusions for a response that is not resolved at one viewer's own level: each
+ * is on (each tag excluded) if it is at ANY level a viewer within `levels` could browse at, so the
+ * answer is never looser than what the client would resolve for that viewer, whatever shape the
+ * rules take.
  */
-export function resolveStrictestPoiMinor(
+export function resolveStrictestAddons(
   data: BrowsingSettingsAddon[],
   levels: number,
   opts?: { isModerator?: boolean }
 ) {
   const bits = Flags.instanceToArray(levels);
-  const result = { disablePoi: false, disableMinor: false };
+  let disablePoi = false;
+  let disableMinor = false;
+  const excludedTagIds = new Set<number>();
   for (let mask = 1; mask < 1 << bits.length; mask++) {
     const level = bits.reduce((acc, bit, i) => (mask & (1 << i) ? acc | bit : acc), 0);
     const resolved = resolveBrowsingSettingsAddons(data, level, opts);
-    result.disablePoi ||= resolved.disablePoi;
-    result.disableMinor ||= resolved.disableMinor;
+    disablePoi ||= resolved.disablePoi;
+    disableMinor ||= resolved.disableMinor;
+    for (const tagId of resolved.excludedTagIds) excludedTagIds.add(tagId);
   }
-  return result;
+  return { disablePoi, disableMinor, excludedTagIds: [...excludedTagIds] };
+}
+
+export function resolveStrictestPoiMinor(
+  data: BrowsingSettingsAddon[],
+  levels: number,
+  opts?: { isModerator?: boolean }
+) {
+  const { disablePoi, disableMinor } = resolveStrictestAddons(data, levels, opts);
+  return { disablePoi, disableMinor };
 }
 
 // Seed for the hard navigation blocklist (W2) — blocks the tag page and nav, not the
