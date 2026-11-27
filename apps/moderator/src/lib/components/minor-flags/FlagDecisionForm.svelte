@@ -125,7 +125,7 @@
   };
 </script>
 
-{#snippet decisionButtons()}
+{#snippet decisionButtons(reasonId: string)}
   {#each decisions as d, i (d.keep.join(','))}
     {@const why = !enabled[i] ? unavailable : null}
     <TriageKeyButton
@@ -137,7 +137,7 @@
       value={d.keep.join(',')}
       formaction={actionHref('decideFlags')}
       disabled={!!why}
-      title={why ?? undefined}
+      aria-describedby={why ? reasonId : undefined}
     >
       {d.label}
     </TriageKeyButton>
@@ -196,6 +196,7 @@
   <TriageDecisionBar
     compact
     buttons={decisionButtons}
+    unavailable={decisions.map((_, i) => (enabled[i] ? undefined : unavailable))}
     picker={reasonOptions && reasonPicker.open !== null ? picker : undefined}
     fields={reasonOptions ? fields : undefined}
     {problem}
