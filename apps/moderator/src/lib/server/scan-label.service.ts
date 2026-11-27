@@ -662,9 +662,9 @@ function withoutWaiting<T>(value: Promise<T>, waitMs: number): Promise<T | null>
   ]);
 }
 
-// Reads the primary, but for the cached open count: it runs straight after a vote, and a lagging
-// replica shows the vote count one behind. Before the blocked count's first fill, the open count
-// includes blocked items.
+// Per-moderator and decided counts read the primary: this runs straight after a vote, and a lagging
+// replica shows it one behind. The open count is cached from the replica; before the blocked
+// count's first fill, it includes blocked items.
 export async function getCounters(
   userId: number,
   filters: ScanLabelFilters,
@@ -757,9 +757,10 @@ const claimableAt = (now: Date) => (eb: ExpressionBuilder<DB, 'ScanLabelItem'>) 
   ]);
 
 /**
- * Decides, as a block, every open item the sweep has acted on. Its image is blocked now, so a further
- * vote could not change the outcome, and the image can no longer be shown to cast one. Also picks up
- * items acted on before this rule, on the next sweep.
+ * Decides, as a block, every open item whose image the sweep itself blocked. That image is blocked
+ * now, so a further vote could not change the outcome, and it can no longer be shown to cast one.
+ * Also picks up items blocked before this rule, on the next sweep. An item the sweep skipped
+ * ('already-blocked', 'image-missing') stays open: closing those is separate work.
  */
 async function decideBlockedMajorities() {
   await dbWrite
@@ -777,6 +778,7 @@ async function decideBlockedMajorities() {
     .where('votes', '>=', BLOCK_MAJORITY)
     .where('blockVotes', '>=', BLOCK_MAJORITY)
     .where('actionedAt', 'is not', null)
+    .where('actionResult', '=', 'blocked')
     .execute();
 }
 
