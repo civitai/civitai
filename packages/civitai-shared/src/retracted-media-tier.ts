@@ -177,12 +177,13 @@ function buildCsamRestrictedSql(image: string): string {
 /**
  * Whether the "Image" row aliased `image` carries a CSAM mark that keeps a moderated or tos block's
  * media from its owner: `csamRowSql` on it, csam anywhere in its comma list of block reasons, or the
- * same on one of the other rows on its url. A url with `URL_SIBLING_CAP` or more other rows counts
- * as marked, since the rows past the cap go unread. A NULL reads as marked.
+ * same on one of the other rows on its url, or a copy on its url a moderator deleted for CSAM review
+ * that no verified report covers (`heldUrlSql` with `owners: false`, a deleted row the sibling scan
+ * cannot see). A url with `URL_SIBLING_CAP` or more other rows counts as marked, since the rows past
+ * the cap go unread. A NULL reads as marked.
  *
- * It leaves out `csamRestrictedSql`'s CSAM report listing and held-file legs on purpose: an owner
- * keeps seeing their own report-listed and held media (Justin, cards 2026-11-20-160723-1e4c035d and
- * 2026-11-19-231513-92710efa).
+ * It leaves out `csamRestrictedSql`'s CSAM report listing and its owner-level held legs on purpose:
+ * an owner keeps seeing their own report-listed and held media.
  */
 export function ownerCsamMarkedSql(image: string): string {
   if (!/^[a-z_][a-z0-9_]*$/i.test(image) || OWNER_CSAM_MARKED_ALIASES.has(image.toLowerCase()))
@@ -204,6 +205,7 @@ function buildOwnerCsamMarkedSql(image: string): string {
     ${marked(image)}
     OR EXISTS (SELECT 1 FROM (${siblings('os')}) os WHERE COALESCE(${marked('os')}, true))
     OR (SELECT count(*) FROM (${siblings('oc')}) oc) >= ${URL_SIBLING_CAP}
+    OR ${heldUrlSql(`${image}."url"`, { owners: false })}
   ), true)`;
 }
 

@@ -1233,7 +1233,12 @@ export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ct
 
     // `ownerCsamMarked` never leaves the server: it only decides `reviewedBlocks` below.
     const reviewedBlocks =
-      ownerBlockedMedia && !actsAsModerator(ctx) && !!ctx.user && ctx.user.id === result.user.id;
+      ownerBlockedMedia &&
+      !actsAsModerator(ctx) &&
+      !!ctx.user &&
+      ctx.user.id === result.user.id &&
+      isSessionOrFullUserKey(ctx) &&
+      ctx.impersonatedBy == null;
     const canSeeMedia = await viewerCanSeeImageMedia(
       ctx,
       {

@@ -41,6 +41,11 @@ export async function getRetractedMedia(
   return { url: row.url, type: row.type, mimeType: row.mimeType, held: row.held };
 }
 
+export type OwnRetractedMedia = Omit<RetractedMedia, 'held'> & {
+  postId: number | null;
+  nsfwLevel: number;
+};
+
 /**
  * The storage key and type of the viewer's own image while `ownerMediaAllowed` leaves them its media
  * under a reviewed block (`reviewedBlocks`, read again here rather than trusted from the page);
@@ -51,11 +56,11 @@ export async function getOwnRetractedMedia(
   imageId: number,
   userId: number,
   db = dbWrite
-): Promise<Omit<RetractedMedia, 'held'> | null> {
+): Promise<OwnRetractedMedia | null> {
   const [row] = await db.$transaction(async (tx) => {
     await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = ${RETRACTED_MEDIA_READ_TIMEOUT_MS}`);
-    return tx.$queryRaw<Omit<RetractedMedia, 'held'>[]>`
-      SELECT i.url, i.type::text AS type, i."mimeType"
+    return tx.$queryRaw<OwnRetractedMedia[]>`
+      SELECT i.url, i.type::text AS type, i."mimeType", i."postId", i."nsfwLevel"
       FROM "Image" i
       WHERE i.id = ${imageId}
         AND i."userId" = ${userId}

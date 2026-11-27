@@ -53,8 +53,10 @@ class FakeRes extends Writable {
 
 const fetchMock = vi.fn();
 const readMedia = vi.fn();
+const heldFor = vi.fn();
 let enabled = true;
 let allowed = true;
+let viewer = { id: 7, impersonated: false, fullScope: true };
 
 async function call(query: Record<string, string> = { imageId: '9' }) {
   const req = Object.assign(new EventEmitter(), {
@@ -65,6 +67,8 @@ async function call(query: Record<string, string> = { imageId: '9' }) {
   }) as unknown as NextApiRequest;
   const res = new FakeRes();
   await serveOwnRetractedMedia(req, res as unknown as NextApiResponse, {
+    viewer,
+    heldFor,
     enabled: async () => enabled,
     rateLimit: async () => ({ allowed, retryAfterSeconds: 3 }),
     readMedia,
@@ -76,7 +80,15 @@ beforeEach(() => {
   vi.clearAllMocks();
   enabled = true;
   allowed = true;
-  readMedia.mockResolvedValue({ url: KEY, type: 'image', mimeType: null });
+  viewer = { id: 7, impersonated: false, fullScope: true };
+  readMedia.mockResolvedValue({
+    url: KEY,
+    type: 'image',
+    mimeType: null,
+    postId: 30,
+    nsfwLevel: 4,
+  });
+  heldFor.mockResolvedValue(undefined);
   getGetUrlByKey.mockResolvedValue({ url: SIGNED, bucket: 'media', key: KEY });
   fetchMock.mockImplementation(
     async () =>
@@ -136,5 +148,38 @@ describe('serveOwnRetractedMedia', () => {
 
   it('refuses a bad id', async () => {
     expect((await call({ imageId: 'x' })).statusCode).toBe(400);
+  });
+
+  it('refuses a moderator acting as the owner, and a scoped key or app token, reading nothing', async () => {
+    for (const v of [
+      { id: 7, impersonated: true, fullScope: true },
+      { id: 7, impersonated: false, fullScope: false },
+    ]) {
+      viewer = v;
+      const res = await call();
+      expect(res.statusCode).toBe(403);
+      expect(res.headers['cache-control']).toBe('private, no-store');
+    }
+    expect(readMedia).not.toHaveBeenCalled();
+  });
+
+  it("holds an image above its model's held level to that model's owner, as image.get does", async () => {
+    heldFor.mockResolvedValue({ level: 1, ownerId: 50 });
+    const held = await call();
+    expect(heldFor).toHaveBeenCalledWith(30);
+    expect(held.statusCode).toBe(404);
+    expect(getGetUrlByKey).not.toHaveBeenCalled();
+
+    heldFor.mockResolvedValue({ level: 4, ownerId: 50 });
+    expect((await call()).statusCode).toBe(200);
+    heldFor.mockResolvedValue({ level: 1, ownerId: 7 });
+    expect((await call()).statusCode).toBe(200);
+  });
+
+  it('refuses when the held level cannot be read', async () => {
+    heldFor.mockRejectedValue(new Error('cache down'));
+    const res = await call();
+    expect(res.statusCode).toBe(503);
+    expect(getGetUrlByKey).not.toHaveBeenCalled();
   });
 });

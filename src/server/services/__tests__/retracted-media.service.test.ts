@@ -11,7 +11,7 @@ import {
 } from '../../../../packages/civitai-shared/src/__tests__/csam-restriction-cases';
 import { POST_PENDING_DELETE_REASON } from '@civitai/db-queries/content-deletion';
 import { heldImageSql, heldUserSql } from '@civitai/shared/held-media';
-import { heldUrlSql } from '@civitai/shared/held-url';
+import { heldUrlSql, reportListedUrlSql } from '@civitai/shared/held-url';
 import { semanticImageHeldText } from '~/server/services/semantic-image-flags.sql';
 
 /**
@@ -751,14 +751,19 @@ describe('getOwnRetractedMedia', () => {
   const own = (id: number, userId = ownerOf(id)) => getOwnRetractedMedia(id, userId);
 
   it('serves the owner a moderated or tos block with no CSAM mark', async () => {
-    expect(await own(1)).toEqual({ url: 'key-1', type: 'image', mimeType: null });
-    expect(await own(2)).toEqual({ url: 'key-2', type: 'image', mimeType: null });
+    expect(await own(1)).toMatchObject({
+      url: 'key-1',
+      type: 'image',
+      mimeType: null,
+      nsfwLevel: 4,
+    });
+    expect(await own(2)).toMatchObject({ url: 'key-2', type: 'image', mimeType: null });
   });
 
   it('serves the owner a report-listed image with no CSAM mark, and a held owner their own', async () => {
     expect(await own(23)).not.toBeNull();
     expect(await own(24)).not.toBeNull();
-    expect(await own(902)).toEqual({ url: 'key-902', type: 'image', mimeType: null });
+    expect(await own(902)).toMatchObject({ url: 'key-902', type: 'image', mimeType: null });
   });
 
   it('never serves anyone else', async () => {
@@ -781,5 +786,61 @@ describe('getOwnRetractedMedia', () => {
     ['no block', 4],
   ])('refuses the owner an image with %s', async (_, id) => {
     expect(await own(id)).toBeNull();
+  });
+
+  it("refuses the owner Y when a moderator deleted X, a copy on Y's url, for CSAM review", async () => {
+    await pg.exec(`
+      INSERT INTO "Image" (id, url, ingestion, "blockedFor", "userId") VALUES (905, 'key-905', 'Blocked', 'moderated', 1405);
+      INSERT INTO "ImageCdnModeratorDelete" ("imageId", url, "userId", "csamReview") VALUES (906, 'key-905', 1405, true);
+    `);
+    expect(await own(905)).toBeNull();
+    expect(await getRetractedMedia(905, { csamReview: false })).toBeNull();
+    await pg.exec(
+      `UPDATE "ImageCdnModeratorDelete" SET "csamReview" = false WHERE "imageId" = 906`
+    );
+    expect(await own(905)).not.toBeNull();
+  });
+
+  // Whatever row shape makes the moderator route refuse a moderator without the CSAM grant (and
+  // serve one with it), the owner route refuses too, except where the only mark is a CSAM report
+  // listing, which owners keep by ruling.
+  describe('refuses the owner whatever the moderator route keeps to the CSAM grant', () => {
+    const target = { id: 990900000, url: 'key-990900000' };
+    const OWNER = 990910000;
+    afterEach(async () => {
+      await pg.exec(csamCaseCleanupSql(target));
+    });
+    const reportListed = async () =>
+      (
+        await pg.query<{ listed: boolean }>(
+          `SELECT ${reportListedUrlSql('i."url"')} AS listed FROM "Image" i WHERE i.id = $1`,
+          [target.id]
+        )
+      ).rows[0].listed;
+
+    it('serves the owner the target with no case marked (the control)', async () => {
+      expect(await getOwnRetractedMedia(target.id, OWNER)).not.toBeNull();
+    });
+
+    const grantOnly: string[] = [];
+    const listedOnly: string[] = [];
+    it.each(CSAM_RESTRICTION_CASES)('$label', async ({ label, mark }) => {
+      await pg.exec(mark(target));
+      const withheld =
+        (await getRetractedMedia(target.id, { csamReview: false })) === null &&
+        (await getRetractedMedia(target.id, { csamReview: true })) !== null;
+      if (!withheld) return;
+      grantOnly.push(label);
+      if ((await getOwnRetractedMedia(target.id, OWNER)) === null) return;
+      expect({ label, reportListed: await reportListed() }).toEqual({ label, reportListed: true });
+      listedOnly.push(label);
+    });
+
+    it('saw the moderator route keep cases to the grant, and the owner route refuse most', () => {
+      expect(grantOnly.length).toBeGreaterThan(5);
+      expect(listedOnly.length).toBeLessThan(grantOnly.length);
+      expect(listedOnly).toEqual(['its listing on a CSAM report']);
+      expect(grantOnly).toContain('a moderator delete on its url flagged for CSAM review');
+    });
   });
 });

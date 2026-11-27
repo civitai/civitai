@@ -4,6 +4,7 @@ import type * as ImageService from '~/server/services/image.service';
 import type * as ModelService from '~/server/services/model.service';
 import type * as UserService from '~/server/services/user.service';
 import '~/__tests__/mocks/db.mock';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const { image, heldLevels } = vi.hoisted(() => ({
   image: vi.fn(),
@@ -250,7 +251,12 @@ describe('getImageHandler on a blocked image, with ownerBlockedMedia', () => {
     {
       user = { id: UPLOADER },
       flag = true,
-    }: { user?: { id: number; isModerator?: boolean }; flag?: boolean } = {}
+      credential = {},
+    }: {
+      user?: { id: number; isModerator?: boolean };
+      flag?: boolean;
+      credential?: Record<string, unknown>;
+    } = {}
   ) {
     heldLevels.mockResolvedValue(new Map());
     image.mockResolvedValueOnce({
@@ -270,6 +276,7 @@ describe('getImageHandler on a blocked image, with ownerBlockedMedia', () => {
       features: { canViewNsfw: true, ownerBlockedMedia: flag },
       req: { headers: {} },
       cache: null,
+      ...credential,
     } as unknown as HandlerCtx;
     return getImageHandler({ input: { id: 1 }, ctx });
   }
@@ -323,6 +330,21 @@ describe('getImageHandler on a blocked image, with ownerBlockedMedia', () => {
   it('serves the owner only the notice with the flag off, as before', async () => {
     notice(
       await read({ blockedFor: BlockedReason.Moderated, ownerCsamMarked: false }, { flag: false })
+    );
+  });
+
+  it('serves only the notice to a moderator acting as the owner, or to a scoped key', async () => {
+    const row = { blockedFor: BlockedReason.Moderated, ownerCsamMarked: false };
+    notice(await read(row, { credential: { impersonatedBy: 5 } }));
+    notice(
+      await read(row, {
+        credential: {
+          apiKeyId: 9,
+          apiKeyType: 'User',
+          subject: { type: 'apiKey', id: 9 },
+          tokenScope: TokenScope.ModelsRead,
+        },
+      })
     );
   });
 

@@ -7,6 +7,7 @@ import { startPglitePrisma } from '~/__tests__/pglite-prisma';
 import { BlockedReason } from '~/server/common/enums';
 import { ownerMediaAllowed } from '~/server/common/image-block-marker';
 import {
+  ownerCsamMarkedColumnSql,
   ownerMediaAllowedSql,
   ownerMediaAllowedWhere,
   ownerMediaSql,
@@ -97,6 +98,25 @@ const MARKS: (Mark & { marked: boolean })[] = [
     marked: true,
   },
   {
+    label: 'moderated + a url copy deleted for CSAM review',
+    blockedFor: 'moderated',
+    setup: `INSERT INTO "ImageCdnModeratorDelete" ("imageId", url, "userId", "csamReview") VALUES ($id + 1000, '$url', 1, true)`,
+    marked: true,
+  },
+  {
+    label: 'moderated + a url copy deleted for CSAM review, its verified report sent',
+    blockedFor: 'moderated',
+    setup: `INSERT INTO "ImageCdnModeratorDelete" ("imageId", url, "userId", "csamReview") VALUES ($id + 1000, '$url', 1, true);
+      INSERT INTO "CsamReport" ("userId", details, images, "reportSentAt") VALUES (1, '{"evidenceVerifiedAt": "2026-11-01T00:00:00Z"}', jsonb_build_array(jsonb_build_object('id', $id + 1000)), now())`,
+    marked: false,
+  },
+  {
+    label: 'moderated + a url copy deleted, not for CSAM review',
+    blockedFor: 'moderated',
+    setup: `INSERT INTO "ImageCdnModeratorDelete" ("imageId", url, "userId", "csamReview") VALUES ($id + 1000, '$url', 1, false)`,
+    marked: false,
+  },
+  {
     label: 'moderated + report-listed, no CSAM mark',
     blockedFor: 'moderated',
     setup: `INSERT INTO "CsamReport" (images) VALUES ('[{"id": $id}]'::jsonb)`,
@@ -154,7 +174,9 @@ beforeAll(async () => {
     CREATE TABLE "ScanLabelItem" (id int PRIMARY KEY, "imageId" int, "voidReason" text);
     CREATE TABLE "ScanLabelFlag" ("itemId" int, snapshot jsonb);
     CREATE TABLE "ScanLabelVote" ("itemId" int, reason text);
-    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, images jsonb NOT NULL DEFAULT '[]');
+    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb NOT NULL DEFAULT '{}',
+      images jsonb NOT NULL DEFAULT '[]', "reportSentAt" timestamp);
+    CREATE TABLE "ImageCdnModeratorDelete" ("imageId" int, url text, "userId" int, "csamReview" boolean);
   `);
   for (const { id, url, ingestion, blockedFor } of MATRIX)
     await h.prisma.$executeRaw`INSERT INTO "Image" (id, url, ingestion, "blockedFor")
@@ -238,6 +260,8 @@ describe('ownerMediaAllowed, reviewedBlocks on', () => {
       ...INGESTIONS.flatMap((ingestion) =>
         ['tos', 'moderated', 'moderated,tos', ' tos , moderated'].map((r) => `${ingestion}/${r}`)
       ),
+      'moderated + a url copy deleted for CSAM review, its verified report sent',
+      'moderated + a url copy deleted, not for CSAM review',
       'moderated + report-listed, no CSAM mark',
       'moderated + clean url sibling',
       'moderated + a non-CSAM hash block',
@@ -314,5 +338,22 @@ describe('ownerCsamMarkedSql', () => {
   it('refuses an alias its own subqueries use', () => {
     expect(() => ownerCsamMarkedSql('os')).toThrow();
     expect(() => ownerCsamMarkedSql('i; DROP')).toThrow();
+  });
+});
+
+describe('ownerCsamMarkedColumnSql', () => {
+  it("reads the mark only for the viewer's own blocked image, NULL for every other row", async () => {
+    const read = (viewerId: number, id: number) =>
+      h.prisma.$queryRaw<{ marked: boolean | null }[]>`
+        SELECT ${ownerCsamMarkedColumnSql(
+          viewerId
+        )} AS marked, i.id FROM "Image" i WHERE i.id = ${id}`;
+    const clean = MARK_CELLS.find((c) => !c.marked)!;
+    const csam = MARK_CELLS.find((c) => c.marked)!;
+    const unblocked = MATRIX.find((c) => c.blockedFor === null)!;
+    expect(await read(OWNER, clean.id)).toEqual([{ marked: false, id: clean.id }]);
+    expect(await read(OWNER, csam.id)).toEqual([{ marked: true, id: csam.id }]);
+    expect(await read(STRANGER, csam.id)).toEqual([{ marked: null, id: csam.id }]);
+    expect(await read(OWNER, unblocked.id)).toEqual([{ marked: null, id: unblocked.id }]);
   });
 });

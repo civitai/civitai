@@ -123,6 +123,16 @@ export const ownerMediaAllowedSql = (
 };
 
 /**
+ * `ownerCsamMarkedSql` as a select column for `ownerMediaAllowed`'s `ownerCsamMarked`: read only for
+ * `viewerId`'s own blocked image, NULL (withheld) for every other row.
+ */
+export const ownerCsamMarkedColumnSql = (viewerId: number, alias = 'i') => {
+  const t = Prisma.raw(`"${alias}"`);
+  return Prisma.sql`(CASE WHEN ${t}."userId" = ${viewerId} AND ${t}."blockedFor" IS NOT NULL
+    THEN ${Prisma.raw(ownerCsamMarkedSql(alias))} END)`;
+};
+
+/**
  * For a read that serves media: the viewer's own images only where `ownerMediaAllowed`. Other
  * images are left to the caller's rules. `TRUE` with no viewer.
  */

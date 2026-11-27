@@ -12,7 +12,7 @@ import { ilikeContains } from '~/server/utils/ilike';
 import { isSessionOrFullUserKey, withModeratorRightsFor } from '~/server/auth/full-user-credential';
 import { credentialLogFields, type RequestCredential } from '~/server/auth/request-credential';
 import { Prisma } from '@prisma/client';
-import { moderatorWithheldSql, ownerCsamMarkedSql } from '@civitai/shared/retracted-media-tier';
+import { moderatorWithheldSql } from '@civitai/shared/retracted-media-tier';
 import { heldGalleryImageSql } from '~/server/utils/held-gallery-level.sql';
 import { decreaseDate } from '~/utils/date-helpers';
 import {
@@ -113,6 +113,7 @@ import {
   assertImageVisibleToViewer,
   entityImageVisibilityConditions,
   imageBlockedForConditions,
+  ownerCsamMarkedColumnSql,
   reportListedImageSql,
   reviewedGalleryImageConditions,
   imageVisibilityConditions,
@@ -4776,8 +4777,7 @@ export const getImage = async ({
       ${imageRestrictedSql()} AS "restricted",${
     ownerReviewedBlocks && userId
       ? Prisma.sql`
-      CASE WHEN i."userId" = ${userId} AND i."blockedFor" IS NOT NULL
-        THEN ${Prisma.raw(ownerCsamMarkedSql('i'))} END AS "ownerCsamMarked",`
+      ${ownerCsamMarkedColumnSql(userId)} AS "ownerCsamMarked",`
       : Prisma.empty
   }
       (
