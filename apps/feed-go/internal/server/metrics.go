@@ -137,6 +137,10 @@ type Metrics struct {
 	// (outcome feed_unavailable), by why the call failed (feed_go_feed_unavailable_total: endpoint,
 	// reason, detail; feedUnavailableCause). Not seeded: the series appear with the first failure.
 	FeedUnavailable *prometheus.CounterVec
+	// FeedRetry counts the second feed-service calls image.getInfinite makes when it answers the app's
+	// 503 here (feed.WithFeedRetry), by outcome (feed_go_feed_retry_total: endpoint, outcome, one of
+	// feed.RetryOutcomes). Seeded on the infinite route.
+	FeedRetry *prometheus.CounterVec
 }
 
 // MetricsHandler is the /metrics handler over g. With openMetrics (on with tracing) it answers a scrape
@@ -304,6 +308,10 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "feed_go_feed_unavailable_total",
 			Help: "image.getInfinite 503s written here for a failed feed-service call (outcome feed_unavailable), by the fallback they replace: reason feed-unavailable (the call failed; detail is the error's class: deadline, timeout, conn_refused, conn_reset, dns, net_*, eof, json, other, ...) or feed-status (the feed answered a 5xx; detail is the status). A value outside those sets is other.",
 		}, []string{EndpointLabel, "reason", "detail"}),
+		FeedRetry: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "feed_go_feed_retry_total",
+			Help: "image.getInfinite feed-service calls that failed as the app's 503 with FEED_GO_INFINITE_ANSWER_FEED_UNAVAILABLE on, by what became of the one retry: recovered (the second call answered 200), failed (it failed again: the 503), other (another answer, handled as before), handed_back (too little of the request budget left for a whole call: handed back, the app's call is the retry).",
+		}, []string{EndpointLabel, "outcome"}),
 		FallbackProxyErrors: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_fallback_proxy_errors_total",
 			Help: "Fallback requests the proxy answered 502 because the Node app failed before a response started, by reason (upstream: unreachable or connection broken; canceled: the client left first). A failure mid-body aborts the response (http.ErrAbortHandler) and is not counted.",
@@ -401,7 +409,10 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		m.ShadowPhase, m.ShadowPhaseCPU, m.ShadowPhaseSolo, m.ShadowPhaseSoloWall,
 		m.GoFirst, m.GoFirstMiss, m.GoFirstDropped, m.GoFirstRaced, m.GoFirstDBReads, m.GoFirstPages, m.GoFirstCheckLag,
 		m.Panics, m.RevocationDegraded, m.JWKSRefresh, m.JWKSStale, m.FallbackProxyErrors, m.CacheMisses, m.CacheWrites, m.Errors, serveInFlight, m.SearchRejected,
-		m.SessionCookieSlot, m.DevalueWrites, m.FeedUnavailable)
+		m.SessionCookieSlot, m.DevalueWrites, m.FeedUnavailable, m.FeedRetry)
+	for _, o := range feed.RetryOutcomes {
+		m.FeedRetry.WithLabelValues(EndpointInfinite, o)
+	}
 	for _, s := range []string{"host", "shared"} {
 		m.SessionCookieSlot.WithLabelValues(s)
 	}

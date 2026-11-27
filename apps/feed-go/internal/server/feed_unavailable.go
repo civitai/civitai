@@ -79,6 +79,11 @@ func (s *Server) answerFeedUnavailable(ctx context.Context, span trace.Span, sta
 	return true
 }
 
+// countFeedRetry counts one image.getInfinite feed-call retry (feed.WithFeedRetry) under outcome.
+func (s *Server) countFeedRetry(outcome string) {
+	s.Metrics.FeedRetry.WithLabelValues(EndpointInfinite, outcome).Inc()
+}
+
 // writeFeedUnavailable writes the app's answer to image.getInfinite (procedure) when the feed failed:
 // the tRPC error envelope of feedUnavailableError as the route writes it (trpc.WriteAppError: 503,
 // Content-Type, Vary, the private Cache-Control, the body in the request's write format), after the
