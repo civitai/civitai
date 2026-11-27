@@ -23,6 +23,7 @@ import {
   PRIOR_NSFW_LEVEL_KEY,
   PRIOR_NSFW_LOCKED_KEY,
 } from '~/server/utils/image-removal-mode';
+import { immediateRemovalSql } from '~/server/utils/image-removal-mode';
 import { createJob, getJobDate } from './job';
 import { postHoldsHeldTextSql } from '~/server/services/post-text-hold';
 
@@ -102,7 +103,7 @@ async function isStillMarkedForDeletion(userId: number) {
       SELECT 1 FROM "User" u
       WHERE u.id = ${userId}
         AND u."deletedAt" IS NOT NULL
-        AND (u.meta->>'imageRemoval' IS NULL OR u.meta->>'imageRemoval' = 'immediate')
+        AND ${immediateRemovalSql(Prisma.raw('u'))}
     ) AS "stillDeleted"
   `;
   return row.stillDeleted;
@@ -121,7 +122,7 @@ const notPendingSql = (entityType: 'Image' | 'Post', id: Prisma.Sql) => Prisma.s
 
 /** The worklist's mode: an absent or 'immediate' choice deletes, anything else blocks. */
 const worklistModeSql = Prisma.sql`CASE
-  WHEN u.meta->>'imageRemoval' IS NULL OR u.meta->>'imageRemoval' = 'immediate' THEN 'immediate'
+  WHEN ${immediateRemovalSql(Prisma.raw('u'))} THEN 'immediate'
   ELSE 'grace'
 END`;
 
@@ -141,7 +142,7 @@ async function drainUser(
       FROM "Image" i
       JOIN "User" u ON u.id = i."userId"
         AND u."deletedAt" IS NOT NULL
-        AND (u.meta->>'imageRemoval' IS NULL OR u.meta->>'imageRemoval' = 'immediate')
+        AND ${immediateRemovalSql(Prisma.raw('u'))}
       WHERE i."userId" = ${userId}
         AND ${notPendingSql('Image', Prisma.raw('i.id'))}
       LIMIT ${budget}
@@ -194,7 +195,7 @@ async function drainUser(
             SELECT 1 FROM "User" u
             WHERE u.id = ${userId}
               AND u."deletedAt" IS NOT NULL
-              AND (u.meta->>'imageRemoval' IS NULL OR u.meta->>'imageRemoval' = 'immediate')
+              AND ${immediateRemovalSql(Prisma.raw('u'))}
           )
           AND NOT ${postHoldsHeldTextSql(Prisma.raw('"Post".id'))}`),
       });

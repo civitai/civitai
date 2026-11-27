@@ -11,6 +11,7 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { instrumentB2Client } from '~/server/prom/b2-put.metrics';
+import { immediateRemovalSql } from '~/server/utils/image-removal-mode';
 import { createJob } from './job';
 
 /** Upkeep for "AppealDecisionRecord" (see the `appeal_decision_record` trigger migration). */
@@ -262,7 +263,7 @@ async function reportedOwnerHashes() {
 
 /**
  * Accounts deleted through the moderator endpoint that stay deleted: at once for an immediate
- * removal (an absent choice is immediate, as in remove-deleted-user-images), otherwise once the grace
+ * removal, otherwise once the grace
  * a restore can undo has passed. A restore clears `deletedAt`.
  */
 async function erasedOwnerIds() {
@@ -271,8 +272,7 @@ async function erasedOwnerIds() {
     LEFT JOIN "User" u ON u.id = m."entityId"
     WHERE m."entityType" = 'user' AND m.activity = ${ERASURE_ACTIVITY} AND m."entityId" IS NOT NULL
       AND (u.id IS NULL OR (u."deletedAt" IS NOT NULL AND (
-        COALESCE(u.meta->>'imageRemoval', 'immediate') = 'immediate'
-        OR u."deletedAt" <= now() - ${ERASURE_GRACE}
+        ${immediateRemovalSql(Prisma.raw('u'))} OR u."deletedAt" <= now() - ${ERASURE_GRACE}
       )))
   `;
   return owners.map((o) => o.userId);

@@ -1,10 +1,12 @@
 import type { shownActivity } from '@civitai/shared/held-media';
 import type { LIFT_KEPT_ACTIVITY } from '@civitai/shared/account-deletion-grace';
-import { LIKENESS_REQUEST_ACTIVITY } from '@civitai/db-queries/image-removal-confirmation';
+import {
+  LIKENESS_REQUEST_ACTIVITY,
+  writeLikenessMark,
+} from '@civitai/db-queries/image-removal-confirmation';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { likenessRequestMarkFailedCounter } from '~/server/prom/likeness-request.metrics';
-import { sleep } from '~/server/utils/concurrency-helpers';
 
 type TagActivities = 'moderateTag' | 'disableTag' | 'addTag' | 'deleteTag';
 
@@ -320,29 +322,24 @@ export async function trackModActivity(
 export async function trackLikenessRequests(
   userId: number,
   imageIds: number[],
-  { tries = 3, backoffMs = 200 }: { tries?: number; backoffMs?: number } = {}
+  retry?: { tries?: number; backoffMs?: number }
 ) {
   if (!imageIds.length) return;
-  for (let attempt = 1; ; attempt++) {
-    try {
-      await trackModActivity(userId, {
+  await writeLikenessMark(
+    () =>
+      trackModActivity(userId, {
         entityType: 'image',
         entityId: imageIds,
         activity: LIKENESS_REQUEST_ACTIVITY,
-      });
-      return;
-    } catch (e) {
-      if (attempt < tries) {
-        await sleep(backoffMs * 2 ** (attempt - 1));
-        continue;
-      }
+      }),
+    (e, tries) => {
       likenessRequestMarkFailedCounter.inc();
       logToAxiom({
         type: 'error',
         name: 'likeness-request-mark-failed',
         message: `${imageIds.length} images after ${tries} tries: ${(e as Error).message}`,
       });
-      return;
-    }
-  }
+    },
+    retry
+  );
 }

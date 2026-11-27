@@ -94,6 +94,30 @@ export function overturnedRemovalLabel(
 export const LIKENESS_REQUEST_ACTIVITY = 'likenessRequest';
 
 /**
+ * Writes the likeness mark with `insert`, retrying a failure with backoff. Never throws: the removal
+ * has committed and its other effects must run. `onGiveUp` gets the last error once every try failed;
+ * the caller counts and logs it there (with no image id), since the copies stay until it is re-marked.
+ */
+export async function writeLikenessMark(
+  insert: () => Promise<unknown>,
+  onGiveUp: (error: unknown, tries: number) => void,
+  { tries = 3, backoffMs = 200 }: { tries?: number; backoffMs?: number } = {}
+): Promise<boolean> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await insert();
+      return true;
+    } catch (e) {
+      if (attempt >= tries) {
+        onGiveUp(e, tries);
+        return false;
+      }
+      await new Promise((resolve) => setTimeout(resolve, backoffMs * 2 ** (attempt - 1)));
+    }
+  }
+}
+
+/**
  * Reasons that say nothing about what the image showed: 'other' is a catch-all, and a likeness
  * request says who asked. Two removals filed under them cannot be told apart.
  */
