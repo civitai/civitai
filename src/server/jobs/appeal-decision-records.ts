@@ -379,16 +379,21 @@ const RATED_COPY_LABELS: string[] = [ViolationType.RealPerson, 'poi'];
 const SCANNER_COPY_RATINGS: string[] = ['pg', 'pg13', 'pg-13'];
 
 /**
- * The ratings the image scan stored for an image, as tag names. The scan writes a
+ * Whether a `TagsOnImageNew` row is a rating the image scan stored. The scan writes a
  * `TagSource.SpineRating` tag, but `get_tag_on_image_attributes` has no code for that source and
  * packs it as 0, so it is read as an automated tag with source bits 0. A tag a user added is
  * source 1. Give SpineRating its own code and this is the one place to switch to it.
  */
+export const isScannerRatingRow = (row: Prisma.Sql) => Prisma.sql`(
+  ((${row}.attributes >> 12)::integer & 15) = 0
+  AND ((${row}.attributes >> 11)::integer & 1) = 1
+)`;
+
+/** The ratings the image scan stored for an image, as tag names. */
 const scannerRatingsOf = (imageId: Prisma.Sql) => Prisma.sql`
   SELECT sg.name FROM "TagsOnImageNew" st JOIN "Tag" sg ON sg.id = st."tagId"
   WHERE st."imageId" = ${imageId}
-    AND ((st.attributes >> 12)::integer & 15) = 0
-    AND ((st.attributes >> 11)::integer & 1) = 1`;
+    AND ${isScannerRatingRow(Prisma.sql`st`)}`;
 
 /** Rated by the scan, and every rating it stored for the image is in `SCANNER_COPY_RATINGS`. */
 const scannerRatedForCopy = (r: Prisma.Sql) => Prisma.sql`(

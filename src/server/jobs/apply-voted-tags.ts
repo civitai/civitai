@@ -1,6 +1,8 @@
+import { Prisma } from '@prisma/client';
 import { uniqBy } from 'lodash-es';
 import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
+import { isScannerRatingRow } from './appeal-decision-records';
 import { createJob, getJobDate } from './job';
 import {
   deleteTagsOnImageNew,
@@ -102,7 +104,7 @@ async function applyDownvotes() {
   // Delete tags under the threshold (not moderation)
   // --------------------------------------------
   const toDelete = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
-    -- Delete downvoted tags (not moderation)
+    -- Delete downvoted tags (not moderation, never a scan rating: the appeal training copy reads it)
     WITH affected AS (
       SELECT DISTINCT vote."imageId", vote."tagId"
       FROM "TagsOnImageVote" vote
@@ -127,7 +129,12 @@ async function applyDownvotes() {
         "imageId"
       FROM under_threshold ut
       JOIN "Tag" t ON t.id = ut."tagId"
-      WHERE t.type != 'Moderation';
+      WHERE t.type != 'Moderation'
+        AND NOT EXISTS (
+          SELECT 1 FROM "TagsOnImageNew" st
+          WHERE st."imageId" = ut."imageId" AND st."tagId" = ut."tagId"
+            AND ${isScannerRatingRow(Prisma.sql`st`)}
+        );
   `;
   await deleteTagsOnImageNew(toDelete);
 

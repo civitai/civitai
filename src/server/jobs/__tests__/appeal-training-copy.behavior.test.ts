@@ -19,12 +19,42 @@ vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   clickhouse: null,
 }));
+vi.mock('~/server/jobs/job', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  createJob: (name: string, cron: string, fn: (e: unknown) => Promise<unknown>) => ({
+    name,
+    cron,
+    run: () => fn(undefined),
+  }),
+  getJobDate: async () => [new Date(0), async () => undefined],
+}));
+// The vote job's writes, against the same database. Only the delete matters here.
+vi.mock('~/server/services/tagsOnImageNew.service', () => ({
+  insertTagsOnImageNew: async () => undefined,
+  upsertTagsOnImageNew: async () => undefined,
+  deleteTagsOnImageNew: async (rows: { imageId: number; tagId: number }[]) => {
+    for (const { imageId, tagId } of rows)
+      await holder.db.query(`DELETE FROM "TagsOnImageNew" WHERE "imageId" = $1 AND "tagId" = $2`, [
+        imageId,
+        tagId,
+      ]);
+  },
+}));
 
 type Raw = ReturnType<typeof pgliteRaw>;
 dbMock.dbWrite.$executeRaw.mockImplementation(((...a: Parameters<Raw['executeRaw']>) =>
   pgliteRaw(holder.db).executeRaw(...a)) as never);
-dbMock.dbWrite.$queryRaw.mockImplementation(((...a: Parameters<Raw['queryRaw']>) =>
-  pgliteRaw(holder.db).queryRaw(...a)) as never);
+// A Date goes as timestamptz, as Prisma sends it: untyped, `${date} - INTERVAL` reads as an interval.
+const TIMESTAMPTZ = 1184;
+dbMock.dbWrite.$queryRaw.mockImplementation((async (
+  strings: TemplateStringsArray | Prisma.Sql,
+  ...values: unknown[]
+) => {
+  if (!Array.isArray(strings)) return pgliteRaw(holder.db).queryRaw(strings);
+  const sql = Prisma.sql(strings as TemplateStringsArray, ...values);
+  const paramTypes = sql.values.map((v) => (v instanceof Date ? TIMESTAMPTZ : 0));
+  return (await holder.db.query(sql.text, sql.values, { paramTypes })).rows;
+}) as never);
 
 const {
   appealTrainingHeld,
@@ -35,6 +65,7 @@ const {
   removeErasedOwnerRecords,
   sweepExcludedRecords,
 } = await import('~/server/jobs/appeal-decision-records');
+const { applyVotedTags } = await import('~/server/jobs/apply-voted-tags');
 
 const MIGRATIONS = [
   '20261020120000_appeal_decision_record',
@@ -80,11 +111,25 @@ beforeAll(async () => {
       "id" serial PRIMARY KEY, "userId" integer, "activity" text NOT NULL, "entityType" text,
       "entityId" integer, "createdAt" timestamp(3) NOT NULL DEFAULT now()
     );
-    CREATE TABLE "Tag" ("id" serial PRIMARY KEY, "name" text NOT NULL UNIQUE);
+    CREATE TABLE "Tag" (
+      "id" serial PRIMARY KEY, "name" text NOT NULL UNIQUE, "type" text NOT NULL DEFAULT 'UserGenerated'
+    );
     CREATE TABLE "TagsOnImageNew" (
       "imageId" integer NOT NULL, "tagId" integer NOT NULL, "attributes" smallint NOT NULL DEFAULT 0,
       PRIMARY KEY ("imageId", "tagId")
     );
+    CREATE TABLE "TagsOnImageVote" (
+      "imageId" integer NOT NULL, "tagId" integer NOT NULL, "userId" integer NOT NULL,
+      "vote" integer NOT NULL, "applied" boolean NOT NULL DEFAULT false,
+      "createdAt" timestamp(3) NOT NULL DEFAULT now()
+    );
+    CREATE VIEW "TagsOnImageDetails" AS SELECT "imageId", "tagId",
+      ("attributes" >> 11) & 1 = 1 AS automated,
+      ("attributes" >> 10) & 1 = 1 AS disabled,
+      ("attributes" >> 9) & 1 = 1 AS "needsReview"
+    FROM "TagsOnImageNew";
+    CREATE FUNCTION iif(boolean, integer, integer) RETURNS integer
+      LANGUAGE sql AS 'SELECT CASE WHEN $1 THEN $2 ELSE $3 END';
     CREATE TABLE training_labels (
       url text, label text, "createdAt" timestamp, source text, reason text, old_label text
     );
@@ -102,7 +147,8 @@ beforeEach(async () => {
   noLabels.mockClear();
   await holder.db.exec(
     `TRUNCATE "AppealDecisionRecord", "AppealTrainingObjectDeletion", "Image", "CsamReport",
-       training_labels, "Appeal", "ModActivity", "User", "Tag", "TagsOnImageNew" RESTART IDENTITY`
+       training_labels, "Appeal", "ModActivity", "User", "Tag", "TagsOnImageNew", "TagsOnImageVote"
+       RESTART IDENTITY`
   );
 });
 
@@ -1287,5 +1333,43 @@ describe('appealTrainingStoreFromEnv', () => {
   it('still deletes training objects without the owner hash key', async () => {
     setEnv({ ...full, ...extra, APPEAL_OWNER_HASH_KEY: undefined });
     expect(await appealTrainingStoreFromEnv()).not.toBeNull();
+  });
+});
+
+describe('community downvotes and the scanner rating', () => {
+  const downvote = async (imageId: number, name: string) =>
+    holder.db.query(
+      `INSERT INTO "TagsOnImageVote" ("imageId", "tagId", "userId", "vote")
+       SELECT $1, id, 9, -1 FROM "Tag" WHERE name = $2`,
+      [imageId, name]
+    );
+  const tagsOf = async (imageId: number) =>
+    (
+      await holder.db.query<{ name: string }>(
+        `SELECT t.name FROM "TagsOnImageNew" ti JOIN "Tag" t ON t.id = ti."tagId"
+         WHERE ti."imageId" = $1 ORDER BY t.name`,
+        [imageId]
+      )
+    ).rows.map((row) => row.name);
+
+  it('never deletes a scanner rating, so a record the scan rated R stays skipped', async () => {
+    await record({
+      appealId: 1,
+      imageId: 101,
+      removalLabel: 'realPerson',
+      removalNsfw: 'None',
+      scanRatings: ['pg', 'r'],
+    });
+    await tagImage(101, 'woman', WD14_TAG_ATTRIBUTES);
+    await downvote(101, 'r');
+    await downvote(101, 'woman');
+
+    await applyVotedTags.run({} as never);
+
+    expect(await tagsOf(101)).toEqual(['pg', 'r']);
+    const store = fakeStore();
+    await copyRejectedForTraining({ store, lookup: noLabels });
+    expect(store.copy).not.toHaveBeenCalled();
+    expect((await states()).map((s) => s.state)).toEqual(['skipped']);
   });
 });
