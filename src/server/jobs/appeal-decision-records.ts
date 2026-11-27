@@ -376,17 +376,42 @@ const COPY_LABELS: string[] = [
   ViolationType.Spam,
 ];
 const RATED_COPY_LABELS: string[] = [ViolationType.RealPerson, 'poi'];
+const SCANNER_COPY_RATINGS: string[] = ['pg', 'pg13', 'pg-13'];
 
-// Anything not listed, or with an unknown rating, is not copied.
+// The scan stores its rating as a `TagSource.SpineRating` tag. `get_tag_on_image_attributes` has no
+// code for that source and packs it as 0, so it is an automated tag with source bits 0; a tag a user
+// added is source 1 and never counts.
+const scannerRatingTag = (t: Prisma.Sql) =>
+  Prisma.sql`((${t}.attributes >> 12)::integer & 15) = 0 AND ((${t}.attributes >> 11)::integer & 1) = 1`;
+
+/** Rated by the scan, and every rating it stored for the image is in `SCANNER_COPY_RATINGS`. */
+const scannerRatedForCopy = (r: Prisma.Sql) => {
+  const st = Prisma.raw('st');
+  return Prisma.sql`(
+    EXISTS (
+      SELECT 1 FROM "TagsOnImageNew" st WHERE st."imageId" = ${r}."imageId" AND ${scannerRatingTag(
+    st
+  )}
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM "TagsOnImageNew" st JOIN "Tag" sg ON sg.id = st."tagId"
+      WHERE st."imageId" = ${r}."imageId" AND ${scannerRatingTag(st)}
+        AND sg.name <> ALL(${SCANNER_COPY_RATINGS}::text[])
+    )
+  )`;
+};
+
+// Anything not listed, with no scanner rating, or removed on a likeness request is not copied.
 const copyableRecord = (r: Prisma.Sql) => Prisma.sql`coalesce(
-  ${r}."removalLabel" = ANY(${COPY_LABELS}::text[])
-  OR (
-    ${r}."removalLabel" = ANY(${RATED_COPY_LABELS}::text[])
-    AND ${r}."removalNsfw" IN ('None', 'Soft')
-    -- aiNsfwLevel is no longer written, so this arm passes only images rated before it stopped;
-    -- new realPerson/poi records are skipped.
-    AND ${r}."aiNsfwLevel" IN (1, 2)
-  ),
+  (
+    ${r}."removalLabel" = ANY(${COPY_LABELS}::text[])
+    OR (
+      ${r}."removalLabel" = ANY(${RATED_COPY_LABELS}::text[])
+      AND ${r}."removalNsfw" IN ('None', 'Soft')
+      AND ${scannerRatedForCopy(r)}
+    )
+  )
+  AND NOT ${requestRemovedRecord(r)},
   false
 )`;
 

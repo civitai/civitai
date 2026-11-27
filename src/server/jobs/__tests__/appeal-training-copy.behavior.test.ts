@@ -80,6 +80,11 @@ beforeAll(async () => {
       "id" serial PRIMARY KEY, "userId" integer, "activity" text NOT NULL, "entityType" text,
       "entityId" integer, "createdAt" timestamp(3) NOT NULL DEFAULT now()
     );
+    CREATE TABLE "Tag" ("id" serial PRIMARY KEY, "name" text NOT NULL UNIQUE);
+    CREATE TABLE "TagsOnImageNew" (
+      "imageId" integer NOT NULL, "tagId" integer NOT NULL, "attributes" smallint NOT NULL DEFAULT 0,
+      PRIMARY KEY ("imageId", "tagId")
+    );
     CREATE TABLE training_labels (
       url text, label text, "createdAt" timestamp, source text, reason text, old_label text
     );
@@ -97,9 +102,24 @@ beforeEach(async () => {
   noLabels.mockClear();
   await holder.db.exec(
     `TRUNCATE "AppealDecisionRecord", "AppealTrainingObjectDeletion", "Image", "CsamReport",
-       training_labels, "Appeal", "ModActivity", "User" RESTART IDENTITY`
+       training_labels, "Appeal", "ModActivity", "User", "Tag", "TagsOnImageNew" RESTART IDENTITY`
   );
 });
+
+// As `get_tag_on_image_attributes` packs a SpineRating tag: source 0, automated, confidence 16.
+const SCAN_RATING_ATTRIBUTES = (1 << 11) | 16;
+// A tag a user added: source 1 (User), not automated.
+const USER_TAG_ATTRIBUTES = 1 << 12;
+// An automated tag from another source: WD14 (3).
+const WD14_TAG_ATTRIBUTES = (3 << 12) | (1 << 11);
+const tagImage = async (imageId: number, name: string, attributes: number) => {
+  await holder.db.query(`INSERT INTO "Tag" ("name") VALUES ($1) ON CONFLICT DO NOTHING`, [name]);
+  await holder.db.query(
+    `INSERT INTO "TagsOnImageNew" ("imageId", "tagId", "attributes")
+     SELECT $1, id, $3 FROM "Tag" WHERE name = $2`,
+    [imageId, name, attributes]
+  );
+};
 
 type Rec = {
   appealId: number;
@@ -108,6 +128,8 @@ type Rec = {
   removalLabel?: string | null;
   removalNsfw?: string | null;
   aiNsfwLevel?: number | null;
+  /** Ratings the scan stored for the image (automated tags, source bits 0). */
+  scanRatings?: string[];
   hoursAgo?: number;
   state?: string | null;
   key?: string | null;
@@ -121,6 +143,7 @@ const record = async ({
   removalLabel = 'spam',
   removalNsfw = null,
   aiNsfwLevel = 0,
+  scanRatings = [],
   hoursAgo = 0.1,
   state = null,
   key = null,
@@ -132,6 +155,7 @@ const record = async ({
       `INSERT INTO "Image" ("id", "userId", "url") VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
       [imageId, userId, `u-${imageId}`]
     );
+  for (const name of scanRatings) await tagImage(imageId, name, SCAN_RATING_ATTRIBUTES);
   await holder.db.query(
     `INSERT INTO "AppealDecisionRecord" ("appealId", "imageId", "imageUrl", "nsfwLevel",
        "nsfwLevelLocked", "decision", "decidedAt", "removalLabel", "trainingCopyState",
@@ -240,29 +264,104 @@ describe('copyRejectedForTraining', () => {
     expect(await states()).toEqual([{ appealId: 1, removalLabel, state: 'skipped', key: null }]);
   });
 
-  it.each([
-    ['poi', 'None', 1, 'copied'],
-    ['poi', 'Soft', 2, 'copied'],
-    ['realPerson', 'None', 1, 'copied'],
-    ['realPerson', 'None', null, 'skipped'],
-    ['realPerson', 'None', 0, 'skipped'],
-    ['poi', 'Soft', 0, 'skipped'],
-    ['poi', 'Mature', 0, 'skipped'],
-    ['poi', 'X', 0, 'skipped'],
-    ['poi', null, 0, 'skipped'],
-    ['poi', 'None', 4, 'skipped'],
-    ['realPerson', 'Blocked', 1, 'skipped'],
-    ['realPersonNsfw', 'None', 1, 'skipped'],
+  it.each<[string, string | null, string[], 'copied' | 'skipped']>([
+    ['realPerson', 'None', ['pg'], 'copied'],
+    ['poi', 'Soft', ['pg13'], 'copied'],
+    ['poi', 'None', ['pg-13'], 'copied'],
+    ['realPerson', 'None', ['r'], 'skipped'],
+    ['poi', 'None', ['x'], 'skipped'],
+    ['poi', 'None', ['xxx'], 'skipped'],
+    ['realPerson', 'None', [], 'skipped'],
+    ['realPerson', 'None', ['pg', 'r'], 'skipped'],
+    ['poi', 'Mature', ['pg'], 'skipped'],
+    ['poi', 'X', ['pg'], 'skipped'],
+    ['poi', null, ['pg'], 'skipped'],
+    ['realPerson', 'Blocked', ['pg'], 'skipped'],
+    ['realPersonNsfw', 'None', ['pg'], 'skipped'],
   ])(
-    'rates a record labelled %s at %s (ai level %s): %s',
-    async (removalLabel, removalNsfw, aiNsfwLevel, state) => {
-      await record({ appealId: 1, imageId: 101, removalLabel, removalNsfw, aiNsfwLevel });
+    'rates a record labelled %s at %s with scan ratings %j: %s',
+    async (removalLabel, removalNsfw, scanRatings, state) => {
+      await record({ appealId: 1, imageId: 101, removalLabel, removalNsfw, scanRatings });
       const store = fakeStore();
 
       await copyRejectedForTraining({ store, lookup: noLabels });
 
       expect(store.copy).toHaveBeenCalledTimes(state === 'copied' ? 1 : 0);
       expect((await states())[0].state).toBe(state);
+    }
+  );
+
+  it('rates a realPerson record by the scan alone, never by aiNsfwLevel or any other tag', async () => {
+    await record({
+      appealId: 1,
+      imageId: 101,
+      removalLabel: 'realPerson',
+      removalNsfw: 'None',
+      aiNsfwLevel: 1,
+    });
+    await record({ appealId: 2, imageId: 102, removalLabel: 'realPerson', removalNsfw: 'None' });
+    await tagImage(102, 'pg', USER_TAG_ATTRIBUTES);
+    await record({
+      appealId: 3,
+      imageId: 103,
+      removalLabel: 'realPerson',
+      removalNsfw: 'None',
+      scanRatings: ['pg'],
+    });
+    await tagImage(103, 'r', USER_TAG_ATTRIBUTES);
+    await record({
+      appealId: 4,
+      imageId: 104,
+      removalLabel: 'realPerson',
+      removalNsfw: 'None',
+      scanRatings: ['pg'],
+    });
+    await tagImage(104, 'r', WD14_TAG_ATTRIBUTES);
+    await record({ appealId: 5, imageId: 105, removalLabel: 'realPerson', removalNsfw: 'None' });
+    await tagImage(105, 'pg', 0);
+    const store = fakeStore();
+
+    await copyRejectedForTraining({ store, lookup: noLabels });
+
+    expect(store.copy.mock.calls).toEqual([
+      ['u-103', '3/u-103'],
+      ['u-104', '4/u-104'],
+    ]);
+    expect((await states()).map((s) => s.state)).toEqual([
+      'skipped',
+      'skipped',
+      'copied',
+      'copied',
+      'skipped',
+    ]);
+  });
+
+  it.each(['spam', 'realPerson'])(
+    'never copies a %s record whose image carries a likeness request mark',
+    async (removalLabel) => {
+      await record({
+        appealId: 1,
+        imageId: 101,
+        removalLabel,
+        removalNsfw: 'None',
+        scanRatings: ['pg'],
+      });
+      await record({
+        appealId: 2,
+        imageId: 102,
+        removalLabel,
+        removalNsfw: 'None',
+        scanRatings: ['pg'],
+      });
+      await holder.db.exec(
+        `INSERT INTO "ModActivity" ("activity", "entityType", "entityId") VALUES ('likenessRequest', 'image', 101)`
+      );
+      const store = fakeStore();
+
+      await copyRejectedForTraining({ store, lookup: noLabels });
+
+      expect(store.copy.mock.calls).toEqual([['u-102', '2/u-102']]);
+      expect((await states()).map((s) => s.state)).toEqual(['skipped', 'copied']);
     }
   );
 
@@ -362,7 +461,7 @@ describe('copyRejectedForTraining', () => {
   it('looks up a missing label, stores it, and copies on it', async () => {
     await record({ appealId: 1, imageId: 101, removalLabel: null });
     await record({ appealId: 2, imageId: 102, removalLabel: null });
-    await record({ appealId: 3, imageId: 103, removalLabel: null, aiNsfwLevel: 1 });
+    await record({ appealId: 3, imageId: 103, removalLabel: null, scanRatings: ['pg'] });
     const lookup = vi.fn<RemovalLabelLookup>(
       async () =>
         new Map([
@@ -632,7 +731,7 @@ describe('appealTrainingHeld', () => {
       imageId: 101,
       removalLabel: 'poi',
       removalNsfw: 'Soft',
-      aiNsfwLevel: 1,
+      scanRatings: ['pg13'],
     });
     await record({ appealId: 2, imageId: 102, removalLabel: 'poi' });
     await record({ appealId: 3, imageId: 103, removalLabel: 'realPerson', removalNsfw: 'Mature' });
@@ -641,14 +740,14 @@ describe('appealTrainingHeld', () => {
       imageId: 104,
       removalLabel: 'realPerson',
       removalNsfw: 'None',
-      aiNsfwLevel: null,
+      aiNsfwLevel: 1,
     });
     await record({
       appealId: 5,
       imageId: 105,
       removalLabel: 'poi',
       removalNsfw: 'Soft',
-      aiNsfwLevel: 0,
+      scanRatings: ['r'],
     });
 
     expect(await held()).toEqual([101]);
