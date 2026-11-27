@@ -87,10 +87,10 @@ func (d *settingsDB) db() *testkit.DB {
 	return &testkit.DB{Routes: routes}
 }
 
-// The entries Node's getGallerySettingsByModelId writes for these rows, as Node itself wrote them:
-// each literal is the output of the function's own assembly (`{ ...getGalleryHiddenPreferences(...),
-// creatorHiddenUserIds, sfwHeld }`, or the `none` marker, through toJson) run under node over the same
-// rows, jsonb parsed from the text below. The held model's stored level 28 (R|X|XXX) has nothing
+// The entries Node's getGallerySettingsByModelId writes for these rows: each literal is the output,
+// under node, of a transcription of the function's assembly (`{ ...getGalleryHiddenPreferences(...),
+// creatorHiddenUserIds, sfwHeld }`, or the `none` marker, through toJson) over the same rows, jsonb
+// parsed from the text below; an audit re-derived all three from the real function. The held model's stored level 28 (R|X|XXX) has nothing
 // within PG|PG-13, so heldGalleryLevel answers the whole limit, 3.
 const (
 	nodeHeldEntry   = `{"hiddenTags":[{"id":9001,"name":"anime"},{"id":9002,"name":"nsfw \"x\""}],"hiddenUsers":[{"id":1201,"username":"hidden_one"}],"hiddenImages":{"6001":[8099]},"level":3,"pinnedPosts":{"9":[2],"10":[3]},"creatorHiddenUserIds":[1301,1302],"sfwHeld":true}`

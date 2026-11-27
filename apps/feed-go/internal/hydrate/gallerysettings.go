@@ -58,7 +58,15 @@ type galleryModel struct {
 // and one write (singleflight); nothing is kept in process (a written entry answers the repeats).
 func (s *Sources) galleryHoldsWritten(ctx context.Context, ids []int, flagged bool) (map[int]jspack.Obj, error) {
 	c := s.Compute
-	return c.lookupShared(ctx, MissGallerySettings, ids, func(ctx context.Context, ids []int) (map[int]jspack.Obj, error) {
+	// A flagged rebuild never shares a flight: the flight key is the ids alone, so a caller that saw
+	// the flag must not join an unflagged caller's replica rebuild (nor the reverse). Flags are rare.
+	run := c.lookupShared
+	if flagged {
+		run = func(ctx context.Context, _ string, ids []int, lookup func(context.Context, []int) (map[int]jspack.Obj, error)) (map[int]jspack.Obj, error) {
+			return lookup(ctx, ids)
+		}
+	}
+	return run(ctx, MissGallerySettings, ids, func(ctx context.Context, ids []int) (map[int]jspack.Obj, error) {
 		entries, holds, err := s.gallerySettingsEntries(ctx, ids, flagged)
 		if err != nil {
 			return nil, err
