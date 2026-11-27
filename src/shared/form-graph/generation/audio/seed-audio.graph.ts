@@ -1,9 +1,6 @@
 import type { z } from 'zod';
 import { defineGraph } from 'form-graph';
-import {
-  hasQuotedSpokenLine,
-  SEED_AUDIO_MAX_PROMPT_LENGTH,
-} from '~/shared/constants/seed-audio.constants';
+import { SEED_AUDIO_MAX_PROMPT_LENGTH } from '~/shared/constants/seed-audio.constants';
 import { imagesDef, textDef } from '../defs';
 import { familyScope, type FamilyExt } from '../shared';
 
@@ -13,11 +10,7 @@ export const seedAudio = defineGraph<FamilyExt>({ scope: familyScope })
   .field('prompt', {
     ...textDef('prompt', SEED_AUDIO_MAX_PROMPT_LENGTH),
     refine: (output: z.ZodString) =>
-      output
-        .refine((v) => v.trim().length > 0, { message: 'Prompt is required' })
-        .refine(hasQuotedSpokenLine, {
-          message: 'Include at least one spoken line in quotes, e.g. "Welcome back to the show."',
-        }),
+      output.refine((v) => v.trim().length > 0, { message: 'Prompt is required' }),
     meta: {
       required: true,
       targetKey: 'prompt',
