@@ -58,10 +58,10 @@ async function setup() {
 
 describe('caseTick', () => {
   it('alerts an overdue case once, minors first, with no contact details', async () => {
-    const { file, alerts, deps, heartbeat } = await setup();
+    const { pg, file, alerts, deps, heartbeat } = await setup();
     const late = await file('2026-11-20T10:00:00Z');
     const lateMinor = await file('2026-11-20T11:00:00Z', true);
-    await file('2026-11-21T23:00:00Z'); // due 11-23T23:00Z, not yet
+    const notYet = await file('2026-11-21T23:00:00Z'); // due 11-23T23:00Z
 
     const first = await caseTick(deps('2026-11-23T12:00:00Z'));
     expect(first).toEqual({ evaluated: 3, alerted: 2, overdue: 2 });
@@ -76,6 +76,35 @@ describe('caseTick', () => {
     const second = await caseTick(deps('2026-11-23T12:15:00Z'));
     expect(second).toEqual({ evaluated: 3, alerted: 0, overdue: 2 });
     expect(alerts).toHaveLength(1);
+
+    const third = await caseTick(deps('2026-11-24T00:00:00Z'));
+    expect(third).toEqual({ evaluated: 3, alerted: 1, overdue: 3 });
+    expect(alerts[1].text).toContain(notYet.publicRef);
+    const stored = await pg.query<{ n: number }>(
+      "SELECT count(*)::int AS n FROM case_event WHERE type = 'clock'"
+    );
+    expect(stored.rows[0].n).toBe(3);
+  });
+
+  it('alerts every clock kind in deadline-first order, at the exact moment it is due', async () => {
+    const { pg, file, alerts, deps } = await setup();
+    const c = await file('2026-11-21T12:00:00Z'); // due 11-23T12:00Z
+    await pg.query(
+      "UPDATE case_record SET warn_at = '2026-11-23T06:00:00Z', restore_earliest_at = '2026-11-23T11:00:00Z', restore_latest_at = '2026-11-23T11:30:00Z' WHERE public_ref = $1",
+      [c.publicRef]
+    );
+
+    expect(await caseTick(deps('2026-11-23T11:59:59Z'))).toMatchObject({ alerted: 3, overdue: 0 });
+    expect(await caseTick(deps('2026-11-23T12:00:00Z'))).toMatchObject({ alerted: 1, overdue: 1 });
+    expect(alerts[0].text.split('\n').map((l) => l.split(' is ')[1].split(':')[0])).toEqual([
+      'near its deadline',
+      'past its latest restore date',
+      'open for restore',
+    ]);
+    expect(alerts[1].text).toContain('past its deadline');
+    expect(alerts.map((a) => a.text).join('\n')).not.toMatch(
+      /claimant@example\.com|civitai\.com\/images/
+    );
   });
 
   it('skips test, decided and imported cases', async () => {
@@ -83,6 +112,12 @@ describe('caseTick', () => {
     const test = await file('2026-11-20T10:00:00Z');
     const decided = await file('2026-11-20T10:00:00Z');
     const imported = await file('2026-11-20T10:00:00Z');
+    const counted = await file('2026-11-20T10:00:00Z');
+    const undone = await file('2026-11-20T10:00:00Z');
+    await pg.query(
+      "UPDATE case_record SET source = 'import', state = 'Undone' WHERE public_ref = $1",
+      [undone.publicRef]
+    );
     await pg.query('UPDATE case_record SET is_test = true WHERE public_ref = $1', [test.publicRef]);
     await pg.query('UPDATE case_record SET decided_at = now() WHERE public_ref = $1', [
       decided.publicRef,
@@ -92,21 +127,23 @@ describe('caseTick', () => {
     ]);
 
     expect(await caseTick(deps('2026-11-23T12:00:00Z'))).toEqual({
-      evaluated: 0,
-      alerted: 0,
-      overdue: 0,
+      evaluated: 1,
+      alerted: 1,
+      overdue: 1,
     });
-    expect(alerts).toHaveLength(0);
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0].text).toContain(counted.publicRef);
   });
 
   it('re-alerts on the next run when the alert send failed', async () => {
-    const { file, deps } = await setup();
+    const { file, deps, heartbeat } = await setup();
     await file('2026-11-20T10:00:00Z');
     const failing = {
       ...deps('2026-11-23T12:00:00Z'),
       alert: async () => Promise.reject(new Error('SES down')),
     };
     await expect(caseTick(failing)).rejects.toThrow('SES down');
+    expect(heartbeat()).toBeNull();
 
     const sent: string[] = [];
     const ok = {
@@ -119,11 +156,38 @@ describe('caseTick', () => {
 
   it('reports a gap in the schedule even when no case is late', async () => {
     const { alerts, deps } = await setup();
-    await caseTick(deps('2026-11-23T08:00:00Z'));
+    const start = Date.parse('2026-11-23T08:00:00Z');
+    await caseTick(deps(new Date(start).toISOString()));
+    const justUnder = start + CASE_TICK_MAX_GAP_MS - 60_000;
+    await caseTick(deps(new Date(justUnder).toISOString()));
     expect(alerts).toHaveLength(0);
-    const later = new Date(Date.parse('2026-11-23T08:00:00Z') + CASE_TICK_MAX_GAP_MS + 60_000);
-    await caseTick(deps(later.toISOString()));
+    await caseTick(deps(new Date(justUnder + CASE_TICK_MAX_GAP_MS + 60_000).toISOString()));
     expect(alerts).toHaveLength(1);
-    expect(alerts[0].text).toContain('did not run from 2026-11-23T08:00:00.000Z');
+    expect(alerts[0].subject).toBe('Takedown clocks: no clock check completed for over 2 hours');
+    expect(alerts[0].text).toContain(
+      `No clock check completed from ${new Date(justUnder).toISOString()}`
+    );
+  });
+
+  it('does not call an already-overdue case "near its deadline"', async () => {
+    const { pg, file, alerts, deps } = await setup();
+    const c = await file('2026-11-20T10:00:00Z');
+    await pg.query(
+      "UPDATE case_record SET warn_at = '2026-11-22T00:00:00Z' WHERE public_ref = $1",
+      [c.publicRef]
+    );
+    expect(await caseTick(deps('2026-11-23T12:00:00Z'))).toMatchObject({ alerted: 1 });
+    expect(alerts[0].text).toContain('past its deadline');
+    expect(alerts[0].text).not.toContain('near its deadline');
+  });
+
+  it('puts the gap note first when a gap and a late case come together', async () => {
+    const { file, alerts, deps } = await setup();
+    await caseTick(deps('2026-11-22T00:00:00Z'));
+    const late = await file('2026-11-20T10:00:00Z'); // due 11-22T10:00Z
+    await caseTick(deps('2026-11-22T12:00:00Z'));
+    const lines = alerts[0].text.split('\n');
+    expect(lines[0]).toContain('No clock check completed from 2026-11-22T00:00:00.000Z');
+    expect(lines[1]).toContain(late.publicRef);
   });
 });

@@ -46,7 +46,8 @@ export async function caseTick({
   now = () => new Date(),
 }: CaseTickDeps): Promise<CaseTickResult> {
   const at = now();
-  const last = await heartbeat.read();
+  // The heartbeat is only for the gap note; a failed read must not stop the clocks.
+  const last = await heartbeat.read().catch(() => null);
   const open = await db
     .selectFrom('case_record as c')
     .select([
@@ -59,9 +60,12 @@ export async function caseTick({
       'c.restore_earliest_at as restore_earliest_at',
       'c.restore_latest_at as restore_latest_at',
     ])
+    .where('c.source', '!=', 'import')
     .where('c.import_batch_id', 'is', null)
     .where('c.is_test', '=', false)
     .where('c.decided_at', 'is', null)
+    // A fixed lock order, so two overlapping runs wait on each other instead of deadlocking.
+    .orderBy('c.id')
     .execute();
 
   // Thresholds are recorded and alerted together: if the alert fails, the records roll back and the
@@ -75,6 +79,8 @@ export async function caseTick({
         if (!value) continue;
         const when = new Date(value as unknown as string);
         if (when > at) continue;
+        if (clock.kind === 'warn' && c.due_at && new Date(c.due_at as unknown as string) <= at)
+          continue;
         if (clock.kind === 'overdue') overdue++;
         const inserted = await trx
           .insertInto('case_event')
@@ -108,7 +114,7 @@ export async function caseTick({
     const gapNote =
       last && gap > CASE_TICK_MAX_GAP_MS
         ? [
-            `The clock check did not run from ${
+            `No clock check completed from ${
               last.at
             } until ${at.toISOString()}; anything below crossed during that gap.`,
           ]
@@ -122,7 +128,7 @@ export async function caseTick({
           ? `Takedown clocks: ${lines.length} case threshold${
               lines.length === 1 ? '' : 's'
             } crossed`
-          : 'Takedown clocks: the clock check was not running',
+          : 'Takedown clocks: no clock check completed for over 2 hours',
         [...gapNote, ...lines.map((l) => l.text)].join('\n')
       );
     }

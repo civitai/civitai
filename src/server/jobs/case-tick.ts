@@ -14,7 +14,11 @@ export const caseTickJob = createJob(
   'case-tick',
   '*/15 * * * *',
   async () => {
-    if (!takedownRequestsConfigured()) return { skipped: 'not configured' };
+    // Without the cases credential no clock is evaluated and no heartbeat is written, so say so loudly.
+    if (!takedownRequestsConfigured()) {
+      logToAxiom({ type: 'error', name: 'case-tick-not-configured' });
+      return { skipped: 'not configured' };
+    }
     const result = await runCaseTick();
     logToAxiom({ name: 'case-tick', payload: result });
     return result;
