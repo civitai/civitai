@@ -78,7 +78,7 @@ var (
 		"as-posts": EndpointAsPosts, "infinite": EndpointInfinite, "model-getall": EndpointModelGetAll,
 		"v1-models": EndpointV1ModelsID, "v1-models-headers": EndpointV1ModelsID,
 	}
-	otherDirs = []string{"devalue", "metrics", "model-assoc", "region-blocked", "site-search", "v1-images"}
+	otherDirs = []string{"devalue", "metrics", "model-assoc", "region-blocked", "site-search", "v1-filenames", "v1-images"}
 )
 
 // goldenMinSigned is, per directory, how many fixtures at least must get a signature (the counts on

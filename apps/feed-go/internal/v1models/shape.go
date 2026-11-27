@@ -69,7 +69,7 @@ func shapeModel(it *item, o shapeOptions) (superjson.Object, error) {
 	}
 	versions := make([]any, 0, len(it.versions))
 	name, _ := getVal(it.base, "name").(string)
-	model := nameModel{name: name, typ: it.typ}
+	model := nameModel{name: name, typ: it.typ, unicode: o.unicodeNames}
 	for _, v := range it.versions {
 		// The list's `supportsGeneration` filter is a fallback upstream, so only the status filters.
 		if s, _ := getVal(v, "status").(string); s != "Published" {
