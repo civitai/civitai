@@ -225,7 +225,8 @@ export function createRevocationCheck(config: RevocationCheckConfig): Revocation
         }
       }
       quietly(() => config.onOutcome?.('hit', seconds()));
-      answered.add(claims);
+      // The registry answers false for a token without a jti without reading anything: not a confirmation.
+      if (claims.jti) answered.add(claims);
       return revoked;
     } catch (err) {
       const reason = reasonOf(err);

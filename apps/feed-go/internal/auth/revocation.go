@@ -66,8 +66,8 @@ func (r *Revocation) IsRevoked(ctx context.Context, c *Claims) bool {
 // Check is IsRevoked that also reports whether the read failed, so the verdict came from the markers. A
 // read that fails on a transient connection or failover error is retried once after RetryDelay, as the
 // package does; one that hit the deadline or failed any other way is not, and none is for RetryCooldown
-// after a retry fails. A token without a jti is never read, so it is reported unconfirmed, as the package's
-// confirmElevated does for claims it never checked.
+// after a retry fails. A token without a jti is never read, so it is reported unconfirmed: the package's
+// confirmElevated never confirms one either.
 func (r *Revocation) Check(ctx context.Context, c *Claims) (revoked, readFailed bool) {
 	if c.Jti == "" {
 		return false, true

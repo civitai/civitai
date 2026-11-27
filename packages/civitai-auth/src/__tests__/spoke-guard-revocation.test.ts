@@ -157,3 +157,29 @@ describe('a failed revocation read on an elevated session', () => {
     expect(await check(guard)).toMatchObject({ status: 'ok', user: { id: 7 } });
   });
 });
+
+// civitai/civitai#10695: a token without a jti is never revocation-read, so an elevated one is never confirmed.
+describe('a session token without a jti', () => {
+  const jtiLess = async (claims: Record<string, unknown> = {}) => {
+    const { SignJWT, importPKCS8 } = await import('jose');
+    return new SignJWT({ sub: '7', signedAt: Date.now(), ...claims })
+      .setProtectedHeader({ alg: 'ES256', kid: 'k1', typ: 'JWT' })
+      .setIssuedAt()
+      .setExpirationTime('1h')
+      .setIssuer(ISSUER)
+      .sign(await importPKCS8(keys.privateKey, 'ES256'));
+  };
+  const guard = () =>
+    createSpokeGuard({ isRevoked: createRevocationCheck({ redis: () => store() }) });
+
+  it('is refused for a moderator, though the store answers', async () => {
+    cache.user = { id: 7, username: 'seven', isModerator: true };
+    const r = await guard().check(`civ-token=${await jtiLess()}`, 'http://localhost:3100/x');
+    expect(r).toEqual({ status: 'unavailable' });
+  });
+
+  it('is allowed for an ordinary user', async () => {
+    const r = await guard().check(`civ-token=${await jtiLess()}`, 'http://localhost:3100/x');
+    expect(r).toMatchObject({ status: 'ok', user: { id: 7 } });
+  });
+});
