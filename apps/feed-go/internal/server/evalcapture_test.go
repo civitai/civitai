@@ -323,10 +323,10 @@ func (l *listSink) len() int {
 	return len(l.rows)
 }
 
-// evalUnresolvedCount reads feed_go_eval_capture_unresolved_total{feed_endpoint="as-posts",source,reason}.
-func evalUnresolvedCount(t *testing.T, reg *prometheus.Registry, source, reason string) float64 {
+// serveUnresolvedCount reads feed_go_eval_capture_unresolved_total{feed_endpoint="as-posts",source="serve",reason}.
+func serveUnresolvedCount(t *testing.T, reg *prometheus.Registry, reason string) float64 {
 	t.Helper()
-	v, _ := metricValue(t, reg, "feed_go_eval_capture_unresolved_total", map[string]string{"feed_endpoint": EndpointAsPosts, "source": source, "reason": reason})
+	v, _ := metricValue(t, reg, "feed_go_eval_capture_unresolved_total", map[string]string{"feed_endpoint": EndpointAsPosts, "source": "serve", "reason": reason})
 	return v
 }
 
@@ -379,7 +379,7 @@ func TestEvalCaptureServeUnresolvedReason(t *testing.T) {
 				if reason == c.reason {
 					want = 1
 				}
-				if got := evalUnresolvedCount(t, reg, "serve", reason); got != want {
+				if got := serveUnresolvedCount(t, reg, reason); got != want {
 					t.Errorf("unresolved{serve,%s} = %v, want %v", reason, got, want)
 				}
 			}
@@ -406,9 +406,9 @@ func TestEvalCaptureServeBearerUnresolved(t *testing.T) {
 	r.Header.Set("Authorization", "Bearer synthetic-key-0001")
 	s.ServeHTTP(httptest.NewRecorder(), r)
 	s.shadows.Wait()
-	if evalCount(t, reg, "serve", "unresolved") != 1 || evalUnresolvedCount(t, reg, "serve", "bearer-token") != 1 || evalUnresolvedCount(t, reg, "serve", "other") != 0 {
+	if evalCount(t, reg, "serve", "unresolved") != 1 || serveUnresolvedCount(t, reg, "bearer-token") != 1 || serveUnresolvedCount(t, reg, "other") != 0 {
 		t.Errorf("unresolved %v bearer-token %v other %v, want 1, 1 and 0", evalCount(t, reg, "serve", "unresolved"),
-			evalUnresolvedCount(t, reg, "serve", "bearer-token"), evalUnresolvedCount(t, reg, "serve", "other"))
+			serveUnresolvedCount(t, reg, "bearer-token"), serveUnresolvedCount(t, reg, "other"))
 	}
 	if samples.len()+caseRows.len() != 0 {
 		t.Errorf("rows written: %d samples %d cases", samples.len(), caseRows.len())
