@@ -33,14 +33,14 @@ vi.mock('../../metrics', () => ({
 import { createSessionSigner, SESSION_REGISTRY_KEYS } from '@civitai/auth';
 import { verifier } from '../verifier';
 
-const mint = (jti: string) =>
+const mint = (jti: string, extra: Record<string, unknown> = {}) =>
   createSessionSigner({
     privateKeyPem: h.kp.privateKey,
     publicKeyPem: h.kp.publicKey,
     kid: 'k1',
     issuer: 'https://auth.test',
     maxAge: 3600,
-  }).mintSessionToken({ user: { id: 7 }, signedAt: Date.now() }, { jti });
+  }).mintSessionToken({ user: { id: 7 }, signedAt: Date.now(), ...extra }, { jti });
 
 let revoked: string;
 let other: string;
@@ -72,5 +72,24 @@ describe('gateway verifier revocation check', () => {
     // The store answers again without the marker: the record follows it.
     h.store.hGet = async () => null;
     await expect(verifier.verifyToken(revoked)).resolves.toMatchObject({ jti: 'jti-revoked' });
+  });
+
+  it('an impersonation session is refused when the revocation read fails', async () => {
+    const impersonation = await mint('jti-imp', { impersonatedBy: 99, impExp: Date.now() + 600_000 });
+    const plain = await mint('jti-plain');
+
+    // The store answers: both are allowed.
+    await expect(verifier.verifyToken(impersonation)).resolves.toMatchObject({ jti: 'jti-imp', impersonatedBy: 99 });
+    await expect(verifier.verifyToken(plain)).resolves.toMatchObject({ jti: 'jti-plain' });
+
+    h.store.hGet = async () => {
+      throw new Error('ECONNRESET');
+    };
+    h.store.get = async () => {
+      throw new Error('ECONNRESET');
+    };
+    // The read fails: the elevated session is refused, the ordinary one keeps the fail-open policy.
+    await expect(verifier.verifyToken(impersonation)).resolves.toBeNull();
+    await expect(verifier.verifyToken(plain)).resolves.toMatchObject({ jti: 'jti-plain' });
   });
 });

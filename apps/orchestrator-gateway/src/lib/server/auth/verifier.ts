@@ -22,6 +22,16 @@ const checkRevocation = createRevocationCheck({
 // SPOKE-side verifier: the service verifies the incoming session token (`__Secure-civ-token`) or the
 // per-user bearer token LOCALLY — no monolith hop. ES256 signatures are checked against the hub's cached
 // JWKS (createAuthVerifier defaults jwksUri from AUTH_JWKS_URI when no local public key is set).
+//
+// An impersonation session (claims.impersonatedBy) is elevated: when this request's revocation read did not
+// answer, it is refused rather than allowed on the cached record, as the main app and the other spokes do
+// (`confirmElevated`). The gateway resolves no user, so a moderator's own session (isModerator) is not
+// distinguishable here and keeps the ordinary policy.
 export const verifier = createAuthVerifier({
-  isRevoked: async (claims) => (getSysRedis() ? checkRevocation(claims) : false),
+  isRevoked: async (claims) => {
+    if (!getSysRedis()) return false;
+    if (await checkRevocation(claims)) return true;
+    if (claims.impersonatedBy == null) return false;
+    return (await checkRevocation.confirmElevated(claims)) === 'unavailable';
+  },
 });
