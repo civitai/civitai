@@ -12,8 +12,9 @@ import (
 )
 
 // MissGalleryHold is the gallery-hold computation of a `model:gallery-settings:<modelId>` miss
-// (GalleryHolds): only the hold getHeldGalleryLevel reads is computed, never the settings entry, so
-// nothing is written back and nothing is kept in process.
+// (GalleryHolds) without write-back: only the hold getHeldGalleryLevel reads is computed, never the
+// settings entry, so nothing is written back and nothing is kept in process. With MissGallerySettings
+// written back the entry is built and written instead, and counted under that name.
 const MissGalleryHold = "gallery-hold"
 
 // GalleryHold is what getGallerySettingsByModelId's rebuild says about a model's hold: Held is its
@@ -35,18 +36,23 @@ const sqlGalleryHold = `SELECT id, minor, "sfwOnly", jsonb_typeof("gallerySettin
 // or SFW-only, at heldGalleryLevel(stored level, model). The map holds every model found.
 //
 // The rebuild reads the model through getDbWithoutLag('model', id): the primary for a model a recent
-// write flagged. This service reads only the replica, so when any of the models carries that flag, or
-// the flag read fails, nothing is computed and the request falls back (`gallery-settings-miss`): Node
-// then reads the primary. Without s.Compute (FEED_GO_COMPUTE_MISSES off) or a replica it falls back
-// too, and so does a Go-first probe (WithPresence), which reports the miss as before. A failed query
-// is `gallery-settings-miss-failed`.
+// write flagged. Without write-back this service reads only the replica, so when any of the models
+// carries that flag nothing is computed and the request falls back (`gallery-settings-miss`): Node
+// then reads the primary. A failed flag read falls back either way. Without s.Compute
+// (FEED_GO_COMPUTE_MISSES off) or a replica it falls back too, and so does a Go-first probe
+// (WithPresence), which reports the miss as before. A failed query is `gallery-settings-miss-failed`.
 //
-// Concurrent calls for the same models share one query (singleflight), but no answer is kept in
-// process (MissCompute.memoized): the hold is a safety rule, and a kept answer could outlive the bust
-// a minor or SFW-only flag change sends. Nothing is written back: the settings entry Node writes also
-// carries the creator's hidden users, which Node reads from the primary (getCreatorGalleryHiddenUserIds
-// with fresh), so this service cannot build it. Each computed miss counts its models in
-// s.Compute.Observe (MissGalleryHold, "computed"; a failed query "error").
+// Without write-back, concurrent calls for the same models share one query (singleflight), but no
+// answer is kept in process (MissCompute.memoized): the hold is a safety rule, and a kept answer could
+// outlive the bust a minor or SFW-only flag change sends; nothing is written, so Node's next read
+// rebuilds the key. Each computed miss counts its models in s.Compute.Observe (MissGalleryHold,
+// "computed"; a failed query "error").
+//
+// With MissGallerySettings written back (FEED_GO_CACHE_WRITEBACK lists `gallery-settings`, which needs
+// the primary), the whole entry is rebuilt as Node rebuilds it, with Node's reads (the model from the
+// primary when flagged, the creator's hidden users always from the primary), and written where and as
+// Node writes it, SET NX for a week (galleryHoldsWritten); the hold is read off it. Its misses count
+// under MissGallerySettings, its writes in feed_go_cache_writes_total{cache="gallery-settings"}.
 func (s *Sources) GalleryHolds(ctx context.Context, modelIDs []int) (map[int]GalleryHold, error) {
 	out := map[int]GalleryHold{}
 	ids := Unique(modelIDs)
@@ -56,15 +62,24 @@ func (s *Sources) GalleryHolds(ctx context.Context, modelIDs []int) (map[int]Gal
 	if s == nil || s.Compute == nil || s.Replica == nil || presenceOf(ctx) != nil {
 		return nil, fallback.New("gallery-settings-miss")
 	}
-	if flagged, err := s.lagFlagged(ctx, "model", ids); flagged || err != nil {
+	c := s.Compute
+	writeBack := c.writes(MissGallerySettings)
+	flagged, err := s.lagFlagged(ctx, "model", ids)
+	if err != nil || (flagged && !writeBack) || (writeBack && (c.Primary == nil || s.Packed == nil)) {
 		return nil, fallback.New("gallery-settings-miss")
 	}
-	c := s.Compute
-	records, err := c.lookupShared(ctx, MissGalleryHold, ids, s.lookupGalleryHolds)
-	if err != nil {
-		c.observe(MissGalleryHold, "error", len(ids))
+	cache, lookup := MissGalleryHold, s.lookupGalleryHolds
+	var records map[int]jspack.Obj
+	if writeBack {
+		cache = MissGallerySettings
+		records, err = s.galleryHoldsWritten(ctx, ids, flagged)
 	} else {
-		c.observe(MissGalleryHold, "computed", len(ids))
+		records, err = c.lookupShared(ctx, cache, ids, lookup)
+	}
+	if err != nil {
+		c.observe(cache, "error", len(ids))
+	} else {
+		c.observe(cache, "computed", len(ids))
 	}
 	if err != nil {
 		return nil, fallback.Wrap("gallery-settings-miss-failed", err)

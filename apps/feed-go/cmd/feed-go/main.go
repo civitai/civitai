@@ -497,6 +497,11 @@ func run(log *slog.Logger) error {
 		// The Node app this service shadows is the production build (isProd): nextPage on https://<host>.
 		NodeProduction: true,
 	}
+	if cfg.V1ImagesServeGallerySettingsMiss {
+		// An absent gallery-settings key's hold, as image.getInfinite's switch computes it (lag-aware;
+		// FEED_GO_COMPUTE_MISSES off: nil Compute, so it falls back).
+		v1.Gallery = feed.HoldComputingGallery(deps.Gallery, sources)
+	}
 	// The image.getInfinite shadow shares all of the gallery's dependencies, plus the post→version /
 	// version→model caches and the username lookup the REST port reads, and the blocked tag list.
 	infinite := &feed.InfiniteDeps{
@@ -745,7 +750,8 @@ func run(log *slog.Logger) error {
 	log.Info("public /api/v1/models", "FEED_GO_SERVE_V1_MODELS", mc.Serve, "mounted", srv.V1Fallback != nil,
 		"FEED_GO_V1_BEARER_AUTH", mc.BearerAuth, "FEED_GO_V1_MODELS_ANSWER_NOT_FOUND", mc.AnswerNotFound)
 	log.Info("public /api/v1/images", "FEED_GO_SERVE_V1_IMAGES", mc.ServeImages,
-		"mounted", srv.V1ImagesFallback != nil)
+		"mounted", srv.V1ImagesFallback != nil,
+		"FEED_GO_V1_IMAGES_SERVE_GALLERY_SETTINGS_MISS", cfg.V1ImagesServeGallerySettingsMiss)
 	log.Info("public /api/search", "FEED_GO_SERVE_SEARCH", sc.Serve, "mounted", srv.SearchFallback != nil,
 		"search_backend_configured", searchDeps.Upstream != nil)
 	log.Info("public tRPC answers' write format", "TRPC_WRITE_DEVALUE", cfg.WriteDevalue)

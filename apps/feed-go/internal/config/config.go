@@ -138,6 +138,13 @@ type Config struct {
 	// row (its hold only, never written back), as the Node rebuild decides it, instead of the
 	// `gallery-settings-miss` fallback. Needs FEED_GO_COMPUTE_MISSES (otherwise the miss falls back).
 	InfiniteServeGallerySettingsMiss bool
+	// V1ImagesServeGallerySettingsMiss is FEED_GO_V1_IMAGES_SERVE_GALLERY_SETTINGS_MISS (default off):
+	// on `GET /api/v1/images`, answer a model gallery-settings key absent from the cache as Node's
+	// rebuild decides its hold (feed.HoldComputingGallery over hydrate.Sources.GalleryHolds: from the
+	// model's row, and with `gallery-settings` in FEED_GO_CACHE_WRITEBACK the whole entry, written
+	// back as Node writes it) instead of the `gallery-settings-miss` fallback. Needs
+	// FEED_GO_COMPUTE_MISSES (otherwise the miss falls back).
+	V1ImagesServeGallerySettingsMiss bool
 	// InfiniteServeInputHubID is FEED_GO_INFINITE_SERVE_INPUT_HUB_ID (default off): compute an
 	// `image.getInfinite` request with `hubId` (a user-composed hub, and its `hubExcludedSources`;
 	// feed.InfinitePorts.HubID), reading the `user-hubs` flag per viewer from FLIPT_URL. Off, such a
@@ -343,6 +350,7 @@ func Load() (*Config, error) {
 		ServeInfinite:                    boolEnv("FEED_GO_SERVE_INFINITE", false),
 		InfiniteServeSortRandom:          boolEnv("FEED_GO_INFINITE_SERVE_SORT_RANDOM", false),
 		InfiniteServeGallerySettingsMiss: boolEnv("FEED_GO_INFINITE_SERVE_GALLERY_SETTINGS_MISS", false),
+		V1ImagesServeGallerySettingsMiss: boolEnv("FEED_GO_V1_IMAGES_SERVE_GALLERY_SETTINGS_MISS", false),
 
 		InfiniteServeInputPostIDs: boolEnv("FEED_GO_INFINITE_SERVE_INPUT_POST_IDS", false),
 		InfiniteServeInputHubID:   boolEnv("FEED_GO_INFINITE_SERVE_INPUT_HUB_ID", false),

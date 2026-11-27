@@ -48,7 +48,7 @@ const (
 // this list to tell a miss Go answers from one it falls back on (Sources.MissReason).
 var MissCaches = []string{MissUserCosmetics, MissImageFrames, MissEventDecorations, MissImageMeta, MissTagIDs, MissModelFrames,
 	MissModelDecorations, MissVersionImages, MissModelData, MissModelTags, MissOfficialModels, MissMetrics, MissImageTags,
-	MissUserFollows, MissVersionShowcase, MissImageResources, MissCreatorMemberships, MissGalleryHold}
+	MissUserFollows, MissVersionShowcase, MissImageResources, MissCreatorMemberships, MissGalleryHold, MissGallerySettings}
 
 // MissCompute is how hydration answers a miss on the per-entity caches Node fills on read: with the
 // Node lookup's own query, batched once per page and cache, instead of falling back. A Sources
@@ -288,11 +288,12 @@ func (c *MissCompute) flightLookup(ctx context.Context, cache string, ids []int,
 // keeps tag ids in a per-pod L1 far longer than recentTTL, and a model frame or decoration is the same
 // lookup the image ones keep. The version-showcase decision (MissVersionShowcase, ShowcaseState) does
 // not go through lookupShared and keeps nothing, so it is false for it too, as for the image resources
-// (MissImageResources, computeImageResources). Nor is the gallery hold (MissGalleryHold, GalleryHolds):
-// it is a safety rule, and a kept answer could outlive the bust a minor or SFW-only flag change sends.
+// (MissImageResources, computeImageResources). Nor is the gallery hold (MissGalleryHold, GalleryHolds),
+// nor the gallery settings it rebuilds when written back (MissGallerySettings): it is a safety rule,
+// and a kept answer could outlive the bust a minor or SFW-only flag change sends.
 func (c *MissCompute) memoized(cache string) bool {
 	return !c.writes(cache) && cache != MissImageMeta && cache != MissUserFollows && cache != MissVersionShowcase &&
-		cache != MissImageResources && cache != MissCreatorMemberships && cache != MissGalleryHold
+		cache != MissImageResources && cache != MissCreatorMemberships && cache != MissGalleryHold && cache != MissGallerySettings
 }
 
 // fromRecent adds the kept, unexpired answers of ids to out and returns the ids it could not answer.
