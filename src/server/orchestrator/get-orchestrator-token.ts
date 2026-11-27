@@ -7,7 +7,7 @@ import { credentialLogFields, getRequestCredential } from '~/server/auth/request
 import { dbWrite } from '~/server/db/client';
 import { observeTokenIdentityMismatch } from '~/server/orchestrator/orchestrator-identity-metrics';
 import { getOrMintCachedToken } from '~/server/orchestrator/orchestrator-token-cache';
-import { offlineCapOrchestratorToken } from '~/server/orchestrator/offline-spend-cap';
+import { ownKeyOrchestratorToken } from '~/server/orchestrator/offline-spend-cap';
 import {
   decodeOwnedToken,
   encodeOwnedToken,
@@ -77,12 +77,11 @@ export async function getOrchestratorToken(
   if (!standing || !standing.exists || (standing.muted && !options.allowRestricted))
     throw new TRPCError({ code: 'FORBIDDEN', message: RESTRICTED_ACCOUNT_MESSAGE });
 
-  // The offline Buzz cap (flag `oauth-offline-grant`, offline-spend-cap.ts): a refresh-minted OAuth
-  // token with a cap is sent as itself and never cached under the user. Null otherwise, and nothing
+  // A limited key is sent as itself and never cached under the user. Null otherwise, and nothing
   // below changes.
-  if (ctx?.req && env.ORCHESTRATOR_MODE !== 'dev') {
-    const capped = await offlineCapOrchestratorToken(userId, ctx.req);
-    if (capped) return capped;
+  if (ctx?.req) {
+    const own = await callerOwnOrchestratorToken(userId, ctx.req);
+    if (own) return own;
   }
 
   const redisKey = userId.toString();
@@ -186,6 +185,20 @@ export async function getOrchestratorToken(
     });
   }
   return token;
+}
+
+/**
+ * The caller's own key when getOrchestratorToken sends it instead of the user's System token (a
+ * limited personal key or a capped offline OAuth token, each behind its flag; offline-spend-cap.ts),
+ * else null. Work queued for a job to submit later would run on the System token, so a path that
+ * queues refuses a request this returns a token for.
+ */
+export function callerOwnOrchestratorToken(
+  userId: number,
+  req: NextApiRequest
+): Promise<string | null> {
+  if (env.ORCHESTRATOR_MODE === 'dev') return Promise.resolve(null);
+  return ownKeyOrchestratorToken(userId, req);
 }
 
 type RequestSessionUser = { id?: number; meta?: unknown };

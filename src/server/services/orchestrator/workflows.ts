@@ -30,6 +30,7 @@ import type {
   workflowQuerySchema,
 } from '~/server/schema/orchestrator/workflows.schema';
 import { createOrchestratorClient } from '~/server/services/orchestrator/client';
+import { throwIfApiKeyBuzzLimitRefusal } from '~/server/orchestrator/api-key-buzz-limit-refusal';
 import { observeOrchestratorRead } from '~/server/services/orchestrator/orchestrator-read-metrics';
 import {
   clampSubmitSource,
@@ -231,6 +232,7 @@ export async function queryWorkflows({
     (performance.now() - readStart) / 1000
   );
   if (!data) {
+    throwIfApiKeyBuzzLimitRefusal(error.status, error);
     switch (error.status) {
       case 400:
         throw throwBadRequestError(error.detail);
@@ -310,6 +312,7 @@ export async function getWorkflow({
     (performance.now() - readStart) / 1000
   );
   if (!data) {
+    throwIfApiKeyBuzzLimitRefusal(error.status, error);
     switch (error.status) {
       case 400:
         throw throwBadRequestError(error.detail);
@@ -927,6 +930,7 @@ export async function liftWorkflowMatureRestriction({
     ...(signal ? { signal } : {}),
   });
   if (!response || response.status >= 500) return { outcome: 'no-response' };
+  throwIfApiKeyBuzzLimitRefusal(response.status, error);
   if (response.status === 403) return { outcome: 'insufficient-funds' };
   if (!response.ok)
     throwOrchestratorFailure({ error, response, message: orchestratorErrorMessage(error) });
@@ -1004,6 +1008,7 @@ export function throwOrchestratorFailure({
   if (!response) {
     throw throwServiceUnavailableError(unavailableMessage, error);
   }
+  throwIfApiKeyBuzzLimitRefusal(response.status, error);
   switch (response.status) {
     case 400:
       throw throwBadRequestError(message);

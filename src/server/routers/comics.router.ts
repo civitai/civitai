@@ -1,6 +1,7 @@
 import { assertNotDealFileImages } from '~/server/services/deal-file-image';
 import { assertAccountNotRestricted } from '~/server/services/account-restriction.service';
 import { z } from 'zod';
+import type { NextApiRequest } from 'next';
 import type { SessionUser } from '~/types/session';
 import { comicProjectMetaSchema, parseComicProjectMeta } from '~/server/schema/comics.schema';
 import {
@@ -63,7 +64,10 @@ import {
   ownerMediaAllowedWhere,
   type RestrictableImage,
 } from '~/server/common/image-visibility';
-import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
+import {
+  callerOwnOrchestratorToken,
+  getOrchestratorToken,
+} from '~/server/orchestrator/get-orchestrator-token';
 import {
   panelSourceImageUrl,
   viewerPanelMetadata,
@@ -1015,6 +1019,19 @@ function withoutUnlockClaim(metadata: Prisma.JsonValue | null) {
   const copy = { ...metadata };
   delete copy.unlockClaim;
   return copy;
+}
+
+export const QUEUED_PANELS_REFUSED_FOR_OWN_KEY =
+  "Queued panels can't be created with a limited API key.";
+
+/**
+ * Queued panels are submitted later by a job on the user's System token, outside the key's own
+ * limit. So a request getOrchestratorToken would send as its own limited key (offline-spend-cap.ts)
+ * cannot queue them.
+ */
+async function refuseQueuedPanelsForOwnKey(userId: number, ctx: { req?: NextApiRequest }) {
+  if (ctx.req && (await callerOwnOrchestratorToken(userId, ctx.req)))
+    throw new TRPCError({ code: 'FORBIDDEN', message: QUEUED_PANELS_REFUSED_FOR_OWN_KEY });
 }
 
 // Shared helper: create a single panel record and submit generation
@@ -4321,6 +4338,10 @@ export const comicsRouter = router({
       } catch (error) {
         throw throwBadRequestError(getOrchestratorErrorMessage(error));
       }
+      // The only path that queues panels. Before the chapter is created, so a refusal leaves nothing
+      // half made.
+      if (input.panels.length > remainingSlots)
+        await refuseQueuedPanelsForOwnKey(ctx.user!.id, ctx);
 
       // Fetch project baseModel for generation config
       const project = await dbRead.comicProject.findUnique({
