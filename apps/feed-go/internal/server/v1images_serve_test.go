@@ -633,6 +633,7 @@ func TestServeV1ImagesNeverUsesTheV1Upstream(t *testing.T) {
 var goldenV1NoStore = map[string]bool{
 	"held-images-on-page": true, "held-model-version": true, "ids-model-version-held": true,
 	"ids-with-meta-wrapped": true, "nsfw-deprecated-name-x": true, "nsfw-true": true,
+	"image-id-held-post": true, "model-only-held": true,
 }
 
 // Every v1-images golden fixture (Node's own answer to a real request over the same world) through
@@ -710,8 +711,8 @@ func TestServeV1ImagesGolden(t *testing.T) {
 		})
 	}
 	// Positive control: each arm was reached, the no-store arm on every fixture that names it.
-	if served < 25 || handed != 3 || fellBack < 5 || noStore != len(goldenV1NoStore) {
-		t.Fatalf("served %d, handed back %d, fell back %d, no-store %d; want >= 25, 3, >= 5, %d", served, handed, fellBack, noStore, len(goldenV1NoStore))
+	if served < 25 || handed != 4 || fellBack < 5 || noStore != len(goldenV1NoStore) {
+		t.Fatalf("served %d, handed back %d, fell back %d, no-store %d; want >= 25, 4, >= 5, %d", served, handed, fellBack, noStore, len(goldenV1NoStore))
 	}
 }
 
