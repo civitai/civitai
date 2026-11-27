@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createTRPCClient, type TRPCLink } from '@trpc/client';
 import { createTRPCReact } from '@trpc/react-query';
 import { observable } from '@trpc/server/observable';
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { beforeEach, describe, expect, test } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import { ChatList } from '~/components/Chat/ChatList';
@@ -89,8 +89,10 @@ const link: TRPCLink<AppRouter> =
 const { Provider: TRPCProvider } = createTRPCReact<AppRouter>();
 
 function Network({ children }: { children: ReactNode }) {
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const client = createTRPCClient<AppRouter>({ links: [link] });
+  const [queryClient] = useState(
+    () => new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  );
+  const [client] = useState(() => createTRPCClient<AppRouter>({ links: [link] }));
   return (
     <TRPCProvider client={client} queryClient={queryClient}>
       <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
@@ -156,6 +158,8 @@ describe.each(variants)('$name mark all read', ({ List, label, role, menu }) => 
     await expect.poll(() => io.marks).toBe(1);
     await openMenu();
     await expect.element(page.getByRole(role, { name: label, exact: true })).toBeVisible();
+    // One click, one mutation.
+    expect(io.marks).toBe(1);
   }
 
   test('clears a count the server no longer has', async () => {
