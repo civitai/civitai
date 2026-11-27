@@ -521,7 +521,7 @@ describe('verdicts', () => {
 
     it('a text that is not exact JSON.stringify output is not rewritten, so its encoding still mismatches', async () => {
       shadowOn();
-      // NODE_WITH_REFEQ with nextCursor's "88" escaped as 88: the same value, other bytes.
+      // NODE_WITH_REFEQ with nextCursor's "88" written as 88: the same value, other bytes.
       replies.node.body = NODE_WITH_REFEQ.replace('"n-88"', '"n-\\u0038\\u0038"');
       replies.go.body = GO_SAME_VALUE;
       await callQuery(INFINITE, INFINITE_INPUT);

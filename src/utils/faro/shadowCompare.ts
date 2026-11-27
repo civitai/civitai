@@ -297,8 +297,6 @@ async function settle(
   else if (candidate.response.fallback === true) verdict = 'candidate_fallback';
   else if (await sameBytes(controlBytes, candidateBytes)) verdict = 'match';
   else {
-    // `meta.referentialEqualities` is not compared (see withoutReferentialEqualities); every other
-    // byte still is.
     const controlText =
       withoutReferentialEqualities(control.response.text) ?? control.response.text;
     const candidateText =
