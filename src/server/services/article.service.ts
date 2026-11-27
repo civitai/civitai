@@ -18,7 +18,7 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import type { ManipulateType } from 'dayjs';
 import { truncate } from 'lodash-es';
-import { NsfwLevel } from '~/server/common/enums';
+import type { NsfwLevel } from '~/server/common/enums';
 import { TEXT_MODERATION_RETRY_STATUSES } from '~/server/jobs/text-moderation-retry.constants';
 import {
   hasBlockMarker,
@@ -729,11 +729,7 @@ export const getArticles = async ({
           ...(((storedCoverId != null && storedCoverId !== article.coverId) ||
             (article.coverId != null && minorHiddenCoverIds.has(article.coverId)) ||
             (!!viewable && !coverImage) ||
-            (!!cover &&
-              !coverImage &&
-              (isRestrictedImage(cover) ||
-                cover.nsfwLevel === NsfwLevel.Blocked ||
-                cover.ingestion !== ImageIngestionStatus.Scanned))) && {
+            (!!cover && !coverImage)) && {
             cover: null,
           }),
           tags: tags.map(({ tag }) => ({
@@ -1055,12 +1051,7 @@ export const getArticleById = async ({
     return {
       ...article,
       // The legacy `cover` is the same image's key.
-      ...((coverWithheld ||
-        (!!article.coverImage &&
-          !coverImage &&
-          (isRestrictedImage(article.coverImage) ||
-            article.coverImage.nsfwLevel === NsfwLevel.Blocked ||
-            article.coverImage.ingestion !== ImageIngestionStatus.Scanned))) && {
+      ...((coverWithheld || (!!article.coverImage && !coverImage)) && {
         cover: null,
       }),
       nsfwLevel: article.nsfwLevel as NsfwLevel,

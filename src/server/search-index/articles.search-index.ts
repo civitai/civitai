@@ -109,7 +109,7 @@ export const transformData = async ({
         user: withoutUserImage(user),
         // The legacy `cover` is the same image's key. Null, not absent: an update merges into the
         // stored document.
-        ...((coverWithheld || (!!cover && cover.ingestion !== 'Scanned')) && { cover: null }),
+        ...((coverWithheld || (!!cover && !servable(cover))) && { cover: null }),
         // `content` is a searchable attribute and is stored as HTML, so tag and
         // attribute names were indexed as prose — a query for `iframe` could
         // match on markup. Regex-strip rather than a full HTML-to-text pass:
