@@ -123,9 +123,9 @@ export async function removalConfirmationImageId(id: number): Promise<number | n
 }
 
 /**
- * Confirms a held removal and runs it. The requester cannot confirm their own: the hold exists so a
- * second moderator agrees. The removal is recorded as the requester's, the confirmation as the
- * confirmer's.
+ * Confirms a held removal and runs it. Neither the requester nor a moderator whose removal joined the
+ * request may confirm: the hold exists so a moderator with no part in it agrees. The removal is
+ * recorded as the requester's, the confirmation as the confirmer's.
  */
 export async function confirmRemoval({
   id,
