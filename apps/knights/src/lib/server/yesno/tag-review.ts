@@ -86,9 +86,8 @@ export async function runTagReview(
     const from = walk.after ?? { imageId: 0, tagId: 0 };
     // The flagged rows come from the `TagsOnImageNew_needsReview_idx` partial index alone (its predicate copied exactly
     // in `flaggedSql`), materialized with no order or limit: joining Tag or Image inside that scan, or ordering it by
-    // the primary key, lets Postgres walk the whole table instead (over a minute on prod). The page of `pageSize` is
-    // cut from that set before any join, so the gate runs on one page, not on every flagged row ahead of the LIMIT.
-    // The same rule is noted on the moderator queue query.
+    // the primary key, lets Postgres walk the whole table instead (over a minute on prod). Cut the page from that set
+    // before any join. The same rule is noted on the moderator queue query.
     const flagged = await readWithoutJit(db, (trx) =>
       trx
         .with(
