@@ -56,6 +56,7 @@ vi.mock('~/hooks/useEngagedModelMembership', () => ({ useEngagedModelsPrefetch: 
 vi.mock('~/components/InView/InViewLoader', () => ({ InViewLoader: () => null }));
 vi.mock('~/components/Search/search.utils2', () => ({
   useInfiniteHitsTransformed: () => ({ hits: h.hits, showMore: () => undefined, isLastPage: true }),
+  useSearchFeedHits: () => undefined,
 }));
 vi.mock('react-instantsearch', () => ({
   useInstantSearch: () => ({ status: 'idle', uiState: {} }),

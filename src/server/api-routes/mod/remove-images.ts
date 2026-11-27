@@ -13,6 +13,7 @@ import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsin
 import { Limiter } from '~/server/utils/concurrency-helpers';
 import { ViolationType } from '~/server/common/enums';
 import { heldRemovalSummary, holdRemovals } from '~/server/services/image-removal-hold.service';
+import { trackLikenessRequests } from '~/server/services/moderator.service';
 
 const schema = z.object({
   imageIds: z.array(z.number()).optional(),
@@ -66,6 +67,11 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
 
     const tracker = new Tracker(req, res);
     const images = await handleBlockImages({ ids, userId, moderatorId });
+    if (violationType === ViolationType.LikenessRequest)
+      await trackLikenessRequests(
+        moderatorId ?? -1,
+        images.map((image) => image.id)
+      );
     await Limiter({ batchSize: 10000 }).process(images, async (images) => {
       await tracker.images(
         images.map((image) => ({

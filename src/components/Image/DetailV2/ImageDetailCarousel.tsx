@@ -2,6 +2,7 @@ import { useShowEventCosmetics } from '~/providers/BrowserSettingsProvider';
 import { useLocalStorage } from '@mantine/hooks';
 import { useState, useEffect, useRef, createContext, useContext } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { WithheldMedia } from '~/components/EdgeMedia/WithheldMedia';
 import { useOptionalCivitaiSessionContext } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 import { RetractedMedia } from '~/components/RetractedMedia/RetractedMedia';
 import { useRetractedMedia } from '~/components/RetractedMedia/retracted-media';
@@ -42,7 +43,8 @@ type ImageDetailCarouselProps = {
 type ImageProps = {
   id: number;
   nsfwLevel: number;
-  url: string;
+  /** Null when the server withholds the media (a block, to its owner). */
+  url: string | null;
   height: number | null;
   width: number | null;
   type: MediaType;
@@ -402,12 +404,14 @@ function ImageContent({
               className="max-h-full w-auto max-w-full"
               controls={active}
             />
+          ) : !image.url ? (
+            <WithheldMedia />
           ) : (
             <EdgeMedia
               // `src`, `name`, `type`, `anim` and `original`: the props that shape the request,
               // shared with the shell's preload of this image (see `image-detail-main-media`) so
               // the two cannot ask for different URLs.
-              {...imageDetailMediaProps(image)}
+              {...imageDetailMediaProps({ ...image, url: image.url })}
               alt={image.name ?? undefined}
               imageId={image.id}
               className="max-h-full w-auto max-w-full"

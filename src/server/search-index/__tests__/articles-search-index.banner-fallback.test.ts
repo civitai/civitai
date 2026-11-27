@@ -129,6 +129,23 @@ describe('articles search index', () => {
     expect(record).toHaveProperty('cover', null);
   });
 
+  it.each(['NotFound', 'Pending', 'Error'])(
+    '🔴 clears the legacy cover key of an article whose cover is %s',
+    async (ingestion) => {
+      const [record] = await recordsOf({
+        articles: [
+          article({
+            coverImage: { ...image(10, 1), ingestion },
+            bannerImage: null,
+            cover: 'key-10',
+          }),
+        ],
+        cosmetics: {},
+      });
+      expect(record).toHaveProperty('cover', null);
+    }
+  );
+
   it('keeps the legacy cover key of an article whose cover is shown (control)', async () => {
     const [record] = await recordsOf({
       articles: [article({ coverImage: image(10, 4), bannerImage: null, cover: 'key-10' })],

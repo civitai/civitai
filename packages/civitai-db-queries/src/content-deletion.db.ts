@@ -564,15 +564,48 @@ export const DEAL_FILE_IMAGE_USES = {
  */
 export const IMAGE_USES_WITHOUT_RELATION = { ...DEAL_FILE_IMAGE_USES };
 
-/** True in SQL when a deal file points at the image whose id is `id`. */
+/**
+ * True in SQL when the image whose id is `id` is a service review's copy of a deal file: an object
+ * the server made for one review, never reused anywhere else.
+ */
+export const reviewCopyImageSql = (id: RawBuilder<unknown> | ReturnType<typeof sql.ref>) =>
+  sql<boolean>`EXISTS (SELECT 1 FROM "ServiceDealReviewImage" ri WHERE ri."imageId" = ${id})`;
+
+/** The tables of `DEAL_FILE_IMAGE_USES`, whose `scanKey` names the copy's object. */
+const DEAL_FILE_SCAN_KEY_TABLES = [
+  ...new Set(Object.values(DEAL_FILE_IMAGE_USES).map(([table]) => table)),
+];
+
+/**
+ * True in SQL when a deal file points at the image whose id is `id`, or names its object as a
+ * `scanKey`: the key is recorded before the copy's Image row and the pointer only after it.
+ * 🔴 The key leg reads the partial `scanKey` indexes of migration
+ * `20271206120000_deal_file_copy_indexes`.
+ */
 export const dealFileImageSql = (id: RawBuilder<unknown> | ReturnType<typeof sql.ref>) =>
   sql<boolean>`(${sql.join(
-    Object.values(DEAL_FILE_IMAGE_USES).map(
-      ([table, column]) =>
-        sql`EXISTS (SELECT 1 FROM ${sql.table(table)} d WHERE d.${sql.id(column)} = ${id})`
-    ),
+    [
+      ...Object.values(DEAL_FILE_IMAGE_USES).map(
+        ([table, column]) =>
+          sql`EXISTS (SELECT 1 FROM ${sql.table(table)} d WHERE d.${sql.id(column)} = ${id})`
+      ),
+      sql`EXISTS (SELECT 1 FROM "Image" si WHERE si.id = ${id} AND (${sql.join(
+        DEAL_FILE_SCAN_KEY_TABLES.map(
+          (table) => sql`EXISTS (SELECT 1 FROM ${sql.table(table)} d WHERE d."scanKey" = si.url)`
+        ),
+        sql` OR `
+      )}))`,
+    ],
     sql` OR `
   )})`;
+
+/**
+ * True in SQL when the image whose id is `id` is a copy the server made of a deal file, for its
+ * scan (`dealFileImageSql`) or a service review (`reviewCopyImageSql`). No client names its key or
+ * attaches it anywhere.
+ */
+export const serverCopyImageSql = (id: RawBuilder<unknown> | ReturnType<typeof sql.ref>) =>
+  sql<boolean>`(${dealFileImageSql(id)} OR ${reviewCopyImageSql(id)})`;
 
 /**
  * The key a stored url names, lowercased; shop artwork columns hold whatever the client sent.

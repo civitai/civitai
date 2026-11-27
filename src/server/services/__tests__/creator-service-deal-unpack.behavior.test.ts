@@ -1,3 +1,5 @@
+import { assertNotDealFileImages } from '~/server/services/deal-file-image';
+import { deleteImagesIn } from '~/server/services/__tests__/deal-file-copy.fake';
 import { Prisma } from '@prisma/client';
 import { constants } from '~/server/common/constants';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
@@ -451,9 +453,7 @@ beforeEach(async () => {
     ]);
     return { id: row.id };
   });
-  images.deleteImages.mockImplementation(async (ids: number[]) =>
-    q(`DELETE FROM "Image" WHERE id = ANY($1::int[]) RETURNING id`, [ids])
-  );
+  images.deleteImages.mockImplementation(deleteImagesIn(holder.db));
   await holder.db.exec(`
     TRUNCATE "ServiceDealFilePurge", "ServiceDealReviewImage", "ServiceDealReview", "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering", "UserEngagement", "Image", "Report", "ImageReport", "CsamReport", "CsamQueueSetAside" RESTART IDENTITY;
     DELETE FROM "User";
@@ -1526,6 +1526,19 @@ describe('resuming', () => {
     expect((await entries(fileId))[0].imageId).toBe(1);
   });
 
+  it('never takes a posted image with the same key for the row a crash left', async () => {
+    const dealId = await accepted();
+    const fileId = await zipFinal(dealId, [{ name: 'a.png', data: IMAGE_A }]);
+    await q(
+      `INSERT INTO "ServiceDealFileEntry" ("fileId", "dealId", "entryIndex", "path", "size", "scanKey") VALUES ($1, 1, 0, 'a.png', 1, 'left-key')`,
+      [fileId]
+    );
+    await q(`INSERT INTO "Image" (url, "postId") VALUES ('left-key', 5), ('left-key', NULL)`);
+    expect(await unpack.unpackFinals()).toBe(1);
+    expect(images.createImage).not.toHaveBeenCalled();
+    expect((await entries(fileId))[0].imageId).toBe(2);
+  });
+
   it('does not submit an image that was already judged and whose copy is gone', async () => {
     const dealId = await accepted();
     const fileId = await zipFinal(dealId, [{ name: 'a.png', data: IMAGE_A }]);
@@ -1886,14 +1899,32 @@ describe('copies of scanned images', () => {
     const { fileId } = await settled();
     const hour = 60 * 60_000;
     const at = Date.now() + 1000 * hour;
-    expect(await unpack.countDanglingScanCopies({ now: at })).toEqual({ marked: 0, unmarked: 0 });
+    expect(await unpack.countDanglingScanCopies({ now: at })).toEqual({ settling: 0, dangling: 0 });
     await q(`DELETE FROM "Image" WHERE id = 1`);
     expect(await unpack.deleteEntryScanCopies()).toBe(0);
     expect((await entries(fileId))[0]).toMatchObject({ imageId: 1, scanKey: 'scan-key-1' });
     expect(await unpack.countDanglingScanCopies({ now: at + hour - 1 })).toBeNull();
     expect(await unpack.countDanglingScanCopies({ now: at + hour })).toEqual({
-      marked: 0,
-      unmarked: 1,
+      settling: 0,
+      dangling: 1,
+    });
+  });
+
+  it('counts a marked entry as dangling once its delete is past the settle window', async () => {
+    const { fileId } = await settled();
+    const at = Date.now() + 2000 * 60 * 60_000;
+    await q(`DELETE FROM "Image" WHERE id = 1`);
+    await q(`UPDATE "ServiceDealFileEntry" SET "copyDeleteStartedAt" = now() WHERE "fileId" = $1`, [
+      fileId,
+    ]);
+    expect(await unpack.countDanglingScanCopies({ now: at })).toEqual({ settling: 1, dangling: 0 });
+    await q(
+      `UPDATE "ServiceDealFileEntry" SET "copyDeleteStartedAt" = now() - interval '31 minutes' WHERE "fileId" = $1`,
+      [fileId]
+    );
+    expect(await unpack.countDanglingScanCopies({ now: at + 60 * 60_000 })).toEqual({
+      settling: 0,
+      dangling: 1,
     });
   });
 
@@ -1922,9 +1953,7 @@ describe('copies of scanned images', () => {
            SELECT $1, i, 'a.png', 1, i, 'Passed' FROM generate_series(1, 51) i`,
         [dealId]
       );
-      images.deleteImages.mockImplementation(async (ids: number[]) =>
-        q(`DELETE FROM "Image" WHERE id = ANY($1::int[]) AND url <> 'kept' RETURNING id`, [ids])
-      );
+      images.deleteImages.mockImplementation(deleteImagesIn(holder.db, `url <> 'kept'`));
     }
     const copies = async () =>
       (await q<{ imageId: number }>(`SELECT "imageId" FROM "ServiceDealFileEntry"`)).map(
@@ -2013,6 +2042,7 @@ describe('copies of scanned images', () => {
       expect(images.deleteImages).toHaveBeenCalledWith([1], {
         updatePosts: false,
         actor: { system: 'creator-service-deal-file' },
+        onDeleted: expect.any(Function),
       });
       expect(await q(`SELECT id FROM "Image" ORDER BY id`)).toEqual([{ id: 2 }, { id: 3 }]);
       const rows = await orphans();
@@ -2139,6 +2169,42 @@ describe('copies of scanned images', () => {
       expect(await files.purgeRemovedFiles()).toBe(1);
       expect(await q(`SELECT id FROM "Image"`)).toEqual([]);
       expect(await q(`SELECT id FROM "ServiceDealFile" WHERE id = $1`, [fileId])).toEqual([]);
+    });
+
+    const keptWhole = async (fileId: number) => {
+      expect(await q(`SELECT id FROM "ServiceDealFile" WHERE id = $1`, [fileId])).toHaveLength(1);
+      expect(
+        await q(`SELECT id FROM "ServiceDealFileEntry" WHERE "fileId" = $1`, [fileId])
+      ).toHaveLength(1);
+      const [{ id }] = await q<{ id: number }>(`SELECT id FROM "Image"`);
+      await expect(assertNotDealFileImages([id], 'used here')).rejects.toMatchObject({
+        code: 'FORBIDDEN',
+      });
+    };
+
+    it('keeps the file, its entry and its refused copy when the delete fails to commit', async () => {
+      const fileId = await overLevelFinal();
+      images.deleteImages.mockImplementationOnce(
+        async (
+          ids: number[],
+          options: { onDeleted: (db: never, rows: { id: number }[]) => Promise<void> }
+        ) =>
+          deleteImagesIn(holder.db)(ids, {
+            onDeleted: async (db, rows) => {
+              await options.onDeleted(db as never, rows);
+              throw new Error('commit failed');
+            },
+          })
+      );
+      expect(await files.purgeRemovedFiles()).toBe(0);
+      await keptWhole(fileId);
+    });
+
+    it('keeps the file, its entry and its refused copy when the delete fails', async () => {
+      const fileId = await overLevelFinal();
+      images.deleteImages.mockRejectedValueOnce(new Error('store down'));
+      expect(await files.purgeRemovedFiles()).toBe(0);
+      await keptWhole(fileId);
     });
 
     it.each([
@@ -2472,22 +2538,66 @@ describe('a Final rated outside the domain', () => {
         )
       )[0].copyDeleteStartedAt;
 
-    it('settles our own copy delete that stopped before its clear on the next run, and the finals clear again', async () => {
+    const stranded = () =>
+      loggingMock.logToAxiom.mock.calls.filter(
+        ([entry]) => (entry as { name?: string }).name === 'deal_copy_settle_stranded'
+      );
+
+    it('lets go of our own copy delete that stopped after it committed, and logs nothing', async () => {
       const { dealId, fileId } = await completedRatedFinal('result.zip');
-      expect(await finalsClear(dealId)).toBe(true);
-      images.deleteImages.mockImplementationOnce(async (ids: number[]) => {
-        await q(`DELETE FROM "Image" WHERE id = ANY($1::int[])`, [ids]);
+      images.deleteImages.mockImplementationOnce(async (ids: number[], options: never) => {
+        await deleteImagesIn(holder.db)(ids, options);
         throw new Error('stopped after the delete');
       });
+      loggingMock.logToAxiom.mockClear();
       expect(await unpack.deleteEntryScanCopies()).toBe(0);
-      expect(await marker(fileId)).not.toBeNull();
-      expect(await finalsClear(dealId)).toBe(false);
-      expect((await everyoneSees(dealId, fileId)).buyer).toEqual(refused);
+      expect((await entries(fileId))[0].imageId).toBeNull();
+      expect(await marker(fileId)).toBeNull();
+      expect(await finalsClear(dealId)).toBe(true);
+      expect(stranded()).toEqual([]);
+    });
 
+    it('keeps the copy, pointed and marked, when its delete is taken back, and a retry lets it go', async () => {
+      const { dealId, fileId } = await completedRatedFinal('result.zip');
+      images.deleteImages.mockImplementationOnce(async (ids: number[]) =>
+        deleteImagesIn(holder.db)(ids, {
+          onDeleted: async () => {
+            throw new Error('stopped before the commit');
+          },
+        })
+      );
+      expect(await unpack.deleteEntryScanCopies()).toBe(0);
+      expect((await entries(fileId))[0].imageId).not.toBeNull();
+      expect(await marker(fileId)).not.toBeNull();
+      expect(await q(`SELECT 1 FROM "Image"`)).toHaveLength(1);
+
+      expect(await unpack.deleteEntryScanCopies()).toBe(1);
+      expect((await entries(fileId))[0].imageId).toBeNull();
+      expect(await finalsClear(dealId)).toBe(true);
+    });
+
+    it('keeps a copy deleted elsewhere while marked and held pointed', async () => {
+      const { dealId, fileId } = await completedRatedFinal('result.zip');
+      images.deleteImages.mockImplementationOnce(async () => {
+        await q(`DELETE FROM "Image"`);
+        return [];
+      });
+      loggingMock.logToAxiom.mockClear();
+      expect(await unpack.deleteEntryScanCopies()).toBe(0);
+      expect((await entries(fileId))[0].imageId).not.toBeNull();
+      expect(await finalsClear(dealId)).toBe(false);
+      expect(stranded()).toHaveLength(1);
+      expect(JSON.stringify(stranded())).not.toContain('scan-key');
+      // Gone some other way: a retry finds nothing of its own to let go.
+      expect(await unpack.deleteEntryScanCopies()).toBe(0);
+      expect((await entries(fileId))[0].imageId).not.toBeNull();
+    });
+
+    it('lets go of a copy our own delete returned (control)', async () => {
+      const { dealId, fileId } = await completedRatedFinal('result.zip');
       expect(await unpack.deleteEntryScanCopies()).toBe(1);
       expect((await entries(fileId))[0]).toMatchObject({ imageId: null, scanKey: null });
       expect(await finalsClear(dealId)).toBe(true);
-      expect((await everyoneSees(dealId, fileId)).buyer).toEqual(served);
     });
 
     it('keeps a copy gone without our delete pointed, so the finals stay not clear', async () => {

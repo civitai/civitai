@@ -10,6 +10,7 @@ describe('removalWeight', () => {
     ['non-ai', 0.5],
     ['spam', 0.5],
     ['other', 0],
+    ['likenessRequest', 0],
   ])('weighs %s as %s', (reason, weight) => {
     expect(removalWeight(reason)).toBe(weight);
   });

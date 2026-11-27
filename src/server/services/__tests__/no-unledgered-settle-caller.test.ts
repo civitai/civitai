@@ -231,7 +231,12 @@ const CALLER_LEDGER: Site[] = [
 const CALLS_PER_OWNER: Record<string, number> = { cancelWorkflow: 1, pollWorkflow: 1 };
 
 /** The modules that BIND the export at all — the population the call scan reads from. */
-const IMPORTER_LEDGER = [ROUTER];
+const IMPORTER_LEDGER = [
+  ROUTER,
+  // Binds `settleReservedLegs` only, to settle a runner attempt from its row; it never calls
+  // `settleCustomComfySpend` (a runner submit writes no settle record).
+  'src/server/services/blocks/runner-reconcile.service.ts',
+];
 
 /**
  * The three method names that terminate a tRPC procedure.

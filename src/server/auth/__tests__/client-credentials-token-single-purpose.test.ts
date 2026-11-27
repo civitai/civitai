@@ -275,6 +275,7 @@ describe('the runner mint path of /api/v1/block-tokens', () => {
         : null,
     authorization: async (id) => (id === 'rra_x' ? authorization() : null),
     hasLiveAttempt: async () => false,
+    hasSpentAttempt: async () => false,
     capUsed: async () => 0,
     runsSince: async () => 0,
   });

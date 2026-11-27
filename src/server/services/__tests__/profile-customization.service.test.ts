@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { NsfwLevel } from '~/server/common/enums';
+import { dealCopyCheckFor } from '~/server/services/__tests__/deal-file-copy.fake';
 
 /**
  * The redesign's members-only page customisation: who may set it, what a visitor is shown, and
@@ -328,6 +329,22 @@ describe('setProfileBackground', () => {
     await setProfileBackground({ userId: OWNER, imageId: 70, domain: 'green' });
     expect(dbMock.dbWrite.userProfile.upsert).toHaveBeenCalledWith(
       expect.objectContaining({ update: { sfwBackgroundImageId: 70 } })
+    );
+  });
+
+  it("refuses the owner's own image when it is a service review's copy, and writes nothing", async () => {
+    const REVIEW_COPY = 71;
+    subscriptions = [subscription('gold')];
+    dbMock.dbRead.image.findUnique.mockResolvedValue({ userId: OWNER } as never);
+    dbMock.dbWrite.$queryRaw.mockImplementationOnce(dealCopyCheckFor(REVIEW_COPY));
+    await expect(setProfileBackground({ userId: OWNER, imageId: REVIEW_COPY })).rejects.toThrow(
+      /delivery file/
+    );
+    expect(dbMock.dbWrite.userProfile.upsert).not.toHaveBeenCalled();
+
+    await setProfileBackground({ userId: OWNER, imageId: 70 });
+    expect(dbMock.dbWrite.userProfile.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ update: { backgroundImageId: 70 } })
     );
   });
 

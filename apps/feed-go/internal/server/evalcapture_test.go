@@ -758,6 +758,65 @@ func TestEvalCaptureCorpusOnlyInfiniteSignsAsCredentialed(t *testing.T) {
 	}
 }
 
+// T4 never stores a corpus-only sample whose input holds a key that may name the API key's holder
+// (evalcorpus.MayNameViewer): the holder is signed in but unknown here, so Capture's `$self`
+// placeholder could not replace their own id, username or collection, and the value would be stored
+// as sent. Through the real recorder each is answered 202, writes no row, and is counted unresolved
+// with reason bearer-token; the control (the same sample, no such key) is written. The values are
+// synthetic and pairwise distinct.
+func TestEvalCaptureCorpusOnlyMayNameViewerNotRecorded(t *testing.T) {
+	for _, c := range []struct {
+		name, endpoint, input, path string
+		post                        func(*testing.T, *Server, ShadowRequest) int
+		named                       bool
+	}{
+		{"infinite userId", EndpointInfinite, `{"json":{"limit":20,"userId":48213}}`, "", postCorpusOnlyInfinite, true},
+		{"infinite username", EndpointInfinite, `{"json":{"limit":20,"username":"keyholder-synthetic"}}`, "", postCorpusOnlyInfinite, true},
+		{"infinite collectionId", EndpointInfinite, `{"json":{"limit":20,"collectionId":90617}}`, "", postCorpusOnlyInfinite, true},
+		{"infinite user", EndpointInfinite, `{"json":{"limit":20,"user":"keyholder-synthetic-2"}}`, "", postCorpusOnlyInfinite, true},
+		{"infinite excludedUserIds", EndpointInfinite, `{"json":{"limit":20,"excludedUserIds":[73501]}}`, "", postCorpusOnlyInfinite, true},
+		{"infinite, no viewer-naming key", EndpointInfinite, corpusOnlyInfiniteInput, "", postCorpusOnlyInfinite, false},
+		{"v1-models-id username pair", EndpointV1ModelsID, "limit=1&username=keyholder-synthetic", "/api/v1/models/5001", postCorpusOnly, true},
+		{"v1-models-id userId pair", EndpointV1ModelsID, "limit=1&userId=61842", "/api/v1/models/5001", postCorpusOnly, true},
+		{"v1-models-id, no viewer-naming pair", EndpointV1ModelsID, "limit=1", "/api/v1/models/5001", postCorpusOnly, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			reg := prometheus.NewRegistry()
+			samples, caseRows := &listSink{}, &listSink{}
+			s := infiniteCorpusOnlyServer(t, reg, evalcapture.New(evalcapture.Config{Samples: samples, Cases: caseRows}))
+			code := c.post(t, s, ShadowRequest{CorpusOnly: true, Credential: "header", SampleRate: 0.25,
+				Input: c.input, Path: c.path, Headers: map[string]string{"host": "site.example"}})
+			if code != http.StatusAccepted {
+				t.Fatalf("code %d, want 202", code)
+			}
+			count := func(name string, labels map[string]string) float64 {
+				labels["feed_endpoint"], labels["source"] = c.endpoint, "corpus-only"
+				v, _ := metricValue(t, reg, name, labels)
+				return v
+			}
+			written := count("feed_go_eval_capture_total", map[string]string{"outcome": "written"})
+			unresolved := count("feed_go_eval_capture_total", map[string]string{"outcome": "unresolved"})
+			refused := count("feed_go_eval_capture_total", map[string]string{"outcome": "refused"})
+			bearer := count("feed_go_eval_capture_unresolved_total", map[string]string{"reason": "bearer-token"})
+			if c.named {
+				if samples.len() != 0 || caseRows.len() != 0 {
+					t.Errorf("%d sample rows and %d case rows, want 0 and 0", samples.len(), caseRows.len())
+				}
+				if written != 0 || unresolved != 1 || bearer != 1 || refused != 0 {
+					t.Errorf("written %v unresolved %v (bearer-token %v) refused %v, want 0, 1 (1), 0", written, unresolved, bearer, refused)
+				}
+				return
+			}
+			if samples.len() != 1 || caseRows.len() != 1 {
+				t.Errorf("%d sample rows and %d case rows, want 1 and 1", samples.len(), caseRows.len())
+			}
+			if written != 1 || unresolved != 0 || bearer != 0 || refused != 0 {
+				t.Errorf("written %v unresolved %v (bearer-token %v) refused %v, want 1, 0 (0), 0", written, unresolved, bearer, refused)
+			}
+		})
+	}
+}
+
 // T4 with the capture off (or on an endpoint it does not capture) is accepted and discarded: nothing
 // recorded, computed, compared or counted.
 func TestEvalCaptureCorpusOnlyDiscarded(t *testing.T) {
@@ -817,11 +876,16 @@ func TestEvalCaptureSeeded(t *testing.T) {
 			}
 		}
 	}
-	if n := testutil.CollectAndCount(m.EvalCaptureUnresolved); n != 55 {
-		t.Errorf("feed_go_eval_capture_unresolved_total has %d series, want 55 ((4 + 3 + 4) * 5; corpus-only resolves no viewer)", n)
+	if n := testutil.CollectAndCount(m.EvalCaptureUnresolved); n != 57 {
+		t.Errorf("feed_go_eval_capture_unresolved_total has %d series, want 57 ((4 + 3 + 4) * 5 + 2; corpus-only: bearer-token only)", n)
+	}
+	for _, e := range []string{"v1-models-id", "infinite"} {
+		if v, found := metricValue(t, reg, "feed_go_eval_capture_unresolved_total", map[string]string{"feed_endpoint": e, "source": "corpus-only", "reason": "bearer-token"}); !found || v != 0 {
+			t.Errorf("eval_capture_unresolved{%s,corpus-only,bearer-token} = %v found=%v, want a 0 series", e, v, found)
+		}
 	}
 	if _, found := metricValue(t, reg, "feed_go_eval_capture_unresolved_total", map[string]string{"feed_endpoint": "v1-models-id", "source": "corpus-only", "reason": "other"}); found {
-		t.Error("corpus-only resolves no viewer, but an unresolved series exists for it")
+		t.Error("corpus-only resolves no viewer, so bearer-token is its only reason, but an other series exists for it")
 	}
 	if n := testutil.CollectAndCount(m.EvalCaptureRowsDropped); n != 2*7 {
 		t.Errorf("feed_go_eval_capture_rows_dropped_total has %d series, want 14", n)

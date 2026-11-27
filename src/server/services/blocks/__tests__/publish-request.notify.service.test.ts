@@ -30,7 +30,15 @@ vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOri
 
 const { mockNotify, db, s3, holder } = vi.hoisted(() => {
   const mockNotify = vi.fn(async (..._a: unknown[]) => undefined);
-  const holder: { zipBytes: Uint8Array } = { zipBytes: new Uint8Array() };
+  // `platformUpdate`: the `app_platform_updates` row a reject of a staff on-behalf submit
+  // withdraws (null = none). The REAL supersede (app-platform-update.record) reads and writes it
+  // through the primary below, the db client being the process boundary this file mocks.
+  const holder: {
+    zipBytes: Uint8Array;
+    platformUpdate: { id: string; slug: string; status: string; shipped?: boolean } | null;
+  } = { zipBytes: new Uint8Array(), platformUpdate: null };
+  const sqlText = (q: unknown): string =>
+    Array.isArray(q) ? q.join('?') : String((q as { sql?: unknown })?.sql ?? '');
   const makeDb = () => ({
     // `approveRequest`'s pre-flight probes the media-split table; no row reads as absent.
     $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => []),
@@ -82,7 +90,23 @@ const { mockNotify, db, s3, holder } = vi.hoisted(() => {
       updateMany: vi.fn(async (..._a: unknown[]) => ({ count: 0 })),
     },
   });
-  const db = { read: makeDb(), write: makeDb() };
+  // The platform-update record's read (`readRows`, a Prisma.sql object) and its supersede write
+  // (a tagged `$executeRaw`), against `holder.platformUpdate`. Every other raw read stays empty.
+  const executeRaw = vi.fn(async (...a: unknown[]): Promise<number> => {
+    const row = holder.platformUpdate;
+    if (!sqlText(a[0]).includes('UPDATE "app_platform_updates"') || !row) return 0;
+    // As the record's supersede: pending, conflicted, or merged and not yet shipped.
+    if (row.status === 'superseded' || (row.status === 'merged' && row.shipped)) return 0;
+    row.status = 'superseded';
+    return 1;
+  });
+  const db = { read: makeDb(), write: { ...makeDb(), $executeRaw: executeRaw } };
+  db.write.$queryRaw = vi.fn(
+    async (...a: unknown[]): Promise<unknown> =>
+      sqlText(a[0]).includes('"app_platform_updates"') && holder.platformUpdate
+        ? [{ ...holder.platformUpdate }]
+        : []
+  );
   // approveRequest's final step runs in a transaction that writes the request and the block.
   db.write.$transaction = vi.fn(async (fn: (tx: unknown) => Promise<unknown>) =>
     fn({
@@ -179,6 +203,11 @@ vi.mock('~/utils/bundle-s3', () => ({
   getBundleBucket: () => 'bundles',
   getBundleS3Client: () => s3,
 }));
+/** The supersede writes the real record made: `[staffUserId, updateId]` per UPDATE. */
+const supersedeWrites = () =>
+  db.write.$executeRaw.mock.calls
+    .filter((c) => (c[0] as string[]).join('?').includes('UPDATE "app_platform_updates"'))
+    .map((c) => c.slice(1, 3));
 
 const { approveRequest, rejectRequest } = await import(
   '~/server/services/blocks/publish-request.service'
@@ -223,6 +252,7 @@ beforeAll(async () => {
 beforeEach(() => {
   vi.clearAllMocks();
   mockNotify.mockResolvedValue(undefined);
+  holder.platformUpdate = null;
   // Re-seed the default happy-path resolutions cleared by clearAllMocks.
   db.write.appBlockPublishRequest.update.mockImplementation(
     async (a: { data?: unknown }) => a?.data ?? {}
@@ -461,14 +491,407 @@ describe('rejectRequest — submitter notification (post-commit, best-effort)', 
   });
 });
 
+/**
+ * A STAFF SUBMIT ON THE OWNER'S BEHALF (`fileSummary.onBehalf`): the request's submitter is the
+ * moderator, so the outcome also goes to the app's OWNER, under its own type naming the staff
+ * member. The moderator still gets the ordinary submitter notification.
+ */
+describe('approve / reject of a staff on-behalf submit — the owner is notified too', () => {
+  const MODERATOR = 8001;
+  const OWNER = 7101;
+  const ON_BEHALF_SUMMARY = {
+    files: [],
+    added: [],
+    removed: [],
+    changed: [],
+    onBehalf: {
+      platformUpdateId: 'apu_01JABCDEFGHJKMNPQRSTVWXYZ0',
+      staffUserId: MODERATOR,
+      staffUsername: 'mod-ana',
+      ownerUserId: OWNER,
+      ownerUsername: 'owner-olga',
+    },
+  };
+  const ORDINARY_SUMMARY = { files: [], added: [], removed: [], changed: [] };
+  const calls = () => mockNotify.mock.calls.map((c) => c[0] as Record<string, unknown>);
+
+  function rejectRow(fileSummary: unknown, submittedByUserId = MODERATOR) {
+    return {
+      id: 'req_rej_1',
+      status: 'pending',
+      deployState: null,
+      slug: 'cool-app',
+      version: '1.2.0',
+      manifest: { name: 'Cool App' },
+      submittedByUserId,
+      fileSummary,
+    };
+  }
+
+  it('approve: the moderator gets app-block-approved, the owner app-platform-update-approved', async () => {
+    db.read.appBlockPublishRequest.findUnique.mockResolvedValueOnce({
+      ...pendingApproveRow(),
+      submittedByUserId: MODERATOR,
+      fileSummary: ON_BEHALF_SUMMARY,
+    });
+    db.read.appBlock.findFirst.mockResolvedValueOnce(existingAppBlock());
+
+    await approveRequest({ publishRequestId: 'req_appr_1', reviewerUserId: 9 });
+
+    expect(calls()).toEqual([
+      expect.objectContaining({
+        type: 'app-block-approved',
+        userId: MODERATOR,
+        key: 'app-block-approved:req_appr_1',
+      }),
+      {
+        type: 'app-platform-update-approved',
+        userId: OWNER,
+        key: 'app-platform-update-approved:req_appr_1',
+        attribution: { kind: 'moderator', requestId: 'req_appr_1' },
+        details: {
+          slug: 'cool-app',
+          name: 'Cool App',
+          version: '1.2.0',
+          approvalNote: null,
+          hasPage: false,
+          mature: false,
+          updateId: 'apu_01JABCDEFGHJKMNPQRSTVWXYZ0',
+          byUsername: 'mod-ana',
+        },
+      },
+    ]);
+  });
+
+  it('reject: the moderator gets app-block-rejected, the owner app-platform-update-rejected with the reason', async () => {
+    db.read.appBlockPublishRequest.findUnique.mockResolvedValueOnce(rejectRow(ON_BEHALF_SUMMARY));
+    // The update the request carried is still pending, so the reject withdraws it.
+    holder.platformUpdate = {
+      id: 'apu_01JABCDEFGHJKMNPQRSTVWXYZ0',
+      slug: 'cool-app',
+      status: 'pending',
+    };
+
+    await rejectRequest({
+      publishRequestId: 'req_rej_1',
+      reviewerUserId: 9,
+      rejectionReason: '  Breaks the gallery layout  ',
+    });
+
+    expect(calls()).toEqual([
+      expect.objectContaining({
+        type: 'app-block-rejected',
+        userId: MODERATOR,
+        key: 'app-block-rejected:req_rej_1',
+      }),
+      {
+        type: 'app-platform-update-rejected',
+        userId: OWNER,
+        key: 'app-platform-update-rejected:req_rej_1',
+        attribution: { kind: 'moderator', requestId: 'req_rej_1' },
+        details: {
+          slug: 'cool-app',
+          name: 'Cool App',
+          version: '1.2.0',
+          reason: 'Breaks the gallery layout',
+          updateId: 'apu_01JABCDEFGHJKMNPQRSTVWXYZ0',
+          byUsername: 'mod-ana',
+          updateWithdrawn: true,
+        },
+      },
+    ]);
+  });
+
+  it('the owner is told even when the submitter’s notification fails', async () => {
+    db.read.appBlockPublishRequest.findUnique.mockResolvedValueOnce(rejectRow(ON_BEHALF_SUMMARY));
+    mockNotify.mockRejectedValueOnce(new Error('notifications down'));
+
+    await expect(
+      rejectRequest({
+        publishRequestId: 'req_rej_1',
+        reviewerUserId: 9,
+        rejectionReason: 'Breaks the gallery layout',
+      })
+    ).resolves.toBeUndefined();
+    expect(calls().map((c) => [c.type, c.userId])).toEqual([
+      ['app-block-rejected', MODERATOR],
+      ['app-platform-update-rejected', OWNER],
+    ]);
+  });
+
+  it('CONTROL: an ordinary request notifies ONLY its submitter (approve and reject)', async () => {
+    db.read.appBlockPublishRequest.findUnique.mockResolvedValueOnce({
+      ...pendingApproveRow(),
+      fileSummary: ORDINARY_SUMMARY,
+    });
+    db.read.appBlock.findFirst.mockResolvedValueOnce(existingAppBlock());
+    await approveRequest({ publishRequestId: 'req_appr_1', reviewerUserId: 9 });
+    expect(calls().map((c) => [c.type, c.userId])).toEqual([['app-block-approved', SUBMITTER]]);
+
+    mockNotify.mockClear();
+    db.read.appBlockPublishRequest.findUnique.mockResolvedValueOnce(
+      rejectRow(ORDINARY_SUMMARY, SUBMITTER)
+    );
+    await rejectRequest({
+      publishRequestId: 'req_rej_1',
+      reviewerUserId: 9,
+      rejectionReason: 'Breaks the gallery layout',
+    });
+    expect(calls().map((c) => [c.type, c.userId])).toEqual([['app-block-rejected', SUBMITTER]]);
+  });
+
+  it('a reset-to-pending clone of an on-behalf request notifies like an owner request and withdraws nothing', async () => {
+    // What `resetOnsiteListingToPending` writes: the owner as submitter, `onBehalf` replaced by
+    // `stagedFromOnBehalf`.
+    const CLONE_SUMMARY = {
+      ...ORDINARY_SUMMARY,
+      stagedFromOnBehalf: { platformUpdateId: 'apu_01JABCDEFGHJKMNPQRSTVWXYZ0' },
+    };
+    holder.platformUpdate = {
+      id: 'apu_01JABCDEFGHJKMNPQRSTVWXYZ0',
+      slug: 'cool-app',
+      status: 'pending',
+    };
+    db.read.appBlockPublishRequest.findUnique.mockResolvedValueOnce({
+      ...pendingApproveRow(),
+      submittedByUserId: OWNER,
+      fileSummary: CLONE_SUMMARY,
+    });
+    db.read.appBlock.findFirst.mockResolvedValueOnce(existingAppBlock());
+    await approveRequest({ publishRequestId: 'req_appr_1', reviewerUserId: 9 });
+    expect(calls().map((c) => [c.type, c.userId])).toEqual([['app-block-approved', OWNER]]);
+
+    mockNotify.mockClear();
+    db.read.appBlockPublishRequest.findUnique.mockResolvedValueOnce(
+      rejectRow(CLONE_SUMMARY, OWNER)
+    );
+    await rejectRequest({
+      publishRequestId: 'req_rej_1',
+      reviewerUserId: 9,
+      rejectionReason: 'Breaks the gallery layout',
+    });
+    expect(calls().map((c) => [c.type, c.userId])).toEqual([['app-block-rejected', OWNER]]);
+    expect(supersedeWrites()).toEqual([]);
+    expect(holder.platformUpdate?.status).toBe('pending');
+  });
+
+  describe('after an ownership transfer, only the CURRENT owner is told (PR #10605)', () => {
+    const NEW_OWNER = 7202;
+    /** The app as it is now: the block's owner moved from OWNER to `userId`. */
+    const transferredTo = (userId: number) =>
+      db.read.appBlock.findFirst.mockResolvedValue({
+        ...existingAppBlock(),
+        app: { ...existingAppBlock().app, userId },
+      });
+
+    it('approve: the owner outcome goes to the new owner, never the recorded one', async () => {
+      transferredTo(NEW_OWNER);
+      db.read.appBlockPublishRequest.findUnique.mockResolvedValueOnce({
+        ...pendingApproveRow(),
+        submittedByUserId: MODERATOR,
+        fileSummary: ON_BEHALF_SUMMARY,
+      });
+      await approveRequest({ publishRequestId: 'req_appr_1', reviewerUserId: 9 });
+      expect(calls().map((c) => [c.type, c.userId])).toEqual([
+        ['app-block-approved', MODERATOR],
+        ['app-platform-update-approved', NEW_OWNER],
+      ]);
+    });
+
+    it('reject: the owner outcome goes to the new owner, never the recorded one', async () => {
+      transferredTo(NEW_OWNER);
+      db.read.appBlockPublishRequest.findUnique.mockResolvedValueOnce(rejectRow(ON_BEHALF_SUMMARY));
+      await rejectRequest({
+        publishRequestId: 'req_rej_1',
+        reviewerUserId: 9,
+        rejectionReason: 'Breaks the gallery layout',
+      });
+      expect(calls().map((c) => [c.type, c.userId])).toEqual([
+        ['app-block-rejected', MODERATOR],
+        ['app-platform-update-rejected', NEW_OWNER],
+      ]);
+    });
+
+    it('a transfer to the submitting moderator sends no second copy', async () => {
+      transferredTo(MODERATOR);
+      db.read.appBlockPublishRequest.findUnique.mockResolvedValueOnce(rejectRow(ON_BEHALF_SUMMARY));
+      await rejectRequest({
+        publishRequestId: 'req_rej_1',
+        reviewerUserId: 9,
+        rejectionReason: 'Breaks the gallery layout',
+      });
+      expect(calls().map((c) => [c.type, c.userId])).toEqual([['app-block-rejected', MODERATOR]]);
+    });
+
+    it('the current owner unreadable: the recorded owner is told, and the reject stands', async () => {
+      db.read.appBlock.findFirst.mockRejectedValue(new Error('replica down'));
+      db.read.appBlockPublishRequest.findUnique.mockResolvedValueOnce(rejectRow(ON_BEHALF_SUMMARY));
+      await expect(
+        rejectRequest({
+          publishRequestId: 'req_rej_1',
+          reviewerUserId: 9,
+          rejectionReason: 'Breaks the gallery layout',
+        })
+      ).resolves.toBeUndefined();
+      expect(calls().map((c) => [c.type, c.userId])).toEqual([
+        ['app-block-rejected', MODERATOR],
+        ['app-platform-update-rejected', OWNER],
+      ]);
+    });
+
+    afterEach(() => {
+      db.read.appBlock.findFirst.mockReset();
+      db.read.appBlock.findFirst.mockResolvedValue(null);
+    });
+  });
+
+  it('an on-behalf record naming the submitter themselves sends no second copy', async () => {
+    db.read.appBlockPublishRequest.findUnique.mockResolvedValueOnce(
+      rejectRow(
+        {
+          ...ON_BEHALF_SUMMARY,
+          onBehalf: { ...ON_BEHALF_SUMMARY.onBehalf, ownerUserId: MODERATOR },
+        },
+        MODERATOR
+      )
+    );
+    await rejectRequest({
+      publishRequestId: 'req_rej_1',
+      reviewerUserId: 9,
+      rejectionReason: 'Breaks the gallery layout',
+    });
+    expect(calls().map((c) => [c.type, c.userId])).toEqual([['app-block-rejected', MODERATOR]]);
+  });
+});
+
+/**
+ * Decided in PR #10605 ("Reject withdraws it"): rejecting a staff on-behalf submit also
+ * withdraws the platform update it carried (`superseded`, by the rejecting moderator), through
+ * the platform-update record's own supersede, and the owner is told. An approve leaves the
+ * update alone; an ordinary reject touches no update. The supersede is the REAL one
+ * (`app-platform-update.record`), observed at the db client: the row it reads and the UPDATE it
+ * writes.
+ */
+describe('reject of a staff on-behalf submit withdraws its platform update', () => {
+  const MODERATOR = 8001;
+  const OWNER = 7101;
+  const UPDATE_ID = 'apu_01JABCDEFGHJKMNPQRSTVWXYZ0';
+  const ON_BEHALF_SUMMARY = {
+    files: [],
+    onBehalf: {
+      platformUpdateId: UPDATE_ID,
+      staffUserId: MODERATOR,
+      staffUsername: 'mod-ana',
+      ownerUserId: OWNER,
+      ownerUsername: 'owner-olga',
+    },
+  };
+  const row = (fileSummary: unknown, submittedByUserId = MODERATOR) => ({
+    id: 'req_rej_1',
+    status: 'pending',
+    deployState: null,
+    slug: 'cool-app',
+    version: '1.2.0',
+    manifest: { name: 'Cool App' },
+    submittedByUserId,
+    fileSummary,
+  });
+  const ownerCall = () =>
+    mockNotify.mock.calls
+      .map((c) => c[0] as { type: string; details: Record<string, unknown> })
+      .find((c) => c.type === 'app-platform-update-rejected');
+  /** The invocation order of the first supersede UPDATE the record wrote. */
+  const supersedeOrder = () => {
+    const i = db.write.$executeRaw.mock.calls.findIndex((c) =>
+      (c[0] as string[]).join('?').includes('UPDATE "app_platform_updates"')
+    );
+    return db.write.$executeRaw.mock.invocationCallOrder[i]!;
+  };
+
+  beforeEach(() => {
+    holder.platformUpdate = { id: UPDATE_ID, slug: 'cool-app', status: 'pending' };
+  });
+
+  it('supersedes the update as the rejecting moderator, after the reject, and tells the owner', async () => {
+    db.read.appBlockPublishRequest.findUnique.mockResolvedValueOnce(row(ON_BEHALF_SUMMARY));
+    await rejectRequest({
+      publishRequestId: 'req_rej_1',
+      reviewerUserId: 9,
+      rejectionReason: 'Breaks the gallery layout',
+    });
+    // One supersede, resolved by the rejecting moderator (9), of the update the request carried.
+    expect(supersedeWrites()).toEqual([[9, UPDATE_ID]]);
+    expect(holder.platformUpdate?.status).toBe('superseded');
+    // After the request is rejected, before the owner hears about it.
+    expect(db.write.appBlockPublishRequest.update.mock.invocationCallOrder[0]).toBeLessThan(
+      supersedeOrder()
+    );
+    const ownerIdx = mockNotify.mock.calls.findIndex(
+      (c) => (c[0] as { type: string }).type === 'app-platform-update-rejected'
+    );
+    expect(supersedeOrder()).toBeLessThan(mockNotify.mock.invocationCallOrder[ownerIdx]!);
+    expect(ownerCall()?.details).toMatchObject({
+      updateId: UPDATE_ID,
+      reason: 'Breaks the gallery layout',
+      updateWithdrawn: true,
+    });
+  });
+
+  it('an update that cannot be withdrawn (already shipped) never fails the reject, and the owner is not told it was', async () => {
+    db.read.appBlockPublishRequest.findUnique.mockResolvedValueOnce(row(ON_BEHALF_SUMMARY));
+    // Shipped in an approved version already: the record's supersede refuses (CONFLICT).
+    holder.platformUpdate = { id: UPDATE_ID, slug: 'cool-app', status: 'merged', shipped: true };
+    await expect(
+      rejectRequest({
+        publishRequestId: 'req_rej_1',
+        reviewerUserId: 9,
+        rejectionReason: 'Breaks the gallery layout',
+      })
+    ).resolves.toBeUndefined();
+    expect(db.write.appBlockPublishRequest.update).toHaveBeenCalledTimes(1);
+    expect(ownerCall()).toBeDefined();
+    expect(ownerCall()!.details).not.toHaveProperty('updateWithdrawn');
+    expect(holder.platformUpdate?.status).toBe('merged');
+  });
+
+  it('CONTROL: an approve of an on-behalf submit does NOT supersede the update', async () => {
+    db.read.appBlockPublishRequest.findUnique.mockResolvedValueOnce({
+      ...pendingApproveRow(),
+      submittedByUserId: MODERATOR,
+      fileSummary: ON_BEHALF_SUMMARY,
+    });
+    db.read.appBlock.findFirst.mockResolvedValueOnce(existingAppBlock());
+    await approveRequest({ publishRequestId: 'req_appr_1', reviewerUserId: 9 });
+    // Positive control: the approve did run to its notifications.
+    expect(mockNotify).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'app-platform-update-approved', userId: OWNER })
+    );
+    expect(supersedeWrites()).toEqual([]);
+    expect(holder.platformUpdate?.status).toBe('pending');
+  });
+
+  it('CONTROL: an ordinary (non-on-behalf) reject touches no update', async () => {
+    db.read.appBlockPublishRequest.findUnique.mockResolvedValueOnce(row({ files: [] }, SUBMITTER));
+    await rejectRequest({
+      publishRequestId: 'req_rej_1',
+      reviewerUserId: 9,
+      rejectionReason: 'Breaks the gallery layout',
+    });
+    expect(mockNotify).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'app-block-rejected', userId: SUBMITTER })
+    );
+    expect(supersedeWrites()).toEqual([]);
+    expect(holder.platformUpdate?.status).toBe('pending');
+  });
+});
+
 // ---------------------------------------------------------------------------
 // STAFF PLATFORM UPDATES at approve (`platform-update-bundle-check.ts`), through this file's
 // approve harness: the approve re-checks the bytes it approves and marks shipped, by this request,
 // exactly the unshipped updates those bytes contain.
 //
-// 🔴 THE REGRESSION: at origin/main nothing marks an update shipped, so with the submit check
-// every later submit of the app would be checked for it forever, and an owner's own later edit to
-// the same lines would be refused.
+// Without the approve marking updates shipped, every later submit of the app is checked for the
+// update forever, and an owner's own later edit to the same lines is refused.
 // ---------------------------------------------------------------------------
 
 const forgejo = await import('~/server/services/blocks/forgejo.service');
@@ -483,6 +906,9 @@ describe('approveRequest — staff platform updates', () => {
   const trees = new Map<string, Map<string, string>>();
   const blobs = new Map<string, Buffer>();
   let savedZip: Uint8Array = holder.zipBytes;
+  // The file's own raw-SQL implementations (the platform-update record harness), put back after.
+  const savedQueryRaw = db.write.$queryRaw.getMockImplementation();
+  const savedExecuteRaw = db.write.$executeRaw.getMockImplementation();
 
   const row = (id: string, commitSha: string, path: string, operation = 'update') => ({
     id,
@@ -563,8 +989,8 @@ describe('approveRequest — staff platform updates', () => {
     puFlag.on = false;
     vi.mocked(forgejo.listRepoTreeAtRef).mockImplementation(async () => new Map());
     vi.mocked(forgejo.getBlobContent).mockImplementation(async () => Buffer.from(''));
-    db.write.$queryRaw.mockImplementation(async () => []);
-    db.write.$executeRaw.mockImplementation(async () => 0);
+    if (savedQueryRaw) db.write.$queryRaw.mockImplementation(savedQueryRaw);
+    if (savedExecuteRaw) db.write.$executeRaw.mockImplementation(savedExecuteRaw);
   });
 
   it('🔴 marks shipped, by this request, only the updates the approved bundle contains', async () => {

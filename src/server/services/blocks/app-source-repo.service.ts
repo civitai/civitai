@@ -44,6 +44,10 @@ import {
 } from '~/server/services/blocks/app-source-repo.plan';
 import { isMissingTableError } from '~/server/services/blocks/app-access.service';
 import { FORGEJO_SOURCE_ORG } from '~/server/services/blocks/forgejo-orgs';
+import {
+  latestApprovedBuild,
+  latestApprovedCommitSha,
+} from '~/server/services/blocks/latest-approved-build';
 
 export type SourceRepoOrigin = 'fork' | 'assistant' | 'backfill';
 
@@ -740,17 +744,13 @@ export async function listBackfillCandidates(): Promise<BackfillCandidate[]> {
     parentSlug: string | null;
   }>;
   for (const fork of forks) {
-    const approved = await dbRead.appBlockPublishRequest.findFirst({
-      where: { appBlockId: fork.id, status: 'approved', forgejoCommitSha: { not: null } },
-      orderBy: [{ reviewedAt: 'desc' }, { submittedAt: 'desc' }],
-      select: { forgejoCommitSha: true, version: true },
-    });
-    if (!approved?.forgejoCommitSha) continue;
+    const approved = await latestApprovedBuild(fork.id);
+    if (!approved) continue;
     out.push({
       slug: fork.slug,
       ownerUserId: fork.ownerUserId,
       kind: 'approved-fork',
-      seedCommitSha: approved.forgejoCommitSha,
+      seedCommitSha: approved.commitSha,
       seedRepoSlug: fork.slug,
       lineage:
         fork.parentSlug && fork.parentAppBlockId
@@ -805,16 +805,6 @@ export async function listBackfillCandidates(): Promise<BackfillCandidate[]> {
  */
 export async function sourceRepoGoverningBlockId(row: SourceRepoRow): Promise<string | null> {
   return (await governingBlock(row))?.id ?? null;
-}
-
-/** The build-repo commit of the app block's latest APPROVED publish request, or `null`. */
-export async function latestApprovedCommitSha(appBlockId: string): Promise<string | null> {
-  const approved = await dbRead.appBlockPublishRequest.findFirst({
-    where: { appBlockId, status: 'approved', forgejoCommitSha: { not: null } },
-    orderBy: [{ reviewedAt: 'desc' }, { submittedAt: 'desc' }],
-    select: { forgejoCommitSha: true },
-  });
-  return approved?.forgejoCommitSha ?? null;
 }
 
 export type SeedFromBuildRepoResult = EnsureSourceRepoResult | { kind: 'no-approved-version' };

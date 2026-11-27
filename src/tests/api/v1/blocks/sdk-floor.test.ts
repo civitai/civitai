@@ -32,7 +32,6 @@ describe('GET /api/v1/blocks/sdk-floor', () => {
   it('publishes the minimum of @civitai/sdk and @civitai/blocks-react', () => {
     const { statusCode, payload, headers } = call('GET');
     expect(statusCode).toBe(200);
-    // Exactly `{ packages: [{ name, minimum }] }`: no other key at either level.
     expect(Object.keys(payload as object)).toEqual(['packages']);
     const packages = (payload as { packages: Record<string, unknown>[] }).packages;
     for (const p of packages) {

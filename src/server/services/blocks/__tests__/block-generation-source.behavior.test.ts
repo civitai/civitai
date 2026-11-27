@@ -1,3 +1,4 @@
+import { serverCopyTablesSql } from '@civitai/db-queries/test/image-uses';
 import { PGlite } from '@electric-sql/pglite';
 import sharp from 'sharp';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -206,6 +207,7 @@ beforeAll(async () => {
   await holder.db.exec(`
     CREATE TABLE "Post" (id int PRIMARY KEY, "publishedAt" timestamp(3),
       availability text NOT NULL DEFAULT 'Public', "tosViolation" boolean NOT NULL DEFAULT false);
+    ${serverCopyTablesSql};
     CREATE TABLE "Image" (
       id int PRIMARY KEY,
       "modelRestricted" boolean NOT NULL DEFAULT false,

@@ -1,3 +1,4 @@
+import { serverCopyTablesSql } from '@civitai/db-queries/test/image-uses';
 import { PGlite } from '@electric-sql/pglite';
 import { TRPCError } from '@trpc/server';
 import { readFileSync } from 'fs';
@@ -80,12 +81,13 @@ beforeAll(async () => {
     );
     CREATE TABLE "ItemDefinition" ("id" integer PRIMARY KEY, "imageUrl" text);
     CREATE TABLE "ImageCdnShopTakedown" (url text, "shopItemId" integer, PRIMARY KEY (url, "shopItemId"));
+    ${serverCopyTablesSql};
   `);
 });
 
 beforeEach(async () => {
   await holder.db.exec(
-    `TRUNCATE "Image", "Cosmetic", "CosmeticShopItem", "ItemDefinition", "ImageCdnShopTakedown"`
+    `TRUNCATE "Image", "Cosmetic", "CosmeticShopItem", "ItemDefinition", "ImageCdnShopTakedown", "ServiceDealReviewImage", "ServiceDealFileEntry", "ServiceDealFile"`
   );
   await holder.db.exec(`
     INSERT INTO "Image" ("userId", url, ingestion) VALUES
@@ -370,5 +372,69 @@ describe('assertClientImageUrlsUsable and shop artwork', () => {
     } finally {
       await holder.db.exec(`RESET enable_seqscan`);
     }
+  });
+});
+
+describe("a service review copy's key", () => {
+  const COPY_KEY = '0a0b0c0d-0000-4000-8000-00000000000e';
+  const MODERATOR = 9;
+  const usable = (url: string, userId: number) =>
+    assertClientImageUrlsUsable({ urls: [url], userId }).then(
+      () => 'accepted',
+      (e: unknown) => {
+        if (e instanceof TRPCError && e.code === 'BAD_REQUEST') return 'refused';
+        throw e;
+      }
+    );
+
+  const givenCopy = (ownerId: number) =>
+    holder.db.exec(`
+      INSERT INTO "Image" ("userId", url) VALUES (${ownerId}, '${COPY_KEY}');
+      INSERT INTO "ServiceDealReviewImage" ("reviewId", "imageId")
+        SELECT 1, id FROM "Image" WHERE url = '${COPY_KEY}';
+    `);
+
+  it('is refused as a new image to its own buyer', async () => {
+    await givenCopy(CALLER);
+    expect(await usable(COPY_KEY, CALLER)).toBe('refused');
+    expect(await usable(`https://cdn.example/x/${COPY_KEY}/original=true`, CALLER)).toBe('refused');
+  });
+
+  it('is refused to a moderator whose own row it is', async () => {
+    await givenCopy(MODERATOR);
+    expect(await usable(COPY_KEY, MODERATOR)).toBe('refused');
+  });
+
+  it("leaves the buyer's ordinary own upload usable (control)", async () => {
+    await givenCopy(CALLER);
+    expect(await usable(OWN_KEY, CALLER)).toBe('accepted');
+  });
+});
+
+describe("a deal file's scan copy key", () => {
+  const COPY_KEY = '33333333-3333-4333-8333-333333333333';
+  const usable = (url: string) =>
+    assertClientImageUrlsUsable({ urls: [url], userId: CALLER }).then(
+      () => 'accepted',
+      (e: unknown) => {
+        if (e instanceof TRPCError && e.code === 'BAD_REQUEST') return 'refused';
+        throw e;
+      }
+    );
+  const givenCopy = (pointed: boolean) =>
+    holder.db.exec(`
+      INSERT INTO "Image" ("userId", url) VALUES (${CALLER}, '${COPY_KEY}');
+      INSERT INTO "ServiceDealFile" ("imageId", "scanKey")
+        SELECT ${pointed ? 'id' : 'NULL'}, url FROM "Image" WHERE url = '${COPY_KEY}';
+    `);
+
+  it.each([true, false])('is refused to its own seller (pointer written: %s)', async (pointed) => {
+    await givenCopy(pointed);
+    expect(await usable(COPY_KEY)).toBe('refused');
+  });
+
+  it("leaves the seller's ordinary own upload usable (control)", async () => {
+    await givenCopy(true);
+    expect(await usable(OWN_KEY)).toBe('accepted');
   });
 });

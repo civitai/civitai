@@ -28,6 +28,7 @@ import {
   keysInTextWithin,
   keysInWithin,
   MAX_KEYS,
+  serverCopySql,
 } from '~/server/services/image-url-ownership';
 import {
   appUsesScannedSourceRows,
@@ -82,6 +83,7 @@ type InputImageRow = {
   url: string;
   userId: number;
   visible: boolean;
+  /** Blocked, a violation, or a deal file's or review's copy: refused whoever owns it. */
   blocked: boolean;
   scanComplete: boolean;
   /** Not scanned yet, in a state the scan still moves on from. */
@@ -147,7 +149,8 @@ async function assertKeysUsable({
     rows.push(
       ...(await dbWrite.$queryRaw<InputImageRow[]>`
         SELECT i.url, i."userId",
-          (i."blockedFor" IS NOT NULL OR i."tosViolation" OR p."tosViolation" IS TRUE) AS blocked,
+          (i."blockedFor" IS NOT NULL OR i."tosViolation" OR p."tosViolation" IS TRUE
+            OR ${serverCopySql('i')}) AS blocked,
           (i.ingestion = 'Scanned' AND i."blockedFor" IS NULL AND i."needsReview" IS NULL
             AND NOT i."tosViolation" AND p."publishedAt" <= now()
             AND p.availability IN ('Public', 'Unsearchable') AND NOT p."tosViolation") IS TRUE AS visible,

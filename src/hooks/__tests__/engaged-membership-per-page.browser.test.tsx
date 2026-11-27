@@ -149,6 +149,7 @@ vi.mock('~/components/Search/search.utils2', () => ({
     showMore: () => undefined,
     isLastPage: true,
   }),
+  useSearchFeedHits: () => undefined,
 }));
 vi.mock('react-instantsearch', () => ({
   useInstantSearch: () => ({ status: 'idle', uiState: {} }),

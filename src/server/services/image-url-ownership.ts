@@ -1,10 +1,12 @@
-import { storedKeySql } from '@civitai/db-queries/content-deletion';
+import { serverCopyImageSql, storedKeySql } from '@civitai/db-queries/content-deletion';
 import { Prisma } from '@prisma/client';
+import { sql } from 'kysely';
 import { TRPCError } from '@trpc/server';
 import type { NextApiResponse } from 'next';
 import { clickhouse } from '~/server/clickhouse/client';
 import { escapeClickhouseString } from '~/server/clickhouse/escape';
 import { dbWrite } from '~/server/db/client';
+import { toPrismaSql } from '~/server/db/prisma-sql-kysely';
 import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
 import { registerCounterWithLabels } from '~/server/prom/client';
@@ -179,6 +181,10 @@ export function keysInTextWithin(text: string, budget?: DecodeBudget): string[] 
 /** The key a stored shop artwork value names, normalised as `storedUrlsFor` normalises a url. */
 export const keyIn = (column: string) => Prisma.raw(storedKeySql(column));
 
+/** True in SQL when the "Image" row aliased `image` is a deal file's or a review's copy (`serverCopyImageSql`). */
+export const serverCopySql = (image: string) =>
+  toPrismaSql(serverCopyImageSql(sql.ref(`${image}.id`)));
+
 /** Cosmetics outside the shop (event badges and the like) hold no artwork a buyer paid for. */
 const soldInShop = Prisma.sql`EXISTS (SELECT 1 FROM "CosmeticShopItem" s WHERE s."cosmeticId" = "Cosmetic".id)`;
 
@@ -233,7 +239,8 @@ export async function assertClientImageUrlsUsable({
   if (keys.length > MAX_KEYS) throw imageUrlUnavailableError();
   if (!shopArtwork) {
     const owned = await db.$queryRaw<unknown[]>`
-      SELECT 1 FROM "Image" WHERE url = ANY(${keys}::text[]) AND "userId" <> ${userId} LIMIT 1
+      SELECT 1 FROM "Image" WHERE url = ANY(${keys}::text[])
+        AND ("userId" <> ${userId} OR ${serverCopySql('Image')}) LIMIT 1
     `;
     if (owned.length) throw imageUrlUnavailableError();
     return;
@@ -243,8 +250,8 @@ export async function assertClientImageUrlsUsable({
 }
 
 /**
- * The stored values among `keys` that another user's `Image` row, or shop artwork other than
- * `shopRow`'s own, already has, whatever that row's state. `firstOnly` stops at the first.
+ * The stored values among `keys` that another user's `Image` row, a server-made copy, or shop artwork
+ * other than `shopRow`'s own, already has, whatever that row's state. `firstOnly` stops at the first.
  */
 async function keysOnOtherRows({
   keys,
@@ -261,7 +268,7 @@ async function keysOnOtherRows({
 }) {
   const rows = await db.$queryRaw<{ key: string }[]>`
     SELECT url AS key FROM "Image" WHERE url = ANY(${keys}::text[])
-      AND (${shopRow !== undefined} OR "userId" <> ${userId})
+      AND (${shopRow !== undefined} OR "userId" <> ${userId} OR ${serverCopySql('Image')})
     UNION ALL
     SELECT ${keyIn(`"data"->>'url'`)} FROM "Cosmetic" WHERE ${keyIn(
     `"data"->>'url'`
@@ -511,8 +518,9 @@ export async function recordedKeys(
 }
 
 /**
- * The upload keys in `urls` that were issued to someone other than `userId` and `alsoIssuedTo`,
- * and those with no issue record and no `Image` row of theirs.
+ * The upload keys in `urls` that were issued to someone other than `userId` and `alsoIssuedTo`, or
+ * that a deal file's or a review's copy stores, and those with no issue record and no `Image` row
+ * of theirs.
  */
 export async function keyIssuers({
   urls,
@@ -543,22 +551,33 @@ export async function keyIssuers({
   const logged = await ownersFromClickhouse(readLogForAll ? keys : unrecorded);
   result.requestLogReadFailed = logged.failed;
   for (const [key, owner] of logged.owners) if (!owners.has(key)) owners.set(key, owner);
-  result.issuedToOthers = [...owners].filter(([, o]) => !allowed.includes(o)).map(([k]) => k);
+  const issuedToOthers = new Set(
+    [...owners].filter(([, o]) => !allowed.includes(o)).map(([k]) => k)
+  );
 
-  const remaining = keys.filter((k) => !owners.has(k));
-  if (!remaining.length) return result;
-  // A row of theirs may store the key bare or as the url given.
-  const urlsByKey = new Map(remaining.map((k) => [k, [k]]));
+  // A row may store the key bare or as the url given.
+  const urlsByKey = new Map(keys.map((k) => [k, [k]]));
   for (const url of urls) {
     if (!url) continue;
     for (const key of keysIn(url)) urlsByKey.get(key)?.push(url);
   }
   const candidates = [...new Set([...urlsByKey.values()].flat())];
-  const own = await db.$queryRaw<{ url: string }[]>`
-    SELECT url FROM "Image" WHERE url = ANY(${candidates}::text[]) AND "userId" = ANY(${allowed}::int[])
+  const rows = await db.$queryRaw<{ url: string; copy: boolean }[]>`
+    SELECT url, ${serverCopySql('Image')} AS "copy" FROM "Image"
+    WHERE url = ANY(${candidates}::text[])
+      AND ("userId" = ANY(${allowed}::int[]) OR ${serverCopySql('Image')})
   `;
-  const ownUrls = new Set(own.map((r) => r.url));
-  result.unrecorded = remaining.filter((k) => !urlsByKey.get(k)?.some((u) => ownUrls.has(u)));
+  const named = (urlSet: Set<string>) => (k: string) =>
+    urlsByKey.get(k)!.some((u) => urlSet.has(u));
+  // A server-made copy's key is no one's to name, however it was issued.
+  const copyUrls = new Set(rows.filter((r) => r.copy).map((r) => r.url));
+  for (const key of keys.filter(named(copyUrls))) issuedToOthers.add(key);
+  result.issuedToOthers = [...issuedToOthers];
+
+  const ownUrls = new Set(rows.filter((r) => !r.copy).map((r) => r.url));
+  result.unrecorded = keys.filter(
+    (k) => !owners.has(k) && !issuedToOthers.has(k) && !named(ownUrls)(k)
+  );
   return result;
 }
 

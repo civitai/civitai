@@ -1,5 +1,6 @@
 import { BLOCK_SLUG, type AssistantTool } from '@civitai/app-assistant';
 import type { ChatToolResult } from '@civitai/components-chat/runner-protocol';
+import { platformUpdatePathShapeRefusal } from '@civitai/shared/platform-update-path';
 
 import type { Logger } from '../core/interfaces';
 import { exitCodeOf, outputOf } from './preview';
@@ -7,34 +8,14 @@ import type { SdkPinSandbox } from './sdk-pin';
 
 /**
  * STAFF PLATFORM UPDATES in App Assistant: a change Civitai staff pushed to the open app (civitai's
- * `app-platform-update.service.ts`, one commit on a `platform-update/<id>` branch of the app's
- * source repo), brought into the app's sandbox by the runner itself as a reply opens and before a
- * submit.
- *
- * The sandbox is not a git checkout, so an update is applied as file contents. civitai sends, for
- * each path the update's RECORD lists, the file at the recorded `commitSha` (what the update writes)
- * and at its `baseCommitSha` (what it was cut from), both read by commit id: a commit added to the
- * update's branch later is never applied. civitai lists every OPEN update (`pending`, and
- * `conflicted` ones nobody merged yet) at every reply, and the runner rebuilds its hand-offs from
- * that list, never from its own memory: a restarted runner hands a conflicted update over again.
- * For each update, oldest first:
- *
- *  - every file in the sandbox is what the update was cut from (or already what it writes): the
- *    update is written, and civitai saves the app and records the update merged, with the commit
- *    that save wrote as its merge commit (only when that commit holds the update);
- *  - any file the user (or the assistant) changed since, or one the runner cannot write (not text,
- *    or a path it cannot write): nothing of the update is written. It is recorded conflicted, both
- *    versions go to the app's `scratch/` folder (never saved or submitted; written again when they
- *    are gone), and the assistant is told to merge them itself and then call
- *    {@link PLATFORM_UPDATE_MERGED}, which saves the app and records it merged;
- *  - an update whose author civitai does not verify as Civitai staff now is not applied at all, and
- *    one staff withdrew between the list and the save is put back;
- *  - an update too large for one answer (`tooLarge`) is left for the owner to merge with the CLI.
- *
- * The user is told of each update once per conversation, in what it came to (merged and saved,
- * written but not saved yet, handed to the assistant, withdrawn, too large, not verified).
- *
- * Flag off, no updates, an older civitai without the endpoint, or any failure to list: nothing
+ * `app-platform-update.service.ts`), brought into the sandbox by the runner as a reply opens and
+ * before a submit. What is not obvious from the code below:
+ *  - files are read by commit id (the record's `commitSha` and `baseCommitSha`), so a commit added
+ *    to the update's branch later is never applied;
+ *  - the runner keeps no hand-off of its own: it rebuilds them from civitai's open list at every
+ *    reply, so a restarted runner hands a conflicted update over again;
+ *  - a conflicted update writes nothing of the app's own files: both versions go to `scratch/`.
+ * Flag off, no updates, an older civitai without the endpoint, or a failure to list: nothing
  * happens and nothing is said.
  */
 
@@ -52,15 +33,12 @@ const READ_MAX_BYTES = 8 * 1024 * 1024;
 const REMEMBERED = 10_000;
 
 /**
- * Whether the runner can write `path` (repo-relative) into the sandbox: what civitai lets a platform
- * update hold (`platformUpdatePathRefusal`), less nothing it may write. Refused: empty or past 400
- * characters, absolute, a backslash, a control character, an empty, `.` or `..` segment. Dotfiles,
- * brackets, spaces and non-ASCII are fine (the one shell command quotes the path).
+ * Whether the runner can write `path` (repo-relative) into the sandbox: the path-shape checks of
+ * civitai's `platformUpdatePathRefusal`, not its never-held-file check. Dotfiles, brackets, spaces
+ * and non-ASCII are fine (the one shell command quotes the path).
  */
 export function runnerWritablePath(path: string): boolean {
-  if (!path || path.length > 400) return false;
-  if (path.startsWith('/') || path.includes('\\') || /[\x00-\x1f\x7f]/.test(path)) return false;
-  return !path.split('/').some((s) => s === '' || s === '.' || s === '..');
+  return platformUpdatePathShapeRefusal(path) === null;
 }
 
 /** `value` as one single-quoted shell word. */
@@ -109,10 +87,6 @@ export interface PlatformUpdateSource {
     outcome: 'merged' | 'conflicted'
   ): Promise<PlatformUpdateResolve>;
 }
-
-// ---------------------------------------------------------------------------
-// What the user and the assistant are told (pinned by the tests)
-// ---------------------------------------------------------------------------
 
 function staffName(update: PendingPlatformUpdate): string {
   return update.by.username ?? 'Civitai staff';
@@ -256,10 +230,6 @@ export function withdrawnToolAnswer(app: string, id: string): string {
   )}. Then tell the user: ${JSON.stringify(WITHDRAWN_LINE)}`;
 }
 
-// ---------------------------------------------------------------------------
-// civitai's endpoints
-// ---------------------------------------------------------------------------
-
 export interface CivitaiPlatformUpdatesOptions {
   civitaiUrl: string;
   /** The runner's own secret, which civitai checks on every call. */
@@ -376,10 +346,6 @@ function isPendingUpdate(value: unknown): value is PendingPlatformUpdate {
     )
   );
 }
-
-// ---------------------------------------------------------------------------
-// Applying updates to the sandbox
-// ---------------------------------------------------------------------------
 
 export type PlatformUpdatesOutcome = {
   /** Updates written into the sandbox and recorded merged. */

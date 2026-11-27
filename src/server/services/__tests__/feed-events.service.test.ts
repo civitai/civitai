@@ -58,6 +58,13 @@ describe('feed events', () => {
     expect(asSeen.seenIds).toEqual([1, 2]);
   });
 
+  it("stores the viewer's personal-hot-lead flag; no cohort is null, never control", () => {
+    const tag = (personalHotLead?: boolean | null) =>
+      buildFeedEventRow(load, { userId: 5, memberType: 'gold', personalHotLead }, 0)
+        .personalHotLead;
+    expect([tag(true), tag(false), tag(null), tag(undefined)]).toEqual([true, false, null, null]);
+  });
+
   it('samples by session key, and resolves the viewer only for a kept session', async () => {
     const keys = Array.from({ length: 50 }, (_, i) => `k${i}`);
     const kept = keys.find((k) => hashToUnit(k) < 0.5)!;

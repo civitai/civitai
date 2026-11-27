@@ -1,5 +1,7 @@
 import { CSAM_REPORT_LISTED_IMAGE_IDS_SQL } from '@civitai/shared/held-media';
 import { childSafetyImageCase } from '@civitai/db-queries/child-safety-case';
+import { sql, type Kysely } from 'kysely';
+import type { DB } from '@civitai/db-schema/kysely';
 import { toPrismaSql } from '~/server/db/prisma-sql-kysely';
 import { finalCsamHeldSql } from '~/server/services/creator-service-deal-file-held-sql';
 import { constants } from '~/server/common/constants';
@@ -572,13 +574,17 @@ type FileObjects = {
 };
 
 /** Deletes scan copies one by one; returns the ids that went. A copy kept for its case stays. */
-async function deleteImages(imageIds: number[]) {
+async function deleteImages(imageIds: number[], onDeleted?: CopyDeleteRecord) {
   const gone: number[] = [];
   if (!imageIds.length) return gone;
   const service = await import('~/server/services/image.service');
   for (const id of imageIds) {
     const deleted = await service
-      .deleteImages([id], { updatePosts: false, actor: { system: 'creator-service-deal-file' } })
+      .deleteImages([id], {
+        updatePosts: false,
+        actor: { system: 'creator-service-deal-file' },
+        onDeleted,
+      })
       .catch(() => null);
     if (deleted?.some((row) => row.id === id)) gone.push(id);
   }
@@ -597,41 +603,70 @@ export async function markCopyDeletes(entryIds: number[]) {
       AND EXISTS (SELECT 1 FROM "Image" i WHERE i."id" = e."imageId")`;
 }
 
+/** Runs in an image delete's own transaction (`onDeleted`), with the rows it deleted. */
+export type CopyDeleteRecord = (db: Kysely<DB>, deleted: { id: number }[]) => Promise<void>;
+
 /**
- * Settles the marked entries a delete was asked for; returns the ids let go. An entry lets go of its
- * copy when this delete removed it or an earlier try did (marked, and the image is gone); one no file
- * owns goes with it. One whose copy still exists (kept for its case, or the delete failed) stays
- * pointed and unmarked. An unmarked entry whose image is gone stays pointed (`fileImageGone`).
+ * Lets go of these entries' copies that the delete running it removed, in that delete's own
+ * transaction, so a crash cannot leave a copy gone and its entry still pointed: either both commit
+ * or neither. An entry no file owns goes with its copy. Which entries went is read from what the
+ * delete returned once committed, never from here: this runs before the commit, which may fail.
  */
-export async function settleCopyDeletes(entryIds: number[], goneImageIds: number[]) {
-  if (!entryIds.length) return [];
-  const released = await dbWrite.$queryRaw<{ id: number }[]>`
-    WITH released AS (
-      SELECT e."id", e."fileId" FROM "ServiceDealFileEntry" e
-      WHERE e."id" IN (${Prisma.join(entryIds)}) AND e."imageId" IS NOT NULL
-        AND (e."imageId" IN (${Prisma.join(goneImageIds.length ? goneImageIds : [-1])})
-          OR (e."copyDeleteStartedAt" IS NOT NULL AND ${entryImageGone(Prisma.sql`e`)}))
-    ), dropped AS (
-      DELETE FROM "ServiceDealFileEntry" e USING released r
-      WHERE e."id" = r."id" AND r."fileId" IS NULL RETURNING e."id"
-    ), cleared AS (
-      UPDATE "ServiceDealFileEntry" e
-      SET "imageId" = NULL, "scanKey" = NULL, "copyDeleteStartedAt" = NULL
-      FROM released r WHERE e."id" = r."id" AND r."fileId" IS NOT NULL RETURNING e."id"
-    )
-    SELECT "id" FROM dropped UNION ALL SELECT "id" FROM cleared`;
+export function releaseEntryCopies(entryIds: number[]): CopyDeleteRecord {
+  return async (db, deleted) => {
+    await sql`
+      WITH released AS (
+        SELECT e."id", e."fileId" FROM "ServiceDealFileEntry" e
+        WHERE e."id" = ANY(${entryIds}::int[])
+          AND e."imageId" = ANY(${deleted.map(({ id }) => id)}::int[])
+      ), dropped AS (
+        DELETE FROM "ServiceDealFileEntry" e USING released r
+        WHERE e."id" = r."id" AND r."fileId" IS NULL RETURNING e."id"
+      ), cleared AS (
+        UPDATE "ServiceDealFileEntry" e
+        SET "imageId" = NULL, "scanKey" = NULL, "copyDeleteStartedAt" = NULL
+        FROM released r WHERE e."id" = r."id" AND r."fileId" IS NOT NULL RETURNING e."id"
+      )
+      SELECT "id" FROM dropped UNION ALL SELECT "id" FROM cleared`.execute(db);
+  };
+}
+
+/**
+ * After a delete that ran `releaseEntryCopies`: an entry whose copy still exists (kept for its case,
+ * or the delete failed) is unmarked and stays pointed. One still marked whose copy is gone was not
+ * let go by this delete, so its copy went some other way: it stays pointed and marked, its file
+ * refused (`fileImageGone`), and is logged as stranded.
+ */
+export async function settleCopyDeletes(entryIds: number[]) {
+  if (!entryIds.length) return;
+  const stranded = await dbWrite.$queryRaw<{ id: number; fileId: number | null }[]>`
+    SELECT e."id", e."fileId" FROM "ServiceDealFileEntry" e
+    WHERE e."id" IN (${Prisma.join(entryIds)}) AND e."copyDeleteStartedAt" IS NOT NULL
+      AND ${entryImageGone(Prisma.sql`e`)}`;
+  for (const { id, fileId } of stranded)
+    logToAxiom({
+      name: 'deal_copy_settle_stranded',
+      type: 'warning',
+      message: 'a marked scan copy is gone, but not by this delete; its file stays refused',
+      entryId: id,
+      fileId,
+    });
   await dbWrite.$executeRaw`
     UPDATE "ServiceDealFileEntry" e SET "copyDeleteStartedAt" = NULL
     WHERE e."id" IN (${Prisma.join(entryIds)}) AND e."copyDeleteStartedAt" IS NOT NULL
       AND EXISTS (SELECT 1 FROM "Image" i WHERE i."id" = e."imageId")`;
-  return released.map(({ id }) => id);
 }
 
 /** Marks, deletes and settles these entries' scan copies; returns the entry ids let go. */
 async function deleteEntryCopies(entries: { id: number; imageId: number }[]) {
   const ids = entries.map(({ id }) => id);
   await markCopyDeletes(ids);
-  return settleCopyDeletes(ids, await deleteImages(entries.map(({ imageId }) => imageId)));
+  const gone = await deleteImages(
+    entries.map(({ imageId }) => imageId),
+    releaseEntryCopies(ids)
+  );
+  await settleCopyDeletes(ids);
+  return entries.filter(({ imageId }) => gone.includes(imageId)).map(({ id }) => id);
 }
 
 /** Deletes every stored version of one object; false (and logged) when any may remain. */
@@ -1576,6 +1611,17 @@ async function failOrRetry(preview: ClaimedPreview, error: unknown) {
 }
 
 /**
+ * The Image a crash left for a copy whose key was recorded, so the copy is never ingested twice. A
+ * copy is never posted, so a posted row with that url is not it.
+ */
+export async function findScanCopyImageId(scanKey: string) {
+  const [existing] = await dbWrite.$queryRaw<{ id: number }[]>`
+    SELECT "id" FROM "Image" WHERE "url" = ${scanKey}::text AND "postId" IS NULL
+    ORDER BY "id" LIMIT 1`;
+  return existing?.id;
+}
+
+/**
  * A bare Image row, scanned like any upload: no post, no feed, ingestion NOT skipped. The caller
  * records its id on the file so the copy can be found and deleted.
  */
@@ -1618,13 +1664,8 @@ export async function startPreviewScans({ limit = 5 } = {}) {
     const began = Date.now();
     try {
       let frames = 0;
-      let imageId: number | undefined;
-      if (preview.scanKey) {
-        // A crash left the object, and maybe the Image row: find it so it is never ingested twice.
-        const [existing] = await dbWrite.$queryRaw<{ id: number }[]>`
-          SELECT "id" FROM "Image" WHERE "url" = ${preview.scanKey}::text LIMIT 1`;
-        imageId = existing?.id;
-      }
+      // A crash left the object, and maybe the Image row.
+      let imageId = preview.scanKey ? await findScanCopyImageId(preview.scanKey) : undefined;
       if (!imageId) {
         const original = await readObject(await getBucket(), preview.s3Key);
         // Scanned already marked: the transcode is the only place a video gets its mark, and publish reuses this clip.
@@ -1774,34 +1815,45 @@ export async function publishPreviews({ limit = 5 } = {}) {
  * moderation tooling reads, and deleting it would take the evidence with it.
  */
 export async function deleteScanCopies({ limit = 50 } = {}) {
-  const rows = await dbWrite.$queryRaw<{ id: number; imageId: number }[]>`
-    SELECT "id", "imageId" FROM "ServiceDealFile"
-    WHERE "imageId" IS NOT NULL
-      AND (("scanStatus" = 'Passed'::"ServiceDealFileScanStatus"
-          -- A video publishes by copying its scan copy, so the copy waits for that.
-          AND ("mimeType" NOT IN (${VIDEO_MIMES}) OR "watermarkedKey" IS NOT NULL
-            OR "status" = 'Failed'::"ServiceDealFileStatus"))
-        OR ("scanStatus" = 'Pending'::"ServiceDealFileScanStatus"
-          AND "status" = 'Failed'::"ServiceDealFileStatus"))
-    ORDER BY "id" LIMIT ${limit}::int`;
-  if (!rows.length) return 0;
   const service = await import('~/server/services/image.service');
   let deleted = 0;
-  for (const row of rows) {
-    try {
-      await service.deleteImages([row.imageId], {
-        updatePosts: false,
-        actor: { system: 'creator-service-deal-file' },
-      });
-      await dbWrite.$executeRaw`
-        UPDATE "ServiceDealFile" SET "imageId" = NULL, "scanKey" = NULL WHERE "id" = ${row.id}::int`;
-      deleted++;
-    } catch (error) {
-      logPreview(
-        'scan copy delete failed; it will be retried',
-        { fileId: row.id, imageId: row.imageId, error: (error as Error)?.message },
-        'error'
-      );
+  // A copy kept for its case stays selected, so the run pages past it rather than stopping there.
+  for (let afterId = 0; deleted < limit; ) {
+    const rows = await dbWrite.$queryRaw<{ id: number; imageId: number }[]>`
+      SELECT "id", "imageId" FROM "ServiceDealFile"
+      WHERE "imageId" IS NOT NULL AND "id" > ${afterId}::int
+        -- A copy gone some other way keeps its pointer, refused, but is not walked again.
+        AND EXISTS (SELECT 1 FROM "Image" i WHERE i."id" = "imageId")
+        AND (("scanStatus" = 'Passed'::"ServiceDealFileScanStatus"
+            -- A video publishes by copying its scan copy, so the copy waits for that.
+            AND ("mimeType" NOT IN (${VIDEO_MIMES}) OR "watermarkedKey" IS NOT NULL
+              OR "status" = 'Failed'::"ServiceDealFileStatus"))
+          OR ("scanStatus" = 'Pending'::"ServiceDealFileScanStatus"
+            AND "status" = 'Failed'::"ServiceDealFileStatus"))
+      ORDER BY "id" LIMIT ${limit - deleted}::int`;
+    if (!rows.length) break;
+    afterId = rows[rows.length - 1].id;
+    for (const row of rows) {
+      try {
+        // Let go in the delete's own transaction. A copy its case kept, or one gone some other
+        // way, keeps its pointer and key, so it stays refused everywhere.
+        const gone = await service.deleteImages([row.imageId], {
+          updatePosts: false,
+          actor: { system: 'creator-service-deal-file' },
+          onDeleted: (db, rows) =>
+            sql`UPDATE "ServiceDealFile" SET "imageId" = NULL, "scanKey" = NULL
+              WHERE "id" = ${row.id}::int AND "imageId" = ANY(${rows.map(({ id }) => id)}::int[])`
+              .execute(db)
+              .then(() => undefined),
+        });
+        if (gone.some((image) => image.id === row.imageId)) deleted++;
+      } catch (error) {
+        logPreview(
+          'scan copy delete failed; it will be retried',
+          { fileId: row.id, imageId: row.imageId, error: (error as Error)?.message },
+          'error'
+        );
+      }
     }
   }
   return deleted;

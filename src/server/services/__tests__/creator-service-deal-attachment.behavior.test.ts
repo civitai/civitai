@@ -1,3 +1,4 @@
+import { deleteImagesIn } from '~/server/services/__tests__/deal-file-copy.fake';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { PGlite } from '@electric-sql/pglite';
@@ -354,9 +355,7 @@ beforeEach(async () => {
     ]);
     return { id: row.id };
   });
-  images.deleteImages.mockImplementation(async (ids: number[]) =>
-    q(`DELETE FROM "Image" WHERE id = ANY($1::int[]) RETURNING id`, [ids])
-  );
+  images.deleteImages.mockImplementation(deleteImagesIn(holder.db));
   await holder.db.exec(`
     TRUNCATE "Report", "ImageReport", "ServiceDealReviewImage", "ServiceDealReview", "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering", "UserEngagement", "Image", "CsamReport", "ServiceDisputeReview" RESTART IDENTITY;
     DELETE FROM "User";

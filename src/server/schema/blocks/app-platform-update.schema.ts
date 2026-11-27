@@ -30,6 +30,9 @@ export const resolvePlatformUpdateSchema = z.object({
 
 export const supersedePlatformUpdateSchema = z.object({ id: updateId });
 
+/** Staff: submit the app's approved version with this update applied, on the owner's behalf. */
+export const submitPlatformUpdateOnBehalfSchema = z.object({ id: updateId });
+
 const changePath = z.string().min(1).max(400);
 
 export const pushPlatformUpdateSchema = z

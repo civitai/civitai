@@ -19,6 +19,7 @@ import { evictHomeBlocks } from './home-blocks';
 import { syncSearchIndex, syncSearchIndexBulk } from './search-index';
 import { parkModelSearchUpdates } from './search-index-park';
 import { logAxiomError, logToAxiom } from './axiom';
+import { recordLikenessRequest } from './mod-activity';
 import { appealResolutionEmail } from './emails/appeal-resolution.email';
 import { isFeedbackCaptureOwner } from '@civitai/shared/feedback-capture';
 import { mirrorBlockedHashesSql, NEWEST_BLOCKLIST_ROW_SQL } from '@civitai/shared/held-media';
@@ -667,6 +668,7 @@ export async function applyBlockSideEffects(
           // them nothing.
           reason: violationType ? violationUserMessage(violationType) : undefined,
         }),
+    violationType === 'likenessRequest' ? recordLikenessRequest(actorUserId, imageId) : undefined,
     bestEffort('invalidate-existence', imageId, () => invalidateImagesExistence([imageId])),
     bestEffort('visibility', imageId, () => applyVisibilitySideEffects(imageId, img.postId)),
     evictHomeBlocks([imageId]),

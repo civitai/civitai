@@ -5,8 +5,12 @@
  * allowed users). Every other raw query gets `[]`.
  */
 export const imageUrlOwnersFake = (rows: { url: string; userId: number }[]) =>
-  (async (strings: TemplateStringsArray, keys: unknown, second: unknown, third: unknown) => {
+  (async (strings: TemplateStringsArray, ...values: unknown[]) => {
     const sql = strings.join('');
+    // Nested SQL fragments (the review-copy leg) bind nothing these rows answer.
+    const [keys, second, third] = values.filter(
+      (value) => !(value && typeof value === 'object' && 'strings' in value)
+    );
     if (!sql.includes('url = ANY(') || !Array.isArray(keys)) return [];
     if (Array.isArray(second))
       return rows

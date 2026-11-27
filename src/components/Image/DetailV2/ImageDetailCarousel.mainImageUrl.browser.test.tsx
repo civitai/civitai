@@ -95,3 +95,30 @@ describe('the carousel’s main <img> requests the URL the shell preloads', () =
     expect(src).toBe(imageDetailMainImageUrl(img));
   });
 });
+
+// A null `url` (a block, to its owner) must not reach `EdgeMedia`, which draws a broken image.
+describe('a slide whose media the server withheld', () => {
+  test.each(['image', 'video'] as const)('a %s with no url shows WithheldMedia', async (type) => {
+    await page.viewport(1200, 800);
+    renderWithProviders(
+      <div data-slide style={{ width: 400, height: 300, display: 'flex' }}>
+        <ImageDetailCarousel
+          images={[
+            { id: 4103, name: 'mine.png', nsfwLevel: 1, height: 600, width: 400, type, url: null },
+          ]}
+          index={0}
+          next={noop}
+          previous={noop}
+          canNavigate={false}
+        />
+      </div>
+    );
+    const slide = await vi.waitFor(() => {
+      const found = document.querySelector<HTMLElement>('[data-slide]');
+      if (!found?.querySelector('img, video, svg')) throw new Error('slide not drawn yet');
+      return found;
+    });
+    expect(slide.textContent).toContain('Media unavailable');
+    expect(slide.querySelector('img, video')).toBeNull();
+  });
+});

@@ -62,6 +62,7 @@ function reads(over: Partial<RunnerMintReads> = {}): RunnerMintReads {
         : null,
     authorization: async (id) => (id === standing.id ? standing : null),
     hasLiveAttempt: async (runId) => runId !== RUN && runId !== 'run_abc',
+    hasSpentAttempt: async () => false,
     capUsed: async (userId, clientId) =>
       userId === USER && clientId === CLIENT ? 0 : Number.POSITIVE_INFINITY,
     runsSince: async (authorizationId) =>
@@ -230,6 +231,7 @@ describe('decideRunnerMint', () => {
 
   it('refuses a run that already has a live attempt', async () => {
     expect(await refusal(reads({ hasLiveAttempt: async () => true }))).toBe('run_live');
+    expect(await refusal(reads({ hasSpentAttempt: async () => true }))).toBe('run_spent');
   });
 
   it('refuses past the offline cap, and mints at exactly the headroom', async () => {

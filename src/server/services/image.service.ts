@@ -1059,6 +1059,9 @@ type ImageDeleteOptions = {
   keepStoredFiles?: boolean;
   /** False: a row its child-safety case keeps is not queued, for a caller with its own retry queue. */
   queueKept?: boolean;
+  /** Runs in the delete's own transaction with the rows it deleted, so a write that records the
+   *  delete commits with it or not at all. Not called when nothing was deleted. */
+  onDeleted?: (db: ReturnType<typeof kyselyOver>, deleted: { id: number }[]) => Promise<void>;
 };
 
 /**
@@ -1148,6 +1151,7 @@ export async function deleteImagesWithOutcome(
     updatePosts = true,
     keepStoredFiles = false,
     queueKept,
+    onDeleted,
     retractPublicBlobs = false,
     retractionGate = newRetractionGate(),
   }: PurgeResizeCacheRetraction &
@@ -1194,12 +1198,13 @@ export async function deleteImagesWithOutcome(
       hidden,
       gone,
     } = await withDeleteTransaction(
-      !moderatorDecides({
-        replay: moderatorDelete ? { moderatorDelete: true } : undefined,
-        queueKept,
-      }),
-      (db) =>
-        deleteImageRows(db, {
+      !!onDeleted ||
+        !moderatorDecides({
+          replay: moderatorDelete ? { moderatorDelete: true } : undefined,
+          queueKept,
+        }),
+      async (db) => {
+        const outcome = await deleteImageRows(db, {
           ids,
           actor,
           where: callerWhere,
@@ -1219,7 +1224,10 @@ export async function deleteImagesWithOutcome(
               },
           recountPosts: updatePosts,
           cdnTakedown: moderatorDelete,
-        })
+        });
+        if (onDeleted && outcome.deleted.length) await onDeleted(db, outcome.deleted);
+        return outcome;
+      }
     );
 
     keptForCase.push(...caseKept);

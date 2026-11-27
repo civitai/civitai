@@ -29,6 +29,8 @@ const NAMED_TYPES = [
   'app-block-rejected',
   'app-listing-approved',
   'app-listing-rejected',
+  'app-platform-update-approved',
+  'app-platform-update-rejected',
 ] as const;
 const ALL_DECISION_TYPES = [...NAMED_TYPES, 'app-listing-hidden'] as const;
 
@@ -251,6 +253,39 @@ describe('appReviewDetailFetcher', () => {
       'Reviewed by @reviewer_ada, Civitai App Review'
     );
     expect(getNotificationMessage(gone)?.byline).toBe('Reviewed by Civitai App Review');
+  });
+
+  it('🔴 the owner’s copy of a staff on-behalf outcome reads the BLOCK request table', async () => {
+    // Its request is an AppBlockPublishRequest (the on-behalf submit), though its type is not
+    // `app-block-*`. The same id in the listing table names another reviewer.
+    const {
+      blockFindMany,
+      listingFindMany,
+      ctx: c,
+    } = ctx([{ id: 31, username: 'reviewer_ada' }], {
+      block: [{ id: 'pubreq_ob', reviewedByUserId: 31 }],
+      listing: [{ id: 'pubreq_ob', reviewedByUserId: 44 }],
+    });
+    const approved = {
+      id: 1,
+      type: 'app-platform-update-approved',
+      details: decided('pubreq_ob'),
+    };
+    const rejected = {
+      id: 2,
+      type: 'app-platform-update-rejected',
+      details: decided('pubreq_ob'),
+    };
+    await appReviewDetailFetcher.fetcher([approved, rejected], c);
+    expect(blockFindMany).toHaveBeenCalledTimes(1);
+    expect(listingFindMany).not.toHaveBeenCalled();
+    for (const n of [approved, rejected]) {
+      expect(n.details).toEqual({
+        ...BASE,
+        actor: { username: 'reviewer_ada' },
+        reviewedByModerator: true,
+      });
+    }
   });
 
   it('falls back to the team when the request has no reviewer or is gone', async () => {

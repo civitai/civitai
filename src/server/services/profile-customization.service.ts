@@ -15,6 +15,7 @@ import { CacheTTL } from '~/server/common/constants';
 import { isMemberTier, profileMemberTierKey } from '~/server/services/subscriptions.service';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import { ownerMediaAllowed } from '~/server/common/image-block-marker';
+import { assertNotDealFileImages } from '~/server/services/deal-file-image';
 import { isImageOwner } from '~/server/services/util.service';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { Flags } from '~/shared/utils/flags';
@@ -118,6 +119,7 @@ export async function setProfileBackground({
 }) {
   if (!(await isImageOwner({ userId, imageId, allowMods: false })))
     throw throwNotFoundError('Image not found');
+  await assertNotDealFileImages([imageId], 'used here');
   if (!(await isMemberTier(userId))) throw throwAuthorizationError(MEMBERS_ONLY);
 
   // On civitai.com it sets the civitai.com override, as the customizer's own field there does.

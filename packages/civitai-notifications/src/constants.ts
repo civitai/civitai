@@ -59,6 +59,9 @@ export const emailNotificationTypes: readonly string[] = [
   'app-listing-reset-to-pending',
   'app-access-request-approved',
   'app-access-request-declined',
+  // The app owner's copy of a staff on-behalf submit's review outcome.
+  'app-platform-update-approved',
+  'app-platform-update-rejected',
   'app-review-reply-to-moderator',
   'app-review-reply-to-developer',
 ];

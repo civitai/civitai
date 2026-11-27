@@ -53,6 +53,8 @@ import { resolveUserAppLimit } from '~/server/services/blocks/user-app-caps.serv
 import { getUsageLimitDef } from '~/shared/constants/usage-limits';
 import { boundedClusterCall, takeClusterWindowCount } from '~/server/utils/cluster-window-count';
 import { forkSeedExclusionReason } from '~/server/services/blocks/fork-seed-exclusions';
+import { MANIFEST_PATH } from '~/server/services/blocks/app-source-repo.plan';
+import { latestApprovedCommitSha } from '~/server/services/blocks/latest-approved-build';
 import { logToAxiom } from '~/server/logging/client';
 import type { StoreVisibilityScope } from '~/shared/utils/store-visibility-scope';
 import {
@@ -111,8 +113,6 @@ export const FORK_SLUG_RE = /^[a-z][a-z0-9-]{1,38}[a-z0-9]$/;
 const FORK_SUFFIX_LENGTH = '-fork-'.length + 4;
 const SLUG_MAX = 40;
 const SLUG_ATTEMPTS = 6;
-
-const MANIFEST_PATH = 'block.manifest.json';
 
 // ---------------------------------------------------------------------------
 // The seed's contents
@@ -188,6 +188,8 @@ export async function buildForkSeedZip(
   };
   kept.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
 
+  // Not `deterministicBundleZip` (bundle-zip.ts): its `localeCompare` order and folder entries give
+  // other bytes, so another seed sha256, for nested or mixed-case paths.
   const zip = new JSZip();
   for (const f of kept) zip.file(f.path, f.content, { date: new Date(0), createFolders: false });
   const buffer = Buffer.from(
@@ -597,12 +599,7 @@ export async function startAppFork(input: StartAppForkInput): Promise<ForkStartR
   }
 
   // The latest APPROVED commit — the sha the platform wrote on approve. Never a branch HEAD.
-  const approved = await dbRead.appBlockPublishRequest.findFirst({
-    where: { appBlockId: parentBlock.id, status: 'approved', forgejoCommitSha: { not: null } },
-    orderBy: [{ reviewedAt: 'desc' }, { submittedAt: 'desc' }],
-    select: { forgejoCommitSha: true },
-  });
-  const parentCommitSha = approved?.forgejoCommitSha ?? null;
+  const parentCommitSha = await latestApprovedCommitSha(parentBlock.id);
   if (!parentCommitSha || !FORK_COMMIT_SHA_RE.test(parentCommitSha)) {
     throw new TRPCError({ code: 'PRECONDITION_FAILED', message: FORK_NO_APPROVED_VERSION_MESSAGE });
   }

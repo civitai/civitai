@@ -2408,9 +2408,10 @@ unheld model), each with the key absent; the `GallerySettingsMiss` rows of
 When the feed-service call fails, Node's `serveFromFeed` returns `timeout`, `error` or `status:5xx`
 and `answerWithoutFeed` throws `SERVICE_UNAVAILABLE` ("Image search is temporarily overloaded — please
 retry.", `isTransientFeedReason`). Handed back as the `feed-unavailable` / `feed-status` fallback, the
-request makes the app call the feed again, which in an outage usually fails again: the slow call runs
-twice and the 503 comes about twice as late. With the switch on, the public route writes that 503
-here instead (`writeFeedUnavailable`), counted as request outcome `feed_unavailable`, neither `served`
+request makes the app call the feed again, and the app answers the 503 only when that second call
+fails too. With the switch on, the public route writes that 503 here instead (`writeFeedUnavailable`),
+after making the second call itself when the request budget has room for it, and otherwise still
+hands the request back (the retry, below). It is counted as request outcome `feed_unavailable`, neither `served`
 nor a fallback.
 
 - **Which failures.** A failed call (a transport error, the 5 s `FEED_PRIMARY_TIMEOUT_MS`, a body that
@@ -2446,9 +2447,42 @@ nor a fallback.
   The bytes are derived from the app's code and its own superjson and devalue, not captured from a
   running server; `internal/trpc/apperror_test.go` and `internal/server/feed_unavailable_test.go`
   pin them as literals.
-- **Shadow and Go-first probe.** Unchanged: they write to no client, and count the fallback
-  (`unsupported` with its reason) as before.
-- **Rollback.** Switch off: every such request is the fallback again.
+- **The retry.** Node's `serveFromFeed` makes one feed call and has no retry of its own (`fetchFeedAnswer`:
+  one `fetch`, `AbortSignal.timeout(FEED_PRIMARY_TIMEOUT_MS)`, no second attempt; `answerWithoutFeed`
+  then throws the 503). But a request this service hands back makes the app call the feed itself, so at
+  the request level a failed call has always had a second one: this service's, then the app's (the same
+  query, at once, with its own whole 5 s). Answering the 503 here removes that second call, so with the
+  switch on the route makes it here instead (`feed.WithFeedRetry`, set only by `ServeInfiniteHTTP` when
+  the switch is on; `fetchInfiniteFeed`): once, at once (no delay), the same GET query, and only when
+  the first call failed as the app's 503 (`UnavailableError`: a failed call or a 5xx, on a page no
+  last-good copy can answer). A page, a 4xx, an unmarked anonymous first page's failure and the
+  request's own context ending are never retried. The second call gets a whole call's time, as the
+  app's does: if the request budget (`FEED_GO_REQUEST_BUDGET_MS`, 6 s) leaves less than the feed
+  client's per-call timeout (`feedsvc.Client.AttemptTimeout`, 5 s), there is no second call here and
+  the failure is handed back unmarked, the app's call being the retry. So a 503 is answered here only
+  after two whole calls failed, as the app answers it after a hand-back. That keeps the 503 rate
+  the app's, and gives up part of what answering it here was for: a first call that timed out
+  (5 s of the 6 s budget) is always handed back, so a hung feed's 503 still arrives after the app's
+  own call (about 10 s), as with the switch off. Only a fast failure (a refused connection, a 5xx)
+  is retried here and, failing again, answered here at once. With the switch off there is
+  no retry here: the hand-back already gives the second call, and a retry would make a third.
+- **The app's breaker.** With `feed-service-degrade` on and its breaker open, the app answers a
+  handed-back request's 503 without calling the feed (`breaker`, also `isTransientFeedReason`). This
+  service cannot see that breaker, so its retry is made anyway: while the breaker is open a retried
+  request costs the feed two calls where the hand-back cost one. Accepted, not mirrored: only fast
+  failures are retried (a timed-out call, the load the breaker is for, is handed back and meets the
+  breaker), and a fast failure costs the failing service little. `feed_go_feed_retry_total{outcome="failed"}`
+  is the rate of those extra calls. A retry that answers 200 can still end the request past its
+  budget (the hydrate after the call), which is the `deadline` fallback and a hand-back; it is
+  counted `recovered` all the same.
+  Outcomes on `feed_go_feed_retry_total{feed_endpoint, outcome}` (seeded on `infinite`): `recovered`
+  (the second call answered 200), `failed` (it failed as the 503 again: the 503),
+  `other` (any other answer, or the request ending: handled as that answer always is), `handed_back`
+  (too little budget for a whole call). A `failed` retry is also on `feed_go_feed_unavailable_total`,
+  with the second call's cause.
+- **Shadow and Go-first probe.** Unchanged: they write to no client, count the fallback
+  (`unsupported` with its reason) as before, and never retry (Node's shadow call is one call too).
+- **Rollback.** Switch off: every such request is the fallback again, with no retry here.
 
 ## 15. `model.getAll` (tRPC, shadow; served only behind `FEED_GO_SERVE_MODEL_GETALL`, default off)
 
@@ -3898,8 +3932,8 @@ endpoints are captured (`evalcapture.Supported`); every other endpoint is skippe
   reason: an API credential, never looked up by a tap), `session-cache-miss`, `session-cache-cleared`,
   `session-id-mismatch`, `other` (anything else). Seeded at 0 for the endpoints each source captures
   (shadow and serve: the four first-wave endpoints; serve-parity: the three tRPC ones; corpus-only:
-  `v1-models-id` and `infinite`, `refused` included; the unresolved reasons for every source but corpus-only, which
-  resolves no viewer). It counts rows queued; a row the
+  `v1-models-id` and `infinite`, `refused` included; every unresolved reason for every source but corpus-only, which
+  resolves no viewer and is seeded `bearer-token` only, below). It counts rows queued; a row the
   writers drop afterwards (a batch ClickHouse refused after its retries, shutdown) is counted in
   `feed_go_eval_capture_rows_dropped_total{table,reason}` (chwrite's reasons, seeded) and the failure
   logged (`eval capture insert failed`). A case is queued before its sample, and the sample names it
@@ -3949,8 +3983,16 @@ class and apart from the same request signed out.
   pair, by the same rules the strip uses), a `credential` that is not exactly `header` or `query`, or
   any of Node's answer (`node`, `responseHeaders`, `upstream`). With the capture off, or on another
   endpoint: 202, discarded.
+- **Not recorded, counted `unresolved`** (202, `feed_go_eval_capture_unresolved_total{reason="bearer-token"}`):
+  a sample whose input holds a key Capture tests against the viewer's own identity
+  (`evalcorpus.MayNameViewer`: a top-level `userId`, `username`, `user`, `collectionId` or `*UserIds`
+  key, or a REST `username`/`userId` pair, whatever its value). The request was signed in with an API
+  key whose holder is not known here, so `$self` / `$self-collection` could not replace the holder's
+  own id, username or collection (§19.3) and the value would be stored as sent. Not a sampler fault,
+  so not `refused`; the Tempo import refuses the same requests by the same rule (§19.10).
 - **Recorded** with source `corpus-only`, result `corpus-only`, no Node answer, the viewer signed out
-  (or a verified crawler; nothing is resolved: no cookie, no credential), and the class on the request
+  (or a verified crawler; nothing is resolved: no cookie, no credential, and no input key that could
+  name the key holder, above), and the class on the request
   (`evalcorpus.Request.CredentialClass`): the case's `credential` is `header` / `query`, and its
   signature is exactly that of the same request carrying a real credential of that class (a `query`
   class also records `$credential-param`), so the corpus groups the two and the replay uses the API-key

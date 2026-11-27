@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { gateBlockUploadImage } from '~/server/services/blocks/block-image-upload.service';
+import { dealCopyCheckFor } from '~/server/services/__tests__/deal-file-copy.fake';
 
 const OWNER = 7;
 const user = { id: OWNER, isModerator: false } as Parameters<
@@ -22,10 +23,7 @@ beforeEach(() => {
 });
 
 const pointedAt = (pointed: boolean) =>
-  dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
-    pointed && [...strings].join('').includes('ServiceDealFile')
-      ? [{ dealFileImage: true }]
-      : []) as never);
+  dbMock.dbWrite.$queryRaw.mockImplementation(dealCopyCheckFor(pointed ? 1 : -1));
 
 describe('gateBlockUploadImage', () => {
   it("refuses the caller's own image when it is a deal file's scan copy", async () => {
