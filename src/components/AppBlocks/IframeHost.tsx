@@ -180,6 +180,9 @@ interface IframeHostProps {
    *  `projectBlockInitMaturity`). Absent → the block falls back to
    *  `maxBrowsingLevel`, i.e. the pre-field behaviour. */
   effectiveBrowsingLevel?: number;
+  /** The mint's `viewerImage`, raw → `BLOCK_INIT.viewer.image` (see
+   *  `projectBlockInitViewerImage`). Absent → the key is absent. */
+  viewerImage?: unknown;
   /** Re-mint the block token after a consent grant so it carries the newly
    *  granted scopes (pushed to the iframe via TOKEN_REFRESH). */
   onConsentGranted?: () => void;
@@ -1270,6 +1273,7 @@ export function IframeHost({
   domain,
   maxBrowsingLevel,
   effectiveBrowsingLevel,
+  viewerImage,
   onConsentGranted,
 }: IframeHostProps) {
   // Treat the slot context as ModelSlotContext when the optional viewer/theme
@@ -1655,7 +1659,7 @@ export function IframeHost({
     // Contract `viewer` object (null for anon) — the only place viewer
     // id/username/status are exposed to the iframe. Built via the same pure
     // projection module so the allowlist lives in one tested place.
-    viewer: projectBlockInitViewer(context),
+    viewer: projectBlockInitViewer(context, viewerImage),
     theme: activeTheme,
     renderMode: install.renderMode,
     // Advisory maturity signal — server-authoritative values from the mint.

@@ -6101,7 +6101,13 @@ describe('blocks.getMyViewer', () => {
     const caller = blocksRouter.createCaller(fakeCtx() as never);
     const result = await caller.getMyViewer({ blockToken: 'tok' });
     // buzzBudget comes from the token claim (validClaims default 50).
-    expect(result).toEqual({ id: 42, username: 'u', status: 'active', buzzBudget: 50 });
+    expect(result).toEqual({
+      id: 42,
+      username: 'u',
+      status: 'active',
+      image: null,
+      buzzBudget: 50,
+    });
     // The identity is read for the TOKEN subject (42) — NEVER a client input.
     expect(mockDbWriteUserFindUnique.mock.calls[0][0].where).toEqual({ id: 42 });
   });

@@ -908,6 +908,69 @@ describe('POST /api/v1/block-tokens — W10 page mint', () => {
   // collections scopes (SKIP_OAUTH_CHECK), `posts:write:self` maps to a REAL bit
   // (`TokenScope.MediaWrite`), so the fixture must grant it or the mint refuses
   // for an unrelated reason and the consent claim goes untested.
+  describe('viewerImage (BLOCK_INIT.viewer.image) — rides the SIGNED user:read:self', () => {
+    // TokenScope.UserRead = 1 << 0. The avatar is keyed on the scopes the token was
+    // SIGNED with (after consent), never the requested set: a viewer who has not
+    // granted user:read:self must not have their avatar handed to the app.
+    const USER_READ_BIT = 1n << 0n;
+    const PAGE_VIEWER_BLOCK = () =>
+      PAGE_BLOCK(['user:read:self'], ['user:read:self'], USER_READ_BIT);
+    const xAvatar = {
+      image: null,
+      profilePicture: { url: 'key-x-avatar', nsfwLevel: 8, ingestion: 'Scanned' },
+    };
+
+    it('NO grant: the key is ABSENT and the avatar is never read', async () => {
+      mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+        grantedScopes: [],
+        revokedAt: null,
+      });
+      dbMock.dbRead.user.findUnique.mockResolvedValue(xAvatar);
+      mockBlockRegistry.resolvePageBlock.mockResolvedValue(PAGE_VIEWER_BLOCK());
+      const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+      const res = makeRes();
+      await handler(makeReq({ origin: 'https://civitai.com', body: pageBody() }), res);
+
+      expect(res._status).toBe(200);
+      expect(mockTokenService.sign.mock.calls[0][0].scopes).not.toContain('user:read:self');
+      expect(res._body.missingScopes).toContain('user:read:self');
+      expect('viewerImage' in res._body).toBe(false);
+      expect(JSON.stringify(res._body)).not.toContain('key-x-avatar');
+    });
+
+    it('WITH grant: the avatar is judged against the token ceiling (X on an SFW host → withheld)', async () => {
+      mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+        grantedScopes: ['user:read:self'],
+        revokedAt: null,
+      });
+      dbMock.dbRead.user.findUnique.mockResolvedValue(xAvatar);
+      mockBlockRegistry.resolvePageBlock.mockResolvedValue(PAGE_VIEWER_BLOCK());
+      const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+      const res = makeRes();
+      await handler(makeReq({ origin: 'https://civitai.com', body: pageBody() }), res);
+
+      expect(res._status).toBe(200);
+      expect(mockTokenService.sign.mock.calls[0][0].scopes).toContain('user:read:self');
+      expect(res._body.viewerImage).toEqual({ restricted: true });
+      expect(JSON.stringify(res._body)).not.toContain('key-x-avatar');
+    });
+
+    it('WITH grant, no avatar: the key is present and null', async () => {
+      mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+        grantedScopes: ['user:read:self'],
+        revokedAt: null,
+      });
+      dbMock.dbRead.user.findUnique.mockResolvedValue({ image: null, profilePicture: null });
+      mockBlockRegistry.resolvePageBlock.mockResolvedValue(PAGE_VIEWER_BLOCK());
+      const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+      const res = makeRes();
+      await handler(makeReq({ origin: 'https://civitai.com', body: pageBody() }), res);
+
+      expect(res._status).toBe(200);
+      expect(res._body.viewerImage).toBeNull();
+    });
+  });
+
   describe('posts:write:self — consent-PROMPTED, and it reaches the token', () => {
     // TokenScope.MediaWrite = 1 << 6; TokenScope.ModelsRead = 1 << 2. BOTH must be
     // in the fixture's ceiling: the mint validates the WHOLE manifest scope set

@@ -18,7 +18,7 @@
  */
 
 export const SCOPE_DESCRIPTIONS: Record<string, string> = {
-  'user:read:self': "Read the viewer's username and account status",
+  'user:read:self': "Read the viewer's username, profile picture and account status",
   'models:read:self': 'Read the model on the page where the block is mounted',
   'buzz:read:self': "Read the viewer's Buzz balance",
   // 🔴 THIS SENTENCE IS A CONSENT PROMISE, NOT A LABEL. Three rules govern it.
@@ -102,7 +102,7 @@ export const SCOPE_DESCRIPTIONS: Record<string, string> = {
 
 /** Short plain-language name per scope, shown as the row title on the viewer's permissions list. */
 export const SCOPE_PLAIN_TITLES: Record<string, string> = {
-  'user:read:self': 'See your username and account status',
+  'user:read:self': 'See your username, profile picture and account status',
   'models:read:self': 'See the model it sits on',
   'buzz:read:self': 'See your Buzz balance',
   'ai:write:budgeted': 'Run AI work with your Buzz',

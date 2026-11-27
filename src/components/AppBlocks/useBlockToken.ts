@@ -39,6 +39,10 @@ interface UseBlockTokenResult {
    *  (`app-data-writes-routing.ts`): present only on a production page-run block token of an app
    *  the cutover flag is on for. `undefined` everywhere else. Forwarded, never derived. */
   appData: { url: string; slug: string } | undefined;
+  /** The mint's `viewerImage`, RAW (`undefined` when the response omits it). The host
+   *  shape-checks it into `BLOCK_INIT.viewer.image` (`projectBlockInitViewerImage`).
+   *  Scoped to the instance like the token. Forwarded, never derived. */
+  viewerImage?: unknown;
   /**
    * A bounded automatic re-mint is scheduled after a refresh failure — i.e. the
    * hook has NOT settled. Consumers must not take a destructive action (collapse
@@ -73,6 +77,8 @@ interface TokenResponse {
   effectiveBrowsingLevel?: number;
   /** The App Storage writes cutover. Omitted unless the mint decided it. */
   appData?: unknown;
+  /** The viewer's avatar. Omitted unless the token carries `user:read:self`. */
+  viewerImage?: unknown;
 }
 
 /** The mint's `appData`, shape-checked: two strings, copied by field, or `undefined`. */
@@ -133,6 +139,7 @@ export function useBlockToken(
   // part of the returned contract — it drives whether a consumer may take a
   // destructive action — so it has to re-render.
   const [appData, setAppData] = useState<{ url: string; slug: string } | undefined>(undefined);
+  const [viewerImage, setViewerImage] = useState<unknown>(undefined);
   const [retrying, setRetrying] = useState<boolean>(false);
   // M4 (audit-10): peek the current token via a ref instead of running a
   // side-effect inside a state-updater. React 18 strict-mode calls updaters
@@ -303,6 +310,7 @@ export function useBlockToken(
           : undefined
       );
       setAppData(readMintAppData(data.appData));
+      setViewerImage(data.viewerImage);
       setPending(false);
 
       const expiresAtMs = new Date(data.expiresAt).getTime();
@@ -507,6 +515,7 @@ export function useBlockToken(
     effectiveBrowsingLevel,
     // Scoped to the instance like the token: another app's service slug must never reach this one.
     appData: tokenMatchesInstance ? appData : undefined,
+    viewerImage: tokenMatchesInstance ? viewerImage : undefined,
     retrying,
     // The mint failed, nothing usable is left, and no automatic attempt is
     // coming. This — NOT a bare `error` — is what a consumer may act
