@@ -70,7 +70,7 @@ const cluster = Array.from({ length: 8 }, (_, i) =>
 /** The harness loads no Tailwind; these are the utilities layout relies on. */
 const LAYOUT = `
   .absolute{position:absolute} .inset-0{inset:0} .inset-x-0{left:0;right:0}
-  .inset-x-2{left:8px;right:8px} .bottom-2{bottom:8px} .top-1{top:4px} .bottom-1{bottom:4px}
+  .inset-x-2{left:8px;right:8px} .bottom-2{bottom:8px} .bottom-16{bottom:64px} .top-1{top:4px} .bottom-1{bottom:4px}
   .flex{display:flex} .flex-col{flex-direction:column} .flex-wrap{flex-wrap:wrap}
   .items-center{align-items:center} .justify-between{justify-content:space-between}
   .pointer-events-none{pointer-events:none} .pointer-events-auto{pointer-events:auto}
@@ -78,10 +78,21 @@ const LAYOUT = `
   .gap-2{gap:8px} .right-2{right:8px} .top-2{top:8px} .left-2{left:8px}
 `;
 
-const stage = (placements: PlacedSticker[]) => (
+const stage = (placements: PlacedSticker[], isVideo = false) => (
   <div style={{ position: 'relative', width: 390, height: 390 }}>
     <style>{LAYOUT}</style>
-    <StickerPlacementOverlay placements={placements} viewerId={OWNER_ID} sticker={sticker} />
+    {isVideo && (
+      <div
+        data-testid="video-controls"
+        style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 56 }}
+      />
+    )}
+    <StickerPlacementOverlay
+      placements={placements}
+      viewerId={OWNER_ID}
+      sticker={sticker}
+      isVideo={isVideo}
+    />
   </div>
 );
 
@@ -187,6 +198,19 @@ describe('the bar keeps clear of stickers and the Hide controls pill', () => {
       const box = rectOf(el);
       if (box.height > 0) expect(overlaps(bar, box)).toBe(false);
     }
+  });
+
+  test.each([
+    ['clustered mid-image', cluster],
+    ['one at the top edge', [...cluster.slice(0, 7), placed(8, 0.5, 0.05)]],
+  ])('on a video, %s, the bar stays off the controls', async (_name, placements) => {
+    renderWithProviders(stage(placements, true), { user: { id: 7 } });
+    await select(0);
+
+    const bar = rectOf(page.getByRole('group', { name: 'Pending stickers' }).element());
+    const controls = rectOf(page.getByTestId('video-controls').element());
+    expect(controls.height).toBeGreaterThan(0);
+    expect(overlaps(bar, controls)).toBe(false);
   });
 
   test('a sticker at the bottom edge is still selectable', async () => {

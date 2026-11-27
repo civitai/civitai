@@ -52,6 +52,9 @@ const CONTROL_GAP_PX = 14;
 /** Height reserved for the crowded-image bar, which wraps to two rows on a phone. */
 const PENDING_BAR_STRIP_PX = 96;
 
+/** Clearance above a video's own controls, which run along the bottom edge. */
+const VIDEO_CONTROLS_CLEARANCE_PX = 64;
+
 /** Shared so the two in-box marks cannot drift apart in size or weight. */
 const PLACEMENT_MARK_CLASS =
   'truncate rounded px-1.5 py-0.5 text-[10px] font-semibold leading-tight';
@@ -97,6 +100,7 @@ export function StickerPlacementOverlay({
   paced = true,
   step = null,
   takenCorners,
+  isVideo = false,
   hiddenIds,
   bindPose,
 }: {
@@ -107,6 +111,8 @@ export function StickerPlacementOverlay({
   bindPose?: (id: number) => (node: HTMLElement | null) => void;
   /** Corners another decoration draws in, which the peek toggle keeps out of. */
   takenCorners?: PeekToggleCorner[];
+  /** A video draws its own controls along the bottom edge, which the bar keeps clear of. */
+  isVideo?: boolean;
   viewerId?: number;
   className?: string;
   /**
@@ -398,8 +404,9 @@ export function StickerPlacementOverlay({
     ? ownerPending.find((placement) => placement.id === selectedId)
     : undefined;
   // Bottom, unless an owner-pending sticker reaches into that strip and the top is
-  // clear. If both are blocked the bar stays at the bottom, and covered stickers
-  // stay reachable by keyboard and the queue.
+  // clear; a video prefers the top, to stay off its controls, and lifts the bottom
+  // bar above them. If both are blocked, covered stickers stay reachable by
+  // keyboard and the queue.
   const barEdge = (() => {
     if (!crowded || controlBox.height <= 0) return 'bottom' as const;
     const reaches = (edge: 'top' | 'bottom') =>
@@ -411,9 +418,11 @@ export function StickerPlacementOverlay({
           (box.height * Math.abs(Math.cos(radians)) + box.width * Math.abs(Math.sin(radians))) / 2;
         const centre = data.y * controlBox.height;
         return edge === 'bottom'
-          ? centre + half > controlBox.height - PENDING_BAR_STRIP_PX
+          ? centre + half >
+              controlBox.height - PENDING_BAR_STRIP_PX - (isVideo ? VIDEO_CONTROLS_CLEARANCE_PX : 0)
           : centre - half < PENDING_BAR_STRIP_PX;
       });
+    if (isVideo) return reaches('top') ? ('bottom' as const) : ('top' as const);
     return reaches('bottom') && !reaches('top') ? ('top' as const) : ('bottom' as const);
   })();
   useEffect(() => {
@@ -838,6 +847,7 @@ export function StickerPlacementOverlay({
                 selectedName={selected ? artwork.get(selected.data.cosmeticId)?.name : undefined}
                 onClear={() => setSelectedId(null)}
                 edge={barEdge}
+                lifted={isVideo}
               />
             )}
           </div>

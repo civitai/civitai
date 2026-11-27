@@ -13,6 +13,7 @@ export function StickerPendingBar({
   selectedName,
   onClear,
   edge = 'bottom',
+  lifted = false,
   style,
 }: {
   count: number;
@@ -20,6 +21,8 @@ export function StickerPendingBar({
   selectedName?: string;
   onClear: () => void;
   edge?: 'top' | 'bottom';
+  /** Sit above a video's controls when on the bottom edge. */
+  lifted?: boolean;
   style?: CSSProperties;
 }) {
   // Escape only while focus is inside the bar, and only when there is a
@@ -39,7 +42,7 @@ export function StickerPendingBar({
       onKeyDown={onKeyDown}
       className={clsx(
         'pointer-events-auto absolute inset-x-2 flex flex-wrap items-center justify-between gap-2 rounded-md bg-dark-8/90 px-2 py-1.5 text-white',
-        edge === 'top' ? 'top-2' : 'bottom-2'
+        edge === 'top' ? 'top-2' : lifted ? 'bottom-16' : 'bottom-2'
       )}
       style={style}
     >
