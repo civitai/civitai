@@ -3,7 +3,7 @@ import { BlockedReason } from '~/server/common/enums';
 import { ownerIngestionSignalData } from '~/server/common/image-block-marker';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { mergeStoredImage, storeUpdateFromIngestionSignal } from '~/store/image.store';
-import { isImageShownBlocked } from '~/utils/image-blocked';
+import { isImageShownBlocked } from '~/shared/utils/image-blocked';
 
 // The owner's page after a live signal: the server's payload, written to the store, laid over
 // the image the page loaded.

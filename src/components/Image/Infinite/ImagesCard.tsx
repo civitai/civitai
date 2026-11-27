@@ -54,7 +54,7 @@ import {
   getImagesCardFooterHeight,
   isImagesCardFooterOneRow,
 } from '~/components/Image/Infinite/images-card-footer';
-import { isImageShownBlocked } from '~/utils/image-blocked';
+import { isImageShownBlocked } from '~/shared/utils/image-blocked';
 import classes from './ImagesCard.module.scss';
 
 function getDialogState<T extends { id?: number }>(imageId: number, images: T[] = []) {

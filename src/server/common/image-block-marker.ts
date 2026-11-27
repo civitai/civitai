@@ -57,6 +57,11 @@ export function blockLeavesMedia(
   return !hasBlockMarker(image);
 }
 
+/** The block reason an image's owner may see: only one they can act on (`OWNER_MEDIA_EXEMPT_BLOCKS`). */
+export function ownerVisibleBlockedFor(blockedFor?: string | null): string | null {
+  return blockedFor != null && OWNER_MEDIA_EXEMPT_BLOCKS.includes(blockedFor) ? blockedFor : null;
+}
+
 /**
  * The ingestion signal payload an image's owner receives. A block reason reaches the owner only
  * when it is one they can act on (`OWNER_MEDIA_EXEMPT_BLOCKS`); every other reason is dropped,
@@ -73,7 +78,10 @@ export function ownerIngestionSignalData({
   blockedFor?: string | null;
   nsfwLevel?: number;
 }) {
-  const ownerBlockedFor =
-    blockedFor != null && OWNER_MEDIA_EXEMPT_BLOCKS.includes(blockedFor) ? blockedFor : undefined;
-  return { imageId, ingestion, blockedFor: ownerBlockedFor, nsfwLevel };
+  return {
+    imageId,
+    ingestion,
+    blockedFor: ownerVisibleBlockedFor(blockedFor) ?? undefined,
+    nsfwLevel,
+  };
 }

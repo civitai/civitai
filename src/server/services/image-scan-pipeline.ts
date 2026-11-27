@@ -265,16 +265,16 @@ export function extractFailedSteps(steps: unknown[]): string[] {
 }
 
 /**
- * Flip an image to `Error` (unless `ingestionAfterScanErrorSql` keeps its state), increment
- * its scan `retryCount`, and stamp a small
+ * Flip an image to `Error` (a NotFound, Blocked or held Rescan row keeps its state, see
+ * `ingestionAfterScanErrorSql`), increment its scan `retryCount`, and stamp a small
  * `scanJobs.error = { status, failureType, failedSteps, reason, failureClass, at }`
  * so a plain Postgres query can tell WHY a scan errored (and which step) without an
  * orchestrator lookup — and so the `ingest-images` cron can pick a retry ceiling
  * from `failureClass`. retryCount ALWAYS increments: it's the absolute attempt
  * count the per-class ceilings are applied against. Returns the new retryCount, mediaType,
- * userId, the stored ingestion and blockedFor, and the computed failureClass; all but
- * failureClass are `null` when no row matched (e.g. the image was deleted between scan
- * request and callback).
+ * userId, failureClass, and the stored ingestion and blockedFor, which the owner signal
+ * reports; all but failureClass are `null` when no row matched (e.g. the image was deleted
+ * between scan request and callback).
  */
 export async function markImageScanError({
   workflowId,

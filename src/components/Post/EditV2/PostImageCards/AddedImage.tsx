@@ -73,6 +73,7 @@ import { ImageToolsPopover } from '~/components/Post/EditV2/Tools/PostImageTools
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { StorylineCaptionSlot } from '~/components/Storyline/editor/StorylineCaptionSlot';
 import { useCurrentUserRequired } from '~/hooks/useCurrentUser';
+import { editorBlockNotice } from '~/shared/utils/image-blocked';
 import {
   DEFAULT_EDGE_IMAGE_WIDTH,
   MAX_MANUAL_CHECKPOINTS_PER_IMAGE,
@@ -243,6 +244,7 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
     .filter((data) => data.id !== id && canAddManualResources(data));
 
   const { generation } = useCurrentUserSettings();
+  const viewerIsModerator = !!useCurrentUserRequired().isModerator;
   const advancedMode = generation?.advancedMode ?? false;
 
   const allowedResources = useMemo(() => {
@@ -254,12 +256,11 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
   }, [storedImage.nsfwLevel, storedImage.resourceHelper]);
 
   const isPending = ingestion === ImageIngestionStatus.Pending;
-  // const isBlocked = ingestion === ImageIngestionStatus.Blocked;
   const isScanned = ingestion === ImageIngestionStatus.Scanned;
   const isPendingManualAssignment = ingestion === ImageIngestionStatus.PendingManualAssignment;
   const isScanFailed = ingestion === ImageIngestionStatus.Error;
   const isScanNotFound = ingestion === ImageIngestionStatus.NotFound;
-  const isBlocked = false;
+  const { isBlocked } = editorBlockNotice({ ingestion, blockedFor }, viewerIsModerator);
   const isMinor = minor && !needsReview;
   const canAdd = canAddManualResources({ type, meta });
   // #endregion
@@ -1543,7 +1544,8 @@ function NsfwLicenseViolationAlert() {
 function TosViolationBanner() {
   const currentUser = useCurrentUserRequired();
   const { image, onDelete, isDeleting } = useAddedImageContext();
-  const { blockedFor, id } = image;
+  const { id } = image;
+  const { reason: blockedFor } = editorBlockNotice(image, !!currentUser.isModerator);
   const { showPreview } = usePostPreviewContext();
   return (
     <Alert

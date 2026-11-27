@@ -561,6 +561,15 @@ describe('image-scan-result webhook - pipeline tests', () => {
       });
       expect(errorFlips).toHaveLength(0);
       expect(mockRefreshPicturesForImages).toHaveBeenCalledWith([13]);
+
+      // The owner's card stops pending: it hears Blocked, and no reason.
+      const sent = vi
+        .mocked(signalClient.send)
+        .mock.calls.map(([message]: any) => message.data)
+        .filter((data: any) => data.imageId === 13);
+      expect(sent).toEqual([
+        expect.objectContaining({ ingestion: ImageIngestionStatus.Blocked, blockedFor: undefined }),
+      ]);
     });
 
     it('signals the Error state so the editor stops showing "Analyzing image"', async () => {

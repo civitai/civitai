@@ -252,6 +252,7 @@ export async function processImageScanWorkflow({
       await refreshProfilePicturesForImagesLazy([imageId]);
       await bustPostOfImage(imageId);
       await evictHomeBlocksForImages({ imageIds: [imageId] });
+      await signalHardBlock(imageId);
       if (articleImageScanning) await fanOutArticleImageUpdates(imageId);
       return;
     }
@@ -486,6 +487,24 @@ export async function blockImageFromRating({
       "metadata" = ${withoutGraceMarkersSql()}
     WHERE id = ${imageId}
   `;
+}
+
+/** Never throws: tells the owner's open page the image is Blocked, so its card stops pending. */
+async function signalHardBlock(imageId: number) {
+  try {
+    const row = await dbWrite.image.findUnique({
+      where: { id: imageId },
+      select: { userId: true },
+    });
+    await sendIngestionSignal({
+      imageId,
+      userId: row?.userId ?? null,
+      ingestion: ImageIngestionStatus.Blocked,
+      nsfwLevel: NsfwLevel.Blocked,
+    });
+  } catch (error) {
+    handleLogError(error as Error);
+  }
 }
 
 /** Never throws: the block it follows has committed, and the rest of the scan failed. */
