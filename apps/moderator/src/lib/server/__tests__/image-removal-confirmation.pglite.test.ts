@@ -550,16 +550,68 @@ describe('deciding a held removal', () => {
     expect(setReportStatus.mock.calls.map(([a]) => a.id)).toEqual([7]);
   });
 
-  it('also actions a TOS report on the image filed after the hold, but no other new report', async () => {
-    const id = await hold();
-    await db.exec(`
+  const fileSinceHold = () =>
+    db.exec(`
       INSERT INTO "Report" (id, status, reason) VALUES (10, 'Pending', 'TOSViolation'), (11, 'Pending', 'NSFW');
       INSERT INTO "ImageReport" ("imageId", "reportId") VALUES (50, 10), (50, 11);
     `);
+  const actioned = () => setReportStatus.mock.calls.map(([a]) => a.id);
+
+  it('on a path that settles TOS reports, also actions one filed since the hold, but no other new report', async () => {
+    await approve();
+    const { held } = await blockImage({
+      imageId: IMAGE,
+      userId: REQUESTER,
+      violationType: 'animatedMinorNsfw',
+      reportIds: [7, 8],
+      source: 'api.removeImages',
+    });
+    await fileSinceHold();
+
+    await confirmRemoval({ id: held!.confirmationId, userId: CONFIRMER });
+
+    expect(actioned()).toEqual([7, 8, 10]);
+  });
+
+  it('on a moderator block, leaves a TOS report filed since the hold for review', async () => {
+    const id = await hold();
+    await fileSinceHold();
 
     await confirmRemoval({ id, userId: CONFIRMER });
 
-    expect(setReportStatus.mock.calls.map(([a]) => a.id).sort((a, b) => a - b)).toEqual([7, 8, 10]);
+    expect(actioned()).toEqual([7, 8]);
+  });
+
+  it('voided because a ban removed the image meanwhile: closes the kept reports unpaid, no others', async () => {
+    await approve();
+    const { held } = await blockImage({
+      imageId: IMAGE,
+      userId: REQUESTER,
+      violationType: 'animatedMinorNsfw',
+      reportIds: [7, 8],
+      source: 'api.removeImages',
+    });
+    await fileSinceHold();
+    await db.query(
+      `UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'moderated' WHERE id = $1`,
+      [IMAGE]
+    );
+    await db.query(
+      `INSERT INTO "User" ("id", "bannedAt") SELECT "userId", now() FROM "Image" WHERE id = $1
+       ON CONFLICT ("id") DO UPDATE SET "bannedAt" = now()`,
+      [IMAGE]
+    );
+
+    expect(await confirmRemoval({ id: held!.confirmationId, userId: CONFIRMER })).toMatchObject({
+      status: 'Void',
+    });
+
+    expect(
+      setReportStatus.mock.calls.map(([a]) => [a.id, (a as { noReward?: boolean }).noReward])
+    ).toEqual([
+      [7, true],
+      [8, true],
+    ]);
   });
 
   it('runs the removal once when two moderators confirm', async () => {

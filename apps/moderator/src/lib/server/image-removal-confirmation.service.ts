@@ -105,6 +105,9 @@ export type DecideResult =
   | { ok: true; status: RemovalConfirmationStatus; note?: string }
   | { ok: false; error: string };
 
+/** Removal paths whose unheld run also actions every open TOS report on the image. */
+const TOS_SETTLING_SOURCES = ['api.removeImages', 'site.setTosViolation'];
+
 const NOT_PENDING = 'This removal was decided or changed since the page loaded. Reload.';
 
 /** The image a removal confirmation is about; `null` for one that does not exist. */
@@ -175,7 +178,8 @@ export async function confirmRemoval({
   if (voidNote === 'A later appeal was approved') return { ok: true, status, note: voidNote };
 
   let skipped = false;
-  let unpaid = false;
+  // Voided because another removal already took it down: that block decides the payout.
+  let unpaid = voidNote ? await isBannedOwnerBlocked(row.imageId) : false;
   if (!voidNote)
     try {
       unpaid = await isBannedOwnerBlocked(row.imageId);
@@ -197,26 +201,29 @@ export async function confirmRemoval({
       throw e;
     }
   // The image is down either way, so the reports the removal answered are actioned, unless it is
-  // held: the ones kept on the request, and any TOS report filed since the hold. Only reports on
-  // this image; one a moderator has reviewed since the hold keeps its status.
-  const openReportIds = skipped
-    ? []
-    : (
-        await dbWrite
-          .selectFrom('ImageReport as ir')
-          .innerJoin('Report as r', 'r.id', 'ir.reportId')
-          .select('r.id')
-          .distinct()
-          .where('ir.imageId', '=', row.imageId)
-          .where('r.status', 'in', OPEN_REPORT_STATUSES)
-          .where((eb) =>
-            eb.or([
-              ...(claimed.reportIds.length ? [eb('r.id', 'in', claimed.reportIds)] : []),
-              eb(sql<string>`r.reason::text`, '=', 'TOSViolation'),
-            ])
-          )
-          .execute()
-      ).map((r) => r.id);
+  // held: the ones kept on the request, and, when this removal ran and its path settles the image's
+  // TOS reports unheld, any TOS report filed since the hold. Only reports on this image; one a
+  // moderator has reviewed since the hold keeps its status.
+  const settlesTos = !voidNote && TOS_SETTLING_SOURCES.includes(row.source);
+  const openReportIds =
+    skipped || (!settlesTos && !claimed.reportIds.length)
+      ? []
+      : (
+          await dbWrite
+            .selectFrom('ImageReport as ir')
+            .innerJoin('Report as r', 'r.id', 'ir.reportId')
+            .select('r.id')
+            .where('ir.imageId', '=', row.imageId)
+            .where('r.status', 'in', OPEN_REPORT_STATUSES)
+            .where((eb) =>
+              eb.or([
+                ...(claimed.reportIds.length ? [eb('r.id', 'in', claimed.reportIds)] : []),
+                ...(settlesTos ? [eb(sql<string>`r.reason::text`, '=', 'TOSViolation')] : []),
+              ])
+            )
+            .orderBy('r.id')
+            .execute()
+        ).map((r) => r.id);
   for (const reportId of openReportIds)
     await setReportStatus({
       id: reportId,
