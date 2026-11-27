@@ -210,11 +210,8 @@ const isPlainObject = (value: unknown): value is Record<string, unknown> =>
  * exactly `JSON.stringify` output (as the Node writer's is). Any other text is left alone, so its
  * encoding is still compared byte for byte.
  */
-export function withoutReferentialEqualities(
-  text: string,
-  maxTextLength: number = SHADOW_DIFF_BUDGET.maxTextLength
-): string | undefined {
-  if (text.length > maxTextLength) return undefined;
+export function withoutReferentialEqualities(text: string): string | undefined {
+  if (text.length > SHADOW_DIFF_BUDGET.maxTextLength) return undefined;
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
