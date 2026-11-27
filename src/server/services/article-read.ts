@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+import { Flags } from '~/shared/utils/flags';
 import { ArticleIngestionStatus, ArticleStatus, Availability } from '~/shared/utils/prisma/enums';
 
 export type ArticleReader = { id?: number; isModerator?: boolean } | undefined;
@@ -34,9 +35,10 @@ export function articleReadableWhere(viewer: ArticleReader): Prisma.ArticleWhere
   };
 }
 
-/** The columns `canReadArticle` reads. */
+/** The columns `canReadArticle` and `articleWithinBrowsingLevel` read. */
 export const articleReadSelect = {
   userId: true,
+  nsfwLevel: true,
   publishedAt: true,
   status: true,
   ingestion: true,
@@ -52,4 +54,20 @@ export function canReadArticle(article: ReadableArticle, viewer: ArticleReader) 
     article.status === ArticleStatus.Published &&
     article.ingestion === ArticleIngestionStatus.Scanned;
   return (isOwner || isLive) && canViewArticle(article, viewer);
+}
+
+/**
+ * The level must intersect the article's; an unrated article (nsfwLevel 0) is also visible to its
+ * author and moderators. Mirrors canListAssociatedModel for linked models; getArticles applies the
+ * unrated exception only under `pending` (article.service.ts).
+ */
+export function articleWithinBrowsingLevel(
+  article: { nsfwLevel: number; userId: number | null },
+  viewer: ArticleReader,
+  browsingLevel: number
+) {
+  if (Flags.intersects(article.nsfwLevel, browsingLevel)) return true;
+  const privileged =
+    !!viewer?.isModerator || (viewer?.id !== undefined && article.userId === viewer.id);
+  return article.nsfwLevel === 0 && privileged;
 }
