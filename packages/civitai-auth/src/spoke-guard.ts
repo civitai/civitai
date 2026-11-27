@@ -162,8 +162,12 @@ export function createSpokeGuard(config: SpokeGuardConfig): SpokeGuard {
       const own = readSessionToken(jar, { host: null, mode: 'host' });
       if (own?.slot === 'host') {
         const ownResolved = await sessions.resolveSessionUser(own.value);
-        // A host session the hub can't resolve right now is unknown, not absent: report it as such.
-        if (ownResolved.user || ownResolved.reason === 'unavailable')
+        // A host session the hub can't resolve or confirm right now is unknown, not absent: report it as such.
+        if (
+          ownResolved.user ||
+          ownResolved.reason === 'unavailable' ||
+          ownResolved.reason === 'unconfirmed'
+        )
           [read, resolved] = [own, ownResolved];
       }
     }

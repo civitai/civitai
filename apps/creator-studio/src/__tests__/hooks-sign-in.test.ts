@@ -38,9 +38,9 @@ describe('creator-studio sign-in wiring', () => {
   );
 
   // Mod Lead ruling 2026-11-27: an elevated session whose revocation read failed gets a 503, not a sign-in.
-  it('answers 503 to an unconfirmed elevated session, with no redirect and no cookie change', async () => {
+  it.each(['/dashboard', '/'])('answers 503 to an unconfirmed elevated session on %s, with no redirect and no cookie change', async (path) => {
     guardCheck.mockResolvedValue({ status: 'unavailable' });
-    const { response, resolve } = await run('/dashboard');
+    const { response, resolve } = await run(path);
     expect(response.status).toBe(503);
     expect(response.headers.get('location')).toBeNull();
     expect(response.headers.get('set-cookie')).toBeNull();

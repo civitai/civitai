@@ -974,3 +974,21 @@ func TestIsRevokedStopsRetryingForTheCooldownAfterARetryFails(t *testing.T) {
 		t.Fatalf("after the cool-down: %d round trips, want 5 (retrying again)", r.Calls)
 	}
 }
+
+// A request that ends during the backoff never retried, so it does not pause retries for the process.
+func TestIsRevokedARequestEndedInTheBackoffDoesNotPauseRetries(t *testing.T) {
+	r := testkit.NewRedis()
+	r.Err = errors.New("read tcp 10.0.0.1:6379: connection reset by peer")
+	rev := &Revocation{Redis: r, RetryDelay: func() time.Duration { return time.Second }, RetryCooldown: time.Hour}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	rev.Check(ctx, revocationClaims())
+	if r.Calls != 1 {
+		t.Fatalf("ended in the backoff: %d round trips, want 1", r.Calls)
+	}
+	rev.RetryDelay = func() time.Duration { return 0 }
+	rev.Check(context.Background(), revocationClaims())
+	if r.Calls != 3 {
+		t.Fatalf("next failure: %d round trips, want 3 (it still retries)", r.Calls)
+	}
+}

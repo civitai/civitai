@@ -56,8 +56,8 @@ export const handle: Handle = async ({ event, resolve }) => {
   });
 
   if (result.status !== 'ok') {
-    if (OPTIONAL_AUTH_PATHS.has(pathname)) return resolve(event, withVersion);
     if (result.status === 'unavailable') return spokeUnavailableResponse();
+    if (OPTIONAL_AUTH_PATHS.has(pathname)) return resolve(event, withVersion);
     if (result.status === 'login') {
       return new Response(null, { status: 302, headers: { location: result.redirect } });
     }

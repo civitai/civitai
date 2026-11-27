@@ -81,16 +81,15 @@ func (r *Revocation) Check(ctx context.Context, c *Claims) (revoked, readFailed 
 		t := time.NewTimer(delay)
 		select {
 		case <-t.C:
-			cmds, err = r.read(ctx, c, k)
+			if cmds, err = r.read(ctx, c, k); err != nil {
+				cooldown := r.RetryCooldown
+				if cooldown == 0 {
+					cooldown = 10 * time.Second
+				}
+				r.retryPausedUntil.Store(time.Now().Add(cooldown).UnixNano())
+			}
 		case <-ctx.Done():
 			t.Stop()
-		}
-		if err != nil {
-			cooldown := r.RetryCooldown
-			if cooldown == 0 {
-				cooldown = 10 * time.Second
-			}
-			r.retryPausedUntil.Store(time.Now().Add(cooldown).UnixNano())
 		}
 	}
 	if err != nil {
