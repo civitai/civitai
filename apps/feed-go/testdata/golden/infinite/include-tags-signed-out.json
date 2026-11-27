@@ -1066,6 +1066,7 @@
             "poi": false,
             "restricted": false,
             "meta": null,
+            "thumbnailUrl": "00000000-0000-4000-8000-000000008905",
             "modelVersionIds": [],
             "modelVersionIdsManual": [],
             "baseModel": null,
@@ -1097,7 +1098,6 @@
             ],
             "cosmetic": null,
             "eventDecoration": null,
-            "thumbnailUrl": "00000000-0000-4000-8000-000000008905",
             "judgeScore": null
           },
           {
@@ -1133,6 +1133,7 @@
             "poi": false,
             "restricted": false,
             "meta": null,
+            "thumbnailUrl": null,
             "modelVersionIds": [],
             "modelVersionIdsManual": [],
             "baseModel": null,
@@ -1219,7 +1220,6 @@
               }
             },
             "eventDecoration": null,
-            "thumbnailUrl": null,
             "judgeScore": null
           },
           {
@@ -1255,6 +1255,7 @@
             "poi": false,
             "restricted": false,
             "meta": null,
+            "thumbnailUrl": null,
             "modelVersionIds": [],
             "modelVersionIdsManual": [],
             "baseModel": null,
@@ -1302,7 +1303,6 @@
             ],
             "cosmetic": null,
             "eventDecoration": null,
-            "thumbnailUrl": null,
             "judgeScore": null
           },
           {
@@ -1338,6 +1338,7 @@
             "poi": false,
             "restricted": false,
             "meta": null,
+            "thumbnailUrl": null,
             "modelVersionIds": [],
             "modelVersionIdsManual": [],
             "baseModel": null,
@@ -1400,7 +1401,6 @@
             ],
             "cosmetic": null,
             "eventDecoration": null,
-            "thumbnailUrl": null,
             "judgeScore": null
           }
         ],
@@ -1433,14 +1433,14 @@
           "items.1.publishedAt": [
             "Date"
           ],
+          "items.1.thumbnailUrl": [
+            "undefined"
+          ],
           "items.1.baseModel": [
             "undefined"
           ],
           "items.1.tags.0.lastUpvote": [
             "Date"
-          ],
-          "items.1.thumbnailUrl": [
-            "undefined"
           ],
           "items.2.createdAt": [
             "Date"
@@ -1451,10 +1451,10 @@
           "items.2.publishedAt": [
             "Date"
           ],
-          "items.2.baseModel": [
+          "items.2.thumbnailUrl": [
             "undefined"
           ],
-          "items.2.thumbnailUrl": [
+          "items.2.baseModel": [
             "undefined"
           ],
           "items.3.createdAt": [
@@ -1466,14 +1466,14 @@
           "items.3.publishedAt": [
             "Date"
           ],
+          "items.3.thumbnailUrl": [
+            "undefined"
+          ],
           "items.3.baseModel": [
             "undefined"
           ],
           "items.3.tags.0.lastUpvote": [
             "Date"
-          ],
-          "items.3.thumbnailUrl": [
-            "undefined"
           ]
         },
         "referentialEqualities": {

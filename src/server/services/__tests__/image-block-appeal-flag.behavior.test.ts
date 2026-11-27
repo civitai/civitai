@@ -870,7 +870,7 @@ describe('an explicit unblock of an image an account deletion blocked', () => {
       [DECIDED, review]
     );
 
-    await handleUnblockImages({ ids: [DECIDED], moderatorId: 2 } as never);
+    await handleUnblockImages({ csamReview: true, ids: [DECIDED], moderatorId: 2 } as never);
 
     const { rows } = await holder.db.query<{
       needsReview: string | null;

@@ -1455,14 +1455,15 @@ func BuildInfiniteImages(rows []RawImage, hy *Hydrated, viewer Viewer, now time.
 			availability, item = r.Availability, r.Collection
 		}
 		// In the Node object's key order: `availability` is the SELECT's column before `minor`, `meta`
-		// follows `restricted` (and a collection row's two columns), `baseModel` is set after
-		// `modelVersionIdsManual`, and `judgeScore` is last.
+		// follows `restricted` (and a collection row's two columns) and precedes `thumbnailUrl` (the
+		// key feedThumbnailFields adds after it), `baseModel` is set after `modelVersionIdsManual`, and
+		// `judgeScore` is last.
 		wire := make(superjson.Object, 0, len(img.Wire)+6)
 		for _, f := range img.Wire {
 			switch f.Key {
 			case "minor":
 				wire = append(wire, superjson.Field{Key: "availability", Val: availability})
-			case "modelVersionIds":
+			case "thumbnailUrl":
 				wire = append(wire, superjson.Field{Key: "meta", Val: nil})
 			case "user":
 				wire = append(wire, superjson.Field{Key: "baseModel", Val: superjson.Undefined{}})

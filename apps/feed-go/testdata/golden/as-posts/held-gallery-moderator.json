@@ -655,6 +655,7 @@
                 "minor": false,
                 "poi": false,
                 "restricted": false,
+                "thumbnailUrl": null,
                 "modelVersionIds": [],
                 "modelVersionIdsManual": [],
                 "user": {
@@ -684,8 +685,7 @@
                   520
                 ],
                 "cosmetic": null,
-                "eventDecoration": null,
-                "thumbnailUrl": null
+                "eventDecoration": null
               },
               {
                 "id": 8301,
@@ -718,6 +718,7 @@
                 "minor": false,
                 "poi": false,
                 "restricted": false,
+                "thumbnailUrl": null,
                 "modelVersionIds": [],
                 "modelVersionIdsManual": [],
                 "user": {
@@ -747,8 +748,7 @@
                   526
                 ],
                 "cosmetic": null,
-                "eventDecoration": null,
-                "thumbnailUrl": null
+                "eventDecoration": null
               }
             ],
             "review": null
@@ -778,10 +778,10 @@
           "items.0.images.0.publishedAt": [
             "Date"
           ],
-          "items.0.images.0.tags": [
+          "items.0.images.0.thumbnailUrl": [
             "undefined"
           ],
-          "items.0.images.0.thumbnailUrl": [
+          "items.0.images.0.tags": [
             "undefined"
           ],
           "items.0.images.1.createdAt": [
@@ -793,10 +793,10 @@
           "items.0.images.1.publishedAt": [
             "Date"
           ],
-          "items.0.images.1.tags": [
+          "items.0.images.1.thumbnailUrl": [
             "undefined"
           ],
-          "items.0.images.1.thumbnailUrl": [
+          "items.0.images.1.tags": [
             "undefined"
           ],
           "items.0.review": [
