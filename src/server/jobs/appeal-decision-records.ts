@@ -378,15 +378,26 @@ const COPY_LABELS: string[] = [
 const RATED_COPY_LABELS: string[] = [ViolationType.RealPerson, 'poi'];
 const SCANNER_COPY_RATINGS: string[] = ['pg', 'pg13', 'pg-13'];
 
+/** `TagSource.SpineRating` as `get_tag_on_image_attributes` packs it (migration 20271208120000). */
+const SPINE_RATING_SOURCE_CODE = 10;
+/** The rating names the image scan stores. */
+const SCANNER_RATING_NAMES: string[] = ['pg', 'pg13', 'pg-13', 'r', 'x', 'xxx'];
+
 /**
- * Whether a `TagsOnImageNew` row is a rating the image scan stored. The scan writes a
- * `TagSource.SpineRating` tag, but `get_tag_on_image_attributes` has no code for that source and
- * packs it as 0, so it is read as an automated tag with source bits 0. A tag a user added is
- * source 1. Give SpineRating its own code and this is the one place to switch to it.
+ * Whether a `TagsOnImageNew` row is a rating the image scan stored: its `SpineRating` source code,
+ * or, for rows written before that code existed (packed as source 0), an automated source-0 tag
+ * named as a rating. Other automated source-0 tags, such as legacy Hive labels, are not ratings.
  */
 export const isScannerRatingRow = (row: Prisma.Sql) => Prisma.sql`(
-  ((${row}.attributes >> 12)::integer & 15) = 0
-  AND ((${row}.attributes >> 11)::integer & 1) = 1
+  ((${row}.attributes >> 12)::integer & 15) = ${SPINE_RATING_SOURCE_CODE}
+  OR (
+    ((${row}.attributes >> 12)::integer & 15) = 0
+    AND ((${row}.attributes >> 11)::integer & 1) = 1
+    AND EXISTS (
+      SELECT 1 FROM "Tag" rt
+      WHERE rt.id = ${row}."tagId" AND rt.name = ANY(${SCANNER_RATING_NAMES}::text[])
+    )
+  )
 )`;
 
 /** The ratings the image scan stored for an image, as tag names. */
