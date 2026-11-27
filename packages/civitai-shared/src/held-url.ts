@@ -192,7 +192,7 @@ export function heldUrlSql(
 /** The ids `CSAM_REPORT_LISTED_IMAGE_IDS_SQL` lists, as bigints, so a join on "Image".id can use its
  *  primary key. An entry that is not a number lists nothing. */
 // The CASE, not a WHERE: Postgres may run the cast before a WHERE's pattern test.
-const LISTED_IMAGE_IDS_SQL = `SELECT CASE WHEN rl_ids.id ~ '^[0-9]{1,18}$' THEN (rl_ids.id)::bigint END
+export const LISTED_IMAGE_IDS_SQL = `SELECT CASE WHEN rl_ids.id ~ '^[0-9]{1,18}$' THEN (rl_ids.id)::bigint END
   FROM (${CSAM_REPORT_LISTED_IMAGE_IDS_SQL}) rl_ids`;
 
 /**

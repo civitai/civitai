@@ -121,6 +121,13 @@ const MARKS: (Mark & { marked: boolean })[] = [
     marked: true,
   },
   {
+    label: 'moderated + another row on its url listed with a leading zero',
+    blockedFor: 'moderated',
+    setup: `INSERT INTO "Image" (id, "userId", url, ingestion) VALUES ($id + 1000, 9, '$url', 'Scanned');
+      INSERT INTO "CsamReport" (images) VALUES (jsonb_build_array('0' || ($id + 1000)::text))`,
+    marked: true,
+  },
+  {
     label: "moderated + the pHash of another user's listed image",
     blockedFor: 'moderated',
     pHash: 5151,
@@ -276,10 +283,9 @@ describe('ownerMediaAllowed, reviewedBlocks off (the flag off)', () => {
 describe('ownerMediaAllowed, reviewedBlocks on', () => {
   it('adds a moderated or tos block, alone or listed together, with no CSAM mark', () => {
     const added = named(tsAllowed(true).filter((id) => !tsAllowed(false).includes(id)));
+    // Only an image whose scan ended Blocked: an unfinished scan may not have read its marks yet.
     expect(added).toEqual([
-      ...INGESTIONS.flatMap((ingestion) =>
-        ['tos', 'moderated', 'moderated,tos', ' tos , moderated'].map((r) => `${ingestion}/${r}`)
-      ),
+      ...['tos', 'moderated', 'moderated,tos', ' tos , moderated'].map((r) => `Blocked/${r}`),
       'moderated + a url copy deleted, not for CSAM review',
       'moderated + report-listed, no CSAM mark',
       'moderated + clean url sibling',

@@ -6,7 +6,7 @@ import {
   heldItemImageSql,
   unreadableImageSql,
 } from './held-media';
-import { heldUrlSql, reportListedUrlSql } from './held-url';
+import { LISTED_IMAGE_IDS_SQL, heldUrlSql, reportListedUrlSql } from './held-url';
 import { blockedForSignal, type BlockedForPatterns, type ScannerVerdict } from './media-signals';
 
 /** Whether the retracted-media routes may serve the "Image" row aliased `image` at all, to anyone:
@@ -213,7 +213,8 @@ function buildOwnerCsamMarkedSql(image: string): string {
 /**
  * `reportListedUrlSql` for the "Image" row aliased `image`, less its own listing: another row or a
  * moderator-deleted copy on its url is listed on a CSAM report, or a row on its url has the pHash of
- * an image listed on one, whoever's it is.
+ * an image other than this one listed on one, whoever's it is. Built as `reportListedUrlSql` is, so
+ * the listed ids read through the primary key and the listed pHashes once per statement.
  */
 function reportedCopySql(image: string): string {
   const url = `${image}."url"`;
@@ -221,20 +222,21 @@ function reportedCopySql(image: string): string {
   return `(
     EXISTS (
       SELECT 1 FROM "Image" orl_i
-      WHERE orl_i.url = ${url} AND orl_i.id <> ${id}
-        AND (orl_i.id)::text IN (${CSAM_REPORT_LISTED_IMAGE_IDS_SQL})
+      WHERE orl_i.url = ${url} AND orl_i.id <> ${id} AND orl_i.id IN (${LISTED_IMAGE_IDS_SQL})
     )
     OR EXISTS (
       SELECT 1 FROM "ImageCdnModeratorDelete" orl_d
-      WHERE orl_d.url = ${url} AND (orl_d."imageId")::text IN (${CSAM_REPORT_LISTED_IMAGE_IDS_SQL})
+      WHERE orl_d.url = ${url} AND orl_d."imageId" IN (${LISTED_IMAGE_IDS_SQL})
     )
     OR EXISTS (
       SELECT 1 FROM "Image" orl_p
-      WHERE orl_p.url = ${url} AND orl_p."pHash" IN (
-        SELECT orl_x."pHash" FROM "Image" orl_x
-        WHERE orl_x.id <> ${id} AND orl_x."pHash" IS NOT NULL
-          AND (orl_x.id)::text IN (${CSAM_REPORT_LISTED_IMAGE_IDS_SQL})
-      )
+      CROSS JOIN LATERAL jsonb_array_elements(COALESCE((
+        -- Uncorrelated, so it is computed once per statement, not per outer row.
+        SELECT jsonb_agg(jsonb_build_array(orl_x.id, orl_x."pHash")) FROM "Image" orl_x
+        WHERE orl_x.id IN (${LISTED_IMAGE_IDS_SQL}) AND orl_x."pHash" IS NOT NULL
+      ), '[]'::jsonb)) orl_e
+      WHERE orl_p.url = ${url}
+        AND (orl_e ->> 1)::bigint = orl_p."pHash" AND (orl_e ->> 0)::bigint <> ${id}
     )
   )`;
 }

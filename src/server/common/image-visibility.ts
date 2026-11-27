@@ -111,6 +111,7 @@ export const ownerMediaAllowedSql = (
           WHERE btrim(ob_reason.value) NOT IN (${Prisma.join(OWNER_MEDIA_REVIEWED_BLOCKS)})
         )
         AND cardinality(string_to_array(${t}."blockedFor", ',')) > 0
+        AND ${t}."ingestion" = ${ImageIngestionStatus.Blocked}::"ImageIngestionStatus"
         AND NOT ${Prisma.raw(ownerCsamMarkedSql(alias))}
       )
     ELSE ${t}."ingestion" <> ${ImageIngestionStatus.Blocked}::"ImageIngestionStatus"
@@ -124,11 +125,14 @@ export const ownerMediaAllowedSql = (
 
 /**
  * `ownerCsamMarkedSql` as a select column for `ownerMediaAllowed`'s `ownerCsamMarked`: read only for
- * `viewerId`'s own blocked image, NULL (withheld) for every other row.
+ * `viewerId`'s own Blocked image under a block that is not exempt, NULL (withheld) for every other row.
  */
 export const ownerCsamMarkedColumnSql = (viewerId: number, alias = 'i') => {
   const t = Prisma.raw(`"${alias}"`);
-  return Prisma.sql`(CASE WHEN ${t}."userId" = ${viewerId} AND ${t}."blockedFor" IS NOT NULL
+  return Prisma.sql`(CASE WHEN ${t}."userId" = ${viewerId}
+      AND ${t}."ingestion" = ${ImageIngestionStatus.Blocked}::"ImageIngestionStatus"
+      AND ${t}."blockedFor" IS NOT NULL
+      AND ${t}."blockedFor" NOT IN (${Prisma.join(OWNER_MEDIA_EXEMPT_BLOCKS)})
     THEN ${Prisma.raw(ownerCsamMarkedSql(alias))} END)`;
 };
 

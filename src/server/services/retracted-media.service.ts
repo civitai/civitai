@@ -5,6 +5,7 @@ import { moderatorMediaWhereSql, moderatorWithheldSql } from '@civitai/shared/re
 import { OWNER_MEDIA_EXEMPT_BLOCKS } from '~/server/common/image-block-marker';
 import { ownerMediaAllowedSql } from '~/server/common/image-visibility';
 import { dbWrite } from '~/server/db/client';
+import { reviewOfImageSql } from '~/server/services/creator-service-review-image-sql';
 import { imageVisibilityConditions } from '~/server/services/image-visibility.service';
 
 export type RetractedMedia = {
@@ -71,9 +72,11 @@ export async function getOwnRetractedMedia(
   const [row] = await db.$transaction(async (tx) => {
     await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = ${RETRACTED_MEDIA_READ_TIMEOUT_MS}`);
     return tx.$queryRaw<OwnRetractedMedia[]>`
-      SELECT i.url, i.type::text AS type, i."mimeType", i."postId", i."nsfwLevel"
+      SELECT i.url, i.type::text AS type, i."mimeType", i."postId",
+        COALESCE(rw."level", i."nsfwLevel") AS "nsfwLevel"
       FROM "Image" i
       LEFT JOIN "Post" p ON p.id = i."postId"
+      LEFT JOIN LATERAL ${reviewOfImageSql} rw ON TRUE
       WHERE i.id = ${imageId}
         AND i."userId" = ${userId}
         AND ${Prisma.join(visible, ' AND ')}
