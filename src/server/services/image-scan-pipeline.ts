@@ -939,7 +939,7 @@ export async function resolveScanOutcome({
     toUpdate.nsfwLevel = scanLevel = NsfwLevel.Blocked;
   }
   // A CSAM block is decided only in a moderator's CSAM review, so its owner gets no rule notice.
-  if (ruleBlocked && toUpdate.blockedFor !== BlockedReason.CSAM)
+  if (ruleBlocked && !blockedForNamesCsam(toUpdate.blockedFor as string | undefined))
     await notifyImageAutoBlocked({
       imageId: image.id,
       userId: image.userId,

@@ -50,11 +50,6 @@ const ALLOWED: Record<string, number> = {
   'packages/civitai-db-queries/src/content-deletion.db.ts': 1,
   // A kept hide's recorded prior state.
   'packages/civitai-db-queries/src/pending-deletes.db.ts': 1,
-  // Outbound: owner notices, report actioning and payouts, awaiting their decision.
-  'src/server/services/image.service.ts': 2,
-  'src/server/services/report.service.ts': 1,
-  'src/server/services/image-scan-pipeline.ts': 1,
-  'apps/moderator/src/lib/server/image-moderation.service.ts': 3,
   // A moderator count of unusual block reasons: a list naming CSAM is worth their look.
   'apps/moderator/src/lib/server/moderation-board.service.ts': 1,
 };

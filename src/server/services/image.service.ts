@@ -1578,7 +1578,7 @@ export async function handleUnblockImages({
  * of a held image sends no owner notice and actions no report: for one under review they wait in
  * `ImageDeferredBlockEffect` for the review to close.
  */
-const heldImageSql = Prisma.sql`("blockedFor" = ${BlockedReason.CSAM} OR ("needsReview" = 'csam' AND NOT EXISTS (
+const heldImageSql = Prisma.sql`(${csamBlockedSql()} OR ("needsReview" = 'csam' AND NOT EXISTS (
   SELECT 1 FROM "CsamQueueSetAside" s WHERE s."imageId" = "Image".id AND s.outcome = 'Dismissed'
 )))`;
 
@@ -1642,7 +1642,7 @@ export async function writeModeratorBlock(
         pHash: bigint | null;
       }[]
     >`
-      SELECT id, ${heldImageSql} AS held, "blockedFor" = ${BlockedReason.CSAM} AS "removedForCsam",
+      SELECT id, ${heldImageSql} AS held, ${csamBlockedSql()} AS "removedForCsam",
         "needsReview" = 'csam' AS "underReview", "pHash"
       FROM "Image" WHERE id = ANY(${ids}::int[])
     `;

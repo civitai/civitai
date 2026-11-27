@@ -99,6 +99,8 @@ const FLAGGED = 1; // under the review flag, not yet removed: removed for CSAM b
 const REMOVED = 2; // removed for CSAM, the review flag kept
 const REMOVED_TOS = 3; // removed by a moderator, the review flag kept
 const DISMISSED = 4; // removed with the flag kept, then dismissed from its queue: not held
+const REMOVED_LISTED = 105; // as REMOVED, with CSAM inside a comma list of block reasons
+const REMOVED_TOS_LISTED = 106; // as REMOVED_TOS, a comma list with no CSAM in it
 
 const SCHEMA = `
 CREATE TABLE "Image" (
@@ -188,8 +190,10 @@ beforeEach(async () => {
       ($1, 7, 'csam', 'CSAM', 'Scanned', 4, $5),
       ($2, 7, 'csam', 'CSAM', 'Blocked', 32, $5),
       ($3, 7, 'csam', 'moderated', 'Blocked', 32, $5),
-      ($4, 7, 'csam', 'moderated', 'Blocked', 32, $5)`,
-    [FLAGGED, REMOVED, REMOVED_TOS, DISMISSED, HASH]
+      ($4, 7, 'csam', 'moderated', 'Blocked', 32, $5),
+      ($6, 7, 'csam', 'TOS,csam', 'Blocked', 32, $5),
+      ($7, 7, 'csam', 'TOS,Moderated', 'Blocked', 32, $5)`,
+    [FLAGGED, REMOVED, REMOVED_TOS, DISMISSED, HASH, REMOVED_LISTED, REMOVED_TOS_LISTED]
   );
   await pg.query(
     `INSERT INTO "CsamQueueSetAside" ("imageId", "userId", outcome, "moderatorId") VALUES ($1, 7, 'Dismissed', 2)`,
@@ -347,6 +351,17 @@ describe('a re-block of a removed, held image', () => {
 
     expect(blocklistEntries()).toEqual([]);
     expect(await pgRows()).toEqual([]);
+  });
+
+  it('reads a CSAM block inside a comma list as removed for CSAM, and a list without one as not', async () => {
+    expect(await reblock(REMOVED_LISTED)).toEqual({ skipped: true });
+    expect(await reblock(REMOVED_TOS_LISTED)).toEqual({ skipped: true });
+
+    expect(blocklistEntries()).toEqual([[{ hash: HASH, reason: 'CSAM' }]]);
+    const deferred = await pg.query<{ imageId: number }>(
+      'SELECT "imageId" FROM "ImageDeferredBlockEffect" ORDER BY "imageId"'
+    );
+    expect(deferred.rows).toEqual([{ imageId: REMOVED_TOS_LISTED }]);
   });
 
   it('writes nothing for one dismissed from its queue, which is not held (control)', async () => {

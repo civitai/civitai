@@ -64,14 +64,13 @@ const NOT_FLAG_ONLY_REMAINING = sql<boolean>`("needsReview" IS DISTINCT FROM ${F
 const BLOCKED_REASON_MODERATED = 'moderated';
 /** The row holds a CSAM block, anywhere in its comma list of block reasons (main app: `csamBlockedSql`). */
 const CSAM_BLOCKED = sql<boolean>`${sql.raw(csamBlockedForSql('"Image"'))}`;
-const BLOCKED_REASON_CSAM = 'CSAM';
 
 /**
  * Removed for CSAM, or under the review flag and not dismissed from its queue. A block of a held image
  * sends no owner notice and actions no report: for one under review they wait in
  * `ImageDeferredBlockEffect` for the review to close. The main app's twin is `heldImageSql`.
  */
-const HELD_IMAGE = sql<boolean>`("blockedFor" = ${BLOCKED_REASON_CSAM} OR ("needsReview" = ${FLAG_KEPT_THROUGH_BLOCK} AND NOT EXISTS (
+const HELD_IMAGE = sql<boolean>`(${CSAM_BLOCKED} OR ("needsReview" = ${FLAG_KEPT_THROUGH_BLOCK} AND NOT EXISTS (
   SELECT 1 FROM "CsamQueueSetAside" s WHERE s."imageId" = "Image".id AND s.outcome = 'Dismissed'
 )))`;
 
@@ -95,7 +94,7 @@ const OWNER_BANNED = sql<boolean>`EXISTS (SELECT 1 FROM "User" u WHERE u.id = "I
 /** A banned owner's image, blocked for anything but CSAM: a report verdict neither restores it nor blocks it
  *  again, whatever blocked it. The ban's own block skips rows already blocked, so a rule block can be the
  *  only cause on record. */
-const BANNED_OWNER_BLOCKED = sql<boolean>`("ingestion" = 'Blocked' AND "blockedFor" IS DISTINCT FROM ${BLOCKED_REASON_CSAM} AND ${OWNER_BANNED})`;
+const BANNED_OWNER_BLOCKED = sql<boolean>`("ingestion" = 'Blocked' AND NOT ${CSAM_BLOCKED} AND ${OWNER_BANNED})`;
 /** What Remove leaves as it is: a banned owner's grace-blocked image still gets the real block, which
  *  clears the breadcrumbs an account restore reads, and so does an image a kept delete hid, whose
  *  marker the block drops so the delete's release cannot lift it. */
@@ -679,7 +678,7 @@ export async function blockImage({
         // Read here, not off the replica read above, which may not have the scan's hash yet.
         pHashText,
         HELD_IMAGE.as('held'),
-        sql<boolean>`"blockedFor" = ${BLOCKED_REASON_CSAM}`.as('removedForCsam'),
+        CSAM_BLOCKED.as('removedForCsam'),
         sql<boolean>`"needsReview" = ${FLAG_KEPT_THROUGH_BLOCK}`.as('underReview'),
       ])
       .where('id', '=', imageId)

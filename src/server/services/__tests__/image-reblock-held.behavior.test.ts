@@ -63,6 +63,8 @@ const FLAGGED_LIVE = 72; // under review, not removed yet
 const FLAG_REMOVED = 73; // removed with the review flag, another reason
 const OTHER_REASON = 74; // removed for another reason
 const DISMISSED = 75; // removed with the review flag, dismissed from its queue
+const HELD_LISTED = 76; // as HELD, with CSAM inside a comma list of block reasons
+const OTHER_LISTED = 77; // as OTHER_REASON, a comma list with no CSAM in it
 const report = (imageId: number) => imageId + 1000;
 // And its pHash is the id plus 130.
 
@@ -140,7 +142,9 @@ beforeEach(async () => {
       (${FLAGGED_LIVE}, 7, 'Scanned', NULL, 4, 'csam', 202),
       (${FLAG_REMOVED}, 7, 'Blocked', 'moderated', 32, 'csam', 203),
       (${OTHER_REASON}, 7, 'Blocked', 'AiNotVerified', 32, NULL, 204),
-      (${DISMISSED}, 7, 'Blocked', 'moderated', 32, 'csam', 205);
+      (${DISMISSED}, 7, 'Blocked', 'moderated', 32, 'csam', 205),
+      (${HELD_LISTED}, 7, 'Blocked', 'TOS,csam', 32, NULL, 206),
+      (${OTHER_LISTED}, 7, 'Blocked', 'TOS,Moderated', 32, NULL, 207);
     INSERT INTO "CsamQueueSetAside" ("imageId", outcome) VALUES (${DISMISSED}, 'Dismissed');
     INSERT INTO "Report" (id, "userId", reason, status)
       SELECT id + 1000, 9, 'TOSViolation', 'Pending' FROM "Image";
@@ -256,6 +260,25 @@ describe('setTosViolationHandler on an image removed with its block reason kept'
     await tosBlock(HELD);
 
     expect(blocklistReasons()).toEqual({ '201': 'CSAM' });
+  });
+});
+
+describe('setTosViolationHandler on an image whose comma list of block reasons', () => {
+  it('names CSAM: blocks it as one removed for CSAM, with no notice, report action or reward', async () => {
+    await tosBlock(HELD_LISTED);
+
+    expect(await blockedFor(HELD_LISTED)).toBe('TOS,csam');
+    expect(notifiedImages()).toEqual([]);
+    expect(await reportStatus(report(HELD_LISTED))).toBe('Pending');
+    expect(rewardedReports()).toEqual([]);
+    expect(await deferred()).toEqual([]);
+  });
+
+  it('does not name CSAM: blocks it as any other image (control)', async () => {
+    await tosBlock(OTHER_LISTED);
+
+    expect(notifiedImages()).toEqual([`/images/${OTHER_LISTED}`]);
+    expect(await reportStatus(report(OTHER_LISTED))).toBe('Actioned');
   });
 });
 
@@ -496,6 +519,9 @@ describe("handleBlockImages and the images' reports", () => {
       [report(FLAG_REMOVED)]: 'Pending',
       [report(OTHER_REASON)]: 'Actioned',
       [report(DISMISSED)]: 'Pending',
+      // Not in this removal.
+      [report(HELD_LISTED)]: 'Pending',
+      [report(OTHER_LISTED)]: 'Pending',
       [CSAM_REPORT]: 'Pending',
       [UNACTIONED_REPORT]: 'Unactioned',
       [ACTIONED_REPORT]: 'Actioned',

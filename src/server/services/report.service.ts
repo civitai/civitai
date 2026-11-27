@@ -1580,7 +1580,7 @@ function closeDismissedReviewAppeals(limit: number) {
     RETURNING id, "userId", "entityType", "entityId", "buzzTransactionId",
       (
         EXISTS (
-          SELECT 1 FROM "Image" o WHERE o."userId" = "Appeal"."userId" AND o."blockedFor" = 'CSAM'
+          SELECT 1 FROM "Image" o WHERE o."userId" = "Appeal"."userId" AND ${csamBlockedSql('o')}
         )
         OR EXISTS (
           SELECT 1 FROM "UserReport" ur JOIN "Report" r ON r.id = ur."reportId"
