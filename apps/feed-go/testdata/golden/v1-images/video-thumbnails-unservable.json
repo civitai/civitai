@@ -101,12 +101,13 @@
         "height": 360,
         "nsfwLevel": 1,
         "blockMarked": true,
+        "ownerMediaAllowed": false,
         "parentId": 8031,
         "cachedAt": {
           "$date": "2026-06-15T11:55:00.000Z"
         }
       },
-      "packed": "3gAIomlkzSLjo3VybNkkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDA4OTMxpXdpZHRozQKApmhlaWdodM0BaKluc2Z3TGV2ZWwBq2Jsb2NrTWFya2Vkw6hwYXJlbnRJZM0fX6hjYWNoZWRBdNb/ai/oFA=="
+      "packed": "3gAJomlkzSLjo3VybNkkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDA4OTMxpXdpZHRozQKApmhlaWdodM0BaKluc2Z3TGV2ZWwBq2Jsb2NrTWFya2Vkw7Fvd25lck1lZGlhQWxsb3dlZMKocGFyZW50SWTNH1+oY2FjaGVkQXTW/2ov6BQ="
     },
     "packed:caches:thumbnails:8032": {
       "value": {
@@ -241,6 +242,56 @@
         "postId": 7020,
         "postTitle": "Golden post 7020",
         "index": 1,
+        "publishedAt": {
+          "$date": "2026-06-06T06:00:00.000Z"
+        },
+        "unpublishedAt": null,
+        "modelVersionId": null,
+        "model3dId": null,
+        "availability": "Public",
+        "minor": false,
+        "poi": false,
+        "acceptableMinor": false,
+        "restricted": false,
+        "_resources": []
+      },
+      {
+        "id": 8033,
+        "name": "golden-8033.mp4",
+        "url": "00000000-0000-4000-8000-000000008033",
+        "nsfwLevel": 1,
+        "width": 1280,
+        "height": 720,
+        "hash": "UGOLDEN8033",
+        "hideMeta": false,
+        "hasMeta": true,
+        "hasPositivePrompt": true,
+        "onSite": false,
+        "remixOfId": null,
+        "createdAt": {
+          "$date": "2026-06-06T05:00:00.000Z"
+        },
+        "sortAt": {
+          "$date": "2026-06-06T06:00:00.000Z"
+        },
+        "mimeType": "video/mp4",
+        "type": "video",
+        "metadata": {
+          "width": 1280,
+          "height": 720,
+          "duration": 12,
+          "thumbnailId": 8933
+        },
+        "ingestion": "Scanned",
+        "blockedFor": null,
+        "scannedAt": {
+          "$date": "2026-06-06T05:01:00.000Z"
+        },
+        "needsReview": null,
+        "userId": 1002,
+        "postId": 7020,
+        "postTitle": "Golden post 7020",
+        "index": 2,
         "publishedAt": {
           "$date": "2026-06-06T06:00:00.000Z"
         },

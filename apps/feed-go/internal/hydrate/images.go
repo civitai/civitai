@@ -131,6 +131,8 @@ type Thumbnail struct {
 	Height any
 	// Servable is a "blockMarked" field that is exactly false; true, null or no field is not servable.
 	Servable bool
+	// OwnerMediaAllowed is an "ownerMediaAllowed" field that is exactly true.
+	OwnerMediaAllowed bool
 }
 
 // sqlThumbnailMiss is the thumbnail cache's two lookups as one statement (thumbnailRowsSql over the
