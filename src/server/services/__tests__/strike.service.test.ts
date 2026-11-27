@@ -1152,9 +1152,7 @@ describe('strike.service', () => {
       expect(mockDbWrite.$transaction).toHaveBeenCalled(); // escalation still runs
     });
 
-    // The thresholds are in active points (strike.constants): MUTE_POINTS mutes, REVIEW_MUTE_POINTS
-    // also flags for a moderator. Nothing bans automatically. A Copyright strike on top of one
-    // already issued today escalates exactly as a moderator's own strike does.
+    // A Copyright strike on top of one already issued today escalates exactly as a moderator's own strike does.
     describe.each([StrikeReason.Copyright, StrikeReason.ManualModAction])(
       'a same-day %s strike that crosses a threshold',
       (reason) => {

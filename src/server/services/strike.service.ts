@@ -51,7 +51,7 @@ export async function shouldRateLimitStrike(userId: number): Promise<boolean> {
     FROM "UserStrike"
     WHERE "userId" = ${userId}
       AND "createdAt" >= CURRENT_DATE
-      AND "reason"::text != ALL(${RATE_LIMIT_EXEMPT_REASONS}::text[]) -- text: the list can lead the hand-applied enum migration
+      AND "reason"::text != ALL(${RATE_LIMIT_EXEMPT_REASONS}::text[]) -- text, not the enum: this code deploys before the hand-applied migration adds 'Copyright'
       AND "status" != ${StrikeStatus.Voided}::"StrikeStatus"
   `;
   return Number(result.count) >= 1;
