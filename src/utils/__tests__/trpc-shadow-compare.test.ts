@@ -474,6 +474,80 @@ describe('verdicts', () => {
     });
   });
 
+  // The Go service never writes superjson's meta.referentialEqualities
+  // (apps/feed-go/internal/superjson), which the Node writer adds when one object instance sits at
+  // several paths. Only that member is exempt from the byte compare.
+  describe('meta.referentialEqualities', () => {
+    const NODE_WITH_REFEQ =
+      '{"result":{"data":{"json":{"items":[{"id":4101,"createdAt":"2026-11-20T08:00:00.000Z","user":{"id":9,"cosmetics":[{"id":7}]}},{"id":4102,"createdAt":"2026-11-21T08:00:00.000Z","user":{"id":9,"cosmetics":[{"id":7}]}}],"nextCursor":"n-88"},"meta":{"values":{"items.0.createdAt":["Date"],"items.1.createdAt":["Date"]},"referentialEqualities":{"items.0.user":["items.1.user"]},"v":1}}}}';
+    const GO_SAME_VALUE =
+      '{"result":{"data":{"json":{"items":[{"id":4101,"createdAt":"2026-11-20T08:00:00.000Z","user":{"id":9,"cosmetics":[{"id":7}]}},{"id":4102,"createdAt":"2026-11-21T08:00:00.000Z","user":{"id":9,"cosmetics":[{"id":7}]}}],"nextCursor":"n-88"},"meta":{"values":{"items.0.createdAt":["Date"],"items.1.createdAt":["Date"]},"v":1}}}}';
+
+    it('a body differing only in referentialEqualities is a match, each side its own byte length', async () => {
+      browser(false);
+      signedOutShadow(true);
+      replies.node.body = NODE_WITH_REFEQ;
+      replies.go.body = GO_SAME_VALUE;
+      await callQuery(INFINITE, INFINITE_INPUT);
+      await vi.waitFor(() => expect(shadowPushes()).toHaveLength(1));
+      const [payload, options] = shadowPushes()[0];
+      expect(payload.values).toEqual({
+        control_ms: 0,
+        candidate_ms: 0,
+        control_bytes: 382,
+        candidate_bytes: 324,
+      });
+      expect(options.context).toEqual({
+        procedure: 'image.getInfinite',
+        candidate: 'go-transport',
+        verdict: 'match',
+        control_status: '200',
+        candidate_status: '200',
+        candidate_served_by: 'go',
+        viewer: 'signed_out',
+      });
+    });
+
+    it('a meta holding only referentialEqualities matches an answer with no meta', async () => {
+      shadowOn();
+      replies.node.body =
+        '{"result":{"data":{"json":{"items":[{"id":4101,"user":{"id":9,"cosmetics":[{"id":7}]}},{"id":4102,"user":{"id":9,"cosmetics":[{"id":7}]}}],"nextCursor":"n-88"},"meta":{"referentialEqualities":{"items.0.user":["items.1.user"]},"v":1}}}}';
+      replies.go.body =
+        '{"result":{"data":{"json":{"items":[{"id":4101,"user":{"id":9,"cosmetics":[{"id":7}]}},{"id":4102,"user":{"id":9,"cosmetics":[{"id":7}]}}],"nextCursor":"n-88"}}}}';
+      await callQuery(INFINITE, INFINITE_INPUT);
+      await vi.waitFor(() => expect(shadowPushes()).toHaveLength(1));
+      expect(shadowPushes()[0][1].context.verdict).toBe('match');
+    });
+
+    it('a real value difference beside it is still a mismatch, at that value', async () => {
+      shadowOn();
+      replies.node.body = NODE_WITH_REFEQ;
+      replies.go.body =
+        '{"result":{"data":{"json":{"items":[{"id":4101,"createdAt":"2026-11-20T08:00:00.000Z","user":{"id":9,"cosmetics":[{"id":7}]}},{"id":41020,"createdAt":"2026-11-21T08:00:00.000Z","user":{"id":9,"cosmetics":[{"id":7}]}}],"nextCursor":"n-88"},"meta":{"values":{"items.0.createdAt":["Date"],"items.1.createdAt":["Date"]},"v":1}}}}';
+      await callQuery(INFINITE, INFINITE_INPUT);
+      await vi.waitFor(() => expect(shadowPushes()).toHaveLength(1));
+      expect(shadowPushes()[0][1].context).toMatchObject({
+        verdict: 'mismatch',
+        diff_path: '$.result.data.json.items[1].id',
+        diff_kind: 'value',
+      });
+    });
+
+    it('meta.values is still compared: an answer missing its Date annotations is a mismatch', async () => {
+      shadowOn();
+      replies.node.body = NODE_WITH_REFEQ;
+      replies.go.body =
+        '{"result":{"data":{"json":{"items":[{"id":4101,"createdAt":"2026-11-20T08:00:00.000Z","user":{"id":9,"cosmetics":[{"id":7}]}},{"id":4102,"createdAt":"2026-11-21T08:00:00.000Z","user":{"id":9,"cosmetics":[{"id":7}]}}],"nextCursor":"n-88"}}}}';
+      await callQuery(INFINITE, INFINITE_INPUT);
+      await vi.waitFor(() => expect(shadowPushes()).toHaveLength(1));
+      expect(shadowPushes()[0][1].context).toMatchObject({
+        verdict: 'mismatch',
+        diff_path: '$.result.data.meta',
+        diff_kind: 'missing_in_candidate',
+      });
+    });
+  });
+
   it('candidate_fallback: the Go service handed it to Node, so identical bytes are not a match', async () => {
     shadowOn();
     replies.go = { status: 200, body: CONTROL_BODY, servedBy: 'node' };
