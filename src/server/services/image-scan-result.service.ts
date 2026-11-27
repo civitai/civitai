@@ -104,14 +104,15 @@ export async function processImageScanWorkflow({
     const failureType =
       status === 'expired' ? 'expired' : status === 'canceled' ? 'canceled' : 'workflow-failed';
     const reason = await readJobFailureReason(workflowId);
-    const { retryCount, mediaType, userId, failureClass } = await markImageScanError({
-      workflowId,
-      imageId,
-      status,
-      failureType,
-      failedSteps,
-      reason,
-    });
+    const { retryCount, mediaType, userId, ingestion, blockedFor, failureClass } =
+      await markImageScanError({
+        workflowId,
+        imageId,
+        status,
+        failureType,
+        failedSteps,
+        reason,
+      });
     logToAxiom(
       {
         name: 'image-scan-result',
@@ -130,7 +131,12 @@ export async function processImageScanWorkflow({
       },
       'webhooks'
     );
-    await sendIngestionSignal({ imageId, userId, ingestion: ImageIngestionStatus.Error });
+    await sendIngestionSignal({
+      imageId,
+      userId,
+      ingestion: ingestion ?? ImageIngestionStatus.Error,
+      blockedFor,
+    });
     if (articleImageScanning) await fanOutArticleImageUpdates(imageId);
     return;
   }
@@ -144,14 +150,15 @@ export async function processImageScanWorkflow({
     parsed = parseScanSteps({ steps, workflowId });
   } catch (error) {
     const reason = error instanceof Error ? error.message : 'Unknown error';
-    const { retryCount, mediaType, userId, failureClass } = await markImageScanError({
-      workflowId,
-      imageId,
-      status,
-      failureType: 'unusable-result',
-      failedSteps: extractFailedSteps(steps),
-      reason,
-    });
+    const { retryCount, mediaType, userId, ingestion, blockedFor, failureClass } =
+      await markImageScanError({
+        workflowId,
+        imageId,
+        status,
+        failureType: 'unusable-result',
+        failedSteps: extractFailedSteps(steps),
+        reason,
+      });
     logToAxiom(
       {
         name: 'image-scan-result',
@@ -168,7 +175,12 @@ export async function processImageScanWorkflow({
       },
       'webhooks'
     );
-    await sendIngestionSignal({ imageId, userId, ingestion: ImageIngestionStatus.Error });
+    await sendIngestionSignal({
+      imageId,
+      userId,
+      ingestion: ingestion ?? ImageIngestionStatus.Error,
+      blockedFor,
+    });
     if (articleImageScanning) await fanOutArticleImageUpdates(imageId);
     return;
   }
@@ -244,14 +256,15 @@ export async function processImageScanWorkflow({
       return;
     }
 
-    const { retryCount, mediaType, userId, failureClass } = await markImageScanError({
-      workflowId,
-      imageId,
-      status,
-      failureType: 'processing-failed',
-      failedSteps: extractFailedSteps(steps),
-      reason,
-    });
+    const { retryCount, mediaType, userId, ingestion, blockedFor, failureClass } =
+      await markImageScanError({
+        workflowId,
+        imageId,
+        status,
+        failureType: 'processing-failed',
+        failedSteps: extractFailedSteps(steps),
+        reason,
+      });
     logToAxiom(
       {
         name: 'image-scan-result',
@@ -270,7 +283,12 @@ export async function processImageScanWorkflow({
       },
       'webhooks'
     );
-    await sendIngestionSignal({ imageId, userId, ingestion: ImageIngestionStatus.Error });
+    await sendIngestionSignal({
+      imageId,
+      userId,
+      ingestion: ingestion ?? ImageIngestionStatus.Error,
+      blockedFor,
+    });
     if (articleImageScanning) await fanOutArticleImageUpdates(imageId);
     return;
   }

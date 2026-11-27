@@ -590,6 +590,61 @@ describe('image-scan-result webhook - pipeline tests', () => {
       );
     });
 
+    // A scan error keeps a Blocked row Blocked; signalling Error would show the owner an
+    // unblocked, failed image until a reload.
+    it.each([
+      ['a failed workflow', 'failed', [] as any[]],
+      ['a succeeded workflow with no usable result', 'succeeded', [] as any[]],
+      ['a processing failure', 'succeeded', null],
+    ])(
+      'signals the state the error write stored when it kept the block: %s',
+      async (_, status, steps) => {
+        const passthrough = mockDbWrite.$queryRaw.getMockImplementation();
+        mockDbWrite.$queryRaw.mockImplementation(async (query: any, ...values: any[]) => {
+          const strings = Array.isArray(query) ? query : query.strings;
+          const text = strings.join('');
+          if (text.includes('INSERT INTO "Tag"'))
+            throw new Error('Raw query failed. Code: `23502`.');
+          if (text.includes('UPDATE "Image"') && text.includes("'{retryCount}'"))
+            return [
+              {
+                retryCount: 1,
+                mediaType: 'image',
+                userId: 55,
+                ingestion: ImageIngestionStatus.Blocked,
+                blockedFor: 'moderated',
+              },
+            ];
+          return passthrough(query, ...values);
+        });
+
+        await processImageScanWorkflow({
+          workflowId: 'workflow-whose-scan-errors',
+          status,
+          imageId: 15,
+          steps: steps ?? scanSteps('a third tag that cannot be created'),
+        });
+
+        expect(vi.mocked(signalClient.send)).toHaveBeenCalledTimes(1);
+
+        expect(vi.mocked(signalClient.send)).toHaveBeenCalledWith(
+          expect.objectContaining({
+            userId: 55,
+            data: expect.objectContaining({
+              imageId: 15,
+              ingestion: ImageIngestionStatus.Blocked,
+              blockedFor: 'moderated',
+            }),
+          })
+        );
+        expect(vi.mocked(signalClient.send)).not.toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({ imageId: 15, ingestion: ImageIngestionStatus.Error }),
+          })
+        );
+      }
+    );
+
     it('still surfaces a deleted image so the webhook can ACK it as skipped', async () => {
       mockDbWrite.image.findUnique.mockResolvedValue(null);
 

@@ -263,14 +263,15 @@ export function extractFailedSteps(steps: unknown[]): string[] {
 }
 
 /**
- * Flip an image to `Error`, increment its scan `retryCount`, and stamp a small
+ * Flip an image to `Error` (or keep the state `ingestionAfterScanErrorSql` keeps), increment its scan `retryCount`, and stamp a small
  * `scanJobs.error = { status, failureType, failedSteps, reason, failureClass, at }`
  * so a plain Postgres query can tell WHY a scan errored (and which step) without an
  * orchestrator lookup — and so the `ingest-images` cron can pick a retry ceiling
  * from `failureClass`. retryCount ALWAYS increments: it's the absolute attempt
  * count the per-class ceilings are applied against. Returns the new (post-increment)
- * retryCount, the image's mediaType, and the computed failureClass; retryCount /
- * mediaType are `null` when no row matched (e.g. the image was deleted between scan
+ * retryCount, the image's mediaType, the stored ingestion and blockedFor (what the owner's
+ * signal must say), and the computed failureClass; all but failureClass are `null` when no
+ * row matched (e.g. the image was deleted between scan
  * request and callback).
  */
 export async function markImageScanError({
@@ -295,6 +296,8 @@ export async function markImageScanError({
   retryCount: number | null;
   mediaType: string | null;
   userId: number | null;
+  ingestion: ImageIngestionStatus | null;
+  blockedFor: string | null;
   failureClass: string;
 }> {
   const failureClass = classifyImageScanFailure({ reason, failureType, middleware, failedSteps });
@@ -310,7 +313,13 @@ export async function markImageScanError({
     at: new Date().toISOString(),
   });
   const rows = await dbWrite.$queryRaw<
-    { retryCount: number | null; mediaType: string | null; userId: number | null }[]
+    {
+      retryCount: number | null;
+      mediaType: string | null;
+      userId: number | null;
+      ingestion: ImageIngestionStatus;
+      blockedFor: string | null;
+    }[]
   >`
     UPDATE "Image"
     SET
@@ -330,7 +339,7 @@ export async function markImageScanError({
       ) || ${keepPermanentScanFailureSql()}
     WHERE id = ${imageId}
     RETURNING ("scanJobs"->>'retryCount')::int as "retryCount", type as "mediaType",
-      "userId"
+      "userId", "ingestion", "blockedFor"
   `;
   await queueCdnAccessSyncWhen(
     imageId,
@@ -343,6 +352,8 @@ export async function markImageScanError({
     retryCount: rows[0]?.retryCount ?? null,
     mediaType: rows[0]?.mediaType ?? null,
     userId: rows[0]?.userId ?? null,
+    ingestion: rows[0]?.ingestion ?? null,
+    blockedFor: rows[0]?.blockedFor ?? null,
     failureClass,
   };
 }

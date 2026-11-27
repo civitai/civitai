@@ -312,6 +312,27 @@ describe('processImageScanningWorkflow', () => {
     expect(mockRecordAudit).not.toHaveBeenCalled();
   });
 
+  // A scan error keeps a Blocked row Blocked; signalling Error would show the owner an
+  // unblocked, failed image until a reload.
+  it('signals the state the error write stored, not Error', async () => {
+    pipeline.markImageScanError.mockResolvedValue({
+      userId: 3,
+      ingestion: 'Blocked',
+      blockedFor: 'moderated',
+      failureClass: 'unknown',
+    });
+    await deliver('failed', [failedScanStep]);
+
+    expect(pipeline.sendIngestionSignal).toHaveBeenCalledTimes(1);
+    expect(pipeline.sendIngestionSignal).toHaveBeenCalledWith({
+      imageId: 7,
+      userId: 3,
+      ingestion: 'Blocked',
+      blockedFor: 'moderated',
+      log: IMAGE_SCANNING_LOG,
+    });
+  });
+
   it.each([
     ['succeeded', [scanStep]],
     ['failed', [failedScanStep]],

@@ -197,7 +197,8 @@ async function failScan(
   }
 ) {
   const { articleImageScanning, logType, message, stack, ...error } = input;
-  const { retryCount, mediaType, userId, failureClass } = await markImageScanError(error);
+  const { retryCount, mediaType, userId, ingestion, blockedFor, failureClass } =
+    await markImageScanError(error);
   logToAxiom(
     {
       name: IMAGE_SCANNING_LOG.name,
@@ -215,7 +216,8 @@ async function failScan(
   await sendIngestionSignal({
     imageId: error.imageId,
     userId,
-    ingestion: ImageIngestionStatus.Error,
+    ingestion: ingestion ?? ImageIngestionStatus.Error,
+    blockedFor,
     log: IMAGE_SCANNING_LOG,
   });
   if (articleImageScanning) await fanOutArticleImageUpdates(error.imageId);
