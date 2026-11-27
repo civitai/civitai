@@ -22,6 +22,7 @@ export const MOD_ACTION = {
   caseIntake: 'case-intake',
   casePartyView: 'case-party-view',
   casePartyAction: 'case-party-action',
+  caseTick: 'case-tick',
 } as const;
 
 /**
@@ -34,6 +35,7 @@ export const CASE_ACTIONS: ReadonlySet<ModActionName> = new Set([
   MOD_ACTION.caseIntake,
   MOD_ACTION.casePartyView,
   MOD_ACTION.casePartyAction,
+  MOD_ACTION.caseTick,
 ]);
 export type ModActionName = (typeof MOD_ACTION)[keyof typeof MOD_ACTION];
 
@@ -413,6 +415,10 @@ const requestOrigin = {
 
 export const caseDefinitionsInput = z.object({});
 export type CaseDefinitionsInput = z.infer<typeof caseDefinitionsInput>;
+
+/** The scheduled clock evaluation. It takes nothing: the spoke reads the clock and the cases itself. */
+export const caseTickInput = z.object({});
+export type CaseTickInput = z.infer<typeof caseTickInput>;
 
 export const caseIntakeInput = z.object({
   processKey,

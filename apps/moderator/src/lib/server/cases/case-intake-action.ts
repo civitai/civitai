@@ -1,5 +1,4 @@
 import type { Kysely } from 'kysely';
-import { sendEmailStrict } from '@civitai/email';
 import { env } from '$env/dynamic/private';
 import type { CaseIntakeInput } from '@civitai/moderation';
 import type { ProcessDefinition } from '@civitai/moderation/process-definition';
@@ -14,6 +13,7 @@ import { createIntakeRateLimit } from './intake-rate-limit';
 import { noticeTime, renderNotice } from './notice-render';
 import { defaultSendDeps, hashAddress, sendNotice, type SendDeps } from './send-notice';
 import { verifyTurnstile } from './turnstile';
+import { caseAlert } from './case-tick';
 
 /** How long a party's link opens their case. */
 export const PARTY_LINK_DAYS = 365;
@@ -222,20 +222,7 @@ export function defaultCaseIntakeDeps(
     rateLimit: limitPerIp,
     sendDeps: defaultSendDeps,
     receiptsPerAddressPerDay: receiptCapFromEnv(env.TAKEDOWN_RECEIPTS_PER_ADDRESS_PER_DAY),
-    alert: async (subject, text) => {
-      const to = env.MODERATION_ALERT_EMAIL;
-      if (!to)
-        throw Object.assign(new Error('MODERATION_ALERT_EMAIL is not set'), {
-          name: 'NoAlertAddress',
-        });
-      await sendEmailStrict({
-        to,
-        subject,
-        text,
-        html: `<p>${text}</p>`,
-        tags: { template: 'caseIntakeAlert', mailClass: 'transactional' },
-      });
-    },
+    alert: (subject, text) => caseAlert(subject, text, 'caseIntakeAlert'),
     background: (work) =>
       void work.catch((e) => console.error('case receipt send failed', e?.name)),
     ...more,

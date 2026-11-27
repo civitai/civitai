@@ -7,6 +7,7 @@ import {
   caseIntakeInput,
   casePartyActionInput,
   casePartyViewInput,
+  caseTickInput,
   feedbackTriageInput,
   imageModerateInput,
   imageTagModerateInput,
@@ -26,6 +27,7 @@ import { logToAxiom } from '../axiom';
 import { getClickhouse } from '../clickhouse';
 import { caseIntake, defaultCaseIntakeDeps } from '../cases/case-intake-action';
 import { casePartyAction, casePartyView, defaultCasePartyDeps } from '../cases/case-party';
+import { caseTick, defaultCaseTickDeps } from '../cases/case-tick';
 import { enabledDefinitions, publicDefinition } from '../cases/definitions';
 import { applyGrants } from '../access';
 import { civitaiAppUrl } from '../civitai-url';
@@ -286,6 +288,12 @@ const casePartyActionAction: ModAction<z.infer<typeof casePartyActionInput>> = {
   handler: (input) => casePartyAction(input, defaultCasePartyDeps(dbWrite)),
 };
 
+/** The scheduled clock evaluation, called by the main app's case-tick job on the cases credential. */
+const caseTickAction: ModAction<z.infer<typeof caseTickInput>> = {
+  schema: caseTickInput,
+  handler: () => caseTick(defaultCaseTickDeps(dbWrite)),
+};
+
 export const modActions: Record<string, ModAction> = {
   [MOD_ACTION.imageModerate]: imageModerate,
   [MOD_ACTION.abuseReport]: abuseReport,
@@ -296,4 +304,5 @@ export const modActions: Record<string, ModAction> = {
   [MOD_ACTION.caseIntake]: caseIntakeAction,
   [MOD_ACTION.casePartyView]: casePartyViewAction,
   [MOD_ACTION.casePartyAction]: casePartyActionAction,
+  [MOD_ACTION.caseTick]: caseTickAction,
 };
