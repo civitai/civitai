@@ -39,7 +39,7 @@ export const strikeReasonPublicLabel: Record<StrikeReason, string> = {
   [StrikeReason.ProhibitedContent]: 'Content violated our Terms of Service',
   [StrikeReason.ManualModAction]: 'Content violated our Terms of Service',
   [StrikeReason.Scam]: 'Impersonating Civitai staff',
-  [StrikeReason.Copyright]: 'Copyright infringement',
+  [StrikeReason.Copyright]: 'Content removed after a copyright (DMCA) notice',
 };
 
 export const createStrikeSchema = z.object({
