@@ -81,7 +81,8 @@ export function ImageMeta({ imageId }: { imageId: number }) {
   }, [data]);
 
   if (!meta || !simpleMeta) return null;
-  if (data?.type === 'audio') return <SongMeta meta={meta} model={data.resources[0]} />;
+  if (data?.type === 'audio')
+    return <SongMeta meta={meta} model={data.resources[0]} onSite={onSite} />;
 
   const software = meta.software ?? (onSite ? 'Civitai Generator' : 'External Generator');
   const { prompt, negativePrompt } = meta;
@@ -181,9 +182,11 @@ export function ImageMeta({ imageId }: { imageId: number }) {
 export function SongMeta({
   meta,
   model,
+  onSite,
 }: {
   meta: Record<string, unknown>;
   model?: { modelName?: string | null; versionName?: string | null };
+  onSite?: boolean;
 }) {
   const { copy: copyAll, copied: copiedAll } = useMetadataCopy(meta);
   const style = typeof meta.musicDescription === 'string' ? meta.musicDescription : undefined;
@@ -213,7 +216,11 @@ export function SongMeta({
           <div className="flex flex-wrap items-center gap-1">
             <Text className="text-lg font-semibold">Style</Text>
             <Badge size="xs" radius="sm">
-              {typeof meta.software === 'string' ? meta.software : 'Civitai Generator'}
+              {typeof meta.software === 'string'
+                ? meta.software
+                : onSite
+                ? 'Civitai Generator'
+                : 'External Generator'}
             </Badge>
           </div>
           <div className="flex items-center gap-1">

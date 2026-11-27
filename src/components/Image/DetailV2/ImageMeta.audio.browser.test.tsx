@@ -26,6 +26,13 @@ describe("a song's generation data", () => {
     await expect.element(page.getByText('1945495925')).toBeVisible();
   });
 
+  test('names an on-site song\'s generator Civitai, and one made elsewhere External', async () => {
+    const screen = renderWithProviders(<SongMeta meta={meta} onSite />);
+    await expect.element(page.getByText('Civitai Generator')).toBeVisible();
+    (await screen).rerender(<SongMeta meta={meta} onSite={false} />);
+    await expect.element(page.getByText('External Generator')).toBeVisible();
+  });
+
   test('names the model by its ecosystem when the song has no resource', async () => {
     renderWithProviders(<SongMeta meta={meta} />);
     await expect.element(page.getByText('MiniMax Music 3')).toBeVisible();

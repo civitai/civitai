@@ -74,7 +74,10 @@ describe('the post page song card', () => {
 
   test('opens the song from its title and its cover', async () => {
     renderWithProviders(<PostSongCard song={first} list={list} />);
-    await expect.element(page.getByRole('link', { name: 'Neon Prayer', exact: true })).toBeVisible();
-    await expect.element(page.getByRole('link', { name: 'Open Neon Prayer' })).toBeVisible();
+    // The image detail route, for this song's id, from both.
+    for (const name of ['Neon Prayer', 'Open Neon Prayer'])
+      await expect
+        .element(page.getByRole('link', { name, exact: true }))
+        .toHaveAttribute('href', expect.stringMatching(/^\/images\/1(\?|$)/));
   });
 });

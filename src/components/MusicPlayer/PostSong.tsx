@@ -20,7 +20,12 @@ import { useSongListPlays } from '~/components/Music/useSongPlays';
 import { useMusicPlayerCovers } from '~/components/MusicPlayer/useMusicPlayerCover';
 import type { MusicTrack } from '~/store/music-player.store';
 import { useMusicPlayerStore, useMusicPlayheadStore } from '~/store/music-player.store';
-import { clampPlaybackTime, formatPlaybackTime, playbackProgress } from '~/utils/audio-player';
+import {
+  clampPlaybackTime,
+  formatPlaybackTime,
+  playbackProgress,
+  timeFromPointer,
+} from '~/utils/audio-player';
 import { abbreviateNumber } from '~/utils/number-helpers';
 
 /** The fields of a song's Image row the player needs. */
@@ -225,10 +230,9 @@ function PostSongWaveform({
         aria-valuenow={Math.round(currentTime)}
         aria-valuetext={`${formatPlaybackTime(currentTime)} of ${formatPlaybackTime(durationSec)}`}
         className="group flex h-9 cursor-pointer items-center sm:h-11"
-        onClick={(e) => {
-          const rect = e.currentTarget.getBoundingClientRect();
-          seekTo(((e.clientX - rect.left) / rect.width) * durationSec);
-        }}
+        onClick={(e) =>
+          seekTo(timeFromPointer(e.clientX, e.currentTarget.getBoundingClientRect(), durationSec))
+        }
         onKeyDown={(e) => {
           if (e.key === 'ArrowRight') seekTo(currentTime + SEEK_STEP_SECONDS);
           else if (e.key === 'ArrowLeft') seekTo(currentTime - SEEK_STEP_SECONDS);
@@ -236,7 +240,6 @@ function PostSongWaveform({
           e.preventDefault();
         }}
       >
-        {/* As the global player draws it, so the song looks the same in both. */}
         <SongWaveform
           peaks={peaks}
           progress={progress}
