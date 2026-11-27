@@ -714,6 +714,7 @@ describe('submitVersion — a staff submit on the owner’s behalf (platform upd
         submitVersion({
           bundleBuffer: await bundle({ ...VALID, version: '0.3.0' }),
           submittedByUserId: ON_BEHALF.ownerUserId,
+          submitterIsModerator: false,
         })
       ).rejects.toThrow(
         'slug my-app has a pending Civitai staff submission of a platform update by mod-ana, ' +
@@ -733,6 +734,7 @@ describe('submitVersion — a staff submit on the owner’s behalf (platform upd
         submitVersion({
           bundleBuffer: await bundle({ ...VALID, version: '0.3.0' }),
           submittedByUserId: ON_BEHALF.ownerUserId,
+          submitterIsModerator: false,
         })
       ).rejects.toThrow(
         'slug my-app already has a pending submission from another user; wait for it to be ' +

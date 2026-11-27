@@ -29,7 +29,15 @@ vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOri
 
 const { mockNotify, db, s3, holder } = vi.hoisted(() => {
   const mockNotify = vi.fn(async (..._a: unknown[]) => undefined);
-  const holder: { zipBytes: Uint8Array } = { zipBytes: new Uint8Array() };
+  // `platformUpdate`: the `app_platform_updates` row a reject of a staff on-behalf submit
+  // withdraws (null = none). The REAL supersede (app-platform-update.record) reads and writes it
+  // through the primary below, the db client being the process boundary this file mocks.
+  const holder: {
+    zipBytes: Uint8Array;
+    platformUpdate: { id: string; slug: string; status: string } | null;
+  } = { zipBytes: new Uint8Array(), platformUpdate: null };
+  const sqlText = (q: unknown): string =>
+    Array.isArray(q) ? q.join('?') : String((q as { sql?: unknown })?.sql ?? '');
   const makeDb = () => ({
     // `approveRequest`'s pre-flight probes the media-split table; no row reads as absent.
     $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => []),
@@ -79,7 +87,22 @@ const { mockNotify, db, s3, holder } = vi.hoisted(() => {
       updateMany: vi.fn(async (..._a: unknown[]) => ({ count: 0 })),
     },
   });
-  const db = { read: makeDb(), write: makeDb() };
+  // The platform-update record's read (`readRows`, a Prisma.sql object) and its supersede write
+  // (a tagged `$executeRaw`), against `holder.platformUpdate`. Every other raw read stays empty.
+  const executeRaw = vi.fn(async (...a: unknown[]): Promise<number> => {
+    const row = holder.platformUpdate;
+    if (!sqlText(a[0]).includes('UPDATE "app_platform_updates"') || !row) return 0;
+    if (row.status !== 'pending' && row.status !== 'conflicted') return 0;
+    row.status = 'superseded';
+    return 1;
+  });
+  const db = { read: makeDb(), write: { ...makeDb(), $executeRaw: executeRaw } };
+  db.write.$queryRaw = vi.fn(
+    async (...a: unknown[]): Promise<unknown> =>
+      sqlText(a[0]).includes('"app_platform_updates"') && holder.platformUpdate
+        ? [{ ...holder.platformUpdate }]
+        : []
+  );
   // approveRequest's final step runs in a transaction that writes the request and the block.
   db.write.$transaction = vi.fn(async (fn: (tx: unknown) => Promise<unknown>) =>
     fn({
@@ -163,13 +186,11 @@ vi.mock('~/utils/bundle-s3', () => ({
   getBundleBucket: () => 'bundles',
   getBundleS3Client: () => s3,
 }));
-// A reject of a staff on-behalf submit withdraws its platform update through this service.
-const { mockSupersede } = vi.hoisted(() => ({
-  mockSupersede: vi.fn(async (a: { id: string }) => ({ id: a.id, status: 'superseded' as const })),
-}));
-vi.mock('~/server/services/blocks/app-platform-update.service', () => ({
-  supersedePlatformUpdate: mockSupersede,
-}));
+/** The supersede writes the real record made: `[staffUserId, updateId]` per UPDATE. */
+const supersedeWrites = () =>
+  db.write.$executeRaw.mock.calls
+    .filter((c) => (c[0] as string[]).join('?').includes('UPDATE "app_platform_updates"'))
+    .map((c) => c.slice(1));
 
 const { approveRequest, rejectRequest } = await import(
   '~/server/services/blocks/publish-request.service'
@@ -214,10 +235,7 @@ beforeAll(async () => {
 beforeEach(() => {
   vi.clearAllMocks();
   mockNotify.mockResolvedValue(undefined);
-  mockSupersede.mockImplementation(async (a: { id: string }) => ({
-    id: a.id,
-    status: 'superseded' as const,
-  }));
+  holder.platformUpdate = null;
   // Re-seed the default happy-path resolutions cleared by clearAllMocks.
   db.write.appBlockPublishRequest.update.mockImplementation(
     async (a: { data?: unknown }) => a?.data ?? {}
@@ -528,6 +546,12 @@ describe('approve / reject of a staff on-behalf submit — the owner is notified
 
   it('reject: the moderator gets app-block-rejected, the owner app-platform-update-rejected with the reason', async () => {
     db.read.appBlockPublishRequest.findUnique.mockResolvedValueOnce(rejectRow(ON_BEHALF_SUMMARY));
+    // The update the request carried is still pending, so the reject withdraws it.
+    holder.platformUpdate = {
+      id: 'apu_01JABCDEFGHJKMNPQRSTVWXYZ0',
+      slug: 'cool-app',
+      status: 'pending',
+    };
 
     await rejectRequest({
       publishRequestId: 'req_rej_1',
@@ -623,8 +647,10 @@ describe('approve / reject of a staff on-behalf submit — the owner is notified
 /**
  * OPERATOR DECISION "Reject withdraws it": rejecting a staff on-behalf submit also withdraws the
  * platform update it carried (`superseded`, by the rejecting moderator), through the
- * platform-update service's own supersede, and the owner is told. An approve leaves the update
- * alone; an ordinary reject touches no update.
+ * platform-update record's own supersede, and the owner is told. An approve leaves the update
+ * alone; an ordinary reject touches no update. The supersede is the REAL one
+ * (`app-platform-update.record`), observed at the db client: the row it reads and the UPDATE it
+ * writes.
  */
 describe('reject of a staff on-behalf submit withdraws its platform update', () => {
   const MODERATOR = 8001;
@@ -654,6 +680,17 @@ describe('reject of a staff on-behalf submit withdraws its platform update', () 
     mockNotify.mock.calls
       .map((c) => c[0] as { type: string; details: Record<string, unknown> })
       .find((c) => c.type === 'app-platform-update-rejected');
+  /** The invocation order of the first supersede UPDATE the record wrote. */
+  const supersedeOrder = () => {
+    const i = db.write.$executeRaw.mock.calls.findIndex((c) =>
+      (c[0] as string[]).join('?').includes('UPDATE "app_platform_updates"')
+    );
+    return db.write.$executeRaw.mock.invocationCallOrder[i]!;
+  };
+
+  beforeEach(() => {
+    holder.platformUpdate = { id: UPDATE_ID, slug: 'cool-app', status: 'pending' };
+  });
 
   it('supersedes the update as the rejecting moderator, after the reject, and tells the owner', async () => {
     db.read.appBlockPublishRequest.findUnique.mockResolvedValueOnce(row(ON_BEHALF_SUMMARY));
@@ -662,18 +699,17 @@ describe('reject of a staff on-behalf submit withdraws its platform update', () 
       reviewerUserId: 9,
       rejectionReason: 'Breaks the gallery layout',
     });
-    expect(mockSupersede).toHaveBeenCalledTimes(1);
-    expect(mockSupersede).toHaveBeenCalledWith({ staffUserId: 9, id: UPDATE_ID });
+    // One supersede, resolved by the rejecting moderator (9), of the update the request carried.
+    expect(supersedeWrites()).toEqual([[9, UPDATE_ID]]);
+    expect(holder.platformUpdate?.status).toBe('superseded');
     // After the request is rejected, before the owner hears about it.
     expect(db.write.appBlockPublishRequest.update.mock.invocationCallOrder[0]).toBeLessThan(
-      mockSupersede.mock.invocationCallOrder[0]!
+      supersedeOrder()
     );
     const ownerIdx = mockNotify.mock.calls.findIndex(
       (c) => (c[0] as { type: string }).type === 'app-platform-update-rejected'
     );
-    expect(mockSupersede.mock.invocationCallOrder[0]).toBeLessThan(
-      mockNotify.mock.invocationCallOrder[ownerIdx]!
-    );
+    expect(supersedeOrder()).toBeLessThan(mockNotify.mock.invocationCallOrder[ownerIdx]!);
     expect(ownerCall()?.details).toMatchObject({
       updateId: UPDATE_ID,
       reason: 'Breaks the gallery layout',
@@ -683,7 +719,8 @@ describe('reject of a staff on-behalf submit withdraws its platform update', () 
 
   it('an update that cannot be withdrawn (already merged) never fails the reject, and the owner is not told it was', async () => {
     db.read.appBlockPublishRequest.findUnique.mockResolvedValueOnce(row(ON_BEHALF_SUMMARY));
-    mockSupersede.mockRejectedValueOnce(new Error('This update is already merged'));
+    // Merged into the owner's app already: the record's supersede refuses (CONFLICT).
+    holder.platformUpdate = { id: UPDATE_ID, slug: 'cool-app', status: 'merged' };
     await expect(
       rejectRequest({
         publishRequestId: 'req_rej_1',
@@ -694,6 +731,7 @@ describe('reject of a staff on-behalf submit withdraws its platform update', () 
     expect(db.write.appBlockPublishRequest.update).toHaveBeenCalledTimes(1);
     expect(ownerCall()).toBeDefined();
     expect(ownerCall()!.details).not.toHaveProperty('updateWithdrawn');
+    expect(holder.platformUpdate?.status).toBe('merged');
   });
 
   it('CONTROL: an approve of an on-behalf submit does NOT supersede the update', async () => {
@@ -708,7 +746,8 @@ describe('reject of a staff on-behalf submit withdraws its platform update', () 
     expect(mockNotify).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'app-platform-update-approved', userId: OWNER })
     );
-    expect(mockSupersede).not.toHaveBeenCalled();
+    expect(supersedeWrites()).toEqual([]);
+    expect(holder.platformUpdate?.status).toBe('pending');
   });
 
   it('CONTROL: an ordinary (non-on-behalf) reject touches no update', async () => {
@@ -721,6 +760,7 @@ describe('reject of a staff on-behalf submit withdraws its platform update', () 
     expect(mockNotify).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'app-block-rejected', userId: SUBMITTER })
     );
-    expect(mockSupersede).not.toHaveBeenCalled();
+    expect(supersedeWrites()).toEqual([]);
+    expect(holder.platformUpdate?.status).toBe('pending');
   });
 });

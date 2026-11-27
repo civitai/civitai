@@ -65,6 +65,9 @@ import { notifyAppBlockSubmitter } from '~/server/services/blocks/app-block-noti
 import type { AppBlockModerationNotificationDetails } from '~/server/notifications/app-block.notifications';
 import type { AppReviewAttribution } from '~/server/notifications/app-review-attribution';
 import { readOnBehalf } from '~/shared/utils/publish-request-on-behalf';
+// The platform-update RECORD module, not app-platform-update.service: that service imports the
+// source-repo and access services, which reach back here (an import cycle).
+import { supersedePlatformUpdate } from '~/server/services/blocks/app-platform-update.record';
 import type { dbRead as DbReadClient } from '~/server/db/client';
 import { manifestDeclaresPage } from '~/shared/utils/app-manifest-page';
 import { isMatureContentRating } from '~/server/utils/server-domain';
@@ -7753,7 +7756,7 @@ export async function rejectRequest(params: RejectRequestParams): Promise<void> 
 
 /**
  * Withdraw (`superseded`, by the rejecting moderator) the platform update a rejected on-behalf
- * request carried, through the platform-update service's own supersede. POST-COMMIT and
+ * request carried, through the platform-update record's own supersede. POST-COMMIT and
  * best-effort: the reject has landed, so a failure here is logged and never fails it. `true` when
  * the update is withdrawn (now or already); `false` when it could not be (it was merged into the
  * owner's app already, or the table is unavailable).
@@ -7764,9 +7767,6 @@ async function withdrawRejectedPlatformUpdate(args: {
   publishRequestId: string;
 }): Promise<boolean> {
   try {
-    const { supersedePlatformUpdate } = await import(
-      '~/server/services/blocks/app-platform-update.service'
-    );
     await supersedePlatformUpdate({ staffUserId: args.reviewerUserId, id: args.platformUpdateId });
     return true;
   } catch (err) {
