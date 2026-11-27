@@ -190,7 +190,9 @@ and whichever side rules first takes it out of the other's queue. Off unless the
   budget, resuming where the last run stopped (process memory; a restart starts over, and the upsert makes reruns idempotent).
   A row gets an item when its tag is a Moderation tag below Blocked and its image passes `modReviewEligibleImage`
   (`@civitai/db/knights`) on a published post.
-- **Eligibility.** One predicate, `modReviewEligibleImage`, keeps staff-only images away from players. It runs where an item is
+- **Eligibility.** One predicate, `modReviewEligibleImage`, keeps staff-only images away from players: it includes every image a
+  moderator without the CSAM grant may not see (`moderatorWithheldSql`), read by Knights through the gate view's `modReviewContent`
+  column. It runs where an item is
   created, served, voted on and swept, and in the moderator app's write-back guard; an item whose image stops passing it is no
   longer served, its vote is refused and an answered one is swept `unplayable`.
 - **Episodes.** Each time a tag is flagged after a ruling it gets a fresh item (`episode` + 1); while the latest item is open, awaiting
