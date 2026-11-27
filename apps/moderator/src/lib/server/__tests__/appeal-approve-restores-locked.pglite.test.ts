@@ -8,7 +8,12 @@ import type { DB } from '@civitai/db-schema/kysely';
 import { Kysely } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Effects from '../image-moderation-effects';
+import type * as ThumbnailCache from '../thumbnail-cache';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
+import {
+  CSAM_LINK_TABLES_SQL,
+  WITHHELD_TABLES_SQL,
+} from '../../../../../../packages/civitai-shared/src/__tests__/csam-restriction-cases';
 
 const { dbHandle, chQuery, chInsert } = vi.hoisted(() => ({
   dbHandle: { current: null as unknown },
@@ -55,10 +60,18 @@ vi.mock('../cache', () => ({ bustCachedObject: vi.fn(async () => undefined) }));
 vi.mock('../image-models-reindex', () => ({
   queueDocumentsForImageMinorChanges: vi.fn(async () => undefined),
 }));
-vi.mock('../thumbnail-cache', () => ({ invalidateThumbnails: vi.fn(async () => undefined) }));
+vi.mock('../thumbnail-cache', async (importOriginal) => ({
+  ...(await importOriginal<typeof ThumbnailCache>()),
+  invalidateThumbnails: vi.fn(async () => undefined),
+}));
 vi.mock('../clickhouse', () => ({ getClickhouse: () => ({ query: chQuery, insert: chInsert }) }));
 
-const { acceptImage, resolveImageAppeal } = await import('../image-moderation.service');
+const { acceptImage, resolveImageAppeal, AppealRestoreRefusedError } = await import(
+  '../image-moderation.service'
+);
+const { updateImageNsfwLevel } = await import('../image-nsfw-level');
+const { resolveIngestionError, rescanStuckImages } = await import('../ingestion.service');
+const { WithheldImageError } = await import('../withheld-write');
 const { refundAppealFee, notifyAppealResolved } = await import('../image-moderation-effects');
 const { queueDocumentsForImageMinorChanges } = await import('../image-models-reindex');
 const { syncSearchIndex } = await import('../search-index');
@@ -548,5 +561,119 @@ describe('a restore that leaves the image with no rating', () => {
 
     expect(await imageRow()).toMatchObject({ ingestion: 'Scanned', nsfwLevel: 1 });
     expect(await queued()).toBe(0);
+  });
+});
+
+// The action checks the withheld rule before it writes; each write checks it again itself. Here the
+// image becomes withheld between the two: a CSAM-blocked copy lands on its url just before the
+// `nth` UPDATE of "Image" runs.
+describe('a write that races the image becoming withheld', () => {
+  const race = { nth: 0, seen: 0 };
+  const WITHHOLD = `INSERT INTO "Image" ("id", "url", "blockedFor", "ingestion") VALUES (999, 'shared', 'CSAM', 'Blocked')`;
+  // At the driver: every statement the services build reaches PGlite through `db.query`.
+  const racing = () => {
+    const query = db.query.bind(db);
+    db.query = (async (text: string, ...rest: unknown[]) => {
+      if (/^update "Image"/i.test(text) && ++race.seen === race.nth) await db.exec(WITHHOLD);
+      return query(text, ...(rest as []));
+    }) as typeof db.query;
+  };
+
+  beforeEach(async () => {
+    race.nth = 0;
+    race.seen = 0;
+    await db.exec(
+      `${CSAM_LINK_TABLES_SQL}
+       ${WITHHELD_TABLES_SQL.replace(/^CREATE TABLE "(User|TagsOnImageDetails)".*$/gm, '')}
+       ALTER TABLE "User" ADD COLUMN "meta" JSONB, ADD COLUMN "bannedAt" TIMESTAMP(3);
+       ALTER TABLE "Image" ADD COLUMN "url" TEXT, ADD COLUMN "createdAt" TIMESTAMP(3) DEFAULT now(),
+         ADD COLUMN "minor" BOOLEAN NOT NULL DEFAULT FALSE, ADD COLUMN "poi" BOOLEAN NOT NULL DEFAULT FALSE,
+         ADD COLUMN "scannedAt" TIMESTAMP(3);
+       UPDATE "Image" SET "url" = 'shared', "userId" = 7;
+       INSERT INTO "User" ("id") VALUES (7);`
+    );
+    racing();
+  });
+
+  const withheldNow = () =>
+    db.query(`SELECT 1 FROM "Image" WHERE id = 999`).then((r) => r.rows.length === 1);
+
+  it('an approval leaves it removed and the appeal Pending', async () => {
+    race.nth = 1;
+    await expect(
+      resolveImageAppeal({
+        csamReview: false,
+        imageId: IMAGE_ID,
+        status: 'Approved',
+        resolvedReason: 'misclassified',
+        userId: 2,
+      })
+    ).rejects.toBeInstanceOf(AppealRestoreRefusedError);
+
+    expect(await withheldNow()).toBe(true);
+    expect(await imageRow()).toMatchObject({ ingestion: 'Blocked', nsfwLevel: 32 });
+    const appeal = await db.query<{ status: string }>(`SELECT status FROM "Appeal"`);
+    expect(appeal.rows).toEqual([{ status: 'Pending' }]);
+  });
+
+  it('an accept leaves it removed', async () => {
+    race.nth = 1;
+    await expect(
+      acceptImage({ csamReview: false, imageId: IMAGE_ID, userId: 2, restoreRemoved: true })
+    ).rejects.toBeInstanceOf(WithheldImageError);
+
+    expect(await imageRow()).toMatchObject({ ingestion: 'Blocked', nsfwLevel: 32 });
+  });
+
+  it("an accept's level reset, after the lift, leaves the Blocked level", async () => {
+    race.nth = 2;
+    await acceptImage({ csamReview: false, imageId: IMAGE_ID, userId: 2, restoreRemoved: true });
+
+    expect(await imageRow()).toMatchObject({ nsfwLevel: 32, nsfwLevelLocked: true });
+  });
+
+  it("an accept's rescan of an unrated image, after the lift, sends nothing to the scanner", async () => {
+    await db.exec(`CREATE OR REPLACE FUNCTION update_nsfw_levels_new(ids INTEGER[]) RETURNS VOID
+      LANGUAGE SQL AS $$ SELECT $$;`);
+    race.nth = 3;
+    await acceptImage({ csamReview: false, imageId: IMAGE_ID, userId: 2, restoreRemoved: true });
+
+    expect(await imageRow()).toMatchObject({ ingestion: 'Scanned', nsfwLevel: 0 });
+    const queued = await db.query(`SELECT 1 FROM "JobQueue" WHERE "type" = 'ImageScan'`);
+    expect(queued.rows).toEqual([]);
+  });
+
+  it('a rating leaves its level', async () => {
+    race.nth = 1;
+    await expect(
+      updateImageNsfwLevel({ csamReview: false, id: IMAGE_ID, nsfwLevel: 1, userId: 2 })
+    ).rejects.toBeInstanceOf(WithheldImageError);
+
+    expect(await imageRow()).toMatchObject({ nsfwLevel: 32 });
+  });
+
+  it('an ingestion-error resolve leaves it in Error', async () => {
+    await db.exec(
+      `UPDATE "Image" SET ingestion = 'Error', "blockedFor" = NULL, "needsReview" = NULL WHERE id = ${IMAGE_ID}`
+    );
+    race.nth = 1;
+    await expect(
+      resolveIngestionError({ csamReview: false, id: IMAGE_ID, nsfwLevel: 1, userId: 2 })
+    ).rejects.toBeInstanceOf(WithheldImageError);
+
+    expect(await imageRow()).toMatchObject({ ingestion: 'Error' });
+  });
+
+  it('a stuck-image rescan leaves it Pending', async () => {
+    await db.exec(
+      `UPDATE "Image" SET ingestion = 'Pending', "blockedFor" = NULL, "nsfwLevelLocked" = FALSE,
+         "createdAt" = now() - interval '1 day' WHERE id = ${IMAGE_ID}`
+    );
+    race.nth = 1;
+    expect(await rescanStuckImages({ imageIds: [IMAGE_ID], userId: 2, viewer: undefined })).toEqual(
+      { ok: true, count: 0, skipped: 0 }
+    );
+
+    expect(await imageRow()).toMatchObject({ ingestion: 'Pending' });
   });
 });
