@@ -70,7 +70,7 @@ const cluster = Array.from({ length: 8 }, (_, i) =>
 /** The harness loads no Tailwind; these are the utilities layout relies on. */
 const LAYOUT = `
   .absolute{position:absolute} .inset-0{inset:0} .inset-x-0{left:0;right:0}
-  .inset-x-2{left:8px;right:8px} .bottom-2{bottom:8px} .bottom-16{bottom:64px} .top-1{top:4px} .bottom-1{bottom:4px}
+  .inset-x-2{left:8px;right:8px} .bottom-2{bottom:8px} .bottom-16{bottom:64px} .right-44{right:176px} .top-1{top:4px} .bottom-1{bottom:4px}
   .flex{display:flex} .flex-col{flex-direction:column} .flex-wrap{flex-wrap:wrap}
   .items-center{align-items:center} .justify-between{justify-content:space-between}
   .pointer-events-none{pointer-events:none} .pointer-events-auto{pointer-events:auto}
@@ -78,8 +78,8 @@ const LAYOUT = `
   .gap-2{gap:8px} .right-2{right:8px} .top-2{top:8px} .left-2{left:8px}
 `;
 
-const stage = (placements: PlacedSticker[], isVideo = false) => (
-  <div style={{ position: 'relative', width: 390, height: 390 }}>
+const stage = (placements: PlacedSticker[], isVideo = false, step?: number) => (
+  <div data-testid="stage" style={{ position: 'relative', width: 390, height: 390 }}>
     <style>{LAYOUT}</style>
     {isVideo && (
       <div
@@ -92,6 +92,7 @@ const stage = (placements: PlacedSticker[], isVideo = false) => (
       viewerId={OWNER_ID}
       sticker={sticker}
       isVideo={isVideo}
+      step={step}
     />
   </div>
 );
@@ -179,6 +180,34 @@ describe('many pending stickers on one image', () => {
       .not.toBeInTheDocument();
   });
 
+  test('counts only the stickers drawn so far, so a history replay is not offered the rest', async () => {
+    renderWithProviders(stage(cluster, false, 0), { user: { id: 7 } });
+
+    await expect.element(page.getByRole('button', { name: 'Approve' })).toBeVisible();
+    await expect
+      .element(page.getByRole('group', { name: 'Pending stickers' }))
+      .not.toBeInTheDocument();
+  });
+
+  test('a non-interactive surface (a feed card, a post) never gets the bar', async () => {
+    renderWithProviders(
+      <div style={{ position: 'relative', width: 390, height: 390 }}>
+        <style>{LAYOUT}</style>
+        <StickerPlacementOverlay
+          placements={cluster}
+          viewerId={OWNER_ID}
+          sticker={sticker}
+          interactive={false}
+        />
+      </div>,
+      { user: { id: 7 } }
+    );
+    await expect.element(page.getByAltText(':test:').first()).toBeInTheDocument();
+    await expect
+      .element(page.getByRole('group', { name: 'Pending stickers' }))
+      .not.toBeInTheDocument();
+  });
+
   test('links to the received sticker queue', async () => {
     renderWithProviders(stage(cluster), { user: { id: 7 } });
     await expect
@@ -206,10 +235,13 @@ describe('many pending stickers on one image', () => {
     const approve = box(page.getByRole('button', { name: 'Approve' }).element());
     const decline = box(page.getByRole('button', { name: 'Decline' }).element());
     const bar = box(page.getByRole('group', { name: 'Pending stickers' }).element());
+    // Bounded by the image box, not the (taller) viewport.
+    const image = box(page.getByTestId('stage').element());
     for (const rect of [approve, decline, bar]) {
-      expect(rect.left).toBeGreaterThanOrEqual(0);
-      expect(rect.right).toBeLessThanOrEqual(390);
-      expect(rect.bottom).toBeLessThanOrEqual(800);
+      expect(rect.left).toBeGreaterThanOrEqual(image.left);
+      expect(rect.right).toBeLessThanOrEqual(image.right);
+      expect(rect.top).toBeGreaterThanOrEqual(image.top);
+      expect(rect.bottom).toBeLessThanOrEqual(image.bottom);
     }
     expect(approve.right).toBeLessThanOrEqual(decline.left + 1);
   });
@@ -232,10 +264,12 @@ describe('the bar keeps clear of stickers and the Hide controls pill', () => {
     const pill = rectOf(page.getByRole('button', { name: 'Hide controls' }).element());
     expect(overlaps(bar, pill)).toBe(false);
     // The bar must not cover any rendered sticker; an edge sticker is what forces it to the other side.
-    for (const el of stickerButtons().elements()) {
-      const box = rectOf(el);
-      if (box.height > 0) expect(overlaps(bar, box)).toBe(false);
-    }
+    const boxes = stickerButtons()
+      .elements()
+      .map(rectOf)
+      .filter((box) => box.height > 0);
+    expect(boxes).toHaveLength(placements.length);
+    for (const box of boxes) expect(overlaps(bar, box)).toBe(false);
   });
 
   test.each([
@@ -249,6 +283,9 @@ describe('the bar keeps clear of stickers and the Hide controls pill', () => {
     const controls = rectOf(page.getByTestId('video-controls').element());
     expect(controls.height).toBeGreaterThan(0);
     expect(overlaps(bar, controls)).toBe(false);
+    const pill = rectOf(page.getByRole('button', { name: 'Hide controls' }).element());
+    expect(overlaps(pill, controls)).toBe(false);
+    expect(overlaps(pill, bar)).toBe(false);
   });
 
   test('a sticker at the bottom edge is still selectable', async () => {

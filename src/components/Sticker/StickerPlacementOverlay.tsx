@@ -438,7 +438,9 @@ export function StickerPlacementOverlay({
     crowded
       ? [
           ...(takenCorners ?? []),
-          ...(barEdge === 'top'
+          // On a video the bottom corners are the player's controls, so the pill
+          // keeps the top and the bar makes room for it.
+          ...(barEdge === 'top' && !isVideo
             ? (['top-left', 'top-right'] as const)
             : (['bottom-left', 'bottom-right'] as const)),
         ]
@@ -843,6 +845,7 @@ export function StickerPlacementOverlay({
                 onClear={() => setSelectedId(null)}
                 edge={barEdge}
                 lifted={isVideo}
+                clearPill={isVideo && barEdge === 'top'}
               />
             )}
           </div>
