@@ -2,6 +2,7 @@ import type { Prisma } from '@prisma/client';
 import { Tracker } from '~/server/clickhouse/client';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { assertNotDealFileImages } from '~/server/services/deal-file-image';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import { modelsSearchIndex } from '~/server/search-index';
 import type { ImagesForModelVersions } from '~/server/services/image.service';
@@ -39,6 +40,8 @@ export async function assertCoverImagesValid({
 }) {
   const ids = [coverImageId, sfwCoverImageId].filter(isDefined);
   if (!ids.length) return;
+  // A copy is in no post, so the read below refuses it too; this holds if one ever is.
+  await assertNotDealFileImages(ids, 'used here');
 
   const images = await dbRead.image.findMany({
     where: {

@@ -37,6 +37,7 @@ import { comicsRouter } from '../comics.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { OnboardingSteps } from '~/server/common/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { dealCopyCheckFor } from '~/server/services/__tests__/deal-file-copy.fake';
 
 const USER_ID = 7;
 const OTHER_USER_ID = 8;
@@ -105,10 +106,7 @@ describe.each(['coverImageId', 'heroImageId'] as const)(
     });
 
     it("refuses the caller's own image when it is a deal file's scan copy", async () => {
-      dbMock.dbWrite.$queryRaw.mockImplementationOnce((async (strings: TemplateStringsArray) =>
-        [...strings].join('').includes('ServiceDealFile')
-          ? [{ dealFileImage: true }]
-          : []) as never);
+      dbMock.dbWrite.$queryRaw.mockImplementationOnce(dealCopyCheckFor(OWN_IMAGE));
       await expect(update({ [column]: OWN_IMAGE })).rejects.toMatchObject({ code: 'FORBIDDEN' });
       expect(dbMock.dbWrite.comicProject.update).not.toHaveBeenCalled();
     });

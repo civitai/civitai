@@ -43,6 +43,7 @@ import {
   type AssertPostOwnedBy,
 } from '~/server/services/image.service';
 import { CLIENT_IMAGE_COLUMNS, pickClientImageColumns } from '~/server/utils/image-columns';
+import { dealCopyCheckFor } from '~/server/services/__tests__/deal-file-copy.fake';
 
 const URL_KEY = '3f6c2b91-0d84-4a15-9e70-c2b8a4d15e33';
 const OWNER = 7;
@@ -465,8 +466,7 @@ describe('entity image writers', () => {
     dbMock.dbWrite.imageConnection.findMany.mockResolvedValue([] as never);
     dbMock.dbWrite.image.count.mockResolvedValue(1 as never);
     const prior = dbMock.dbWrite.$queryRaw.getMockImplementation();
-    dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
-      [...strings].join('').includes('ServiceDealFile') ? [{ dealFileImage: true }] : []) as never);
+    dbMock.dbWrite.$queryRaw.mockImplementation(dealCopyCheckFor(555));
     try {
       await expect(
         updateEntityImages({

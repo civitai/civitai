@@ -7,6 +7,7 @@ import {
   type ListingImageMeta,
 } from '~/server/schema/blocks/app-listing.schema';
 import { NsfwLevel } from '~/server/common/enums';
+import { dealCopyCheckFor } from '~/server/services/__tests__/deal-file-copy.fake';
 
 /**
  * App Store Listings (W13 P1) — asset pipeline service tests.
@@ -392,8 +393,7 @@ describe('screenshot CRUD', () => {
     mockDb.appListing.findUnique.mockResolvedValue(listingRow);
     mockDb.image.findUnique.mockResolvedValue(validScreenshotImage);
     const prior = mockDb.$queryRaw.getMockImplementation();
-    mockDb.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
-      [...strings].join('').includes('ServiceDealFile') ? [{ dealFileImage: true }] : []) as never);
+    mockDb.$queryRaw.mockImplementation(dealCopyCheckFor(500));
     try {
       const { addListingScreenshot } = await import('../app-listing-assets.service');
       await expect(

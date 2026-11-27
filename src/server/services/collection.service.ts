@@ -1723,8 +1723,10 @@ export const upsertCollection = async ({
         !isModerator
       )
         throw imageUrlUnavailableError();
-      if (existingCover && existingCover.id !== currentCollection.image?.id)
+      if (existingCover && existingCover.id !== currentCollection.image?.id) {
         await assertCoverMediaAllowed(existingCover.id, asModerator, tx);
+        await assertNotDealFileImages([existingCover.id], 'used here');
+      }
       if (!imageId && image && !existingCover) {
         await assertClientImageUrlsUsable({ urls: [image.url], userId, db: tx });
         if (image.url !== newCoverUrl)
