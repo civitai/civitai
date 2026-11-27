@@ -624,8 +624,20 @@ superjson unless `TRPC_WRITE_DEVALUE` is on (§5.2):
 {"result":{"data":{"json":{…},"meta":{"values":{"items.0.createdAt":["Date"],…},"v":1}}}}
 ```
 
-- Dates are ISO strings annotated `["Date"]`; `undefined` members are dropped from `json` and
-  annotated `["undefined"]` (array elements become `null`), exactly as superjson's walker does.
+- Dates are ISO strings annotated `["Date"]`; an `undefined` (object member, array element or the
+  root) is written as `null` and annotated `["undefined"]`, byte for byte as Node writes it:
+  superjson's walker maps undefined to null (its `undefined` transformation) before `JSON.stringify`
+  runs, so a member is `"nextCursor":null` plus `"nextCursor":["undefined"]`, never an omitted key.
+  Until feed-go 0.0.51 this writer omitted the member (and wrote a root undefined with no `json`);
+  that decoded to the same value but failed every byte compare (a last page was exactly the 18
+  bytes of `"nextCursor":null,` short). Only the superjson envelope changed: the plain-JSON REST
+  bodies (`superjson.Plain`, `JSON.stringify`'s rules, §13) still omit an undefined member, as Node's
+  `res.json` does, so their bytes and ETags are unchanged; the devalue writer has its own encoding
+  of undefined (§5.2) and is untouched.
+- The annotation ORDER follows this writer's traversal. Node's can differ in one case: at a level
+  whose child is itself annotated under an integer-like key (an undefined or Date array element, a
+  numeric object key), the JS object holding that level's annotations enumerates the integer key
+  first. The decoded value is the same; a byte compare of `meta.values` sees the reorder.
 - `meta.referentialEqualities` is **not** written. Node emits it when one object instance appears at
   several paths (a creator's `cosmetics` array on each of their images, the post `user` that is also
   `images[0].user`). It restores object identity after decode, never a value; nothing in the client
@@ -890,9 +902,10 @@ path as serving, and compares decoded values:
   numerically), `meta.values` as a set (a `Date` or `undefined` on one side only is a difference the
   client would see), `meta.referentialEqualities` ignored;
 - `["undefined"]` annotations applied first, as `superjson.deserialize` applies them: superjson
-  writes an undefined object member as `null` plus the annotation, this service's writer omits the
-  member and writes the same annotation, and `setDeep` assigns the annotated path either way, so
-  both decode to the same object. (Before this, every such member — `images.*.tags` on every image,
+  writes an undefined object member as `null` plus the annotation, and so does this service's writer
+  since 0.0.51 (§5 "Wire format"); before that it omitted the member. `setDeep` assigns the
+  annotated path either way, so both decode to the same object, and the comparator keeps accepting
+  an omitted member against an annotated null (an older release, a replayed capture). (Before this, every such member — `images.*.tags` on every image,
   `images.*.thumbnailUrl` on every image without a video thumbnail, `review` on every post without
   one — was counted `missing-in-go`, and at 64 differences per comparison those artifacts also
   truncated the report before any real difference was reached.) A real `null` against an
@@ -3751,7 +3764,7 @@ trailing newline) of:
 | `viewer` | the viewer descriptor: `class` (anon / crawler / banned / user / moderator), `browsingLevel`, `showNsfw`, `hiddenPrefs` (any hidden preference non-empty), `self` (the input named the viewer's own user or collection) |
 | `host` | the domain color of the `Host` (green / blue / red), `other`, or `unmapped` (no host colors configured) |
 | `region` | `none` (no country header), `open`, `restricted` (REGION_RESTRICTION_CONFIG), `blocked` (REGION_BLOCK_CONFIG); the country read as the server reads it (`x-isuk`, then `cf-ipcountry`, `cf-region-code` for a US state) |
-| `credential` | REST only: `none`, or `header` / `query` / `session` joined with `+` (`Authorization` or the sampler's credential header; a non-empty `token` query value; a session cookie name) |
+| `credential` | REST: `none`, or `header` / `query` / `session` joined with `+` (`Authorization` or the sampler's credential header; a non-empty `token` query value; a session cookie name). tRPC: only when the class holds `header` or `query` (an API credential), so a signed-out or session-cookie request's tRPC shape has no `credential` key |
 | `response`, `outcome` | optional, supplied by the caller, and always classes of the **Node** (reference) answer, never of Go's: a signature must not move when a Go handback is closed |
 
 The **signature** is xxhash64 of the shape's bytes as 16 lowercase hex digits (`github.com/cespare/xxhash/v2`,
@@ -3843,13 +3856,13 @@ endpoints are captured (`evalcapture.Supported`); every other endpoint is skippe
 | T1 | `shadow` | `compare`: the hand-back branch (result `unsupported` / `deadline`, its reason), the compute-error branch (`go_error`), and after the comparison (its result, header result, diff categories) | the sample's `node` and `responseHeaders` | 1 / the sample's `sampleRate` (the Node sampler's effective rate, below); when absent (an older sampler) or outside (0, 1], 1 / `FEED_GO_EVAL_CAPTURE_SHADOW_RATE` (its configured rate; 0 when unset: unknown) |
 | T2 | `serve-parity` | `replay`, after a compared replay | the replay's `result.data` and picked headers | 1 / `FEED_GO_SERVE_PARITY_SAMPLE_RATE` |
 | T3 | `serve` | the public routes (`serve`, `serveV1Models`), after the answer is written or the request handed back, at `FEED_GO_EVAL_CAPTURE_SERVE_RATE` (default 0: off) | none; the result is `served`, `handback` (with the fallback reason) or `error` | 1 / that rate |
-| T4 | `corpus-only` | the `v1-models-id` shadow handler, for a sample marked `corpusOnly` (below); never computed or compared | none; the result is `corpus-only` | 1 / the sample's `sampleRate`; 0 when absent or outside (0, 1] (the shadow's configured rate is not its rate) |
+| T4 | `corpus-only` | the `v1-models-id` and `infinite` shadow handlers, for a sample marked `corpusOnly` (below); never computed or compared | none; the result is `corpus-only` | 1 / the sample's `sampleRate`; 0 when absent or outside (0, 1] (the shadow's configured rate is not its rate) |
 
 - **Viewer.** The one the computation resolved, read through `auth.WithResolveObserver` (no extra
   store read). A request handed back before anything resolved a viewer is resolved by the tap (T1 on
   the sample's goroutine; T3 on one of `DefaultEvalCaptureWorkers` = 2 capture workers, after the
   answer, a full pool or shutdown dropping it), with credentials redacted, so an API key is never
-  looked up here: such a request is dropped (T4 is how credentialed requests reach the corpus). The hidden
+  looked up here: such a request is unresolved (T4 is how credentialed requests reach the corpus). The hidden
   preferences and the viewer's collections cost a read and are not known here: `hiddenPrefs` is
   always false and a `collectionId` input is stored as sent.
 - **Node's answer** (`node_body`, `node_headers`) is stored only for a request with no session user
@@ -3874,11 +3887,19 @@ endpoints are captured (`evalcapture.Supported`); every other endpoint is skippe
   per endpoint; an identical case (same id) once. Every capture writes its sample row (case_id 0 when
   not admitted), so the samples weigh the traffic and the cases stay a few per shape.
 - **Outcomes.** `feed_go_eval_capture_total{feed_endpoint,source,outcome}`: `written` (admitted:
-  both rows queued), `deduped` (sample row queued, not admitted), `dropped` (a row refused by a full or
-  closed writer queue, a T3 capture with every worker busy, a viewer that could not be resolved, or a
-  request that built no case), and for corpus-only only `refused` (below). Seeded at 0 for the
-  endpoints each source captures (shadow and serve: the four first-wave endpoints; serve-parity: the
-  three tRPC ones; corpus-only: `v1-models-id`, `refused` included). It counts rows queued; a row the
+  both rows queued), `deduped` (sample row queued, not admitted), `unresolved` (nothing captured: the
+  viewer could not be resolved), `invalid` (nothing captured: the request built no case, e.g. an
+  unknown credential class), `dropped` (lost to load or shutdown only: a row refused by a full or
+  closed writer queue, a T3 capture with every worker busy or the server shutting down), and for
+  corpus-only only `refused` (below). So a `dropped` is always capacity, never a request the corpus
+  could not hold. An `unresolved` capture is counted again in
+  `feed_go_eval_capture_unresolved_total{feed_endpoint,source,reason}`, by the viewer resolve's
+  fallback reason, a closed set (`evalcapture.UnresolvedReasons`): `bearer-token` (every `bearer-*`
+  reason: an API credential, never looked up by a tap), `session-cache-miss`, `session-cache-cleared`,
+  `session-id-mismatch`, `other` (anything else). Seeded at 0 for the endpoints each source captures
+  (shadow and serve: the four first-wave endpoints; serve-parity: the three tRPC ones; corpus-only:
+  `v1-models-id` and `infinite`, `refused` included; the unresolved reasons for every source but corpus-only, which
+  resolves no viewer). It counts rows queued; a row the
   writers drop afterwards (a batch ClickHouse refused after its retries, shutdown) is counted in
   `feed_go_eval_capture_rows_dropped_total{table,reason}` (chwrite's reasons, seeded) and the failure
   logged (`eval capture insert failed`). A case is queued before its sample, and the sample names it
@@ -3899,6 +3920,22 @@ exactly one API credential (an Authorization header, or a non-empty `token`; bot
 under the same in-flight cap and per-second bucket, counted `corpus_only` on a 2xx. `v1-models-id` is
 the only first-wave REST endpoint, so the only one sent. A header credential that
 `FEED_GO_SHADOW_V1_MODELS_CREDENTIALS` already mirrors as a described sample stays one.
+
+The tRPC `image.getInfinite` (the same switch, no other): T1 does hold its credentialed requests (a
+tRPC sample forwards the credential as `authorization: present`), but feed-go hands every one back
+(`bearer-*`), so its viewer is never resolved and T1 captures none of them (`unresolved`). With the
+switch above 0, that fraction of the sampled `image.getInfinite` requests carrying exactly one API
+credential is posted to the `infinite` compare path as a corpus-only sample IN PLACE OF its shadow
+sample (one POST per sampled request, as before; the comparison it replaces was a hand-back),
+before the handler runs and whatever Node answers, under the same bounds, counted `corpus_only` on a
+2xx. Sent: `{corpusOnly: true, credential, sampleRate, input, headers}`, `input` the raw tRPC
+`input` (no path); never the key in any form, Authorization, `x-feed-go-credential`, any cookie,
+`node`, `responseHeaders`. A request whose `input` or headers would still hold the key (as written,
+URI-encoded, JSON-escaped, or in the input once parsed as JSON) is not sent corpus-only and stays an ordinary shadow sample. Both
+credential kinds at once, or an empty `?token=`, stay ordinary shadow samples too. Feed-go checks and
+records it as below; a tRPC shape carries the class for an API credential (`header` / `query`,
+the shape table above), so it signs exactly as the same request with a real credential of that
+class and apart from the same request signed out.
 
 - **Sent:** `{corpusOnly: true, credential: "header" | "query", sampleRate, input, path, headers}`;
   `input` is the raw query string less every pair named like a credential (`token` in any case or
@@ -3923,7 +3960,8 @@ the only first-wave REST endpoint, so the only one sent. A header credential tha
   reads a pair as URLSearchParams does (escape by escape) when it looks for the key.
 - **Deploy order:** feed-go first, then the Node switch. A feed-go without T4 reads a corpus-only
   sample as one with no `node` (`bad_request`, 400: Node counts it `rejected`), so nothing is stored,
-  but every one is a counted bad request.
+  but every one is a counted bad request. A feed-go with T4 for `[id]` only accepts and discards an
+  `image.getInfinite` one (202, nothing stored, counted `corpus_only` by Node).
 
 **Insert once (the `cases` pin contract).** `cases` is a ReplacingMergeTree versioned by
 `last_seen`: of the rows of one `(endpoint, case_id)`, the newest `last_seen` wins. The harness pins

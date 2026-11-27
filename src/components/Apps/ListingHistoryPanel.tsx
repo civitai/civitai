@@ -1,5 +1,6 @@
-import { Alert, Badge, Button, Group, Loader, Stack, Text } from '@mantine/core';
+import { Alert, Anchor, Badge, Button, Group, Loader, Stack, Text } from '@mantine/core';
 import { IconAlertTriangle } from '@tabler/icons-react';
+import Link from 'next/link';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 
 import { DeployFailureDetail } from '~/components/Apps/DeployFailureDetail';
@@ -21,6 +22,8 @@ import type { BuildAttemptSignals } from '~/shared/constants/app-block-build.con
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { ReviewerByline, type DecisionReviewerView } from '~/components/Apps/ReviewerByline';
+import { reviewThreadDeveloperUrl } from '~/shared/utils/app-review-thread';
 
 /**
  * The authoring page's **History** tab — one listing's full publish-request stream.
@@ -81,6 +84,11 @@ export type ListingHistoryEntry = {
   reviewedAt: string | Date | null;
   rejectionReason: string | null;
   approvalNotes: string | null;
+  /**
+   * Who decided it, on the app team's own read only. Optional because the moderator projection
+   * never carries it (that surface shows its own reviewer chip through `children`).
+   */
+  reviewer?: DecisionReviewerView | null;
   changelog: string | null;
   deployState: string | null;
   /** Last lifecycle transition — the clock for elapsed time and the stalled check. */
@@ -103,6 +111,11 @@ export type ListingHistoryEntry = {
    * need not spell it; treated as `false` when absent, which is the safe direction.
    */
   canWithdraw?: boolean;
+  /**
+   * The server's verdict on whether the review conversation is open to the caller: the app's
+   * current owner, on a decided request. An editor sees this history but not the thread.
+   */
+  canConverse?: boolean;
 };
 
 function formatWhen(value: string | Date | null | undefined): string {
@@ -125,6 +138,11 @@ export type ListingHistoryPanelViewProps = {
   withdrawEnabled?: boolean;
   /** Pins the clock for tests. When absent the view ticks once a second while a build runs. */
   now?: number;
+  /**
+   * Offer the review conversation on decided entries. The container passes
+   * `features.appReviewReplies`; off by default, so nothing links to a dark page.
+   */
+  conversationEnabled?: boolean;
 };
 
 /**
@@ -225,6 +243,7 @@ export function ListingHistoryPanelView({
   withdrawing = false,
   withdrawEnabled = true,
   now: pinnedNow,
+  conversationEnabled = false,
 }: ListingHistoryPanelViewProps) {
   const tickingNow = useTickingNow(
     pinnedNow === undefined && hasFreshInFlightBuild(entries, Date.now())
@@ -269,6 +288,9 @@ export function ListingHistoryPanelView({
               withdrawing={withdrawing}
               withdrawEnabled={withdrawEnabled}
               deployStatus={chip}
+              conversationHref={
+                conversationEnabled && e.canConverse ? reviewThreadDeveloperUrl(e.id) : undefined
+              }
             />
             {below}
           </Stack>
@@ -293,6 +315,7 @@ export function ListingHistoryEntryRow({
   withdrawing = false,
   withdrawEnabled = true,
   deployStatus,
+  conversationHref,
   children,
 }: {
   entry: ListingHistoryEntry;
@@ -304,6 +327,11 @@ export function ListingHistoryEntryRow({
    * elapsed time. The moderator modal passes nothing and keeps the plain text.
    */
   deployStatus?: ReactNode;
+  /**
+   * The developer's link to the review conversation, opt-in: only the author view passes it,
+   * never the moderator's prior-versions modal.
+   */
+  conversationHref?: string;
   /** Rendered at the end of the row — the moderator surface's extra chips. */
   children?: ReactNode;
 }) {
@@ -343,6 +371,17 @@ export function ListingHistoryEntryRow({
         <Text size="xs" c="dimmed" data-testid={`apps-history-notes-${e.id}`}>
           {e.approvalNotes}
         </Text>
+      ) : null}
+      <ReviewerByline reviewer={e.reviewer} testId={`apps-history-reviewer-${e.id}`} />
+      {conversationHref ? (
+        <Anchor
+          component={Link}
+          href={conversationHref}
+          size="xs"
+          data-testid={`apps-history-conversation-${e.id}`}
+        >
+          Conversation
+        </Anchor>
       ) : null}
       {/*
         🔴 THREE CONDITIONS, and each one removes a button that could only fail.
@@ -492,6 +531,7 @@ export function ListingHistoryPanel({ appListingId }: { appListingId: string }) 
       onWithdraw={onWithdraw}
       withdrawing={withdrawVersion.isPending || withdrawListing.isPending}
       withdrawEnabled={!!features?.appBlocks}
+      conversationEnabled={!!features?.appReviewReplies}
     />
   );
 }

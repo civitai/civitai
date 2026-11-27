@@ -12,12 +12,23 @@ const queueDeps = vi.hoisted(() => ({
   now: () => new Date('2026-12-15T12:00:00Z'),
 }));
 const skipList = vi.hoisted(() => ({ add: vi.fn(), list: vi.fn() }));
+const playerPrefs = vi.hoisted(() => vi.fn());
+const yesNo = vi.hoisted(() => ({
+  share: 0.5,
+  stretch: 8,
+  tagReview: false,
+  playerDefault: false,
+}));
 // Distinct objects, so a read that takes the primary instead of the replica (or the reverse) fails `toBe`.
 const PRIMARY = vi.hoisted(() => ({ client: 'primary' }));
 const REPLICA = vi.hoisted(() => ({ client: 'replica' }));
 vi.mock('$lib/server/db', () => ({ db: PRIMARY, dbRead: REPLICA }));
 vi.mock('$lib/server/image-url', () => ({ imageUrl: (key: string) => `cdn/${key}` }));
-vi.mock('$lib/server/player-status', () => ({ getPlayerStatus }));
+// The refill gates on rank and hearts only; one mock stands for both reads.
+vi.mock('$lib/server/player-status', () => ({
+  getPlayerStatus,
+  getRankAndSmites: getPlayerStatus,
+}));
 vi.mock('$lib/server/queue/runtime', () => ({ queueDeps }));
 vi.mock('$lib/server/vote-limits/runtime', () => ({ pauseFor: pauseFor }));
 vi.mock('$lib/server/smites/runtime', () => ({ feedSecret: () => 'secret', resetDeps: {} }));
@@ -34,7 +45,8 @@ vi.mock('$lib/server/yesno/cadence', () => ({
   burstRoller: () => () => 0,
   servedHistory,
 }));
-vi.mock('$lib/server/yesno/runtime', () => ({ yesNoConfig: () => ({ share: 0.5, stretch: 8 }) }));
+vi.mock('$lib/server/yesno/runtime', () => ({ yesNoConfig: () => ({ ...yesNo }) }));
+vi.mock('$lib/server/player-prefs', () => ({ playerPrefs }));
 vi.mock('$lib/server/standing', async (original) => ({
   ...(await original<typeof import('$lib/server/standing')>()),
   getStanding,
@@ -75,6 +87,7 @@ beforeEach(() => {
     pauseFor,
     skipList.list,
     getStanding,
+    playerPrefs,
   ]) {
     mock.mockReset();
   }
@@ -84,6 +97,8 @@ beforeEach(() => {
   pickHiddenCheck.mockResolvedValue(null);
   pickYesNo.mockResolvedValue(null);
   skipList.list.mockResolvedValue([]);
+  playerPrefs.mockResolvedValue({ yesNo: true });
+  Object.assign(yesNo, { share: 0.5, tagReview: false, playerDefault: false });
   burstDue.mockReset();
   burstDue.mockReturnValue(true);
   servedHistory.mockReset();
@@ -191,6 +206,46 @@ describe('GET /play/next', () => {
     });
     const { body } = await ask([token('queue', 9)]);
     expect(openItem('secret', 7, body.next.item.id)).toEqual({ kind: 'hidden', id: 5 });
+  });
+
+  describe('the yes/no questions switch in Knights settings', () => {
+    const yesNoOffer = {
+      itemId: 77,
+      prompt: 'Is a real person shown?',
+      imageKey: 'y77',
+      width: 1,
+      height: 2,
+      banner: null,
+      category: { heading: 'People' },
+    };
+
+    it.each([
+      ['generated questions', { share: 0.5, tagReview: false }],
+      ['Paladin tag review', { share: 0, tagReview: true }],
+    ])(
+      'serves no %s to a player who turned it off, even when a burst is due',
+      async (_name, config) => {
+        Object.assign(yesNo, config);
+        playerPrefs.mockResolvedValue({ yesNo: false });
+        pickYesNo.mockResolvedValue(yesNoOffer);
+
+        const { body } = await ask([token('queue', 9)], {}, 3);
+
+        expect(pickYesNo).not.toHaveBeenCalled();
+        expect(body.items.length).toBeGreaterThan(0);
+        for (const picked of body.items) expect(picked.question.kind).not.toBe('bool');
+      }
+    );
+
+    it('serves the burst to a player whose switch is on, reading it with the Config page default', async () => {
+      yesNo.playerDefault = true;
+      pickYesNo.mockResolvedValue(yesNoOffer);
+
+      const { body } = await ask([token('queue', 9)]);
+
+      expect(playerPrefs).toHaveBeenCalledWith(PRIMARY, 7, true);
+      expect(openItem('secret', 7, body.next.item.id)).toEqual({ kind: 'yesno', id: 77 });
+    });
   });
 
   it.each([

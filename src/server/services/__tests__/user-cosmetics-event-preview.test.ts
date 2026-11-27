@@ -161,16 +161,16 @@ describe('user-level cosmetic reads carry no event hats', () => {
 
 describe('the profile shows event hats only to viewers the event is open to', () => {
   beforeEach(() => {
-    const owner = {
+    // Visitor reads go to the replica since civitai/civitai#10193; the owner falls back to the primary.
+    const row = {
       id: OWNER,
       meta: {},
       settings: null,
       profile: { userId: OWNER },
       cosmetics: rows,
     } as never;
-    // A visitor's read (a scoped token included) goes to the replica, everyone else's to the primary.
-    dbMock.dbWrite.user.findUniqueOrThrow.mockResolvedValue(owner);
-    dbMock.dbRead.user.findUniqueOrThrow.mockResolvedValue(owner);
+    dbMock.dbWrite.user.findUniqueOrThrow.mockResolvedValue(row);
+    dbMock.dbRead.user.findUniqueOrThrow.mockResolvedValue(row);
     dbMock.dbRead.userStat.findFirst.mockResolvedValue(null as never);
   });
 
@@ -283,7 +283,8 @@ describe('userProfile.get stays per-viewer', () => {
 // Not an event read: the same handler, for a moderator's own blocked profile cover.
 describe("a moderator's own blocked profile cover", () => {
   beforeEach(() => {
-    const ownerRow = {
+    // Visitor reads go to the replica since civitai/civitai#10193; the owner falls back to the primary.
+    const row = {
       id: OWNER,
       meta: {},
       settings: null,
@@ -305,9 +306,8 @@ describe("a moderator's own blocked profile cover", () => {
         },
       },
     } as never;
-    // A visitor's read (a scoped token included) goes to the replica, everyone else's to the primary.
-    dbMock.dbWrite.user.findUniqueOrThrow.mockResolvedValue(ownerRow);
-    dbMock.dbRead.user.findUniqueOrThrow.mockResolvedValue(ownerRow);
+    dbMock.dbWrite.user.findUniqueOrThrow.mockResolvedValue(row);
+    dbMock.dbRead.user.findUniqueOrThrow.mockResolvedValue(row);
     dbMock.dbRead.userStat.findFirst.mockResolvedValue(null as never);
   });
 

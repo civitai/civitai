@@ -301,7 +301,10 @@ describe('production catalog snapshot (2026-10-20)', () => {
     //   `OauthConsent.offlineBuzzLimit` / `.offlineBuzzPeriod`: `20271204120000_recipe_runner_ledger`
     //   the five redesign `UserProfile` columns (`about`, `backgroundImageId`, `sfwBackgroundImageId`,
     //     `pageTheme`, `pinnedItems`): `20271125120000_profile_redesign_customization`
+    //   `CollectionItem.showcasedAt` / `UserProfile.folderRows`: `20271124120000_profile_folders`
     const inFlightColumns = new Set([
+      'CollectionItem.showcasedAt',
+      'UserProfile.folderRows',
       'UserProfile.about',
       'UserProfile.backgroundImageId',
       'UserProfile.sfwBackgroundImageId',

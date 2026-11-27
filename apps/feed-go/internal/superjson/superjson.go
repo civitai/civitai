@@ -5,8 +5,10 @@
 // Only the value types this service emits are supported:
 //
 //   - nil            -> JSON null
-//   - Undefined{}    -> key/element present in meta as ["undefined"]; omitted from an object's JSON,
-//     written as null inside an array (what JSON.stringify does with undefined)
+//   - Undefined{}    -> null in the JSON (object member, array element or root alike) plus a meta
+//     ["undefined"] annotation at its path: superjson's walker maps undefined to null BEFORE
+//     JSON.stringify runs (its `undefined` rule, transformer.ts), so Node writes `"key":null`, never
+//     an omitted key. Plain (JSON.stringify, no walker) is the one that omits an undefined member.
 //   - time.Time      -> ISO-8601 string with millisecond precision, meta ["Date"]
 //   - string, bool, every int/uint/float kind
 //   - json.RawMessage (passed through verbatim — used for Postgres jsonb columns)
@@ -183,7 +185,7 @@ func plainInto(pool *sync.Pool, v any) (*Buffer, error) {
 		return nil, errors.New("superjson: undefined has no JSON form")
 	}
 	w := getWriter(pool, true)
-	if err := w.value(v, false); err != nil {
+	if err := w.value(v); err != nil {
 		putWriter(w)
 		return nil, err
 	}
@@ -224,21 +226,14 @@ func serializeInto(pool *sync.Pool, v any) (*Buffer, error) {
 
 // envelope writes the superjson envelope for v.
 func (w *writer) envelope(v any) error {
-	_, isUndef := v.(Undefined)
-	if isUndef {
-		// JSON.stringify drops an undefined top-level json; superjson then reads `json` as undefined.
-		// value() writes nothing for it (it is not in an array) and only records the annotation.
-		w.buf = append(w.buf, '{')
-	} else {
-		w.buf = append(w.buf, `{"json":`...)
-	}
-	if err := w.value(v, false); err != nil {
+	// A root undefined is `{"json":null,"meta":{"values":["undefined"],"v":1}}` too: the walker
+	// turns it into null before JSON.stringify sees it.
+	w.buf = append(w.buf, `{"json":`...)
+	if err := w.value(v); err != nil {
 		return err
 	}
 	if len(w.notes) > 0 {
-		if !isUndef {
-			w.buf = append(w.buf, ',')
-		}
+		w.buf = append(w.buf, ',')
 		w.buf = append(w.buf, `"meta":{"values":`...)
 		if len(w.notes) == 1 && w.notes[0].path == "" {
 			// A transformed ROOT value is annotated as a bare array (`["Date"]`), not a path map.
@@ -303,17 +298,16 @@ func (w *writer) push(s segment) { w.path = append(w.path, s) }
 
 func (w *writer) pop() { w.path = w.path[:len(w.path)-1] }
 
-// value writes v at the current path. inArray says whether an Undefined must be written as null
-// (array element) — object members that are Undefined are skipped by the caller before reaching here.
-func (w *writer) value(v any, inArray bool) error {
+// value writes v at the current path. An Undefined is written as null (and annotated, outside
+// plain mode); a plain-mode object member that is Undefined is skipped by the caller before reaching
+// here, as JSON.stringify omits it.
+func (w *writer) value(v any) error {
 	switch t := v.(type) {
 	case nil:
 		w.buf = append(w.buf, "null"...)
 	case Undefined:
 		w.note("undefined")
-		if inArray {
-			w.buf = append(w.buf, "null"...)
-		}
+		w.buf = append(w.buf, "null"...)
 	case time.Time:
 		w.note("Date")
 		// FormatDate's output never contains a byte JSON escapes, so it skips appendString.
@@ -325,7 +319,7 @@ func (w *writer) value(v any, inArray bool) error {
 			w.buf = append(w.buf, "null"...)
 			return nil
 		}
-		return w.value(*t, inArray)
+		return w.value(*t)
 	case string:
 		w.buf = appendString(w.buf, t)
 	case bool:
@@ -355,8 +349,9 @@ func (w *writer) value(v any, inArray bool) error {
 		first := true
 		for _, f := range t {
 			w.push(segment{key: f.Key, index: -1})
-			if _, undef := f.Val.(Undefined); undef {
-				w.note("undefined")
+			if _, undef := f.Val.(Undefined); undef && w.plain {
+				// JSON.stringify (Plain) omits an undefined member. The superjson envelope does not:
+				// value() writes it as null plus its ["undefined"] annotation, as Node's walker does.
 				w.pop()
 				continue
 			}
@@ -366,7 +361,7 @@ func (w *writer) value(v any, inArray bool) error {
 			first = false
 			w.buf = appendString(w.buf, f.Key)
 			w.buf = append(w.buf, ':')
-			if err := w.value(f.Val, false); err != nil {
+			if err := w.value(f.Val); err != nil {
 				return err
 			}
 			w.pop()
@@ -377,7 +372,7 @@ func (w *writer) value(v any, inArray bool) error {
 			w.buf = append(w.buf, "null"...)
 			return nil
 		}
-		return w.value(*t, inArray)
+		return w.value(*t)
 	case []any:
 		w.buf = append(w.buf, '[')
 		for i, e := range t {
@@ -385,7 +380,7 @@ func (w *writer) value(v any, inArray bool) error {
 				w.buf = append(w.buf, ',')
 			}
 			w.push(segment{index: i})
-			if err := w.value(e, true); err != nil {
+			if err := w.value(e); err != nil {
 				return err
 			}
 			w.pop()

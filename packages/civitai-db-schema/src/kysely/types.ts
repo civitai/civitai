@@ -806,6 +806,16 @@ export type AppReviewAgentReportCheck = {
   fingerprint: string;
   created_at: Generated<Timestamp>;
 };
+export type AppReviewMessage = {
+  id: Generated<number>;
+  publish_request_id: string | null;
+  listing_publish_request_id: string | null;
+  author_user_id: number | null;
+  author_role: string;
+  body: string;
+  recipient_user_id: number | null;
+  created_at: Generated<Timestamp>;
+};
 export type AppSubListing = {
   id: string;
   parent_listing_id: string;
@@ -4012,6 +4022,14 @@ export type KnightsPlayer = {
    * The player ticked "Don't show this again": the daily recap popup stays closed; the header button still opens it.
    */
   recapPopupOptOut: Generated<boolean>;
+  /**
+   * The yes/no questions switch in Knights settings. Null follows the default saved on the moderator Config page.
+   */
+  yesNoQuestions: boolean | null;
+  /**
+   * Keys of the preset tag groups the player hides in Knights settings.
+   */
+  hiddenTagGroups: Generated<string[]>;
 };
 export type KnightsPlayerDay = {
   playerId: number;
@@ -4145,6 +4163,15 @@ export type KnightsShopPurchase = {
   createdAt: Generated<Timestamp>;
   lastAttemptAt: Timestamp | null;
   grantedAt: Timestamp | null;
+};
+export type KnightsUnsure = {
+  id: Generated<string>;
+  playerId: number;
+  itemId: number | null;
+  yesNoReferenceId: number | null;
+  questionKey: string;
+  imageId: number;
+  createdAt: Generated<Timestamp>;
 };
 export type KnightsVote = {
   itemId: number;
@@ -7169,6 +7196,7 @@ export type DB = {
   app_publish_request_traces: AppPublishRequestTrace;
   app_review_agent_report_checks: AppReviewAgentReportCheck;
   app_review_agent_reports: AppReviewAgentReport;
+  app_review_messages: AppReviewMessage;
   app_sub_listing_parents: AppSubListingParent;
   app_sub_listings: AppSubListing;
   app_user_scope_grants: AppUserScopeGrant;
@@ -7387,6 +7415,7 @@ export type DB = {
   KnightsShopItem: KnightsShopItem;
   KnightsShopItemChange: KnightsShopItemChange;
   KnightsShopPurchase: KnightsShopPurchase;
+  KnightsUnsure: KnightsUnsure;
   KnightsVote: KnightsVote;
   KnightsYesNoReference: KnightsYesNoReference;
   Leaderboard: Leaderboard;

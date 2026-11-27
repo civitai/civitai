@@ -6,7 +6,8 @@ import { spendableOf } from '$lib/server/conversion/balance';
 import { db } from '$lib/server/db';
 import { getPlayerStatus } from '$lib/server/player-status';
 import { queueDeps } from '$lib/server/queue/runtime';
-import { MUTED_MESSAGE, getStanding } from '$lib/server/standing';
+import { MUTED_MESSAGE } from '$lib/server/standing';
+import { requestStanding } from '$lib/server/request-reads';
 import type { RequestHandler } from './$types';
 
 /** What a restart would take from this player, for the account menu's confirmation. `null` when there is no career. */
@@ -28,7 +29,7 @@ const refuse = (status: number, message: string) => json({ ok: false, message },
 /** Restarts the career. Answers `{ ok: true, to }` for the page to navigate to, or `{ ok: false, message }`. */
 export const POST: RequestHandler = async ({ request, locals }) => {
   // Restarting clears smites, so it counts as judging.
-  if ((await getStanding(db, locals.user.id)).muted) return refuse(403, MUTED_MESSAGE);
+  if ((await requestStanding(db, locals)).muted) return refuse(403, MUTED_MESSAGE);
   const unconfirmed = () => refuse(400, 'Confirm that you want to restart your career.');
   let form: FormData;
   try {

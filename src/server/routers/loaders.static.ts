@@ -5,6 +5,7 @@ import { appListingsRouter } from '~/server/routers/app-listings.router';
 import { appAccessRequestRouter } from '~/server/routers/app-access-request.router';
 import { appFeedbackRouter } from '~/server/routers/app-feedback.router';
 import { appCollaboratorsRouter } from '~/server/routers/app-collaborators.router';
+import { appPlatformUpdatesRouter } from '~/server/routers/app-platform-updates.router';
 import { appStorageRouter } from '~/server/routers/app-storage.router';
 import { appHibernationRouter } from '~/server/routers/app-hibernation.router';
 import { blockImageUploadRouter } from '~/server/routers/block-image-upload.router';
@@ -147,6 +148,7 @@ export const routers = {
   appAccessRequest: () => Promise.resolve(appAccessRequestRouter),
   appFeedback: () => Promise.resolve(appFeedbackRouter),
   appCollaborators: () => Promise.resolve(appCollaboratorsRouter),
+  appPlatformUpdates: () => Promise.resolve(appPlatformUpdatesRouter),
   appStorage: () => Promise.resolve(appStorageRouter),
   appHibernation: () => Promise.resolve(appHibernationRouter),
   blockImageUpload: () => Promise.resolve(blockImageUploadRouter),

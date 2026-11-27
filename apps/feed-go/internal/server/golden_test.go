@@ -1862,6 +1862,132 @@ func goldenReport(t *testing.T, rep *shadow.Report, goPayload []byte) {
 	t.Logf("feed-go payload: %s", goPayload)
 }
 
+// goldenUndefinedWritten checks the BYTES the decoded comparison cannot see: for every path Node's
+// envelope annotates ["undefined"], feed-go's json must hold that key with a literal null, as
+// superjson's walker writes it (undefined -> null before JSON.stringify), not omit it. Both decode
+// to the same object, so shadow.Compare matches either way. It returns the paths it checked and one
+// problem per path feed-go omitted or wrote as something else.
+func goldenUndefinedWritten(goPayload, nodeEnvelope []byte) (checked int, problems []string) {
+	var node struct {
+		Meta struct {
+			Values json.RawMessage `json:"values"`
+		} `json:"meta"`
+	}
+	var goEnv struct {
+		JSON any `json:"json"`
+	}
+	if err := json.Unmarshal(nodeEnvelope, &node); err != nil {
+		return 0, []string{"node envelope: " + err.Error()}
+	}
+	if err := json.Unmarshal(goPayload, &goEnv); err != nil {
+		return 0, []string{"feed-go envelope: " + err.Error()}
+	}
+	var values map[string][]string
+	if len(node.Meta.Values) == 0 || json.Unmarshal(node.Meta.Values, &values) != nil {
+		return 0, nil // no annotations, or a root annotation (a bare array): no member to check
+	}
+	paths := make([]string, 0, len(values))
+	for p, typ := range values {
+		if len(typ) == 1 && typ[0] == "undefined" {
+			paths = append(paths, p)
+		}
+	}
+	sort.Strings(paths)
+	for _, p := range paths {
+		checked++
+		if problem := goldenNullAt(goEnv.JSON, p); problem != "" {
+			problems = append(problems, p+": "+problem)
+		}
+	}
+	return checked, problems
+}
+
+// The instrument behind goldenUndefinedWritten, validated both ways. Negative control: the bytes this
+// service wrote before 0.0.51 (the member omitted, the annotation kept) and a value where Node has
+// null must be reported. Positive control: the Node fixtures do carry ["undefined"] members (a
+// checker that never finds one would pass anything), and Node's own envelope passes its own check.
+func TestGoldenUndefinedWrittenInstrument(t *testing.T) {
+	node := []byte(`{"json":{"items":[{"id":1,"a.b":null}],"nextCursor":null},` +
+		`"meta":{"values":{"items.0.a\\.b":["undefined"],"nextCursor":["undefined"]},"v":1}}`)
+	if n, problems := goldenUndefinedWritten(node, node); n != 2 || len(problems) != 0 {
+		t.Fatalf("Node's bytes: checked %d, problems %v; want 2, none", n, problems)
+	}
+	omitted := []byte(`{"json":{"items":[{"id":1}]},"meta":{"values":{"items.0.a\\.b":["undefined"],"nextCursor":["undefined"]},"v":1}}`)
+	_, problems := goldenUndefinedWritten(omitted, node)
+	if want := []string{"items.0.a\\.b: omitted, want null", "nextCursor: omitted, want null"}; !reflect.DeepEqual(problems, want) {
+		t.Fatalf("omitted members: problems %q, want %q", problems, want)
+	}
+	valued := []byte(`{"json":{"items":[{"id":1,"a.b":3}],"nextCursor":null}}`)
+	if _, problems := goldenUndefinedWritten(valued, node); len(problems) != 1 || problems[0] != "items.0.a\\.b: 3, want null" {
+		t.Fatalf("a value where Node has null: problems %q", problems)
+	}
+	total := 0
+	for _, dir := range []string{"as-posts", "infinite", "model-getall"} {
+		for _, path := range goldenFiles(t, dir, 1) {
+			fx := goldenLoad(t, path)
+			if len(fx.Expect.Envelope) == 0 {
+				continue
+			}
+			n, problems := goldenUndefinedWritten(fx.Expect.Envelope, fx.Expect.Envelope)
+			if len(problems) != 0 {
+				t.Errorf("%s: Node's own envelope fails the check: %v", fx.Name, problems)
+			}
+			total += n
+		}
+	}
+	if total == 0 {
+		t.Fatal("no Node fixture annotates an undefined member: the golden check would observe nothing")
+	}
+}
+
+// goldenNullAt is "" when the superjson path p names a member or element of v that holds null, else
+// what is there instead.
+func goldenNullAt(v any, p string) string {
+	cur := v
+	for _, seg := range goldenParsePath(p) {
+		switch t := cur.(type) {
+		case map[string]any:
+			next, ok := t[seg]
+			if !ok {
+				return "omitted, want null"
+			}
+			cur = next
+		case []any:
+			n, err := strconv.Atoi(seg)
+			if err != nil || n < 0 || n >= len(t) {
+				return "no such array element"
+			}
+			cur = t[n]
+		default:
+			return fmt.Sprintf("parent %v is not an object or array", cur)
+		}
+	}
+	if cur != nil {
+		return fmt.Sprintf("%v, want null", cur)
+	}
+	return ""
+}
+
+// goldenParsePath is superjson's parsePath: segments split on an unescaped ".", a backslash taking
+// the next character literally (escapeKey writes `\.` for "." and `\\` for a backslash).
+func goldenParsePath(p string) []string {
+	var out []string
+	var seg strings.Builder
+	for i := 0; i < len(p); i++ {
+		switch c := p[i]; {
+		case c == '\\' && i+1 < len(p):
+			i++
+			seg.WriteByte(p[i])
+		case c == '.':
+			out = append(out, seg.String())
+			seg.Reset()
+		default:
+			seg.WriteByte(c)
+		}
+	}
+	return append(out, seg.String())
+}
+
 // goldenCacheState is every key of the fake cache: its value (string bytes, or a hash as sorted
 // field=value lines) and expiry.
 func goldenCacheState(r *testkit.Redis) map[string]string {
@@ -1954,6 +2080,9 @@ func goldenRunAsPostsMode(t *testing.T, fx *goldenFixture, writeBack bool) {
 		t.Fatalf("compare: %v", err)
 	}
 	goldenReport(t, rep, c.payload)
+	if _, problems := goldenUndefinedWritten(c.payload, fx.Expect.Envelope); len(problems) > 0 {
+		t.Errorf("undefined members not written as Node writes them:\n  %s", strings.Join(problems, "\n  "))
+	}
 	for _, p := range goldenWriteProblems(fx, before, goldenCacheState(env.cache), writeBack) {
 		t.Error(p)
 	}
@@ -2034,6 +2163,9 @@ func goldenRunInfiniteMode(t *testing.T, fx *goldenFixture, writeBack bool) {
 		t.Fatalf("compare: %v", err)
 	}
 	goldenReport(t, rep, c.payload)
+	if _, problems := goldenUndefinedWritten(c.payload, fx.Expect.Envelope); len(problems) > 0 {
+		t.Errorf("undefined members not written as Node writes them:\n  %s", strings.Join(problems, "\n  "))
+	}
 	for _, p := range goldenWriteProblems(fx, before, goldenCacheState(env.cache), writeBack) {
 		t.Error(p)
 	}
@@ -2526,6 +2658,9 @@ func goldenRunModelsMode(t *testing.T, fx *goldenFixture, writeBack bool) {
 		t.Fatalf("compare: %v", err)
 	}
 	goldenReport(t, rep, c.payload)
+	if _, problems := goldenUndefinedWritten(c.payload, fx.Expect.Envelope); len(problems) > 0 {
+		t.Errorf("undefined members not written as Node writes them:\n  %s", strings.Join(problems, "\n  "))
+	}
 	for _, p := range goldenWriteProblems(fx, state[0], state[1], writeBack) {
 		t.Error(p)
 	}

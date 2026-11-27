@@ -3,6 +3,7 @@ import { getBlockedNsfwWords } from '~/utils/metadata/audit-base';
 import {
   SEARCH_REFUSED_CODE,
   type SearchRefusedBy,
+  WORD_CHECK_LABEL,
 } from '~/shared/constants/search-refusal.constants';
 
 /** `policy`: refused by the server, which names no check to anyone but a moderator. */
@@ -50,13 +51,13 @@ export function shownRefusalOf(
 export function refusedByOf(refusal: SearchRefusal): SearchRefusedBy | undefined {
   switch (refusal) {
     case 'illegal':
-      return 'minor';
+      return WORD_CHECK_LABEL.minor;
     case 'profanity':
       return 'profanity';
     case 'poi':
-      return 'real people';
+      return WORD_CHECK_LABEL.poi;
     case 'blocked-words':
-      return 'blocked words';
+      return WORD_CHECK_LABEL.blocked;
     default:
       return undefined;
   }

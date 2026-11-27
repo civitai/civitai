@@ -255,13 +255,20 @@ const SUBMIT = rowsFor('SUBMIT_WORKFLOW', 'blocks.submitWorkflow', { snapshot: S
     reply: { requestId: 'rq_1', snapshot: failed('boom') },
   },
   {
-    scenario: 'rpc rejects with tRPC error → failure snapshot carries only the message',
+    scenario:
+      'rpc rejects with tRPC error → failure snapshot carries the message and rateLimit meta',
     hosts: BOTH,
     mode: 'default',
     rpc: { rejects: rateLimited },
     payload: { requestId: 'rq_1', body: BODY },
     call: [{ blockToken: TOKEN, body: BODY }],
-    reply: { requestId: 'rq_1', snapshot: failed(RL_MESSAGE) },
+    reply: {
+      requestId: 'rq_1',
+      snapshot: {
+        ...failed(RL_MESSAGE),
+        rateLimit: { retryAfterSeconds: 17, retryAt: '2031-04-05T06:07:08.000Z' },
+      },
+    },
   },
   {
     // current behaviour; candidate fix D3 — three different fallback texts across families
@@ -361,13 +368,20 @@ const ESTIMATE = rowsFor('ESTIMATE_WORKFLOW', 'blocks.estimateWorkflow', { snaps
     reply: { requestId: 'rq_1', snapshot: failed('boom') },
   },
   {
-    scenario: 'rpc rejects with tRPC error → failure snapshot carries only the message',
+    scenario:
+      'rpc rejects with tRPC error → failure snapshot carries the message and rateLimit meta',
     hosts: BOTH,
     mode: 'default',
     rpc: { rejects: rateLimited },
     payload: { requestId: 'rq_1', body: BODY },
     call: [{ blockToken: TOKEN, body: BODY }],
-    reply: { requestId: 'rq_1', snapshot: failed(RL_MESSAGE) },
+    reply: {
+      requestId: 'rq_1',
+      snapshot: {
+        ...failed(RL_MESSAGE),
+        rateLimit: { retryAfterSeconds: 17, retryAt: '2031-04-05T06:07:08.000Z' },
+      },
+    },
   },
   {
     scenario: 'no requestId → dropped',

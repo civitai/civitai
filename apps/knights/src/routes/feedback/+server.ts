@@ -4,7 +4,8 @@ import { feedbackEnabled } from '$lib/server/feedback/enabled';
 import { feedbackContext, submitFeedback } from '$lib/server/feedback/feedback.service';
 import { getPlayerStatus } from '$lib/server/player-status';
 import { queueDeps } from '$lib/server/queue/runtime';
-import { MUTED_MESSAGE, getStanding } from '$lib/server/standing';
+import { MUTED_MESSAGE } from '$lib/server/standing';
+import { requestStanding } from '$lib/server/request-reads';
 import type { RequestHandler } from './$types';
 
 const refuse = (status: number, message: string) => json({ ok: false, message }, { status });
@@ -19,7 +20,7 @@ const REFUSALS = {
 
 export const POST: RequestHandler = async ({ request, locals }) => {
   if (!(await feedbackEnabled(locals.user))) return refuse(403, 'Feedback is not open yet.');
-  if ((await getStanding(db, locals.user.id)).muted) return refuse(403, MUTED_MESSAGE);
+  if ((await requestStanding(db, locals)).muted) return refuse(403, MUTED_MESSAGE);
   const form = await request.formData();
   const path = form.get('path');
 

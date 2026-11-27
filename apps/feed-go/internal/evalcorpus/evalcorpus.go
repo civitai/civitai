@@ -290,7 +290,11 @@ func Capture(req Request, v Viewer, env Env, extra Extra) (*Case, error) {
 		"host":   hostClass(env.HostColors, headers["host"]),
 		"region": regionClass(env, headers),
 	}
-	if rules.rest {
+	// A tRPC shape carries the class only for an API credential, so a credentialed (or corpus-only, T4)
+	// request signs apart from a signed-out one with the same input. A signed-out or session-cookie
+	// request's shape is unchanged; a T3 capture of a request whose API key resolved (none before T3's
+	// switch is on) signs with its class.
+	if rules.rest || hasAPICredentialClass(c.Credential) {
 		shape["credential"] = c.Credential
 	}
 	if extra.Response != "" {

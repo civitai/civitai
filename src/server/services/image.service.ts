@@ -1450,11 +1450,6 @@ export async function handleUnblockImages({
                   : Prisma.sql`"minor" = CASE WHEN "nsfwLevel" >= 4 THEN FALSE ELSE TRUE END,`
                 : Prisma.sql``
             }
-            ${
-              ['minor', 'poi', 'newUser', 'bestiality'].includes(needsReview)
-                ? Prisma.sql`"scannedAt" = NOW(),`
-                : Prisma.sql``
-            }
             "ingestion" = ${liftedIngestionSql}
           WHERE id IN (${Prisma.join(groupedIds)})
             AND ${liftableByUnblockSql}
@@ -7217,6 +7212,8 @@ export async function resolveIngestionError({
       url: true,
       blockedFor: true,
       needsReview: true,
+      scannedAt: true,
+      createdAt: true,
       user: { select: { bannedAt: true, deletedAt: true } },
     },
   });
@@ -7301,7 +7298,8 @@ export async function resolveIngestionError({
       nsfwLevelLocked: true,
       ingestion: ImageIngestionStatus.Scanned,
       blockedFor: null,
-      scannedAt: new Date(),
+      // Not now(): resolving must not move the image in feeds. firstVisibleAt does that, once.
+      scannedAt: image.scannedAt ?? image.createdAt,
     },
   });
   if (count === 0) throw throwBadRequestError('This image changed; reload and try again.');

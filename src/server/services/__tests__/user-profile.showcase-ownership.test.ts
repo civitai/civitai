@@ -402,10 +402,10 @@ describe('updateUserProfile — section widths', () => {
     } as never);
   const savedSections = () =>
     (
-      tx.userProfile.update.mock.calls.at(0)?.[0] as unknown as {
-        data: { profileSectionsSettings: unknown };
-      }
-    ).data.profileSectionsSettings;
+      tx.userProfile.update.mock.calls as unknown as [
+        { data: { profileSectionsSettings: unknown } }
+      ][]
+    )[0][0].data.profileSectionsSettings;
 
   it('keeps the stored widths when saved without the redesign', async () => {
     storeSections([{ key: 'showcase', enabled: true, width: 'half' }]);

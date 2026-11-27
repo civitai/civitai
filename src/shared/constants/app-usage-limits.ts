@@ -219,6 +219,16 @@ export const appUsageLimitDefs = [
     message: 'You have submitted a lot of feedback — give it a little while.',
   },
   {
+    // Replies on an app review thread (`appListings.postReviewMessage`).
+    id: 'apps.review-replies',
+    area: 'apps',
+    kind: 'abuse',
+    label: 'App review replies per hour',
+    window: rolling(HOUR),
+    base: 20,
+    message: 'Too many replies — slow down.',
+  },
+  {
     // The sleeping-apps page's wake-seed reads, and the App Assistant runner's sleeping-app routes.
     id: 'apps.sleeping-reads',
     area: 'apps',

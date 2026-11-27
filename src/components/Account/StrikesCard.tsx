@@ -13,10 +13,8 @@ import { CreatorScoreExplainer } from './CreatorScoreExplainer';
 import { UserScoreDisplay } from './UserScoreDisplay';
 import { scrollIfHashed } from '~/utils/scroll-if-hashed';
 
-// The strike email links to `/user/account#strikes`, and CREATOR_SCORE_EXPLAINER_HREF links to
-// `#creator-score`. On the v2 shell the fragment survives the redirect to the profile pane, so
-// these fire there too.
-
+// The strike email links to `/user/account#strikes`, and CREATOR_SCORE_EXPLAINER_HREF to
+// `#creator-score`; the fragment survives the v2 shell's redirect to the profile pane.
 const scrollToStrikes = scrollIfHashed('#strikes');
 const scrollToCreatorScore = scrollIfHashed(`#${CREATOR_SCORE_ANCHOR}`);
 

@@ -1,14 +1,19 @@
 import type { AppBlockModerationNotificationDetails } from '~/server/notifications/app-block.notifications';
+import {
+  appReviewAttributionDetails,
+  type AppReviewAttribution,
+  withoutAttributionFields,
+} from '~/server/notifications/app-review-attribution';
 
 /**
  * App Blocks (on-site) — submitter-notification emit helper.
  *
  * A thin, best-effort wrapper `approveRequest` / `rejectRequest` call AFTER their
  * state transition commits, to notify the SUBMITTING developer of the moderator
- * decision. Kept in a DEDICATED module whose ONLY static import is a TYPE (erased at
- * compile), and which DYNAMICALLY imports `createNotification` +
- * `NotificationCategory` inside the async body — so importing this helper adds ZERO
- * runtime graph to the caller (mirrors the off-site `app-listing-notify` helper and
+ * decision. Kept in a DEDICATED module whose only static imports are a TYPE (erased at
+ * compile) and the dependency-free `app-review-attribution` leaf, and which DYNAMICALLY
+ * imports `createNotification` + `NotificationCategory` inside the async body — so
+ * importing this helper adds no meaningful runtime graph to the caller (mirrors the off-site `app-listing-notify` helper and
  * the publish-request service's own dynamic-import discipline for heavy deps). This
  * keeps the service's unit tests from pulling the notifications client; a test that
  * asserts emission mocks THIS module (`~/server/services/blocks/app-block-notify`),
@@ -35,6 +40,8 @@ export async function notifyAppBlockSubmitter(
     /** Idempotency key — dedups repeat emissions of the same event to the same user. */
     key: string;
     details: AppBlockModerationNotificationDetails;
+    /** Who decided; becomes the notification's "Reviewed by" line. */
+    attribution: AppReviewAttribution;
   },
   canOpenRunPages: (userId: number) => Promise<boolean> = async (userId) =>
     (await import('~/server/services/blocks/app-run-page-access')).canUserOpenAppRunPages(userId)
@@ -43,14 +50,18 @@ export async function notifyAppBlockSubmitter(
     import('~/server/services/notification.service'),
     import('~/server/common/enums'),
   ]);
+  const attributed: AppBlockModerationNotificationDetails = {
+    ...withoutAttributionFields(opts.details),
+    ...appReviewAttributionDetails(opts.attribution),
+  };
   const details: AppBlockModerationNotificationDetails =
     opts.type === 'app-block-approved'
       ? {
-          ...opts.details,
+          ...attributed,
           // A failed read must not cost the notification: it then links the submissions view.
           canOpenRunPage: await canOpenRunPages(opts.userId).catch(() => false),
         }
-      : opts.details;
+      : attributed;
   await createNotification({
     userId: opts.userId,
     category: NotificationCategory.System,

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -23,7 +24,8 @@ import (
 // The eval capture taps (DESIGN.md §19.6), behind FEED_GO_EVAL_CAPTURE (default off: EvalCapture nil,
 // and then no tap does anything, not even a context value). Each tap hands one evalcapture.Sample to
 // EvalCapture.Recorder.Record, which strips, signs, deduplicates and queues it, and counts the outcome
-// in feed_go_eval_capture_total{feed_endpoint, source, outcome}:
+// in feed_go_eval_capture_total{feed_endpoint, source, outcome} (an unresolved one also in
+// feed_go_eval_capture_unresolved_total{feed_endpoint, source, reason}):
 //
 //   - T1, source shadow: every Node shadow sample of a first-wave endpoint, in compare (the fallback,
 //     error and compared branches), with Node's answer.
@@ -37,8 +39,8 @@ import (
 // The viewer is the one the computation resolved (auth.WithResolveObserver: no extra store read). A
 // request whose computation never resolved one (an early hand-back) is resolved in the background
 // (T1 on the sample's own goroutine; T3 on an eval-capture worker), with credentials redacted, so an
-// API key is never looked up for it: such a request is dropped; T4 is how credentialed requests reach
-// the corpus.
+// API key is never looked up for it: such a request is unresolved (reason bearer-token); T4 is how
+// credentialed requests reach the corpus.
 
 // DefaultEvalCaptureWorkers bounds the T3 captures in flight per pod (EvalCapture.Queue's capacity).
 const DefaultEvalCaptureWorkers = 2
@@ -70,7 +72,8 @@ type EvalCapture struct {
 
 func (e *EvalCapture) on() bool { return e != nil && e.Recorder != nil }
 
-// seedEvalCapture: every outcome of every source per endpoint that source can capture reads 0.
+// seedEvalCapture: every outcome of every source per endpoint that source can capture reads 0, and
+// every unresolved reason of every source that resolves a viewer (corpus-only resolves none).
 func (m *Metrics) seedEvalCapture() {
 	for _, source := range evalcapture.Sources {
 		for _, e := range evalCaptureEndpoints(source) {
@@ -79,6 +82,10 @@ func (m *Metrics) seedEvalCapture() {
 			}
 			if source == evalcapture.SourceCorpusOnly {
 				m.EvalCapture.WithLabelValues(e, source, evalcapture.OutcomeRefused)
+				continue
+			}
+			for _, reason := range evalcapture.UnresolvedReasons {
+				m.EvalCaptureUnresolved.WithLabelValues(e, source, reason)
 			}
 		}
 	}
@@ -94,12 +101,16 @@ func (m *Metrics) seedEvalCapture() {
 var EvalCaptureDropReasons = []string{chwrite.ReasonQueueFull, chwrite.ReasonMarshal, chwrite.ReasonHTTP4xx,
 	chwrite.ReasonHTTPOther, chwrite.ReasonHTTP5xx, chwrite.ReasonTransport, chwrite.ReasonShutdown}
 
+// corpusOnlyEndpoints are the endpoints the Node sampler sends corpus-only samples of (T4), and the
+// only ones captureCorpusOnly records: `/api/v1/models/[id]` and the tRPC `image.getInfinite`.
+var corpusOnlyEndpoints = []string{EndpointV1ModelsID, EndpointInfinite}
+
 // evalCaptureEndpoints are the endpoints a source captures: every first-wave endpoint (all are shadowed
 // and have public routes), less the ones serve-parity does not replay; corpus-only only
-// v1-models-id (the one first-wave endpoint the Node sampler sends corpus-only samples of).
+// corpusOnlyEndpoints.
 func evalCaptureEndpoints(source string) []string {
 	if source == evalcapture.SourceCorpusOnly {
-		return []string{EndpointV1ModelsID}
+		return corpusOnlyEndpoints
 	}
 	var out []string
 	for _, e := range evalcorpus.Endpoints {
@@ -179,10 +190,16 @@ func evalRequest(endpoint string, u *url.URL, header http.Header, host string) e
 	return req
 }
 
-// recordEval hands one capture to the recorder and counts its outcome.
+// recordEval hands one capture to the recorder and counts its outcome (an unresolved one also by
+// evalcapture.UnresolvedReason of its ViewerErr).
 func (s *Server) recordEval(endpoint string, sample evalcapture.Sample) {
-	if o := s.EvalCapture.Recorder.Record(sample); o != "" {
-		s.Metrics.EvalCapture.WithLabelValues(endpoint, sample.Source, o).Inc()
+	o := s.EvalCapture.Recorder.Record(sample)
+	if o == "" {
+		return
+	}
+	s.Metrics.EvalCapture.WithLabelValues(endpoint, sample.Source, o).Inc()
+	if o == evalcapture.OutcomeUnresolved {
+		s.Metrics.EvalCaptureUnresolved.WithLabelValues(endpoint, sample.Source, evalcapture.UnresolvedReason(sample.ViewerErr)).Inc()
 	}
 }
 
@@ -217,7 +234,7 @@ func (s *Server) captureShadow(ctx context.Context, endpoint string, req ShadowR
 	s.recordEval(endpoint, evalcapture.Sample{
 		Source:  evalcapture.SourceShadow,
 		Request: evalRequest(endpoint, r.URL, r.Header, r.Host),
-		Viewer:  evalViewer(u, verifiedCrawler(r)), ViewerKnown: err == nil,
+		Viewer:  evalViewer(u, verifiedCrawler(r)), ViewerKnown: err == nil, ViewerErr: err,
 		Weight:     rateWeight(sampleRateOr(req.SampleRate, s.EvalCapture.ShadowRate)),
 		ProdResult: out.result, FallbackReason: out.reason, DiffCategories: out.categories, HeaderResult: out.header,
 		NodeBody: req.Node, NodeHeaders: req.ResponseHeaders,
@@ -227,7 +244,7 @@ func (s *Server) captureShadow(ctx context.Context, endpoint string, req ShadowR
 // captureCorpusOnly is T4: a corpus-only sample of endpoint (ShadowRequest.CorpusOnly), recorded
 // with its credential class and never compared. It returns the status the shadow handler answers:
 //
-//   - 202, discarded, with the capture off or an endpoint it does not capture (not counted);
+//   - 202, discarded, with the capture off or an endpoint outside corpusOnlyEndpoints (not counted);
 //   - 400, refused (counted evalcapture.OutcomeRefused, never recorded), when the sample still
 //     carries a credential (evalcorpus.HasCredential: an Authorization or credential header, a
 //     session cookie, a `token` or credential-named query pair), its credential class is not exactly
@@ -236,10 +253,17 @@ func (s *Server) captureShadow(ctx context.Context, endpoint string, req ShadowR
 //     range: the shadow's configured rate is not this sample's), result corpus-only, no Node answer,
 //     the viewer signed out (or a verified crawler): it carries no cookie and no credential.
 func (s *Server) captureCorpusOnly(ctx context.Context, endpoint string, req ShadowRequest) int {
-	if !s.EvalCapture.on() || !evalcapture.Supported(endpoint) || endpoint != EndpointV1ModelsID {
+	if !s.EvalCapture.on() || !evalcapture.Supported(endpoint) || !slices.Contains(corpusOnlyEndpoints, endpoint) {
 		return http.StatusAccepted
 	}
-	creq := evalcorpus.Request{Endpoint: endpoint, Path: req.Path, Query: req.Input, Headers: req.Headers}
+	// As evalRequest reads a request: a REST sample's input is its query string, a tRPC sample's the
+	// raw `input` (its credential-named keys are Capture's to strip, as for any tRPC capture).
+	creq := evalcorpus.Request{Endpoint: endpoint, Headers: req.Headers}
+	if isRESTEndpoint(endpoint) {
+		creq.Path, creq.Query = req.Path, req.Input
+	} else {
+		creq.Input = req.Input
+	}
 	if (req.Credential != evalcorpus.CredentialHeader && req.Credential != evalcorpus.CredentialQuery) ||
 		carriesJSON(req.Node) || len(req.ResponseHeaders) > 0 || carriesJSON(req.Upstream) || evalcorpus.HasCredential(creq) {
 		s.Metrics.EvalCapture.WithLabelValues(endpoint, evalcapture.SourceCorpusOnly, evalcapture.OutcomeRefused).Inc()
@@ -276,7 +300,7 @@ func (s *Server) captureParity(rep *parityReplay, node []byte, nodeHeaders map[s
 	s.recordEval(rep.endpoint, evalcapture.Sample{
 		Source:  evalcapture.SourceServeParity,
 		Request: evalRequest(rep.endpoint, &rep.url, rep.header, rep.host),
-		Viewer:  rep.viewer, ViewerKnown: rep.viewerKnown,
+		Viewer:  rep.viewer, ViewerKnown: rep.viewerKnown, ViewerErr: rep.viewerErr,
 		Weight:     rateWeight(s.Parity.Rate),
 		ProdResult: out.result, DiffCategories: out.categories, HeaderResult: out.header,
 		NodeBody: node, NodeHeaders: nodeHeaders,
@@ -313,7 +337,7 @@ func (s *Server) sampleServeCapture(r *http.Request, endpoint string, obs *viewe
 	}
 	u, seen, uerr := obs.get()
 	if seen {
-		sample.Viewer, sample.ViewerKnown = evalViewer(u, false), uerr == nil
+		sample.Viewer, sample.ViewerKnown, sample.ViewerErr = evalViewer(u, false), uerr == nil, uerr
 	}
 	// The request's own values, copied: r is not read once the handler returns.
 	var replay *http.Request
@@ -345,7 +369,7 @@ func (s *Server) sampleServeCapture(r *http.Request, endpoint string, obs *viewe
 		}()
 		if replay != nil {
 			// Nothing resolved the viewer: resolve it now, credentials redacted (an API key is never
-			// looked up here; the request is then dropped).
+			// looked up here; the request is then unresolved, reason bearer-token).
 			ctx, cancel := context.WithTimeout(auth.WithRedactedCredentials(s.background()), evalCaptureResolveTimeout)
 			defer cancel()
 			var u *auth.SessionUser
@@ -353,7 +377,7 @@ func (s *Server) sampleServeCapture(r *http.Request, endpoint string, obs *viewe
 			if s.Resolver != nil {
 				u, uerr = s.Resolver.Resolve(ctx, replay.WithContext(ctx))
 			}
-			sample.Viewer, sample.ViewerKnown = evalViewer(u, false), uerr == nil
+			sample.Viewer, sample.ViewerKnown, sample.ViewerErr = evalViewer(u, false), uerr == nil, uerr
 		}
 		s.recordEval(endpoint, sample)
 	}()

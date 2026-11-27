@@ -108,6 +108,7 @@ vi.mock('~/components/Profile/ProfileHeader', () => ({
 }));
 vi.mock('~/components/Profile/ProfileNavigation', () => ({
   ProfileNavigation: () => <div data-testid="profile-navigation" />,
+  SubnavProfileNavigation: () => <div data-testid="profile-navigation" />,
 }));
 const stub = vi.hoisted(() => () => null);
 vi.mock('~/components/UserAvatar/UserAvatar', async (o) => ({

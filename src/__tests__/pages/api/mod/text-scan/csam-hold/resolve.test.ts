@@ -379,7 +379,7 @@ describe('textScan.resolveCsamHold', () => {
       expect(mocks.clearUserProfileFields).toHaveBeenCalledTimes(1);
       expect(mocks.clearUserProfileFields).toHaveBeenCalledWith({
         userId: 900,
-        fields: ['location', 'bio', 'message', 'showcaseSections', 'folderRows'],
+        fields: ['location', 'bio', 'message', 'showcaseSections', 'folderRows', 'about'],
         actorId: 7,
         archive: archiveUserProfile,
         alwaysArchive: true,

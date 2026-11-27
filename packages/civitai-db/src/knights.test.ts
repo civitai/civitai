@@ -1,6 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
 import {
   CompiledQuery,
+  sql,
   Kysely,
   PostgresAdapter,
   PostgresIntrospector,
@@ -17,6 +18,7 @@ import {
   gradeKnightsVotes,
   postHiddenFromKnights,
   postShownToKnights,
+  readWithoutJit,
   servableImage,
   servableImageForSweeps,
 } from './knights';
@@ -49,9 +51,9 @@ beforeAll(async () => {
     createDriver: () => ({
       init: async () => undefined,
       acquireConnection: async () => connection,
-      beginTransaction: async () => undefined,
-      commitTransaction: async () => undefined,
-      rollbackTransaction: async () => undefined,
+      beginTransaction: async () => void (await pg.exec('BEGIN')),
+      commitTransaction: async () => void (await pg.exec('COMMIT')),
+      rollbackTransaction: async () => void (await pg.exec('ROLLBACK')),
       releaseConnection: async () => undefined,
       destroy: async () => undefined,
     }),
@@ -304,6 +306,33 @@ describe('servableImage', () => {
       .where(servableImage)
       .execute();
     expect(rows.map((r) => r.id)).toEqual([990000201]);
+  });
+});
+
+describe('readWithoutJit', () => {
+  const settings = async (on: Kysely<DB>) =>
+    (
+      await sql<{ jit: string; workers: string }>`SELECT current_setting('jit') AS jit,
+        current_setting('max_parallel_workers_per_gather') AS workers`.execute(on)
+    ).rows[0];
+
+  // Transaction-local: a session-wide setting would stay on the pooled connection for every later query.
+  it('turns JIT and parallel workers off for the read only, whether it opens the transaction or joins one', async () => {
+    // PGlite starts with 0 workers; a nonzero session value makes a leak of either setting visible.
+    await pg.exec('SET max_parallel_workers_per_gather = 2');
+    onTestFinished(async () => {
+      await pg.exec('RESET max_parallel_workers_per_gather');
+    });
+    const before = await settings(db);
+    expect(before).toEqual({ jit: 'on', workers: '2' });
+
+    expect(await readWithoutJit(db, settings)).toEqual({ jit: 'off', workers: '0' });
+    expect(await settings(db)).toEqual(before);
+
+    await db.transaction().execute(async (trx) => {
+      expect(await readWithoutJit(trx, settings)).toEqual({ jit: 'off', workers: '0' });
+    });
+    expect(await settings(db)).toEqual(before);
   });
 });
 

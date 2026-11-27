@@ -104,8 +104,30 @@ export function SearchRefusalNotice({
   );
 }
 
-/** The policy message, with the moderator's line when one is given. */
-export function SearchPolicyMessage({ refusedBy }: { refusedBy?: SearchRefusedBy }) {
+/** The policy message, with the moderator's line when one is given; `compact` for the dropdown. */
+export function SearchPolicyMessage({
+  refusedBy,
+  compact = false,
+}: {
+  refusedBy?: SearchRefusedBy;
+  compact?: boolean;
+}) {
+  if (compact)
+    return (
+      <Stack gap="xs" align="center">
+        <Text size="sm" align="center" weight={600}>
+          {SEARCH_POLICY_MESSAGE.title}
+        </Text>
+        <Text size="xs" align="center">
+          {SEARCH_POLICY_MESSAGE.body}
+        </Text>
+        {refusedBy && (
+          <Text size="xs" align="center" c="dimmed">
+            {searchRefusedByLine(refusedBy)}
+          </Text>
+        )}
+      </Stack>
+    );
   return (
     <Center>
       <Stack maw={750} align="center" gap="xs" className="h-full py-8">

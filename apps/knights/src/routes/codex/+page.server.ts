@@ -16,7 +16,7 @@ export const load: PageServerLoad = async ({ locals }) => {
     rankBadgeUrls(db),
     db
       .selectFrom('NewOrderPlayer')
-      .select('startAt')
+      .select('userId')
       .where('userId', '=', locals.user.id)
       .executeTakeFirst(),
     ratingExamples(db),
@@ -34,6 +34,5 @@ export const load: PageServerLoad = async ({ locals }) => {
     facts: { ...facts, ratingGuide: withExamples(facts.ratingGuide, showExamples ? examples : {}) },
     fervorExample: { correct: 100, accuracyPercent: 80, sum: fervorSum(100, 125) },
     badges: badges.large,
-    swornIn: player?.startAt.toISOString() ?? null,
   };
 };

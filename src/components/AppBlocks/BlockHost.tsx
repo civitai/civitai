@@ -47,6 +47,7 @@ export function BlockHost({ blockInstall, slotContext }: BlockHostProps) {
     needsConsent,
     domain,
     maxBrowsingLevel,
+    viewerImage,
     refresh,
   } = useBlockToken(blockInstall, slotContext);
 
@@ -114,6 +115,7 @@ export function BlockHost({ blockInstall, slotContext }: BlockHostProps) {
       needsConsent={needsConsent}
       domain={domain}
       maxBrowsingLevel={maxBrowsingLevel}
+      viewerImage={viewerImage}
       onConsentGranted={() => {
         void refresh();
       }}

@@ -12,7 +12,6 @@ import {
   ModelVersionSponsorshipSettingsType,
   ReviewReactions,
 } from '~/shared/utils/prisma/enums';
-import { increaseDate } from '~/utils/date-helpers';
 import { ArticleSort, CollectionSort, ImageSort, PostSort } from './enums';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
@@ -1385,9 +1384,6 @@ export const creatorCardStatsDefaults = ['followers', 'likes'];
 export const creatorCardMaxStats = 3;
 
 export const milestoneNotificationFix = '2025-05-28';
-
-export const orchestratorIntegrationDate = new Date('7-12-2024');
-export const downloadGeneratedImagesByDate = increaseDate(orchestratorIntegrationDate, 30, 'days');
 
 /** Minor-safety bans always remove media: `toggleBan` ignores `removeMedia: false` for these. */
 export const banReasonsAlwaysRemovingMedia: readonly BanReasonCode[] =
