@@ -2,6 +2,7 @@ package hydrate
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -110,7 +111,7 @@ func (s *Sources) galleryHoldsWritten(ctx context.Context, ids []int, flagged bo
 func (s *Sources) gallerySettingsEntries(ctx context.Context, ids []int, flagged bool) (map[int][]byte, map[int]GalleryHold, error) {
 	primary := s.Compute.Primary
 	if primary == nil {
-		return nil, nil, fmt.Errorf("gallery settings: write-back needs the primary database")
+		return nil, nil, errors.New("gallery settings: write-back needs the primary database")
 	}
 	modelDB := s.Replica
 	if flagged {
@@ -150,16 +151,17 @@ func (s *Sources) gallerySettingsEntries(ctx context.Context, ids []int, flagged
 			return nil, nil, fmt.Errorf("gallery settings: model %d: %w", m.id, err)
 		}
 		stored, _ := b.stored.Get("level")
-		if b.hold.Held {
+		switch {
+		case b.hold.Held:
 			lvl, err := heldStoredLevel(stored)
 			if err != nil {
 				return nil, nil, fmt.Errorf("gallery settings: model %d: %w", m.id, err)
 			}
 			b.hold.Level = HeldGalleryLevel(lvl, m.minor, m.sfwOnly)
 			b.level = float64(b.hold.Level)
-		} else if stored == nil {
+		case stored == nil:
 			b.level = float64(browsing.AllLevels) // `level ?? allBrowsingLevelsFlag`
-		} else {
+		default:
 			b.level = stored
 		}
 		tagIDs = append(tagIDs, b.tags...)
