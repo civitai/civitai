@@ -13,7 +13,7 @@ vi.mock('@civitai/auth', async (importOriginal) => {
     createSessionTokenClient: () => ({ refresh: h.refresh, revoke: h.revoke }),
   };
 });
-vi.mock('../session-verifier', () => ({ isRevoked: vi.fn() }));
+vi.mock('../session-verifier', () => ({ isRevoked: vi.fn(), confirmElevatedRevocation: vi.fn() }));
 vi.mock('../bearer-token', () => ({ getSessionFromBearerToken: vi.fn() }));
 vi.mock('~/shared/constants/generation.constants', async (importOriginal) => ({
   ...(await importOriginal<object>()),

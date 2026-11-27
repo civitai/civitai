@@ -220,3 +220,56 @@ describe('createRevocationCheck deadline and reporting', () => {
     expect(await check(claims)).toBe(false);
   });
 });
+
+describe('createRevocationCheck confirmElevated', () => {
+  const claimsOf = () => ({ jti: 'j1', sub: '7', signedAt: Date.now() } as never);
+  const revokedStore = store({ [SESSION_REGISTRY_KEYS.tokenState]: { j1: 'invalid' } });
+  // `bound` answers each read from `plan` in turn: a reason rejects with it, `read` lets the read through.
+  // markerCache off where the store holds a revocation: the rejected read still runs and would record it.
+  const planned = (plan: Array<'read' | 'error' | 'timeout' | 'breaker-open'>) => {
+    let calls = 0;
+    const bound = (read: Promise<boolean>) => {
+      const step = plan[calls++] ?? 'read';
+      if (step === 'read') return read;
+      read.catch(() => {});
+      return Promise.reject(Object.assign(new Error(step), { reason: step }));
+    };
+    return { bound, calls: () => calls };
+  };
+
+  it("keeps a failed read unconfirmed when another request's read of the same token answers", async () => {
+    const p = planned(['error', 'read', 'error']);
+    const check = createRevocationCheck({
+      redis: () => revokedStore,
+      bound: p.bound,
+      markerCache: false,
+    });
+    const a = claimsOf();
+    const b = claimsOf();
+    expect(await check(a)).toBe(false);
+    expect(await check(b)).toBe(true);
+    expect(await check.confirmElevated(a)).toBe('unavailable');
+  });
+
+  it('does not retry after an open breaker', async () => {
+    const p = planned(['breaker-open']);
+    const check = createRevocationCheck({ redis: () => store(), bound: p.bound });
+    const a = claimsOf();
+    await check(a);
+    expect(await check.confirmElevated(a)).toBe('unavailable');
+    expect(p.calls()).toBe(1);
+  });
+
+  it('answers revoked when the retry after a fast error finds the session revoked', async () => {
+    const p = planned(['error']);
+    const check = createRevocationCheck({
+      redis: () => revokedStore,
+      bound: p.bound,
+      markerCache: false,
+    });
+    const a = claimsOf();
+    expect(await check(a)).toBe(false);
+    expect(await check.confirmElevated(a)).toBe('revoked');
+    expect(p.calls()).toBe(2);
+  });
+});

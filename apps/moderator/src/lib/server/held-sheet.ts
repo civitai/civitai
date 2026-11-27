@@ -370,7 +370,14 @@ export async function resolveReviewSession(token: string | undefined): Promise<{
 }
 
 async function sessionUser(session: { userId: number; web: WebSession }) {
-  if (!session.web?.jti || (await isRevoked(session.web))) return null;
+  if (!session.web?.jti) return null;
+  // A copy: the revocation check records a failed read against the claims object it was given.
+  const web = { ...session.web };
+  if (await isRevoked(web)) return null;
+  // Every sheet user is a moderator. Unconfirmed throws, so the route answers 503 and keeps the sheet cookie.
+  const confirmed = await isRevoked.confirmElevated(web);
+  if (confirmed === 'revoked') return null;
+  if (confirmed === 'unavailable') throw new Error('sheet session revocation read unavailable');
   const user = await (sessions ??= createSessionClient()).getSessionUserById(session.userId);
   return admitsSheetUser(user) && user.id === session.userId ? user : null;
 }

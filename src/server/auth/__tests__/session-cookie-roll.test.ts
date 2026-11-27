@@ -19,7 +19,7 @@ vi.mock('@civitai/auth', async (importOriginal) => {
     }),
   };
 });
-vi.mock('../session-verifier', () => ({ isRevoked: vi.fn() }));
+vi.mock('../session-verifier', () => ({ isRevoked: vi.fn(), confirmElevatedRevocation: vi.fn() }));
 vi.mock('../bearer-token', () => ({ getSessionFromBearerToken: vi.fn() }));
 
 const HOST = '__Host-civ-token';

@@ -85,7 +85,10 @@ const {
     redis,
     getSessionUserById: vi.fn(async (_id: number) => null as unknown),
     verifyToken: vi.fn(async (_token: string) => null as unknown),
-    isRevoked: vi.fn(async (_claims: unknown) => false),
+    isRevoked: Object.assign(
+      vi.fn(async (_claims: unknown) => false),
+      { confirmElevated: vi.fn(async (_claims: unknown) => 'ok' as string) }
+    ),
     guardCheck: vi.fn(async (_cookie: string, _url: string, _opts?: unknown) => ({} as unknown)),
     getBatchMedia: vi.fn(),
     mintingKeyLive: vi.fn(async (_keyId: number) => true),

@@ -136,14 +136,12 @@ export type RevocationCheck = ((
   opts?: RevocationCheckCallOptions
 ) => Promise<boolean>) & {
   /**
-   * For a session already checked on this request that turned out to be elevated. A read that ended in a fast
-   * error is retried once; one that hit the deadline or the open breaker is not, since a retry would wait again.
+   * For a session already checked on this request that turned out to be elevated: pass the same claims object
+   * the check was given. A read that ended in a fast error is retried once; one that hit the deadline or the
+   * open breaker is not, since a retry would wait again.
    */
   confirmElevated: (claims: SessionClaims) => Promise<ElevatedRevocationVerdict>;
 };
-
-/** Bound on the sessions whose last read failed, oldest dropped first. */
-const FAILED_READS_MAX_ENTRIES = 20_000;
 
 export function createRevocationCheck(config: RevocationCheckConfig): RevocationCheck {
   const cacheOn = config.markerCache ?? true;
@@ -168,15 +166,9 @@ export function createRevocationCheck(config: RevocationCheckConfig): Revocation
     return t ?? revocationReadTimeoutMs();
   };
   const bound = config.bound ?? raceDeadline;
-  // jti → why its most recent read failed; cleared by its next answered read.
-  const failedReads = new Map<string, RevocationFailureReason>();
-  const recordFailure = (jti: string, reason: RevocationFailureReason) => {
-    failedReads.delete(jti);
-    failedReads.set(jti, reason);
-    if (failedReads.size > FAILED_READS_MAX_ENTRIES) {
-      failedReads.delete(failedReads.keys().next().value as string);
-    }
-  };
+  // Why the read for these claims failed. Each verifyToken call returns its own claims object, so an entry
+  // covers that one verification: another request's read of the same token never clears it.
+  const failedReads = new WeakMap<SessionClaims, RevocationFailureReason>();
 
   const check = async (claims: SessionClaims, opts?: RevocationCheckCallOptions) => {
     const started = performance.now();
@@ -184,12 +176,12 @@ export function createRevocationCheck(config: RevocationCheckConfig): Revocation
     try {
       const revoked = await bound(registryOf().isRevoked(claims), opts?.timeoutMs ?? timeoutOf());
       quietly(() => config.onOutcome?.('hit', seconds()));
-      if (claims.jti) failedReads.delete(claims.jti);
+      failedReads.delete(claims);
       return revoked;
     } catch (err) {
       const reason = reasonOf(err);
       quietly(() => config.onOutcome?.(reason, seconds()));
-      if (claims.jti) recordFailure(claims.jti, reason);
+      failedReads.set(claims, reason);
       // Whatever ended the read (error, deadline, open breaker), the verdict comes from the markers seen.
       // The record's reads are in-memory lookups and cannot fail.
       const revoked = cacheOn ? await seenRegistry.isRevoked(claims) : false;
@@ -200,13 +192,12 @@ export function createRevocationCheck(config: RevocationCheckConfig): Revocation
   };
 
   const confirmElevated = async (claims: SessionClaims): Promise<ElevatedRevocationVerdict> => {
-    const jti = claims.jti;
-    const reason = jti ? failedReads.get(jti) : undefined;
-    if (!jti || !reason) return 'ok';
+    const reason = failedReads.get(claims);
+    if (!reason) return 'ok';
     if (reason !== 'error') return 'unavailable';
     if (await check(claims)) return 'revoked';
     // A failed retry is recorded again; only an answered read clears the record.
-    return failedReads.has(jti) ? 'unavailable' : 'ok';
+    return failedReads.has(claims) ? 'unavailable' : 'ok';
   };
 
   return Object.assign(check, { confirmElevated });
