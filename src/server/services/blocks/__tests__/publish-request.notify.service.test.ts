@@ -122,13 +122,10 @@ vi.mock('~/server/flipt/client', async (importOriginal) => {
   const actual = await importOriginal<typeof FliptClient>();
   return {
     ...actual,
-    isFlipt: (async (flag: string, ...rest: unknown[]) =>
-      flag === actual.FLIPT_FEATURE_FLAGS.APP_BLOCKS_PLATFORM_UPDATES
+    isFlipt: async (...args: Parameters<typeof actual.isFlipt>) =>
+      args[0] === actual.FLIPT_FEATURE_FLAGS.APP_BLOCKS_PLATFORM_UPDATES
         ? puFlag.on
-        : (actual.isFlipt as (...a: unknown[]) => Promise<boolean>)(
-            flag,
-            ...rest
-          )) as typeof actual.isFlipt,
+        : actual.isFlipt(...args),
   };
 });
 vi.mock('~/env/server', () => ({
@@ -483,7 +480,7 @@ describe('approveRequest — staff platform updates', () => {
   const UPDATE_TEXT = 'export const a = 1;\nexport const staffFix = true;\n';
   const trees = new Map<string, Map<string, string>>();
   const blobs = new Map<string, Buffer>();
-  let savedZip = new Uint8Array();
+  let savedZip: Uint8Array = holder.zipBytes;
 
   const row = (id: string, commitSha: string, path: string, operation = 'update') => ({
     id,
