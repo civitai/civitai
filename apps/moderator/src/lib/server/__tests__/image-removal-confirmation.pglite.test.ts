@@ -614,6 +614,24 @@ describe('deciding a held removal', () => {
     ]);
   });
 
+  it('stays Pending, its reports untouched, when the payout read for a voided confirm fails', async () => {
+    const id = await hold();
+    await db.query(
+      `UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'moderated' WHERE id = $1`,
+      [IMAGE]
+    );
+    // The banned-owner read is the only query on the Void path that reads "bannedAt".
+    await db.exec(`ALTER TABLE "User" RENAME COLUMN "bannedAt" TO "bannedAtGone"`);
+
+    await expect(confirmRemoval({ id, userId: CONFIRMER })).rejects.toThrow(/bannedAt/);
+
+    await db.exec(`ALTER TABLE "User" RENAME COLUMN "bannedAtGone" TO "bannedAt"`);
+    expect(await confirmations()).toEqual([
+      expect.objectContaining({ status: 'Pending', decidedById: null }),
+    ]);
+    expect(setReportStatus).not.toHaveBeenCalled();
+  });
+
   it('runs the removal once when two moderators confirm', async () => {
     const id = await hold();
     await confirmRemoval({ id, userId: CONFIRMER });

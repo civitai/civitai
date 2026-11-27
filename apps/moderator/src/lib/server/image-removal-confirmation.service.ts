@@ -157,6 +157,10 @@ export async function confirmRemoval({
     ? 'A later appeal was approved'
     : null;
   const status: RemovalConfirmationStatus = voidNote ? 'Void' : 'Confirmed';
+  // Voided because another removal already took it down: that block decides the payout. Read before
+  // the claim, so a failure here leaves the request Pending.
+  const voidUnpaid =
+    voidNote === 'Already removed' ? await isBannedOwnerBlocked(row.imageId) : false;
 
   // Claimed in one statement so two confirmers cannot both run the removal. A removal that joined
   // the request since the read above moved its appeal or added reports: refused, or read back here.
@@ -178,8 +182,7 @@ export async function confirmRemoval({
   if (voidNote === 'A later appeal was approved') return { ok: true, status, note: voidNote };
 
   let skipped = false;
-  // Voided because another removal already took it down: that block decides the payout.
-  let unpaid = voidNote ? await isBannedOwnerBlocked(row.imageId) : false;
+  let unpaid = voidUnpaid;
   if (!voidNote)
     try {
       unpaid = await isBannedOwnerBlocked(row.imageId);
