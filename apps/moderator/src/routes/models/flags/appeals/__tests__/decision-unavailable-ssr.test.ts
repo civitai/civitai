@@ -59,7 +59,10 @@ const submitAwaitingNote = () => false;`
     )
     .replace(/import \{ modelFlagDetail \} from '[^']+';/, 'const modelFlagDetail = () => null;')
     .replace(/import \{ [\w, ]+ \} from '@tabler\/icons-svelte[^']*';/g, '')
-    .replace(/import ModelFlagDetailFrame from '[^']+';/, "import ModelFlagDetailFrame from './Frame.js';")
+    .replace(
+      /import ModelFlagDetailFrame from '[^']+';/,
+      "import ModelFlagDetailFrame from './Frame.js';"
+    )
     .replace(/import TriageKeyButton from '[^']+';/, "import TriageKeyButton from './Key.js';")
     .replace(/import TriageDecisionBar from '[^']+';/, "import TriageDecisionBar from './Bar.js';")
     .replace(/import (\w+) from '[^']+\.svelte';/g, "import $1 from './Empty.js';");
