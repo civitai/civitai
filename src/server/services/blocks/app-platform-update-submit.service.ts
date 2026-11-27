@@ -1,24 +1,10 @@
 /**
- * Staff ON-BEHALF SUBMIT of a platform update: a moderator files a new version of someone else's
- * app for the normal moderator review, built from the app's approved version with a recorded
- * platform update (`app-platform-update.service.ts`) applied. The pure half (the bundle, the
- * version, the refusal copy) is `app-platform-update-submit.plan.ts`.
+ * Staff ON-BEHALF SUBMIT of a platform update, filed through `submitVersion` with the moderator as
+ * submitter (the pure half: `app-platform-update-submit.plan.ts`).
  *
- * WHO SUBMITS. The publish request is filed through `submitVersion`, the ordinary submit path, with
- * the MODERATOR as its submitter (`submittedByUserId`), never the owner. `fileSummary.onBehalf`
- * names the update and the owner, and the review UI shows "submitted by <staff> for <owner>".
- *
- * NEVER DISPLACES THE OWNER. The database allows one pending publish request per app
- * (`app_block_publish_requests_one_pending_per_slug`). When one exists, the submit is refused and
- * that request is left exactly as it was: the update stays on its branch and reaches the app
- * through the owner's next submit. Nothing here withdraws or edits a publish request.
- *
- * THE UPDATE'S STATUS. A submit leaves it `pending`: the owner's own checkout still has to merge
- * it, or their next submit would ship without it. If the review REJECTS the on-behalf request,
- * `rejectRequest` withdraws the update (`superseded`, by the rejecting moderator), so it is no
- * longer offered to the owner's checkout. An approve leaves it as it is.
- *
- * Dark until migration `20271205140000_app_platform_updates` is applied by hand.
+ * One pending request per app (`app_block_publish_requests_one_pending_per_slug`): when the owner
+ * has one, the submit is refused rather than displace it. The update stays `pending`, so the
+ * owner's checkout still merges it and their next submit does not ship without it.
  */
 
 import { TRPCError } from '@trpc/server';

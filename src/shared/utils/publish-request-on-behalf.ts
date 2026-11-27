@@ -1,10 +1,9 @@
 /**
- * The `fileSummary.onBehalf` record of a STAFF SUBMIT ON THE OWNER'S BEHALF, read back (pure). The
- * one reader of that record: every consumer goes through this module.
+ * The `fileSummary.onBehalf` record of a STAFF SUBMIT ON THE OWNER'S BEHALF, read back (pure).
  *
- * Written only by `submitVersion` when `app-platform-update-submit.service.ts` files a platform
- * update for an app's owner: the request's submitter (`submittedByUserId`) is the moderator, and
- * this names the owner it was filed for. Never written from anything a client sent.
+ * Written by `submitVersion` when `app-platform-update-submit.service.ts` files a platform update
+ * for an app's owner: the request's submitter (`submittedByUserId`) is the moderator, and this
+ * names the owner it was filed for.
  */
 
 export type OnBehalfRecord = {

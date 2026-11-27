@@ -9,7 +9,10 @@
 import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { isMissingTableError } from '~/server/services/blocks/missing-table-error';
+import {
+  isMissingColumnError,
+  isMissingTableError,
+} from '~/server/services/blocks/missing-table-error';
 import type { PlatformUpdatePath } from '~/server/services/blocks/app-platform-update.service';
 
 /**
@@ -22,13 +25,6 @@ export function isVerifiedStaff(row: {
   staffDeletedAt: Date | null;
 }): boolean {
   return row.staffIsModerator === true && !row.staffBannedAt && !row.staffDeletedAt;
-}
-
-/** A missing column: the `shipped` migration is not applied yet (Postgres 42703). */
-function isMissingColumnError(err: unknown): boolean {
-  const e = err as { code?: unknown; meta?: { code?: unknown }; message?: unknown };
-  if (e?.code === '42703' || e?.meta?.code === '42703') return true;
-  return typeof e?.message === 'string' && /\bcolumn\b.*\bdoes not exist\b/i.test(e.message);
 }
 
 /** An update every submit of the app must carry, until a version that contains it is approved. */

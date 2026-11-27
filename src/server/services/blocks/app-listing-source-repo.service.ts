@@ -62,6 +62,7 @@
  */
 
 import { TRPCError } from '@trpc/server';
+import { isMissingColumnError } from '~/server/services/blocks/missing-table-error';
 
 /** What a guarded read of the column yields. See the module header on `available`. */
 export type ListingSourceRepoRead = {
@@ -93,31 +94,8 @@ export type SourceRepoReadClient = {
   };
 };
 
-/**
- * Is this the "column does not exist" error?
- *
- * Matched on the ERROR CODE, never on a message substring: the message is driver text
- * that carries the table and column name and changes between Prisma versions, and a
- * substring test on it is exactly the kind of guard that silently stops matching.
- *   - `P2022` — Prisma's own "The column `X` does not exist in the current database."
- *   - `42703` — Postgres `undefined_column`, which reaches us on a `$queryRaw` path and
- *     is also what Prisma reports in `meta.code` for some engine versions.
- *
- * 🔴 NARROW ON PURPOSE. A connection failure, a timeout, a missing TABLE (42P01) and a
- * permission error all propagate — degrading on those would turn a real outage into a
- * silently missing field, which is the failure mode this module is meant to avoid, not
- * cause.
- */
-export function isMissingColumnError(err: unknown): boolean {
-  if (!err || typeof err !== 'object') return false;
-  const e = err as { code?: unknown; meta?: unknown };
-  if (e.code === 'P2022' || e.code === '42703') return true;
-  if (e.meta && typeof e.meta === 'object') {
-    const metaCode = (e.meta as { code?: unknown }).code;
-    if (metaCode === '42703' || metaCode === 'P2022') return true;
-  }
-  return false;
-}
+// The one "column does not exist" predicate (P2022 / 42703, by code): `missing-table-error.ts`.
+export { isMissingColumnError };
 
 /**
  * Read one listing's `sourceRepoUrl`, degrading to `{ available: false, value: null }`

@@ -11,7 +11,10 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { isMissingTableError } from '~/server/services/blocks/missing-table-error';
+import {
+  isMissingColumnError,
+  isMissingTableError,
+} from '~/server/services/blocks/missing-table-error';
 
 export type PlatformUpdateStatus = 'pending' | 'merged' | 'conflicted' | 'superseded';
 
@@ -101,7 +104,13 @@ export async function readRows(
   }
 }
 
-/** A moderator withdraws an update that is still pending (or conflicted): `superseded`. */
+/**
+ * A moderator withdraws an update no approved version has shipped: `superseded`. That is a
+ * `pending` or `conflicted` one, and a `merged` one not yet shipped, which every submit of the app
+ * is still checked for (`listUnshippedPlatformUpdates`) until a version holding it is approved.
+ * A shipped update is refused. Without the `shipped` columns a `merged` update is refused too:
+ * whether it shipped cannot be read, and the submit check is off.
+ */
 export async function supersedePlatformUpdate(args: {
   staffUserId: number;
   id: string;
@@ -112,14 +121,30 @@ export async function supersedePlatformUpdate(args: {
   const row = rows[0];
   if (!row) throw new TRPCError({ code: 'NOT_FOUND', message: 'Update not found' });
   if (row.status === 'superseded') return { id: row.id, status: 'superseded' };
-  const changed = Number(
-    await dbWrite.$executeRaw`UPDATE "app_platform_updates"
+  const supersede = (withdrawable: Prisma.Sql) =>
+    dbWrite.$executeRaw`UPDATE "app_platform_updates"
         SET "status" = 'superseded', "resolved_by_user_id" = ${args.staffUserId},
             "resolved_at" = now(), "updated_at" = now()
-      WHERE "id" = ${row.id} AND "status" IN ('pending', 'conflicted')`
-  );
+      WHERE "id" = ${row.id} AND (${withdrawable})`;
+  let shippedReadable = true;
+  let changed: number;
+  try {
+    changed = Number(
+      await supersede(Prisma.sql`"status" IN ('pending', 'conflicted')
+        OR ("status" = 'merged' AND "shipped_in_publish_request_id" IS NULL)`)
+    );
+  } catch (err) {
+    if (!isMissingColumnError(err)) throw err;
+    shippedReadable = false;
+    changed = Number(await supersede(Prisma.sql`"status" IN ('pending', 'conflicted')`));
+  }
   if (changed !== 1)
-    throw new TRPCError({ code: 'CONFLICT', message: `This update is already ${row.status}` });
+    throw new TRPCError({
+      code: 'CONFLICT',
+      message: `This update is already ${
+        row.status === 'merged' && shippedReadable ? 'shipped' : row.status
+      }`,
+    });
   platformUpdateLog('info', 'superseded', {
     updateId: row.id,
     slug: row.slug,
