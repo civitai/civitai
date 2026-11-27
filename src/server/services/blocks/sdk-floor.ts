@@ -28,14 +28,10 @@ export type LockfileKind = 'package-lock.json' | 'pnpm-lock.yaml' | 'yarn.lock';
 export type LockfileStatus = 'read' | 'absent' | 'unreadable';
 
 /**
- * The lockfile the platform build installs from, chosen from the manifest's `buildCommand` exactly
- * as the CLI chooses it (civitai/cli `internal/validate/lockfile.go`, `packageManagerFor`, which
- * mirrors the build recipe's `PM="${BUILD_CMD%% *}"`): the FIRST WORD of the trimmed command,
- * `pnpm` → pnpm-lock.yaml, `yarn` → yarn.lock, and EVERYTHING else — `npm`, `vite`, `npx`, an
- * omitted or non-string buildCommand (the recipe's legacy `npm run build` default) — →
- * package-lock.json. Only that one file is read, as the CLI's `lockedBlocksReactVersion`
- * (`internal/validate/blocksreactversion.go`) does: a stale lockfile of another package manager
- * committed beside it is not what the build installs, so it is never consulted.
+ * The lockfile the platform build installs from. Must match the CLI `packageManagerFor`
+ * (civitai/cli internal/validate/lockfile.go) and the build recipe's package-manager choice:
+ * anything but pnpm/yarn, including an omitted buildCommand, installs from package-lock.json.
+ * Never read another manager's stale lockfile.
  */
 export function lockfileFor(buildCommand: unknown): LockfileKind {
   const cmd = typeof buildCommand === 'string' ? buildCommand.trim() : '';
@@ -74,11 +70,8 @@ export interface SdkFloorRecord extends SdkFloorJudgement {
 
 /**
  * The submit waits at most this long for the lockfile reading; past it the reading is
- * `unreadable`. 🔴 What this bounds is the WAIT on the asynchronous steps (opening the zip and
- * inflating the entry, which yield to the event loop). The parse itself — a synchronous
- * `JSON.parse` / `yaml.load` / line scan — cannot be interrupted: once it starts it runs to
- * completion, and the timer can only fire after it returns. The parse is bounded by the per-file
- * size cap `extractBundleMetadata` already enforced on this bundle, not by this timeout.
+ * `unreadable`. Bounds only the async zip open/inflate; the synchronous parse cannot be
+ * interrupted and is bounded by extractBundleMetadata's per-file cap.
  */
 export const SDK_FLOOR_TIMEOUT_MS = 2_000;
 
