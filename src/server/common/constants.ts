@@ -1121,6 +1121,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Wan Video 3.0': baseLicenses['wan tos'],
   YuE2: baseLicenses['cc by-nc 4.0'],
   Sonilo: baseLicenses['sonilo tos'],
+  'Seed Audio': baseLicenses['seedream'],
   PolyGen: baseLicenses['meshy tos'],
   Tripo: baseLicenses['tripo terms'],
   Hunyuan3D: baseLicenses['hunyuan3d 2.1'],

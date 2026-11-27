@@ -19,10 +19,16 @@ import {
   type GateState,
 } from '~/shared/generation/gates';
 import type { GenerationCtx } from '~/shared/generation/context';
+import type { FeatureAccess } from '~/server/services/feature-flags.service';
+
+/** Ecosystems that stay hidden unless their feature flag is on for the user. */
+const ECOSYSTEM_FEATURE_FLAGS: Record<string, keyof FeatureAccess> = {
+  SeedAudio: 'seedAudioGenerator',
+};
 
 type EcosystemGateExt = Pick<
   GenerationCtx,
-  'selfHostedDisabledEcosystems' | 'selfHostedMode' | 'gateRules'
+  'selfHostedDisabledEcosystems' | 'selfHostedMode' | 'gateRules' | 'flags'
 >;
 
 /**
@@ -45,6 +51,8 @@ export function getEcosystemStates(
     states.set(key, pickStrongerGate(states.get(key), { state: selfHostedState }));
   for (const [key, res] of rulesToStates(ext.gateRules ?? []).ecosystems)
     states.set(key, pickStrongerGate(states.get(key), res));
+  for (const [key, flag] of Object.entries(ECOSYSTEM_FEATURE_FLAGS))
+    if (ext.flags?.[flag] !== true) states.set(key, { state: 'hidden' });
 
   const hiddenEcosystems = [...states].filter(([, r]) => r.state === 'hidden').map(([key]) => key);
   const hiddenSet = new Set(hiddenEcosystems);
