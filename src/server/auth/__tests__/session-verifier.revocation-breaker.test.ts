@@ -154,4 +154,17 @@ describe('the session revocation read breaker', () => {
     expect(outcomes()).not.toContain('breaker-open');
     await expect(sharedRead()).resolves.toBe('through');
   });
+
+  // civitai/civitai#10695: a reset is retried once through the same breaker, so one check can count twice;
+  // a retry that fails pauses retries, so the next check counts once.
+  it('counts a retried reset and its failed retry toward the breaker, and reports one outcome per check', async () => {
+    breakerOn();
+    redisMock.sysRedis.hGet.mockRejectedValue(new Error('read ECONNRESET'));
+    redisMock.sysRedis.get.mockRejectedValue(new Error('read ECONNRESET'));
+    expect(await isRevoked(signedOut)).toBe(false);
+    expect(outcomes()).toEqual(['error']);
+    expect(await isRevoked(signedOut)).toBe(false);
+    expect(await isRevoked(signedOut)).toBe(false);
+    expect(outcomes()).toEqual(['error', 'error', 'breaker-open']);
+  });
 });

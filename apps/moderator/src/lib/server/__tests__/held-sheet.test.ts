@@ -621,7 +621,7 @@ describe('hook: the sheet cookie', () => {
     expect(isRevoked).toHaveBeenCalledWith(WEB);
   });
 
-  // Mod Lead ruling 2026-11-27: a moderator request whose revocation read failed is refused, session kept.
+  // civitai/civitai#10695: a moderator request whose revocation read failed is refused, session kept.
   it('answers 503 and keeps the sheet cookie when the revocation read is unconfirmed', async () => {
     const token = await signIn();
     isRevoked.confirmElevated.mockResolvedValue('unavailable');

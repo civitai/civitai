@@ -5,6 +5,7 @@ import {
   rollSlot,
   sessionCookieMode,
   sessionCookieNameForSlot,
+  spokeUnavailableResponse,
   type SessionClaims,
   type SessionUser,
 } from '@civitai/auth';
@@ -191,10 +192,7 @@ const handleRequest: Handle = async ({ event, resolve }) => {
     }
     // The same refusal as mints and authorize: an admin session whose revocation read failed waits.
     if (event.locals.session && isUnconfirmedSession(event.locals.session)) {
-      return new Response('session store unavailable, try again', {
-        status: 503,
-        headers: { 'cache-control': 'no-store', 'retry-after': '5' },
-      });
+      return spokeUnavailableResponse();
     }
   }
 

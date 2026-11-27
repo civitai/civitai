@@ -20,8 +20,7 @@ const checkRevocation = createRevocationCheck({
   // SESSION_REVOCATION_CACHE=off|0|false (any case) turns off the record of seen revocations; anything else,
   // unset included, keeps it on. The same parse as @civitai/shared/env-switch, which the hub does not depend on.
   markerCache: !/^(off|0|false)$/i.test((process.env.SESSION_REVOCATION_CACHE ?? '').trim()),
-  // No retry after a fast error: during an outage every sign-in would wait the backoff. Unconfirmed sessions
-  // are refused where it matters (mints, authorize, device approval, /admin).
+  // No retry after a fast error: during an outage every sign-in would wait the backoff.
   retry: false,
   onError: (_err, reason, claims, verdict) => {
     if (verdict === 'deny_cached') hubRevocationDeniedCachedTotal.inc({ reason });

@@ -734,7 +734,7 @@ func TestResolveRevocationOutageKeepsASeenRevocationSignedOut(t *testing.T) {
 	}
 }
 
-// Mod Lead ruling 2026-11-27: a moderator or impersonation session whose revocation read failed is not
+// civitai/civitai#10695: a moderator or impersonation session whose revocation read failed is not
 // answered here; the Node path decides it (retry once after a fast error, else refuse the request).
 func TestResolveRevocationOutageHandsAnElevatedSessionToNode(t *testing.T) {
 	cases := []struct {
@@ -894,7 +894,7 @@ func TestResolveReportsTheCookieSlot(t *testing.T) {
 	}
 }
 
-// Mod Lead ruling 2026-11-27, as createRevocationCheck: one retry after a fast connection-level error,
+// civitai/civitai#10695, as createRevocationCheck: one retry after a fast connection-level error,
 // none after the deadline or any other error.
 func TestIsRevokedRetriesOnceAfterAFastError(t *testing.T) {
 	reset := errors.New("read tcp 10.0.0.1:6379: connection reset by peer")

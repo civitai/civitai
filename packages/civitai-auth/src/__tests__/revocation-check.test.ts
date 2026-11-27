@@ -221,7 +221,7 @@ describe('createRevocationCheck deadline and reporting', () => {
   });
 });
 
-// Mod Lead ruling 2026-11-27: one retry after a fast connection-level error, none after the deadline;
+// civitai/civitai#10695: one retry after a fast connection-level error, none after the deadline;
 // an elevated session whose read still failed is unconfirmed.
 describe('createRevocationCheck retry and confirmElevated', () => {
   const claimsOf = () => ({ jti: 'j1', sub: '7', signedAt: Date.now() } as never);
@@ -315,6 +315,12 @@ describe('createRevocationCheck retry and confirmElevated', () => {
     await new Promise((resolve) => setTimeout(resolve, 60));
     expect(await check(claimsOf())).toBe(false);
     expect(calls()).toBe(5);
+  });
+
+  it('leaves claims it never checked unconfirmed', async () => {
+    const { check } = checkOver(store(), ['read']);
+    await check(claimsOf());
+    expect(await check.confirmElevated(claimsOf())).toBe('unavailable');
   });
 
   it("keeps a failed read unconfirmed when another request's read of the same token answers", async () => {

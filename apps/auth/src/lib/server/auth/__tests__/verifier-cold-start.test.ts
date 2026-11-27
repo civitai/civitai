@@ -131,7 +131,7 @@ describe('hub verifier after the store has been ready', () => {
   });
 });
 
-// Mod Lead ruling 2026-11-27: the hub opts out of the one retry the shared check makes after a fast error.
+// civitai/civitai#10695: the hub opts out of the one retry the shared check makes after a fast error.
 describe('hub verifier on a fast store error', () => {
   it('reads once and falls back, without the retry the shared check makes elsewhere', async () => {
     const { verifier } = await load();

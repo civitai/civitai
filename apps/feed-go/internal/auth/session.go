@@ -163,8 +163,7 @@ func (r *Resolver) resolve(ctx context.Context, req *http.Request) (*SessionUser
 	if u.Memorialized && claims.ImpersonatedBy == nil {
 		return nil, nil
 	}
-	// createSessionClient's confirmElevatedRevocation: a moderator or impersonation session whose read failed
-	// is answered by the Node path, which retries a fast error once and otherwise refuses the request.
+	// Mirrors createSessionClient's confirmElevatedRevocation; the Node path decides.
 	if readFailed && (u.IsModerator || claims.ImpersonatedBy != nil) {
 		return nil, fallback.New("revocation-unconfirmed")
 	}

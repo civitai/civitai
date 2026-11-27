@@ -65,7 +65,8 @@ export interface SessionClientConfig {
    * Injected revocation check (e.g. the shared redis TOKEN_STATE marker). Without it the read path verifies
    * signature + expiry ONLY — a logged-out / banned token would still resolve on a `session:data2` cache hit,
    * because the rich user is read from cache, not re-derived. Wiring it makes `getSessionUser` reject a revoked
-   * token before the cache read. Fail-open inside (a redis blip must not log everyone out).
+   * token before the cache read. Fail-open inside for ordinary sessions (a redis blip must not log everyone
+   * out); a moderator or impersonation session whose read failed is refused (`confirmElevatedRevocation`).
    */
   isRevoked?: (claims: SessionClaims) => Promise<boolean> | boolean;
   /**

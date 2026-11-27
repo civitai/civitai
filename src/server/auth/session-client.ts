@@ -39,6 +39,16 @@ export const sessionClient = createSessionClient({
 // Session-token lifecycle (rolling refresh / revoke) — the hub contract lives in the package, not inline here.
 const sessionTokenClient = createSessionTokenClient();
 
+// Requests whose moderator or impersonation session could not be confirmed (its revocation read failed): signed
+// out for this request only, with the cookie left as it is. /login sends these home rather than to the hub,
+// which would only bounce back.
+const unconfirmedRequests = new WeakSet<object>();
+
+/** Whether getHubSession refused this request's session because its revocation read failed. */
+export function isSessionUnconfirmed(req: object): boolean {
+  return unconfirmedRequests.has(req);
+}
+
 /**
  * Resolve the session from the hub, next-auth-free: read the session cookie → verify → resolve the user
  * (shared cache, hub fetch on miss). Returns the existing `Session` shape so every getServerAuthSession
@@ -51,8 +61,13 @@ export async function getHubSession(req: {
   // The hub's THIN cookie (`civ-token`, in the slots this site reads), distinct from next-auth's legacy `civitai-token`.
   const token = readSessionToken(req.cookies, { host: req.headers.host })?.value;
   if (!token) return null;
-  const user = await sessionClient.getSessionUser(token);
-  if (!user || refuseModerationAccountSession(user, 'session-token')) return null;
+  const resolved = await sessionClient.resolveSessionUser(token);
+  if (!resolved.user) {
+    if (resolved.reason === 'unconfirmed') unconfirmedRequests.add(req);
+    return null;
+  }
+  const { user } = resolved;
+  if (refuseModerationAccountSession(user, 'session-token')) return null;
   // Impersonation (F): surface the moderator's id from the (already-verified) token so the client can show the
   // "exit impersonation" control. The claim is identity-only — no credential.
   const impersonatedBy = decodeTokenClaim(token, 'impersonatedBy');

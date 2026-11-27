@@ -52,7 +52,7 @@ describe('knights access gate', () => {
     expect(resolve).toHaveBeenCalled();
   });
 
-  // Mod Lead ruling 2026-11-27: an elevated session whose revocation read failed gets a 503, not a sign-in.
+  // civitai/civitai#10695: an elevated session whose revocation read failed gets a 503, not a sign-in.
   it('answers 503 to an unconfirmed elevated session, with no redirect and no cookie change', async () => {
     guardCheck.mockResolvedValue({ status: 'unavailable' });
     const { response, resolve } = await run('/');

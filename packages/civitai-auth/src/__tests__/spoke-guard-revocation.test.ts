@@ -97,7 +97,7 @@ function flakyStore(fail: 'hang' | 'error', failing: number) {
   return { redis, rounds: () => calls };
 }
 
-// Mod Lead ruling 2026-11-27: when the revocation read fails, a moderator or impersonation request is
+// civitai/civitai#10695: when the revocation read fails, a moderator or impersonation request is
 // refused (the session is kept), an ordinary one is allowed; one retry after a fast error, none after a timeout.
 describe('a failed revocation read on an elevated session', () => {
   const guardOver = (redis: SessionRegistryRedis) =>

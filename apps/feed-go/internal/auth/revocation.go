@@ -50,8 +50,8 @@ type Revocation struct {
 	OnDegraded func(err error, verdict string)
 	// RetryDelay is the backoff before the one retry after a fast error (default 200-500 ms, random).
 	RetryDelay func() time.Duration
-	// RetryCooldown is how long retries stop after a retry fails (default 10 s,
-	// REVOCATION_RETRY_COOLDOWN_MS).
+	// RetryCooldown is how long retries stop after a retry fails (default 10 s, as
+	// REVOCATION_RETRY_COOLDOWN_MS in the package).
 	RetryCooldown time.Duration
 
 	retryPausedUntil atomic.Int64 // unix nanos
