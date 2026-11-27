@@ -6272,7 +6272,8 @@ export const setModelsCategory = async ({
 // #region [associated models]
 export const getAssociatedResourcesSimple = async (
   { fromId, type, browsingLevel }: GetAssociatedResourcesInput,
-  viewer?: ArticleReader
+  viewer?: ArticleReader,
+  modelViewer?: ArticleReader
 ) => {
   const associations = await dbWrite.modelAssociations.findMany({
     where: { fromModelId: fromId, type },
@@ -6296,7 +6297,7 @@ export const getAssociatedResourcesSimple = async (
 
   const items = associations
     .map(({ id, toModel, toArticle }) => {
-      if (toModel) return associatedModelItem(id, toModel, viewer, browsingLevel);
+      if (toModel) return associatedModelItem(id, toModel, modelViewer, browsingLevel);
       if (!toArticle || !canReadArticle(toArticle, viewer)) return null;
       const { userId, publishedAt, status, ingestion, availability, ...item } = toArticle;
       return { id, item, resourceType: 'article' as const };
@@ -6322,7 +6323,8 @@ function associatedModelItem<T extends AssociatedModelVisibility & ModelSfwFaceS
 
 export const setAssociatedResources = async (
   { fromId, type, associations, reciprocal, browsingLevel }: SetAssociatedResourcesInput,
-  user?: SessionUser
+  user?: SessionUser,
+  modelViewer?: ArticleReader
 ) => {
   const fromModel = await dbWrite.model.findUnique({
     where: { id: fromId },
@@ -6349,7 +6351,7 @@ export const setAssociatedResources = async (
   // is not a removal.
   const existingAssociations = fromModel.associations
     .filter((x) => !x.toArticle || canReadArticle(x.toArticle, user))
-    .filter((x) => !x.toModel || canListAssociatedModel(x.toModel, user, browsingLevel))
+    .filter((x) => !x.toModel || canListAssociatedModel(x.toModel, modelViewer, browsingLevel))
     .map((x) => x.id);
   const existingModelTargets = new Set(
     fromModel.associations.map((x) => x.toModelId).filter(isDefined)

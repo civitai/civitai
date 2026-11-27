@@ -132,6 +132,7 @@ import {
 } from '~/server/services/training-data-restricted.service';
 import { isModelDeletedOrTakenDown } from '~/server/utils/model-withheld';
 import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
+import { ownerOrModeratorViewer } from '~/server/auth/full-user-credential';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { readModelPoiAndOwnerViaKysely } from '~/server/services/hot-reads-6.reads';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -473,11 +474,15 @@ export const modelRouter = router({
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getAssociatedResourcesSchema)
     .use(associationSourceVisible)
-    .query(({ input, ctx }) => getAssociatedResourcesSimple(input, ctx.user)),
+    .query(({ input, ctx }) =>
+      getAssociatedResourcesSimple(input, ctx.user, ownerOrModeratorViewer(ctx))
+    ),
   setAssociatedResources: guardedProcedure
     .meta({ requiredScope: TokenScope.ModelsWrite })
     .input(setAssociatedResourcesSchema)
-    .mutation(({ input, ctx }) => setAssociatedResources(input, ctx.user)),
+    .mutation(({ input, ctx }) =>
+      setAssociatedResources(input, ctx.user, ownerOrModeratorViewer(ctx))
+    ),
   rescan: moderatorProcedure.input(getByIdSchema).mutation(({ input }) => rescanModel(input)),
   getModelsByHash: protectedProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })

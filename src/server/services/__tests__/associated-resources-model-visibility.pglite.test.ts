@@ -123,9 +123,9 @@ beforeAll(async () => {
 afterAll(() => h?.stop());
 
 const listed = async (viewer: SessionUser | undefined, browsingLevel: number, fromId = FROM) =>
-  (await getAssociatedResourcesSimple({ fromId, type: 'Suggested', browsingLevel }, viewer)).map(
-    ({ item }) => item.id
-  );
+  (
+    await getAssociatedResourcesSimple({ fromId, type: 'Suggested', browsingLevel }, viewer, viewer)
+  ).map(({ item }) => item.id);
 
 describe('getAssociatedResourcesSimple model side', () => {
   it('hides a mature model from a PG viewer and a signed-out viewer, shows it at a mature level', async () => {
@@ -161,6 +161,7 @@ describe('getAssociatedResourcesSimple model side', () => {
     const nameAt = async (browsingLevel: number) => {
       const items = await getAssociatedResourcesSimple(
         { fromId: FROM, type: 'Suggested', browsingLevel },
+        stranger,
         stranger
       );
       const item = items.find((x) => x.item.id === MODELS.faced.id)?.item;
@@ -185,6 +186,7 @@ describe('setAssociatedResources model side', () => {
     await link(101, [MODELS.live.id, MODELS.mature.id, MODELS.private.id]);
     await setAssociatedResources(
       { fromId: 101, type: 'Suggested', associations: [], browsingLevel: PG },
+      fromOwner,
       fromOwner
     );
     expect((await remaining(101)).sort()).toEqual([MODELS.mature.id, MODELS.private.id]);
@@ -194,6 +196,7 @@ describe('setAssociatedResources model side', () => {
     await link(102, [MODELS.mature.id]);
     await setAssociatedResources(
       { fromId: 102, type: 'Suggested', associations: [], browsingLevel: ALL },
+      fromOwner,
       fromOwner
     );
     expect(await remaining(102)).toEqual([]);
