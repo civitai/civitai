@@ -286,6 +286,11 @@ export enum FLIPT_FEATURE_FLAGS {
   // its consent's Buzz cap (orchestrator/offline-spend-cap.ts). Global boolean, DEFAULT-OFF: a missing
   // key or an unreachable Flipt reads false, today's behaviour.
   OAUTH_OFFLINE_GRANT = 'oauth-offline-grant',
+  // A personal API key with a Buzz limit, used by its own user, is sent to the orchestrator as itself
+  // instead of the user's System token, so its limit also applies to generation through civitai.com
+  // (orchestrator/offline-spend-cap.ts). Global boolean, DEFAULT-OFF: a missing key or an unreachable
+  // Flipt reads false, today's behaviour.
+  USER_KEY_BUZZ_LIMIT_PROXY = 'user-key-buzz-limit-proxy',
   // Writes superjson tRPC responses with `fastSuperjsonSerialize` (same output, cheaper walk)
   // instead of `superjson.serialize`. DEFAULT-OFF: `isFliptSync` returns null for an unknown flag
   // or an uninitialized client, which keeps `superjson.serialize`. Global boolean, evaluated with

@@ -11,10 +11,10 @@ import {
   csamBlockedSql,
   liftedNsfwLevelSql,
   liftKeptBlockedSql,
+  liftableByUnblockSql,
 } from '~/server/common/image-visibility';
 import dayjs from '~/shared/utils/dayjs';
 import {
-  BlockedReason,
   NotificationCategory,
   NsfwLevel,
   SearchIndexUpdateQueueAction,
@@ -1464,7 +1464,7 @@ export async function getAppealExcludedIds({
           SELECT 1 FROM "UserReport" ur JOIN "Report" r ON r.id = ur."reportId"
           WHERE ur."userId" = c.id AND r.reason = 'CSAM'
         )
-        OR EXISTS (SELECT 1 FROM "Image" o WHERE o."userId" = c.id AND o."blockedFor" = 'CSAM')
+        OR EXISTS (SELECT 1 FROM "Image" o WHERE o."userId" = c.id AND ${csamBlockedSql('o')})
     `,
   ]);
   return { images: new Set(images.map((r) => r.id)), users: new Set(users.map((r) => r.id)) };
@@ -1557,6 +1557,9 @@ function closeUnreviewedAppeals(limit: number) {
  * one `closedSilently` gets no refund and no notice, and one whose owner is deleted no notice.
  */
 function closeDismissedReviewAppeals(limit: number) {
+  const appellantHoldsCsamBlock = Prisma.sql`EXISTS (
+    SELECT 1 FROM "Image" o WHERE o."userId" = "Appeal"."userId" AND ${csamBlockedSql('o')}
+  )`;
   return dbWrite.$queryRaw<(ClaimedOrphan & { closedSilently: boolean; ownerDeleted: boolean })[]>`
     UPDATE "Appeal"
     SET status = 'Void'::"AppealStatus", "resolvedReason" = ${
@@ -1579,9 +1582,7 @@ function closeDismissedReviewAppeals(limit: number) {
     ) AND status = 'Pending'::"AppealStatus"
     RETURNING id, "userId", "entityType", "entityId", "buzzTransactionId",
       (
-        EXISTS (
-          SELECT 1 FROM "Image" o WHERE o."userId" = "Appeal"."userId" AND o."blockedFor" = 'CSAM'
-        )
+        ${appellantHoldsCsamBlock}
         OR EXISTS (
           SELECT 1 FROM "UserReport" ur JOIN "Report" r ON r.id = ur."reportId"
           WHERE ur."userId" = "Appeal"."userId" AND r.reason = 'CSAM'
@@ -1887,7 +1888,7 @@ export async function resolveEntityAppeal({
   if (entityType === EntityType.Image && status === AppealStatus.Approved && ids.length) {
     const held = await dbWrite.$queryRaw<{ id: number }[]>`
       SELECT id FROM "Image" WHERE id = ANY(${ids}::int[])
-        AND ("blockedFor" = ${BlockedReason.CSAM} OR "needsReview" = 'csam')
+        AND (${csamBlockedSql()} OR "needsReview" = 'csam')
     `;
     if (held.length)
       throw throwBadRequestError(
@@ -1992,8 +1993,7 @@ export async function settleResolvedAppeals(
                     ingestion = ${liftedIngestionSql},
                     "metadata" = ${liftedMetadataSql}
                 WHERE id = ${appeal.entityId}
-                  AND "blockedFor" IS DISTINCT FROM ${BlockedReason.CSAM}
-                  AND "needsReview" IS DISTINCT FROM 'csam'
+                  AND ${liftableByUnblockSql}
                 RETURNING "postId", "pHash", ${liftKeptBlockedSql} AS "keptBlocked"
               `
             : await dbWrite.$queryRaw<Written[]>`

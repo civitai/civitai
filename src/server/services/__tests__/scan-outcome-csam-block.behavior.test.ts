@@ -327,6 +327,29 @@ describe('a scan of a CSAM-blocked image', () => {
     ]);
   });
 
+  it('reads a CSAM block inside a comma list as one when a moderation rule blocks it', async () => {
+    vi.mocked(getImagesModRules).mockResolvedValue([{ id: 1 }] as never);
+    vi.mocked(evaluateRules).mockReturnValue({
+      id: 1,
+      action: ModerationRuleAction.Block,
+      reason: 'rule',
+    } as never);
+    await holder.db.exec(`
+      UPDATE "Image" SET "blockedFor" = 'TOS,csam' WHERE id = ${CSAM};
+      UPDATE "Image" SET "blockedFor" = 'TOS,Moderated', ingestion = 'Rescan' WHERE id = ${OTHER};
+    `);
+
+    await scan(CSAM);
+    await scan(OTHER);
+
+    expect(await imageRow(CSAM)).toEqual({ ...STILL_CSAM, blockedFor: 'TOS,csam' });
+    // Control: a list without CSAM takes the rule's block, and its owner the rule notice.
+    expect((await imageRow(OTHER)).blockedFor).toBe('moderated');
+    expect(vi.mocked(createNotification).mock.calls.map(([n]) => n.key)).toEqual([
+      `image-block:${OTHER}`,
+    ]);
+  });
+
   it('keeps the block while an appeal is pending, when the block landed after the load', async () => {
     dbMock.dbWrite.appeal.findMany.mockResolvedValue([{ entityId: CSAM }] as never);
     // Loaded under an earlier block; the CSAM reason was written after the load, before the verdict.

@@ -53,6 +53,7 @@ describe('the moderator appeal resolve paths', () => {
     expectPendingOnly(
       await appealStatementsOf(() =>
         resolveImageAppeal({
+          csamReview: true,
           imageId: 41,
           status: 'Rejected',
           resolvedReason: 'violation-confirmed',
@@ -72,6 +73,8 @@ describe('the moderator appeal resolve paths', () => {
       postId: null,
       buzzTransactionId: null,
     });
-    expectPendingOnly(await appealStatementsOf(() => acceptImage({ imageId: 41, userId: 2 })));
+    expectPendingOnly(
+      await appealStatementsOf(() => acceptImage({ csamReview: true, imageId: 41, userId: 2 }))
+    );
   });
 });

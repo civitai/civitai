@@ -23,6 +23,7 @@ import {
 } from '@civitai/shared/image-review-types';
 import { LIFT_WHILE_OWNER_DELETED } from '@civitai/shared/account-deletion-grace';
 import { isMinorContentRestricted } from '@civitai/shared/minor-content-gate';
+import { blockedForNamesCsam, csamInBlockedForSql } from '@civitai/shared/csam-blocked-for';
 import {
   minorContentNotRestrictedWhere,
   minorContentRestrictedSql,
@@ -522,21 +523,22 @@ export const reviewKeptWhenLiftedSql = Prisma.sql`(CASE
   THEN "metadata"->>${PRIOR_NEEDS_REVIEW_KEY}::text
 END)`;
 
-/**
- * The row holds a CSAM block. NULL when `blockedFor` is NULL: a filter negates it with `IS NOT TRUE`.
- * A scan's block write, `keepPendingAppealFlags` and an appeal filing never give such a row the
- * 'appeal' review.
- */
-export const csamBlockedSql = (alias?: 'i') =>
-  Prisma.raw(`${alias ? `"${alias}".` : ''}"blockedFor" = '${BlockedReason.CSAM}'`);
+/** The row holds a CSAM block, anywhere in its comma list of block reasons. */
+export const csamBlockedSql = (alias?: 'i' | 'o') =>
+  csamInBlockedFor(Prisma.raw(`${alias ? `"${alias}".` : ''}"blockedFor"`));
+
+const [CSAM_IN_BEFORE, CSAM_IN_AFTER] = csamInBlockedForSql('\u0000').split('\u0000');
+/** `csamBlockedSql` over a `blockedFor` value given as SQL, such as a recorded prior one. */
+export const csamInBlockedFor = (blockedFor: Prisma.Sql) =>
+  Prisma.sql([CSAM_IN_BEFORE, CSAM_IN_AFTER], blockedFor);
 
 /** An unblock may lift the image: it has no CSAM block and no CSAM review flag. */
 export const liftableByUnblock = (image: {
   blockedFor: string | null;
   needsReview: string | null;
-}) => image.blockedFor !== BlockedReason.CSAM && image.needsReview !== CSAM_REVIEW_FLAG;
+}) => !blockedForNamesCsam(image.blockedFor) && image.needsReview !== CSAM_REVIEW_FLAG;
 /** `liftableByUnblock` as the unblock statement's own gate. */
-export const liftableByUnblockSql = Prisma.sql`("blockedFor" IS DISTINCT FROM ${BlockedReason.CSAM} AND "needsReview" IS DISTINCT FROM ${CSAM_REVIEW_FLAG})`;
+export const liftableByUnblockSql = Prisma.sql`(NOT ${csamBlockedSql()} AND "needsReview" IS DISTINCT FROM ${CSAM_REVIEW_FLAG})`;
 
 /** An appeal on the image whose id is `imageId` is still Pending. */
 export const pendingImageAppealSql = (imageId: Prisma.Sql) => Prisma.sql`EXISTS (

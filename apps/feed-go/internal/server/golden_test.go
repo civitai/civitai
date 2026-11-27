@@ -49,7 +49,7 @@ const (
 	// The fixture counts gen.mjs writes: a glob that matches fewer fails, so a moved directory or a
 	// renamed extension cannot pass as zero fixtures.
 	goldenMinAsPosts  = 35
-	goldenMinV1       = 36
+	goldenMinV1       = 52
 	goldenMinInfinite = 155
 	goldenMinModels   = 53
 	goldenIssuer      = "https://auth.example.test"
@@ -134,6 +134,10 @@ type goldenFixture struct {
 		// ServeHubID is FEED_GO_INFINITE_SERVE_INPUT_HUB_ID (infinite/ fixtures; absent: off, the
 		// fixture's `hubId` falls back).
 		ServeHubID bool `json:"serveHubId"`
+		// ServeV1ImageID / ServeV1ModelOnly are FEED_GO_V1_IMAGES_SERVE_IMAGE_ID / _MODEL_ONLY
+		// (v1-images/ fixtures; absent: off, the fixture's `imageId` / model without a version falls back).
+		ServeV1ImageID   bool `json:"serveV1ImageId"`
+		ServeV1ModelOnly bool `json:"serveV1ModelOnly"`
 		// UserHubs is what the `user-hubs` flag reads for the fixture's viewer (Server.UserHubs): "on",
 		// "off" or "error" (a failed read); absent: no flag reader configured.
 		UserHubs string `json:"userHubs"`
@@ -787,6 +791,7 @@ var (
 	goldenReIDs       = regexp.MustCompile(`i\."id" = ANY\(\$(\d+)::int\[\]\)`)
 	goldenRePostIDs   = regexp.MustCompile(`i\."postId" = ANY\(\$(\d+)::int\[\]\)`)
 	goldenRePostID    = regexp.MustCompile(`i\."postId" = \$(\d+)`)
+	goldenReImageID   = regexp.MustCompile(`i\.id = \$(\d+)`)
 	goldenReVersion   = regexp.MustCompile(`irr\."modelVersionId" = \$(\d+)`)
 	goldenReModel     = regexp.MustCompile(`mv\."modelId" = \$(\d+)`)
 	goldenReLevel     = regexp.MustCompile(`\(i\."nsfwLevel" & \$(\d+)\) != 0`)
@@ -822,7 +827,9 @@ var (
 	// a blockedFor reason where ownerMediaAllowed allows it, and the owner's own images held to
 	// ownerMediaAllowed (ownerMediaSql).
 	goldenReBlockedOwner = regexp.MustCompile(`\(i\."blockedFor" IS NULL OR \(i\."userId" = \$(\d+) AND ` + regexp.QuoteMeta(goldenOwnerMediaAllowed) + `\)\)`)
-	goldenReOwnerMedia   = regexp.MustCompile(`\("i"\."userId" <> \$(\d+) OR ` + regexp.QuoteMeta(goldenOwnerMediaAllowed) + `\)`)
+	// The REST legacy path's `requiringMeta`: only images blocked for the bound reason.
+	goldenReBlockedReason = regexp.MustCompile(`i\."blockedFor" = \$(\d+)`)
+	goldenReOwnerMedia    = regexp.MustCompile(`\("i"\."userId" <> \$(\d+) OR ` + regexp.QuoteMeta(goldenOwnerMediaAllowed) + `\)`)
 )
 
 // goldenOwnerMediaAllowed is ownerMediaAllowedSql('i') as the image query spells it, with
@@ -864,6 +871,18 @@ func goldenBlockedFor(args []any, sql string) (func(goldenImage) bool, error) {
 		return func(img goldenImage) bool { return img.UserID != v || ownerAllowed(img) }
 	}); err != nil {
 		return nil, err
+	}
+	for _, m := range goldenReBlockedReason.FindAllStringSubmatch(rest, -1) {
+		n, _ := strconv.Atoi(m[1])
+		reason, ok := "", n >= 1 && n <= len(args)
+		if ok {
+			reason, ok = args[n-1].(string)
+		}
+		if !ok || reason == "" {
+			return nil, fmt.Errorf("golden: a blockedFor reason clause without its reason: %s", m[0])
+		}
+		keeps = append(keeps, func(img goldenImage) bool { return img.BlockedFor != nil && *img.BlockedFor == reason })
+		rest = strings.Replace(rest, m[0], "", 1)
 	}
 	if n := strings.Count(rest, `(i."blockedFor" IS NULL)`); n > 0 {
 		keeps = append(keeps, func(img goldenImage) bool { return img.BlockedFor == nil })
@@ -966,6 +985,7 @@ func goldenImageRows(fx *goldenFixture, sql string, args []any) (*testkit.Rows, 
 	ids, hasIDs := goldenArg(args, goldenReIDs, sql)
 	postIDs, hasPostIDs := goldenArg(args, goldenRePostIDs, sql)
 	postID, hasPostID := goldenArg(args, goldenRePostID, sql)
+	imageID, hasImageID := goldenArg(args, goldenReImageID, sql)
 	version, hasVersion := goldenArg(args, goldenReVersion, sql)
 	model, hasModel := goldenArg(args, goldenReModel, sql)
 	level, hasLevel := goldenArg(args, goldenReLevel, sql)
@@ -1051,14 +1071,21 @@ func goldenImageRows(fx *goldenFixture, sql string, args []any) (*testkit.Rows, 
 		if hasPostID && img.PostID != goldenInt(postID) {
 			continue
 		}
+		if hasImageID && img.ID != goldenInt(imageID) {
+			continue
+		}
+		// FROM "ImageResourceNew" irr JOIN … (JOIN "ModelVersion" mv for a model): one row per matching
+		// resource row. A version matches at most one row of an image; a model, one per version of it the
+		// image used, so such an image is listed once per version.
+		copies := 1
 		if hasVersion || hasModel {
-			ok := false
+			copies = 0
 			for _, r := range img.Resources {
 				if (hasVersion && r.ModelVersionID == goldenInt(version)) || (!hasVersion && versionModel[r.ModelVersionID] == goldenInt(model)) {
-					ok = true
+					copies++
 				}
 			}
-			if !ok {
+			if copies == 0 {
 				continue
 			}
 		}
@@ -1169,7 +1196,9 @@ func goldenImageRows(fx *goldenFixture, sql string, args []any) (*testkit.Rows, 
 			}
 			continue
 		}
-		kept = append(kept, img)
+		for range copies {
+			kept = append(kept, img)
+		}
 	}
 	if hasCollection {
 		// Carry each row's item through the sort and the paging below.
@@ -1856,6 +1885,7 @@ func goldenSetupMode(t testing.TB, fx *goldenFixture, writeBack bool) *goldenEnv
 		ImageLocation:  fx.Config.ImageLocation,
 		NodeProduction: true,
 		Now:            nowFn,
+		Ports:          feed.V1Ports{ImageID: fx.Config.ServeV1ImageID, ModelOnly: fx.Config.ServeV1ModelOnly},
 	}
 	infinite := &feed.InfiniteDeps{Deps: deps, Sources: sources, Blocked: blocked,
 		NewCreators: &feed.NewCreatorBoards{Cache: cache, Now: nowFn},

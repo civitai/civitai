@@ -78,7 +78,7 @@ describe('setImageFlag', () => {
         moderatorId: 9,
         csamReview: false,
       })
-    ).toEqual({ ok: true });
+    ).toEqual({ ok: true, count: 2 });
     expect(logged()).toEqual([1, 3]);
   });
 

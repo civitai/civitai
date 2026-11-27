@@ -2,6 +2,7 @@
 // the reporter, so it never counts against them. Shared by the main app (which creates and purges
 // captures) and the moderator app (which shows them).
 import { nsfwBrowsingLevelsFlag } from './browsing-levels';
+import { blockedForNamesCsam } from './csam-blocked-for';
 
 /** The system account that owns every feedback page capture. Created by a hand-applied migration. */
 export const FEEDBACK_CAPTURE_OWNER_ID = -2;
@@ -95,7 +96,7 @@ export function feedbackCaptureView({
   if (screenshotImageId == null) return 'blur';
   if (!image) return 'expired';
   if (image.userId !== FEEDBACK_CAPTURE_OWNER_ID) return 'hide';
-  if (image.needsReview === 'csam' || image.blockedFor === 'CSAM' || image.minor === true)
+  if (image.needsReview === 'csam' || blockedForNamesCsam(image.blockedFor) || image.minor === true)
     return 'hide-locked';
   if (image.ingestion === 'Blocked') return 'hide';
   return isFeedbackCaptureReady(image) ? 'show' : 'blur';

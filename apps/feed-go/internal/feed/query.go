@@ -44,6 +44,13 @@ type ImagesQuery struct {
 	PostIDs []int
 	// PostID is the input's own `postId` (the REST endpoint): `i."postId" = <postId>`.
 	PostID int
+	// ImageID is the REST endpoint's `imageId` (0 = none): `i.id = <imageId>`, after the post clauses.
+	// getAllImages marks that query personalized, so it is never cached.
+	ImageID int
+	// RequiringMeta is the REST endpoint's `requiringMeta` on its legacy path: `i."blockedFor" =
+	// 'AiNotVerified'`, after the visibility gates. Node drops those gates for it on the red domain
+	// only, and this route passes no domain, so they stay.
+	RequiringMeta bool
 	// TargetUserID is the creator filter (`userId`, or the id a `username` resolved to):
 	// `i."userId" = <targetUserId>`. getAllImages marks that query personalized, so it is never cached.
 	TargetUserID int
@@ -278,6 +285,10 @@ func (q *ImagesQuery) Build() Built {
 	if len(q.PostIDs) > 0 {
 		and = append(and, `i."postId" = ANY(`+a.add(q.PostIDs)+`::int[])`)
 	}
+	if q.ImageID != 0 {
+		// getAllImages' `imageId` (the public API's), after the post clauses as there.
+		and = append(and, `i.id = `+a.add(q.ImageID))
+	}
 	if len(q.ExcludedUsers) > 0 {
 		and = append(and, `i."userId" != ALL(`+a.add(q.ExcludedUsers)+`::int[])`)
 	}
@@ -286,9 +297,10 @@ func (q *ImagesQuery) Build() Built {
 	// ownerId)`).
 	pendingView := q.Pending && (q.IsModerator || q.ViewerID != 0)
 	reactions := len(q.Reactions) > 0 && q.ViewerID != 0
-	if q.TargetUserID != 0 || len(q.FollowedUserIDs) > 0 || len(q.TagIDs) > 0 || prioritized || pendingView || reactions || q.random() {
-		// isPersonalized (the user-gallery path, a follow set, a tag combination, prioritizedUserIds,
-		// the pending view, the viewer's own reactions, a collection's Random order): never cached.
+	if q.TargetUserID != 0 || len(q.FollowedUserIDs) > 0 || len(q.TagIDs) > 0 || q.ImageID != 0 || prioritized || pendingView || reactions || q.random() {
+		// isPersonalized (the user-gallery path, a follow set, a tag combination, a single image,
+		// prioritizedUserIds, the pending view, the viewer's own reactions, a collection's Random
+		// order): never cached.
 		cacheTTL, tags = 0, nil
 	}
 
@@ -402,6 +414,10 @@ func (q *ImagesQuery) Build() Built {
 		}
 		and = append(and, `(i."nsfwLevel" & `+a.add(browsingLevel)+`) != 0 AND i."nsfwLevel" != 0`)
 		and = append(and, hydrate.ImageReviewedSQL("i"))
+	}
+	if q.RequiringMeta {
+		// `if (requiringMeta) AND.push(i."blockedFor" = BlockedReason.AiNotVerified)`, after the gates.
+		and = append(and, `i."blockedFor" = `+a.add("AiNotVerified"))
 	}
 
 	restrictedOwnerSQL := ""

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { CSAM_HOLD_REASON } from '$lib/scan-labels';
 
 /** A vote runs the hold and majority-block sweeps with the real paths, and a refused vote does not. */
 
@@ -16,7 +17,9 @@ const {
   isControlFlaggerVersion,
   itemForToken,
   itemWithheld,
+  skipCard,
 } = vi.hoisted(() => ({
+  skipCard: vi.fn(),
   itemForToken: vi.fn(),
   itemWithheld: vi.fn(),
   getVotedItemOwner: vi.fn(),
@@ -46,6 +49,7 @@ vi.mock('$lib/server/scan-label.service', () => ({
   isControlFlaggerVersion,
   itemForToken,
   itemWithheld,
+  skipCard,
 }));
 
 const { actions, load } = await import('../scan-labels/+page.server');
@@ -278,6 +282,41 @@ describe('vote action', () => {
     expect(applyMajorityBlocks).not.toHaveBeenCalled();
     expect(getVotedItemOwner).not.toHaveBeenCalled();
   });
+
+  it.each(['not-open', 'released', 'full'] as const)(
+    'tells a moderator their CSAM hold did not land when the vote is refused (%s)',
+    async (reason) => {
+      castVote.mockResolvedValue({ ok: false, reason });
+      const hold = event({ token: TOKEN, block: '1', reason: CSAM_HOLD_REASON });
+      const result = (await actions.vote(hold)) as { status: number; data: { error: string } };
+      expect(result.status).toBe(409);
+      expect(result.data.error).toMatch(/CSAM hold was not recorded/);
+      // Control: any other refused vote keeps its own message.
+      const keep = (await actions.vote(event({ token: TOKEN, block: '0' }))) as {
+        data: { error: string };
+      };
+      expect(keep.data.error).not.toMatch(/CSAM hold/);
+    }
+  );
+
+  it('tells a moderator their CSAM hold did not land when the card is refused before the vote', async () => {
+    const hold = () => event({ token: TOKEN, block: '1', reason: CSAM_HOLD_REASON });
+    itemForToken.mockResolvedValueOnce(null);
+    const notYours = (await actions.vote(hold())) as { data: { error: string } };
+    expect(notYours.data.error).toMatch(/CSAM hold was not recorded/);
+    itemWithheld.mockResolvedValueOnce(true);
+    const withheld = (await actions.vote(hold())) as { data: { error: string } };
+    expect(withheld.data.error).toMatch(/CSAM hold was not recorded/);
+    expect(castVote).not.toHaveBeenCalled();
+  });
+
+  // A repeat of a hold that landed (a second tab, a retry) must not say it was not recorded.
+  it('does not tell a moderator a hold that landed was refused', async () => {
+    castVote.mockResolvedValue({ ok: false, reason: 'already-voted' });
+    const hold = event({ token: TOKEN, block: '1', reason: CSAM_HOLD_REASON });
+    const result = (await actions.vote(hold)) as { data: { error: string } };
+    expect(result.data.error).toMatch(/already voted/);
+  });
 });
 
 describe('load', () => {
@@ -346,5 +385,24 @@ describe('load', () => {
       { day: undefined, flaggerVersion: 'scan@1' }
     );
     expect(data.version).toBe('scan@1');
+  });
+});
+
+describe('skip action', () => {
+  it('releases the card’s claim and records no vote', async () => {
+    skipCard.mockResolvedValue(true);
+    expect(await actions.skip(event({ token: TOKEN }))).toEqual({ skipped: true });
+    expect(skipCard).toHaveBeenCalledExactlyOnceWith(TOKEN, 7);
+    expect(castVote).not.toHaveBeenCalled();
+  });
+
+  it('refuses a token that released nothing, so the page says so before it reloads', async () => {
+    skipCard.mockResolvedValue(false);
+    expect(await actions.skip(event({ token: TOKEN }))).toMatchObject({ status: 409 });
+  });
+
+  it('refuses a malformed token without touching the claim', async () => {
+    expect(await actions.skip(event({ token: 'nope' }))).toMatchObject({ status: 400 });
+    expect(skipCard).not.toHaveBeenCalled();
   });
 });

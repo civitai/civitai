@@ -24,6 +24,7 @@ import {
 import { CSAM_BLOCKLIST_RETRY, CsamBlocklistWriteError } from '../image-moderation-effects';
 import { recordAbuseRun } from '../abuse-detection.service';
 import { logToAxiom } from '../axiom';
+import { holdsCsamReview } from '../held-media';
 import { getClickhouse } from '../clickhouse';
 import { caseIntake, defaultCaseIntakeDeps } from '../cases/case-intake-action';
 import { casePartyAction, casePartyView, defaultCasePartyDeps } from '../cases/case-party';
@@ -102,8 +103,10 @@ const imageModerate: ModAction<z.infer<typeof imageModerateInput>> = {
   handler: async ({ ids, reviewAction, userId, ip, userAgent, canConfirmReRemoval }) => {
     // A block only protects, so it is never refused; an unblock of a batch with a withheld image
     // acts on none of it.
+    const moderator = await moderatorById(userId);
+    const csamReview = holdsCsamReview(moderator);
     if (reviewAction === 'unblock') {
-      const withheld = await withheldRefusal(await moderatorById(userId), ids);
+      const withheld = await withheldRefusal(moderator, ids);
       if (withheld) throw Object.assign(new Error(withheld), { status: 403 });
     }
     const held: HeldRemoval[] = [];
@@ -116,7 +119,7 @@ const imageModerate: ModAction<z.infer<typeof imageModerateInput>> = {
     for (const imageId of ids) {
       // Delegated accept uses the smart default (removeMinorFlag is a spoke-only, minor-page option).
       if (reviewAction === 'unblock')
-        await acceptImage({ imageId, userId, restoreRemoved: true }).then(
+        await acceptImage({ imageId, userId, restoreRemoved: true, csamReview }).then(
           async () => ((await isKeptForDeletedOwner(imageId)) ? kept : restored).push(imageId),
           (e) => {
             if (e instanceof ImageNotRestoredError) notRestored.push(imageId);

@@ -12,7 +12,7 @@ import { ilikeContains } from '~/server/utils/ilike';
 import { isSessionOrFullUserKey, withModeratorRightsFor } from '~/server/auth/full-user-credential';
 import { credentialLogFields, type RequestCredential } from '~/server/auth/request-credential';
 import { Prisma } from '@prisma/client';
-import { moderatorWithheldSql } from '@civitai/shared/retracted-media-tier';
+import { moderatorWithheldSql, notWithheldTargetSql } from '@civitai/shared/retracted-media-tier';
 import { heldGalleryImageSql } from '~/server/utils/held-gallery-level.sql';
 import { decreaseDate } from '~/utils/date-helpers';
 import {
@@ -92,6 +92,7 @@ import {
   reviewKeyAfterSql,
   liftedNsfwLevelSql,
   liftKeptBlockedSql,
+  csamBlockedSql,
   liftableByUnblock,
   liftableByUnblockSql,
   CSAM_REVIEW_FLAG,
@@ -1405,11 +1406,7 @@ export async function handleUnblockImages({
   csamReview,
 }: ImageModerationUnblockSchema) {
   // Re-checked by the UPDATE itself, so a mark that lands after the caller's own check still holds.
-  // `i` is the target row itself; a self-join would re-read it from the statement's snapshot. The
-  // target takes no alias because the shared SET fragments name "Image".
-  const notWithheld = Prisma.sql`NOT (
-    SELECT ${Prisma.raw(moderatorWithheldSql('i', { csamReview }))} FROM (SELECT "Image".*) i
-  )`;
+  const notWithheld = Prisma.raw(notWithheldTargetSql({ csamReview }));
   const found = await dbRead.image.findMany({
     where: { id: { in: imageIds } },
     select: {
@@ -1431,7 +1428,7 @@ export async function handleUnblockImages({
           await dbWrite.$queryRaw<{ id: number }[]>`
             SELECT id FROM "Image"
             WHERE id IN (${Prisma.join(found.map((image) => image.id))})
-              AND ("blockedFor" = ${BlockedReason.CSAM} OR "needsReview" = ${CSAM_REVIEW_FLAG})
+              AND (${csamBlockedSql()} OR "needsReview" = ${CSAM_REVIEW_FLAG})
           `
         ).map((row) => row.id)
       )
@@ -1578,7 +1575,7 @@ export async function handleUnblockImages({
  * of a held image sends no owner notice and actions no report: for one under review they wait in
  * `ImageDeferredBlockEffect` for the review to close.
  */
-const heldImageSql = Prisma.sql`("blockedFor" = ${BlockedReason.CSAM} OR ("needsReview" = 'csam' AND NOT EXISTS (
+const heldImageSql = Prisma.sql`(${csamBlockedSql()} OR ("needsReview" = 'csam' AND NOT EXISTS (
   SELECT 1 FROM "CsamQueueSetAside" s WHERE s."imageId" = "Image".id AND s.outcome = 'Dismissed'
 )))`;
 
@@ -1618,7 +1615,9 @@ export async function writeModeratorBlock(
       UPDATE "Image" SET
         ingestion = 'Blocked',
         "nsfwLevel" = ${NsfwLevel.Blocked},
-        "blockedFor" = CASE WHEN "blockedFor" = ${BlockedReason.CSAM} THEN "blockedFor" ELSE ${BlockedReason.Moderated} END,
+        "blockedFor" = CASE WHEN ${csamBlockedSql()} THEN "blockedFor" ELSE ${
+      BlockedReason.Moderated
+    } END,
         "updatedAt" = NOW(),
         "metadata" = CASE WHEN jsonb_typeof("metadata") = 'object' THEN "metadata" - 'ruleId' - 'ruleReason' ELSE "metadata" END
       WHERE id = ANY(${ids}::int[])
@@ -1640,7 +1639,7 @@ export async function writeModeratorBlock(
         pHash: bigint | null;
       }[]
     >`
-      SELECT id, ${heldImageSql} AS held, "blockedFor" = ${BlockedReason.CSAM} AS "removedForCsam",
+      SELECT id, ${heldImageSql} AS held, ${csamBlockedSql()} AS "removedForCsam",
         "needsReview" = 'csam' AS "underReview", "pHash"
       FROM "Image" WHERE id = ANY(${ids}::int[])
     `;
@@ -8397,6 +8396,7 @@ const myImagesSelect = {
   type: true,
   nsfwLevel: true,
   ingestion: true,
+  postId: true,
 } satisfies Prisma.ImageSelect;
 
 /**
@@ -8719,7 +8719,7 @@ export const updateImagesFlag = async ({
   if (withheldFor) {
     const rows = await kyselyWrite
       .updateTable('Image as i')
-      .set({ [flag]: value })
+      .set({ [flag]: value, updatedAt: new Date() })
       .where('i.id', 'in', ids)
       .where(sql<boolean>`NOT ${sql.raw(moderatorWithheldSql('i', withheldFor))}`)
       .returning('i.id')

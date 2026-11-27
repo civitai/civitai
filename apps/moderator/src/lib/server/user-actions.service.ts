@@ -1806,7 +1806,7 @@ export async function setImageFlag(input: {
   moderatorId: number;
   /** The moderator's CSAM grant: the main app refuses clearing a flag on an image withheld from them. */
   csamReview: boolean;
-}): Promise<ActionResult> {
+}): Promise<CountResult> {
   if (!input.imageIds.length) return { ok: false, error: 'Select at least one image.' };
 
   // Chunked like remove/restore, and for a harder reason: this endpoint reads `req.query`, so the ids
@@ -1835,8 +1835,7 @@ export async function setImageFlag(input: {
             error: `${result.error} ${applied} images were already updated — reload.`,
           }
         : { ok: false, error: result.error };
-    // Recorded per chunk, as `inChunks` does: a later chunk's refusal must not leave the images
-    // already updated with no record of who updated them. Only the rows the main app wrote.
+    // Per chunk, so a later chunk's refusal leaves no unrecorded updates.
     const written = writtenIdsOf(chunk, result.body, 'updated');
     await Promise.all(
       written.map((id) =>
@@ -1850,7 +1849,9 @@ export async function setImageFlag(input: {
     );
     applied += written.length;
   }
-  return { ok: true };
+  if (applied === 0)
+    return { ok: false, error: 'Nothing changed — those images may already be gone. Reload.' };
+  return { ok: true, count: applied };
 }
 
 /** A purge whose answer was lost, most often to the timeout below while it keeps running. */

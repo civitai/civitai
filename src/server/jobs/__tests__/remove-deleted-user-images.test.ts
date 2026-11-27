@@ -59,6 +59,7 @@ import {
   BACKLOG_CURSOR_KEY as BACKLOG_KEY,
 } from '~/server/jobs/remove-deleted-user-images';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { blockedForNamesCsam, csamInBlockedForSql } from '@civitai/shared/csam-blocked-for';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 const mockSysRedis = redisMock.sysRedis;
 const mockDbRead = dbMock.dbRead;
@@ -218,7 +219,9 @@ function splitAssignments(body: string) {
  * row, so only the per-image applier can resolve them.
  */
 function parseSetClause(sql: string, params: unknown[]) {
-  const body = sql.slice(sql.indexOf('SET ') + 4, sql.indexOf('WHERE'));
+  // `csamBlockedSql()` carries a quoted comma and a WHERE of its own: read it as one token.
+  const text = sql.split(csamInBlockedForSql('"blockedFor"')).join('CSAM_BLOCKED');
+  const body = text.slice(text.indexOf('SET ') + 4, text.indexOf('WHERE'));
   const queue = [...params];
   const row: Record<string, unknown> = {};
   for (const assignment of splitAssignments(body)) {
@@ -229,8 +232,8 @@ function parseSetClause(sql: string, params: unknown[]) {
     if (value === '?') row[column] = queue.shift();
     else if (/^CASE WHEN "needsReview" = 'csam' THEN 'csam' END$/.test(value))
       row[column] = { keeps: 'csam' };
-    else if (/^CASE WHEN "blockedFor" = \? THEN "blockedFor" ELSE \? END$/.test(value))
-      row[column] = { keeps: queue.shift(), otherwise: queue.shift() };
+    else if (/^CASE WHEN CSAM_BLOCKED THEN "blockedFor" ELSE \? END$/.test(value))
+      row[column] = { otherwise: queue.shift() };
     else if (value === 'now()') row[column] = new Date();
     else if (value === 'NULL') row[column] = null;
     else if (value.startsWith('"metadata" || jsonb_build_object(')) {
@@ -324,8 +327,9 @@ function applyImageUpdate(sql: string, values: unknown[]) {
       recorded.needsReview = fixture.reviewFlags?.[id] === kept ? kept : null;
     }
     if (row.blockedFor && typeof row.blockedFor === 'object') {
-      const { keeps, otherwise } = row.blockedFor as { keeps: string; otherwise: string };
-      recorded.blockedFor = blockedForOf(fixture, id) === keeps ? keeps : otherwise;
+      const { otherwise } = row.blockedFor as { otherwise: string };
+      const stored = blockedForOf(fixture, id);
+      recorded.blockedFor = blockedForNamesCsam(stored) ? stored : otherwise;
     }
     if (typeof row.ingestion === 'string') (fixture.ingestion ??= {})[id] = row.ingestion;
     if (typeof recorded.blockedFor === 'string')

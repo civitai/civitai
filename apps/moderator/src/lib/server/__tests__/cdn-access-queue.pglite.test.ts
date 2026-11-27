@@ -372,7 +372,7 @@ describe('an un-block', () => {
     await blockedImage(1);
     expect(await queueRow('BlockedImageDelete', 1)).toBeDefined();
 
-    await acceptImage({ imageId: 1, userId: 2, restoreRemoved: true });
+    await acceptImage({ csamReview: true, imageId: 1, userId: 2, restoreRemoved: true });
 
     expect(await queueRow('BlockedImageDelete', 1)).toBeUndefined();
   });
@@ -385,6 +385,7 @@ describe('an un-block', () => {
     );
 
     await resolveImageAppeal({
+      csamReview: true,
       imageId: 1,
       status: 'Approved',
       resolvedReason: 'misclassified',
@@ -402,6 +403,7 @@ describe('an un-block', () => {
     );
 
     await resolveImageAppeal({
+      csamReview: true,
       imageId: 1,
       status: 'Rejected',
       resolvedReason: 'upheld',

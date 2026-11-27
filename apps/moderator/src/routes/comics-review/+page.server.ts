@@ -5,6 +5,7 @@ import { parseQuery } from '$lib/server/query';
 import { getComicReviewQueue } from '$lib/server/comic-review.service';
 import { acceptImage, blockImage } from '$lib/server/image-moderation.service';
 import { getActorMeta } from '$lib/server/request-meta';
+import { holdsCsamReview } from '$lib/server/held-media';
 import { heldRemovalMessage } from '$lib/server/removal-hold';
 import { withheldRefusal, withheldRows } from '$lib/server/retracted-media';
 import { getPromptHighlightSegments } from '@civitai/mod-utils/prompt-audit';
@@ -73,6 +74,7 @@ async function moderatePanel(
     userId: number;
     ip?: string;
     userAgent?: string;
+    csamReview: boolean;
   }) => Promise<unknown>,
   event: RequestEvent
 ) {
@@ -86,7 +88,12 @@ async function moderatePanel(
   // Refused rather than thrown: an uncaught throw here renders a 500 page, which tells the moderator
   // nothing about whether the panel was actioned and unmounts the queue they were working.
   try {
-    await run({ imageId, userId: event.locals.user.id, ...getActorMeta(event) });
+    await run({
+      imageId,
+      userId: event.locals.user.id,
+      ...getActorMeta(event),
+      csamReview: holdsCsamReview(event.locals.user),
+    });
   } catch (e) {
     return fail(400, {
       error:

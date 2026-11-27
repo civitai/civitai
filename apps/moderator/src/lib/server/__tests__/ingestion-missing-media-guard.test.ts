@@ -105,7 +105,8 @@ const { resolveIngestionError } = await import('../ingestion.service');
 const published = () =>
   updates[0]?.find(([m]) => m === 'set')?.[1][0] as Record<string, unknown> | undefined;
 
-const resolve = () => resolveIngestionError({ id: 4242, nsfwLevel: 1, userId: 7 });
+const resolve = () =>
+  resolveIngestionError({ csamReview: true, id: 4242, nsfwLevel: 1, userId: 7 });
 
 beforeEach(() => {
   // 🔴 reset, not clear. `clearAllMocks` clears CALLS but leaves IMPLEMENTATIONS installed, so a
@@ -184,10 +185,10 @@ describe('spoke resolveIngestionError — missing-media guard', () => {
 
     await resolve();
 
-    // Column comparisons only; the block and owner guards are pinned against real rows in
-    // ingestion-resolve-refusal.pglite.test.ts.
+    // Column comparisons only; the block, owner and withheld guards are pinned against real rows in
+    // ingestion-resolve-refusal.pglite.test.ts and withheld-write.pglite.test.ts.
     const columnWheres = updates[0]
-      .filter(([m, args]) => m === 'where' && typeof (args as unknown[])[0] !== 'function')
+      .filter(([m, args]) => m === 'where' && typeof (args as unknown[])[0] === 'string')
       .map(([, args]) => args);
     expect(columnWheres).toEqual([
       ['id', '=', 4242],

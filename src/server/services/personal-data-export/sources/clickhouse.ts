@@ -60,6 +60,8 @@ type ChTable = {
   required?: boolean;
   /** Applied to each kept record last. */
   redact?: (row: Record<string, unknown>) => Record<string, unknown>;
+  /** Only rows this returns true for are written; the rest are left out, never counted. */
+  include?: (row: Record<string, unknown>) => boolean;
   /**
    * A record that cannot be reliably attributed (corrupted in storage): left out, not rewritten, and
    * counted in the manifest.
@@ -85,6 +87,145 @@ export function unreliableJobRow(row: Record<string, unknown>, now = Date.now())
   const created = Date.parse(`${String(row.createdAt ?? '').replace(' ', 'T')}Z`);
   return !Number.isFinite(created) || created < EARLIEST_RECORD || created > now + 86_400_000;
 }
+
+/**
+ * Job types a user starts: generation, editing, training, audio and chat. A job of any other type
+ * is one the site runs itself (scanning, hashing, tagging, conversion, embedding) and is not
+ * written. Fail closed: a job type added later stays out of the archive until it is listed here.
+ * Compared case-insensitively.
+ */
+export const USER_JOB_TYPES: ReadonlySet<string> = new Set(
+  [
+    // Image and video generation and editing.
+    'TextToImage',
+    'TextToImageV2',
+    'Comfy',
+    'ComfyImageGen',
+    'ComfyImageToSvg',
+    'ComfyMiniMaxH3ImageGen',
+    'ComfyMiniMaxH3VideoGen',
+    'comfyLtx2VideoGen',
+    'comfyLtx23VideoGen',
+    'comfyLtx25VideoGen',
+    'comfyVideoGen',
+    'comfyTrellis2Model',
+    'AnimaComfy',
+    'BooguImageComfy',
+    'FaceFixComfy',
+    'Fibo2Comfy',
+    'Flux2DevComfy',
+    'Flux2KleinComfy',
+    'Flux2KleinKvComfy',
+    'Flux3KleinComfy',
+    'HiDreamO1ImageComfy',
+    'Ideogram4Comfy',
+    'ImageUpscalerComfy',
+    'LensComfy',
+    'MageFlowImageComfy',
+    'MingImageComfy',
+    'MossImageComfy',
+    'QwenImage21Comfy',
+    'QwenImageComfy',
+    'QwenImageEditComfy',
+    'Rmbg3Comfy',
+    'StableDiffusionCpp',
+    'AnimaStableDiffusionCpp',
+    'Flux2KleinStableDiffusionCpp',
+    'FluxStableDiffusionCpp',
+    'QwenImageEditStableDiffusionCpp',
+    'QwenStableDiffusionCpp',
+    'ZImageStableDiffusionCpp',
+    'ZImageTurboStableDiffusionCpp',
+    'ImageUpscaler',
+    'PreprocessImage',
+    'PreprocessVideo',
+    'uniRig',
+    'videoBackgroundRemoval',
+    'videoEnhancement',
+    'videoInterpolation',
+    'videoUpscaler',
+    'alibaba-happy-horse-video',
+    'alibaba-qwen-image',
+    'alibaba-wan-image',
+    'alibaba-wan-video',
+    'byteplus-seedream',
+    'fal-gemini-image-gen',
+    'fal-gpt-image-15',
+    'fal-gpt-image-15-edit',
+    'fal-gpt-image-26',
+    'fal-grok-image',
+    'fal-grok-image-edit',
+    'fal-grok-video',
+    'fal-minimax-h3-max-video',
+    'fal-seedream',
+    'fal-wan-image',
+    'fal-wan-video',
+    'falFlux2Image',
+    'falFlux3Image',
+    'falIdeogram45Image',
+    'falIdeogram46Image',
+    'falKrea2Image',
+    'falMaiImage',
+    'falMaiImage27',
+    'falMeshyModel',
+    'falMuseImage',
+    'falTripoModel',
+    'flux1Kontext',
+    'flux3VideoGen',
+    'google-nano-banana-2',
+    'google-nano-banana-2-lite',
+    'google-nano-banana-pro',
+    'googleGeminiOmniVideo',
+    'googleNanoBanana21',
+    'googleVeo3Video',
+    'kling',
+    'kling-v3',
+    'kling-v4',
+    'krea3Image',
+    'minimax',
+    'minimax-h3-video',
+    'minimaxGptImage2',
+    'minimaxGptImage2Edit',
+    'minimaxGptImage25',
+    'minimaxGptImage25Edit',
+    'minimaxSeedanceVideo',
+    'openrouter-video',
+    'runwareWanVideo',
+    'vidu',
+    // Training.
+    'AIToolkitTrainingEpoch',
+    'ComfyTrainingEpoch',
+    'ImageResourceTraining',
+    // Audio.
+    'AceStepAudio',
+    'MiniMaxMusic3',
+    'YuE2',
+    'seedAudio',
+    'soniloAudio',
+    'TextToSpeech',
+    // Chat: the job record only, never message text (this table carries none), and the web tools
+    // a chat calls.
+    'chatCompletion',
+    'webSearch',
+    'webScrape',
+    // On the user's own token only for their request: an App Block run (customComfy), and
+    // captioning in an App Block step (MediaCaptioning). The site's own runs of these types
+    // (sticker tracking, dataset auto-captioning) use the site token and carry userId 0, which
+    // isUserJob drops. The job record only.
+    'customComfy',
+    'MediaCaptioning',
+  ].map((t) => t.toLowerCase())
+);
+
+/**
+ * Jobs the site submits on its own token are stored with userId 0, so a row is the user's only when
+ * it carries their id and a listed type. A type the site also submits for a user's content on its
+ * own token (model3DPreview, the post-rating render) is not listed at all.
+ */
+export const isUserJob = (row: Record<string, unknown>) =>
+  Number(row.userId) > 0 &&
+  typeof row.jobType === 'string' &&
+  USER_JOB_TYPES.has(row.jobType.toLowerCase());
 
 /** A Buzz row as the owner sees it in the app: no other user's id from `details` or the ledger id. */
 export function redactBuzzRow(row: Record<string, unknown>) {
@@ -140,10 +281,12 @@ export const CH_TABLES: ChTable[] = [
     file: 'data/clickhouse/generation-jobs.jsonl',
     table: 'orchestration.jobs',
     where: null,
-    description: 'Your generation job history.',
+    description:
+      'Your generation job history. Jobs the site runs itself (automated checks and file processing) are not included.',
     // Every request carries it: read whatever the table's size, by its approved column list.
     required: true,
     unreliable: (row) => unreliableJobRow(row),
+    include: isUserJob,
     // Stored as is; an empty provider reads as unknown.
     redact: (row) => ({ ...row, provider: row.provider ? row.provider : 'unknown' }),
   },
@@ -322,6 +465,7 @@ export async function exportClickhouse({
           for await (const rows of rs.stream())
             for (const row of rows) {
               const raw = row.json<Record<string, unknown>>();
+              if (table.include && !table.include(raw)) continue;
               if (table.unreliable?.(raw)) {
                 entry.leftOut = (entry.leftOut ?? 0) + 1;
                 continue;

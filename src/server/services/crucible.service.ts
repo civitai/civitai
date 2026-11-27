@@ -186,7 +186,8 @@ import {
   getCrucibleLiveMinVotes,
   getCrucibleMinVotes,
   getCrucibleTimeAdjustedMinVotes,
-  baseModelMakesMediaType,
+  baseModelFitsCrucible,
+  crucibleModelMediaNoun,
   getAverageFinishTopPercent,
   getCreatorFinish,
   getCruciblePrizeWinners,
@@ -233,6 +234,7 @@ import {
   contestBannedSql,
   isContestBanned,
 } from '~/server/services/contest-ban';
+import { canAddManualResources } from '~/utils/manual-image-resources';
 import { removeTags } from '~/utils/string-helpers';
 
 const log = createLogger('crucible-service', 'cyan');
@@ -1077,13 +1079,17 @@ async function assertRequiredModelsMakeContentType(versionIds: number[], content
     where: { id: { in: ids } },
     select: { baseModel: true },
   });
-  if (versions.some(({ baseModel }) => !baseModelMakesMediaType(baseModel, contentType)))
-    throw throwBadRequestError(`Every required model must make ${contentType}s.`);
+  if (versions.some(({ baseModel }) => !baseModelFitsCrucible(baseModel, contentType)))
+    throw throwBadRequestError(
+      `Every required model must make ${crucibleModelMediaNoun(contentType)}.`
+    );
 }
 
 function assertBaseModelsMakeContentType(baseModels: string[], contentType: MediaType) {
-  if (baseModels.some((baseModel) => !baseModelMakesMediaType(baseModel, contentType)))
-    throw throwBadRequestError(`Every allowed base model must make ${contentType}s.`);
+  if (baseModels.some((baseModel) => !baseModelFitsCrucible(baseModel, contentType)))
+    throw throwBadRequestError(
+      `Every allowed base model must make ${crucibleModelMediaNoun(contentType)}.`
+    );
 }
 
 const hasEntryRestriction = ({
@@ -2414,6 +2420,22 @@ const entryIneligibleMessages: Record<CrucibleEntryIneligibleReason, string> = {
   'not-found': 'Image not found',
 };
 
+const modelReasons = new Set<CrucibleEntryIneligibleReason>([
+  'no-resources',
+  'missing-required-resource',
+  'wrong-base-model',
+]);
+const ADD_MODEL_ON_POST_HINT =
+  ' If you used a required model, add it to your post with "+ Resource", then enter again.';
+
+/** Media made off-site loses its metadata, so the entrant declares the model on their post. */
+const getEntryIneligibleMessage = (
+  reason: CrucibleEntryIneligibleReason,
+  image: { type: MediaType; meta: unknown }
+) =>
+  entryIneligibleMessages[reason] +
+  (modelReasons.has(reason) && canAddManualResources(image) ? ADD_MODEL_ON_POST_HINT : '');
+
 type EntryEligibilityCrucible = {
   startAt: Date | null;
   createdAt: Date;
@@ -2749,6 +2771,7 @@ export const submitEntry = async ({
         type: true,
         nsfwLevel: true,
         modelRestricted: true,
+        meta: true,
         metadata: true,
         createdAt: true,
         ingestion: true,
@@ -2838,7 +2861,7 @@ export const submitEntry = async ({
     const [ineligibleReason] =
       (await getEntryIneligibleReasons(crucible, [image], userId)).get(image.id) ?? [];
     if (ineligibleReason) {
-      return throwBadRequestError(entryIneligibleMessages[ineligibleReason]);
+      return throwBadRequestError(getEntryIneligibleMessage(ineligibleReason, image));
     }
 
     let buzzTransactionId: string | null = null;
