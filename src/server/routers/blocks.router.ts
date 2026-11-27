@@ -12237,7 +12237,6 @@ async function submitCustomComfyWorkflow(opts: {
         logRunnerLedgerError('submitted', attemptId, error);
         return false;
       });
-    // Not recorded: the attempt stays `submitting` and keeps counting.
     // Lost to the sweeper, which moved it to `unknown` while the submit was in flight: adopt it.
     const adopted =
       !moved &&
@@ -12251,6 +12250,7 @@ async function submitCustomComfyWorkflow(opts: {
           logRunnerLedgerError('adopt', attemptId, error);
           return false;
         }));
+    // Neither move landed: the attempt stays in its current state and keeps counting.
     if (!moved) {
       logToAxiom({
         name: adopted ? 'runner-attempt-adopted' : 'runner-attempt-unrecorded',

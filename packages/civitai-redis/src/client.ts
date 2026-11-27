@@ -3104,7 +3104,8 @@ const REDIS_KEYS_UNPREFIXED = {
     // replay if it is evicted.
     RUNNER_SUBMIT_JTI: 'blocks:runner-submit-jti',
     // A user disconnected a runner client: `${RUNNER_REVOKED}:${userId}:${clientId}`, TTL past the
-    // runner token's life. Present => a runner submit for the pair is refused.
+    // runner token's life. Value is the revoke time (epoch s); submits with a token minted at or
+    // before it are refused.
     RUNNER_REVOKED: 'blocks:runner-revoked',
     // The reconciler cancelled a runner workflow past its reserved ceiling:
     // `${RUNNER_OVER_CEILING_CANCEL}:${attemptId}`, SET NX, 1h TTL, so it cancels once.
