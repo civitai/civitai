@@ -621,6 +621,8 @@ func run(log *slog.Logger) error {
 		log.Error("flag not read; every hubId request falls back", "flag", server.UserHubsFlag, "err", err)
 	}
 	srv := &server.Server{
+		// The release, as X-Feed-Go-Version on every public answer (server.PublicMux).
+		Version:          version,
 		Resolver:         resolver,
 		Deps:             deps,
 		Models:           models,

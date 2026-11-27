@@ -49,6 +49,8 @@ type Reply = {
   servedBy?: string | null;
   /** The edge cache's verdict header (`cf-cache-status`) on this leg; none unless set. */
   cache?: string;
+  /** feed-go's release header (`x-feed-go-version`) on this leg; none unless set. */
+  version?: string;
 };
 type Sent = {
   leg: Leg;
@@ -148,6 +150,7 @@ beforeEach(() => {
     if (leg === 'go' && reply.servedBy !== null)
       headers['x-feed-go-served'] = reply.servedBy ?? 'go';
     if (reply.cache) headers['cf-cache-status'] = reply.cache;
+    if (reply.version !== undefined) headers['x-feed-go-version'] = reply.version;
     return new Response(reply.body, { status: reply.status, headers });
   });
   vi.stubGlobal('fetch', fetchMock);
@@ -212,7 +215,7 @@ const nodeRequests = () => sent.filter((s) => s.leg === 'node');
 
 type Push = [
   { type: string; values: Record<string, number> },
-  { skipDedupe: boolean; context: Record<string, string> }
+  { skipDedupe: boolean; context: Record<string, string> },
 ];
 const shadowPushes = () =>
   (h.pushMeasurement.mock.calls as unknown as Push[]).filter(
@@ -1158,5 +1161,67 @@ describe('signed out', () => {
     await settleAll();
     expect(shadowPushes()).toHaveLength(0);
     expect(sent.map((s) => s.leg)).toEqual(['go']);
+  });
+});
+
+/**
+ * feed-go sends `x-feed-go-version` on every answer, and any cache stores it with the body, so a
+ * stored answer still names the release that produced it. Each leg's is beaconed as a short value.
+ */
+describe('feed-go version', () => {
+  it('beacons the version of the candidate leg, and no control field when the control sent none', async () => {
+    shadowOn();
+    replies.go = { status: 200, body: CONTROL_BODY, version: '0.0.51' };
+    await callQuery(INFINITE, INFINITE_INPUT);
+    await vi.waitFor(() => expect(shadowPushes()).toHaveLength(1));
+    expect(shadowPushes()[0][1].context).toEqual({
+      procedure: 'image.getInfinite',
+      candidate: 'go-transport',
+      verdict: 'match',
+      control_status: '200',
+      candidate_status: '200',
+      candidate_served_by: 'go',
+      candidate_go_version: '0.0.51',
+    });
+  });
+
+  it('beacons the version of each leg, on a mismatch too', async () => {
+    browser(false);
+    signedOutShadow(true);
+    replies.node = { status: 200, body: CONTROL_BODY, cache: 'HIT', version: '0.0.50' };
+    replies.go = { status: 200, body: CANDIDATE_BODY, cache: 'MISS', version: '0.0.52-dev' };
+    await callQuery(MODELS, MODELS_INPUT);
+    await vi.waitFor(() => expect(shadowPushes()).toHaveLength(1));
+    const { context } = shadowPushes()[0][1];
+    expect(context.verdict).toBe('mismatch');
+    expect(context.control_go_version).toBe('0.0.50');
+    expect(context.candidate_go_version).toBe('0.0.52-dev');
+    expect(context.control_cache).toBe('hit');
+    expect(context.candidate_cache).toBe('miss');
+  });
+
+  it('beacons the version of a handed-back candidate too', async () => {
+    shadowOn();
+    replies.go = { status: 200, body: CONTROL_BODY, servedBy: 'node', version: '0.0.49' };
+    await callQuery(INFINITE, INFINITE_INPUT);
+    await vi.waitFor(() => expect(shadowPushes()).toHaveLength(1));
+    const { context } = shadowPushes()[0][1];
+    expect(context.verdict).toBe('candidate_fallback');
+    expect(context.candidate_served_by).toBe('node');
+    expect(context.candidate_go_version).toBe('0.0.49');
+  });
+
+  it.each([
+    ['dev', 'dev'],
+    ['1.2.3', '1.2.3'],
+    ['someone@example.com', 'other'],
+    ['1.2.3-' + 'x'.repeat(40), 'other'],
+    ['v1.2.3', 'other'],
+  ])('beacons %j as %j', async (sentVersion, beaconed) => {
+    shadowOn();
+    replies.go = { status: 200, body: CONTROL_BODY, version: sentVersion };
+    await callQuery(INFINITE, INFINITE_INPUT);
+    await vi.waitFor(() => expect(shadowPushes()).toHaveLength(1));
+    expect(shadowPushes()[0][1].context.candidate_go_version).toBe(beaconed);
   });
 });
