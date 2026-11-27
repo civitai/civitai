@@ -321,11 +321,13 @@ const GATE_LEDGER: Record<string, string> = {
     'reads the ACCEPTED set via listAcceptedCollaboratorUserIds, ignoring `displayed`.',
   'src/server/services/blocks/app-review-thread.service.ts':
     'NOT a caller-identity gate on the listing. The review reply thread asks ' +
-    "resolveListingAccess (with `userId: null`) only for a store-listing request's " +
-    'CANONICAL owner, who is a thread participant beside the submitter and who is ' +
-    "notified of a moderator's reply. The denormalized AppListing.userId could name a " +
-    'former owner on a drifted onsite row, which would hand that user the thread. ' +
-    'Collaborators are not participants.',
+    'resolveListingAccess / resolveAppAccess (with `userId: null`) only for the CANONICAL ' +
+    "owner of the request's listing or app, who is the thread's developer side and the one " +
+    "notified of a moderator's reply; the submitter counts only while they are that owner " +
+    '(or while nothing the request is for exists yet), so a former owner loses the thread ' +
+    'after a transfer or claim. The denormalized AppListing.userId could name a former ' +
+    'owner on a drifted onsite row. Collaborators are not participants (operator decision: ' +
+    'current owner only).',
   'src/pages/api/v1/blocks/dev-token.ts':
     'NOT widened, deliberately. This is a THIRD gate shape the ledger surfaced: a ' +
     'positive-match BRANCH CONDITION (`block.app.userId === user.id`) rather than a ' +

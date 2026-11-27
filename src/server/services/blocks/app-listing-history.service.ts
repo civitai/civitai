@@ -10,6 +10,7 @@ import { reviewUserChipSelect } from '~/server/selectors/review-user-chip.select
 import { latestBuildAttemptSignals } from '~/server/services/blocks/build-attempts.service';
 import type { BuildAttemptSignals } from '~/shared/constants/app-block-build.constants';
 import { redactDeployDetailForAuthor } from '~/shared/utils/review-boot-check';
+import { isDecidedReviewStatus } from '~/shared/utils/app-review-thread';
 import {
   canonicalOwnerWhereBranches,
   listingEditorRole,
@@ -122,6 +123,13 @@ export type ListingHistoryEntry = {
    * authorization boundary: the procs are still the gate and are unchanged.
    */
   canWithdraw: boolean;
+  /**
+   * May THIS caller open the review conversation on this request? Server-computed for the same
+   * reason as `canWithdraw`: the thread admits the app's current OWNER only (and moderators, on
+   * their own review surface), so an accepted editor, who sees this history, would otherwise be
+   * offered a link that can only answer "not found". Decided requests only.
+   */
+  canConverse: boolean;
 };
 
 /** Hard cap. An app with more history than this is pathological, not paginated. */
@@ -244,6 +252,19 @@ function isAuthorFailure(row: { status: string; deployState: string | null }): b
 }
 
 /**
+ * Whether the caller is offered the review conversation on a history entry: a decided request,
+ * and the caller is the listing's current owner, which is who `reviewThreadDeveloperUserId`
+ * puts on the thread for every request this history lists (each is for this listing, or its
+ * first version under its slug and submitted by this owner).
+ */
+export function canConverseOnHistoryEntry(
+  status: string,
+  role: 'owner' | 'editor' | null | undefined
+): boolean {
+  return role === 'owner' && isDecidedReviewStatus(status);
+}
+
+/**
  * Every publish event for ONE listing the caller may act on, newest first.
  *
  * 🔴 AUTHORIZED THROUGH {@link resolveListingAccess}, the SAME resolver `/apps/mine`'s row
@@ -354,6 +375,7 @@ export async function listListingHistory(opts: {
         buildSignals: null,
         deployUpdatedAt: null,
         canWithdraw: canWithdrawRequest(r.status, r.submittedByUserId, opts.userId),
+        canConverse: canConverseOnHistoryEntry(r.status, access.role),
       })
     ),
     ...blockRequests.map(
@@ -386,6 +408,7 @@ export async function listListingHistory(opts: {
         buildSignals: isAuthorFailure(r) ? signalsById.get(r.id) ?? null : null,
         deployUpdatedAt: r.deployUpdatedAt,
         canWithdraw: canWithdrawRequest(r.status, r.submittedByUserId, opts.userId),
+        canConverse: canConverseOnHistoryEntry(r.status, access.role),
       })
     ),
   ];
@@ -414,6 +437,12 @@ export type OrphanedSubmission = {
   approvalNotes: string | null;
   reviewer: DecisionReviewer | null;
   canWithdraw: boolean;
+  /**
+   * Whether the review conversation is offered: a decided request whose slug no listing holds.
+   * A slug another user's listing now holds puts nobody on the thread's developer side
+   * (`reviewThreadDeveloperUserId`), so the link would only answer "not found".
+   */
+  canConverse: boolean;
 };
 
 /** Display bound on the orphan group. It is a tail, not a browsable archive. */
@@ -513,15 +542,23 @@ export async function listMyOrphanedSubmissions(opts: {
   if (rows.length === 0) return [];
 
   const slugs = [...new Set(rows.map((r: { slug: string }) => r.slug))];
-  const ownedWithSlug = await dbRead.appListing.findMany({
-    where: {
-      slug: { in: slugs },
-      revisionOfId: null,
-      OR: canonicalOwnerWhereBranches(opts.userId),
-    },
-    select: { slug: true },
-  });
+  const [ownedWithSlug, listedWithSlug] = await Promise.all([
+    dbRead.appListing.findMany({
+      where: {
+        slug: { in: slugs },
+        revisionOfId: null,
+        OR: canonicalOwnerWhereBranches(opts.userId),
+      },
+      select: { slug: true },
+    }),
+    // Any owner: a slug someone else's listing holds closes the thread to this submitter.
+    dbRead.appListing.findMany({
+      where: { slug: { in: slugs }, revisionOfId: null },
+      select: { slug: true },
+    }),
+  ]);
   const ownedSlugs = new Set(ownedWithSlug.map((l: { slug: string }) => l.slug));
+  const listedSlugs = new Set(listedWithSlug.map((l: { slug: string }) => l.slug));
 
   return (
     rows
@@ -552,6 +589,7 @@ export async function listMyOrphanedSubmissions(opts: {
           // Always the submitter here, by construction — but routed through the SAME helper
           // the app-keyed entries use, so the pending-only half of the rule has one home.
           canWithdraw: canWithdrawRequest(r.status, opts.userId, opts.userId),
+          canConverse: isDecidedReviewStatus(r.status) && !listedSlugs.has(r.slug),
         })
       )
   );
