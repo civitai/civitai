@@ -1269,6 +1269,7 @@
                 "minor": false,
                 "poi": false,
                 "restricted": false,
+                "thumbnailUrl": null,
                 "modelVersionIds": [],
                 "modelVersionIdsManual": [],
                 "user": {
@@ -1346,8 +1347,7 @@
                     "crop": "0%"
                   }
                 },
-                "eventDecoration": null,
-                "thumbnailUrl": null
+                "eventDecoration": null
               },
               {
                 "id": 8002,
@@ -1380,6 +1380,7 @@
                 "minor": false,
                 "poi": false,
                 "restricted": false,
+                "thumbnailUrl": null,
                 "modelVersionIds": [],
                 "modelVersionIdsManual": [],
                 "user": {
@@ -1439,8 +1440,7 @@
                   521
                 ],
                 "cosmetic": null,
-                "eventDecoration": null,
-                "thumbnailUrl": null
+                "eventDecoration": null
               }
             ],
             "review": {
@@ -1501,6 +1501,7 @@
                 "minor": false,
                 "poi": false,
                 "restricted": false,
+                "thumbnailUrl": "00000000-0000-4000-8000-000000008905",
                 "modelVersionIds": [],
                 "modelVersionIdsManual": [],
                 "user": {
@@ -1530,8 +1531,7 @@
                   524
                 ],
                 "cosmetic": null,
-                "eventDecoration": null,
-                "thumbnailUrl": "00000000-0000-4000-8000-000000008905"
+                "eventDecoration": null
               }
             ],
             "review": null
@@ -1616,6 +1616,7 @@
                 "minor": false,
                 "poi": false,
                 "restricted": false,
+                "thumbnailUrl": null,
                 "modelVersionIds": [],
                 "modelVersionIdsManual": [],
                 "user": {
@@ -1675,8 +1676,7 @@
                   523
                 ],
                 "cosmetic": null,
-                "eventDecoration": null,
-                "thumbnailUrl": null
+                "eventDecoration": null
               }
             ],
             "review": {
@@ -1736,6 +1736,7 @@
                 "minor": false,
                 "poi": false,
                 "restricted": false,
+                "thumbnailUrl": null,
                 "modelVersionIds": [],
                 "modelVersionIdsManual": [],
                 "user": {
@@ -1765,8 +1766,7 @@
                   522
                 ],
                 "cosmetic": null,
-                "eventDecoration": null,
-                "thumbnailUrl": null
+                "eventDecoration": null
               }
             ],
             "review": null
@@ -1821,6 +1821,7 @@
                 "minor": false,
                 "poi": false,
                 "restricted": false,
+                "thumbnailUrl": null,
                 "modelVersionIds": [],
                 "modelVersionIdsManual": [],
                 "user": {
@@ -1850,8 +1851,7 @@
                   525
                 ],
                 "cosmetic": null,
-                "eventDecoration": null,
-                "thumbnailUrl": null
+                "eventDecoration": null
               }
             ],
             "review": null
@@ -1936,6 +1936,7 @@
                 "minor": false,
                 "poi": false,
                 "restricted": false,
+                "thumbnailUrl": null,
                 "modelVersionIds": [],
                 "modelVersionIdsManual": [],
                 "user": {
@@ -2000,8 +2001,7 @@
                   526
                 ],
                 "cosmetic": null,
-                "eventDecoration": null,
-                "thumbnailUrl": null
+                "eventDecoration": null
               }
             ],
             "review": {
@@ -2036,10 +2036,10 @@
           "items.0.images.0.publishedAt": [
             "Date"
           ],
-          "items.0.images.0.tags": [
+          "items.0.images.0.thumbnailUrl": [
             "undefined"
           ],
-          "items.0.images.0.thumbnailUrl": [
+          "items.0.images.0.tags": [
             "undefined"
           ],
           "items.0.images.1.createdAt": [
@@ -2051,10 +2051,10 @@
           "items.0.images.1.publishedAt": [
             "Date"
           ],
-          "items.0.images.1.tags": [
+          "items.0.images.1.thumbnailUrl": [
             "undefined"
           ],
-          "items.0.images.1.thumbnailUrl": [
+          "items.0.images.1.tags": [
             "undefined"
           ],
           "items.1.publishedAt": [
@@ -2099,10 +2099,10 @@
           "items.2.images.0.publishedAt": [
             "Date"
           ],
-          "items.2.images.0.tags": [
+          "items.2.images.0.thumbnailUrl": [
             "undefined"
           ],
-          "items.2.images.0.thumbnailUrl": [
+          "items.2.images.0.tags": [
             "undefined"
           ],
           "items.3.publishedAt": [
@@ -2123,10 +2123,10 @@
           "items.3.images.0.publishedAt": [
             "Date"
           ],
-          "items.3.images.0.tags": [
+          "items.3.images.0.thumbnailUrl": [
             "undefined"
           ],
-          "items.3.images.0.thumbnailUrl": [
+          "items.3.images.0.tags": [
             "undefined"
           ],
           "items.3.review": [
@@ -2150,10 +2150,10 @@
           "items.4.images.0.publishedAt": [
             "Date"
           ],
-          "items.4.images.0.tags": [
+          "items.4.images.0.thumbnailUrl": [
             "undefined"
           ],
-          "items.4.images.0.thumbnailUrl": [
+          "items.4.images.0.tags": [
             "undefined"
           ],
           "items.4.review": [
@@ -2177,10 +2177,10 @@
           "items.5.images.0.publishedAt": [
             "Date"
           ],
-          "items.5.images.0.tags": [
+          "items.5.images.0.thumbnailUrl": [
             "undefined"
           ],
-          "items.5.images.0.thumbnailUrl": [
+          "items.5.images.0.tags": [
             "undefined"
           ]
         },

@@ -776,6 +776,7 @@
             "poi": false,
             "restricted": false,
             "meta": null,
+            "thumbnailUrl": "00000000-0000-4000-8000-000000008932",
             "modelVersionIds": [],
             "modelVersionIdsManual": [],
             "baseModel": null,
@@ -807,7 +808,6 @@
             ],
             "cosmetic": null,
             "eventDecoration": null,
-            "thumbnailUrl": "00000000-0000-4000-8000-000000008932",
             "judgeScore": null
           },
           {
@@ -844,6 +844,7 @@
             "poi": false,
             "restricted": false,
             "meta": null,
+            "thumbnailUrl": "00000000-0000-4000-8000-000000008931",
             "modelVersionIds": [],
             "modelVersionIdsManual": [],
             "baseModel": null,
@@ -875,7 +876,6 @@
             ],
             "cosmetic": null,
             "eventDecoration": null,
-            "thumbnailUrl": "00000000-0000-4000-8000-000000008931",
             "judgeScore": null
           }
         ],

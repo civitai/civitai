@@ -430,8 +430,10 @@ func buildImage(r RawImage, hy *Hydrated, viewer Viewer) Image {
 	}
 
 	// Key order follows the JS object: the SELECT's columns (spread), with in-place overrides keeping
-	// their position, then the added keys. Dropped by the wire trims: hideMeta, scannedAt, mimeType,
-	// postTitle, acceptableMinor, meta, availability, baseModel, judgeScore.
+	// their position, then the added keys. `...feedThumbnailFields(...)` follows `meta`: its
+	// `nsfwLevel` overrides in place and its `thumbnailUrl` is added there, before `modelVersionIds`.
+	// Dropped by the wire trims: hideMeta, scannedAt, mimeType, postTitle, acceptableMinor, meta,
+	// availability, baseModel, judgeScore.
 	wire := superjson.Object{
 		{Key: "id", Val: int64(r.ID)},
 		{Key: "name", Val: strOrNil(r.Name)},
@@ -459,6 +461,7 @@ func buildImage(r RawImage, hy *Hydrated, viewer Viewer) Image {
 		{Key: "minor", Val: r.Minor},
 		{Key: "poi", Val: r.Poi},
 		{Key: "restricted", Val: r.Restricted},
+		{Key: "thumbnailUrl", Val: thumbURL},
 		{Key: "modelVersionIds", Val: []any{}},
 		{Key: "modelVersionIdsManual", Val: []any{}},
 		{Key: "user", Val: user},
@@ -472,7 +475,6 @@ func buildImage(r RawImage, hy *Hydrated, viewer Viewer) Image {
 		{Key: "tagIds", Val: orUndefined(tagIDs, hasTagIDs)},
 		{Key: "cosmetic", Val: frame},
 		{Key: "eventDecoration", Val: decoration},
-		{Key: "thumbnailUrl", Val: thumbURL},
 	}
 	idx := 0
 	if r.Index != nil {

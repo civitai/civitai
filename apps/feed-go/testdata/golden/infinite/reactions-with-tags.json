@@ -1510,6 +1510,7 @@
             "poi": false,
             "restricted": false,
             "meta": null,
+            "thumbnailUrl": null,
             "modelVersionIds": [],
             "modelVersionIdsManual": [],
             "baseModel": null,
@@ -1561,7 +1562,6 @@
             ],
             "cosmetic": null,
             "eventDecoration": null,
-            "thumbnailUrl": null,
             "judgeScore": null
           }
         ],
@@ -1581,13 +1581,13 @@
           "items.0.publishedAt": [
             "Date"
           ],
+          "items.0.thumbnailUrl": [
+            "undefined"
+          ],
           "items.0.baseModel": [
             "undefined"
           ],
           "items.0.tags": [
-            "undefined"
-          ],
-          "items.0.thumbnailUrl": [
             "undefined"
           ]
         },
