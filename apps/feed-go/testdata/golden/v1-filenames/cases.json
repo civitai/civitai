@@ -547,6 +547,51 @@
         "Emal_full_fp32.safetensors",
         "Emal_trainingData.zip"
       ]
+    },
+    {
+      "model": {
+        "name": "Café",
+        "type": "Checkpoint"
+      },
+      "version": {
+        "name": "Café　v2"
+      },
+      "files": [
+        {
+          "id": 7200,
+          "name": "model.safetensors",
+          "overrideName": null,
+          "type": "Model",
+          "metadata": {
+            "format": "SafeTensor",
+            "size": "pruned",
+            "fp": "fp16"
+          }
+        },
+        {
+          "id": 7201,
+          "name": "model.safetensors",
+          "overrideName": null,
+          "type": "Model",
+          "metadata": {
+            "format": "SafeTensor",
+            "size": "full",
+            "fp": "fp32"
+          }
+        },
+        {
+          "id": 7202,
+          "name": "data.zip",
+          "overrideName": null,
+          "type": "Training Data",
+          "metadata": {}
+        }
+      ],
+      "names": [
+        "caf_v2_pruned_fp16.safetensors",
+        "caf_v2_full_fp32.safetensors",
+        "caf_v2_trainingData.zip"
+      ]
     }
   ]
 }

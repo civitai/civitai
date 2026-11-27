@@ -57,7 +57,8 @@ for (const members of classes.values()) {
   if (members.length < 2) continue;
   for (const a of members)
     for (const b of members) {
-      if (!matches(a, b)) throw new Error(`/\\u${hex4(a)}/i does not match \\u${hex4(b)}, same class`);
+      if (!matches(a, b))
+        throw new Error(`/\\u${hex4(a)}/i does not match \\u${hex4(b)}, same class`);
       checked++;
     }
 }
@@ -121,7 +122,12 @@ const replaced = replaceCases.map(([value, search]) => ({
   result: replaceInsensitive(value, search, ''),
 }));
 
-const file = (id, name, type = 'Model', metadata = { format: 'SafeTensor', size: 'pruned', fp: 'fp16' }) => ({
+const file = (
+  id,
+  name,
+  type = 'Model',
+  metadata = { format: 'SafeTensor', size: 'pruned', fp: 'fp16' }
+) => ({
   id,
   name,
   overrideName: null,
@@ -132,13 +138,22 @@ const namingCases = [
   { model: { name: 'Café Model', type: 'Checkpoint' }, version: { name: 'CAFÉ MODEL v2' } },
   { model: { name: 'Σίσυφος', type: 'Checkpoint' }, version: { name: 'ΣΊΣΥΦΟΣ XL' } },
   { model: { name: 'Straße', type: 'Checkpoint' }, version: { name: 'STRASSE v1' } },
-  { model: { name: 'Модель', type: 'Checkpoint' }, version: { name: '\u00a0модель\u3000v3\u2028' } },
+  {
+    model: { name: 'Модель', type: 'Checkpoint' },
+    version: { name: '\u00a0модель\u3000v3\u2028' },
+  },
   { model: { name: '模型', type: 'Checkpoint' }, version: { name: '模型 v1' } },
   { model: { name: '🐱 Cat', type: 'Checkpoint' }, version: { name: '🐱 CAT v2' } },
   { model: { name: 'Ｍｏｄｅｌ', type: 'VAE' }, version: { name: 'ｍｏｄｅｌ fp16' } },
   { model: { name: 'Kelvin', type: 'Checkpoint' }, version: { name: '\u212aelvin v1' } },
-  { model: { name: 'Ölbild', type: 'TextualInversion' }, version: { name: 'ÖLBILD neg', trainedWords: ['ölbild'] } },
+  {
+    model: { name: 'Ölbild', type: 'TextualInversion' },
+    version: { name: 'ÖLBILD neg', trainedWords: ['ölbild'] },
+  },
   { model: { name: 'ǅemal', type: 'Checkpoint' }, version: { name: 'ǆemal\u2003' } },
+  // Only a non-ASCII space is left after the strip: trimmed by the engine's set (a leading empty
+  // word would capitalise `v2`).
+  { model: { name: 'Café', type: 'Checkpoint' }, version: { name: 'Café\u3000v2' } },
 ].map((c, i) => {
   const base = 7100 + i * 10;
   const files =
@@ -146,14 +161,23 @@ const namingCases = [
       ? [file(base, 'model.pt'), file(base + 1, 'negative.pt', 'Negative')]
       : [
           file(base, 'model.safetensors'),
-          file(base + 1, 'model.safetensors', 'Model', { format: 'SafeTensor', size: 'full', fp: 'fp32' }),
+          file(base + 1, 'model.safetensors', 'Model', {
+            format: 'SafeTensor',
+            size: 'full',
+            fp: 'fp32',
+          }),
           file(base + 2, 'data.zip', 'Training Data', {}),
         ];
   return {
     ...c,
     files,
     names: files.map((f) =>
-      resolveModelFileName({ model: c.model, modelVersion: c.version, file: { ...f }, versionFiles: files })
+      resolveModelFileName({
+        model: c.model,
+        modelVersion: c.version,
+        file: { ...f },
+        versionFiles: files,
+      })
     ),
   };
 });

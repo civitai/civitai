@@ -43,8 +43,8 @@ func loadFilenameCases(t *testing.T) *filenameCases {
 		t.Fatal(err)
 	}
 	// Positive control on the fixture: a file that read as empty would pass every loop below.
-	if len(c.Replace) < 20 || len(c.Naming) < 10 {
-		t.Fatalf("%d replace and %d naming cases, want at least 20 and 10", len(c.Replace), len(c.Naming))
+	if len(c.Replace) < 20 || len(c.Naming) < 11 {
+		t.Fatalf("%d replace and %d naming cases, want at least 20 and 11", len(c.Replace), len(c.Naming))
 	}
 	return &c
 }

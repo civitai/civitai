@@ -45,7 +45,10 @@ describe('feed-go jscanon.json', () => {
       const a = String.fromCharCode(cu);
       const b = String.fromCharCode(c);
       // Digits around it: a digit is its own canonical value, so only the entry itself can match.
-      expect(replaceInsensitive(`0${a}1`, b, ''), `U+${cu.toString(16)} vs U+${c.toString(16)}`).toBe('01');
+      expect(
+        replaceInsensitive(`0${a}1`, b, ''),
+        `U+${cu.toString(16)} vs U+${c.toString(16)}`
+      ).toBe('01');
     }
   });
 
