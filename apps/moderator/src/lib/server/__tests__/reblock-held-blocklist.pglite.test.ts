@@ -396,6 +396,32 @@ describe('blockImage for a likeness request', () => {
     expect(spies.recordLikenessRequest.mock.calls).toEqual([[2, REMOVED_TOS]]);
   });
 
+  it('marks an already-removed image actioned from the reports queue', async () => {
+    const REMOVED_PLAIN = 6;
+    // The reports-queue read checks the owner's ban and rule blocks.
+    await pg.exec(`
+      CREATE TABLE IF NOT EXISTS "User" ("id" INTEGER PRIMARY KEY, "bannedAt" TIMESTAMP(3));
+      CREATE TABLE IF NOT EXISTS "ModerationRule" ("id" INTEGER PRIMARY KEY, "action" TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS "ModerationRuleVersion" ("ruleId" INTEGER NOT NULL, "action" TEXT NOT NULL);
+    `);
+    await pg.query(
+      `INSERT INTO "Image" ("id", "userId", "blockedFor", "ingestion", "nsfwLevel") VALUES ($1, 7, 'moderated', 'Blocked', 4)`,
+      [REMOVED_PLAIN]
+    );
+
+    const result = await blockImage({
+      imageId: REMOVED_PLAIN,
+      userId: 2,
+      skipAppealCheck: true,
+      skipModeratorRemoved: true,
+      violationType: 'likenessRequest',
+    });
+
+    expect(result).toMatchObject({ alreadyRemoved: true });
+    expect(spies.applyBlockSideEffects).not.toHaveBeenCalled();
+    expect(spies.recordLikenessRequest.mock.calls).toEqual([[2, REMOVED_PLAIN]]);
+  });
+
   it('marks a fresh block exactly once (control)', async () => {
     await pg.query(
       `INSERT INTO "Image" ("id", "userId", "ingestion", "nsfwLevel") VALUES ($1, 7, 'Scanned', 4)`,

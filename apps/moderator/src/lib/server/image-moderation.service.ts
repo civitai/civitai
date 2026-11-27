@@ -616,8 +616,11 @@ export async function blockImage({
       ])
       .where('id', '=', imageId)
       .executeTakeFirst();
-    if (prior?.removed)
+    if (prior?.removed) {
+      // Removed for another reason: the request still stands, so its copies go.
+      if (violationType === 'likenessRequest') await recordLikenessRequest(userId, imageId);
       return { alreadyRemoved: true, ...(prior.ownerBanned && { unpaid: true as const }) };
+    }
     unpaid = !!prior?.bannedOwnerBlocked;
   }
 
