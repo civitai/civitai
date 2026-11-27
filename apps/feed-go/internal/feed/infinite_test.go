@@ -748,13 +748,14 @@ func TestBuildInfiniteImagesAddsTheInfiniteWireFields(t *testing.T) {
 	if len(images) != 1 {
 		t.Fatalf("images = %d", len(images))
 	}
-	// The Node object's key order (an image.getInfinite item of the Node goldens): the devalue body
-	// writes keys in this order, so it is part of the bytes.
+	// The Node object's key order (getAllImagesUncaptured's item under stripImageForInfiniteWire): the
+	// devalue body writes keys in this order, so it is part of the bytes. `thumbnailUrl` is the key
+	// `...feedThumbnailFields(...)` adds right after `meta` (its `nsfwLevel` overrides in place).
 	want := []string{"id", "name", "url", "nsfwLevel", "width", "height", "hash", "hasMeta", "hasPositivePrompt",
 		"onSite", "remixOfId", "createdAt", "sortAt", "type", "metadata", "ingestion", "blockedFor", "needsReview",
 		"postId", "index", "publishedAt", "modelVersionId", "model3dId", "availability", "minor", "poi", "restricted",
-		"meta", "modelVersionIds", "modelVersionIdsManual", "baseModel", "user", "stats", "reactions", "tags", "tagIds",
-		"cosmetic", "eventDecoration", "thumbnailUrl", "judgeScore"}
+		"meta", "thumbnailUrl", "modelVersionIds", "modelVersionIdsManual", "baseModel", "user", "stats", "reactions",
+		"tags", "tagIds", "cosmetic", "eventDecoration", "judgeScore"}
 	if keys := wireKeys(images[0].Wire); !reflect.DeepEqual(keys, want) {
 		t.Fatalf("keys = %v\nwant   %v", keys, want)
 	}
