@@ -1,4 +1,4 @@
-import { readFileSync } from 'fs';
+import { readdirSync, readFileSync } from 'fs';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
 import { buildFeedEventRow } from '../feed-events.service';
@@ -7,7 +7,9 @@ import { buildFeedEventRow } from '../feed-events.service';
 // are pinned. Columns come from the CREATE plus every later ADD COLUMN.
 const MIGRATIONS = path.resolve(__dirname, '../../clickhouse/migrations');
 const DDL = path.join(MIGRATIONS, '2026-11-20-feed-events.sql');
-const ALTERS = ['2026-11-27-feed-events-personal-hot-lead.sql'];
+const ALTERS = readdirSync(MIGRATIONS).filter(
+  (file) => /-feed-events[\w-]*\.sql$/.test(file) && file !== path.basename(DDL)
+);
 
 function ddlColumns(): string[] {
   const sql = readFileSync(DDL, 'utf8');

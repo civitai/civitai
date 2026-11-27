@@ -226,21 +226,12 @@ function useImpressionObserver<T extends HTMLElement>(
     registry.elements.set(element, state);
     registry.observer.observe(element);
 
-    const onClick = (event: MouseEvent) => {
-      if (event.type === 'auxclick' && event.button !== 1) return;
-      if (isLinkClick(event.target)) recordFeedItemClick(state.targets);
-    };
-    const clickRoot = state.targets.length
-      ? clicksOnParent
-        ? element.parentElement
-        : element
-      : null;
-    clickRoot?.addEventListener('click', onClick);
-    clickRoot?.addEventListener('auxclick', onClick);
+    const stopClicks = state.targets.length
+      ? trackFeedClicks(element, state.targets, clicksOnParent)
+      : undefined;
 
     return () => {
-      clickRoot?.removeEventListener('click', onClick);
-      clickRoot?.removeEventListener('auxclick', onClick);
+      stopClicks?.();
       disarmDwell(state);
       registry.observer.unobserve(element);
       registry.elements.delete(element);
@@ -263,6 +254,25 @@ function useImpressionObserver<T extends HTMLElement>(
   }, [enabled, key, root, clicksOnParent]);
 
   return ref;
+}
+
+/** Feed click rows for link clicks in `element`, or in its parent for an overlay with no pointer events. */
+export function trackFeedClicks(
+  element: Element,
+  targets: ImpressionTarget[],
+  onParent = false
+): () => void {
+  const root = onParent ? element.parentElement : element;
+  const onClick = (event: Event) => {
+    if (event.type === 'auxclick' && (event as MouseEvent).button !== 1) return;
+    if (isLinkClick(event.target)) recordFeedItemClick(targets);
+  };
+  root?.addEventListener('click', onClick);
+  root?.addEventListener('auxclick', onClick);
+  return () => {
+    root?.removeEventListener('click', onClick);
+    root?.removeEventListener('auxclick', onClick);
+  };
 }
 
 // A button inside a link (e.g. a card menu) is not a click through, so the nearest control must be the link.

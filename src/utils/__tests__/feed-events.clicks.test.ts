@@ -107,6 +107,18 @@ describe('feed clicks and the item context map', () => {
     expect(clicks().map((e) => e.position)).toEqual([10_000]);
   });
 
+  it('search hits that arrive after their load (more results) click at their place in the list', () => {
+    const { tracker, clicks, goTo } = setup();
+    goTo('/search/models');
+    tracker.start();
+    tracker.searchLoad('models_v9', {});
+    tracker.searchHits('models_v9', 'Model', [11, 12, 13]);
+    tracker.click(model(13));
+    expect(clicks()).toEqual([
+      expect.objectContaining({ feed: 'search', entityId: 13, position: 2, pageIndex: 0 }),
+    ]);
+  });
+
   it('forgets a removed query and everything after stop', () => {
     const { client, tracker, setPages, clicks } = setup();
     const stop = tracker.start();

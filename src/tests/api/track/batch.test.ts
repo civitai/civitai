@@ -143,6 +143,7 @@ async function importHandler() {
 describe('POST /api/track/batch', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockIsFlipt.mockReset().mockResolvedValue(false);
     devStore.isDev = false;
     devStore.sessionResolved = true;
     devStore.sessionCookie = false;
