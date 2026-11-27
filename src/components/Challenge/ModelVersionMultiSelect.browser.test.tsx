@@ -79,6 +79,35 @@ describe('ModelVersionMultiSelect with a media type', () => {
   });
 });
 
+describe('ModelVersionMultiSelect with video and audio (music crucibles)', () => {
+  test('accepts a music model, searches its base model and still refuses an image model', async () => {
+    const onChange = vi.fn();
+    mocks.versions = [version(1, 'ACE Audio')];
+    renderWithProviders(
+      <ModelVersionMultiSelect
+        value={[1]}
+        onChange={onChange}
+        mediaTypes={[MediaType.video, MediaType.audio]}
+      />
+    );
+
+    await expect.element(page.getByText('Model 1')).toBeVisible();
+    expect(document.body.textContent).not.toMatch(/Doesn't make/);
+
+    const { options, onSelectMultiple } = await openPicker();
+    for (const { baseModels } of options.resources) {
+      expect(baseModels).toContain('ACE Audio');
+      expect(baseModels).toContain('MiniMax H3');
+      expect(baseModels).not.toContain('SDXL 1.0');
+    }
+    onSelectMultiple([
+      { id: 5, baseModel: 'ACE Audio', model: { name: 'Music' } },
+      { id: 6, baseModel: 'SDXL 1.0', model: { name: 'Image LoRA' } },
+    ]);
+    expect(onChange).toHaveBeenCalledWith([1, 5]);
+  });
+});
+
 describe('ModelVersionMultiSelect without a media type', () => {
   test('leaves the search unfiltered, as challenges use it', async () => {
     renderWithProviders(<ModelVersionMultiSelect value={[]} />);

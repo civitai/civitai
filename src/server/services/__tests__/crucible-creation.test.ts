@@ -439,7 +439,6 @@ describe('createCrucible — resource requirements', () => {
     expect(crucibleCreate).toHaveBeenCalled();
   });
 
-  // Music crucibles are video crucibles: entrants post a video of their track.
   it('lets a video crucible require a music model', async () => {
     modelVersionFindMany.mockResolvedValue([{ baseModel: 'ACE Audio' }]);
 

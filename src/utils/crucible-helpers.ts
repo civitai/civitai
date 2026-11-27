@@ -90,7 +90,6 @@ export const formatMediaTypesNoun = (mediaTypes: MediaType[]) =>
 export const crucibleModelMediaNoun = (contentType: MediaType) =>
   formatMediaTypesNoun(getCrucibleModelMediaTypes(contentType));
 
-/** Whether a crucible of `contentType` may require a model or base model of `baseModel`. */
 export const baseModelFitsCrucible = (baseModel: string, contentType: MediaType) =>
   getCrucibleModelMediaTypes(contentType).some((mediaType) =>
     baseModelMakesMediaType(baseModel, mediaType)
