@@ -204,9 +204,7 @@ export async function confirmRemoval({
       throw e;
     }
   // The image is down either way, so the reports the removal answered are actioned, unless it is
-  // held: the ones kept on the request, and, when this removal ran and its path settles the image's
-  // TOS reports unheld, any TOS report filed since the hold. Only reports on this image; one a
-  // moderator has reviewed since the hold keeps its status.
+  // held. One a moderator has reviewed since the hold keeps its status.
   const settlesTos = !voidNote && TOS_SETTLING_SOURCES.includes(row.source);
   const openReportIds =
     skipped || (!settlesTos && !claimed.reportIds.length)
