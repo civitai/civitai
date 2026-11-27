@@ -2,8 +2,6 @@ import { queueImageDeletes } from '@civitai/db-queries/content-deletion';
 import { ownerMediaAllowed } from '~/server/common/image-block-marker';
 import { sanitizeHtml } from '~/utils/html-sanitize-helpers';
 import { kyselyOver } from '~/server/db/prisma-kysely';
-import { sql } from 'kysely';
-import { CSAM_REPORT_LISTED_IMAGE_IDS_SQL, heldImageKnownSql } from '@civitai/shared/held-media';
 import {
   keepWithheldMedia,
   restoreWithheldMedia,
@@ -733,7 +731,9 @@ export const getArticles = async ({
             (!!viewable && !coverImage) ||
             (!!cover &&
               !coverImage &&
-              (isRestrictedImage(cover) || cover.nsfwLevel === NsfwLevel.Blocked))) && {
+              (isRestrictedImage(cover) ||
+                cover.nsfwLevel === NsfwLevel.Blocked ||
+                cover.ingestion !== ImageIngestionStatus.Scanned))) && {
             cover: null,
           }),
           tags: tags.map(({ tag }) => ({
@@ -1059,7 +1059,8 @@ export const getArticleById = async ({
         (!!article.coverImage &&
           !coverImage &&
           (isRestrictedImage(article.coverImage) ||
-            article.coverImage.nsfwLevel === NsfwLevel.Blocked))) && {
+            article.coverImage.nsfwLevel === NsfwLevel.Blocked ||
+            article.coverImage.ingestion !== ImageIngestionStatus.Scanned))) && {
         cover: null,
       }),
       nsfwLevel: article.nsfwLevel as NsfwLevel,
@@ -2947,6 +2948,7 @@ export async function getArticleScanStatus({
     (i) =>
       i.ingestion === ImageIngestionStatus.Error || i.ingestion === ImageIngestionStatus.NotFound
   );
+  const absentImages = errorImages.filter(isAbsentImage);
   // Rescan is a re-queued (in-flight) image — treat it as non-terminal alongside
   // Pending so `allComplete` is false and the client keeps polling until it settles.
   const pendingImages = images.filter(
@@ -3008,9 +3010,8 @@ export async function getArticleScanStatus({
       updatedAt: moderation?.updatedAt ?? null,
     },
     errorReason: articleIngestionErrorReason({
-      errorImages: errorImages.filter((i) => i.ingestion === ImageIngestionStatus.Error).length,
-      missingImages: errorImages.filter((i) => i.ingestion === ImageIngestionStatus.NotFound)
-        .length,
+      errorImages: errorImages.length - absentImages.length,
+      missingImages: absentImages.length,
       // The same rule as the owner's notification: a check still being retried has not failed yet.
       textError: required && textCheckSpentRetries(moderation),
     }),
@@ -3260,33 +3261,6 @@ const carriesImageHold = (image: {
   image.poi;
 
 /**
- * The ids among `imageIds` under a CSAM hold: flagged or blocked as CSAM, listed on a CsamReport,
- * or owned by a user one names. All of them when the article itself has a CSAM report.
- */
-async function csamHeldImageIds(
-  tx: Prisma.TransactionClient,
-  articleId: number,
-  imageIds: number[]
-): Promise<Set<number>> {
-  if (!imageIds.length) return new Set();
-  const db = kyselyOver(tx);
-  const { rows: reported } = await sql<{ id: number }>`
-    SELECT 1 AS id FROM "ArticleReport" ar
-    JOIN "Report" r ON r.id = ar."reportId"
-    WHERE ar."articleId" = ${articleId} AND r.reason = 'CSAM'
-    LIMIT 1
-  `.execute(db);
-  if (reported.length) return new Set(imageIds);
-  const { rows } = await sql<{ id: number }>`
-    SELECT i.id FROM "Image" i
-    WHERE i.id IN (${sql.join(imageIds)})
-      AND (${sql.raw(heldImageKnownSql('i'))}
-        OR (i.id)::text IN (${sql.raw(CSAM_REPORT_LISTED_IMAGE_IDS_SQL)}))
-  `.execute(db);
-  return new Set(rows.map((row) => row.id));
-}
-
-/**
  * In-transaction half of the ingestion state machine. Takes the advisory lock,
  * reads ground truth (image connections + EntityModeration + article fields),
  * derives the next ingestion state, and writes the Article row. Returns hints
@@ -3368,14 +3342,8 @@ export async function recomputeArticleIngestionInTx(
 
   // A missing image is left out for readers (only Scanned images are served), so it hides the
   // article only while it carries a hold a moderator has to clear.
-  const absent = images.filter(isAbsentImage);
-  const csamHeld = await csamHeldImageIds(
-    tx,
-    articleId,
-    absent.filter((image) => !carriesImageHold(image)).map((image) => image.id)
-  );
   const isMissing = (image: (typeof images)[number]) =>
-    isAbsentImage(image) && !carriesImageHold(image) && !csamHeld.has(image.id);
+    isAbsentImage(image) && !carriesImageHold(image);
 
   const totalImages = imageStates.length;
   const scannedImages = imageStates.filter((s) => s === ImageIngestionStatus.Scanned).length;
@@ -3449,7 +3417,12 @@ export async function recomputeArticleIngestionInTx(
   });
   const errorEpisode = readIngestionErrorState(current.metadata);
   const inErrorEpisode = current.ingestion === ArticleIngestionStatus.Error || !!errorEpisode;
-  const inputHeld = images.some((image) => image.needsReview != null || hasBlockMarker(image));
+  const inputHeld = images.some(
+    (image) =>
+      image.needsReview != null ||
+      hasBlockMarker(image) ||
+      (isAbsentImage(image) && !isMissing(image))
+  );
   // A deferred url keeps the article off public, a moderator's rating included: it covers the
   // images it was given, not a url still waiting to be proved. An Error episode ends only past
   // unheld images: the retry job republishes unwatched, so it must not publish past one a

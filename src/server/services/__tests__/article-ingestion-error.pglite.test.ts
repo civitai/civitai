@@ -434,35 +434,26 @@ describe('an image whose upload is missing', () => {
     expect((await recompute()).ingestion).toBe('Error');
   });
 
-  it('keeps the article hidden while the missing image is listed on a CSAM report', async () => {
+  // Readers never get an absent image's bytes, so nothing beyond the image's own state holds it:
+  // an owner must not learn from their article whether a report names them.
+  it('goes public the same whether or not a CSAM report names its owner or lists the image', async () => {
     await seed({ content: MISSING });
-    await h.pg.query(`INSERT INTO "CsamReport" (images) VALUES ($1)`, [
+    await h.pg.query(`INSERT INTO "CsamReport" ("userId", images) VALUES ($1, $2)`, [
+      OWNER,
       JSON.stringify([{ id: CONTENT }]),
     ]);
-
-    expect((await recompute()).ingestion).toBe('Error');
-  });
-
-  it("keeps the article hidden while the missing image's owner is named on a CSAM report", async () => {
-    await seed({ content: MISSING });
-    await h.pg.query(`INSERT INTO "CsamReport" ("userId") VALUES ($1)`, [OWNER]);
-
-    expect((await recompute()).ingestion).toBe('Error');
-  });
-
-  it('keeps the article hidden while the article has a CSAM report', async () => {
-    await seed({ content: MISSING });
     await h.pg.query(`INSERT INTO "Report" VALUES (990000001, 'CSAM')`);
     await h.pg.query(`INSERT INTO "ArticleReport" VALUES ($1, 990000001)`, [ARTICLE]);
 
-    expect((await recompute()).ingestion).toBe('Error');
+    expect((await recompute()).ingestion).toBe('Scanned');
   });
 
-  it('is published past a report for another reason', async () => {
-    await seed({ content: MISSING });
-    await h.pg.query(`INSERT INTO "Report" VALUES (990000002, 'NSFW')`);
-    await h.pg.query(`INSERT INTO "ArticleReport" VALUES ($1, 990000002)`, [ARTICLE]);
+  it('tells the owner nothing when the missing image is held', async () => {
+    await seed({ content: { ...MISSING, tosViolation: true } });
 
-    expect((await recompute()).ingestion).toBe('Scanned');
+    const after = await recompute();
+
+    expect(after.ingestion).toBe('Error');
+    expect(after.notice).toBeNull();
   });
 });
