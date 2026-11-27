@@ -226,7 +226,7 @@
   }
 
   function openReport() {
-    if (submitting || settledOnScreen || questionTimeShowing) return;
+    if (submitting || settledOnScreen || questionTimeShowing || imageFailed) return;
     reportItem = view?.item.key ?? null;
   }
 
@@ -677,6 +677,7 @@
     const onScreen = view?.item;
     if (!onScreen || !gone.has(onScreen.live) || tracker.has(onScreen.key) || settledOnScreen) return;
     reasonItem = null;
+    reportItem = null;
     settledItem = onScreen.key;
     settledReady = false;
     clearTimeout(settledTimer);
@@ -1087,7 +1088,7 @@
                 icon="flag"
                 keyHint="R"
                 hint="Report a problem with the image or the question (R)"
-                disabled={submitting || settledOnScreen || questionTimeShowing}
+                disabled={submitting || imageFailed || settledOnScreen || questionTimeShowing}
                 onclick={(event) => {
                   event.preventDefault();
                   openReport();
