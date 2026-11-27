@@ -11,8 +11,11 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY . .
+# feed-go's release (package.json "version", ci/version.sh) is linked in as main.version: the
+# binary's `--version` and its X-Feed-Go-Version header. A missing version fails the build.
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/feed-go ./cmd/feed-go && \
+    version="$(sh ci/version.sh package.json)" && \
+    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${version}" -o /out/feed-go ./cmd/feed-go && \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/feed-eval ./cmd/feed-eval
 
 FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab AS runtime

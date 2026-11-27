@@ -253,12 +253,22 @@ jobs:
 
       # Both binaries the image ships (apps/feed-go/Dockerfile), built as it builds them. The help
       # path's exit code is cmd/feed-eval's own unit test; this does not see the image's layout.
+      # feed-go's `--version` must be package.json's version (read here by jq, a second parser,
+      # against ci/version.sh's sed), never "dev": it is the X-Feed-Go-Version header.
       - name: go build
         run: |
           set -euo pipefail
-          CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /tmp/feed-go ./cmd/feed-go
+          version="$(sh ci/version.sh package.json)"
+          CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${version}" -o /tmp/feed-go ./cmd/feed-go
           CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /tmp/feed-eval ./cmd/feed-eval
           ls -l /tmp/feed-go /tmp/feed-eval
+          want="$(jq -r .version package.json)"
+          got="$(/tmp/feed-go --version)"
+          echo "feed-go --version: ${got} (package.json: ${want})"
+          if [ -z "$want" ] || [ "$want" = null ] || [ "$got" != "$want" ]; then
+            echo "::error::feed-go --version is '${got}', want package.json's '${want}'"
+            exit 1
+          fi
 
       - name: Redis Cluster logs
         if: failure()
