@@ -188,7 +188,7 @@ describe('updateImageNsfwLevel → version showcase cache', () => {
 
 // A song's level includes its own cover's (docs/features/music.md "A song's rating").
 describe('updateImageNsfwLevel → the song a cover belongs to', () => {
-  const rerate = vi.fn(async (_songId: number) => undefined);
+  const rerate = vi.fn<(songId: number) => Promise<void>>(async () => undefined);
   const SONG = 7302;
 
   beforeEach(() => {
@@ -212,6 +212,7 @@ describe('updateImageNsfwLevel → the song a cover belongs to', () => {
     expect(dbMock.dbWrite.track.findUnique).toHaveBeenCalledWith(
       expect.objectContaining({ where: { coverImageId: IMAGE_ID } })
     );
+    expect(rerate).toHaveBeenCalledTimes(1);
     expect(rerate).toHaveBeenCalledWith(SONG);
   });
 

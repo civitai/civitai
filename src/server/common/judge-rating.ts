@@ -1,8 +1,9 @@
 import { Prisma } from '@prisma/client';
+import { browsingLevels } from '~/shared/constants/browsingLevel.constants';
 import { JUDGE_RATING_METADATA_KEY } from '~/shared/utils/block-provenance-metadata';
 
 /** The single browsing levels a rating can be, PG to XXX: a combined or Blocked level is not one. */
-export const RATING_LEVELS: readonly number[] = [1, 2, 4, 8, 16];
+export const RATING_LEVELS: readonly number[] = browsingLevels;
 const RATING_LEVEL_TEXTS = Prisma.raw(RATING_LEVELS.map((level) => `'${level}'`).join(', '));
 
 /**

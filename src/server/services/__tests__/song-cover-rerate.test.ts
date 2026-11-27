@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { NsfwLevel } from '~/server/common/enums';
-import { applyIngestionSideEffects, type ScanImage } from '../image-scan-pipeline';
+import { NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { imagesMetricsSearchIndex } from '~/server/search-index';
+import { signalClient } from '~/utils/signal-client';
+import { applyIngestionSideEffects, rerateSong, type ScanImage } from '../image-scan-pipeline';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 
 /**
@@ -74,5 +76,36 @@ describe("a song's own cover, once scanned", () => {
 
     expect(dbMock.dbWrite.track.findUnique).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.image.updateMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('rerateSong, once it has written a new level', () => {
+  it("tells the owner's editor the new level and queues the song's search update", async () => {
+    const send = vi.spyOn(signalClient, 'send').mockResolvedValue(undefined as never);
+    const searchUpdate = vi
+      .spyOn(imagesMetricsSearchIndex, 'queueUpdate')
+      .mockResolvedValue(undefined as never);
+    // The read rateSong guards with, then the read its effects run on.
+    dbMock.dbWrite.image.findUnique
+      .mockReset()
+      .mockResolvedValueOnce(songRow as never)
+      .mockResolvedValue({ ...songRow, nsfwLevel: NsfwLevel.R, needsReview: null } as never);
+
+    await rerateSong(SONG);
+
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: OWNER,
+        data: expect.objectContaining({
+          imageId: SONG,
+          ingestion: ImageIngestionStatus.Scanned,
+          nsfwLevel: NsfwLevel.R,
+        }),
+      })
+    );
+    expect(searchUpdate).toHaveBeenCalledWith([
+      { id: SONG, action: SearchIndexUpdateQueueAction.Update },
+    ]);
   });
 });

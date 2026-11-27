@@ -119,6 +119,7 @@ describe('a song the scan did not flag', () => {
   it('is re-rated once its Scanned verdict is written', async () => {
     await run(scanned(false));
 
+    expect(pipeline.rerateSong).toHaveBeenCalledTimes(1);
     expect(pipeline.rerateSong).toHaveBeenCalledWith(7);
     expect(pipeline.resolveScanOutcome.mock.invocationCallOrder[0]).toBeLessThan(
       pipeline.rerateSong.mock.invocationCallOrder[0]
@@ -173,6 +174,7 @@ describe('a song with a title and no lyrics', () => {
     await applySongLyricsVerdict(7);
 
     expect(pipeline.resolveScanOutcome).not.toHaveBeenCalled();
+    expect(pipeline.rerateSong).toHaveBeenCalledTimes(1);
     expect(pipeline.rerateSong).toHaveBeenCalledWith(7);
   });
 });
@@ -318,6 +320,7 @@ describe('a lyrics verdict landing', () => {
     await applySongLyricsVerdict(7);
 
     expect(pipeline.resolveScanOutcome).not.toHaveBeenCalled();
+    expect(pipeline.rerateSong).toHaveBeenCalledTimes(1);
     expect(pipeline.rerateSong).toHaveBeenCalledWith(7);
   });
 

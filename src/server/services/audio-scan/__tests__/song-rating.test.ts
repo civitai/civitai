@@ -120,6 +120,16 @@ describe('a decided song', () => {
     expect(await level()).toBe(X);
   });
 
+  it("is not raised by another user's image, or one in a post, linked as its cover", async () => {
+    await song();
+    await cover(X, `"userId" = 99`);
+    expect(await rate()).toBeNull();
+
+    await q(`UPDATE "Image" SET "userId" = ${OWNER}, "postId" = 5 WHERE id = ${COVER}`);
+    expect(await rate()).toBeNull();
+    expect(await level()).toBe(PG);
+  });
+
   it('is not raised by a blocked cover, or one still being scanned', async () => {
     await song();
     await cover(R, `"blockedFor" = 'tos'`);
@@ -190,6 +200,18 @@ describe('a song its own scan still decides', () => {
     expect(await rate()).toBeNull();
     expect(dbMock.dbWrite.image.updateMany).not.toHaveBeenCalled();
     expect(await level()).toBe(PG);
+  });
+
+  // A lock on level 0 holds no rating, so the song is rated and the lock goes, as the scan does.
+  it('is rated through a lock that holds no level, dropping the lock', async () => {
+    await song(`"nsfwLevelLocked" = true, "nsfwLevel" = 0`);
+    await languageVerdict(R);
+
+    expect(await rate()).toBe(R);
+    const { rows } = await h.pg.query<{ nsfwLevel: number; nsfwLevelLocked: boolean }>(
+      `SELECT "nsfwLevel", "nsfwLevelLocked" FROM "Image" WHERE id = ${SONG}`
+    );
+    expect(rows[0]).toEqual({ nsfwLevel: R, nsfwLevelLocked: false });
   });
 
   it("never overrides a locked level, a moderator's review", async () => {

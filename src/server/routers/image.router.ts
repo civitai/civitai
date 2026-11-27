@@ -301,7 +301,7 @@ export const imageRouter = router({
     .use(isOwnerOrModerator)
     .mutation(async ({ input, ctx }) => {
       const result = await setSongCover({ ...input, user: ctx.user });
-      // The new cover's own scan re-rates the song too, but not a reused row it already scanned.
+      // A reused cover row that was already scanned gets no new scan verdict to re-rate the song.
       await rerateSong(input.id).catch(handleLogError);
       return result;
     }),

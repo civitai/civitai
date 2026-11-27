@@ -7246,6 +7246,7 @@ export async function raiseOwnImageNsfwLevel({
   await queueDocumentsForImageMinorChanges({ levelImageIds: [id] });
   await updateModel3DNsfwLevelForThumbnailImage({ imageId: id, postId: raised.postId });
   await queueImageSearchIndexUpdate({ ids: [id], action: SearchIndexUpdateQueueAction.Update });
+  if (raised.postId == null) await rerateSongOfRatedCover(id);
   return true;
 }
 
@@ -7452,6 +7453,7 @@ export async function resolveIngestionError({
     action: SearchIndexUpdateQueueAction.Update,
   });
   await queueDocumentsForImageMinorChanges({ levelImageIds: [id] });
+  if (image.postId == null) await rerateSongOfRatedCover(id);
 
   await trackModActivity(userId, {
     entityType: 'image',

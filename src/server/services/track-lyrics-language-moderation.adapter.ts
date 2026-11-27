@@ -24,7 +24,6 @@ export const trackLyricsLanguageModerationAdapter: ModerationAdapter = {
     return new Map(rows.map((row) => [row.imageId, row.text]));
   },
 
-  // Only the retry cron calls submit.
   submit: ({ entityId }) => submitTrackLyricsLanguageScan({ imageId: entityId, fromRetry: true }),
 
   applyResult: async ({ entityId, workflowId, output }) => {
