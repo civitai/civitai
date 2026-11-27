@@ -58,6 +58,8 @@ const ALLOWED: Record<string, number> = {
   'packages/civitai-db-queries/src/content-deletion.db.ts': 1,
   // A kept hide's recorded prior state.
   'packages/civitai-db-queries/src/pending-deletes.db.ts': 1,
+  // The self-heal's sweep count, logged only and never gating a write: exact to use the CSAM-blocked index.
+  'src/server/jobs/csam-blocklist-self-heal.ts': 1,
   // A moderator count of unusual block reasons: a list naming CSAM is worth their look.
   'apps/moderator/src/lib/server/moderation-board.service.ts': 1,
 };

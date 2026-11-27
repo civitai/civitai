@@ -307,6 +307,30 @@ describe('the candidate SQL, on real Postgres', () => {
     expect(await query(STILL_BLOCKED_SQL, [[11, 12]])).toEqual([{ id: 11, pHash: '211' }]);
   });
 
+  it('heals a comma-list CSAM removal that the exact sweep count leaves out', async () => {
+    await pg.exec(`
+      TRUNCATE "Image", "CsamReport";
+      INSERT INTO "Image" VALUES (11, 8, 'Blocked', 'TOS,csam', 211), (13, 8, 'Blocked', 'TOS,csam', 213);
+      INSERT INTO "CsamReport" ("userId", images, "createdAt") VALUES (8, '[11]', '2026-11-20');
+    `);
+    const added: string[][] = [];
+    const counts = await healCsamBlocklist(
+      { writes: true },
+      {
+        readCandidates: () => candidates(),
+        readSweepCount: async () => (await query<{ sweep: number }>(SWEEP_COUNT_SQL))[0].sweep,
+        readNewest: async () => [],
+        readPgCsam: async () => [],
+        rereadPrimary: (ids) => query(STILL_BLOCKED_SQL, [ids]),
+        addEntries: async (hashes) => void added.push(hashes),
+        copyToPg: async () => undefined,
+        log: () => undefined,
+      }
+    );
+    expect(counts.sweep).toBe(0);
+    expect(added.flat()).toEqual(['211']);
+  });
+
   it('re-reads on the write only the ids still removed for CSAM', async () => {
     expect(await query(STILL_BLOCKED_SQL, [[1, 3, 4, 6]])).toEqual([
       { id: 1, pHash: '-4276845791567733103' },
