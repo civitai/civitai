@@ -15,6 +15,8 @@ export function imageAlias(ref: string): string {
  */
 export function csamHeldImageSql(image: string): string {
   const i = imageAlias(image);
-  return `(${csamInBlockedForSql(`${i}."blockedFor"`)} OR (${i}."needsReview" = 'csam' AND NOT EXISTS (
+  return `(${csamInBlockedForSql(
+    `${i}."blockedFor"`
+  )} OR (${i}."needsReview" = 'csam' AND NOT EXISTS (
   SELECT 1 FROM "CsamQueueSetAside" sa WHERE sa."imageId" = ${i}.id AND sa.outcome = 'Dismissed')))`;
 }

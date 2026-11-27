@@ -68,7 +68,8 @@ vi.mock('~/components/ImageGuard/ImageGuard2', () => {
 });
 vi.mock('~/components/Dialog/RoutedDialogLink', async (importOriginal) => ({
   ...(await importOriginal<object>()),
-  RoutedDialogLink: ({ children }: any) => <a>{children}</a>,
+  // Keeps the link's own props, so the song card's cover link is sized and named as on the site.
+  RoutedDialogLink: ({ name, state, ...props }: any) => <a {...props} />,
 }));
 vi.mock('~/components/Sticker/StickerPlacementBatchProvider', async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -128,7 +129,8 @@ describe('a song on the post page', () => {
 
     await expect.element(page.getByText('Midnight Arcade')).toBeInTheDocument();
     await expect.element(page.getByText('Untitled song')).toBeInTheDocument();
-    expect(page.getByText('3:20').elements()).toHaveLength(3);
+    // Each song's length, under its title and at the end of its waveform.
+    expect(page.getByText('3:20').elements()).toHaveLength(6);
     expect(page.getByTestId('media-audio').elements()).toHaveLength(0);
     // The picture in the same post renders as before.
     await expect.element(page.getByTestId('media-image')).toBeInTheDocument();
@@ -196,7 +198,7 @@ describe('a song on the post page', () => {
     expect(ids(player().queued)).toEqual([3, 1]);
   });
 
-  test('at phone width the tile fits its title beside a 64px cover that carries the rating', async () => {
+  test('at phone width the tile fits its title beside a 96px cover that carries the rating', async () => {
     await page.viewport(390, 800);
     await renderWithProviders(
       <div className="px-4">
@@ -211,10 +213,10 @@ describe('a song on the post page', () => {
     await expect.element(title).toBeVisible();
     expect(title.element().scrollWidth).toBeLessThanOrEqual(title.element().clientWidth);
 
-    const cover = page.getByTestId('music-cover-placeholder').element()
-      .parentElement as HTMLElement;
-    const coverBox = cover.getBoundingClientRect();
-    expect(coverBox.width).toBe(64);
+    // The card's design (#10686): 96px under `sm`, so the rating toggle fits on it.
+    const coverBox = page.getByLabelText('Open Paper Lanterns').element().getBoundingClientRect();
+    expect(coverBox.width).toBe(96);
+    expect(coverBox.height).toBe(96);
     const rating = page.getByTestId('rating').element().getBoundingClientRect();
     expect(rating.left).toBeGreaterThanOrEqual(coverBox.left);
     expect(rating.top).toBeGreaterThanOrEqual(coverBox.top);

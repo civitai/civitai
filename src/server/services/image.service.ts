@@ -3058,9 +3058,9 @@ const getAllImagesUncaptured = async (
   if (types && types.length > 0) {
     AND.push(Prisma.sql`i.type = ANY(ARRAY[${Prisma.join(types)}]::"MediaType"[])`);
   }
-  // The availability clause below already binds `userId` for every non-moderator, so the owner
-  // carve-out keeps a cached model gallery keyed as it was.
-  const songsHidden = songsHiddenSql({ music: canSeeSongs(user, isModerator), ownerId: userId });
+  // The owner view, as the availability clause below: a narrow-scope key gets no owner carve-out,
+  // and that clause already binds the same id, so a cached model gallery stays keyed as it was.
+  const songsHidden = songsHiddenSql({ music: canSeeSongs(user, isModerator), ownerId });
   if (songsHidden) AND.push(songsHidden);
 
   // [x]

@@ -1,6 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { PGlite } from '@electric-sql/pglite';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TRPCError } from '@trpc/server';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { pgliteKysely } from '~/__tests__/pglite-kysely';
+import { NOTHING_WITHHELD_SQL } from '../../../../packages/civitai-shared/src/__tests__/csam-restriction-cases';
 import { SONGS_UNAVAILABLE_MESSAGE } from '~/shared/form-graph/generation/audio/song-metadata';
 import type * as ItemVisibility from '~/server/services/collection-item-visibility';
 import type * as SearchIndex from '~/server/search-index';
@@ -26,6 +29,17 @@ vi.mock('~/server/services/collection-item-visibility', async (importOriginal) =
   ...(await importOriginal<typeof ItemVisibility>()),
   assertCollectionItemsVisibleToViewer: assertVisible,
 }));
+// A moderator's save re-reads the withheld rule on its own database, where nothing is withheld.
+const withheld = vi.hoisted(() => ({ db: null as unknown as PGlite }));
+vi.mock('~/server/db/kyselyDb', () => {
+  const db = pgliteKysely(() => withheld.db);
+  return { kyselyRead: db, kyselyWrite: db };
+});
+beforeAll(async () => {
+  withheld.db = new PGlite();
+  await withheld.db.exec(NOTHING_WITHHELD_SQL);
+}, 60_000);
+afterAll(() => withheld.db.close());
 vi.mock('~/server/search-index', async (importOriginal) => ({
   ...(await importOriginal<typeof SearchIndex>()),
   collectionsSearchIndex: { queueUpdate: vi.fn() },

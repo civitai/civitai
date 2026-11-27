@@ -118,7 +118,18 @@ beforeAll(async () => {
 
 afterAll(() => db.close());
 
-const viewer = { user: { id: VIEWER, isModerator: false }, features: { music: true } };
+/** A browser session (no API key) on a domain that serves mature content, unless `sfw`. */
+const session = (user: { id: number; isModerator: boolean } | undefined, sfw = false) =>
+  ({
+    user,
+    features: { music: true, canViewNsfw: !sfw },
+    req: { headers: {} },
+    apiKeyId: undefined,
+    apiKeyType: undefined,
+    subject: undefined,
+    tokenScope: undefined,
+  } as unknown as Parameters<typeof getSongLyrics>[0]['ctx']);
+const viewer = session({ id: VIEWER, isModerator: false });
 const read = (id: number, ctx: Parameters<typeof getSongLyrics>[0]['ctx'] = viewer) =>
   getSongLyrics({ id, ctx });
 
@@ -127,17 +138,28 @@ describe('getSongLyrics', () => {
     expect(await read(201)).toEqual(TIMED);
   });
 
+  it("holds a mature song's lyrics to the domain's browsing level, except for its owner", async () => {
+    await db.exec(`UPDATE "Image" SET "nsfwLevel" = 4 WHERE id = 201`);
+    try {
+      expect(await read(201, session({ id: VIEWER, isModerator: false }, true))).toBeNull();
+      expect(await read(201, session({ id: OWNER, isModerator: false }, true))).toEqual(TIMED);
+      expect(await read(201)).toEqual(TIMED);
+      await db.exec(`UPDATE "Image" SET "nsfwLevel" = 1 WHERE id = 201`);
+      expect(await read(201, session({ id: VIEWER, isModerator: false }, true))).toEqual(TIMED);
+    } finally {
+      await db.exec(`UPDATE "Image" SET "nsfwLevel" = DEFAULT WHERE id = 201`);
+    }
+  });
+
   it('returns nothing until the lyrics have their own clean verdict, even past a rating lock', async () => {
     expect(await read(213)).toBeNull();
     expect(await read(214)).toBeNull();
     expect(await read(215)).toBeNull();
-    expect(
-      await read(213, { user: { id: OWNER, isModerator: false }, features: { music: true } })
-    ).toBeNull();
+    expect(await read(213, session({ id: OWNER, isModerator: false }))).toBeNull();
   });
 
   it('returns them to a signed-out viewer too', async () => {
-    expect(await read(201, { user: undefined, features: { music: true } })).toEqual(TIMED);
+    expect(await read(201, session(undefined))).toEqual(TIMED);
   });
 
   it('returns nothing for a song held for csam review, that is blocked, or not yet reviewed', async () => {
@@ -148,8 +170,8 @@ describe('getSongLyrics', () => {
   });
 
   it('keeps an unreviewed or held song lyric-less for its owner and for moderators as well', async () => {
-    const owner = { user: { id: OWNER, isModerator: false }, features: { music: true } };
-    const moderator = { user: { id: VIEWER, isModerator: true }, features: { music: true } };
+    const owner = session({ id: OWNER, isModerator: false });
+    const moderator = session({ id: VIEWER, isModerator: true });
     expect(await read(204, owner)).toBeNull();
     expect(await read(202, owner)).toBeNull();
     expect(await read(202, moderator)).toBeNull();
@@ -157,16 +179,16 @@ describe('getSongLyrics', () => {
   });
 
   it("returns a song's lines under another review to its owner only", async () => {
-    const owner = { user: { id: OWNER, isModerator: false }, features: { music: true } };
-    const moderator = { user: { id: VIEWER, isModerator: true }, features: { music: true } };
+    const owner = session({ id: OWNER, isModerator: false });
+    const moderator = session({ id: VIEWER, isModerator: true });
     expect(await read(212, owner)).toEqual(TIMED);
     expect(await read(212)).toBeNull();
     expect(await read(212, moderator)).toBeNull();
   });
 
   it('keeps a blocked song lyric-less for the owner and moderators, whom visibility lets through', async () => {
-    const owner = { user: { id: OWNER, isModerator: false }, features: { music: true } };
-    const moderator = { user: { id: VIEWER, isModerator: true }, features: { music: true } };
+    const owner = session({ id: OWNER, isModerator: false });
+    const moderator = session({ id: VIEWER, isModerator: true });
     // A Blocked level and a block reason: the song shows to these viewers, its lyrics do not.
     for (const ctx of [owner, moderator]) {
       expect(await read(209, ctx)).toBeNull();
@@ -185,7 +207,9 @@ describe('getSongLyrics', () => {
   });
 
   it('refuses everyone while the music flag is off', async () => {
-    await expect(read(201, { ...viewer, features: { music: false } })).rejects.toMatchObject({
+    await expect(
+      read(201, { ...viewer, features: { music: false } } as typeof viewer)
+    ).rejects.toMatchObject({
       code: 'UNAUTHORIZED',
     });
   });

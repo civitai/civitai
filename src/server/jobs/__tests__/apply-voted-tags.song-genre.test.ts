@@ -51,6 +51,11 @@ beforeAll(async () => {
       automated boolean NOT NULL DEFAULT false, disabled boolean NOT NULL DEFAULT false,
       "needsReview" boolean NOT NULL DEFAULT false, PRIMARY KEY ("imageId", "tagId")
     );
+    -- The packed tag rows the downvote read checks for a scan rating; these tests store none.
+    CREATE TABLE "TagsOnImageNew" (
+      "imageId" int NOT NULL, "tagId" int NOT NULL, attributes smallint NOT NULL DEFAULT 0,
+      PRIMARY KEY ("imageId", "tagId")
+    );
     -- The database's insert-only tag writer, reduced to the row it inserts.
     CREATE FUNCTION insert_tag_on_image(int, int, "TagSource", int, boolean, boolean, boolean)
     RETURNS void AS $$

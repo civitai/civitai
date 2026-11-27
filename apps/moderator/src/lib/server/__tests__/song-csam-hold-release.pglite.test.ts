@@ -386,7 +386,9 @@ describe('lifting the song itself', () => {
     await lyricsHold('Confirmed');
 
     expectLockedBeforeLift(
-      await statementsOf(() => acceptCsamReviewedImage({ csamReview: true, imageId: SONG, userId: MOD }))
+      await statementsOf(() =>
+        acceptCsamReviewedImage({ csamReview: true, imageId: SONG, userId: MOD })
+      )
     );
   });
 
@@ -406,9 +408,9 @@ describe('lifting the song itself', () => {
     await seed({ marker: { lyrics: 5 } });
     await lyricsHold('Confirmed');
 
-    await expect(acceptCsamReviewedImage({ csamReview: true, imageId: SONG, userId: MOD })).rejects.toBeInstanceOf(
-      ConfirmedSongHoldError
-    );
+    await expect(
+      acceptCsamReviewedImage({ csamReview: true, imageId: SONG, userId: MOD })
+    ).rejects.toBeInstanceOf(ConfirmedSongHoldError);
 
     expect((await song()).needsReview).toBe('csam');
   });
@@ -418,7 +420,9 @@ describe('lifting the song itself', () => {
     await lyricsHold('Confirmed');
 
     await expect(
-      withStaleReplica(SONG, () => acceptCsamReviewedImage({ csamReview: true, imageId: SONG, userId: MOD }))
+      withStaleReplica(SONG, () =>
+        acceptCsamReviewedImage({ csamReview: true, imageId: SONG, userId: MOD })
+      )
     ).rejects.toBeInstanceOf(ConfirmedSongHoldError);
 
     expect((await song()).needsReview).toBe('csam');
