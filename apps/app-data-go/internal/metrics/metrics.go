@@ -101,18 +101,16 @@ var WriteOutcomes = []string{"2xx", "4xx", "501", "refused_here", "unknown", "un
 
 // CacheOps are the `op` values of app_data_cache_ops_total, each with the `outcome` values it can
 // have (cache.Op*, cache.Outcome*): a get's hit, miss, invalid (a value that did not open: another key
-// or format, or garbage, read as a miss) or error; a set's or del's ok or error; a claim won or held
-// by another, or error; and for each, skipped_breaker (not asked: the breaker was open). `kind` is one
-// of CacheKinds.
+// or format, or garbage, read as a miss) or error; a set's or del's ok or error; and for each,
+// skipped_breaker (not asked: the breaker was open). `kind` is one of CacheKinds.
 var CacheOps = map[string][]string{
-	"get":   {"hit", "miss", "invalid", "error", "skipped_breaker"},
-	"set":   {"ok", "error", "skipped_breaker"},
-	"claim": {"won", "held", "error", "skipped_breaker"},
-	"del":   {"ok", "error", "skipped_breaker"},
+	"get": {"hit", "miss", "invalid", "error", "skipped_breaker"},
+	"set": {"ok", "error", "skipped_breaker"},
+	"del": {"ok", "error", "skipped_breaker"},
 }
 
 // CacheKinds are the `kind` values of app_data_cache_ops_total (cache.Kind*).
-var CacheKinds = []string{"block", "user", "overlay", "snapshot"}
+var CacheKinds = []string{"block", "user", "snapshot"}
 
 // ResumeOutcomes are the `outcome` values of app_data_stream_resumes_total (session.Resume*).
 var ResumeOutcomes = []string{"synced", "cursor_refused", "unsupported", "discarded"}

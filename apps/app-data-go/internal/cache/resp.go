@@ -2,6 +2,7 @@ package cache
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -73,13 +74,6 @@ type RedisError string
 
 func (e RedisError) Error() string { return "cache: server error: " + string(e) }
 
-// The scripts: each compares before it writes, in one step on the server.
-const (
-	scriptSwapIf = `if redis.call('GET', KEYS[1]) == ARGV[1] then redis.call('SET', KEYS[1], ARGV[2], 'PX', ARGV[3]) return 1 end return 0`
-	scriptDelIf  = `if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end return 0`
-	scriptHSet   = `if redis.call('HEXISTS', KEYS[1], ARGV[1]) == 0 and redis.call('HLEN', KEYS[1]) >= tonumber(ARGV[4]) then return 0 end redis.call('HSET', KEYS[1], ARGV[1], ARGV[2]) redis.call('PEXPIRE', KEYS[1], ARGV[3]) return 1`
-)
-
 func millis(ttl time.Duration) string { return strconv.FormatInt(max(1, ttl.Milliseconds()), 10) }
 
 // Get implements Store.
@@ -102,63 +96,10 @@ func (r *RESP) Set(ctx context.Context, key string, val []byte, ttl time.Duratio
 	return wantOK(rep, err)
 }
 
-// SetNX implements Store.
-func (r *RESP) SetNX(ctx context.Context, key string, val []byte, ttl time.Duration) (bool, error) {
-	rep, err := r.do(ctx, "SET", key, string(val), "PX", millis(ttl), "NX")
-	switch {
-	case err != nil:
-		return false, err
-	case rep.null:
-		return false, nil
-	}
-	return true, wantOK(rep, nil)
-}
-
 // Del implements Store.
 func (r *RESP) Del(ctx context.Context, key string) error {
 	rep, err := r.do(ctx, "DEL", key)
 	return wantInt(rep, err)
-}
-
-// SwapIf implements Store.
-func (r *RESP) SwapIf(ctx context.Context, key string, expect, val []byte, ttl time.Duration) (bool, error) {
-	rep, err := r.do(ctx, "EVAL", scriptSwapIf, "1", key, string(expect), string(val), millis(ttl))
-	if err := wantInt(rep, err); err != nil {
-		return false, err
-	}
-	return rep.n == 1, nil
-}
-
-// DelIf implements Store.
-func (r *RESP) DelIf(ctx context.Context, key string, expect []byte) error {
-	rep, err := r.do(ctx, "EVAL", scriptDelIf, "1", key, string(expect))
-	return wantInt(rep, err)
-}
-
-// HSet implements Store.
-func (r *RESP) HSet(ctx context.Context, key, field string, val []byte, ttl time.Duration, maxFields int) error {
-	rep, err := r.do(ctx, "EVAL", scriptHSet, "1", key, field, string(val), millis(ttl), strconv.Itoa(maxFields))
-	return wantInt(rep, err)
-}
-
-// HGetAll implements Store.
-func (r *RESP) HGetAll(ctx context.Context, key string) (map[string][]byte, error) {
-	rep, err := r.do(ctx, "HGETALL", key)
-	switch {
-	case err != nil:
-		return nil, err
-	case rep.kind != '*' || len(rep.arr)%2 != 0:
-		return nil, errUnexpected
-	}
-	out := make(map[string][]byte, len(rep.arr)/2)
-	for i := 0; i < len(rep.arr); i += 2 {
-		f, v := rep.arr[i], rep.arr[i+1]
-		if f.kind != '$' || v.kind != '$' || f.null || v.null {
-			return nil, errUnexpected
-		}
-		out[string(f.bulk)] = v.bulk
-	}
-	return out, nil
 }
 
 var errUnexpected = errors.New("cache: unexpected reply")
@@ -347,10 +288,12 @@ func readReply(rd *bufio.Reader, depth int) (reply, error) {
 		case n == -1:
 			return reply{kind: kind, null: true}, nil
 		}
-		buf := make([]byte, n+2)
-		if _, err := io.ReadFull(rd, buf); err != nil {
+		// Grown as the bytes arrive, never to a length the server only claimed.
+		var b bytes.Buffer
+		if _, err := io.CopyN(&b, rd, int64(n)+2); err != nil {
 			return reply{}, err
 		}
+		buf := b.Bytes()
 		if buf[n] != '\r' || buf[n+1] != '\n' {
 			return reply{}, errUnexpected
 		}

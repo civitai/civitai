@@ -147,44 +147,11 @@ func (f *fakeValkey) exec(ctx context.Context, args []string, ms func(string) ti
 		}
 		return bulk(v)
 	case "SET":
-		if len(args) == 6 && args[5] == "NX" {
-			ok, _ := st.SetNX(ctx, args[1], []byte(args[2]), ms(args[4]))
-			if !ok {
-				return "$-1\r\n"
-			}
-			return "+OK\r\n"
-		}
 		_ = st.Set(ctx, args[1], []byte(args[2]), ms(args[4]))
 		return "+OK\r\n"
 	case "DEL":
 		_ = st.Del(ctx, args[1])
 		return ":1\r\n"
-	case "HGETALL":
-		h, _ := st.HGetAll(ctx, args[1])
-		var out strings.Builder
-		fmt.Fprintf(&out, "*%d\r\n", 2*len(h))
-		for k, v := range h {
-			out.WriteString(bulk([]byte(k)) + bulk(v))
-		}
-		return out.String()
-	case "EVAL":
-		key := args[3]
-		switch args[1] {
-		case scriptSwapIf:
-			ok, _ := st.SwapIf(ctx, key, []byte(args[4]), []byte(args[5]), ms(args[6]))
-			if ok {
-				return ":1\r\n"
-			}
-			return ":0\r\n"
-		case scriptDelIf:
-			_ = st.DelIf(ctx, key, []byte(args[4]))
-			return ":1\r\n"
-		case scriptHSet:
-			n, _ := strconv.Atoi(args[7])
-			_ = st.HSet(ctx, key, args[4], []byte(args[5]), ms(args[6]), n)
-			return ":1\r\n"
-		}
-		return "-ERR unknown script\r\n"
 	}
 	return "-ERR unknown command\r\n"
 }
@@ -212,30 +179,6 @@ func TestRESPSpeaksEveryCommandCacheUses(t *testing.T) {
 	}
 	if _, ttl := f.store.raw("k"); ttl != time.Minute {
 		t.Fatalf("ttl %s", ttl)
-	}
-	if ok, err := r.SetNX(ctx, "k", []byte("x"), time.Minute); ok || err != nil {
-		t.Fatalf("setnx over a value: %v %v", ok, err)
-	}
-	if ok, err := r.SetNX(ctx, "n", []byte("x"), time.Minute); !ok || err != nil {
-		t.Fatalf("setnx: %v %v", ok, err)
-	}
-	if ok, err := r.SwapIf(ctx, "n", []byte("wrong"), []byte("y"), time.Minute); ok || err != nil {
-		t.Fatalf("swap on a mismatch: %v %v", ok, err)
-	}
-	if ok, err := r.SwapIf(ctx, "n", []byte("x"), []byte("y"), time.Minute); !ok || err != nil {
-		t.Fatalf("swap: %v %v", ok, err)
-	}
-	if err := r.DelIf(ctx, "n", []byte("y")); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := r.Get(ctx, "n"); !errors.Is(err, ErrMiss) {
-		t.Fatal("delif did not delete")
-	}
-	if err := r.HSet(ctx, "h", "f", []byte("hv"), time.Minute, 4); err != nil {
-		t.Fatal(err)
-	}
-	if h, err := r.HGetAll(ctx, "h"); err != nil || string(h["f"]) != "hv" || len(h) != 1 {
-		t.Fatalf("hgetall: %v %v", h, err)
 	}
 	if err := r.Del(ctx, "k"); err != nil {
 		t.Fatal(err)
@@ -404,12 +347,6 @@ func TestReadReplyRejectsWhatIsNotRESP(t *testing.T) {
 func TestRESPRejectsUnexpectedReplies(t *testing.T) {
 	if wantOK(reply{kind: ':'}, nil) == nil || wantInt(reply{kind: '+'}, nil) == nil {
 		t.Fatal("a wrong reply type was accepted")
-	}
-	f := newFakeValkey(t)
-	r := f.client()
-	// HGETALL of a string-valued key answers an error here; the client passes it on.
-	if _, err := r.HGetAll(ctxT(t), "k"); err != nil {
-		t.Fatalf("hgetall of nothing: %v", err)
 	}
 }
 

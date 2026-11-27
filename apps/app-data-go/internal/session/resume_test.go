@@ -134,57 +134,23 @@ func (s *memSnapshots) put(v Saved) {
 	s.Save(context.Background(), SnapshotKey{Token: sha256.Sum256([]byte("tok-a")), Schema: schemaA}, v, time.Minute)
 }
 
-// memOverlays is OverlayStore in memory.
-type memOverlays struct {
-	mu    sync.Mutex
-	held  map[string][]SavedOverlay
-	drops int
-}
-
-func (o *memOverlays) id(token [sha256.Size]byte, schema string) string {
-	return string(token[:]) + schema
-}
-
-func (o *memOverlays) Load(_ context.Context, token [sha256.Size]byte, schema string) []SavedOverlay {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	return slices.Clone(o.held[o.id(token, schema)])
-}
-
-func (o *memOverlays) Save(token [sha256.Size]byte, schema string, s SavedOverlay) {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	if o.held == nil {
-		o.held = map[string][]SavedOverlay{}
-	}
-	o.held[o.id(token, schema)] = append(o.held[o.id(token, schema)], s)
-}
-
-func (o *memOverlays) Drop(_ context.Context, token [sha256.Size]byte, schema string) {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	delete(o.held, o.id(token, schema))
-	o.drops++
-}
-
 // cacheRig is a manager over a resumer, with snapshots; restart builds another over the same origin,
 // snapshots and clock, as a restarted process would.
 type cacheRig struct {
-	t        *testing.T
-	o        *resumer
-	snaps    *memSnapshots
-	overlays *memOverlays
-	c        *clock
-	m        *Manager
-	opts     Options
-	resumes  sync.Map // outcome → *atomic.Int32
-	forgot   atomic.Int32
-	fresh    atomic.Int32
+	t       *testing.T
+	o       *resumer
+	snaps   *memSnapshots
+	c       *clock
+	m       *Manager
+	opts    Options
+	resumes sync.Map // outcome → *atomic.Int32
+	forgot  atomic.Int32
+	fresh   atomic.Int32
 }
 
 func newCacheRig(t *testing.T, opts Options) *cacheRig {
 	t.Helper()
-	r := &cacheRig{t: t, o: newResumer(), snaps: newMemSnapshots(), overlays: &memOverlays{}, c: &clock{t: time.Unix(1_700_000_000, 0)}}
+	r := &cacheRig{t: t, o: newResumer(), snaps: newMemSnapshots(), c: &clock{t: time.Unix(1_700_000_000, 0)}}
 	r.o.now = r.c.now
 	if opts.Exchange == nil {
 		opts.Exchange = r.o.Exchange
@@ -597,49 +563,6 @@ func TestAFloorReopenNeverResumes(t *testing.T) {
 	_, _ = r.m.ReadAt(ctx, "tok-a", schemaA, 99)
 	if len(r.o.resumed()) != 0 || r.o.opens("tok-a") != 2 {
 		t.Fatalf("resumes %v, opens %d", r.o.resumed(), r.o.opens("tok-a"))
-	}
-}
-
-// OVERLAYS AT REST: an acknowledged write is stored, and a stream another process opens shows it
-// before its own stream does; a refused token's are dropped.
-func TestAnAcknowledgedWriteReadsBackInAnotherProcess(t *testing.T) {
-	r := newCacheRig(t, Options{OverlayTTL: time.Minute, ReopenEvery: time.Minute})
-	r.opts.OverlayStore = r.overlays
-	r.restart()
-	r.o.heads["tok-a"] = 5
-	r.liveA()
-	body := json.RawMessage(`{"text":"written"}`)
-	r.m.Ack("tok-a", schemaA, Ack{Key: "k9", Seq: 9, URN: "urn:apps.civitai.com:todo-app/notes/r9", Body: body, Version: 1})
-	// Another process (no stream of its own yet): the write reads back from the stored overlay.
-	other := New(r.o, r.opts)
-	defer other.Close()
-	got, err := read(t, other, "tok-a", schemaA)
-	if err != nil || !strings.Contains(urns(got), "notes/r9") {
-		t.Fatalf("🔴 the acknowledged write did not read back elsewhere: %q %v", urns(got), err)
-	}
-	// Another token never reads it.
-	r.o.records["tok-b"] = []registry.Entity{r3}
-	r.o.heads["tok-b"] = 5
-	if got, _ := read(t, other, "tok-b", schemaA); strings.Contains(urns(got), "r9") {
-		t.Fatal("🔴 another token read the overlay")
-	}
-	// Expired or malformed stored overlays are not applied.
-	r.overlays.Save(sha256.Sum256([]byte("tok-c")), schemaA, SavedOverlay{Ack: Ack{Key: "kx", Seq: 9, URN: "u", Body: body}, Until: r.c.now()})
-	r.overlays.Save(sha256.Sum256([]byte("tok-c")), schemaA, SavedOverlay{Ack: Ack{Key: "", Seq: 9}, Until: r.c.now().Add(time.Second)})
-	r.overlays.Save(sha256.Sum256([]byte("tok-c")), schemaA, SavedOverlay{Ack: Ack{Key: "ky", Seq: 9, URN: "u2", Body: body}, Until: r.c.now().Add(time.Hour)})
-	r.o.records["tok-c"] = []registry.Entity{r1}
-	r.o.heads["tok-c"] = 5
-	if got, _ := read(t, other, "tok-c", schemaA); urns(got) != r1.URN {
-		t.Fatalf("stale overlays applied: %q", urns(got))
-	}
-	// A refused token drops its overlays.
-	other.Close()
-	r.o.refuseExchange["tok-a"] = exchange.ErrRefused
-	third := New(r.o, r.opts)
-	defer third.Close()
-	_, _ = read(t, third, "tok-a", schemaA)
-	if r.overlays.Load(context.Background(), sha256.Sum256([]byte("tok-a")), schemaA) != nil {
-		t.Fatal("a refused token's overlays were kept")
 	}
 }
 

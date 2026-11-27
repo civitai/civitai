@@ -173,7 +173,7 @@ REST. The hub still verifies every token it is sent.
 
 **Once per block token.** The hub claims each block token's `jti` and refuses a second exchange of it
 as a replay, so `exchange.BlockCache` sits in front of the block exchange (and, with the shared cache
-on, a claim in valkey that every process sharing it honours: [CACHE-DESIGN.md](CACHE-DESIGN.md)):
+on, the issued token is saved in valkey for a restarted process: [CACHE-DESIGN.md](CACHE-DESIGN.md)):
 
 - **Issued:** the token is handed to every stream of that block token (one per collection read)
   until it expires; concurrent opens share one call.

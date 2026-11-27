@@ -164,10 +164,9 @@ type BlockCache struct {
 	// Observe is told each exchange's outcome and, for a refusal, the hub's code (RefusalCode;
 	// `none` otherwise). Nil is none. Never a token.
 	Observe func(outcome, code string)
-	// Shared, when set, is a store of block exchanges shared with other processes (package cache,
-	// APP_DATA_CACHE_URL): a token this cache does not hold is looked for there, and its exchange
-	// claimed there, before the hub is asked, so no two processes both spend one block token's
-	// exchange. Nil is this process alone.
+	// Shared, when set, is a store of block exchanges shared with other processes and restarts
+	// (package cache, APP_DATA_CACHE_URL): a token this cache does not hold is looked for there before
+	// the hub is asked, and a token the hub issues is saved there. Nil is this process alone.
 	Shared SharedBlocks
 
 	mu      sync.Mutex
@@ -234,7 +233,7 @@ func (c *BlockCache) first(ctx context.Context, k [sha256.Size]byte, e *blockEnt
 		err = c.Verify(ctx, subject)
 	}
 	if err == nil {
-		tok, shared, err = c.exchange(ctx, k, subject)
+		tok, shared, err = c.exchange(ctx, k, subject, start)
 	}
 	if err == nil && shared && !c.now().Before(tok.Expires.Add(-c.Margin)) {
 		// Another process's exchange, too close to its expiry to open a stream with: spent, as a
@@ -268,8 +267,6 @@ func (c *BlockCache) first(ctx context.Context, k [sha256.Size]byte, e *blockEnt
 		c.observe(BlockReused, nil)
 	case err == nil:
 		c.observe(BlockIssued, nil)
-	case errors.Is(err, ErrRefused) && shared:
-		c.observe(BlockRemembered, err)
 	case errors.Is(err, ErrRefused):
 		c.observe(BlockRefused, err)
 	case errors.Is(err, ErrSpent):
@@ -284,81 +281,35 @@ func (c *BlockCache) first(ctx context.Context, k [sha256.Size]byte, e *blockEnt
 	return tok, err
 }
 
-// exchange asks the hub for subject's exchange, through Shared when it is set: shared is true when
-// the answer is another process's exchange (a token it was issued, or a refusal), the hub not asked.
-func (c *BlockCache) exchange(ctx context.Context, k [sha256.Size]byte, subject string) (tok Token, shared bool, err error) {
-	if c.Shared == nil {
-		tok, err = c.Hub(ctx, subject)
-		return tok, false, err
-	}
-	b := c.Shared.Begin(ctx, k)
-	switch b.State {
-	case SharedIssued:
-		return b.Token, true, nil
-	case SharedRefused:
-		return Token{}, true, b.Refusal
-	case SharedPending:
-		return Token{}, false, ErrBlockPending
-	case SharedClaimed:
-		tok, err = c.Hub(ctx, subject)
-		var re *RefusedError
-		switch {
-		case err == nil:
-			c.Shared.Issued(ctx, b.Claim, tok)
-		case errors.As(err, &re):
-			c.Shared.Refused(ctx, b.Claim, re)
-		default:
-			// No token was issued: another process may try.
-			c.Shared.Release(ctx, b.Claim)
+// exchange asks the hub for subject's exchange, after Shared when it is set: shared is true when the
+// answer is a token another process (or this one before a restart) was issued, the hub not asked.
+// Only an issued token is saved there, never a refusal: a refusal is this process's to remember.
+//
+// Two processes that both miss ask the hub both (there is no claim): the hub issues to one and
+// refuses the other's replay, which this cache remembers as any refusal, as without the store.
+func (c *BlockCache) exchange(ctx context.Context, k [sha256.Size]byte, subject string, start time.Time) (tok Token, shared bool, err error) {
+	if c.Shared != nil {
+		if tok, ok := c.Shared.Load(ctx, k); ok {
+			return tok, true, nil
 		}
-		return tok, false, err
 	}
-	// SharedUnavailable: fail open, as with no shared store. Two processes may then both ask the hub,
-	// which issues to one and refuses the other as a replay: what happens without the store.
 	tok, err = c.Hub(ctx, subject)
+	if err == nil && c.Shared != nil {
+		// Held to MaxTokenLife from before the call, as first holds it: never saved past its expiry.
+		if limit := start.Add(MaxTokenLife); tok.Expires.After(limit) {
+			tok.Expires = limit
+		}
+		c.Shared.Save(ctx, k, tok)
+	}
 	return tok, false, err
 }
 
-// ErrBlockPending is a block token whose exchange another process claimed (SharedBlocks) and did not
-// finish in the time it was waited for. Not a refusal: no token was handed out here, and a later read
-// may find the other process's answer.
-var ErrBlockPending = errors.New("exchange: another process is exchanging this block token")
-
-// SharedState is what SharedBlocks.Begin found.
-type SharedState int
-
-const (
-	// SharedUnavailable: the shared store could not be asked (any error, or its breaker open). The
-	// exchange goes on as with no shared store.
-	SharedUnavailable SharedState = iota
-	// SharedClaimed: nobody had exchanged the token, and this process now holds the claim: it asks the
-	// hub, then ends the claim with Issued, Refused or Release.
-	SharedClaimed
-	// SharedIssued: another process exchanged it; Token is what the hub issued.
-	SharedIssued
-	// SharedRefused: the hub refused another process's exchange of it; Refusal is that answer.
-	SharedRefused
-	// SharedPending: another process holds the claim and gave no answer in the time waited.
-	SharedPending
-)
-
-// SharedBegin is what SharedBlocks.Begin answers.
-type SharedBegin struct {
-	State   SharedState
-	Token   Token
-	Refusal *RefusedError
-	// Claim is the claim to end (SharedClaimed only), opaque here.
-	Claim any
-}
-
 // SharedBlocks is a store of block-token exchanges shared by every process that uses it, keyed by
-// the token's SHA-256 (never a claim read from it). Every method fails open: a store that cannot be
-// asked is SharedUnavailable, and a failed write is dropped.
+// the token's SHA-256 (never a claim read from it). It fails open: a Load that cannot answer is a
+// miss, and a Save that fails does nothing.
 type SharedBlocks interface {
-	Begin(ctx context.Context, id [sha256.Size]byte) SharedBegin
-	Issued(ctx context.Context, claim any, tok Token)
-	Refused(ctx context.Context, claim any, refusal *RefusedError)
-	Release(ctx context.Context, claim any)
+	Load(ctx context.Context, id [sha256.Size]byte) (Token, bool)
+	Save(ctx context.Context, id [sha256.Size]byte, tok Token)
 }
 
 // again answers from an exchange already made.

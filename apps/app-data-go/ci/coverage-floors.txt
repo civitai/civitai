@@ -8,7 +8,7 @@
 total 91
 cmd/app-data-go 11
 internal/api 99
-internal/cache 96
+internal/cache 97
 internal/config 99
 internal/exchange 100
 internal/metrics 98

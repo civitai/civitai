@@ -206,28 +206,66 @@ func TestTokensFailOpen(t *testing.T) {
 
 // ---- block tokens ----
 
-// process is one app-data-go process's block cache over the shared cache c.
-func process(c *Cache, hub *fakeHub, clk *clock) *exchange.BlockCache {
-	return &exchange.BlockCache{Hub: hub.exchange, Margin: 30 * time.Second, Now: clk.now,
-		Shared: &Blocks{C: c, Poll: time.Millisecond, Now: clk.now}}
+// replayHub issues once per block token, as the hub does (it claims the token's jti), and refuses
+// every later exchange of it as a replay.
+type replayHub struct {
+	mu     sync.Mutex
+	issued map[string]bool
+	calls  int
+	now    func() time.Time
 }
 
-// 🔴 THE RACE: two processes sharing the cache exchange one block token at once. The hub is asked
-// exactly once, and both get the token it issued. Without the shared claim the second would be the
-// hub's replay refusal (block_token_spent after a restart).
-func TestTwoProcessesNeverBothExchangeOneBlockToken(t *testing.T) {
+func (h *replayHub) exchange(_ context.Context, subject string) (exchange.Token, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.calls++
+	if h.issued[subject] {
+		return exchange.Token{}, &exchange.RefusedError{Status: 400, Code: "invalid_grant"}
+	}
+	h.issued[subject] = true
+	return exchange.Token{Access: "x." + strconv.Itoa(h.calls) + "." + subject, Expires: h.now().Add(10 * time.Minute)}, nil
+}
+
+func (h *replayHub) count() int { h.mu.Lock(); defer h.mu.Unlock(); return h.calls }
+
+// process is one app-data-go process's block cache over the shared cache c.
+func process(c *Cache, hub func(context.Context, string) (exchange.Token, error), clk *clock) *exchange.BlockCache {
+	return &exchange.BlockCache{Hub: hub, Margin: 30 * time.Second, Now: clk.now, Shared: &Blocks{C: c, Now: clk.now}}
+}
+
+// 🔴 THE RESTART: a block token exchanged before a restart is not exchanged again after it (without
+// the cache, the hub's replay refusal), and the saved token lives until it expires, no longer.
+func TestARestartedProcessReusesTheBlockTokensExchange(t *testing.T) {
 	r := newRig(t, secretA)
-	gate := make(chan struct{})
-	hub := &fakeHub{refuse: map[string]bool{}, life: 15 * time.Minute, now: r.clk.now, block: gate}
-	a, b := process(r.c, hub, r.clk), process(r.sharing(t, secretA), hub, r.clk)
-	// Both processes find nothing (their Gets both run before either claims), so both reach the claim
-	// at once: only SET NX keeps one of them from the hub.
+	hub := &replayHub{issued: map[string]bool{}, now: r.clk.now}
+	first, err := process(r.c, hub.exchange, r.clk).Exchange(context.Background(), blockToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.clk.add(time.Minute)
+	again, err := process(r.sharing(t, secretA), hub.exchange, r.clk).Exchange(context.Background(), blockToken)
+	if err != nil || again.Access != first.Access || hub.count() != 1 {
+		t.Fatalf("🔴 after a restart: %+v %v (hub %d)", again, err, hub.count())
+	}
+	id := sha256.Sum256([]byte(blockToken))
+	if _, ttl := r.store.raw(r.c.Name(KindBlock, id[:])); ttl != 10*time.Minute {
+		t.Fatalf("ttl %s, want the token's 10m", ttl)
+	}
+}
+
+// 🔴 THE RACE, without a claim: two processes that both miss both ask the hub. The loser degrades to
+// what happens without the cache: the hub's replay refusal, remembered. Never a hang, never another
+// token's exchange, and the winner's token is what the cache keeps.
+func TestTheLoserOfARaceGetsTheHubsReplayRefusal(t *testing.T) {
+	r := newRig(t, secretA)
+	hub := &replayHub{issued: map[string]bool{}, now: r.clk.now}
+	a, b := process(r.c, hub.exchange, r.clk), process(r.sharing(t, secretA), hub.exchange, r.clk)
+	// Both Gets miss before either saves.
 	var barrier sync.WaitGroup
 	barrier.Add(2)
 	var gets atomic.Int32
 	r.store.set(func(m *memStore) {
 		m.afterGet = func() {
-			// The first two Gets wait for each other; later ones (the loser's polls) pass.
 			if gets.Add(1) <= 2 {
 				barrier.Done()
 				barrier.Wait()
@@ -240,112 +278,65 @@ func TestTwoProcessesNeverBothExchangeOneBlockToken(t *testing.T) {
 	for i, p := range []*exchange.BlockCache{a, b} {
 		wg.Go(func() { got[i], errs[i] = p.Exchange(context.Background(), blockToken) })
 	}
-	// Let both reach the claim, then the winner's hub call through.
-	time.Sleep(20 * time.Millisecond)
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("🔴 the race hung")
+	}
 	r.store.set(func(m *memStore) { m.afterGet = nil })
-	close(gate)
-	wg.Wait()
-	if hub.count() != 1 {
-		t.Fatalf("🔴 the hub was asked %d times for one block token", hub.count())
+	if hub.count() != 2 {
+		t.Fatalf("the hub was asked %d times; the race was not run", hub.count())
 	}
-	if errs[0] != nil || errs[1] != nil || got[0].Access == "" || got[0].Access != got[1].Access {
-		t.Fatalf("answers %+v %v", got, errs)
-	}
-	// A third process after the fact reads it, the hub not asked.
-	c := process(r.sharing(t, secretA), hub, r.clk)
-	if tok, err := c.Exchange(context.Background(), blockToken); err != nil || tok.Access != got[0].Access || hub.count() != 1 {
-		t.Fatalf("third: %+v %v (hub %d)", tok, err, hub.count())
-	}
-}
-
-func TestABlockRefusalIsSharedAndAFailureIsReleased(t *testing.T) {
-	r := newRig(t, secretA)
-	hub := &fakeHub{refuse: map[string]bool{blockToken: true}, life: 15 * time.Minute, now: r.clk.now}
-	if _, err := process(r.c, hub, r.clk).Exchange(context.Background(), blockToken); !errors.Is(err, exchange.ErrRefused) {
-		t.Fatal(err)
+	winner, loser := 0, 1
+	if errs[0] != nil {
+		winner, loser = 1, 0
 	}
 	var re *exchange.RefusedError
-	if _, err := process(r.sharing(t, secretA), hub, r.clk).Exchange(context.Background(), blockToken); !errors.As(err, &re) ||
-		re.Code != "invalid_grant" || hub.count() != 1 {
-		t.Fatalf("shared refusal: %v (hub %d)", err, hub.count())
+	if errs[winner] != nil || got[winner].Access == "" || !errors.As(errs[loser], &re) || re.Code != "invalid_grant" || got[loser].Access != "" {
+		t.Fatalf("🔴 answers %+v %v", got, errs)
 	}
-	// Its time to live is the block memory.
-	id := sha256.Sum256([]byte(blockToken))
-	if _, ttl := r.store.raw(r.c.Name(KindBlock, id[:])); ttl != BlockRefusalTTL {
-		t.Fatalf("refusal ttl %s", ttl)
+	// The loser remembers its refusal (the hub not asked again); a third process reads the winner's.
+	loserCache := []*exchange.BlockCache{a, b}[loser]
+	if _, err := loserCache.Exchange(context.Background(), blockToken); !errors.Is(err, exchange.ErrRefused) || hub.count() != 2 {
+		t.Fatalf("loser again: %v (hub %d)", err, hub.count())
 	}
-	// A failure (no token issued) releases the claim: the next process asks the hub itself.
-	other := "blk-header-2.blk-payload-2.blk-sig-2"
-	failing := &exchange.BlockCache{Hub: func(context.Context, string) (exchange.Token, error) {
-		return exchange.Token{}, errors.New("hub unreachable")
-	}, Now: r.clk.now, Shared: &Blocks{C: r.c, Now: r.clk.now}}
-	if _, err := failing.Exchange(context.Background(), other); err == nil {
-		t.Fatal("a failure answered")
-	}
-	if _, err := process(r.sharing(t, secretA), hub, r.clk).Exchange(context.Background(), other); err != nil || hub.count() != 2 {
-		t.Fatalf("after a released claim: %v (hub %d)", err, hub.count())
+	third, err := process(r.sharing(t, secretA), hub.exchange, r.clk).Exchange(context.Background(), blockToken)
+	if err != nil || third.Access != got[winner].Access || hub.count() != 2 {
+		t.Fatalf("third: %+v %v (hub %d)", third, err, hub.count())
 	}
 }
 
-func TestAnIssuedBlockTokensTimeToLiveIsItsExpiry(t *testing.T) {
+// A refusal is never shared: another process asks the hub itself.
+func TestABlockRefusalIsNotShared(t *testing.T) {
 	r := newRig(t, secretA)
-	hub := &fakeHub{refuse: map[string]bool{}, life: 10 * time.Minute, now: r.clk.now}
-	if _, err := process(r.c, hub, r.clk).Exchange(context.Background(), blockToken); err != nil {
-		t.Fatal(err)
+	calls := 0
+	refuse := func(context.Context, string) (exchange.Token, error) {
+		calls++
+		return exchange.Token{}, &exchange.RefusedError{Status: 400, Code: "invalid_grant"}
 	}
-	id := sha256.Sum256([]byte(blockToken))
-	if _, ttl := r.store.raw(r.c.Name(KindBlock, id[:])); ttl != 10*time.Minute {
-		t.Fatalf("ttl %s", ttl)
+	_, _ = process(r.c, refuse, r.clk).Exchange(context.Background(), blockToken)
+	_, _ = process(r.sharing(t, secretA), refuse, r.clk).Exchange(context.Background(), blockToken)
+	if calls != 2 || len(r.store.keys()) != 0 {
+		t.Fatalf("calls %d, keys %v", calls, r.store.keys())
 	}
 }
 
-// A claim another process never finishes: waited for, then pending (a failure), never exchanged here.
-func TestAClaimNeverFinishedIsPendingNotExchangedAgain(t *testing.T) {
+func TestASavedBlockTokenThatDoesNotReadIsAMiss(t *testing.T) {
 	r := newRig(t, secretA)
 	id := sha256.Sum256([]byte(blockToken))
-	if _, st := r.c.Claim(context.Background(), KindBlock, id[:], time.Minute); st != ClaimWon {
-		t.Fatal("setup claim")
-	}
-	hub := &fakeHub{refuse: map[string]bool{}, life: 15 * time.Minute, now: r.clk.now}
-	p := &exchange.BlockCache{Hub: hub.exchange, Now: r.clk.now,
-		Shared: &Blocks{C: r.sharing(t, secretA), Wait: 20 * time.Millisecond, Poll: time.Millisecond, Now: r.clk.now}}
-	if _, err := p.Exchange(context.Background(), blockToken); !errors.Is(err, exchange.ErrBlockPending) || hub.count() != 0 {
-		t.Fatalf("%v (hub %d)", err, hub.count())
-	}
-	// The caller giving up ends the wait too.
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	b := &Blocks{C: r.c, Wait: time.Hour, Poll: time.Hour}
-	if got := b.Begin(ctx, id); got.State != exchange.SharedPending {
-		t.Fatalf("cancelled wait: %v", got.State)
-	}
-}
-
-// A claim found at Get (not at SetNX) is waited for; garbage there is waited on until the wait ends.
-func TestBeginWaitsOnAClaimFoundAtGet(t *testing.T) {
-	r := newRig(t, secretA)
-	id := sha256.Sum256([]byte(blockToken))
-	cl, _ := r.c.Claim(context.Background(), KindBlock, id[:], time.Minute)
-	b := &Blocks{C: r.sharing(t, secretA), Wait: time.Second, Poll: time.Millisecond}
-	done := make(chan exchange.SharedBegin)
-	go func() { done <- b.Begin(context.Background(), id) }()
-	time.Sleep(10 * time.Millisecond)
-	raw, _ := json.Marshal(blockValue{V: valueVersion, Access: "issued-elsewhere", Expires: time.Now().Add(time.Hour)})
-	r.c.Finish(context.Background(), KindBlock, cl, raw, time.Minute)
-	if got := <-done; got.State != exchange.SharedIssued || got.Token.Access != "issued-elsewhere" {
-		t.Fatalf("%+v", got)
-	}
-	// Unreadable results are not answers.
-	for _, v := range []string{`{`, `{"v":1}`, `{"v":9,"access":"a"}`} {
-		r.c.Put(context.Background(), KindBlock, id[:], []byte(v), time.Minute)
-		b.Wait = 5 * time.Millisecond
-		if got := b.Begin(context.Background(), id); got.State != exchange.SharedPending {
-			t.Fatalf("%s: %v", v, got.State)
+	b := &Blocks{C: r.c}
+	for _, raw := range []string{`{`, `{"v":2,"access":"a"}`, `{"v":1,"access":""}`} {
+		r.c.Put(context.Background(), KindBlock, id[:], []byte(raw), time.Minute)
+		if _, ok := b.Load(context.Background(), id); ok {
+			t.Fatalf("%s read", raw)
 		}
 	}
-	// The default timings.
-	if (&Blocks{}).now().IsZero() {
-		t.Fatal("no clock")
+	// The default clock: a token saved without one lives until its expiry.
+	b.Save(context.Background(), id, exchange.Token{Access: "a", Expires: time.Now().Add(time.Minute)})
+	if tok, ok := b.Load(context.Background(), id); !ok || tok.Access != "a" {
+		t.Fatal("saved with the default clock")
 	}
 }
 
@@ -353,21 +344,13 @@ func TestBeginWaitsOnAClaimFoundAtGet(t *testing.T) {
 func TestBlocksFailOpen(t *testing.T) {
 	r := newRig(t, secretA)
 	r.store.set(func(m *memStore) { m.fail = true })
-	hub := &fakeHub{refuse: map[string]bool{}, life: 15 * time.Minute, now: r.clk.now}
-	if tok, err := process(r.c, hub, r.clk).Exchange(context.Background(), blockToken); err != nil || tok.Access == "" || hub.count() != 1 {
+	hub := &replayHub{issued: map[string]bool{}, now: r.clk.now}
+	if tok, err := process(r.c, hub.exchange, r.clk).Exchange(context.Background(), blockToken); err != nil || tok.Access == "" || hub.count() != 1 {
 		t.Fatalf("%+v %v", tok, err)
 	}
 }
 
-func TestBlocksIgnoresAClaimOfAnotherType(t *testing.T) {
-	b := &Blocks{C: newRig(t, secretA).c}
-	b.Issued(context.Background(), "not a claim", exchange.Token{})
-	b.Refused(context.Background(), "not a claim", &exchange.RefusedError{})
-	b.Refused(context.Background(), Claim{name: "x"}, nil)
-	b.Release(context.Background(), 42)
-}
-
-// ---- snapshots and overlays ----
+// ---- snapshots ----
 
 func snapKey(token string) session.SnapshotKey {
 	return session.SnapshotKey{Token: sha256.Sum256([]byte(token)), Schema: "urn:schema:apps.civitai.com:a/notes@v1",
@@ -409,50 +392,4 @@ func TestASnapshotReadsBackOnlyForItsTokenSchemaAndRegion(t *testing.T) {
 			t.Fatalf("%s read", raw)
 		}
 	}
-}
-
-func TestOverlaysReadBackPerTokenAndSchema(t *testing.T) {
-	r := newRig(t, secretA)
-	o := Overlays{C: r.c, Max: 2, Now: r.clk.now}
-	tok := sha256.Sum256([]byte(hubToken))
-	schema := "urn:schema:apps.civitai.com:a/notes@v1"
-	until := r.clk.now().Add(time.Minute)
-	o.Save(tok, schema, session.SavedOverlay{Ack: session.Ack{Key: "k1", Seq: 9, URN: "urn:1", Body: json.RawMessage(`{"a":1}`), Version: 3}, Until: until})
-	o.Save(tok, schema, session.SavedOverlay{Ack: session.Ack{Key: "k2", Seq: 10, Deleted: true}, Until: until})
-	o.Save(tok, schema, session.SavedOverlay{Ack: session.Ack{Key: "k3", Seq: 11}, Until: r.clk.now()}) // expired: not stored
-	var got []session.SavedOverlay
-	deadline := time.Now().Add(2 * time.Second)
-	for len(got) < 2 && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-		got = o.Load(context.Background(), tok, schema)
-	}
-	if len(got) != 2 {
-		t.Fatalf("%d overlays", len(got))
-	}
-	byKey := map[string]session.SavedOverlay{}
-	for _, g := range got {
-		byKey[g.Key] = g
-	}
-	if k1 := byKey["k1"]; k1.Seq != 9 || k1.URN != "urn:1" || string(k1.Body) != `{"a":1}` || k1.Version != 3 || !k1.Until.Equal(until) {
-		t.Fatalf("k1 %+v", k1)
-	}
-	if !byKey["k2"].Deleted {
-		t.Fatal("k2 lost its delete")
-	}
-	if o.Load(context.Background(), sha256.Sum256([]byte(hubToken2)), schema) != nil ||
-		o.Load(context.Background(), tok, schema+"x") != nil {
-		t.Fatal("🔴 another token's or schema's overlays read back")
-	}
-	o.Drop(context.Background(), tok, schema)
-	if o.Load(context.Background(), tok, schema) != nil {
-		t.Fatal("dropped overlays read back")
-	}
-	// A field that does not read is skipped; the default clock works.
-	r.c.HPut(context.Background(), KindOverlay, overlayID(tok, schema), []byte("k9"), []byte(`{"v":7}`), time.Minute, 4)
-	if o.Load(context.Background(), tok, schema) != nil {
-		t.Fatal("an unreadable overlay read back")
-	}
-	Overlays{C: r.c}.Save(tok, schema, session.SavedOverlay{Ack: session.Ack{Key: "kx", Seq: 1}, Until: time.Now().Add(time.Minute)})
-	// A body that is not JSON is not stored (never: the store's bodies are JSON).
-	Overlays{C: r.c}.Save(tok, schema, session.SavedOverlay{Ack: session.Ack{Key: "ky", Seq: 1, Body: json.RawMessage(`{`)}, Until: time.Now().Add(time.Minute)})
 }

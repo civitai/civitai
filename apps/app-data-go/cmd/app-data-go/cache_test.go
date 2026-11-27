@@ -29,7 +29,7 @@ func TestTheCacheIsWiredInFrontOfTheRouter(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	m := metrics.New(reg, func() (int, int, int, int) { return 0, 0, 0, 0 })
 	// A closed port: the first operation fails, and the start never waited on it.
-	cfg := &config.Config{Writes: true, MaxRecords: 7, Cache: &config.Cache{URL: "redis://127.0.0.1:1",
+	cfg := &config.Config{Cache: &config.Cache{URL: "redis://127.0.0.1:1",
 		Key: []byte(strings.Repeat("k", 32)), Timeout: 50 * time.Millisecond}}
 	start := time.Now()
 	store, err := openCache(cfg, m, reg)
@@ -39,8 +39,8 @@ func TestTheCacheIsWiredInFrontOfTheRouter(t *testing.T) {
 	router := &exchange.Router{User: func(context.Context, string) (exchange.Token, error) {
 		return exchange.Token{Access: "x", Expires: time.Now().Add(time.Hour)}, nil
 	}, Blocks: &exchange.BlockCache{}}
-	h := withCache(store, router, cfg, m)
-	if h.exchange == nil || h.fresh == nil || h.forget == nil || h.snapshots == nil || h.overlays == nil || h.resumed == nil {
+	h := withCache(store, router, m)
+	if h.exchange == nil || h.fresh == nil || h.forget == nil || h.snapshots == nil || h.resumed == nil {
 		t.Fatalf("a hook is missing: %+v", h)
 	}
 	if _, ok := router.Blocks.Shared.(*cache.Blocks); !ok {
@@ -53,9 +53,10 @@ func TestTheCacheIsWiredInFrontOfTheRouter(t *testing.T) {
 	if v := testutil.ToFloat64(m.CacheOps.WithLabelValues("user", "get", "error")); v != 1 {
 		t.Fatalf("the failed get was not counted: %v", v)
 	}
-	// Writes off: no overlays.
-	cfg.Writes = false
-	if withCache(store, &exchange.Router{}, cfg, m).overlays != nil {
-		t.Fatal("overlays without the writes")
+	// Block exchange off: nothing to share.
+	off := &exchange.Router{}
+	withCache(store, off, m)
+	if off.Blocks != nil {
+		t.Fatal("a block cache was made")
 	}
 }

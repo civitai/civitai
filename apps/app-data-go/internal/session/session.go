@@ -107,8 +107,7 @@
 // past its exchanged token's expiry. A stream that ended because its token or its data was refused
 // (exchange_refused, revoked, invalid_token, not_private, too_large, malformed, end, cursor_expired,
 // or a classified exchange failure) drops its snapshot; one whose token was refused (exchange_refused,
-// revoked, invalid_token) also drops its token's cached exchange and overlays (Forget,
-// OverlayStore.Drop).
+// revoked, invalid_token) also drops its token's cached exchange (Forget).
 //
 // RESUME. A stream that opens (never one reopened for a floor) loads its key's snapshot, after its
 // exchange (a refused token loads nothing), and subscribes from the snapshot's cursor, asking the
@@ -119,12 +118,9 @@
 // naming `{"sync":"done"}`, as a fresh stream's reads wait for `Live`. A Live that does not promise
 // one (`{"sync":"pending"}`: an adapter before it) and a refused cursor (`cursor_expired` or
 // `bad_request`, before the sync) drop the snapshot, and the stream starts over from a fresh snapshot
-// in the same session.
-//
-// OVERLAYS AT REST. With the writes on and an OverlayStore, each acknowledged write is also stored
-// for its token and schema until its overlay expires, and a stream that opens lays the stored ones
-// over itself as Ack does, each until its own expiry: a write acknowledged by another process (a
-// restart, a later replica) reads back like one of this process's.
+// in the same session. The overlays (READ-YOUR-WRITES) stay in memory only: a stream that opens after
+// a restart holds every committed write once it is answered, from its fresh snapshot or its resume's
+// sync.
 package session
 
 import (
@@ -274,21 +270,6 @@ type Snapshots interface {
 	Load(ctx context.Context, k SnapshotKey) (Saved, bool)
 	Save(ctx context.Context, k SnapshotKey, s Saved, ttl time.Duration)
 	Drop(ctx context.Context, k SnapshotKey)
-}
-
-// SavedOverlay is one acknowledged write as an OverlayStore keeps it: the Ack, and when its overlay
-// expires.
-type SavedOverlay struct {
-	Ack
-	Until time.Time
-}
-
-// OverlayStore keeps acknowledged writes by token and schema (OVERLAYS AT REST; package cache). Every
-// method fails open. Save must not block: it is called on the write path.
-type OverlayStore interface {
-	Load(ctx context.Context, token [sha256.Size]byte, schema string) []SavedOverlay
-	Save(token [sha256.Size]byte, schema string, o SavedOverlay)
-	Drop(ctx context.Context, token [sha256.Size]byte, schema string)
 }
 
 // The `outcome` of a stream's resume (metrics.ResumeOutcomes): it reached the adapter's sync and
@@ -542,9 +523,6 @@ type Options struct {
 	// Snapshots, when set, saves streams and resumes them (SNAPSHOTS, RESUME); the Subscriber must be
 	// a ResumeSubscriber for a stream to resume. Nil: nothing is saved or resumed.
 	Snapshots Snapshots
-	// OverlayStore, when set, keeps the acknowledged writes (OVERLAYS AT REST); used only with the
-	// writes on.
-	OverlayStore OverlayStore
 	// Resumed observes each resume by outcome (Resume*); nil is none.
 	Resumed func(outcome string)
 }
@@ -885,23 +863,15 @@ func (m *Manager) Ack(token, schema string, a Ack) {
 		open = append(open, s)
 	}
 	m.mu.Unlock()
-	until := m.opts.Now().Add(m.opts.OverlayTTL)
+	maxOverlay := m.opts.MaxOverlayBytes
+	if maxOverlay <= 0 {
+		maxOverlay = m.opts.MaxBytes
+	}
 	for _, s := range open {
-		if kind, ok := s.ack(a, until, m.opts.MaxRecords, m.maxOverlayBytes()); ok && m.opts.Overlaid != nil {
+		if kind, ok := s.ack(a, m.opts.Now().Add(m.opts.OverlayTTL), m.opts.MaxRecords, maxOverlay); ok && m.opts.Overlaid != nil {
 			m.opts.Overlaid(kind)
 		}
 	}
-	if m.opts.OverlayStore != nil {
-		m.opts.OverlayStore.Save(id, schema, SavedOverlay{Ack: a, Until: until})
-	}
-}
-
-// maxOverlayBytes is one stream's overlay byte bound (Options.MaxOverlayBytes; zero is MaxBytes).
-func (m *Manager) maxOverlayBytes() int {
-	if m.opts.MaxOverlayBytes > 0 {
-		return m.opts.MaxOverlayBytes
-	}
-	return m.opts.MaxBytes
 }
 
 // ack reports the overlay's kind, and whether it was applied.
@@ -1111,7 +1081,6 @@ func (m *Manager) follow(ctx context.Context, s *session, token string) (string,
 		s.checked = tok.Checked
 	}
 	s.mu.Unlock()
-	m.loadOverlays(ctx, s)
 	cursor := m.restore(ctx, s)
 	for {
 		reason, err := m.stream(ctx, s, token, tok.Access, cursor)
@@ -1295,23 +1264,6 @@ func (m *Manager) restore(ctx context.Context, s *session) string {
 	}
 	s.records, s.bytes, s.resumed, s.cursor = records, n, true, sv.Cursor
 	return sv.Cursor
-}
-
-// loadOverlays lays the stored overlays of s's token and schema over s (OVERLAYS AT REST), each until
-// its own expiry, by Ack's rules.
-func (m *Manager) loadOverlays(ctx context.Context, s *session) {
-	if m.opts.OverlayStore == nil || !m.writesOn() {
-		return
-	}
-	now := m.opts.Now()
-	for _, o := range m.opts.OverlayStore.Load(ctx, s.k.token, s.k.schema) {
-		if o.Seq <= 0 || o.Key == "" || !now.Before(o.Until) || o.Until.After(now.Add(m.opts.OverlayTTL)) {
-			continue
-		}
-		if kind, ok := s.ack(o.Ack, o.Until, m.opts.MaxRecords, m.maxOverlayBytes()); ok && m.opts.Overlaid != nil {
-			m.opts.Overlaid(kind)
-		}
-	}
 }
 
 // exchangeFresh is the re-check's exchange (Options.ExchangeFresh).
@@ -1623,11 +1575,7 @@ func (m *Manager) persistOnEnd(s *session, reason string, err error) func() {
 	case reason == CloseRefused || reason == CloseRevoked || reason == CloseInvalidToken:
 		k := s.snapKey()
 		return func() {
-			ctx := m.base
-			m.opts.Snapshots.Drop(ctx, k)
-			if m.opts.OverlayStore != nil {
-				m.opts.OverlayStore.Drop(ctx, k.Token, k.Schema)
-			}
+			m.opts.Snapshots.Drop(m.base, k)
 			if m.opts.Forget != nil {
 				m.opts.Forget(k.Token)
 			}

@@ -72,7 +72,7 @@ is its `401`/`503`. A shared or signed-out read's refusal is counted by reason i
 the flag off, where the read falls back to REST).
 
 **The shared cache (off by default, `APP_DATA_CACHE_URL`).** One valkey instance holds the exchanged
-block and hub tokens, the overlays and the private streams' snapshots, sealed and under HMAC'd names,
+block and hub tokens and the private streams' snapshots, sealed and under HMAC'd names,
 so a restart starts warm: a block token is not spent again, and a private stream resumes from its
 cursor, answered only once the adapter's first poll since is in. It fails open: any error or timeout
 is a miss, and a breaker stops asking a valkey that is down. See [CACHE-DESIGN.md](CACHE-DESIGN.md).

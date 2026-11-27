@@ -143,7 +143,7 @@ func run(log *slog.Logger) error {
 		// within the re-check window; a re-check always asks the hub).
 		open := cacheHooks{exchange: router.Exchange}
 		if store != nil {
-			open = withCache(store, router, cfg, m)
+			open = withCache(store, router, m)
 		}
 		// One budget over every stream this process opens, private, level and per-viewer
 		// (config.DefaultCacheBudgetBytes).
@@ -157,7 +157,7 @@ func run(log *slog.Logger) error {
 			Budget: budget, Reserve: cfg.PrivateReserve(),
 			Cooldown: streamCooldown, NotPrivateCooldown: notPrivateCooldown,
 			Exchange: open.exchange, ExchangeFresh: open.fresh, Forget: open.forget,
-			Snapshots: open.snapshots, OverlayStore: open.overlays, Resumed: open.resumed,
+			Snapshots: open.snapshots, Resumed: open.resumed,
 			ExpiryMargin: expiryMargin, Recheck: tokenRecheck,
 			Opened: m.StreamsOpened.Inc,
 			Closed: func(reason string) { m.StreamsClosed.WithLabelValues(reason).Inc() },
@@ -300,20 +300,15 @@ type cacheHooks struct {
 	exchange, fresh func(context.Context, string) (exchange.Token, error)
 	forget          func([32]byte)
 	snapshots       session.Snapshots
-	overlays        session.OverlayStore
 	resumed         func(string)
 }
 
 // withCache puts store in front of router: the hub-token exchange (cache.Tokens), the block
-// exchange's claim (cache.Blocks, with the block exchange on), the snapshots, and the overlays (with
-// the writes on).
-func withCache(store *cache.Cache, router *exchange.Router, cfg *config.Config, m *metrics.Metrics) cacheHooks {
+// exchange's issued tokens (cache.Blocks, with the block exchange on), and the snapshots.
+func withCache(store *cache.Cache, router *exchange.Router, m *metrics.Metrics) cacheHooks {
 	tokens := &cache.Tokens{C: store, Exchange: router.Exchange, Recheck: tokenRecheck, Margin: expiryMargin}
 	h := cacheHooks{exchange: tokens.Open, fresh: tokens.Fresh, forget: tokens.Forget,
 		snapshots: cache.Snapshots{C: store}, resumed: m.ObserveResume}
-	if cfg.Writes {
-		h.overlays = cache.Overlays{C: store, Max: cfg.MaxRecords}
-	}
 	if router.Blocks != nil {
 		router.Blocks.Shared = &cache.Blocks{C: store}
 	}

@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -88,7 +87,7 @@ func TestNewRefusesAShortKey(t *testing.T) {
 		t.Fatal("a 5-byte key was accepted")
 	}
 	c, err := New(newMemStore(), bytes.Repeat([]byte("k"), MinSecretBytes), Options{})
-	if err != nil || c.opts.Now == nil || cap(c.async) != 64 {
+	if err != nil || c.opts.Now == nil {
 		t.Fatalf("defaults: %v %v", c, err)
 	}
 }
@@ -98,17 +97,8 @@ func TestANilCacheDoesNothingAndAlwaysMisses(t *testing.T) {
 	ctx := context.Background()
 	c.Put(ctx, KindUser, []byte("id"), []byte("v"), time.Minute)
 	c.Delete(ctx, KindUser, []byte("id"))
-	c.HPut(ctx, KindOverlay, []byte("id"), []byte("f"), []byte("v"), time.Minute, 4)
-	c.Finish(ctx, KindBlock, Claim{}, []byte("v"), time.Minute)
-	c.Replace(ctx, KindBlock, Claim{}, []byte("v"), time.Minute)
-	c.Release(ctx, KindBlock, Claim{})
-	ran := false
-	c.Go(func() { ran = true })
-	if _, ok := c.Get(ctx, KindUser, []byte("id")); ok || ran || c.HAll(ctx, KindOverlay, []byte("id")) != nil || c.BreakerOpen() {
+	if _, ok := c.Get(ctx, KindUser, []byte("id")); ok || c.BreakerOpen() {
 		t.Fatal("a nil cache answered something")
-	}
-	if _, st := c.Claim(ctx, KindBlock, []byte("id"), time.Minute); st != ClaimUnavailable {
-		t.Fatalf("claim on a nil cache: %v", st)
 	}
 }
 
@@ -144,7 +134,7 @@ func TestNothingInValkeyNamesTheIdOrHoldsTheValueInClear(t *testing.T) {
 	token := "civitai_TOKEN-CANARY-7f3a" //nolint:gosec // G101: a synthetic test fixture
 	id := sha256.Sum256([]byte(token))
 	r.c.Put(ctx, KindUser, id[:], []byte("ACCESS-CANARY-91c2"), time.Minute)
-	r.c.HPut(ctx, KindOverlay, id[:], []byte("STORAGE-KEY-CANARY"), []byte("BODY-CANARY"), time.Minute, 4)
+	r.c.Put(ctx, KindSnapshot, append(id[:], "\x00STORAGE-KEY-CANARY"...), []byte("BODY-CANARY"), time.Minute)
 	keys := r.store.keys()
 	if len(keys) != 2 {
 		t.Fatalf("keys %v", keys)
@@ -162,15 +152,8 @@ func TestNothingInValkeyNamesTheIdOrHoldsTheValueInClear(t *testing.T) {
 	r.store.mu.Lock()
 	defer r.store.mu.Unlock()
 	for _, v := range r.store.vals {
-		if bytes.Contains(v, []byte("ACCESS-CANARY")) {
+		if bytes.Contains(v, []byte("ACCESS-CANARY")) || bytes.Contains(v, []byte("BODY-CANARY")) {
 			t.Fatal("🔴 a value is stored in clear")
-		}
-	}
-	for _, h := range r.store.hashes {
-		for f, v := range h {
-			if strings.Contains(f, "STORAGE-KEY-CANARY") || bytes.Contains(v, []byte("BODY-CANARY")) {
-				t.Fatal("🔴 an overlay field or value is stored in clear")
-			}
 		}
 	}
 }
@@ -239,14 +222,8 @@ func TestARefusedConnectionIsAMissAndANoOp(t *testing.T) {
 		t.Fatal("a failed get answered")
 	}
 	r.c.Delete(ctx, KindUser, []byte("id"))
-	if _, st := r.c.Claim(ctx, KindBlock, []byte("id"), time.Minute); st != ClaimUnavailable {
-		t.Fatalf("claim: %v", st)
-	}
-	if got := r.obs.list(); got != "user/set/error,user/get/error,user/del/error,block/claim/error" {
+	if got := r.obs.list(); got != "user/set/error,user/get/error,user/del/error" {
 		t.Fatalf("observed %s", got)
-	}
-	if r.c.HAll(ctx, KindOverlay, []byte("id")) != nil {
-		t.Fatal("a failed HAll answered")
 	}
 }
 
@@ -359,129 +336,5 @@ func TestACancelledCallerDoesNotTripTheBreaker(t *testing.T) {
 	}
 	if _, ok := r.c.Get(context.Background(), KindUser, []byte("id")); !ok {
 		t.Fatal("the write under a cancelled caller was not made")
-	}
-}
-
-func TestAClaimIsWonOnceAndEndedOnlyByItsHolder(t *testing.T) {
-	r := newRig(t, secretA)
-	ctx := context.Background()
-	other := r.sharing(t, secretA)
-	a, st := r.c.Claim(ctx, KindBlock, []byte("tok"), time.Minute)
-	if st != ClaimWon {
-		t.Fatalf("first claim: %v", st)
-	}
-	if _, st := other.Claim(ctx, KindBlock, []byte("tok"), time.Minute); st != ClaimHeld {
-		t.Fatalf("second claim: %v", st)
-	}
-	v, ok := other.Get(ctx, KindBlock, []byte("tok"))
-	if !ok || !IsClaim(v) {
-		t.Fatal("a held claim does not read as a claim")
-	}
-	// Another's claim is neither finished nor released by a claim that is not it.
-	b := Claim{name: a.name, sealed: []byte("not a's claim")}
-	other.Finish(ctx, KindBlock, b, []byte("result"), time.Minute)
-	other.Release(ctx, KindBlock, b)
-	if v, _ := r.c.Get(ctx, KindBlock, []byte("tok")); !IsClaim(v) {
-		t.Fatal("🔴 another's claim was replaced")
-	}
-	r.c.Finish(ctx, KindBlock, a, []byte("result"), time.Minute)
-	if v, _ := other.Get(ctx, KindBlock, []byte("tok")); string(v) != "result" || IsClaim(v) {
-		t.Fatalf("finished: %q", v)
-	}
-	// Released: the key holds nothing, and can be claimed again.
-	c, _ := r.c.Claim(ctx, KindBlock, []byte("tok2"), time.Minute)
-	r.c.Release(ctx, KindBlock, c)
-	if _, st := other.Claim(ctx, KindBlock, []byte("tok2"), time.Minute); st != ClaimWon {
-		t.Fatal("a released claim was not free")
-	}
-	// Replace writes whether or not the claim is still there.
-	r.c.Replace(ctx, KindBlock, c, []byte("replaced"), time.Minute)
-	if v, _ := r.c.Get(ctx, KindBlock, []byte("tok2")); string(v) != "replaced" {
-		t.Fatalf("replace: %q", v)
-	}
-}
-
-func TestAClaimWhileTheBreakerIsOpenIsUnavailable(t *testing.T) {
-	r := newRig(t, secretA)
-	r.store.set(func(m *memStore) { m.fail = true })
-	for range BreakerFailures {
-		r.c.Get(context.Background(), KindUser, []byte("x"))
-	}
-	if _, st := r.c.Claim(context.Background(), KindBlock, []byte("tok"), time.Minute); st != ClaimUnavailable {
-		t.Fatalf("claim with the breaker open: %v", st)
-	}
-}
-
-func TestHashFieldsReadBackAndAreBounded(t *testing.T) {
-	r := newRig(t, secretA)
-	ctx := context.Background()
-	if r.c.HAll(ctx, KindOverlay, []byte("id")) != nil {
-		t.Fatal("an empty hash answered")
-	}
-	for i := range 4 {
-		r.c.HPut(ctx, KindOverlay, []byte("id"), fmt.Appendf(nil, "f%d", i), fmt.Appendf(nil, "v%d", i), time.Minute, 3)
-	}
-	got := r.c.HAll(ctx, KindOverlay, []byte("id"))
-	if len(got) != 3 {
-		t.Fatalf("%d fields, want the cap of 3", len(got))
-	}
-	// Another id's hash, and a field moved from it, read as nothing.
-	if r.c.HAll(ctx, KindOverlay, []byte("id-2")) != nil {
-		t.Fatal("another id's hash answered")
-	}
-	name := r.c.Name(KindOverlay, []byte("id"))
-	r.store.set(func(m *memStore) {
-		for f, v := range m.hashes[name] {
-			m.hashes[name]["moved-"+f] = v
-		}
-		m.hashes[name]["garbage"] = []byte("x")
-	})
-	r.obs.reset()
-	if got := r.c.HAll(ctx, KindOverlay, []byte("id")); len(got) != 3 {
-		t.Fatalf("%d fields opened, want the 3 in place", len(got))
-	}
-	if r.obs.list() != "overlay/get/invalid,overlay/get/hit" {
-		t.Fatalf("observed %s", r.obs.list())
-	}
-	r.store.set(func(m *memStore) {
-		m.hashes[name] = map[string][]byte{"garbage": []byte("x")}
-	})
-	if r.c.HAll(ctx, KindOverlay, []byte("id")) != nil {
-		t.Fatal("a hash of garbage answered")
-	}
-	r.c.HPut(ctx, KindOverlay, []byte("id"), []byte("f"), []byte("v"), 0, 3)
-}
-
-func TestGoIsBoundedAndDropsPastItsCap(t *testing.T) {
-	st := newMemStore()
-	c, _ := New(st, secretA, Options{Timeout: time.Second, MaxAsync: 2})
-	release := make(chan struct{})
-	var started sync.WaitGroup
-	started.Add(2)
-	for range 2 {
-		c.Go(func() { started.Done(); <-release })
-	}
-	started.Wait()
-	ran := make(chan struct{}, 1)
-	c.Go(func() { ran <- struct{}{} })
-	close(release)
-	select {
-	case <-ran:
-		t.Fatal("a third write ran past the cap of 2")
-	case <-time.After(20 * time.Millisecond):
-	}
-	done := make(chan struct{})
-	var once sync.Once
-	deadline := time.Now().Add(time.Second)
-	for {
-		c.Go(func() { once.Do(func() { close(done) }) })
-		select {
-		case <-done:
-			return
-		case <-time.After(5 * time.Millisecond):
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("a slot never came back")
-		}
 	}
 }
