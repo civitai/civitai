@@ -135,6 +135,16 @@ beforeAll(async () => {
   (dbMock.dbWrite.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockImplementation(answer);
 });
 
+// What the owner CSAM check (`ownerCsamMarkedSql`) reads, beyond this file's tables.
+const CSAM_CHECK_TABLES = `
+  ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS "pHash" bigint;
+  CREATE TABLE IF NOT EXISTS "BlockedImage" (hash bigint, reason text);
+  CREATE TABLE IF NOT EXISTS "ScanLabelItem" (id int PRIMARY KEY, "imageId" int, "voidReason" text);
+  CREATE TABLE IF NOT EXISTS "ScanLabelFlag" ("itemId" int, snapshot jsonb);
+  CREATE TABLE IF NOT EXISTS "ScanLabelVote" ("itemId" int, reason text);
+  CREATE TABLE IF NOT EXISTS "ImageCdnModeratorDelete" ("imageId" int, url text, "userId" int, "csamReview" boolean);
+`;
+
 let blocks: Array<[number, number]> = [];
 
 beforeEach(async () => {
@@ -301,14 +311,8 @@ describe('a review copy whose source Final is held', () => {
 
   // The owner retracted-media route holds a moderated copy to the same rule as the image page.
   it('is refused to its buyer by the owner route once the source is held, as by the page', async () => {
-    // What the owner route's CSAM check reads, beyond this file's tables.
     await db.exec(`
-      ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS "pHash" bigint;
-      CREATE TABLE IF NOT EXISTS "BlockedImage" (hash bigint, reason text);
-      CREATE TABLE IF NOT EXISTS "ScanLabelItem" (id int PRIMARY KEY, "imageId" int, "voidReason" text);
-      CREATE TABLE IF NOT EXISTS "ScanLabelFlag" ("itemId" int, snapshot jsonb);
-      CREATE TABLE IF NOT EXISTS "ScanLabelVote" ("itemId" int, reason text);
-      CREATE TABLE IF NOT EXISTS "ImageCdnModeratorDelete" ("imageId" int, url text, "userId" int, "csamReview" boolean);
+      ${CSAM_CHECK_TABLES}
       UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'moderated', url = 'copy-key' WHERE id = ${IMAGE};
     `);
     const own = () =>
@@ -536,6 +540,24 @@ describe('the image page behind a block', () => {
     expect(await publishedAt(IMAGE)).toBe('2026-01-04T00:00:00.000Z');
     // No firstVisibleAt: GREATEST(publishedAt, scannedAt, createdAt).
     expect(await publishedAt(UNRELATED)).toBe('2026-01-02T00:00:00.000Z');
+  });
+
+  it("reads the owner CSAM check for the image's owner, only with the owner-media read on", async () => {
+    await db.exec(`
+      ${CSAM_CHECK_TABLES}
+      UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'moderated' WHERE id = ${UNRELATED};
+    `);
+    const { getImage } = await import('~/server/services/image.service');
+    const marked = (viewer: Viewer, ownerReviewedBlocks?: boolean) =>
+      getImage({
+        id: UNRELATED,
+        ...viewer,
+        ownerReviewedBlocks,
+        shownReviewImageLevels: allBrowsingLevelsFlag,
+      }).then((image) => (image as { ownerCsamMarked?: boolean | null }).ownerCsamMarked);
+    expect(await marked({ userId: BUYER }, true)).toBe(false);
+    expect(await marked({ userId: BUYER })).toBeUndefined();
+    expect(await marked(MOD, true)).toBeNull();
   });
 
   it('still serves its buyer and a moderator through a block', async () => {

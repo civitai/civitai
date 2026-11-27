@@ -25,6 +25,14 @@ regexes = [
   '''(?i)0123456789|abcdefgh|bcdefghi|cdefghij|defghijk|efghijkl|fghijklm|ghijklmn|hijklmno|ijklmnop|jklmnopq|klmnopqr|lmnopqrs|mnopqrst|nopqrstu|opqrstuv|pqrstuvw|qrstuvwx|rstuvwxy|stuvwxyz''',
 ]
 
+[[allowlists]]
+description = "Hand-typed fixture values already in branch history"
+regexTarget = "secret"
+regexes = [
+  # A made-up storage key in src/server/utils/__tests__/own-retracted-media.test.ts.
+  '''^0b9f5a4e-1d2c-4e3f-8a7b-6c5d4e3f2a1b$''',
+]
+
 # Credentials passed as a URL query parameter, e.g. example request URLs in
 # comments, docs, scripts or JSON samples. The default rules do not cover a
 # bare `token=` query value.

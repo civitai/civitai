@@ -98,6 +98,7 @@ import {
   unblockedMetadataSql,
   scanKeepsRowSql,
   blockedMediaListConditions,
+  ownerCsamMarkedColumnSql,
 } from '~/server/common/image-visibility';
 import {
   BLOCKED_IMAGE_DELETE_QUEUE,
@@ -113,7 +114,6 @@ import {
   assertImageVisibleToViewer,
   entityImageVisibilityConditions,
   imageBlockedForConditions,
-  ownerCsamMarkedColumnSql,
   reportListedImageSql,
   reviewedGalleryImageConditions,
   imageVisibilityConditions,
