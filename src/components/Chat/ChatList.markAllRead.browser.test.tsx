@@ -71,7 +71,6 @@ const link: TRPCLink<AppRouter> =
           case 'chat.markAllAsRead': {
             io.marks++;
             const changed = io.changed;
-            // The server has now read everything.
             io.unread = [];
             return changed;
           }
@@ -158,7 +157,6 @@ describe.each(variants)('$name mark all read', ({ List, label, role, menu }) => 
     await expect.poll(() => io.marks).toBe(1);
     await openMenu();
     await expect.element(page.getByRole(role, { name: label, exact: true })).toBeVisible();
-    // One click, one mutation.
     expect(io.marks).toBe(1);
   }
 
