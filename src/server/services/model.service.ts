@@ -615,8 +615,8 @@ export const getModelsRaw = async ({
    */
   coverage?: CoverageAudience;
   /**
-   * Keep taken-down models listed (the v1 API's documented behaviour). A sibling of `input` so
-   * it can never arrive from parsed query params.
+   * Keep taken-down models listed; only the v1 by-id route sets it. A sibling of `input` so it can
+   * never arrive from parsed query params.
    */
   includeWithheld?: boolean;
 }) => {
@@ -7013,6 +7013,7 @@ export async function getModelsWithVersions({
   ownerUserId,
   publicVersionsOnly,
   curate,
+  includeWithheld,
 }: {
   input: GetAllModelsOutput & { take?: number; skip?: number };
   user?: {
@@ -7029,6 +7030,8 @@ export async function getModelsWithVersions({
   publicVersionsOnly?: boolean;
   /** Puts each version's curated showcase in place of its default images. */
   curate?: typeof withCuratedShowcases;
+  /** See `getModelsRaw`. */
+  includeWithheld?: boolean;
 }) {
   const { items, nextCursor } = await getModelsRaw({
     input,
@@ -7037,7 +7040,7 @@ export async function getModelsWithVersions({
     ignoreBrowsingAddons,
     ownerUserId,
     publicVersionsOnly,
-    includeWithheld: true,
+    includeWithheld,
   });
 
   const modelVersionIds = items.flatMap(({ modelVersions }) => modelVersions.map(({ id }) => id));

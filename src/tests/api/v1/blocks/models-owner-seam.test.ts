@@ -198,9 +198,10 @@ const MODEL_DATA: Record<number, unknown> = {
   },
 };
 
-// The owner clause on either alias, excluding the `... OR <alias>."userId" = $n` owner-exemption
-// arms. `\b` stops the second `m` of `mm` matching on its own, past the lookbehind.
-const OWNER_CLAUSE = /(?<!OR )\bm{1,2}\."userId" = \$(\d+)/g;
+// The owner clause on either alias, excluding the owner-exemption arms: `... OR <alias>."userId" = $n`
+// and the taken-down rule's `($n::boolean AND mm."userId" = $n)`. `\b` stops the second `m` of
+// `mm` matching on its own, past the lookbehind.
+const OWNER_CLAUSE = /(?<!OR |::boolean AND )\bm{1,2}\."userId" = \$(\d+)/g;
 
 /** Values bound into every owner clause of the captured model query. */
 function boundOwnerIds(): unknown[] {

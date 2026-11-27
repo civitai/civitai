@@ -223,9 +223,13 @@
   "expect": {
     "body": "{\"items\":[],\"metadata\":{}}",
     "sql": {
-      "text": "SELECT mm.\"modelId\" as \"id\", m.\"name\", m.\"sfwName\", m.\"coverImageId\", m.\"sfwCoverImageId\", m.\"description\", m.\"sfwDescription\", m.\"allowNoCredit\", m.\"allowCommercialUse\", m.\"allowDerivatives\", m.\"allowDifferentLicense\", m.\"type\", mm.\"minor\", m.\"sfwOnly\", mm.\"poi\", m.\"nsfw\", mm.\"nsfwLevel\", mm.\"status\", m.\"createdAt\", mm.\"lastVersionAt\", m.\"publishedAt\", m.\"locked\", m.\"meta\", mm.\"mode\", mm.\"availability\", jsonb_build_object( 'downloadCount', mm.\"downloadCount\", 'thumbsUpCount', mm.\"thumbsUpCount\", 'thumbsDownCount', mm.\"thumbsDownCount\", 'commentCount', mm.\"commentCount\", 'collectedCount', mm.\"collectedCount\", 'tippedAmountCount', mm.\"tippedAmountCount\" ) as \"rank\", mm.\"userId\", CONCAT(mm.\"thumbsUpCount\", '|', mm.\"downloadCount\", '|', mm.\"modelId\") as \"cursorId\" FROM \"ModelMetric\" mm JOIN \"Model\" m ON m.\"id\" = mm.\"modelId\" WHERE (mm.\"mode\" IS NULL OR mm.\"mode\" != $1::\"ModelModifier\") AND (mm.\"poi\" = false OR mm.\"userId\" = $2) AND mm.\"status\" = $3::\"ModelStatus\" AND mm.\"availability\" != 'Private'::\"Availability\" AND (mm.\"nsfwLevel\" & $4) != 0 ORDER BY mm.\"thumbsUpCount\" DESC, mm.\"downloadCount\" DESC, mm.\"modelId\" LIMIT $5",
+      "text": "SELECT mm.\"modelId\" as \"id\", m.\"name\", m.\"sfwName\", m.\"coverImageId\", m.\"sfwCoverImageId\", m.\"description\", m.\"sfwDescription\", m.\"allowNoCredit\", m.\"allowCommercialUse\", m.\"allowDerivatives\", m.\"allowDifferentLicense\", m.\"type\", mm.\"minor\", m.\"sfwOnly\", mm.\"poi\", m.\"nsfw\", mm.\"nsfwLevel\", mm.\"status\", m.\"createdAt\", mm.\"lastVersionAt\", m.\"publishedAt\", m.\"locked\", m.\"meta\", mm.\"mode\", mm.\"availability\", jsonb_build_object( 'downloadCount', mm.\"downloadCount\", 'thumbsUpCount', mm.\"thumbsUpCount\", 'thumbsDownCount', mm.\"thumbsDownCount\", 'commentCount', mm.\"commentCount\", 'collectedCount', mm.\"collectedCount\", 'tippedAmountCount', mm.\"tippedAmountCount\" ) as \"rank\", mm.\"userId\", CONCAT(mm.\"thumbsUpCount\", '|', mm.\"downloadCount\", '|', mm.\"modelId\") as \"cursorId\" FROM \"ModelMetric\" mm JOIN \"Model\" m ON m.\"id\" = mm.\"modelId\" WHERE (mm.\"mode\" IS NULL OR mm.\"mode\" != $1::\"ModelModifier\") AND ( mm.\"mode\" IS DISTINCT FROM $2::\"ModelModifier\" OR ($3::boolean AND mm.\"userId\" = $4) OR $5::boolean ) AND (mm.\"poi\" = false OR mm.\"userId\" = $6) AND mm.\"status\" = $7::\"ModelStatus\" AND mm.\"availability\" != 'Private'::\"Availability\" AND (mm.\"nsfwLevel\" & $8) != 0 ORDER BY mm.\"thumbsUpCount\" DESC, mm.\"downloadCount\" DESC, mm.\"modelId\" LIMIT $9",
       "values": [
         "Archived",
+        "TakenDown",
+        false,
+        null,
+        false,
         null,
         "Published",
         1,

@@ -85,6 +85,8 @@ async function buildPublicModelResponse(
     // they 404 minor-flagged and child-tagged models that /models/{id} serves at
     // the same id. POI still applies, matching the model page.
     ignoreBrowsingAddons: true,
+    // The direct route keeps serving a taken-down model, with its images dropped; list routes don't.
+    includeWithheld: true,
   });
   if (items.length === 0) return null;
 

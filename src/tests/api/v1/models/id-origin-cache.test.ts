@@ -435,4 +435,9 @@ describe('GET /api/v1/models/[id] — origin-side response cache', () => {
       ignoreBrowsingAddons: true,
     });
   });
+
+  it('(m) passes includeWithheld, so getModelsWithVersions keeps a taken-down model', async () => {
+    await invoke({ id: '123' });
+    expect(mockGetModelsWithVersions.mock.calls[0][0]).toMatchObject({ includeWithheld: true });
+  });
 });
