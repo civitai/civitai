@@ -186,7 +186,8 @@ function buildCsamRestrictedSql(image: string): string {
  * an owner keeps seeing their own report-listed media. Nor does an owner-level hold.
  */
 export function ownerCsamMarkedSql(image: string): string {
-  if (!/^[a-z_][a-z0-9_]*$/i.test(image) || OWNER_CSAM_MARKED_ALIASES.has(image.toLowerCase()))
+  // Lower case only: it is spliced unquoted, so a mixed-case alias would name another relation.
+  if (!/^[a-z_][a-z0-9_]*$/.test(image) || OWNER_CSAM_MARKED_ALIASES.has(image))
     throw new Error(`Bad table alias: ${image}`);
   return buildOwnerCsamMarkedSql(image);
 }
@@ -244,7 +245,8 @@ function reportedCopySql(image: string): string {
 const OWNER_CSAM_MARKED_ALIASES = new Set(
   [...buildOwnerCsamMarkedSql('i').matchAll(/(?:FROM|JOIN) "\w+" (\w+)/g)]
     .map((m) => m[1].toLowerCase())
-    .concat(['om_reason'])
+    // Derived-table and function aliases the pattern above does not see.
+    .concat(['om_reason', 'orl_e', 'le', 'listed', 'rl_ids'])
 );
 
 /**

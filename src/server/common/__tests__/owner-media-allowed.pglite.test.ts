@@ -362,7 +362,8 @@ describe('ownerMediaSql', () => {
 
 describe('ownerCsamMarkedSql', () => {
   it('refuses an alias its own subqueries use', () => {
-    expect(() => ownerCsamMarkedSql('os')).toThrow();
+    for (const alias of ['os', 'orl_e', 'le', 'listed', 'rl_ids', 'om_reason', 'Image'])
+      expect(() => ownerCsamMarkedSql(alias)).toThrow();
     expect(() => ownerCsamMarkedSql('i; DROP')).toThrow();
   });
 });
