@@ -819,11 +819,10 @@ var (
 	// least the captured level is kept only for the bound owner (none bound: for nobody).
 	goldenReMinorMature = regexp.MustCompile(`\(NOT \(\(COALESCE\(i\."minor", FALSE\)\) AND \(i\."nsfwLevel" IS NULL OR i\."nsfwLevel" = 0 OR i\."nsfwLevel" >= (\d+)\)\)(?: OR i\."userId" = \$(\d+))?\)`)
 	// The block clauses (blockedMediaListConditions, image-visibility.ts): the owner's exemption from
-	// a blockedFor reason where ownerMediaAllowed allows it, the owner's own images held to
-	// ownerMediaAllowed (ownerMediaSql), and a bare owner exemption (any reason, no ownerMediaAllowed).
-	goldenReBlockedOwner     = regexp.MustCompile(`\(i\."blockedFor" IS NULL OR \(i\."userId" = \$(\d+) AND ` + regexp.QuoteMeta(goldenOwnerMediaAllowed) + `\)\)`)
-	goldenReOwnerMedia       = regexp.MustCompile(`\("i"\."userId" <> \$(\d+) OR ` + regexp.QuoteMeta(goldenOwnerMediaAllowed) + `\)`)
-	goldenReBlockedOwnerBare = regexp.MustCompile(`\(i\."blockedFor" IS NULL OR i\."userId" = \$(\d+)\)`)
+	// a blockedFor reason where ownerMediaAllowed allows it, and the owner's own images held to
+	// ownerMediaAllowed (ownerMediaSql).
+	goldenReBlockedOwner = regexp.MustCompile(`\(i\."blockedFor" IS NULL OR \(i\."userId" = \$(\d+) AND ` + regexp.QuoteMeta(goldenOwnerMediaAllowed) + `\)\)`)
+	goldenReOwnerMedia   = regexp.MustCompile(`\("i"\."userId" <> \$(\d+) OR ` + regexp.QuoteMeta(goldenOwnerMediaAllowed) + `\)`)
 )
 
 // goldenOwnerMediaAllowed is ownerMediaAllowedSql('i') as the image query spells it, with
@@ -833,9 +832,9 @@ const goldenOwnerMediaAllowed = `(CASE WHEN "i"."blockedFor" IS NOT NULL THEN "i
 
 // goldenBlockedFor reads the image query's block clauses from sql and returns whether an image passes
 // all of them, each evaluated as Postgres would over the row: `(i."blockedFor" IS NULL)`, the owner's
-// exemption where ownerMediaAllowed allows it, the owner's own images held to ownerMediaAllowed, and
-// the bare owner exemption. Any other mention of "blockedFor" outside the SELECT list is an error, so
-// a block clause the harness does not evaluate never reads as passing.
+// exemption where ownerMediaAllowed allows it, and the owner's own images held to ownerMediaAllowed.
+// Any other mention of "blockedFor" outside the SELECT list (a bare owner exemption from any reason
+// included) is an error, so a block clause the harness does not evaluate never reads as passing.
 func goldenBlockedFor(args []any, sql string) (func(goldenImage) bool, error) {
 	ownerAllowed := func(img goldenImage) bool {
 		if img.BlockedFor != nil {
@@ -863,11 +862,6 @@ func goldenBlockedFor(args []any, sql string) (func(goldenImage) bool, error) {
 	}
 	if err := take(goldenReOwnerMedia, func(v int) func(goldenImage) bool {
 		return func(img goldenImage) bool { return img.UserID != v || ownerAllowed(img) }
-	}); err != nil {
-		return nil, err
-	}
-	if err := take(goldenReBlockedOwnerBare, func(v int) func(goldenImage) bool {
-		return func(img goldenImage) bool { return img.BlockedFor == nil || img.UserID == v }
 	}); err != nil {
 		return nil, err
 	}
