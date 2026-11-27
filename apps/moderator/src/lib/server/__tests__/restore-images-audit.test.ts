@@ -67,6 +67,21 @@ describe('restoredIdsOf', () => {
 });
 
 describe('setImageFlag', () => {
+  it('records only the images the main app wrote', async () => {
+    answer({ message: 'ok', updated: [1, 3], skipped: [2] });
+
+    expect(
+      await setImageFlag({
+        imageIds: [1, 2, 3],
+        flag: 'poi',
+        value: false,
+        moderatorId: 9,
+        csamReview: false,
+      })
+    ).toEqual({ ok: true });
+    expect(logged()).toEqual([1, 3]);
+  });
+
   it('records the chunks applied before a later chunk is refused', async () => {
     const ids = Array.from({ length: 150 }, (_, i) => i + 1);
     vi.stubGlobal(

@@ -1745,10 +1745,15 @@ export async function removeAllImagesForUser(input: {
 /** The ids of `chunk` that `/api/mod/restore-images` restored. It skips one only the CSAM review may
  *  restore and keeps one blocked while its owner is deleted; neither is a restore to log. A response
  *  from before `restored` existed falls back to its `skipped` list. */
-export function restoredIdsOf(chunk: number[], body: Record<string, unknown>) {
-  if (Array.isArray(body.restored)) {
-    const restored = new Set(body.restored);
-    return chunk.filter((id) => restored.has(id));
+export const restoredIdsOf = (chunk: number[], body: Record<string, unknown>) =>
+  writtenIdsOf(chunk, body, 'restored');
+
+/** The ids of `chunk` a main-app route wrote: its `key` list, else all but its `skipped`. */
+function writtenIdsOf(chunk: number[], body: Record<string, unknown>, key: string) {
+  const listed = body[key];
+  if (Array.isArray(listed)) {
+    const written = new Set(listed);
+    return chunk.filter((id) => written.has(id));
   }
   const skipped = new Set(Array.isArray(body.skipped) ? body.skipped : []);
   return chunk.filter((id) => !skipped.has(id));
@@ -1810,24 +1815,31 @@ export async function setImageFlag(input: {
   let applied = 0;
   for (let i = 0; i < input.imageIds.length; i += CHUNK) {
     const chunk = input.imageIds.slice(i, i + CHUNK);
-    const result = await callMainApp(
-      '/api/mod/update-image-flag',
-      {
+    const result = await postJson({
+      path: '/api/mod/update-image-flag',
+      body: {},
+      query: {
         flag: input.flag,
         value: String(input.value),
         csamReview: String(input.csamReview),
         ids: chunk.join(','),
       },
-      'Image flag update'
-    );
+      label: 'Image flag update',
+      auth: 'webhook',
+      timeoutMs: 15_000,
+    });
     if (!result.ok)
       return applied > 0
-        ? { ok: false, error: `${result.error} ${applied} images were already updated — reload.` }
-        : result;
+        ? {
+            ok: false,
+            error: `${result.error} ${applied} images were already updated — reload.`,
+          }
+        : { ok: false, error: result.error };
     // Recorded per chunk, as `inChunks` does: a later chunk's refusal must not leave the images
-    // already updated with no record of who updated them.
+    // already updated with no record of who updated them. Only the rows the main app wrote.
+    const written = writtenIdsOf(chunk, result.body, 'updated');
     await Promise.all(
-      chunk.map((id) =>
+      written.map((id) =>
         recordModActivity({
           userId: input.moderatorId,
           entityType: 'image',
@@ -1836,7 +1848,7 @@ export async function setImageFlag(input: {
         })
       )
     );
-    applied += chunk.length;
+    applied += written.length;
   }
   return { ok: true };
 }

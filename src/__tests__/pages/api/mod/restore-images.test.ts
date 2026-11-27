@@ -232,6 +232,14 @@ describe('/api/mod/update-image-flag', () => {
     });
   });
 
+  it('names the images its write skipped', async () => {
+    h.updateFlag.mockResolvedValueOnce([PLAIN]);
+    expect(await setFlag({ ids: `${PLAIN},${WITHHELD}`, value: 'false', csamReview: 'true' })).toBe(
+      200
+    );
+    expect(lastBody).toMatchObject({ updated: [PLAIN], skipped: [WITHHELD] });
+  });
+
   it('clears it on an image nothing withholds, without the grant', async () => {
     expect(await setFlag({ ids: `${PLAIN}`, value: 'false', csamReview: 'false' })).toBe(200);
     expect(h.updateFlag).toHaveBeenCalledWith({

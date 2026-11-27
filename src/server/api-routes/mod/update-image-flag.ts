@@ -27,8 +27,11 @@ export default WebhookEndpoint(async function updateImageFlag(
     const withheldFor = value ? undefined : { csamReview };
     if (withheldFor) await assertMayLoosenImages(ids, withheldFor);
     const written = await updateImagesFlag({ ids, flag, value, withheldFor });
+    const updated = new Set(written);
     res.status(200).json({
       message: `Updated ${written.length} images with flag ${flag} to ${value}`,
+      updated: written,
+      skipped: ids.filter((id) => !updated.has(id)),
     });
   } catch (e) {
     if (e instanceof TRPCError && e.code === 'FORBIDDEN') return handleEndpointError(res, e);
