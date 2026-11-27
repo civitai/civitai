@@ -715,6 +715,20 @@ describe('POST /api/v1/blocks/submit-version (token auth)', () => {
     expect(callArg.sourceDirty).toBe(true);
   });
 
+  it('passes sdkFloorOverride through to the service verbatim', async () => {
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    const sdkFloorOverride = [{ package: '@civitai/sdk', installed: '0.29.4', minimum: '0.40.1' }];
+    const { req, res } = createMocks({
+      headers: { authorization: 'Bearer good-key' },
+      body: { ...goodBody, sdkFloorOverride },
+    });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    expect(mockSubmitVersion.mock.calls[0][0].sdkFloorOverride).toEqual([
+      { package: '@civitai/sdk', installed: '0.29.4', minimum: '0.40.1' },
+    ]);
+  });
+
   it('passes sourceDirty:false through as FALSE, not as absent', async () => {
     mockGetSession.mockResolvedValueOnce(MOD_SESSION);
     const { req, res } = createMocks({

@@ -463,6 +463,16 @@ describe('POST /api/blocks/submit-version', () => {
     expect(arg.sourceDirty).toBe(true);
   });
 
+  it('passes sdkFloorOverride through to the service verbatim', async () => {
+    const sdkFloorOverride = [{ package: '@civitai/sdk', installed: '0.29.4', minimum: '0.40.1' }];
+    const res = makeRes();
+    await invoke(makeReq({ body: { bundleBase64, sdkFloorOverride } }), res);
+    expect(res._status).toBe(200);
+    expect(mockSubmitVersion.mock.calls[0][0].sdkFloorOverride).toEqual([
+      { package: '@civitai/sdk', installed: '0.29.4', minimum: '0.40.1' },
+    ]);
+  });
+
   it('passes sourceDirty:false through as FALSE, not as absent', async () => {
     const res = makeRes();
     await invoke(makeReq({ body: { bundleBase64, sourceCommit: SHA, sourceDirty: false } }), res);

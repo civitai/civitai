@@ -20,6 +20,7 @@ Operational runbooks, security reviews, incident handoffs and content-policy rec
 | Minor detection review mode | [docs/features/minor-detection-review.md](minor-detection-review.md) |
 | Label store (every moderation judgement, for training) | [docs/features/label-store.md](label-store.md) |
 | Knights in-game inquisitor queue (moderators confirm skill checks) | [docs/features/knights-inquisitor.md](knights-inquisitor.md) |
+| Knights "What's new" (launch dialog and per-feature entries) | [docs/features/knights-whats-new.md](knights-whats-new.md) |
 | Edit LoRA training (Training Studio before/after pairs) | [docs/features/edit-lora-training.md](edit-lora-training.md) |
 | Rating Disputes | [docs/features/rating-dispute.md](rating-dispute.md) |
 | Buzz Accounts | [docs/features/buzz-accounts.md](buzz-accounts.md) |
