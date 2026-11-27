@@ -734,6 +734,37 @@ func TestResolveRevocationOutageKeepsASeenRevocationSignedOut(t *testing.T) {
 	}
 }
 
+// Mod Lead ruling 2026-11-27: a moderator or impersonation session whose revocation read failed is not
+// answered here; the Node path decides it (retry once after a fast error, else refuse the request).
+func TestResolveRevocationOutageHandsAnElevatedSessionToNode(t *testing.T) {
+	cases := []struct {
+		name string
+		user map[string]any
+		mut  func(map[string]any)
+	}{
+		{"moderator", map[string]any{"id": 42, "username": "viewer-a", "isModerator": true}, nil},
+		{"impersonation", map[string]any{"id": 42, "username": "viewer-a"}, func(m map[string]any) {
+			m["impersonatedBy"] = 77
+			m["impExp"] = time.Now().Add(time.Hour).UnixMilli()
+		}},
+	}
+	for _, c := range cases {
+		f := newResolveFixture(t)
+		f.session(t, 42, c.user)
+		tok := f.token(t, c.mut)
+		req := func() (*SessionUser, error) {
+			return f.r.Resolve(context.Background(), request(map[string]string{"Cookie": "__Secure-civ-token=" + tok}, "/x"))
+		}
+		if u, err := req(); err != nil || u == nil || u.ID != 42 {
+			t.Fatalf("%s healthy store: got %+v, %v; want user 42", c.name, u, err)
+		}
+		f.sys.Err = testkit.ErrDown
+		if u, err := req(); u != nil || fallback.Reason(err) != "revocation-unconfirmed" {
+			t.Fatalf("%s outage: got %+v, %v; want the revocation-unconfirmed fallback", c.name, u, err)
+		}
+	}
+}
+
 // staleFixture is a Verifier on a hand-moved clock over a switchable JWKS, with stale drops counted.
 type staleFixture struct {
 	now    time.Time

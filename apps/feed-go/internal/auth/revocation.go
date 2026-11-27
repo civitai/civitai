@@ -48,8 +48,14 @@ type Revocation struct {
 
 // IsRevoked reports whether the session has been signed out, banned or cut.
 func (r *Revocation) IsRevoked(ctx context.Context, c *Claims) bool {
+	revoked, _ := r.Check(ctx, c)
+	return revoked
+}
+
+// Check is IsRevoked that also reports whether the read failed, so the verdict came from the markers.
+func (r *Revocation) Check(ctx context.Context, c *Claims) (revoked, readFailed bool) {
 	if c.Jti == "" {
-		return false
+		return false, false
 	}
 	timeout := r.Timeout
 	if timeout == 0 {
@@ -115,9 +121,9 @@ func (r *Revocation) IsRevoked(ctx context.Context, c *Claims) bool {
 		if r.OnDegraded != nil {
 			r.OnDegraded(err, verdict)
 		}
-		return revoked
+		return revoked, true
 	}
-	return Decide(c, val(state), val(familyState), val(all), val(userCut), val(impUserCut), val(impCut))
+	return Decide(c, val(state), val(familyState), val(all), val(userCut), val(impUserCut), val(impCut)), false
 }
 
 // revocationKeys are the per-claims keys of the read ("" = not read).

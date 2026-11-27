@@ -7,7 +7,7 @@ import {
   type RefreshFailure,
 } from '@civitai/auth';
 import { setSessionCookie, type CookieWritable } from './civ-cookie';
-import { isRevoked } from './session-verifier';
+import { confirmElevatedRevocation, isRevoked } from './session-verifier';
 import { decodeTokenClaim, decodeTokenPayload } from './token-claims';
 import { refuseModerationAccountSession } from './moderation-account';
 import { observeSessionLeg, observeSessionRollFailed } from './session-metrics';
@@ -23,6 +23,7 @@ import { observeSessionLeg, observeSessionRollFailed } from './session-metrics';
 // them to prom-client here.
 export const sessionClient = createSessionClient({
   isRevoked,
+  confirmElevatedRevocation,
   onIdentityLeg: (outcome, durationSeconds) =>
     observeSessionLeg('identity', outcome, durationSeconds),
   onJwksLeg: (outcome, durationSeconds) => observeSessionLeg('jwks', outcome, durationSeconds),

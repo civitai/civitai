@@ -1,5 +1,6 @@
 import { decodeJwt } from 'jose';
 import { createSessionClient } from './session-client';
+import type { RevocationCheck } from './revocation-check';
 import {
   createSessionTokenClient,
   type RefreshFailure,
@@ -50,9 +51,11 @@ export interface SpokeGuardConfig {
   require?: (user: SessionUser) => boolean;
   /**
    * Revocation check (`createRevocationCheck`). Required: without it a signed-out or banned session still
-   * resolves on a cache hit.
+   * resolves on a cache hit. Its `confirmElevated`, when present, refuses a moderator or impersonation request
+   * whose revocation read failed.
    */
-  isRevoked: (claims: SessionClaims) => boolean | Promise<boolean>;
+  isRevoked: ((claims: SessionClaims) => boolean | Promise<boolean>) &
+    Partial<Pick<RevocationCheck, 'confirmElevated'>>;
   /** Seconds after which a session is rolled (AUTH_SESSION_UPDATE_AGE, default 24h). */
   updateAgeSeconds?: number;
   sessionTokenClient?: Pick<SessionTokenClient, 'refresh'>;
@@ -93,7 +96,10 @@ export function createSpokeGuard(config: SpokeGuardConfig): SpokeGuard {
       '[@civitai/auth] createSpokeGuard requires isRevoked (see createRevocationCheck)'
     );
   }
-  const sessions = createSessionClient({ isRevoked: config.isRevoked });
+  const sessions = createSessionClient({
+    isRevoked: config.isRevoked,
+    confirmElevatedRevocation: config.isRevoked.confirmElevated,
+  });
   const updateAgeMs =
     (config.updateAgeSeconds ?? (Number(process.env.AUTH_SESSION_UPDATE_AGE) || 24 * 60 * 60)) *
     1000;

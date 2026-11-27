@@ -5,6 +5,7 @@ import { getCacheRedis, sessionCacheKey } from './redis';
 import { now, elapsed, isTimeoutError, safeInvoke } from './timing';
 import type { SessionUser, SessionClaims } from './types';
 import { refusesMemorializedSession } from './memorialized';
+import type { ElevatedRevocationVerdict } from './revocation-check';
 
 // SESSION CLIENT — the consumer-side interface to the auth hub's session-user data (thin-session model;
 // docs/thin-session-token-design.md, "LOCKED ARCHITECTURE"). One zero-config builder for every session op a
@@ -18,7 +19,8 @@ import { refusesMemorializedSession } from './memorialized';
 
 /**
  * Why a token did not resolve to a user. `unavailable`: the hub identity fetch failed (timeout, network,
- * non-ok other than 401/404, unparseable body) — the session may be fine. `invalid`: everything else,
+ * non-ok other than 401/404, unparseable body), or an elevated session's revocation read failed — the session
+ * may be fine. `invalid`: everything else,
  * including a token the verifier rejects because the hub's signing keys could not be fetched.
  */
 export type SessionResolution =
@@ -65,6 +67,12 @@ export interface SessionClientConfig {
    * token before the cache read. Fail-open inside (a redis blip must not log everyone out).
    */
   isRevoked?: (claims: SessionClaims) => Promise<boolean> | boolean;
+  /**
+   * Asked once the user is resolved, for a moderator or an impersonation token only: `unavailable` resolves the
+   * request as `unavailable` (the session is kept), `revoked` as `invalid`. Wire `isRevoked.confirmElevated`
+   * from `createRevocationCheck` alongside `isRevoked`.
+   */
+  confirmElevatedRevocation?: (claims: SessionClaims) => Promise<ElevatedRevocationVerdict>;
   /**
    * Optional instrumentation for the identity read-through leg — the app→hub `fetchIdentity` hop that this
    * SPOF fix routes in-cluster. Called once per hub fetch with the outcome and its wall-clock duration so the
@@ -135,6 +143,10 @@ export function createSessionClient(config: SessionClientConfig = {}): SessionCl
   }
 
   const INVALID: SessionResolution = Object.freeze({ user: null, reason: 'invalid' } as const);
+  const UNAVAILABLE: SessionResolution = Object.freeze({
+    user: null,
+    reason: 'unavailable',
+  } as const);
 
   async function resolveSessionUser(token: string): Promise<SessionResolution> {
     const claims = await verify(token);
@@ -144,7 +156,7 @@ export function createSessionClient(config: SessionClientConfig = {}): SessionCl
 
     // 1. Shared-cache read — fail-open: a cache blip falls through to the hub fetch rather than throwing.
     const cached = await readCachedUser(userId);
-    if (cached) return refuseMemorialized({ user: cached }, claims);
+    if (cached) return refuseForCaller({ user: cached }, claims);
 
     // 2. Single-flight the miss → hub identity fetch. The fetch target is the token's issuer, but ONLY after
     // it's validated against a CONFIGURED trusted hub origin (AUTH_JWT_ISSUER / the AUTH_JWKS_URI origin) — see
@@ -152,7 +164,7 @@ export function createSessionClient(config: SessionClientConfig = {}): SessionCl
     // that doesn't pin `issuer` in its verifier (jose only checks `iss` when issuer is set) wouldn't catch a
     // mismatched issuer. Mismatch / unconfigured → `invalid` (fail closed), no fetch.
     const existing = inflight.get(userId);
-    if (existing) return refuseMemorialized(await existing, claims);
+    if (existing) return refuseForCaller(await existing, claims);
     // VALIDATE the token's issuer against the configured trusted origin(s) — unchanged. This is the anti-spoof
     // guard: the bearer only leaves for an origin the operator configured, never one an attacker's `iss` names.
     const baseUrl = trustedHubBase(claims.iss);
@@ -179,12 +191,22 @@ export function createSessionClient(config: SessionClientConfig = {}): SessionCl
       }
     })().finally(() => inflight.delete(userId));
     inflight.set(userId, p);
-    return refuseMemorialized(await p, claims);
+    return refuseForCaller(await p, claims);
   }
 
   // Applied per caller, after the single-flight: callers sharing one fetch may differ in impersonation.
-  function refuseMemorialized(res: SessionResolution, claims: SessionClaims): SessionResolution {
-    return res.user && refusesMemorializedSession(res.user, claims) ? INVALID : res;
+  async function refuseForCaller(
+    res: SessionResolution,
+    claims: SessionClaims
+  ): Promise<SessionResolution> {
+    if (!res.user) return res;
+    if (refusesMemorializedSession(res.user, claims)) return INVALID;
+    const elevated = claims.impersonatedBy != null || res.user.isModerator === true;
+    if (!elevated || !config.confirmElevatedRevocation) return res;
+    const verdict = await config.confirmElevatedRevocation(claims);
+    if (verdict === 'revoked') return INVALID;
+    if (verdict === 'unavailable') return UNAVAILABLE;
+    return res;
   }
 
   async function getSessionUser(token: string): Promise<SessionUser | null> {
