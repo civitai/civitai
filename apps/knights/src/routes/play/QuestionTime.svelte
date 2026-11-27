@@ -42,12 +42,12 @@
   onclick={onstart}
   out:fade={{ duration: reducedMotion() ? 120 : 160 }}
 >
+  <!-- svelte-ignore a11y_interactive_supports_focus -- the pointer handlers only hold the countdown; focus stays on Start now. -->
   <div
     class="card"
     role="dialog"
     aria-labelledby="question-time-title"
     aria-describedby="question-time-line"
-    tabindex="-1"
     onpointerenter={(event) => (hovered = event.pointerType === 'mouse')}
     onpointerleave={() => (hovered = false)}
   >
