@@ -25,10 +25,9 @@ import {
   eventPointsRefereeUsersSql,
 } from '~/server/events/points/referee.sql';
 import {
-  mergeRefereeShards,
-  parseRefereeRow,
   REFEREE_ACTOR_SHARDS,
   REFEREE_FULL_ACTOR_SHARDS,
+  refereeShardMerge,
   type RefereeRow,
 } from '~/server/events/points/referee-shards';
 import { drainEventPointsPush, markEventPointsDirty } from '~/server/events/points/push';
@@ -292,7 +291,7 @@ export async function queryReferee(
       ? REFEREE_FULL_ACTOR_SHARDS
       : REFEREE_ACTOR_SHARDS;
   // One after another: run together they would hold as much memory as the single query.
-  const results: RefereeRow[][] = [];
+  const merge = refereeShardMerge();
   for (let shard = 0; shard < shards; shard++) {
     const limit = queryLimit(deadline);
     const queryId = refereeQueryId(event, 'settle', `:${shard + 1}of${shards}`);
@@ -316,10 +315,9 @@ export async function queryReferee(
         }),
       })
     );
-    const rows = await withQueryId(queryId, () => result.json<Record<string, unknown>>());
-    results.push(rows.map(parseRefereeRow));
+    merge.add(await withQueryId(queryId, () => result.json<Record<string, unknown>>()));
   }
-  return mergeRefereeShards(results);
+  return merge.rows();
 }
 
 // The durable record: one row per hat per day, which the standings, the winner and the per-hat

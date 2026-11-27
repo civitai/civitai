@@ -1,14 +1,15 @@
 // Checks the event points referee query (src/server/events/points/referee.sql.ts) against hand-built
 // fixtures, whole and in actor shards merged as the settle job merges them. CI has no ClickHouse, so
-// this is the query's semantic test: run it after any change to the SQL or the merge. The fixtures are CTEs that shadow the real tables and the session is readonly, so it reads
-// no real rows and writes nothing; any ClickHouse server works.
+// this is the query's semantic test: run it after any change to the SQL or the merge. The fixtures
+// are CTEs that shadow the real tables and the session is readonly, so it reads no real rows and
+// writes nothing; any ClickHouse server works.
 //
 // Usage: CLICKHOUSE_HOST=... CLICKHOUSE_USERNAME=... CLICKHOUSE_PASSWORD=... \
 //          node scripts/check-event-points-sql.mjs ['<text to replace>=><replacement>']
 // The optional argument applies one mutation to the query; a correct check prints MISMATCH for it.
 import { createClient } from '@clickhouse/client';
 import { readFileSync } from 'fs';
-import { mergeRefereeShards, parseRefereeRow } from '../src/server/events/points/referee-shards.ts';
+import { refereeShardMerge } from '../src/server/events/points/referee-shards.ts';
 
 const [mutant] = process.argv.slice(2);
 const src = readFileSync(
@@ -190,22 +191,22 @@ const PARAMS = {
 // the merged rows more than one shard contributed to: a split that never meets in the merge tests
 // nothing.
 async function run(query, recomputeFrom, shards = 1, params = PARAMS) {
-  const results = [];
+  const merge = refereeShardMerge();
+  const seen = new Map();
   for (let actorShard = 0; actorShard < shards; actorShard++) {
     const result = await client.query({
       query,
       format: 'JSONEachRow',
       query_params: { ...params, recomputeFrom, actorShards: shards, actorShard },
     });
-    results.push((await result.json()).map(parseRefereeRow));
-  }
-  const seen = new Map();
-  for (const shard of results)
-    for (const r of shard) {
+    const raw = await result.json();
+    for (const r of raw) {
       const key = JSON.stringify([r.day, r.userId, r.cosmeticId, r.claimKey]);
       seen.set(key, (seen.get(key) ?? 0) + 1);
     }
-  const rows = mergeRefereeShards(results).map((r) => [
+    merge.add(raw);
+  }
+  const rows = merge.rows().map((r) => [
     r.day,
     r.userId,
     r.cosmeticId,

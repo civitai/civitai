@@ -71,21 +71,27 @@ const compare = (a: RefereeRow, b: RefereeRow) =>
       a.cosmeticId - b.cosmeticId ||
       (a.claimKey < b.claimKey ? -1 : a.claimKey > b.claimKey ? 1 : 0);
 
-// One row per (day, hat), in the query's ORDER BY. The team is any() in the query, so here the first
-// shard's is kept.
-export function mergeRefereeShards(shards: RefereeRow[][]): RefereeRow[] {
+// Sums shards into one row per (day, hat), in the query's ORDER BY. Each shard returns nearly every
+// (day, hat), so a shard is folded in as it arrives rather than all of them held at once. The team is
+// any() in the query, so here the first shard's is kept.
+export function refereeShardMerge() {
   const merged = new Map<string, RefereeRow>();
-  for (const rows of shards)
-    for (const row of rows) {
-      const key = JSON.stringify([row.day, row.userId, row.cosmeticId, row.claimKey]);
-      const into = merged.get(key);
-      if (!into) {
-        merged.set(key, { ...row, hours: { ...row.hours } });
-        continue;
+  return {
+    add(raw: Record<string, unknown>[]) {
+      for (const r of raw) {
+        const row = parseRefereeRow(r);
+        // claimKey last: the other parts cannot contain the separator.
+        const key = `${row.day}|${row.userId}|${row.cosmeticId}|${row.claimKey}`;
+        const into = merged.get(key);
+        if (!into) {
+          merged.set(key, row);
+          continue;
+        }
+        for (const column of COUNTS) into[column] += row[column];
+        for (const [hour, points] of Object.entries(row.hours))
+          into.hours[Number(hour)] = (into.hours[Number(hour)] ?? 0) + points;
       }
-      for (const column of COUNTS) into[column] += row[column];
-      for (const [hour, points] of Object.entries(row.hours))
-        into.hours[Number(hour)] = (into.hours[Number(hour)] ?? 0) + points;
-    }
-  return [...merged.values()].sort(compare);
+    },
+    rows: () => [...merged.values()].sort(compare),
+  };
 }
