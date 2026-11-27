@@ -88,6 +88,12 @@ export function overturnedRemovalLabel(
 }
 
 /**
+ * The ModActivity row on an image removed on a likeness request. Both apps write it; the main app's
+ * appeal-decision-records sweep deletes the image's appeal training copies by it.
+ */
+export const LIKENESS_REQUEST_ACTIVITY = 'likenessRequest';
+
+/**
  * Reasons that say nothing about what the image showed: 'other' is a catch-all, and a likeness
  * request says who asked. Two removals filed under them cannot be told apart.
  */

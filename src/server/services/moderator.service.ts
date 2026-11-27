@@ -1,5 +1,6 @@
 import type { shownActivity } from '@civitai/shared/held-media';
 import type { LIFT_KEPT_ACTIVITY } from '@civitai/shared/account-deletion-grace';
+import { LIKENESS_REQUEST_ACTIVITY } from '@civitai/db-queries/image-removal-confirmation';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 
@@ -57,7 +58,7 @@ export type ImageModActivity = {
     // A version showcase removal: the version it was removed from.
     | `versionShowcaseRemove:${number}`
     | ReturnType<typeof shownActivity>
-    | 'likenessRequest';
+    | typeof LIKENESS_REQUEST_ACTIVITY;
 };
 
 type ArticleModActivity = {
@@ -285,29 +286,6 @@ type ModActivity = {
 // `MODERATOR_TAKEDOWN_ACTIVITIES` in `src/server/jobs/image-ingestion.ts`, where a suppressed row means a
 // takedown demoted to a delete-without-blob-retraction. That demotion is reproducible locally and cannot
 // happen in production — do not diagnose one from the other.
-/**
- * Marks images removed on a likeness request. The appeal-decision-records sweep deletes their appeal
- * training copies by this row; the moderator app's `recordLikenessRequest` writes the same row.
- * Best-effort and never throws: it runs after the removal committed, and the steps after it (report
- * actioning, the search-index delete, the DeleteTOS events) must still run.
- */
-export async function trackLikenessRequests(userId: number, imageIds: number[]) {
-  if (!imageIds.length) return;
-  try {
-    await trackModActivity(userId, {
-      entityType: 'image',
-      entityId: imageIds,
-      activity: 'likenessRequest',
-    });
-  } catch (e) {
-    logToAxiom({
-      type: 'error',
-      name: 'likeness-request-mark-failed',
-      message: `${imageIds.length} images: ${(e as Error).message}`,
-    });
-  }
-}
-
 export async function trackModActivity(
   userId: number,
   input: ModActivity,
@@ -328,4 +306,27 @@ export async function trackModActivity(
     SELECT ${userId}, ${input.entityType}, ${input.activity}, UNNEST(${input.entityId}::int[])
     ON CONFLICT DO NOTHING
   `;
+}
+
+/**
+ * Marks images removed on a likeness request. The appeal-decision-records sweep deletes their appeal
+ * training copies by this row; the moderator app's `recordLikenessRequest` writes the same row.
+ * Best-effort and never throws: it runs after the removal committed, and the steps after it (report
+ * actioning, the search-index delete, the DeleteTOS events) must still run.
+ */
+export async function trackLikenessRequests(userId: number, imageIds: number[]) {
+  if (!imageIds.length) return;
+  try {
+    await trackModActivity(userId, {
+      entityType: 'image',
+      entityId: imageIds,
+      activity: LIKENESS_REQUEST_ACTIVITY,
+    });
+  } catch (e) {
+    logToAxiom({
+      type: 'error',
+      name: 'likeness-request-mark-failed',
+      message: `${imageIds.length} images: ${(e as Error).message}`,
+    });
+  }
 }

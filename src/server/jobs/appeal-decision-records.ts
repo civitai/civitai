@@ -1,3 +1,4 @@
+import { LIKENESS_REQUEST_ACTIVITY } from '@civitai/db-queries/image-removal-confirmation';
 import { BLOCKED_IMAGE_RETENTION_DAYS } from '@civitai/shared/job-queue';
 import { newS3Client } from '~/utils/s3-client-factory';
 import type { S3Client } from '@aws-sdk/client-s3';
@@ -61,7 +62,6 @@ const ineligibleRecord = (r: Prisma.Sql) => {
 /** Written by `/api/mod/user/delete`, the erasure endpoint, and not by self-serve deletion. */
 const ERASURE_ACTIVITY = 'deleteAccount';
 /** Written on an image removed because the person depicted, or a rights holder, asked. */
-export const LIKENESS_REQUEST_ACTIVITY = 'likenessRequest';
 
 /** By appeal, or by owner hash for a record whose appeal row is gone. */
 const ownersRecord = (r: Prisma.Sql, userIds: number[]) => Prisma.sql`(
@@ -102,7 +102,7 @@ async function deleteRecords(where: Prisma.Sql, alsoLabelWhere: Prisma.Sql = Pri
 
 /**
  * Removes an erased account's records and their training objects, rows first. The nightly sweep
- * removes the same records, so a failure here waits at most a day.
+ * removes the same records by the account's `deleteAccount` audit row, when that row was written.
  */
 export async function removeErasedOwnerRecords(userId: number, store?: AppealTrainingStore | null) {
   const { swept, keys } = await deleteRecords(ownersRecord(Prisma.raw('r'), [userId]));
@@ -263,7 +263,8 @@ async function reportedOwnerHashes() {
 
 /**
  * Accounts deleted through the moderator endpoint that stay deleted: at once for an immediate
- * removal, otherwise once the grace a restore can undo has passed. A restore clears `deletedAt`.
+ * removal (an absent choice is immediate, as in remove-deleted-user-images), otherwise once the grace
+ * a restore can undo has passed. A restore clears `deletedAt`.
  */
 async function erasedOwnerIds() {
   const owners = await dbWrite.$queryRaw<{ userId: number }[]>`
@@ -271,7 +272,8 @@ async function erasedOwnerIds() {
     LEFT JOIN "User" u ON u.id = m."entityId"
     WHERE m."entityType" = 'user' AND m.activity = ${ERASURE_ACTIVITY} AND m."entityId" IS NOT NULL
       AND (u.id IS NULL OR (u."deletedAt" IS NOT NULL AND (
-        u.meta->>'imageRemoval' = 'immediate' OR u."deletedAt" <= now() - ${ERASURE_GRACE}
+        COALESCE(u.meta->>'imageRemoval', 'immediate') = 'immediate'
+        OR u."deletedAt" <= now() - ${ERASURE_GRACE}
       )))
   `;
   return owners.map((o) => o.userId);

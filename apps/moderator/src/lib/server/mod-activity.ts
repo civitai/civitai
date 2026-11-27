@@ -1,6 +1,7 @@
 import type { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import type { ReviewTier } from '@civitai/shared/review-batch';
+import { LIKENESS_REQUEST_ACTIVITY } from '@civitai/db-queries/image-removal-confirmation';
 import { dbRead, dbWrite } from './db';
 import { usersByIds } from './users.service';
 
@@ -21,14 +22,14 @@ export async function recordModActivity(input: ModActivityInsert): Promise<void>
 
 /**
  * Marks an image removed for a likeness/DMCA request. The main app's appeal-decision-records sweep
- * deletes the image's appeal training copies by this row (`LIKENESS_REQUEST_ACTIVITY` there).
+ * deletes the image's appeal training copies by this row.
  */
 export const recordLikenessRequest = (userId: number, imageId: number) =>
   recordModActivity({
     userId,
     entityType: 'image',
     entityId: imageId,
-    activity: 'likenessRequest',
+    activity: LIKENESS_REQUEST_ACTIVITY,
   });
 
 type ModActivityInsert = {

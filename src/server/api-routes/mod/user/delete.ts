@@ -141,9 +141,9 @@ export default defineModeratorEndpoint('user.delete', {
       throw e;
     }
 
-    // Only an immediate removal: a grace deletion can be restored, and the nightly
-    // appeal-decision-records sweep removes its records once the grace has passed. Best-effort, like
-    // the audit below; the sweep also retries this by the audit row. Logged by owner hash, never the id.
+    // Only an immediate removal: a grace deletion can be restored, so its records wait for the nightly
+    // sweep after the grace. The sweep finds the account by the audit row below, so it repairs a
+    // failure here unless that write fails too.
     if (input.removeImages) {
       try {
         await removeErasedOwnerRecords(input.userId);
