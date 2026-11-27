@@ -131,8 +131,10 @@ beforeEach(async () => {
   );
 });
 
-// As `get_tag_on_image_attributes` packs a SpineRating tag: source 0, automated, confidence 16.
+// A SpineRating tag written before it had its own code: source 0, automated, confidence 16.
 const SCAN_RATING_ATTRIBUTES = (1 << 11) | 16;
+// As the packing does once SpineRating has its own code (10): bit 15 set, so a negative smallint.
+const SPINE_CODE_RATING_ATTRIBUTES = ((10 << 12) | (1 << 11) | 16) - (1 << 16);
 // A tag a user added: source 1 (User), not automated.
 const USER_TAG_ATTRIBUTES = 1 << 12;
 // An automated tag from another source: WD14 (3).
@@ -1355,5 +1357,67 @@ describe('community downvotes and the scanner rating', () => {
     await copyRejectedForTraining({ store, lookup: noLabels });
     expect(store.copy).not.toHaveBeenCalled();
     expect((await states()).map((s) => s.state)).toEqual(['skipped']);
+  });
+});
+
+describe('the scan rating under its own source code', () => {
+  const copiedImages = async () => {
+    const store = fakeStore();
+    await copyRejectedForTraining({ store, lookup: noLabels });
+    return store.copy.mock.calls.map(([key]) => key);
+  };
+  const realPerson = (appealId: number, imageId: number) =>
+    record({ appealId, imageId, removalLabel: 'realPerson', removalNsfw: 'None' });
+
+  it('reads a rating stored with the SpineRating code', async () => {
+    await realPerson(1, 101);
+    await tagImage(101, 'pg13', SPINE_CODE_RATING_ATTRIBUTES);
+    await realPerson(2, 102);
+    await tagImage(102, 'r', SPINE_CODE_RATING_ATTRIBUTES);
+
+    expect(await copiedImages()).toEqual(['u-101']);
+    expect((await states()).map((s) => s.state)).toEqual(['copied', 'skipped']);
+  });
+
+  it('reads a rating across both encodings, so a new pg beside an old r still skips', async () => {
+    await realPerson(1, 101);
+    await tagImage(101, 'pg', SPINE_CODE_RATING_ATTRIBUTES);
+    await tagImage(101, 'r', SCAN_RATING_ATTRIBUTES);
+
+    expect(await copiedImages()).toEqual([]);
+  });
+
+  it('still reads a legacy automated source-0 label as a rating, so the record skips', async () => {
+    await record({
+      appealId: 1,
+      imageId: 101,
+      removalLabel: 'realPerson',
+      removalNsfw: 'None',
+      scanRatings: ['pg'],
+    });
+    // A Hive or AiRecognition label written before those sources had codes: automated, source 0.
+    await tagImage(101, 'woman', SCAN_RATING_ATTRIBUTES);
+
+    expect(await copiedImages()).toEqual([]);
+  });
+
+  it('keeps a downvote off a SpineRating-coded rating and a legacy source-0 label, not off WD14', async () => {
+    await tagImage(101, 'r', SPINE_CODE_RATING_ATTRIBUTES);
+    await tagImage(101, 'woman', SCAN_RATING_ATTRIBUTES);
+    await tagImage(101, 'smile', WD14_TAG_ATTRIBUTES);
+    for (const name of ['r', 'woman', 'smile'])
+      await holder.db.query(
+        `INSERT INTO "TagsOnImageVote" ("imageId", "tagId", "userId", "vote")
+         SELECT 101, id, 9, -1 FROM "Tag" WHERE name = $1`,
+        [name]
+      );
+
+    const selected = await downvotedTagsToDelete(new Date(0));
+    const names = (
+      await holder.db.query<{ name: string }>(`SELECT name FROM "Tag" WHERE id = ANY($1::int[])`, [
+        selected.map((row) => row.tagId),
+      ])
+    ).rows.map((row) => row.name);
+    expect(names).toEqual(['smile']);
   });
 });

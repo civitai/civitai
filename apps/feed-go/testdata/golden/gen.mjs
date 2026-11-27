@@ -162,6 +162,8 @@ const MODELS = {
   5004: { id: 5004, userId: 1002, mode: null, minor: false, sfwOnly: false, galleryLevel: null },
   5005: { id: 5005, userId: 1002, mode: null, minor: false, sfwOnly: false, galleryLevel: null },
   5006: { id: 5006, userId: 1001, mode: null, minor: false, sfwOnly: false, galleryLevel: null },
+  // 1002's model whose version 6701 pins post 7030 (the requiring-meta-pinned-* fixtures).
+  5007: { id: 5007, userId: 1002, mode: null, minor: false, sfwOnly: false, galleryLevel: null },
 };
 const VERSIONS = {
   6001: 5001,
@@ -171,6 +173,7 @@ const VERSIONS = {
   6301: 5004,
   6401: 5005,
   6501: 5006,
+  6701: 5007,
 };
 // ModelVersion.baseModel per version (the `baseModels` filter). Read only by a fixture that sends it.
 const VERSION_BASE_MODELS = {
@@ -181,6 +184,7 @@ const VERSION_BASE_MODELS = {
   6301: 'Pony',
   6401: 'Illustrious',
   6501: 'SDXL 1.0',
+  6701: 'SDXL 1.0',
 };
 const settings = (extra) => ({
   hiddenTags: [],
@@ -200,6 +204,7 @@ const GALLERY_SETTINGS = {
   5004: settings({ pinnedPosts: { 6301: [7101] } }),
   5005: settings({}),
   5006: settings({}),
+  5007: settings({ pinnedPosts: { 6701: [7030] } }),
 };
 
 // Posts: [id, userId, modelVersionId, publishedAt]
@@ -351,8 +356,14 @@ image(8030, 7011, { hideMeta: true, hasMeta: false });
 image(8041, 7030, { index: 0 });
 image(8042, 7030, { index: 1 });
 image(8043, 7030, { index: 2 });
+// A fourth, as a metadata-blocked image reads in production: blocked for AiNotVerified, its ingestion
+// Blocked and its level Blocked (32), so the level gate drops it everywhere but where getAllImages
+// leaves the gates out for `requiringMeta` (the red domain).
+image(8044, 7030, { index: 3, nsfwLevel: 32 });
 IMAGES[8041].blockedFor = 'CSAM';
 IMAGES[8042].blockedFor = 'AiNotVerified';
+IMAGES[8044].blockedFor = 'AiNotVerified';
+IMAGES[8044].ingestion = 'Blocked';
 // An acceptableMinor image (1001's), listed only in a collection, and there only to its owner and to
 // moderators.
 image(8501, 7501);
@@ -1327,9 +1338,11 @@ function imageSql(q) {
     if (i.needsReview !== null) return false;
     // `acceptableMinor = FALSE`; in a collection the image's owner (and a moderator) still sees it.
     if (i.acceptableMinor && (!q.collectionId || (!isModerator && i.userId !== userId))) return false;
-    if ((i.nsfwLevel & browsingLevel) === 0 || i.nsfwLevel === 0) return false;
-    // `if (requiringMeta) AND.push(i."blockedFor" = AiNotVerified)`, after the gates (which only the red
-    // domain drops for it; no fixture sends it there).
+    // `if (!requiringMeta || domain !== 'red')`: the level and reviewed gates, left out for
+    // `requiringMeta` on red. Only the level is mirrored (as in the Go harness): the one image that is
+    // not reviewed, 8044, is also outside every level, so the level alone decides it here.
+    if (without !== 'metaGates' && !(q.requiringMeta && q.domain === 'red') && ((i.nsfwLevel & browsingLevel) === 0 || i.nsfwLevel === 0)) return false;
+    // `if (requiringMeta) AND.push(i."blockedFor" = AiNotVerified)`, after the gates.
     if (without !== 'requiringMeta' && q.requiringMeta && i.blockedFor !== 'AiNotVerified') return false;
     return true;
   };
@@ -1364,8 +1377,8 @@ function imageSql(q) {
   // The same for the ids, new-creators, reactions and prioritized-creators clauses: the tables hold every
   // row each alone decides on.
   // (`ids` only as the input's own: the feed hydrate's ids are the feed's page, whose rows are held.)
-  // (`imageId`, a version-less model and `requiringMeta` only on the REST endpoint's legacy path, whose
-  // fixtures postdate the rest: T.v1Candidates.)
+  // (`imageId` and a version-less model only on the REST endpoint's legacy path, whose fixtures
+  // postdate the rest: T.v1Candidates. `requiringMeta` everywhere, with the rows the gates alone drop.)
   for (const [key, on] of [
     ['ids', !!q.ids?.length && !q.throwOnStatementTimeout && T.idsCandidates],
     ['newCreators', !!board],
@@ -1373,7 +1386,8 @@ function imageSql(q) {
     ['prioritized', prioritized && !iifOrder],
     ['imageId', !!q.imageId && T.v1Candidates],
     ['model', !prioritized && !q.modelVersionId && !!q.modelId && T.v1Candidates],
-    ['requiringMeta', !!q.requiringMeta && T.v1Candidates],
+    ['requiringMeta', !!q.requiringMeta],
+    ['metaGates', !!q.requiringMeta],
   ]) {
     if (!on) continue;
     without = key;
@@ -1801,6 +1815,7 @@ function asPostsHandler({ input: { limit, cursor, hidden, ...input }, ctx }) {
       followed: false,
       postIds: versionPinnedPosts,
       user,
+      domain: ctx.domain,
       include: [...input.include, 'tagIds', 'profilePictures'],
     });
     let versionPinnedImages = pinnedPostsImages;
@@ -1849,6 +1864,7 @@ function asPostsHandler({ input: { limit, cursor, hidden, ...input }, ctx }) {
       followed: false,
       postIds: [sponsoredPost.postId],
       user,
+      domain: ctx.domain,
       include: [...input.include, 'tagIds', 'profilePictures'],
     });
     const approved = new Set(sponsoredPost.imageIds);
@@ -1856,7 +1872,7 @@ function asPostsHandler({ input: { limit, cursor, hidden, ...input }, ctx }) {
   }
   const sponsoredPostId = sponsored.length ? sponsoredPost?.postId : undefined;
 
-  const pageFetchArgs = { ...input, followed: false, ids: undefined, user, include: [...input.include, 'tagIds', 'profilePictures'] };
+  const pageFetchArgs = { ...input, followed: false, domain: ctx.domain, ids: undefined, user, include: [...input.include, 'tagIds', 'profilePictures'] };
   while (true) {
     const { nextCursor, items } = fetchFn(structuredCloneInput({ ...pageFetchArgs, cursor, limit: Math.ceil(limit * 2) }));
     for (const image of items) {
@@ -1978,7 +1994,7 @@ function runAsPosts(spec) {
     ...raw,
   };
   const features = { imageIndexFeed: spec.nodeFlags.imageIndexFeed, galleryLazyPostImages: spec.nodeFlags.lazy, creatorPromotions: spec.nodeFlags.creatorPromotions };
-  return { value: asPostsHandler({ input, ctx: { user, features } }), cacheable: !session && !isViewerScopedImageFeed(raw) };
+  return { value: asPostsHandler({ input, ctx: { user, features, domain: boardColorOf(spec.host) } }), cacheable: !session && !isViewerScopedImageFeed(raw) };
 }
 
 // --- image.getInfinite's `hubId` --------------------------------------------------------------------
@@ -2244,6 +2260,8 @@ const isViewerScopedInfiniteFeed = (input) =>
 
 /** requiresImageDbPath (src/server/schema/image.schema.ts), for the inputs these fixtures send. */
 const requiresImageDbPath = (input) =>
+  // The feed service has no filter for images blocked until their metadata is verified.
+  (!!input.requiringMeta && !!input.userId) ||
   !!input.postId ||
   !!input.postIds?.length ||
   !!input.collectionId ||
@@ -2843,6 +2861,24 @@ const AS_POSTS = [
     nodeFlags: { imageIndexFeed: false },
     goConfig: { imageIndexFeed: false },
     input: { modelId: 5001, modelVersionId: 6001, sort: 'Newest', browsingLevel: 1, limit: 2, techniques: [3] },
+    replies: {},
+  },
+  // `requiringMeta`: the feed mapper refuses it (an empty page, no feed call), and the pinned post's
+  // getAllImages call (`...input`, with the request's `domain`) applies it.
+  {
+    name: 'requiring-meta-pinned',
+    description: '`requiringMeta` on a version that pins post 7030, signed in as its creator on an NSFW host: the page is empty (the feed cannot express the flag); the pinned post keeps only 8042 (blocked AiNotVerified): not 8043 (no block), nor 8041 (CSAM, refused to its owner), nor 8044 (Blocked level, outside 31).',
+    viewer: 1002,
+    host: HOST.blue,
+    input: { modelId: 5007, modelVersionId: 6701, requiringMeta: true, sort: 'Newest', browsingLevel: 31, limit: 5 },
+    replies: {},
+  },
+  {
+    name: 'requiring-meta-pinned-red',
+    description: 'The same on the red domain: getAllImages leaves the level and reviewed gates out for `requiringMeta` there, so the pinned post also lists 8044, whose level is Blocked.',
+    viewer: 1002,
+    host: HOST.red,
+    input: { modelId: 5007, modelVersionId: 6701, requiringMeta: true, sort: 'Newest', browsingLevel: 31, limit: 5 },
     replies: {},
   },
   // Fallbacks: shapes feed-go does not answer.
@@ -4030,6 +4066,31 @@ const INFINITE = [
     replies: {
       'levels=1&excludedTags=9901&excludePoi=1&sort=reactions&limit=4': { body: { items: [8005, 8001, 8003, 8007], ...fc('1718000000000', '8007') } },
     },
+  },
+  // `requiringMeta` (#9491): beside a `userId` it routes to Postgres (requiresImageDbPath), and every
+  // Postgres page applies it; on the red domain getAllImages leaves the level and reviewed gates out.
+  {
+    name: 'requiring-meta-own-creator',
+    description: '`requiringMeta` beside the viewer’s own `userId` on an NSFW host: requiresImageDbPath, so the Postgres page, no feed call; only 8042 (blocked AiNotVerified): not 8043 (no block), nor 8041 (CSAM, refused to its owner), nor 8044 (its level Blocked, outside 31).',
+    viewer: 1002,
+    host: HOST.blue,
+    input: { userId: 1002, requiringMeta: true, sort: 'Newest', browsingLevel: 31, limit: 10 },
+  },
+  {
+    name: 'requiring-meta-own-creator-red',
+    description: 'The same on the red domain: the level and reviewed gates are left out for `requiringMeta`, so 8044 is listed too (Newest: 8044, then 8042).',
+    viewer: 1002,
+    host: HOST.red,
+    input: { userId: 1002, requiringMeta: true, sort: 'Newest', browsingLevel: 31, limit: 10 },
+  },
+  {
+    name: 'requiring-meta-moderator-db-path',
+    description: 'image-index-feed off, `requiringMeta` without a `userId`, a moderator on an NSFW host: the Postgres page of every creator, narrowed to the images blocked AiNotVerified: 8042 only (8044’s level is outside 31, and the gates stay off red).',
+    viewer: 1004,
+    host: HOST.blue,
+    nodeFlags: { imageIndexFeed: false },
+    goConfig: { imageIndexFeed: false },
+    input: { requiringMeta: true, sort: 'Newest', browsingLevel: 31, limit: 10 },
   },
   // Fallbacks.
   {

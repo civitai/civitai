@@ -3,6 +3,7 @@ import {
   isNavigationRequest,
   parseCookieHeader,
   spokeReauthResponse,
+  spokeUnavailableResponse,
   withSetCookies,
 } from '@civitai/auth';
 import { civitaiAppUrl } from '$lib/server/civitai-url';
@@ -219,7 +220,11 @@ export const handle: Handle = async ({ event, resolve }) => {
     });
     return new Response(null, { status: 403, headers: { 'cache-control': 'no-store' } });
   }
-  if (webSession && webSession.status !== 'ok' && webSession.reason === 'unavailable') {
+  if (
+    webSession &&
+    (webSession.status === 'unavailable' ||
+      (webSession.status !== 'ok' && webSession.reason === 'unavailable'))
+  ) {
     // The web session could not be resolved right now, so whether one exists is unknown: answer from
     // neither, and keep the sheet cookie for when it can be.
     return new Response(null, { status: 503, headers: { 'cache-control': 'no-store' } });
@@ -264,6 +269,7 @@ export const handle: Handle = async ({ event, resolve }) => {
       navigation: isNavigationRequest(event.request),
     }));
 
+  if (result.status === 'unavailable') return spokeUnavailableResponse();
   if (result.status === 'login') {
     return new Response(null, { status: 302, headers: { location: result.redirect } });
   }

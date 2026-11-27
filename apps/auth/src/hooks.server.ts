@@ -5,6 +5,7 @@ import {
   rollSlot,
   sessionCookieMode,
   sessionCookieNameForSlot,
+  spokeUnavailableResponse,
   type SessionClaims,
   type SessionUser,
 } from '@civitai/auth';
@@ -21,6 +22,7 @@ import { verifier } from '$lib/server/auth/verifier';
 import { getOrProduceSessionUser } from '$lib/server/auth/session-producer';
 import { allowedCorsOrigin } from '$lib/server/cors';
 import { isAdminRequest, isHubAdmin } from '$lib/server/auth/admin';
+import { isUnconfirmedSession } from '$lib/server/auth/unconfirmed-session';
 import {
   isHubPageRequest,
   isTrustedSessionCaller,
@@ -187,6 +189,10 @@ const handleRequest: Handle = async ({ event, resolve }) => {
         });
       }
       return forbidden();
+    }
+    // The same refusal as mints and authorize: an admin session whose revocation read failed waits.
+    if (event.locals.session && isUnconfirmedSession(event.locals.session)) {
+      return spokeUnavailableResponse();
     }
   }
 

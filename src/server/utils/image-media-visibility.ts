@@ -145,11 +145,19 @@ export async function viewerCanSeeImageMedia(
     postId: number | null;
     ingestion: string;
     blockedFor: string | null;
-  }
+    ownerCsamMarked?: boolean | null;
+  },
+  /** `ownerMediaAllowed`'s, and only for the image's owner. */
+  { reviewedBlocks = false }: { reviewedBlocks?: boolean } = {}
 ) {
-  // A block refuses the media to everyone but a moderator and, for an exempt block, its owner
-  // (`ownerMediaAllowed`).
-  if (!actsAsModerator(ctx) && !ownerMediaAllowed(image)) return false;
+  // A block refuses the media to everyone but a moderator and its owner where `ownerMediaAllowed`
+  // says so (an exempt block, or with `reviewedBlocks` a reviewed one).
+  const owner = !!ctx.user && ctx.user.id === image.userId;
+  if (
+    !actsAsModerator(ctx) &&
+    !ownerMediaAllowed(image, { reviewedBlocks: reviewedBlocks && owner })
+  )
+    return false;
   const media = { nsfwLevel: image.nsfwLevel, user: { id: image.userId } };
   const canSee =
     canViewImageMedia(ctx, media) ||

@@ -1,5 +1,5 @@
 // No Prisma imports: profile-picture.servable.ts uses it under suites that mock `@prisma/client`.
-import { NsfwLevel } from '~/server/common/enums';
+import { BlockedReason, NsfwLevel } from '~/server/common/enums';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { isOwnerExemptBlock, ownerVisibleBlockedFor } from '~/shared/utils/image-blocked';
 
@@ -22,15 +22,47 @@ export function hasBlockMarker(image: {
 export { OWNER_MEDIA_EXEMPT_BLOCKS, ownerVisibleBlockedFor } from '~/shared/utils/image-blocked';
 
 /**
- * Whether an image's owner may be served its media: it carries no block, or only an exempt one.
- * For the owner a Blocked level alone is a rating, not a block (`hasBlockMarker` counts it for
- * everyone else).
+ * The block reasons that, with `reviewedBlocks` (the `ownerBlockedMedia` flag), also leave an image's
+ * media with its owner, alone or listed together, while the image carries no CSAM mark
+ * (`ownerCsamMarkedSql`). An allow-list: any other reason in the list withholds.
  */
-export function ownerMediaAllowed(image: {
-  ingestion: ImageIngestionStatus | string;
-  blockedFor: string | null;
-}) {
-  if (image.blockedFor != null) return isOwnerExemptBlock(image.blockedFor);
+export const OWNER_MEDIA_REVIEWED_BLOCKS: readonly string[] = [
+  BlockedReason.Moderated,
+  BlockedReason.TOS,
+];
+
+/**
+ * Whether every reason in a comma list of block reasons is in `OWNER_MEDIA_REVIEWED_BLOCKS`. Trims
+ * spaces only, as the SQL twin's `btrim` does.
+ */
+export const isReviewedBlock = (blockedFor: string) =>
+  blockedFor
+    .split(',')
+    .every((reason) => OWNER_MEDIA_REVIEWED_BLOCKS.includes(reason.replace(/^ +| +$/g, '')));
+
+/**
+ * Whether an image's owner may be served its media: it carries no block, or only an exempt one, or
+ * with `reviewedBlocks` a reviewed one (`isReviewedBlock`) on an image whose scan ended Blocked and
+ * where `ownerCsamMarked` was read as false (unread, it withholds). For the owner a Blocked level
+ * alone is a rating, not a block (`hasBlockMarker` counts it for everyone else).
+ */
+export function ownerMediaAllowed(
+  image: {
+    ingestion: ImageIngestionStatus | string;
+    blockedFor: string | null;
+    /** `ownerCsamMarkedSql` for the image, read only where `reviewedBlocks` is on. */
+    ownerCsamMarked?: boolean | null;
+  },
+  { reviewedBlocks = false }: { reviewedBlocks?: boolean } = {}
+) {
+  if (image.blockedFor != null)
+    return (
+      isOwnerExemptBlock(image.blockedFor) ||
+      (reviewedBlocks &&
+        image.ingestion === ImageIngestionStatus.Blocked &&
+        image.ownerCsamMarked === false &&
+        isReviewedBlock(image.blockedFor))
+    );
   return image.ingestion !== ImageIngestionStatus.Blocked;
 }
 

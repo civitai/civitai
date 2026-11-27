@@ -198,24 +198,47 @@ const LISTED_IMAGE_IDS_SQL = `SELECT CASE WHEN rl_ids.id ~ '^[0-9]{1,18}$' THEN 
 /**
  * Whether the url `url` (a column reference) carries reported bytes: an image row or moderator delete
  * on it is listed on any CsamReport, whatever the report's state, or an image row on it has the pHash
- * of a listed image. A copy under another url counts through its pHash only.
+ * of a listed image. A copy under another url counts through its pHash only. With `exceptImageId`, the
+ * listing of that image row does not count: neither as a row on the url nor as the image a pHash
+ * matches. A moderator delete of it still counts.
  */
-export function reportListedUrlSql(url: string): string {
+export function reportListedUrlSql(
+  url: string,
+  { exceptImageId }: { exceptImageId?: string } = {}
+): string {
   const u = sqlRef(url);
   if (/^rl_/.test(u)) throw new Error(`Alias taken inside reportListedUrlSql: ${u}`);
-  return `(
-    EXISTS (SELECT 1 FROM "Image" rl_i WHERE rl_i.url = ${u} AND rl_i.id IN (${LISTED_IMAGE_IDS_SQL}))
-    OR EXISTS (
-      SELECT 1 FROM "ImageCdnModeratorDelete" rl_d
-      WHERE rl_d.url = ${u} AND rl_d."imageId" IN (${LISTED_IMAGE_IDS_SQL})
-    )
-    OR EXISTS (
+  const except = exceptImageId == null ? null : sqlRef(exceptImageId);
+  if (except != null && /^rl_/.test(except))
+    throw new Error(`Alias taken inside reportListedUrlSql: ${except}`);
+  const pHashLeg =
+    except == null
+      ? `EXISTS (
       SELECT 1 FROM "Image" rl_p
       -- ARRAY(...) is uncorrelated, so it is computed once per statement, not per outer row.
       WHERE rl_p.url = ${u} AND rl_p."pHash" = ANY(ARRAY(
         SELECT rl_x."pHash" FROM "Image" rl_x
         WHERE rl_x.id IN (${LISTED_IMAGE_IDS_SQL}) AND rl_x."pHash" IS NOT NULL
       ))
+    )`
+      : // Pairs, not ANY(ARRAY(...)): the listed id must be compared, and the list stays uncorrelated.
+        `EXISTS (
+      SELECT 1 FROM "Image" rl_p
+      CROSS JOIN LATERAL jsonb_array_elements(COALESCE((
+        SELECT jsonb_agg(jsonb_build_array(rl_x.id, rl_x."pHash")) FROM "Image" rl_x
+        WHERE rl_x.id IN (${LISTED_IMAGE_IDS_SQL}) AND rl_x."pHash" IS NOT NULL
+      ), '[]'::jsonb)) rl_e
+      WHERE rl_p.url = ${u}
+        AND (rl_e ->> 1)::bigint = rl_p."pHash" AND (rl_e ->> 0)::bigint <> ${except}
+    )`;
+  return `(
+    EXISTS (SELECT 1 FROM "Image" rl_i WHERE rl_i.url = ${u}${
+    except == null ? '' : ` AND rl_i.id <> ${except}`
+  } AND rl_i.id IN (${LISTED_IMAGE_IDS_SQL}))
+    OR EXISTS (
+      SELECT 1 FROM "ImageCdnModeratorDelete" rl_d
+      WHERE rl_d.url = ${u} AND rl_d."imageId" IN (${LISTED_IMAGE_IDS_SQL})
     )
+    OR ${pHashLeg}
   )`;
 }

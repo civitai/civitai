@@ -4,7 +4,8 @@ import { describe, expect, it } from 'vitest';
 
 /**
  * `shownReviewImageLevels` widens what a by-id read admits to service review images, so each caller is
- * a decision: the image page's read (image.get) and the report check. A collect, reaction, comment,
+ * a decision: the image page's read (image.get), the owner retracted-media route that serves the
+ * image page's media for a blocked image, and the report check. A collect, reaction, comment,
  * remix, download or generation data read that passed it would hand a review image to a surface the
  * review never offered.
  */
@@ -26,19 +27,22 @@ describe('who passes the review image opt-in', () => {
         .filter(([, n]) => n)
     );
 
-  it('reaches imageVisibilityConditions only from getImage and assertImageReportable', () => {
+  it('reaches imageVisibilityConditions only from getImage, getOwnRetractedMedia and assertImageReportable', () => {
     expect(tally(/imageVisibilityConditions\(\{[^}]*shownReviewImageLevels[^}]*\}\)/g)).toEqual({
       'src/server/services/image-visibility.service.ts': 1,
       'src/server/services/image.service.ts': 1,
+      'src/server/services/retracted-media.service.ts': 1,
     });
   });
 
-  it('is set from the request only by image.get and the report check', () => {
+  it('is set from the request only by image.get, the owner retracted-media route and the report check', () => {
     expect(tally(/shownReviewImageLevels: shownReviewImageLevelsFor\(/g)).toEqual({
+      'src/pages/api/retracted-media/own/[imageId].ts': 1,
       'src/server/controllers/image.controller.ts': 1,
       'src/server/controllers/report.controller.ts': 1,
     });
     expect(tally(/shownReviewImageLevelsFor\(/g)).toEqual({
+      'src/pages/api/retracted-media/own/[imageId].ts': 1,
       'src/server/controllers/image.controller.ts': 1,
       'src/server/controllers/report.controller.ts': 1,
       'src/server/utils/review-image-levels.ts': 1,

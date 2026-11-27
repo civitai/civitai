@@ -734,6 +734,37 @@ func TestResolveRevocationOutageKeepsASeenRevocationSignedOut(t *testing.T) {
 	}
 }
 
+// civitai/civitai#10695: a moderator or impersonation session whose revocation read failed is not
+// answered here; the Node path decides it (retry once after a fast error, else refuse the request).
+func TestResolveRevocationOutageHandsAnElevatedSessionToNode(t *testing.T) {
+	cases := []struct {
+		name string
+		user map[string]any
+		mut  func(map[string]any)
+	}{
+		{"moderator", map[string]any{"id": 42, "username": "viewer-a", "isModerator": true}, nil},
+		{"impersonation", map[string]any{"id": 42, "username": "viewer-a"}, func(m map[string]any) {
+			m["impersonatedBy"] = 77
+			m["impExp"] = time.Now().Add(time.Hour).UnixMilli()
+		}},
+	}
+	for _, c := range cases {
+		f := newResolveFixture(t)
+		f.session(t, 42, c.user)
+		tok := f.token(t, c.mut)
+		req := func() (*SessionUser, error) {
+			return f.r.Resolve(context.Background(), request(map[string]string{"Cookie": "__Secure-civ-token=" + tok}, "/x"))
+		}
+		if u, err := req(); err != nil || u == nil || u.ID != 42 {
+			t.Fatalf("%s healthy store: got %+v, %v; want user 42", c.name, u, err)
+		}
+		f.sys.Err = testkit.ErrDown
+		if u, err := req(); u != nil || fallback.Reason(err) != "revocation-unconfirmed" {
+			t.Fatalf("%s outage: got %+v, %v; want the revocation-unconfirmed fallback", c.name, u, err)
+		}
+	}
+}
+
 // staleFixture is a Verifier on a hand-moved clock over a switchable JWKS, with stale drops counted.
 type staleFixture struct {
 	now    time.Time
@@ -860,5 +891,119 @@ func TestResolveReportsTheCookieSlot(t *testing.T) {
 	}
 	if want := []string{"shared", "host"}; !slices.Equal(slots, want) {
 		t.Fatalf("slots %v, want %v", slots, want)
+	}
+}
+
+// civitai/civitai#10695, as createRevocationCheck: one retry after a fast connection-level error,
+// none after the deadline or any other error.
+func TestIsRevokedRetriesOnceAfterAFastError(t *testing.T) {
+	reset := errors.New("read tcp 10.0.0.1:6379: connection reset by peer")
+	failFirst := func(r *testkit.Redis, n int) {
+		seen := 0
+		r.KeyErr = func(key string) error {
+			if key != "session:token-state" {
+				return nil
+			}
+			seen++
+			if seen <= n {
+				return reset
+			}
+			return nil
+		}
+	}
+	noDelay := func() time.Duration { return 0 }
+
+	r := testkit.NewRedis()
+	r.SetHash("session:token-state", map[string]string{"tok-1": "invalid"})
+	failFirst(r, 1)
+	var d degradedRecorder
+	rev := &Revocation{Redis: r, Markers: NewMarkerCache(0), OnDegraded: d.report, RetryDelay: noDelay}
+	if revoked, failed := rev.Check(context.Background(), revocationClaims()); !revoked || failed {
+		t.Fatalf("reset then answer: revoked=%v failed=%v, want the store's verdict", revoked, failed)
+	}
+	if r.Calls != 2 || len(d.verdicts) != 0 {
+		t.Fatalf("reset then answer: %d round trips, verdicts %v; want 2 and none", r.Calls, d.verdicts)
+	}
+
+	r = testkit.NewRedis()
+	failFirst(r, 2)
+	d = degradedRecorder{}
+	rev = &Revocation{Redis: r, Markers: NewMarkerCache(0), OnDegraded: d.report, RetryDelay: noDelay}
+	if revoked, failed := rev.Check(context.Background(), revocationClaims()); revoked || !failed {
+		t.Fatalf("two resets: revoked=%v failed=%v, want allowed from the markers", revoked, failed)
+	}
+	if r.Calls != 2 {
+		t.Fatalf("two resets: %d round trips, want 2", r.Calls)
+	}
+	d.only(t, "two resets", VerdictAllowUnknown, "connection reset")
+
+	for _, c := range []struct {
+		name    string
+		fail    func(r *testkit.Redis)
+		timeout time.Duration
+	}{
+		{"deadline", func(r *testkit.Redis) { r.Delay = time.Second }, 20 * time.Millisecond},
+		{"closed client", func(r *testkit.Redis) { r.Err = redis.ErrClosed }, 0},
+		{"other error", func(r *testkit.Redis) { r.Err = testkit.ErrDown }, 0},
+	} {
+		r := testkit.NewRedis()
+		c.fail(r)
+		rev := &Revocation{Redis: r, Timeout: c.timeout, Markers: NewMarkerCache(0), RetryDelay: noDelay}
+		if _, failed := rev.Check(context.Background(), revocationClaims()); !failed || r.Calls != 1 {
+			t.Fatalf("%s: failed=%v after %d round trips, want a failed read and no retry", c.name, failed, r.Calls)
+		}
+	}
+}
+
+// After a retry fails, the process stops retrying for RetryCooldown, then retries again.
+func TestIsRevokedStopsRetryingForTheCooldownAfterARetryFails(t *testing.T) {
+	r := testkit.NewRedis()
+	r.Err = errors.New("read tcp 10.0.0.1:6379: connection reset by peer")
+	rev := &Revocation{Redis: r, RetryDelay: func() time.Duration { return 0 }, RetryCooldown: 50 * time.Millisecond}
+	rev.Check(context.Background(), revocationClaims())
+	if r.Calls != 2 {
+		t.Fatalf("first failure: %d round trips, want 2 (one retry)", r.Calls)
+	}
+	rev.Check(context.Background(), revocationClaims())
+	if r.Calls != 3 {
+		t.Fatalf("inside the cool-down: %d round trips, want 3 (no retry)", r.Calls)
+	}
+	time.Sleep(60 * time.Millisecond)
+	rev.Check(context.Background(), revocationClaims())
+	if r.Calls != 5 {
+		t.Fatalf("after the cool-down: %d round trips, want 5 (retrying again)", r.Calls)
+	}
+}
+
+// A request that ends during the backoff never retried, so it does not pause retries for the process.
+func TestIsRevokedARequestEndedInTheBackoffDoesNotPauseRetries(t *testing.T) {
+	r := testkit.NewRedis()
+	r.Err = errors.New("read tcp 10.0.0.1:6379: connection reset by peer")
+	rev := &Revocation{Redis: r, RetryDelay: func() time.Duration { return time.Second }, RetryCooldown: time.Hour}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	rev.Check(ctx, revocationClaims())
+	if r.Calls != 1 {
+		t.Fatalf("ended in the backoff: %d round trips, want 1", r.Calls)
+	}
+	rev.RetryDelay = func() time.Duration { return 0 }
+	rev.Check(context.Background(), revocationClaims())
+	if r.Calls != 3 {
+		t.Fatalf("next failure: %d round trips, want 3 (it still retries)", r.Calls)
+	}
+}
+
+// A moderator token without a jti is never revocation-read, so it is unconfirmed and goes to Node, as
+// confirmElevated answers for claims it never checked (civitai/civitai#10695).
+func TestResolveHandsAJtiLessModeratorTokenToNode(t *testing.T) {
+	f := newResolveFixture(t)
+	f.session(t, 42, map[string]any{"id": 42, "username": "viewer-a", "isModerator": true})
+	tok := f.token(t, func(m map[string]any) { delete(m, "jti") })
+	u, err := f.r.Resolve(context.Background(), request(map[string]string{"Cookie": "__Secure-civ-token=" + tok}, "/x"))
+	if u != nil || fallback.Reason(err) != "revocation-unconfirmed" {
+		t.Fatalf("jti-less moderator: got %+v, %v; want the revocation-unconfirmed fallback", u, err)
+	}
+	if f.sys.Calls != 0 {
+		t.Fatalf("jti-less moderator: %d sys round trips, want none", f.sys.Calls)
 	}
 }

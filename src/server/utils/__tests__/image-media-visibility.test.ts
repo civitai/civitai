@@ -167,6 +167,25 @@ describe('image.get media for a viewer', () => {
     expect(await viewerCanSeeImageMedia(moderator, blocked(BlockedReason.Moderated))).toBe(true);
   });
 
+  it('applies reviewedBlocks to the owner alone', async () => {
+    const reviewed = {
+      nsfwLevel: NsfwLevel.PG,
+      userId: OWNER_ID,
+      postId: null,
+      ingestion: 'Blocked',
+      blockedFor: BlockedReason.Moderated,
+      ownerCsamMarked: false,
+    };
+    const owner = ctxFor(viewers['the owner on the SFW domain']);
+    const stranger = ctxFor(viewers['signed in on the SFW domain']);
+    const opts = { reviewedBlocks: true };
+    expect(await viewerCanSeeImageMedia(owner, reviewed, opts)).toBe(true);
+    expect(await viewerCanSeeImageMedia(stranger, reviewed, opts)).toBe(false);
+    expect(await viewerCanSeeImageMedia(owner, { ...reviewed, ownerCsamMarked: true }, opts)).toBe(
+      false
+    );
+  });
+
   it('keeps a crawler-only answer out of the shared signed-out edge cache', async () => {
     const crawler = ctxFor(viewers['a crawler on the mature domain']);
     await withViewerMedia(crawler, imageAt(NsfwLevel.R));

@@ -33,9 +33,13 @@ import { REVIEW_MUTE_POINTS, MUTE_POINTS } from '~/shared/constants/strike.const
 // Rate Limiting
 // ============================================================================
 
-// Uncapped: a moderator's own decision, and a scam case's strike, which the case's dedupe already
-// limits to one per case.
-const RATE_LIMIT_EXEMPT_REASONS: StrikeReason[] = [StrikeReason.ManualModAction, StrikeReason.Scam];
+// Uncapped: a moderator's own decision (including a repeat-infringer Copyright strike), and a scam
+// case's strike, which the case's dedupe already limits to one per case.
+const RATE_LIMIT_EXEMPT_REASONS: StrikeReason[] = [
+  StrikeReason.ManualModAction,
+  StrikeReason.Copyright,
+  StrikeReason.Scam,
+];
 
 /**
  * Check if an auto-strike should be skipped due to rate limiting.
@@ -47,7 +51,7 @@ export async function shouldRateLimitStrike(userId: number): Promise<boolean> {
     FROM "UserStrike"
     WHERE "userId" = ${userId}
       AND "createdAt" >= CURRENT_DATE
-      AND "reason" != ALL(${RATE_LIMIT_EXEMPT_REASONS}::"StrikeReason"[])
+      AND "reason"::text != ALL(${RATE_LIMIT_EXEMPT_REASONS}::text[]) -- text, not the enum: this code deploys before the hand-applied migration adds 'Copyright'
       AND "status" != ${StrikeStatus.Voided}::"StrikeStatus"
   `;
   return Number(result.count) >= 1;

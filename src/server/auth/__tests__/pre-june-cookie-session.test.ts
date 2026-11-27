@@ -33,9 +33,11 @@ vi.mock('@civitai/auth', async (importOriginal) => {
   return {
     ...actual,
     createSessionClient: () => ({
-      async getSessionUser(token: string) {
+      async resolveSessionUser(token: string) {
         const claims = await h.verifier!.verifyToken(token);
-        return claims ? { id: Number(claims.sub), username: 'seven' } : null;
+        return claims
+          ? { user: { id: Number(claims.sub), username: 'seven' } }
+          : { user: null, reason: 'invalid' };
       },
       getSessionUserById: (id: number) => h.getSessionUserById(id),
     }),

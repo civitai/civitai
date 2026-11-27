@@ -2,7 +2,11 @@ import { Prisma } from '@prisma/client';
 import { heldImageKnownSql } from '@civitai/shared/held-media';
 import { RETRACTED_MEDIA_READ_TIMEOUT_MS } from '@civitai/shared/retracted-media';
 import { moderatorMediaWhereSql, moderatorWithheldSql } from '@civitai/shared/retracted-media-tier';
+import { OWNER_MEDIA_EXEMPT_BLOCKS } from '~/server/common/image-block-marker';
+import { ownerMediaAllowedSql } from '~/server/common/image-visibility';
 import { dbWrite } from '~/server/db/client';
+import { reviewOfImageSql } from '~/server/services/creator-service-review-image-sql';
+import { imageVisibilityConditions } from '~/server/services/image-visibility.service';
 
 export type RetractedMedia = {
   url: string;
@@ -37,4 +41,51 @@ export async function getRetractedMedia(
   });
   if (!row || row.withheld) return null;
   return { url: row.url, type: row.type, mimeType: row.mimeType, held: row.held };
+}
+
+export type OwnRetractedMedia = Omit<RetractedMedia, 'held'> & {
+  postId: number | null;
+  nsfwLevel: number;
+};
+
+/**
+ * The storage key and type of the viewer's own image while `ownerMediaAllowed` leaves them its media
+ * under a reviewed block (`reviewedBlocks`, read again here rather than trusted from the page);
+ * `null` otherwise, exactly as a missing image. The row must also pass `image.get`'s visibility
+ * conditions for its owner (`imageVisibilityConditions`), so the route opens nothing the image page
+ * would not. Item level only: an owner who is held keeps their own media. Read on the primary; past
+ * its timeout it refuses.
+ */
+export async function getOwnRetractedMedia(
+  imageId: number,
+  userId: number,
+  /** `imageVisibilityConditions`' `shownReviewImageLevels`, as the image page passes it. */
+  { shownReviewImageLevels }: { shownReviewImageLevels?: number } = {},
+  db = dbWrite
+): Promise<OwnRetractedMedia | null> {
+  const visible = imageVisibilityConditions({
+    userId,
+    ownerSeesHeld: true,
+    shownReviewImageLevels,
+    ownerKeepsBlockedRow: true,
+  });
+  const [row] = await db.$transaction(async (tx) => {
+    await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = ${RETRACTED_MEDIA_READ_TIMEOUT_MS}`);
+    return tx.$queryRaw<OwnRetractedMedia[]>`
+      SELECT i.url, i.type::text AS type, i."mimeType", i."postId",
+        COALESCE(rw."level", i."nsfwLevel") AS "nsfwLevel"
+      FROM "Image" i
+      LEFT JOIN "Post" p ON p.id = i."postId"
+      LEFT JOIN LATERAL ${reviewOfImageSql} rw ON TRUE
+      WHERE i.id = ${imageId}
+        AND i."userId" = ${userId}
+        AND ${Prisma.join(visible, ' AND ')}
+        AND i."blockedFor" IS NOT NULL
+        AND i."blockedFor" NOT IN (${Prisma.join(OWNER_MEDIA_EXEMPT_BLOCKS)})
+        -- The only clause keeping a CSAM-marked row out, since visible keeps the owner's blocked rows.
+        -- Pinned by the test "the owner route on a CSAM-marked row" in retracted-media.service.test.ts.
+        AND ${ownerMediaAllowedSql('i', { reviewedBlocks: true })}
+    `;
+  });
+  return row ?? null;
 }
