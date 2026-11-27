@@ -30,6 +30,8 @@ import type { ImageProps } from '~/components/ImageViewer/ImageViewer';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { ToggleSearchableMenuItem } from '~/components/MenuItems/ToggleSearchableMenuItem';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
+import { SetAsBackgroundMenuItem } from '~/components/Profile/SetAsBackground';
+import { PinToProfileMenuItem } from '~/components/Profile/PinToProfileMenuItem';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import type { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
@@ -106,6 +108,8 @@ export function ImageMenuItems(props: ImageContextMenuProps & { disableDelete?: 
           <RemoveFromVersionShowcasesMenuItem imageId={imageId} />
           {isImage && (
             <>
+              <PinToProfileMenuItem entityType="Image" entityId={imageId} />
+              <SetAsBackgroundMenuItem imageId={imageId} />
               <AddArtFrameMenuItem
                 entityType={CosmeticEntity.Image}
                 entityId={imageId}

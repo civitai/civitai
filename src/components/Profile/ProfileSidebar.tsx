@@ -25,6 +25,7 @@ import {
   IconShoppingBag,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
+import clsx from 'clsx';
 import React, { useMemo, useState } from 'react';
 import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
 import { ChatUserButton } from '~/components/Chat/ChatUserButton';
@@ -39,6 +40,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
 import { UserContextMenu } from '~/components/Profile/UserContextMenu';
+import { SidebarBackgroundArt } from '~/components/Profile/SidebarBackgroundArt';
 import { UserStats } from '~/components/Profile/UserStats';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { Username } from '~/components/User/Username';
@@ -53,6 +55,7 @@ import { trpc } from '~/utils/trpc';
 import { CopyButton } from '~/components/CopyButton/CopyButton';
 import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
 import type { PrivacySettingsSchema } from '~/server/schema/user-profile.schema';
+import type { SidebarBackgroundCosmetic } from '~/server/selectors/cosmetic.selector';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { openUserProfileEditModal } from '~/components/Dialog/triggers/user-profile-edit';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
@@ -61,6 +64,13 @@ import { LegendStatusLine } from '~/components/CreatorJourney/LegendStatusLine';
 import { MemorialBadge, MemorialBanner } from '~/components/Profile/MemorialBanner';
 import { getBadgeImageUrl, splitProfileBadges } from '~/shared/utils/badge-visibility';
 import { useAvailableBuzz } from '../Buzz/useAvailableBuzz';
+import { useQueryCreatorShop } from '~/components/CreatorShop/creator-shop.util';
+import { useQueryShopServices } from '~/components/CreatorShop/Services/creator-service.util';
+import {
+  sectionIcons,
+  storefrontSectionId,
+  storefrontShowsServices,
+} from '~/components/CreatorShop/section-meta';
 
 const mapSize: Record<
   'mobile' | 'desktop',
@@ -119,8 +129,18 @@ export function ProfileSidebar({ username, className }: { username: string; clas
   const [showAllBadges, setShowAllBadges] = useState<boolean>(false);
   const [enlargedBadge, setEnlargedBadge] = useState<number | null>(null);
   const sizeOpts = mapSize[isMobile ? 'mobile' : 'desktop'];
+  // Mobile renders this inside ProfileHeader with its own action row, so only desktop changes.
+  const redesign = !!features.profileRedesign && !isMobile;
   const [mainBuzzColor] = useAvailableBuzz();
   const buzzColorConfig = useBuzzCurrencyConfig(mainBuzzColor);
+
+  const hasPublicShop = !!features.creatorShop && !!user?.creatorShopEnabled;
+  const { offerings: services } = useQueryShopServices(
+    user?.id ?? 0,
+    redesign && hasPublicShop && !!features.creatorServices
+  );
+  const { shop } = useQueryCreatorShop(redesign && services.length > 0 ? user?.id : undefined);
+  const showServicesBtn = storefrontShowsServices(shop, services.length, features);
 
   const badges = useMemo(
     () =>
@@ -140,6 +160,9 @@ export function ProfileSidebar({ username, className }: { username: string; clas
   const { profile, stats } = user;
   const shouldDisplayStats = stats && !!Object.values(stats).find((stat) => stat !== 0);
   const equippedCosmetics = user?.cosmetics.filter((c) => !!c.equippedAt);
+  const sidebarBackground = redesign
+    ? equippedCosmetics.find((c) => c.cosmetic.type === CosmeticType.SidebarBackground)?.cosmetic
+    : undefined;
 
   const privacy = profile.privacySettings as PrivacySettingsSchema | null | undefined;
   const { highlightedBadges, otherBadges } = splitProfileBadges(badges, privacy, getBadgeImageUrl);
@@ -210,7 +233,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
         style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.5, flex: 1 }}
         variant={isMobile ? 'filled' : undefined}
       />
-      <AnnouncementMuteToggle creatorId={user.id} creatorName={user.username} />
+      <AnnouncementMuteToggle creatorId={user.id} creatorName={user.username} solid={redesign} />
     </Group>
   );
 
@@ -266,6 +289,22 @@ export function ProfileSidebar({ username, className }: { username: string; clas
     </Button>
   );
 
+  const ServicesIcon = sectionIcons.services;
+  const servicesBtn = showServicesBtn && (
+    <Button
+      component={NextLink}
+      href={`/user/${username}/shop#${storefrontSectionId('services')}`}
+      variant="light"
+      color="yellow"
+      size={sizeOpts.button}
+      radius="xl"
+      leftSection={<ServicesIcon size={16} />}
+      style={{ fontSize: 14, fontWeight: 590, lineHeight: 1.5 }}
+    >
+      Services
+    </Button>
+  );
+
   const mutedAlert = isCurrentUser && muted && (
     <AlertWithIcon icon={<IconAlertCircle />} iconSize="sm">
       You cannot edit your profile because your account has been restricted
@@ -277,108 +316,155 @@ export function ProfileSidebar({ username, className }: { username: string; clas
     showEventCosmetics && isShowcaseHatShowing(user.showcaseHat)
       ? avatarHatOverhang(user.showcaseHat, sizeOpts.avatar)
       : 0;
+  // Redesign: a hat gets just enough room for itself and its drop shadow, never less than the
+  // no-hat padding.
+  const hatPaddingTop = !hatRoom
+    ? undefined
+    : redesign
+    ? `max(var(--mantine-spacing-md), ${hatRoom + 4}px)`
+    : `calc(var(--mantine-spacing-md) + ${hatRoom}px)`;
+
+  const avatar = (
+    <UserAvatar
+      avatarSize={sizeOpts.avatar}
+      user={{ ...user, cosmetics: equippedCosmetics }}
+      size={sizeOpts.username}
+      // Oversized radius to make it always a circle
+      radius={1000}
+      withShowcaseHat
+    />
+  );
+  const rankBadge = <RankBadge rank={user.rank} size={sizeOpts.rankBadge} withTitle />;
+  const identity = (
+    <Stack
+      gap={0}
+      align={redesign ? 'center' : undefined}
+      maw={redesign ? '100%' : undefined}
+      ta={redesign ? 'center' : undefined}
+    >
+      <Username {...user} cosmetics={equippedCosmetics} size="xl" />
+      <Text c="dimmed" size="sm">
+        Joined {formatDate(user.createdAt)}
+      </Text>
+      {memorial && (
+        <Group mt={4}>
+          <MemorialBadge />
+        </Group>
+      )}
+      {features.creatorJourney && <LegendStatusLine userId={user.id} />}
+      {currentUser?.isModerator && (
+        <CopyButton value={String(user.id)}>
+          {({ copied, copy, color }) => (
+            <Text c={copied ? color : 'dimmed'} size="sm" className="cursor-pointer" onClick={copy}>
+              {copied ? 'Copied!' : `User ID: ${user.id}`}
+            </Text>
+          )}
+        </CopyButton>
+      )}
+      {user?.bannedAt && (
+        <Group>
+          <Popover withArrow>
+            <Popover.Target>
+              <UnstyledButton>
+                <Badge
+                  color="red"
+                  style={{
+                    height: 'auto',
+                    whiteSpace: 'normal',
+                    padding: '4px 8px',
+                  }}
+                >
+                  <Group gap={4} wrap="nowrap" align="flex-start">
+                    <Text style={{ whiteSpace: 'normal', lineHeight: 1.3, textAlign: 'left' }}>
+                      {user?.banReason ? `Banned: ${user?.banReason}` : 'Banned'}
+                    </Text>
+                    {user?.bannedReasonDetails && (
+                      <IconInfoCircle size={16} style={{ flexShrink: 0 }} />
+                    )}
+                  </Group>
+                </Badge>
+              </UnstyledButton>
+            </Popover.Target>
+            <Popover.Dropdown maw={350}>
+              {user?.bannedReasonDetails ? (
+                <RenderHtml html={user?.bannedReasonDetails} style={{ fontSize: '14px' }} />
+              ) : (
+                <Text>This user has been banned from the site.</Text>
+              )}
+            </Popover.Dropdown>
+          </Popover>
+        </Group>
+      )}
+    </Stack>
+  );
 
   return (
     <Stack
-      className={className}
+      // Isolated so the sidebar art can sit behind the header without leaving the sidebar.
+      className={clsx(className, redesign && 'isolate')}
       gap={sizeOpts.spacing}
       p="md"
-      pt={hatRoom ? `calc(var(--mantine-spacing-md) + ${hatRoom}px)` : undefined}
+      pt={hatPaddingTop}
+      pos={redesign ? 'relative' : undefined}
+      data-profile-redesign={redesign || undefined}
     >
-      <Group wrap="nowrap" justify="space-between">
-        <Group align="flex-start" justify="space-between" w={!isMobile ? '100%' : undefined}>
-          <UserAvatar
-            avatarSize={sizeOpts.avatar}
-            user={{ ...user, cosmetics: equippedCosmetics }}
-            size={sizeOpts.username}
-            // Oversized radius to make it always a circle
-            radius={1000}
-            withShowcaseHat
-          />
-
-          {!isMobile && (
-            <Group>
-              {shareBtn}
-              <UserContextMenu username={username} />
-            </Group>
-          )}
-        </Group>
-        {isMobile && (
-          <Group wrap="nowrap" gap={4}>
-            {muted ? mutedAlert : editProfileBtn}
-            {!user?.bannedAt && (
-              <>
-                {followUserBtn}
-                {!memorial && <TipBuzzBtn label="" />}
-                {!memorial && <ChatBtn label="" />}
-              </>
-            )}
+      {sidebarBackground && (
+        <SidebarBackgroundArt
+          data={sidebarBackground.data as SidebarBackgroundCosmetic['data']}
+          className="absolute inset-x-0 top-0 -z-10 h-60"
+        />
+      )}
+      {redesign ? (
+        <>
+          <Group
+            gap="xs"
+            wrap="nowrap"
+            pos="absolute"
+            top="var(--mantine-spacing-md)"
+            right="var(--mantine-spacing-md)"
+            className="z-10"
+          >
             {shareBtn}
             <UserContextMenu username={username} />
           </Group>
-        )}
-      </Group>
-      <RankBadge rank={user.rank} size={sizeOpts.rankBadge} withTitle />
-      <Stack gap={0}>
-        <Username {...user} cosmetics={equippedCosmetics} size="xl" />
-        <Text c="dimmed" size="sm">
-          Joined {formatDate(user.createdAt)}
-        </Text>
-        {memorial && (
-          <Group mt={4}>
-            <MemorialBadge />
-          </Group>
-        )}
-        {features.creatorJourney && <LegendStatusLine userId={user.id} />}
-        {currentUser?.isModerator && (
-          <CopyButton value={String(user.id)}>
-            {({ copied, copy, color }) => (
-              <Text
-                c={copied ? color : 'dimmed'}
-                size="sm"
-                className="cursor-pointer"
-                onClick={copy}
-              >
-                {copied ? 'Copied!' : `User ID: ${user.id}`}
-              </Text>
-            )}
-          </CopyButton>
-        )}
-        {user?.bannedAt && (
-          <Group>
-            <Popover withArrow>
-              <Popover.Target>
-                <UnstyledButton>
-                  <Badge
-                    color="red"
-                    style={{
-                      height: 'auto',
-                      whiteSpace: 'normal',
-                      padding: '4px 8px',
-                    }}
-                  >
-                    <Group gap={4} wrap="nowrap" align="flex-start">
-                      <Text style={{ whiteSpace: 'normal', lineHeight: 1.3, textAlign: 'left' }}>
-                        {user?.banReason ? `Banned: ${user?.banReason}` : 'Banned'}
-                      </Text>
-                      {user?.bannedReasonDetails && (
-                        <IconInfoCircle size={16} style={{ flexShrink: 0 }} />
-                      )}
-                    </Group>
-                  </Badge>
-                </UnstyledButton>
-              </Popover.Target>
-              <Popover.Dropdown maw={350}>
-                {user?.bannedReasonDetails ? (
-                  <RenderHtml html={user?.bannedReasonDetails} style={{ fontSize: '14px' }} />
-                ) : (
-                  <Text>This user has been banned from the site.</Text>
+          <Stack gap={sizeOpts.spacing} align="center">
+            {avatar}
+            {rankBadge}
+            {identity}
+          </Stack>
+        </>
+      ) : (
+        <>
+          <Group wrap="nowrap" justify="space-between">
+            <Group align="flex-start" justify="space-between" w={!isMobile ? '100%' : undefined}>
+              {avatar}
+
+              {!isMobile && (
+                <Group>
+                  {shareBtn}
+                  <UserContextMenu username={username} />
+                </Group>
+              )}
+            </Group>
+            {isMobile && (
+              <Group wrap="nowrap" gap={4}>
+                {muted ? mutedAlert : editProfileBtn}
+                {!user?.bannedAt && (
+                  <>
+                    {followUserBtn}
+                    {!memorial && <TipBuzzBtn label="" />}
+                    {!memorial && <ChatBtn label="" />}
+                  </>
                 )}
-              </Popover.Dropdown>
-            </Popover>
+                {shareBtn}
+                <UserContextMenu username={username} />
+              </Group>
+            )}
           </Group>
-        )}
-      </Stack>
+          {rankBadge}
+          {identity}
+        </>
+      )}
 
       {profile.location && !muted && (
         <Group gap="sm" wrap="nowrap">
@@ -404,7 +490,34 @@ export function ProfileSidebar({ username, className }: { username: string; clas
       {memorial && user.username && (
         <MemorialBanner username={user.username} tributes={memorial.tributes} />
       )}
-      {!isMobile && !user?.bannedAt && (
+      {redesign && !user?.bannedAt && (
+        <Stack gap="xs">
+          {isCurrentUser ? (
+            muted ? (
+              mutedAlert
+            ) : (
+              editProfileBtn
+            )
+          ) : (
+            <>
+              {followUserBtn}
+              {!memorial && (
+                <Group grow wrap="nowrap" gap="xs">
+                  <TipBuzzBtn />
+                  <ChatBtn />
+                </Group>
+              )}
+            </>
+          )}
+          {shopBtn && (
+            <Group grow wrap="nowrap" gap="xs">
+              {shopBtn}
+              {servicesBtn}
+            </Group>
+          )}
+        </Stack>
+      )}
+      {!isMobile && !redesign && !user?.bannedAt && (
         <>
           <Group grow>
             {muted ? mutedAlert : editProfileBtn}

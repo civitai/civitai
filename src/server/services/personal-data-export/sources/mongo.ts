@@ -82,6 +82,7 @@ export const USER_STEP_TYPES: ReadonlySet<string> = new Set(
     'miniMaxMusic3',
     'yuE2',
     'soniloAudioGen',
+    'seedAudioGen',
     'polyGen',
     'training',
     'imageResourceTraining',

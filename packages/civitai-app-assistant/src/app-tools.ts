@@ -157,7 +157,7 @@ export interface AppToolsOptions {
 
 /** A new app whose tools the reply gets now (`reopenTools`): it goes straight on to plan and build. */
 const newAppReady = (app: string, intro: string) =>
-  `${intro} ${app} is also its blockId. Its tools are ready for this reply: call set_checklist with the features the user asked for, as your plan, then build it straight away. Ask the user only if their request is ambiguous or needs a decision from them.`;
+  `${intro} ${app} is also its blockId. Its tools are ready for this reply: call set_checklist with the features the user asked for, as your plan, then build it straight away. Ask the user only if their request is ambiguous or needs a decision from them, and then with ask_choice (2 to 4 options), never as a typed question.`;
 /** A new app whose tools come only with the next reply: this reply ends here (`awaitsUser`). */
 const newAppNotReady = (app: string, intro: string) =>
   `${intro} ${app} is also its blockId. It is still starting, so its tools arrive with your next reply, and this reply ends here: the user sees their app is starting, and you plan and build it (set_checklist first) as soon as they reply.`;

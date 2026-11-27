@@ -1,7 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
-import { banReasonsAlwaysRemovingMedia } from '~/server/common/constants';
 import {
   SERVICE_DEAL_FILE_RETENTION_CLOSED_MS,
   SERVICE_DEAL_FILE_RETENTION_COMPLETED_MS,
@@ -54,13 +53,6 @@ export const dealFilesHeld = Prisma.sql`(
   EXISTS (SELECT 1 FROM "ServiceOfferingReport" sr JOIN "Report" r ON r."id" = sr."reportId"
     WHERE sr."serviceOfferingId" = o."id" AND (r."status"::text IN ('Pending', 'Processing')
       OR GREATEST(r."createdAt", r."statusSetAt") + ${retentionWindow} > now()))
-  OR EXISTS (SELECT 1 FROM "User" bu
-    WHERE bu."id" IN ${parties}
-      AND bu."meta" -> 'banDetails' ->> 'reasonCode' IN (${Prisma.join([
-        ...banReasonsAlwaysRemovingMedia,
-      ])}))
-  OR EXISTS (SELECT 1 FROM "UserReport" ur JOIN "Report" r ON r."id" = ur."reportId"
-    WHERE ur."userId" IN ${parties} AND r."status"::text IN ('Pending', 'Processing'))
   OR EXISTS (SELECT 1 FROM "Appeal" a
     WHERE a."userId" IN ${parties} AND a."status"::text = 'Pending')
   OR EXISTS (SELECT 1 FROM "ModActivity" m

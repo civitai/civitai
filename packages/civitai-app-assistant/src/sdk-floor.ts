@@ -12,6 +12,9 @@ export const CIVITAI_SDK = '@civitai/sdk';
  * Bump it together with the root `package.json`'s `@civitai/sdk` on each SDK minor release: the
  * runner's `sdk-floor.test.ts` fails while the two disagree. It only reaches the runner with a runner
  * release.
+ *
+ * Keep its patch at 0: the runner judges major.minor, the server's submit advisory full SemVer,
+ * and the two agree only while the floor is `X.Y.0`.
  */
 export const CIVITAI_SDK_FLOOR = '0.33.0';
 
@@ -19,10 +22,8 @@ export const CIVITAI_SDK_FLOOR = '0.33.0';
 export const CIVITAI_BLOCKS_REACT = '@civitai/blocks-react';
 
 /**
- * The lowest `@civitai/blocks-react` the platform publishes as its minimum: the release the
- * starters paired with `@civitai/sdk` `CIVITAI_SDK_FLOOR` (civitai-app-starters' release of sdk
- * 0.33.0 pins `^0.87.0` in every example). Unlike `CIVITAI_SDK_FLOOR` nothing in this repo pins it,
- * so it is raised BY HAND when the SDK floor moves.
+ * The lowest `@civitai/blocks-react` the platform publishes as its minimum. Nothing here pins it;
+ * raise it by hand to the blocks-react the starters pair with the SDK floor.
  */
 export const CIVITAI_BLOCKS_REACT_FLOOR = '0.87.0';
 
@@ -38,8 +39,8 @@ export interface PlatformSdkFloor {
  * `sdk-below-floor` advisory for a bundle whose lockfile is below them. A version is below when
  * SemVer orders it before `minimum` (a pre-release of the minimum is below it).
  *
- * Raising `CIVITAI_SDK_FLOOR` raises this one too: apps below it are then refused at submit until
- * they upgrade or pass the override.
+ * The `@civitai/sdk` entry follows `CIVITAI_SDK_FLOOR`; `CIVITAI_BLOCKS_REACT_FLOOR` is raised by
+ * hand. Raising either refuses apps below it at submit until they upgrade or pass the override.
  */
 export const PLATFORM_SDK_FLOORS: readonly PlatformSdkFloor[] = [
   { name: CIVITAI_SDK, minimum: CIVITAI_SDK_FLOOR },

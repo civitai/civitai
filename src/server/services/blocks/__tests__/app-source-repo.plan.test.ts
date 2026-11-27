@@ -243,6 +243,10 @@ describe('platform updates', () => {
         [put('node_modules/x/index.js', '1')],
         'node_modules/x/index.js is a file a source repo never holds',
       ],
+      [
+        [put('src/build/x.js', '1')],
+        "src/build/x.js is in a folder the app's package always leaves out",
+      ],
       [[put('../escape.ts', '1')], '../escape.ts is not a relative repo path'],
       [[put('/abs.ts', '1')], '/abs.ts is not a relative repo path'],
     ] as const) {
@@ -273,6 +277,37 @@ describe('platform updates', () => {
     // The shared list is untouched: a fork's seed and an App Assistant save match it as before.
     expect(forkSeedExclusionReason('.ENV')).toBeNull();
     expect(forkSeedExclusionReason('.env')).toBe('env');
+  });
+
+  it("refuses a path under a folder the CLI's package drops at every depth, not only the root", () => {
+    for (const path of [
+      'src/build/x.js',
+      'packages/ui/out/index.js',
+      'app/.cache/data.json',
+      'web/coverage/lcov.info',
+      'web/.vite/deps/a.js',
+      'tools/venv/lib/site.py',
+      'a/b/dist/c.js',
+      'pkg/.next/server.js',
+      'pkg/.turbo/log',
+      'py/.pytest_cache/v',
+      'py/.mypy_cache/v',
+      'py/.ruff_cache/v',
+      'x/.pnpm-store/v3/a',
+      'x/.hg/store',
+      'x/.svn/entries',
+      'x/.venv/bin/python',
+      'src/Build/x.js',
+    ]) {
+      expect(platformUpdatePathRefusal(path), path).toBe(
+        "is in a folder the app's package always leaves out"
+      );
+    }
+    // Positive control: the same names as a FILE, or inside a longer folder name, are writable.
+    for (const path of ['src/build.ts', 'src/out', 'src/builder/x.ts', 'docs/coverage.md'])
+      expect(platformUpdatePathRefusal(path), path).toBeNull();
+    // The shared fork-seed list is untouched: it drops build output at the top level only.
+    expect(forkSeedExclusionReason('src/build/x.js')).toBeNull();
   });
 
   it('commit message: summary, the reason as the body, and the trailers last', () => {

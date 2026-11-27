@@ -480,7 +480,7 @@ export const workflowConfigs: WorkflowConfigs = {
     modeLabel: 'Text to Music',
     description: 'Generate music from text description and lyrics',
     category: 'audio',
-    ecosystemIds: [ECO.AceAudio, ECO.MiniMaxMusic3, ECO.YuE2, ECO.Sonilo],
+    ecosystemIds: [ECO.AceAudio, ECO.MiniMaxMusic3, ECO.YuE2, ECO.Sonilo, ECO.SeedAudio],
     stepDisplay: 'separate',
   },
 

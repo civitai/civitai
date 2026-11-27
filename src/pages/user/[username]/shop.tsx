@@ -9,7 +9,7 @@ import {
   useQueryCreatorShop,
 } from '~/components/CreatorShop/creator-shop.util';
 import { ShopDraftBanner } from '~/components/CreatorShop/Manage/ShopDraftBanner';
-import { storefrontSectionKeys } from '~/components/CreatorShop/section-meta';
+import { storefrontShowsServices } from '~/components/CreatorShop/section-meta';
 import { EmptyShopState } from '~/components/CreatorShop/Storefront/EmptyShopState';
 import { ShopHeader } from '~/components/CreatorShop/Storefront/ShopHeader';
 import { StorefrontSections } from '~/components/CreatorShop/Storefront/StorefrontSections';
@@ -82,11 +82,7 @@ function UserShopPage() {
     });
 
   // ServicesSection renders only with an Active offering, and only where the shop shows it.
-  const showServicesLink =
-    !!shop &&
-    !isEmpty &&
-    services.length > 0 &&
-    storefrontSectionKeys(shop.settings.sections, features).includes('services');
+  const showServicesLink = !isEmpty && storefrontShowsServices(shop, services.length, features);
 
   // The header/banners and non-Featured sections are constrained to a max width
   // and centered; the outer wrapper stays full-width so the Featured section can

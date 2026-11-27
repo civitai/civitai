@@ -12,12 +12,12 @@ const { appReviewReplyDetailFetcher } = await import(
 const { postReviewMessageSchema } = await import('~/server/schema/blocks/app-review-thread.schema');
 const {
   canSubmitReviewReply,
-  developerSideRecipients,
   isDecidedReviewStatus,
   normalizeReviewMessageBody,
   parseReviewSubjectId,
   reviewReplyExcerpt,
   reviewThreadDeveloperUrl,
+  reviewThreadDeveloperUserId,
   reviewThreadModeratorUrl,
   reviewThreadViewerRole,
   routeReply,
@@ -143,51 +143,53 @@ describe('routeReply', () => {
   });
 });
 
-describe('reviewThreadViewerRole', () => {
-  const base = { submittedByUserId: 7, listingOwnerUserId: 9 };
-
-  it('the submitter and the listing owner are the developer side', () => {
-    expect(reviewThreadViewerRole({ ...base, viewerUserId: 7, viewerIsModerator: false })).toBe(
-      'developer'
-    );
-    expect(reviewThreadViewerRole({ ...base, viewerUserId: 9, viewerIsModerator: false })).toBe(
-      'developer'
-    );
+describe('reviewThreadDeveloperUserId', () => {
+  it('the app exists: its current owner, whoever submitted', () => {
+    expect(reviewThreadDeveloperUserId(7, { via: 'app', ownerUserId: 7 })).toBe(7);
+    // Transferred (or claimed): the new owner, and the submitter is out.
+    expect(reviewThreadDeveloperUserId(7, { via: 'app', ownerUserId: 9 })).toBe(9);
+    // An app that resolves to no owner is owned by nobody.
+    expect(reviewThreadDeveloperUserId(7, { via: 'app', ownerUserId: null })).toBe(null);
   });
 
-  it('a moderator who is not a party writes as a moderator', () => {
-    expect(reviewThreadViewerRole({ ...base, viewerUserId: 31, viewerIsModerator: true })).toBe(
-      'moderator'
-    );
-  });
-
-  it('a moderator on their own submission writes as its developer', () => {
-    expect(reviewThreadViewerRole({ ...base, viewerUserId: 7, viewerIsModerator: true })).toBe(
-      'developer'
-    );
-  });
-
-  it('anyone else is not a participant', () => {
-    expect(reviewThreadViewerRole({ ...base, viewerUserId: 55, viewerIsModerator: false })).toBe(
-      null
-    );
-    expect(
-      reviewThreadViewerRole({
-        submittedByUserId: 7,
-        listingOwnerUserId: null,
-        viewerUserId: 9,
-        viewerIsModerator: false,
-      })
-    ).toBe(null);
+  it('a first version: the submitter while they own its slug listing, or no listing exists', () => {
+    expect(reviewThreadDeveloperUserId(7, { via: 'none' })).toBe(7);
+    expect(reviewThreadDeveloperUserId(7, { via: 'slug', ownerUserId: 7 })).toBe(7);
+    // Someone else holds the slug (a transferred draft, or a released slug taken by a
+    // stranger): neither the submitter nor that owner.
+    expect(reviewThreadDeveloperUserId(7, { via: 'slug', ownerUserId: 9 })).toBe(null);
   });
 });
 
-describe('developerSideRecipients', () => {
-  it('the submitter and the listing owner, once each', () => {
-    expect(developerSideRecipients(7, 9)).toEqual([7, 9]);
-    expect(developerSideRecipients(7, 7)).toEqual([7]);
-    expect(developerSideRecipients(7, null)).toEqual([7]);
-    expect(developerSideRecipients(7, undefined)).toEqual([7]);
+describe('reviewThreadViewerRole', () => {
+  it('the developer side is the one user it names', () => {
+    expect(
+      reviewThreadViewerRole({ developerUserId: 9, viewerUserId: 9, viewerIsModerator: false })
+    ).toBe('developer');
+    expect(
+      reviewThreadViewerRole({ developerUserId: 9, viewerUserId: 7, viewerIsModerator: false })
+    ).toBe(null);
+  });
+
+  it('a moderator who is not a party writes as a moderator', () => {
+    expect(
+      reviewThreadViewerRole({ developerUserId: 9, viewerUserId: 31, viewerIsModerator: true })
+    ).toBe('moderator');
+  });
+
+  it('a moderator on their own submission writes as its developer', () => {
+    expect(
+      reviewThreadViewerRole({ developerUserId: 9, viewerUserId: 9, viewerIsModerator: true })
+    ).toBe('developer');
+  });
+
+  it('no developer side: only moderators', () => {
+    expect(
+      reviewThreadViewerRole({ developerUserId: null, viewerUserId: 7, viewerIsModerator: false })
+    ).toBe(null);
+    expect(
+      reviewThreadViewerRole({ developerUserId: null, viewerUserId: 31, viewerIsModerator: true })
+    ).toBe('moderator');
   });
 });
 
@@ -250,7 +252,7 @@ describe('the reply notifications', () => {
     slug: 'pixel-pal',
     name: 'Pixel Pal',
     excerpt: 'Please add a confirm step.',
-    authorUserId: 31,
+    messageId: 11,
   };
 
   it('to the reviewer: the developer replied, linking the review conversation', () => {
@@ -304,39 +306,86 @@ describe('the reply notifications', () => {
 });
 
 describe('appReviewReplyDetailFetcher', () => {
-  const ctx = (users: { id: number; username: string }[]) => {
-    const findMany = vi.fn(async (_args: unknown) => users);
+  const AUTHOR = 4077;
+  const ctx = (messages: { id: number; author: Record<string, unknown> | null }[]) => {
+    const findMany = vi.fn(async (_args: unknown) => messages);
     return {
       findMany,
-      ctx: { db: { user: { findMany } }, showSfwFace: true } as unknown as DetailFetcherContext,
+      ctx: {
+        db: { appReviewMessage: { findMany } },
+        showSfwFace: true,
+      } as unknown as DetailFetcherContext,
     };
   };
   const BASE = { subjectId: 'alpr_01HZX4WXYZ', slug: 'pixel-pal', excerpt: 'Hi' };
+  const author = (over: Record<string, unknown> = {}) => ({
+    id: AUTHOR,
+    username: 'reviewer_ada',
+    deletedAt: null,
+    image: null,
+    profilePicture: null,
+    ...over,
+  });
 
-  it('resolves the stored author into the actor, excluding deleted accounts', async () => {
-    const { findMany, ctx: c } = ctx([{ id: 31, username: 'reviewer_ada' }]);
+  it('resolves the author off the message row, excluding deleted accounts', async () => {
+    const { findMany, ctx: c } = ctx([
+      { id: 11, author: author() },
+      { id: 12, author: author({ deletedAt: new Date('2027-01-01') }) },
+    ]);
     const live = {
       id: 1,
       type: 'app-review-reply-to-developer',
-      details: { ...BASE, authorUserId: 31 },
+      details: { ...BASE, messageId: 11 },
     };
     const gone = {
       id: 2,
       type: 'app-review-reply-to-developer',
-      details: { ...BASE, authorUserId: 44 },
+      details: { ...BASE, messageId: 12 },
     };
-    await appReviewReplyDetailFetcher.fetcher([live, gone], c);
+    const missing = {
+      id: 3,
+      type: 'app-review-reply-to-developer',
+      details: { ...BASE, messageId: 13 },
+    };
+    await appReviewReplyDetailFetcher.fetcher([live, gone, missing], c);
 
-    const where = (findMany.mock.calls[0]![0] as { where: unknown }).where;
-    expect(where).toEqual({ id: { in: [31, 44] }, deletedAt: null });
+    expect((findMany.mock.calls[0]![0] as { where: unknown }).where).toEqual({
+      id: { in: [11, 12, 13] },
+    });
     expect(live.details).toMatchObject({ actor: { username: 'reviewer_ada' } });
-    expect((live.details as Record<string, unknown>).actor).not.toHaveProperty('id');
     expect(gone.details).not.toHaveProperty('actor');
+    expect(missing.details).not.toHaveProperty('actor');
     expect(getNotificationMessage(live)?.byline).toBe('From @reviewer_ada, Civitai App Review');
     expect(getNotificationMessage(gone)?.byline).toBe('From Civitai App Review');
   });
 
-  it('serves only the to-developer type, and makes no query without an author', async () => {
+  it("🔴 the fetched details carry no account id, including an old row's stored one", async () => {
+    const { ctx: c } = ctx([{ id: 11, author: author() }]);
+    const current = {
+      id: 1,
+      type: 'app-review-reply-to-developer',
+      details: { ...BASE, messageId: 11 } as Record<string, unknown>,
+    };
+    // Stored by the build before this one.
+    const legacy = {
+      id: 2,
+      type: 'app-review-reply-to-developer',
+      details: { ...BASE, authorUserId: AUTHOR } as Record<string, unknown>,
+    };
+    await appReviewReplyDetailFetcher.fetcher([current, legacy], c);
+
+    for (const n of [current, legacy]) {
+      expect(n.details).not.toHaveProperty('authorUserId');
+      expect((n.details.actor as Record<string, unknown> | undefined) ?? {}).not.toHaveProperty(
+        'id'
+      );
+      expect(JSON.stringify(n.details)).not.toContain(String(AUTHOR));
+    }
+    expect(current.details).toMatchObject({ actor: { username: 'reviewer_ada' } });
+    expect(getNotificationMessage(legacy)?.byline).toBe('From Civitai App Review');
+  });
+
+  it('serves only the to-developer type, and makes no query without a message', async () => {
     expect(appReviewReplyDetailFetcher.types).toEqual(['app-review-reply-to-developer']);
     const { findMany, ctx: c } = ctx([]);
     await appReviewReplyDetailFetcher.fetcher(

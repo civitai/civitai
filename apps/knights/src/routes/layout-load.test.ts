@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { memorySeenStore } from '$lib/server/seen';
 
 const playerRow = vi.hoisted(() => ({ value: undefined as { userId: number } | undefined }));
 
-const getRecapState = vi.hoisted(() => vi.fn());
 const getDailyStatus = vi.hoisted(() => vi.fn());
 const getPlayerStatus = vi.hoisted(() => vi.fn());
 const getStanding = vi.hoisted(() => vi.fn());
@@ -16,7 +16,34 @@ vi.mock('$lib/server/db', () => ({
   },
 }));
 vi.mock('$lib/server/queue/runtime', () => ({ queueDeps: { now: () => NOW } }));
-vi.mock('$lib/server/daily/daily.service', () => ({ getRecapState, getDailyStatus }));
+vi.mock('$lib/server/daily/daily.service', () => ({ getDailyStatus }));
+const seenStore = vi.hoisted(() => ({
+  value: undefined as undefined | import('$lib/server/seen').SeenStore,
+}));
+vi.mock('$lib/server/seen-runtime', () => ({
+  get seenStore() {
+    return seenStore.value;
+  },
+}));
+// Fixed entries, so the test does not change with the real folder.
+const ENTRIES = vi.hoisted(() => [
+  { id: '2030-01-02-knights', title: 'For Knights.', body: 'B.', minRank: 'Knight', link: null },
+  {
+    id: '2030-01-01-everyone',
+    title: 'For all.',
+    body: 'A.',
+    minRank: null,
+    link: { href: '/settings', text: 'Open Settings' },
+  },
+]);
+vi.mock('$lib/server/whats-new/entries', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('$lib/server/whats-new/entries')>();
+  return {
+    ...actual,
+    LATEST_UPDATE_ID: ENTRIES[0].id,
+    updatesFor: (rank: string) => actual.updatesFor(rank, ENTRIES as never),
+  };
+});
 vi.mock('$lib/server/player-status', () => ({ getPlayerStatus }));
 vi.mock('$lib/server/standing', () => ({ getStanding }));
 const feedbackEnabled = vi.hoisted(() => vi.fn());
@@ -55,8 +82,7 @@ beforeEach(() => {
   getDailyStatus.mockReset();
   getDailyStatus.mockResolvedValue({ streak: 3, shields: 1, maxShields: 2 });
   urlReads.count = 0;
-  getRecapState.mockReset();
-  getRecapState.mockResolvedValue({ optedOut: false, dismissedToday: false, hasHistory: true });
+  seenStore.value = memorySeenStore();
 });
 
 afterEach(() => {
@@ -125,17 +151,18 @@ describe('layout load', () => {
     expect(getDailyStatus).not.toHaveBeenCalled();
   });
 
-  it("shows a moderator as the Inquisitor while the queue is on, with none of their career's stats or recap", async () => {
+  it("shows a moderator as the Inquisitor while the queue is on, with none of their career's stats or What's new", async () => {
     playerRow.value = { userId: 7 };
     stored.value = { inquisitorQueue: true };
     const moderator = { id: 7, username: 'ana', isModerator: true };
+    const get = vi.spyOn(seenStore.value!, 'get');
     expect(await run(moderator)).toMatchObject({
       inquisitor: true,
       headerStats: null,
-      recapUnseen: false,
+      updates: null,
     });
     expect(getPlayerStatus).not.toHaveBeenCalled();
-    expect(getRecapState).not.toHaveBeenCalled();
+    expect(get).not.toHaveBeenCalled();
 
     stored.value = { inquisitorQueue: false };
     expect(await run(moderator)).toMatchObject({
@@ -204,30 +231,68 @@ describe('layout load', () => {
   });
 });
 
-const state = (over: Record<string, boolean> = {}) => ({
-  optedOut: false,
-  dismissedToday: false,
-  hasHistory: true,
+const seen = (over: Partial<import('$lib/server/seen').Seen> = {}) => ({
+  rank: 'Knight',
+  level: 3,
+  guide: true,
+  whatsNew: true,
+  consent: true,
   ...over,
 });
+const knight = async (record: ReturnType<typeof seen> | null) => {
+  playerRow.value = { userId: 7 };
+  getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 3 });
+  if (record) await seenStore.value!.set(7, record);
+  return (await run()).updates;
+};
 
-describe('layout load: the recap dot', () => {
-  it('ignores the old popup opt-out: the dot says "not yet seen today", whatever that column holds', async () => {
-    getRecapState.mockResolvedValue(state({ optedOut: true }));
-    expect((await run()).recapUnseen).toBe(true);
+describe("layout load: What's new", () => {
+  it('lists the entries for the rank, newest first, every one unseen for a player who saw only the launch', async () => {
+    expect(await knight(seen({ updatesSeen: null }))).toEqual({
+      entries: [
+        { id: '2030-01-02-knights', title: 'For Knights.', body: 'B.', link: null },
+        {
+          id: '2030-01-01-everyone',
+          title: 'For all.',
+          body: 'A.',
+          link: { href: '/settings', text: 'Open Settings' },
+        },
+      ],
+      unseen: 2,
+    });
   });
 
-  it('shows while there is a recap to see and it was not dismissed today', async () => {
-    expect((await run()).recapUnseen).toBe(true);
-    expect(getRecapState).toHaveBeenCalledWith(expect.anything(), { playerId: 7, now: NOW });
+  it('counts only the entries newer than the last one seen', async () => {
+    expect((await knight(seen({ updatesSeen: '2030-01-01-everyone' })))?.unseen).toBe(1);
+    expect((await knight(seen({ updatesSeen: '2030-01-02-knights' })))?.unseen).toBe(0);
+  });
+
+  it("leaves out an entry above the player's rank", async () => {
+    playerRow.value = { userId: 7 };
+    await seenStore.value!.set(7, seen({ rank: 'Acolyte', updatesSeen: null }));
+    expect((await run()).updates).toMatchObject({
+      entries: [{ id: '2030-01-01-everyone' }],
+      unseen: 1,
+    });
   });
 
   it.each([
-    ['dismissed today', { dismissedToday: true }],
-    ['no earlier play day', { hasHistory: false }],
-  ])('is off when %s', async (_name, over) => {
-    getRecapState.mockResolvedValue(state(over));
-    expect((await run()).recapUnseen).toBe(false);
+    ['the launch dialog is still to be closed', seen({ whatsNew: false, updatesSeen: null })],
+    ['there is no record yet', null],
+  ])('counts nothing as unseen while %s, and still lists the entries', async (_name, record) => {
+    expect(await knight(record)).toMatchObject({ entries: [{}, {}], unseen: 0 });
+  });
+
+  it('only loses the dot when the store cannot be read', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.spyOn(seenStore.value!, 'get').mockRejectedValue(new Error('down'));
+    expect(await knight(null)).toMatchObject({ unseen: 0 });
+    expect(log).toHaveBeenCalled();
+  });
+
+  it('has none for a visitor who is signed out or has not joined', async () => {
+    expect((await run(null)).updates).toBeNull();
+    expect((await run()).updates).toBeNull();
   });
 
   it('reads no rank badges for a signed-out visitor, and hands the signed-in their badges', async () => {
@@ -235,17 +300,5 @@ describe('layout load: the recap dot', () => {
     expect((await run(null)).badges).toEqual({ small: {}, large: {} });
     expect(rankBadgeUrls).not.toHaveBeenCalled();
     expect((await run()).badges).toBe(BADGES);
-  });
-
-  it('is off, without a lookup, when nobody is signed in', async () => {
-    expect((await run(null)).recapUnseen).toBe(false);
-    expect(getRecapState).not.toHaveBeenCalled();
-  });
-
-  it('never breaks the page when the lookup fails', async () => {
-    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    getRecapState.mockRejectedValue(new Error('down'));
-    expect((await run()).recapUnseen).toBe(false);
-    expect(log).toHaveBeenCalled();
   });
 });

@@ -192,6 +192,7 @@ beforeAll(async () => {
       'sfwBio',
       'sfwMessage',
       'location',
+      'about',
     ])
       .replace('"userId" INTEGER', '"userId" INTEGER PRIMARY KEY')
       .replace('"messageAddedAt" TEXT', '"messageAddedAt" TIMESTAMP(3)')}
@@ -321,8 +322,9 @@ describe('the archive text sections', () => {
   describe('profile', () => {
     it("holds the user's profile row and nobody else's, with only the listed columns", async () => {
       await pg.query(
-        `INSERT INTO "UserProfile" ("userId", bio, message, location, secret) VALUES
-           ($1, 'my bio', 'my message', 'here', 'x'), ($2, 'their bio', NULL, NULL, 'x')`,
+        `INSERT INTO "UserProfile" ("userId", bio, message, location, about, secret) VALUES
+           ($1, 'my bio', 'my message', 'here', '<p>about me</p>', 'x'),
+           ($2, 'their bio', NULL, NULL, NULL, 'x')`,
         [ME, OTHER]
       );
       const rows = await read('profile', ME);
@@ -335,6 +337,7 @@ describe('the archive text sections', () => {
           sfwBio: null,
           sfwMessage: null,
           location: 'here',
+          about: '<p>about me</p>',
           blankedReasons: [],
         },
       ]);

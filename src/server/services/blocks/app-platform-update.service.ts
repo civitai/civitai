@@ -7,7 +7,9 @@
  * a publish request in the owner's name and withdraw the one they have pending.
  *
  * An app with no source repo yet gets one first: a FORK of its build repo (its whole history), so
- * the update branch shares history with an owner's existing checkout of the build repo.
+ * the update branch shares history with an owner's existing checkout of the build repo. Every
+ * update to such a fork is cut from the app's latest APPROVED commit, never the fork's `main`
+ * ({@link approvedBaseFor}).
  *
  * THE RECORD IS THE PROOF. Each update is a row in `app_platform_updates` written by the server
  * after the commit landed, carrying the moderator's user id from the session. The commit's author
@@ -32,13 +34,11 @@
  * `app-blocks-platform-updates` flag is on ({@link isPlatformUpdatesEnabled}).
  */
 
-import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
-import { logToAxiom } from '~/server/logging/client';
 import { isMissingTableError } from '~/server/services/blocks/app-access.service';
 import {
+  MANIFEST_PATH,
   PLATFORM_AUTHOR,
   PLATFORM_UPDATE_REASON_MAX,
   PlatformUpdatePlanError,
@@ -52,59 +52,36 @@ import {
   type PlatformUpdateChange,
 } from '~/server/services/blocks/app-source-repo.plan';
 import { FORGEJO_SOURCE_ORG } from '~/server/services/blocks/forgejo-orgs';
+import {
+  platformUpdateLog as log,
+  platformUpdatesUnavailable as unavailable,
+  readRows,
+  type PlatformUpdatePath,
+  type PlatformUpdateStatus,
+  type UpdateRow,
+} from '~/server/services/blocks/app-platform-update.record';
 import { newAppPlatformUpdateId } from '~/server/utils/app-block-ids';
+import { isVerifiedStaff } from '~/server/services/blocks/app-platform-update-shipped';
 
-export const PLATFORM_UPDATES_FLAG = FLIPT_FEATURE_FLAGS.APP_BLOCKS_PLATFORM_UPDATES;
+// The switch lives in its own small module so the submit path can read it without loading this one.
+export { PLATFORM_UPDATES_FLAG, isPlatformUpdatesEnabled } from './app-platform-update-flag';
 
 /** The most file changes one update may carry. */
 export const PLATFORM_UPDATE_MAX_CHANGES = 100;
 /** The most bytes (decoded) one update may write. */
 export const PLATFORM_UPDATE_MAX_BYTES = 8 * 1024 * 1024;
 
-export type PlatformUpdateStatus = 'pending' | 'merged' | 'conflicted' | 'superseded';
+// The record (row shape, read, supersede) lives in app-platform-update.record.ts; re-exported so
+// this service's callers are unchanged.
+export {
+  readRows,
+  supersedePlatformUpdate,
+  type PlatformUpdatePath,
+  type PlatformUpdateStatus,
+  type UpdateRow,
+} from '~/server/services/blocks/app-platform-update.record';
 
-export type PlatformUpdatePath = { path: string; operation: 'create' | 'update' | 'delete' };
-
-/** The app's manifest, at the root of its source repo. */
-export const MANIFEST_PATH = 'block.manifest.json';
-
-/** The global switch. Off, absent or Flipt unreachable ⇒ off. */
-export async function isPlatformUpdatesEnabled(): Promise<boolean> {
-  return isFlipt(PLATFORM_UPDATES_FLAG).catch(() => false);
-}
-
-const log = (type: 'info' | 'warning' | 'error', message: string, data: Record<string, unknown>) =>
-  logToAxiom({ name: 'app-platform-update', type, message, ...data }, 'webhooks');
-
-const unavailable = () =>
-  new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Platform updates are not available' });
-
-// ---------------------------------------------------------------------------
-// The table (raw SQL; a missing table reads as "off")
-// ---------------------------------------------------------------------------
-
-export type UpdateRow = {
-  id: string;
-  appBlockId: string;
-  slug: string;
-  staffUserId: number;
-  reason: string;
-  branch: string;
-  baseCommitSha: string;
-  commitSha: string;
-  paths: PlatformUpdatePath[];
-  touchesManifest: boolean;
-  status: PlatformUpdateStatus;
-  mergeCommitSha: string | null;
-  seededSourceRepo: boolean;
-  createdAt: Date;
-  resolvedAt: Date | null;
-  /** The staff account as it is NOW (joined at read time); null when it no longer exists. */
-  staffUsername: string | null;
-  staffIsModerator: boolean | null;
-  staffBannedAt: Date | null;
-  staffDeletedAt: Date | null;
-};
+export { MANIFEST_PATH };
 
 async function tableAvailable(): Promise<boolean> {
   try {
@@ -115,62 +92,6 @@ async function tableAvailable(): Promise<boolean> {
     throw err;
   }
 }
-
-const ROW_COLUMNS = Prisma.sql`u."id", u."app_block_id" AS "appBlockId", u."slug",
-  u."staff_user_id" AS "staffUserId", u."reason", u."branch",
-  u."base_commit_sha" AS "baseCommitSha", u."commit_sha" AS "commitSha", u."paths",
-  u."touches_manifest" AS "touchesManifest", u."status",
-  u."merge_commit_sha" AS "mergeCommitSha", u."seeded_source_repo" AS "seededSourceRepo",
-  u."created_at" AS "createdAt", u."resolved_at" AS "resolvedAt",
-  s."username" AS "staffUsername", s."isModerator" AS "staffIsModerator",
-  s."bannedAt" AS "staffBannedAt", s."deletedAt" AS "staffDeletedAt"`;
-
-type RowFilter =
-  | { kind: 'open-for-app'; appBlockId: string }
-  | { kind: 'all-for-app'; appBlockId: string }
-  | { kind: 'commit'; appBlockId: string; commitSha: string }
-  | { kind: 'id'; id: string };
-
-function filterSql(filter: RowFilter): Prisma.Sql {
-  switch (filter.kind) {
-    case 'id':
-      return Prisma.sql`WHERE u."id" = ${filter.id} LIMIT 1`;
-    case 'commit':
-      return Prisma.sql`WHERE u."app_block_id" = ${filter.appBlockId}
-        AND u."commit_sha" = ${filter.commitSha} LIMIT 1`;
-    case 'open-for-app':
-      return Prisma.sql`WHERE u."app_block_id" = ${filter.appBlockId}
-        AND u."status" IN ('pending', 'conflicted')
-        ORDER BY u."created_at" ASC, u."id" ASC LIMIT 100`;
-    case 'all-for-app':
-      return Prisma.sql`WHERE u."app_block_id" = ${filter.appBlockId}
-        ORDER BY u."created_at" DESC, u."id" DESC LIMIT 200`;
-  }
-}
-
-/**
- * Rows matching `filter`, each joined to its staff account as it is NOW; `null` when the table is
- * missing.
- */
-async function readRows(
-  filter: RowFilter,
-  db: Pick<typeof dbRead, '$queryRaw'> = dbRead
-): Promise<UpdateRow[] | null> {
-  try {
-    return (await db.$queryRaw(
-      Prisma.sql`SELECT ${ROW_COLUMNS}
-        FROM "app_platform_updates" u LEFT JOIN "User" s ON s."id" = u."staff_user_id"
-        ${filterSql(filter)}`
-    )) as UpdateRow[];
-  } catch (err) {
-    if (isMissingTableError(err)) return null;
-    throw err;
-  }
-}
-
-// ---------------------------------------------------------------------------
-// The owner-facing shape (the CLI / App Assistant contract)
-// ---------------------------------------------------------------------------
 
 export type OwnerPlatformUpdate = {
   id: string;
@@ -210,21 +131,17 @@ export function ownerView(row: UpdateRow): OwnerPlatformUpdate {
     status: row.status,
     by: {
       username: row.staffUsername ?? null,
-      verifiedStaff: row.staffIsModerator === true && !row.staffBannedAt && !row.staffDeletedAt,
+      verifiedStaff: isVerifiedStaff(row),
     },
     createdAt: new Date(row.createdAt).toISOString(),
   };
 }
 
-// ---------------------------------------------------------------------------
-// App resolution and the owner gate
-// ---------------------------------------------------------------------------
-
 export type AppRef = { appBlockId?: string; slug?: string };
 
-type ResolvedApp = { id: string; slug: string; status: string; ownerUserId: number | null };
+export type ResolvedApp = { id: string; slug: string; status: string; ownerUserId: number | null };
 
-async function resolveApp(ref: AppRef): Promise<ResolvedApp | null> {
+export async function resolveApp(ref: AppRef): Promise<ResolvedApp | null> {
   const select = { id: true, blockId: true, status: true, app: { select: { userId: true } } };
   const block = ref.appBlockId
     ? await dbRead.appBlock.findUnique({ where: { id: ref.appBlockId }, select })
@@ -259,10 +176,6 @@ async function appForOwner(userId: number, ref: AppRef): Promise<ResolvedApp> {
   return app;
 }
 
-// ---------------------------------------------------------------------------
-// Owner API
-// ---------------------------------------------------------------------------
-
 /**
  * The app's OPEN updates — `pending` AND `conflicted` — oldest first, each with its `status`.
  * Empty when the table is missing.
@@ -270,7 +183,7 @@ async function appForOwner(userId: number, ref: AppRef): Promise<ResolvedApp> {
  * 🔴 A `conflicted` update stays listed until it is merged or superseded: the client that hit
  * the conflict reported it once, but the owner has not merged it yet, so every later pull must
  * re-print the hand-merge instructions (or retry the merge) and every later submit must still
- * refuse over it. Listing pending only made the update vanish after that one report.
+ * refuse over it.
  */
 export async function listOpenPlatformUpdates(args: {
   userId: number;
@@ -364,10 +277,6 @@ export async function resolvePlatformUpdate(args: {
   return ownerView({ ...row, status: args.outcome, mergeCommitSha: mergeSha });
 }
 
-// ---------------------------------------------------------------------------
-// Moderator API
-// ---------------------------------------------------------------------------
-
 export type PushPlatformUpdateResult = {
   id: string;
   slug: string;
@@ -386,8 +295,9 @@ export type PushPlatformUpdateResult = {
  *
  * Refuses: an account that is not a moderator; a blank or too-long reason; no changes, too many,
  * too large, a path a source repo never holds; an app with neither a source repo nor an approved
- * version; a source repo under the slug that belongs to a different app; `main` moving during the
- * write. Nothing is recorded for a refused push.
+ * version; a source repo under the slug that belongs to a different app; a fork of the build repo
+ * that does not hold (and cannot be synced to hold) the latest approved commit; `main` moving
+ * during the write. Nothing is recorded for a refused push.
  */
 export async function pushPlatformUpdate(args: {
   staffUserId: number;
@@ -516,7 +426,9 @@ async function pushLocked(args: {
     });
 
   const forgejo = await import('~/server/services/blocks/forgejo.service');
-  const base = await forgejo.getBranchHead(FORGEJO_SOURCE_ORG, app.slug, SOURCE_MAIN_BRANCH);
+  const approvedBase = await approvedBaseFor(app);
+  const base =
+    approvedBase ?? (await forgejo.getBranchHead(FORGEJO_SOURCE_ORG, app.slug, SOURCE_MAIN_BRANCH));
   if (!base)
     throw new TRPCError({ code: 'CONFLICT', message: 'The app’s source repo has no main branch' });
   const current = treeFromMap(await forgejo.listRepoTreeAtRef(app.slug, base, FORGEJO_SOURCE_ORG));
@@ -536,11 +448,20 @@ async function pushLocked(args: {
 
   const id = newAppPlatformUpdateId();
   const branch = platformUpdateBranch(id);
+  if (
+    approvedBase &&
+    (await forgejo.createBranchAt({
+      org: FORGEJO_SOURCE_ORG,
+      slug: app.slug,
+      branch,
+      sha: approvedBase,
+    })) === 'exists'
+  )
+    throw new TRPCError({ code: 'CONFLICT', message: 'The update’s branch already exists' });
   const commit = await forgejo.commitOperations({
     org: FORGEJO_SOURCE_ORG,
     slug: app.slug,
-    branch: SOURCE_MAIN_BRANCH,
-    newBranch: branch,
+    ...(approvedBase ? { branch } : { branch: SOURCE_MAIN_BRANCH, newBranch: branch }),
     operations: plan.operations,
     message: platformUpdateCommitMessage({
       plan,
@@ -598,6 +519,44 @@ async function pushLocked(args: {
     paths,
     touchesManifest,
   };
+}
+
+/**
+ * The commit an update is cut from when it is not the source repo's `main`, decided from the repo
+ * as it IS (never from whether this call created it, so a retry after a failed first push and
+ * every later update get the same answer):
+ *   - a FORK of the build repo (a source repo a platform update created): its `main` is the build
+ *     repo's `main` as it was when forked (or last synced), which may hold a push nobody approved,
+ *     and owners keep pushing to the build repo, so `main` is never the base. The base is the
+ *     app's latest APPROVED commit. One approved after the fork is brought in by fast-forwarding
+ *     the fork's `main` from the build repo's; when the host refuses (the fork's `main` has
+ *     commits of its own) or the build repo's `main` does not hold it, the push is refused.
+ *   - any other source repo (App Assistant, fork start, backfill): `null`, cut from `main`, which
+ *     is the owner's working copy.
+ */
+async function approvedBaseFor(app: ResolvedApp): Promise<string | null> {
+  const forgejo = await import('~/server/services/blocks/forgejo.service');
+  if (!(await forgejo.sourceRepoIsForkOfBuildRepo(app.slug))) return null;
+  const { latestApprovedCommitSha } = await import(
+    '~/server/services/blocks/app-source-repo.service'
+  );
+  const approved = await latestApprovedCommitSha(app.id);
+  if (!approved)
+    throw new TRPCError({
+      code: 'PRECONDITION_FAILED',
+      message: 'The app has no approved version to base the update on',
+    });
+  if (await forgejo.hasCommit(FORGEJO_SOURCE_ORG, app.slug, approved)) return approved;
+  await forgejo.syncForkBranch({
+    org: FORGEJO_SOURCE_ORG,
+    slug: app.slug,
+    branch: SOURCE_MAIN_BRANCH,
+  });
+  if (await forgejo.hasCommit(FORGEJO_SOURCE_ORG, app.slug, approved)) return approved;
+  throw new TRPCError({
+    code: 'CONFLICT',
+    message: 'The app’s approved version is not in its source repo yet; nothing was pushed',
+  });
 }
 
 /** The first parent of `sha` in the slug's source repo; `null` (logged) when it cannot be read. */
@@ -689,30 +648,7 @@ async function notifyOwner(opts: {
   });
 }
 
-/** A moderator withdraws an update that is still pending (or conflicted): `superseded`. */
-export async function supersedePlatformUpdate(args: {
-  staffUserId: number;
-  id: string;
-}): Promise<{ id: string; status: 'superseded' }> {
-  // The primary: an update pushed moments ago may not have reached the replica.
-  const rows = await readRows({ kind: 'id', id: args.id }, dbWrite);
-  if (rows === null) throw unavailable();
-  const row = rows[0];
-  if (!row) throw new TRPCError({ code: 'NOT_FOUND', message: 'Update not found' });
-  if (row.status === 'superseded') return { id: row.id, status: 'superseded' };
-  const changed = Number(
-    await dbWrite.$executeRaw`UPDATE "app_platform_updates"
-        SET "status" = 'superseded', "resolved_by_user_id" = ${args.staffUserId},
-            "resolved_at" = now(), "updated_at" = now()
-      WHERE "id" = ${row.id} AND "status" IN ('pending', 'conflicted')`
-  );
-  if (changed !== 1)
-    throw new TRPCError({ code: 'CONFLICT', message: `This update is already ${row.status}` });
-  log('info', 'superseded', { updateId: row.id, slug: row.slug, staffUserId: args.staffUserId });
-  return { id: row.id, status: 'superseded' };
-}
-
-/** Every update to an app, newest first, for staff. */
+/** The app’s most recent updates (capped by readRows), newest first, for staff. */
 export async function listPlatformUpdatesForModerator(args: {
   app: AppRef;
 }): Promise<Array<OwnerPlatformUpdate & { staffUserId: number; mergeCommitSha: string | null }>> {

@@ -117,8 +117,15 @@ export function assistantRules(
     RULES_AFTER_SETUP[0],
     ...toolRules(features),
     ...RULES_AFTER_SETUP.slice(1),
+    ...(runner === 'remote' ? [PLATFORM_LIMIT_RULE] : []),
   ].join('\n');
 }
+
+/**
+ * A limit of the platform is claimed only from a docs page read for it. The runner's only, as it
+ * names `read_docs`, which the page's assistant does not have.
+ */
+export const PLATFORM_LIMIT_RULE = `- Before you tell the user something cannot be done on Civitai, or offer a smaller version because of a platform limit, look it up with ${READ_DOCS} (https://developer.civitai.com/llms.txt lists the pages, or read the reference page for that area) and name the page that shows the limit. If no page shows it, do not claim the limit.`;
 
 /**
  * How an app reaches the App Store from here. The user has no CLI and cannot reach the sandbox's files,
@@ -166,7 +173,7 @@ export const COVER_RULE =
   "- When the user asks for a store cover image for the app, call generate_app_cover with a prompt that describes the app's subject and mood, with no text or logos. It spends nothing itself: the user sees the price and a button, and only their press makes the cover and puts it on the app's store listing. Tell them that in one short sentence; your reply ends there. Never make a cover any other way, and never call generate_app_cover unless they asked for a cover.";
 
 const RULES_AFTER_SETUP = [
-  '- Before you scaffold, restate the features the user asked for with set_checklist: every requested feature and nothing they did not ask for. It is your plan, not a question: go straight on to building it. Ask the user only when their request is ambiguous or needs a decision from them.',
+  '- Before you scaffold, restate the features the user asked for with set_checklist: every requested feature and nothing they did not ask for. It is your plan, not a question: go straight on to building it. Ask the user only when their request is ambiguous or needs a decision from them, and then ask with ask_choice (2 to 4 options; they can still type their own answer), never with a question typed at the end of your reply.',
   '- Put throwaway probes and scripts in <blockId>/scratch/, never in src/.',
   '- The user knows each sandbox as one of their apps: say "your app", never "sandbox".',
   '- If create_app fails, do not call it again in the same reply: tell the user what its message says to do.',
@@ -235,33 +242,7 @@ export function assistantSystemPrompt(
   const rules = `${assistantRules(runner, features)}${
     subagents ? `\n${assistantSubagentRules(runner)}` : ''
   }`;
-  return (defaults) =>
-    `${
-      runner === 'remote' ? withoutSentencesNaming(defaults, PAGE_ONLY_CHAT_TOOLS) : defaults
-    }\n\n${rules}`;
-}
-
-/**
- * Tools the chat's own rules name whatever tools a reply has, which only the page can offer:
- * `ask_choice` waits for the viewer to tap a choice, and on the runner nobody may be watching, so
- * the runner does not offer it and its rules do not name it.
- */
-export const PAGE_ONLY_CHAT_TOOLS = ['ask_choice'] as const;
-
-/** `text` with every sentence that names one of `tools` taken out, line by line. */
-export function withoutSentencesNaming(text: string, tools: readonly string[]): string {
-  const names = new RegExp(`\\b(?:${tools.join('|')})\\b`);
-  return text
-    .split('\n')
-    .map((line) => {
-      if (!names.test(line)) return line;
-      // A sentence ends at ". " (the chat's rules use no other end inside a line).
-      return line
-        .split(/(?<=\.) +/)
-        .filter((sentence) => !names.test(sentence))
-        .join(' ');
-    })
-    .join('\n');
+  return (defaults) => `${defaults}\n\n${rules}`;
 }
 
 /**

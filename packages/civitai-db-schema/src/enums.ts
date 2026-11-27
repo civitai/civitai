@@ -594,6 +594,7 @@ export const CosmeticType = {
   Sticker: 'Sticker',
   ChatTheme: 'ChatTheme',
   CardDecoration: 'CardDecoration',
+  SidebarBackground: 'SidebarBackground',
 } as const;
 
 export type CosmeticType = (typeof CosmeticType)[keyof typeof CosmeticType];

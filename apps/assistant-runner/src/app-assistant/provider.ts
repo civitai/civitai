@@ -35,8 +35,10 @@ import {
   type ToolResult,
 } from '@civitai/app-assistant';
 import {
+  ASK_CHOICE,
   DISPATCH_AGENT,
   SubagentTracker,
+  askChoiceTool,
   dispatchAgentTool,
   gateToolSet,
   hostToolSet,
@@ -525,7 +527,15 @@ export class AppAssistantTools implements ToolProvider {
             { conversationId, findAttachment: () => undefined, resolveArgs: async (args) => args }
           )
         : {};
-      const tools: ToolSet = { ...sandboxTools, ...page, ...docs, ...merged };
+      // The chat's own ask_choice, as the page offers it: its result ends the reply, the page shows
+      // the options as buttons, and the pick (or what the user types instead) starts the next run.
+      const tools: ToolSet = {
+        ...sandboxTools,
+        ...page,
+        ...docs,
+        ...merged,
+        [ASK_CHOICE]: askChoiceTool(),
+      };
       // Aborts when the gate ends the reply on one of its own calls: its subagents stop with it.
       const replyEnded = new AbortController();
       const gate: GateDeps = {

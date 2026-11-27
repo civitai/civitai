@@ -1,7 +1,7 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
   import { onMount } from 'svelte';
-  import { goto, invalidate } from '$app/navigation';
+  import { goto } from '$app/navigation';
   import Icon from '$lib/Icon.svelte';
   import RankBadge from '$lib/RankBadge.svelte';
   import SmiteNotice from '$lib/SmiteNotice.svelte';
@@ -37,7 +37,7 @@
   ]);
 
   // The stat counters tick up from zero once on load (a reduced-motion player gets the final numbers at once), and yesterday's
-  // verdicts count as seen once the card is on screen, which also clears the header's recap dot.
+  // verdicts count as seen once the card is on screen.
   let shownGold = $state(0);
   let shownStreak = $state(0);
   let shownFervor = $state(0);
@@ -48,9 +48,7 @@
       tween(0, status?.fervor ?? 0, 900, (v) => (shownFervor = Math.round(v))),
     ];
     if (data.recap) {
-      void fetch('/recap', { method: 'POST' })
-        .then((response) => (response.ok ? invalidate('app:recap') : undefined))
-        .catch(() => undefined);
+      void fetch('/recap', { method: 'POST' }).catch(() => undefined);
     }
     return () => cancels.forEach((cancel) => cancel());
   });

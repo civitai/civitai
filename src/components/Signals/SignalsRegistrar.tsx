@@ -18,7 +18,6 @@ import { useMetricSignalsListener } from '~/components/Signals/MetricSignalsRegi
 import { useSignalRegistry } from '~/components/Signals/signals-registry.store';
 import { SignalMessages } from '~/server/common/enums';
 import { imageStore } from '~/store/image.store';
-import { useSchedulerDownloadSignal } from '~/store/scheduler-download.store';
 
 const TrainingSignals = dynamic(
   () =>
@@ -35,8 +34,6 @@ const GenerationSignals = dynamic(
 
 export function SignalsRegistrar() {
   const groups = useSignalRegistry((s) => s.groups);
-
-  useSchedulerDownloadSignal();
 
   useBuzzSignalUpdate();
   useSessionRefreshSignal();

@@ -9,19 +9,23 @@ import {
 import type { PostReviewMessageInput } from '~/server/schema/blocks/app-review-thread.schema';
 import { reviewUserChipSelect } from '~/server/selectors/review-user-chip.selector';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
-import { resolveListingAccess } from '~/server/services/blocks/app-access.service';
+import {
+  resolveAppAccess,
+  resolveListingAccess,
+} from '~/server/services/blocks/app-access.service';
 import { notifyAppReviewReply } from '~/server/services/blocks/app-review-thread-notify';
 import {
-  developerSideRecipients,
   normalizeReviewMessageBody,
   parseReviewSubjectId,
   REVIEW_MESSAGE_BODY_MAX,
   REVIEW_THREAD_MESSAGE_LIMIT,
   reviewReplyExcerpt,
+  reviewThreadDeveloperUserId,
   reviewThreadViewerRole,
   routeReply,
   type ReplyRoute,
   type ReviewMessageAuthorRole,
+  type ReviewThreadOwnership,
   type ReviewThreadSubjectRef,
 } from '~/shared/utils/app-review-thread';
 import { appDisplayName } from '~/shared/utils/app-display-name';
@@ -29,10 +33,12 @@ import { appDisplayName } from '~/shared/utils/app-display-name';
 /**
  * THE REPLY THREAD ON AN APP REVIEW DECISION (`app_review_messages`).
  *
- * A conversation on one publish request between its developer side (the submitter, plus the
- * listing's owner for a store-listing request) and moderators. Nobody else may read or post: a
- * non-participant gets NOT_FOUND, the same answer as a missing request, so a request id says
- * nothing about whether the request exists.
+ * A conversation on one publish request between its developer side and moderators. The
+ * developer side is the CURRENT canonical owner of the app or listing the request is for
+ * (`reviewThreadDeveloperUserId`), not whoever submitted it: after a transfer or a moderator
+ * claim the former owner is out, like everywhere else on the app. Accepted editors are not on it.
+ * Nobody else may read or post: a non-participant gets NOT_FOUND, the same answer as a missing
+ * request, so a request id says nothing about whether the request exists.
  *
  * A developer's message goes to the moderator who decided the request while that account is
  * live and still a moderator, else to the moderator queue (no individual notification, nobody
@@ -71,12 +77,54 @@ type ReviewThreadSubjectRow = {
   status: string;
   rejectionReason: string | null;
   approvalNotes: string | null;
-  submittedByUserId: number;
   reviewedByUserId: number | null;
-  /** The app listing's canonical owner (either kind), when the request has a listing. */
-  listingOwnerUserId: number | null;
+  /** The developer side: {@link reviewThreadDeveloperUserId}. `null` = nobody. */
+  developerUserId: number | null;
   reviewer: DecisionReviewer | null;
 };
+
+/**
+ * Who owns what a request is for. A request carries its app (version) or listing (listing request)
+ * once there is one. Without one (a first submission, or a rejected listing revision whose shadow
+ * was deleted, which nulls the request's `appListingId`) only its slug names the listing.
+ */
+async function resolveOwnership(target: {
+  appListingId?: string | null;
+  appBlockId?: string | null;
+  slug: string;
+  submittedAt: Date;
+}): Promise<ReviewThreadOwnership> {
+  if (target.appListingId) {
+    const access = await resolveListingAccess(target.appListingId, null);
+    // A listing that resolves to no owner is owned by nobody: fail closed.
+    return access
+      ? { via: 'app', ownerUserId: access.ownerUserId }
+      : { via: 'app', ownerUserId: null };
+  }
+  if (target.appBlockId) {
+    const listing = await dbRead.appListing.findUnique({
+      where: { appBlockId: target.appBlockId },
+      select: { id: true },
+    });
+    if (listing) return resolveOwnership({ ...target, appListingId: listing.id, appBlockId: null });
+    // A block with no listing: its owner is the block's (`OauthClient.userId`).
+    const access = await resolveAppAccess(target.appBlockId, null);
+    return { via: 'app', ownerUserId: access?.ownerUserId ?? null };
+  }
+  const byslug = await dbRead.appListing.findUnique({
+    where: { slug: target.slug },
+    select: { id: true, revisionOfId: true, createdAt: true },
+  });
+  if (!byslug || byslug.revisionOfId) return { via: 'none' };
+  const access = await resolveListingAccess(byslug.id, null);
+  if (!access) return { via: 'none' };
+  // Slugs are unique, so a listing that already held this slug when the request was submitted
+  // is the one the request is for (a revision's live parent, say): its owner is the owner. One
+  // created later took the slug after it was released, and may be a stranger's.
+  return byslug.createdAt.getTime() <= target.submittedAt.getTime()
+    ? { via: 'app', ownerUserId: access.ownerUserId }
+    : { via: 'slug', ownerUserId: access.ownerUserId };
+}
 
 async function loadSubject(ref: ReviewThreadSubjectRef): Promise<ReviewThreadSubjectRow | null> {
   if (ref.kind === 'version') {
@@ -90,25 +138,18 @@ async function loadSubject(ref: ReviewThreadSubjectRef): Promise<ReviewThreadSub
         rejectionReason: true,
         approvalNotes: true,
         submittedByUserId: true,
+        submittedAt: true,
         reviewedByUserId: true,
         appBlockId: true,
         reviewedBy: { select: reviewUserChipSelect },
       },
     });
     if (!row) return null;
-    // The app's canonical owner is on the developer side too, not only the version's submitter
-    // (an owner who did not submit this version is offered the conversation on its history). A
-    // first version has no block yet; its submitter is its owner.
-    let versionOwnerUserId: number | null = null;
-    if (row.appBlockId) {
-      const listing = await dbRead.appListing.findUnique({
-        where: { appBlockId: row.appBlockId },
-        select: { id: true },
-      });
-      if (listing) {
-        versionOwnerUserId = (await resolveListingAccess(listing.id, null))?.ownerUserId ?? null;
-      }
-    }
+    const ownership = await resolveOwnership({
+      appBlockId: row.appBlockId,
+      slug: row.slug,
+      submittedAt: row.submittedAt,
+    });
     return {
       ref,
       slug: row.slug,
@@ -117,9 +158,8 @@ async function loadSubject(ref: ReviewThreadSubjectRef): Promise<ReviewThreadSub
       status: row.status,
       rejectionReason: row.rejectionReason,
       approvalNotes: row.approvalNotes,
-      submittedByUserId: row.submittedByUserId,
       reviewedByUserId: row.reviewedByUserId,
-      listingOwnerUserId: versionOwnerUserId,
+      developerUserId: reviewThreadDeveloperUserId(row.submittedByUserId, ownership),
       reviewer: decisionReviewer(row.status, row.reviewedBy),
     };
   }
@@ -132,6 +172,7 @@ async function loadSubject(ref: ReviewThreadSubjectRef): Promise<ReviewThreadSub
       rejectionReason: true,
       approvalNotes: true,
       submittedByUserId: true,
+      submittedAt: true,
       reviewedByUserId: true,
       appListingId: true,
       appListing: { select: { name: true } },
@@ -141,10 +182,11 @@ async function loadSubject(ref: ReviewThreadSubjectRef): Promise<ReviewThreadSub
   if (!row) return null;
   // The canonical owner, not the `appListing.userId` copy: for an on-site listing that column
   // is denormalized and can name a former owner (see `resolveListingAccess`).
-  let listingOwnerUserId: number | null = null;
-  if (row.appListingId) {
-    listingOwnerUserId = (await resolveListingAccess(row.appListingId, null))?.ownerUserId ?? null;
-  }
+  const ownership = await resolveOwnership({
+    appListingId: row.appListingId,
+    slug: row.slug,
+    submittedAt: row.submittedAt,
+  });
   return {
     ref,
     slug: row.slug,
@@ -153,9 +195,8 @@ async function loadSubject(ref: ReviewThreadSubjectRef): Promise<ReviewThreadSub
     status: row.status,
     rejectionReason: row.rejectionReason,
     approvalNotes: row.approvalNotes,
-    submittedByUserId: row.submittedByUserId,
     reviewedByUserId: row.reviewedByUserId,
-    listingOwnerUserId,
+    developerUserId: reviewThreadDeveloperUserId(row.submittedByUserId, ownership),
     reviewer: decisionReviewer(row.status, row.reviewedBy),
   };
 }
@@ -168,8 +209,7 @@ async function resolveParticipant(subjectId: string, viewer: ReviewThreadViewer)
     ? reviewThreadViewerRole({
         viewerUserId: viewer.userId,
         viewerIsModerator: viewer.isModerator,
-        submittedByUserId: subject.submittedByUserId,
-        listingOwnerUserId: subject.listingOwnerUserId,
+        developerUserId: subject.developerUserId,
       })
     : null;
   if (!subject || !role) throw new AppReviewThreadError('NOT_FOUND', 'Submission not found.');
@@ -316,15 +356,14 @@ export async function postReviewMessage(opts: {
         key,
         details,
       });
-    } else if (route.to === 'developer') {
+    } else if (route.to === 'developer' && subject.developerUserId != null) {
+      // The current owner only. The author's account id is not stored: the notification's
+      // details reach the browser as-is, so the fetcher resolves the byline from the message.
       await notifyAppReviewReply({
         type: 'app-review-reply-to-developer',
-        userIds: developerSideRecipients(
-          subject.submittedByUserId,
-          subject.listingOwnerUserId
-        ).filter((id) => id !== viewer.userId),
+        userIds: [subject.developerUserId].filter((id) => id !== viewer.userId),
         key,
-        details: { ...details, authorUserId: viewer.userId },
+        details: { ...details, messageId: message.id },
       });
     }
     // `queue`: no individual notification. The queue's Replies tab and its count show it.

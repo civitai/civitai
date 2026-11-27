@@ -153,7 +153,11 @@ function listenForReply() {
   if (!cw) throw new Error('iframe contentWindow missing');
   const handler = (e: MessageEvent) => {
     const d = e.data as { type?: string; payload?: unknown } | null;
-    if (d && typeof d.type === 'string') received.push({ type: d.type, payload: d.payload });
+    // Re-clone into THIS realm: the payload was deserialised in the iframe's realm, so its
+    // prototypes differ and `toStrictEqual` would reject an otherwise equal object.
+    if (d && typeof d.type === 'string') {
+      received.push({ type: d.type, payload: structuredClone(d.payload) });
+    }
   };
   cw.addEventListener('message', handler);
   return {

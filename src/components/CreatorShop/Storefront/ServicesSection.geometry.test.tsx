@@ -99,3 +99,28 @@ describe("seller's own services card footer", () => {
     }
   );
 });
+
+// The profile sidebar's Services button links to `/shop#shop-services`; the section mounts only
+// once its offerings load, after the router's own hash scroll has run.
+describe('opened on #shop-services', () => {
+  afterEach(() => {
+    history.replaceState(null, '', location.pathname + location.search);
+    vi.restoreAllMocks();
+  });
+
+  test.each([
+    ['#shop-services', 1],
+    ['#shop-featured', 0],
+  ])('with hash %s the section scrolls itself into view %i time(s)', async (hash, calls) => {
+    history.replaceState(null, '', hash);
+    const scroll = vi.spyOn(Element.prototype, 'scrollIntoView');
+    await renderAtViewport(
+      <ServicesSection ownerUserId={SELLER} username="seller" shopPublished />,
+      { width: 1440, height: 900 }
+    );
+    const section = document.getElementById('shop-services');
+    expect(section, 'services section not rendered').not.toBeNull();
+    const onSection = scroll.mock.contexts.filter((el) => el === section);
+    expect(onSection).toHaveLength(calls);
+  });
+});

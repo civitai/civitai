@@ -17,6 +17,7 @@ import { ToggleMinorModel } from '~/components/Model/Actions/ToggleMinorModel';
 import { ToggleSfwOnlyModel } from '~/components/Model/Actions/ToggleSfwOnlyModel';
 import type { UseQueryModelReturn } from '~/components/Model/model.utils';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
+import { PinToProfileMenuItem } from '~/components/Profile/PinToProfileMenuItem';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ReportEntity } from '~/shared/utils/report-helpers';
@@ -99,6 +100,12 @@ export function ModelCardContextMenu({ data }: { data: UseQueryModelReturn[numbe
           key: 'add-to-showcase',
           component: (
             <AddToShowcaseMenuItem key="add-to-showcase" entityType="Model" entityId={data.id} />
+          ),
+        },
+        {
+          key: 'pin-to-profile',
+          component: (
+            <PinToProfileMenuItem key="pin-to-profile" entityType="Model" entityId={data.id} />
           ),
         },
         {

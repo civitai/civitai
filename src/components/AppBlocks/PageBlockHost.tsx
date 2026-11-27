@@ -784,6 +784,9 @@ export interface PageBlockHostProps {
    *  drops it on any surface but `page-run`. Absent on every other caller. */
   appData?: { url: string; slug: string };
   viewer: { id: number; username: string | null } | null;
+  /** The mint's `viewerImage`, raw → `BLOCK_INIT.viewer.image` (see
+   *  `projectBlockInitViewerImage`). Absent on a caller that has no mint value. */
+  viewerImage?: unknown;
   theme: 'light' | 'dark';
   /** Re-mint the page token after a consent grant so it carries the newly
    *  granted scopes (pushed to the iframe via TOKEN_REFRESH). Mirrors
@@ -986,6 +989,7 @@ export function PageBlockHost({
   effectiveBrowsingLevel,
   appData,
   viewer,
+  viewerImage,
   theme,
   onConsentGranted,
   onRetryToken,
@@ -1551,7 +1555,7 @@ export function PageBlockHost({
       // Routing through the SHARED `withSignedInFlag` helper is what makes the
       // two surfaces incapable of drifting: neither host stamps the object by
       // hand. `null` (anonymous) passes through as `null`.
-      viewer: withSignedInFlag(viewer),
+      viewer: withSignedInFlag(viewer, viewerImage),
       theme,
       renderMode: 'iframe',
       // Advisory maturity signal — server-authoritative values from the mint.
@@ -1575,6 +1579,7 @@ export function PageBlockHost({
       grantedScopes,
       token,
       viewer,
+      viewerImage,
       theme,
       domain,
       maxBrowsingLevel,

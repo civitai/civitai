@@ -96,6 +96,22 @@ describe('normalizeStepOutput — soniloAudioGen', () => {
   });
 });
 
+describe('normalizeStepOutput — seedAudioGen', () => {
+  it('surfaces every returned track as audio', async () => {
+    const tracks = [
+      { id: 'a', url: 'https://x/a.mp3', available: true, duration: 6.2 },
+      { id: 'b', url: 'https://x/b.mp3', available: true, duration: 6.2 },
+    ];
+    const result = await normalize({ $type: 'seedAudioGen', output: { blobs: tracks } });
+
+    expect(result).toEqual(tracks.map((t) => expect.objectContaining({ ...t, type: 'audio' })));
+  });
+
+  it('returns nothing when the step has no output yet', async () => {
+    expect(await normalize({ $type: 'seedAudioGen', output: {} })).toEqual([]);
+  });
+});
+
 describe('normalizeStepOutput — polyGen', () => {
   const GLB = { id: 'glb', url: 'https://x/m.glb', format: 'glb', available: true };
   const FBX = { id: 'fbx', url: 'https://x/m.fbx', format: 'fbx', available: true };
