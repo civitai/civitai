@@ -801,6 +801,19 @@ describe('a block majority the sweep acted on', () => {
     expect(await item(it1)).toMatchObject({ status: 'open', outcome: null, decidedAt: null });
   });
 
+  // Ruled by the moderation lead (civitai/civitai#10667): only a majority the sweep acted on is
+  // decided. An image blocked outside the queue leaves its item open; closing those is separate work.
+  it('leaves an item whose image was blocked outside the queue open', async () => {
+    const it1 = await seedItem(1);
+    await vote(it1, 11, true);
+    await vote(it1, 12, false, '2026-10-13T10:01:00Z');
+    await pg.query(
+      `UPDATE "Image" SET "ingestion" = 'Blocked', "blockedFor" = 'moderated' WHERE id = 1`
+    );
+    await applyMajorityBlocks({}, deps());
+    expect(await item(it1)).toMatchObject({ status: 'open', outcome: null, actionedAt: null });
+  });
+
   it('decides an item acted on before this rule on the next sweep, with nothing else pending', async () => {
     const it1 = await seedItem(1);
     await vote(it1, 11, true);
