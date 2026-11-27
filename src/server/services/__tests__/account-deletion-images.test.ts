@@ -367,6 +367,16 @@ describe('unblockAccountDeletionImages', () => {
     expect(result.unblocked).toBe(1);
   });
 
+  it('leaves a withheld image blocked, and counts it', async () => {
+    images = [hidden(1, 'Scanned', { withheld: true }), hidden(2, 'Scanned')];
+
+    const result = await unblockAccountDeletionImages(7);
+
+    expect(images[0]).toMatchObject({ ingestion: 'Blocked', blockedFor: 'moderated' });
+    expect(images[1]).toMatchObject({ ingestion: 'Scanned', blockedFor: null });
+    expect(result).toMatchObject({ unblocked: 1, withheld: 1 });
+  });
+
   it('restores the ingestion the image actually had', async () => {
     images = [hidden(1, 'Pending')];
 

@@ -1,6 +1,7 @@
 import { sql, type Expression, type ExpressionBuilder, type SqlBool } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import {
+  modReviewContent as modReviewContentFromTables,
   noOpenImageReport,
   SERVABLE_IMAGE_CONTENT_MARKER,
   servableImage as servableImageFromTables,
@@ -15,13 +16,15 @@ type Builder = ExpressionBuilder<Joined, 'img' | 'p'>;
 /**
  * The columns of "KnightsImageGate", one row per image on a post: image eligibility for the Knights role, each column
  * one combined answer, none saying why an image is out. The open-report check on a single image still reads ImageReport
- * and Report directly. Every column but `sweepServable` implies `servable`.
+ * and Report directly. Every column but `sweepServable` and `modReviewContent` implies `servable`; `modReviewContent`
+ * implies `sweepServable`. A new column goes last: CREATE OR REPLACE VIEW only appends.
  */
 export const IMAGE_GATE_COLUMNS = [
   'servable',
   'sweepServable',
   'skillCheckEligible',
   'skillCheckLasting',
+  'modReviewContent',
 ] as const;
 export type ImageGateColumn = (typeof IMAGE_GATE_COLUMNS)[number];
 
@@ -36,6 +39,7 @@ export const imageGateColumns: Record<ImageGateColumn, (eb: Builder) => Expressi
     eb.and([servableImageFromTables(eb), ...gateExclusions(false).map((clause) => clause(eb))]),
   skillCheckLasting: (eb) =>
     eb.and([servableImageFromTables(eb), ...gateExclusions(true).map((clause) => clause(eb))]),
+  modReviewContent: modReviewContentFromTables,
 };
 
 /** The SELECT behind "KnightsImageGate", its parameters written in. A NULL answer reads as false. */
@@ -76,4 +80,4 @@ export const servableImageForSweeps = (eb: Builder) =>
 
 /** `modReviewEligibleImage`, through the gate: the content half and no open report on the image. */
 export const modReviewEligibleImage = (_eb: Builder) =>
-  sql<SqlBool>`(${imageGate('sweepServable')} AND ${noOpenImageReport})`;
+  sql<SqlBool>`(${imageGate('modReviewContent')} AND ${noOpenImageReport})`;

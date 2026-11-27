@@ -1,3 +1,4 @@
+import { moderatorWithheldSql } from '@civitai/shared/retracted-media-tier';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { batchProcessor } from '~/server/db/db-helpers';
@@ -47,31 +48,42 @@ async function reprocessExemptBlockedImages(req: NextApiRequest, res: NextApiRes
       return results.map((r) => r.id);
     },
     processor: async ({ batch, cancelFns, batchNumber, batchCount }) => {
-      if (!batch.length) return;
-
-      const updateQuery = await pgDbWrite.cancellableQuery(
-        `
-        UPDATE "Image"
-        SET "ingestion" = 'Rescan', "blockedFor" = NULL
-        WHERE id = ANY($1::int[]) AND "blockedFor" = 'AiNotVerified';
-        `,
-        [batch]
-      );
-      cancelFns.push(updateQuery.cancel);
-      await updateQuery.result();
-
-      const enqueueQuery = await pgDbWrite.cancellableQuery(
-        `
-        INSERT INTO "JobQueue" (type, "entityType", "entityId")
-        SELECT 'ImageScan'::"JobQueueType", 'Image'::"EntityType", unnest($1::int[])
-        ON CONFLICT DO NOTHING;
-        `,
-        [batch]
-      );
-      cancelFns.push(enqueueQuery.cancel);
-      await enqueueQuery.result();
-
-      console.log(`Batch ${batchNumber} of ${batchCount}: updated ${batch.length} images`);
+      const updated = await reprocessExemptBatch(batch, cancelFns);
+      console.log(`Batch ${batchNumber} of ${batchCount}: updated ${updated.length} images`);
     },
   });
+}
+
+/** The token names no moderator, so an image withheld from one without the grant stays blocked. */
+export async function reprocessExemptBatch(
+  batch: number[],
+  cancelFns: (() => Promise<void>)[] = []
+) {
+  if (!batch.length) return [];
+
+  const updateQuery = await pgDbWrite.cancellableQuery<{ id: number }>(
+    `
+    UPDATE "Image" i
+    SET "ingestion" = 'Rescan', "blockedFor" = NULL
+    WHERE i.id = ANY($1::int[]) AND i."blockedFor" = 'AiNotVerified'
+      AND NOT ${moderatorWithheldSql('i', { csamReview: false })}
+    RETURNING i.id;
+    `,
+    [batch]
+  );
+  cancelFns.push(updateQuery.cancel);
+  const updated = (await updateQuery.result()).map((r) => r.id);
+  if (!updated.length) return updated;
+
+  const enqueueQuery = await pgDbWrite.cancellableQuery(
+    `
+    INSERT INTO "JobQueue" (type, "entityType", "entityId")
+    SELECT 'ImageScan'::"JobQueueType", 'Image'::"EntityType", unnest($1::int[])
+    ON CONFLICT DO NOTHING;
+    `,
+    [updated]
+  );
+  cancelFns.push(enqueueQuery.cancel);
+  await enqueueQuery.result();
+  return updated;
 }
