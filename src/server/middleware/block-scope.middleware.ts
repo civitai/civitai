@@ -844,7 +844,6 @@ export const _internalsForTests = {
   resetOriginCache(): void {
     _allowedOriginsCache = null;
     _allowedOriginsInflight = null;
-    _sessionOriginCache.clear();
   },
 };
 
@@ -855,17 +854,6 @@ export const _internalsForTests = {
 // (`isActiveSessionHost`), never by a domain suffix. As for every other allowed origin, CORS only
 // lets the frame READ the answer: the request still needs a bearer token the middleware verifies,
 // and no credentials header is sent.
-//
-// Cached per host, briefly, so a page's burst of preflights costs one Redis read: an ended
-// session can keep CORS for at most SESSION_ORIGIN_ALLOW_TTL_MS (its token is what is revoked;
-// CORS is not the boundary), and a host asked about just before its session was written waits at
-// most SESSION_ORIGIN_DENY_TTL_MS. Bounded, oldest first out, so a flood of distinct
-// session-shaped origins cannot grow it. Kept in memory only: a direct session host is a
-// credential.
-const SESSION_ORIGIN_ALLOW_TTL_MS = 30_000;
-const SESSION_ORIGIN_DENY_TTL_MS = 5_000;
-const SESSION_ORIGIN_CACHE_MAX = 512;
-const _sessionOriginCache = new Map<string, { allowed: boolean; expiresAt: number }>();
 
 async function sessionOriginAllowed(norm: string): Promise<boolean> {
   let host: string;
@@ -877,25 +865,10 @@ async function sessionOriginAllowed(norm: string): Promise<boolean> {
   } catch {
     return false;
   }
-  // Only a session-shaped host is looked up or cached: the routes here also serve browser
-  // integrations from arbitrary origins, which must neither cost a lookup nor push a live
-  // preview out of the cache.
-  if (!sessionHostKind(host, sessionHostDomains())) return false;
-  const now = Date.now();
-  const cached = _sessionOriginCache.get(host);
-  if (cached && cached.expiresAt > now) return cached.allowed;
+  // `isActiveSessionHost` checks the host's shape before any read, so an arbitrary origin (these
+  // routes also serve browser integrations) costs no Redis call.
   const { isActiveSessionHost } = await import('~/server/services/blocks/dev-tunnel.service');
-  const allowed = await isActiveSessionHost(host).catch(() => false);
-  _sessionOriginCache.delete(host);
-  if (_sessionOriginCache.size >= SESSION_ORIGIN_CACHE_MAX) {
-    const oldest = _sessionOriginCache.keys().next().value;
-    if (oldest !== undefined) _sessionOriginCache.delete(oldest);
-  }
-  _sessionOriginCache.set(host, {
-    allowed,
-    expiresAt: now + (allowed ? SESSION_ORIGIN_ALLOW_TTL_MS : SESSION_ORIGIN_DENY_TTL_MS),
-  });
-  return allowed;
+  return isActiveSessionHost(host).catch(() => false);
 }
 
 async function originAllowed(origin: string | undefined): Promise<boolean> {
