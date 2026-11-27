@@ -6347,8 +6347,8 @@ export const setAssociatedResources = async (
   // only allow moderators or model owners to add/remove associated models
   if (!user?.isModerator && fromModel.userId !== user?.id) throw throwAuthorizationError();
 
-  // The editor never lists an article the caller cannot read, so its absence from the payload
-  // is not a removal.
+  // The editor never lists a link the caller cannot see (an unreadable article, a model hidden at
+  // their browsing level), so its absence from the payload is not a removal.
   const existingAssociations = fromModel.associations
     .filter((x) => !x.toArticle || canReadArticle(x.toArticle, user))
     .filter((x) => !x.toModel || canListAssociatedModel(x.toModel, modelViewer, browsingLevel))

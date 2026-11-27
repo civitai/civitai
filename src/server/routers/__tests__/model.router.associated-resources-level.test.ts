@@ -64,10 +64,6 @@ function caller(
   } as never);
 }
 
-/**
- * A signed-out answer is edge-cached by URL, so it must hold only what every signed-out visitor
- * may see, whatever level the URL asks for.
- */
 function listedIds(
   user: { id: number } | undefined,
   canViewNsfw: boolean,
@@ -92,6 +88,7 @@ beforeEach(() => {
 });
 
 describe('model.getAssociatedResourcesSimple browsing level', () => {
+  // Signed-out answers are edge-cached by URL, so the result cannot vary with the requested level.
   it('a signed-out request asking for every level gets PG only', async () => {
     expect(await listedIds(undefined, true)).toEqual([PG_MODEL]);
   });

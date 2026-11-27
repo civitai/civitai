@@ -26,7 +26,6 @@ type Seed = {
   sfwName?: string | null;
 };
 
-// One linked model per state the listing's rules distinguish; all owned by ITEM_OWNER.
 const MODELS = {
   live: { id: 1 },
   mature: { id: 2, nsfwLevel: NsfwLevel.X },
@@ -108,7 +107,6 @@ beforeAll(async () => {
     Object.values(MODELS).map((m) => m.id)
   );
 
-  // dbWrite is the PGlite client for every call these services make.
   const { model, modelAssociations, $transaction } = dbMock.dbWrite;
   model.findUnique.mockImplementation(((args: never) => h.prisma.model.findUnique(args)) as never);
   modelAssociations.findMany.mockImplementation(((args: never) =>

@@ -24,10 +24,7 @@ export type AssociatedModelVisibility = {
   poi: boolean;
 };
 
-/**
- * Whether a linked model is listed to `viewer` at `browsingLevel`: the model listing's rules
- * (getModelsRaw), except that its owner and moderators always see it.
- */
+/** Mirrors getModelsRaw, except that the owner and moderators always see the model. */
 export function canListAssociatedModel(
   model: AssociatedModelVisibility,
   viewer: Viewer,
