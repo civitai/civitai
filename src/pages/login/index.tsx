@@ -55,7 +55,7 @@ export const getServerSideProps = createServerSideProps({
 
     // A moderator or impersonation session refused for this request only (its revocation read failed): the hub
     // would send it straight back here, so go home instead.
-    if (!session?.user && isSessionUnconfirmed(ctx.req)) {
+    if (!session?.user && !isSwitch && isSessionUnconfirmed(ctx.req)) {
       return { redirect: { destination: '/', permanent: false } };
     }
 

@@ -16,6 +16,9 @@ const h = await vi.hoisted(async () => {
   });
   process.env.AUTH_JWT_ISSUER = 'https://auth.test';
   process.env.AUTH_JWT_PUBLIC_KEY = kp.publicKey;
+  // Every token is past the rolling-refresh age, so a session that resolves asks the hub for a fresh token
+  // and writes it: a positive control for "no cookie written".
+  process.env.AUTH_SESSION_UPDATE_AGE = '0.001';
   return { kp, user: {} as Record<string, unknown> };
 });
 
@@ -79,18 +82,27 @@ const read = async (token: string) => {
 beforeEach(() => {
   h.user = { id: 7, username: 'seven', isModerator: true };
   storeUp();
+  // The hub's rolling refresh (the only path that writes a session cookie here) answers a fresh token.
+  vi.spyOn(globalThis, 'fetch').mockImplementation(
+    async () => new Response(JSON.stringify({ token: 'fresh-token' }), { status: 200 })
+  );
 });
 
+const wroteSessionCookie = (setHeader: ReturnType<typeof vi.fn>) =>
+  setHeader.mock.calls.some(([name]) => String(name).toLowerCase() === 'set-cookie');
+
 describe('the main app session for an elevated user whose revocation read failed', () => {
-  it('resolves the moderator while the store answers', async () => {
-    expect((await read(moderatorToken)).session?.user).toMatchObject({ id: 7, isModerator: true });
+  it('resolves the moderator while the store answers, and rolls the aged cookie', async () => {
+    const { session, setHeader } = await read(moderatorToken);
+    expect(session?.user).toMatchObject({ id: 7, isModerator: true });
+    expect(wroteSessionCookie(setHeader)).toBe(true);
   });
 
   it('signs the moderator out for this request, writes no cookie, and marks the request', async () => {
     storeDown();
     const { session, setHeader, req } = await read(moderatorToken);
     expect(session).toBeNull();
-    expect(setHeader).not.toHaveBeenCalled();
+    expect(wroteSessionCookie(setHeader)).toBe(false);
     expect(isSessionUnconfirmed(req)).toBe(true);
   });
 
@@ -125,5 +137,17 @@ describe('the main app session for an elevated user whose revocation read failed
       resolvedUrl: '/login?returnUrl=%2Fmoderator%2Freports',
     } as never);
     expect(result).toEqual({ redirect: { destination: '/', permanent: false } });
+  });
+
+  it('still lets an unconfirmed moderator switch accounts through the hub', async () => {
+    storeDown();
+    const { req, res } = request(moderatorToken);
+    const result = (await loginProps({
+      req,
+      res,
+      query: { reason: 'switch-accounts' },
+      resolvedUrl: '/login?reason=switch-accounts',
+    } as never)) as { redirect: { destination: string } };
+    expect(result.redirect.destination).toMatch(/^https:\/\/auth\.test\//);
   });
 });
