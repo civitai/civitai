@@ -1542,7 +1542,12 @@ function getAllImagesUncaptured(input) {
       ...i,
       model3dId: null,
       meta: null,
+      // ...feedThumbnailFields(...): `nsfwLevel` overrides in place, `thumbnailUrl` is added here.
       nsfwLevel: Math.max(thumbnail?.nsfwLevel ?? 0, i.nsfwLevel),
+      thumbnailUrl:
+        thumbnail && (thumbnail.blockMarked === false || creatorId === userId || isModerator)
+          ? thumbnail.url
+          : undefined,
       modelVersionIds: resources?.filter((r) => r.detected).map((r) => r.modelVersionId) ?? [],
       modelVersionIdsManual: resources?.filter((r) => !r.detected).map((r) => r.modelVersionId) ?? [],
       publishedAt: i.publishedAt ? i.sortAt : undefined,
@@ -1561,11 +1566,6 @@ function getAllImagesUncaptured(input) {
       tagIds: tagIdsVar?.[i.id]?.tags,
       cosmetic: frames?.[i.id] ?? null,
       eventDecoration: eventDecorations?.[i.id] ?? null,
-      // feedThumbnailFields
-      thumbnailUrl:
-        thumbnail && (thumbnail.blockMarked === false || creatorId === userId || isModerator)
-          ? thumbnail.url
-          : undefined,
       judgeScore: parseJudgeScore(collectionItemNote ?? null),
     };
   });

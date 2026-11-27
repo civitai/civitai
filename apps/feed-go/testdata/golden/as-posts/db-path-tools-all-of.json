@@ -1590,6 +1590,7 @@
                 "minor": false,
                 "poi": false,
                 "restricted": false,
+                "thumbnailUrl": null,
                 "modelVersionIds": [],
                 "modelVersionIdsManual": [],
                 "user": {
@@ -1667,8 +1668,7 @@
                     "crop": "0%"
                   }
                 },
-                "eventDecoration": null,
-                "thumbnailUrl": null
+                "eventDecoration": null
               }
             ],
             "review": {
@@ -1728,6 +1728,7 @@
                 "minor": false,
                 "poi": false,
                 "restricted": false,
+                "thumbnailUrl": null,
                 "modelVersionIds": [],
                 "modelVersionIdsManual": [],
                 "user": {
@@ -1757,8 +1758,7 @@
                   522
                 ],
                 "cosmetic": null,
-                "eventDecoration": null,
-                "thumbnailUrl": null
+                "eventDecoration": null
               }
             ],
             "review": null
@@ -1843,6 +1843,7 @@
                 "minor": false,
                 "poi": false,
                 "restricted": false,
+                "thumbnailUrl": null,
                 "modelVersionIds": [],
                 "modelVersionIdsManual": [],
                 "user": {
@@ -1907,8 +1908,7 @@
                   526
                 ],
                 "cosmetic": null,
-                "eventDecoration": null,
-                "thumbnailUrl": null
+                "eventDecoration": null
               }
             ],
             "review": {
@@ -1943,10 +1943,10 @@
           "items.0.images.0.publishedAt": [
             "Date"
           ],
-          "items.0.images.0.tags": [
+          "items.0.images.0.thumbnailUrl": [
             "undefined"
           ],
-          "items.0.images.0.thumbnailUrl": [
+          "items.0.images.0.tags": [
             "undefined"
           ],
           "items.1.publishedAt": [
@@ -1967,10 +1967,10 @@
           "items.1.images.0.publishedAt": [
             "Date"
           ],
-          "items.1.images.0.tags": [
+          "items.1.images.0.thumbnailUrl": [
             "undefined"
           ],
-          "items.1.images.0.thumbnailUrl": [
+          "items.1.images.0.tags": [
             "undefined"
           ],
           "items.1.review": [
@@ -1994,10 +1994,10 @@
           "items.2.images.0.publishedAt": [
             "Date"
           ],
-          "items.2.images.0.tags": [
+          "items.2.images.0.thumbnailUrl": [
             "undefined"
           ],
-          "items.2.images.0.thumbnailUrl": [
+          "items.2.images.0.tags": [
             "undefined"
           ]
         },
