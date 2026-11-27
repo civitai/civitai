@@ -241,13 +241,15 @@ func TestTagIDsMissRepeatsShareOneLookup(t *testing.T) {
 // image tags, which are never written (not a WriteCaches name), so nothing else answers their
 // repeats. The user follows are never kept: the viewer's own follow set, read back after they change it.
 // Nor is the version-showcase decision, which is computed outside lookupShared and keeps nothing, nor
-// the gallery hold (a safety rule a kept answer could hold past its bust).
+// the gallery hold or the gallery settings it rebuilds (a safety rule a kept answer could hold past
+// its bust).
 func TestMemoizedCaches(t *testing.T) {
 	off, on := &MissCompute{}, &MissCompute{WriteBack: AllWrites()}
 	want := map[string]bool{MissUserCosmetics: true, MissImageFrames: true, MissEventDecorations: true, MissImageMeta: false,
 		MissTagIDs: true, MissModelFrames: true, MissModelDecorations: true, MissVersionImages: true, MissMetrics: true,
 		"model-data": true, "model-tags": true, "official-models": true, "image-tags": true,
-		"user-follows": false, "version-showcase": false, "image-resources": false, "creator-memberships": false, "gallery-hold": false}
+		"user-follows": false, "version-showcase": false, "image-resources": false, "creator-memberships": false, "gallery-hold": false,
+		"gallery-settings": false}
 	if len(want) != len(MissCaches) {
 		t.Fatalf("MissCaches %v; this test enumerates %d", MissCaches, len(want))
 	}

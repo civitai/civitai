@@ -877,8 +877,8 @@ func (d *InfiniteDeps) hubDeps() hubDeps {
 // holdGallery is the gallery the hold gates read (heldLevels, heldByPost): the store, computing an
 // absent gallery-settings key's hold when Ports.GallerySettingsMiss is on and GalleryHolds is set.
 func (d *InfiniteDeps) holdGallery() V1Gallery {
-	if d.Ports.GallerySettingsMiss && d.GalleryHolds != nil {
-		return holdComputingGallery{GalleryStore: d.Gallery, holds: d.GalleryHolds}
+	if d.Ports.GallerySettingsMiss {
+		return HoldComputingGallery(d.Gallery, d.GalleryHolds)
 	}
 	return d.Gallery
 }

@@ -1811,6 +1811,11 @@
       }
     },
     "cacheable": true,
-    "writes": {}
+    "writes": {
+      "model:gallery-settings:5001": {
+        "raw": "{\"none\":true,\"hiddenTags\":[],\"hiddenUsers\":[],\"hiddenImages\":{},\"pinnedPosts\":{}}",
+        "ex": 604800
+      }
+    }
   }
 }

@@ -103,6 +103,17 @@ type holdComputingGallery struct {
 	holds GalleryHoldSource
 }
 
+// HoldComputingGallery is store with an absent gallery-settings key's hold computed by holds
+// (holdComputingGallery), for GET /api/v1/images' hold gates with
+// FEED_GO_V1_IMAGES_SERVE_GALLERY_SETTINGS_MISS on; nil holds is the store itself (the miss falls
+// back).
+func HoldComputingGallery(store *GalleryStore, holds GalleryHoldSource) V1Gallery {
+	if holds == nil {
+		return store
+	}
+	return holdComputingGallery{GalleryStore: store, holds: holds}
+}
+
 func (g holdComputingGallery) SettingsMany(ctx context.Context, modelIDs []int) (map[int]*GallerySettings, error) {
 	out, missing, err := g.settingsRead(ctx, modelIDs)
 	if err != nil || len(missing) == 0 {
