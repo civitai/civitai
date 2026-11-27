@@ -131,7 +131,7 @@ beforeEach(async () => {
   );
 });
 
-// As `get_tag_on_image_attributes` packs a SpineRating tag: source 0, automated, confidence 16.
+// A SpineRating tag written before it had its own code: source 0, automated, confidence 16.
 const SCAN_RATING_ATTRIBUTES = (1 << 11) | 16;
 // As the packing does once SpineRating has its own code (10): bit 15 set, so a negative smallint.
 const SPINE_CODE_RATING_ATTRIBUTES = ((10 << 12) | (1 << 11) | 16) - 65536;
@@ -1379,15 +1379,15 @@ describe('the scan rating under its own source code', () => {
     expect((await states()).map((s) => s.state)).toEqual(['copied', 'skipped']);
   });
 
-  it('reads a rating across both encodings, so an old pg and a new r still skip', async () => {
+  it('reads a rating across both encodings, so a new pg beside an old r still skips', async () => {
     await realPerson(1, 101);
-    await tagImage(101, 'pg', SCAN_RATING_ATTRIBUTES);
-    await tagImage(101, 'r', SPINE_CODE_RATING_ATTRIBUTES);
+    await tagImage(101, 'pg', SPINE_CODE_RATING_ATTRIBUTES);
+    await tagImage(101, 'r', SCAN_RATING_ATTRIBUTES);
 
     expect(await copiedImages()).toEqual([]);
   });
 
-  it('no longer reads a legacy automated source-0 label that is not a rating name', async () => {
+  it('still reads a legacy automated source-0 label as a rating, so the record skips', async () => {
     await record({
       appealId: 1,
       imageId: 101,
@@ -1398,13 +1398,14 @@ describe('the scan rating under its own source code', () => {
     // A Hive or AiRecognition label written before those sources had codes: automated, source 0.
     await tagImage(101, 'woman', SCAN_RATING_ATTRIBUTES);
 
-    expect(await copiedImages()).toEqual(['u-101']);
+    expect(await copiedImages()).toEqual([]);
   });
 
-  it('keeps a downvote off a SpineRating-coded rating, but not off a legacy non-rating label', async () => {
+  it('keeps a downvote off a SpineRating-coded rating and a legacy source-0 label, not off WD14', async () => {
     await tagImage(101, 'r', SPINE_CODE_RATING_ATTRIBUTES);
     await tagImage(101, 'woman', SCAN_RATING_ATTRIBUTES);
-    for (const name of ['r', 'woman'])
+    await tagImage(101, 'smile', WD14_TAG_ATTRIBUTES);
+    for (const name of ['r', 'woman', 'smile'])
       await holder.db.query(
         `INSERT INTO "TagsOnImageVote" ("imageId", "tagId", "userId", "vote")
          SELECT 101, id, 9, -1 FROM "Tag" WHERE name = $1`,
@@ -1417,6 +1418,6 @@ describe('the scan rating under its own source code', () => {
         selected.map((row) => row.tagId),
       ])
     ).rows.map((row) => row.name);
-    expect(names).toEqual(['woman']);
+    expect(names).toEqual(['smile']);
   });
 });

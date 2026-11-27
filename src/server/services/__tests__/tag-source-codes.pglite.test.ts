@@ -27,7 +27,7 @@ beforeAll(async () => {
   `);
   await db.exec(migration('20250303170613_tags_on_image_new'));
   await db.exec(migration('20250414192734_tag_type'));
-  await db.exec(migration('20271208120000_tag_source_codes_8_12'));
+  await db.exec(migration('20271208140000_tag_source_codes_8_12'));
 }, 60_000);
 
 afterAll(async () => {

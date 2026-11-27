@@ -378,25 +378,19 @@ const COPY_LABELS: string[] = [
 const RATED_COPY_LABELS: string[] = [ViolationType.RealPerson, 'poi'];
 const SCANNER_COPY_RATINGS: string[] = ['pg', 'pg13', 'pg-13'];
 
-/** `TagSource.SpineRating` as `get_tag_on_image_attributes` packs it (migration 20271208120000). */
+/** `TagSource.SpineRating` as `get_tag_on_image_attributes` packs it (migration 20271208140000). */
 const SPINE_RATING_SOURCE_CODE = 10;
-/** The rating names the image scan stores. */
-const SCANNER_RATING_NAMES: string[] = ['pg', 'pg13', 'pg-13', 'r', 'x', 'xxx'];
-
 /**
  * Whether a `TagsOnImageNew` row is a rating the image scan stored: its `SpineRating` source code,
- * or, for rows written before that code existed (packed as source 0), an automated source-0 tag
- * named as a rating. Other automated source-0 tags, such as legacy Hive labels, are not ratings.
+ * or any automated source-0 row. Rows written before the scan sources had codes packed every one of
+ * them as source 0, so a legacy Hive or AiRecognition label is read as a rating too: the copy rule
+ * then skips the record, and a downvote never deletes it (both fail closed).
  */
 export const isScannerRatingRow = (row: Prisma.Sql) => Prisma.sql`(
   ((${row}.attributes >> 12)::integer & 15) = ${SPINE_RATING_SOURCE_CODE}
   OR (
     ((${row}.attributes >> 12)::integer & 15) = 0
     AND ((${row}.attributes >> 11)::integer & 1) = 1
-    AND EXISTS (
-      SELECT 1 FROM "Tag" rt
-      WHERE rt.id = ${row}."tagId" AND rt.name = ANY(${SCANNER_RATING_NAMES}::text[])
-    )
   )
 )`;
 
