@@ -63,6 +63,7 @@ const outcomeCount = (name: string) =>
 beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
+    CREATE TABLE "ServiceDealReviewImage" ("reviewId" int NOT NULL, "imageId" int NOT NULL);
     CREATE TABLE "Image" ("id" serial PRIMARY KEY, "userId" integer NOT NULL, "url" text NOT NULL);
     CREATE TABLE "ShopArtworkKeyOwner" (
       key text PRIMARY KEY, "userId" integer NOT NULL, "recordedAt" timestamp(3) NOT NULL DEFAULT now()

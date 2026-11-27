@@ -7,6 +7,7 @@ import { assertNotDealFileImages } from '~/server/services/deal-file-image';
 const ENTRY_COPY = 1;
 const PREVIEW_COPY = 2;
 const PLAIN = 3;
+const REVIEW_COPY = 4;
 
 let db: PGlite;
 
@@ -15,6 +16,8 @@ beforeAll(async () => {
   await db.exec(`
     CREATE TABLE "ServiceDealFileEntry" (id serial PRIMARY KEY, "imageId" int);
     CREATE TABLE "ServiceDealFile" (id serial PRIMARY KEY, "imageId" int);
+    CREATE TABLE "ServiceDealReviewImage" ("reviewId" int NOT NULL, "imageId" int NOT NULL);
+    INSERT INTO "ServiceDealReviewImage" VALUES (1, ${REVIEW_COPY});
     INSERT INTO "ServiceDealFileEntry" ("imageId") VALUES (${ENTRY_COPY}), (NULL);
     INSERT INTO "ServiceDealFile" ("imageId") VALUES (${PREVIEW_COPY}), (NULL);
   `);
@@ -35,6 +38,13 @@ describe('assertNotDealFileImages', () => {
     await expect(assertNotDealFileImages([PLAIN, id], 'used here')).rejects.toMatchObject({
       code: 'FORBIDDEN',
     });
+  });
+
+  it("refuses a service review's copy as a use, and leaves its delete to the delete rules", async () => {
+    await expect(assertNotDealFileImages([REVIEW_COPY], 'used here')).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    await expect(assertNotDealFileImages([REVIEW_COPY], 'deleted')).resolves.toBeUndefined();
   });
 
   it('passes an image no deal file points at (control)', async () => {

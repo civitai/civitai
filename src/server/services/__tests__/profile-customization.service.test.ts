@@ -331,6 +331,29 @@ describe('setProfileBackground', () => {
     );
   });
 
+  it("refuses the owner's own image when it is a service review's copy, and writes nothing", async () => {
+    const REVIEW_COPY = 71;
+    subscriptions = [subscription('gold')];
+    dbMock.dbRead.image.findUnique.mockResolvedValue({ userId: OWNER } as never);
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) =>
+      [...strings].join('').includes('ServiceDealReviewImage') &&
+      values.some((v) => Array.isArray(v) && v.includes(REVIEW_COPY))
+        ? [{ dealFileImage: true }]
+        : []) as never);
+    await expect(setProfileBackground({ userId: OWNER, imageId: REVIEW_COPY })).rejects.toThrow(
+      /delivery file/
+    );
+    expect(dbMock.dbWrite.userProfile.upsert).not.toHaveBeenCalled();
+
+    await setProfileBackground({ userId: OWNER, imageId: 70 });
+    expect(dbMock.dbWrite.userProfile.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ update: { backgroundImageId: 70 } })
+    );
+  });
+
   it('refuses a non-member', async () => {
     dbMock.dbRead.image.findUnique.mockResolvedValue({ userId: OWNER } as never);
     await expect(setProfileBackground({ userId: OWNER, imageId: 70 })).rejects.toThrow(

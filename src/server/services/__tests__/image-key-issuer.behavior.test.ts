@@ -76,11 +76,12 @@ beforeAll(async () => {
   await holder.db.exec(`
     CREATE TABLE "Image" ("id" serial PRIMARY KEY, "userId" integer NOT NULL, "url" text NOT NULL);
     CREATE TABLE "ShopArtworkKeyOwner" (key text PRIMARY KEY, "userId" integer NOT NULL);
+    CREATE TABLE "ServiceDealReviewImage" ("reviewId" integer NOT NULL, "imageId" integer NOT NULL);
   `);
 });
 
 beforeEach(async () => {
-  await holder.db.exec(`TRUNCATE "Image", "ShopArtworkKeyOwner"`);
+  await holder.db.exec(`TRUNCATE "Image", "ShopArtworkKeyOwner", "ServiceDealReviewImage"`);
   holder.issued = [];
   holder.logDown = false;
   holder.logHangs = false;
@@ -324,6 +325,58 @@ describe('assertClientKeysIssuedToCaller', () => {
 
   it('accepts a url with no upload key', async () => {
     expect(await outcome('https://example.com/picture.png')).toBe('accepted');
+  });
+});
+
+describe("a service review copy's key", () => {
+  const MODERATOR = 9;
+  const OWN_KEY = '22222222-2222-4222-8222-222222222222';
+  const full = (key: string) => `https://cdn.example/x/${key}/original=true`;
+  const articleUsable = (url: string) =>
+    assertClientImageUrlsUsable({ urls: [url], userId: CALLER, shopArtwork: false }).then(
+      () => 'accepted',
+      (e: unknown) => {
+        if (e instanceof TRPCError && e.code === 'BAD_REQUEST') return 'refused';
+        throw e;
+      }
+    );
+
+  beforeEach(async () => {
+    // The buyer's review copy, stored bare, and an ordinary upload of theirs.
+    await holder.db.exec(`
+      INSERT INTO "Image" ("userId", url) VALUES (${CALLER}, '${KEY}'), (${CALLER}, '${OWN_KEY}');
+      INSERT INTO "ServiceDealReviewImage" ("reviewId", "imageId")
+        SELECT 1, id FROM "Image" WHERE url = '${KEY}';
+    `);
+  });
+
+  it('is refused as a new image to its own buyer, in any form the url carries it', async () => {
+    for (const url of [KEY, KEY.toUpperCase(), full(KEY)]) {
+      expect(await outcome(url, BEFORE)).toBe('refused');
+      expect(await articleUsable(url)).toBe('refused');
+    }
+  });
+
+  it('is refused even when its key was issued to the buyer', async () => {
+    await recordUploadKeyOwner(KEY, CALLER);
+    expect(await outcome(KEY, BEFORE)).toBe('refused');
+  });
+
+  it("is reported as not the caller's to every reader of the issue records", async () => {
+    const issuers = await keyIssuers({ urls: [full(KEY)], userId: CALLER, now: BEFORE });
+    expect(issuers.issuedToOthers).toEqual([KEY]);
+  });
+
+  it('is refused to a moderator too, before unrecorded keys are refused', async () => {
+    await expect(
+      assertClientKeysIssuedToCaller({ urls: [KEY], userId: MODERATOR, now: BEFORE })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+  });
+
+  it("leaves the buyer's ordinary own upload usable (control)", async () => {
+    expect(await outcome(OWN_KEY, AFTER)).toBe('accepted');
+    expect(await outcome(full(OWN_KEY), AFTER)).toBe('accepted');
+    expect(await articleUsable(full(OWN_KEY))).toBe('accepted');
   });
 });
 
