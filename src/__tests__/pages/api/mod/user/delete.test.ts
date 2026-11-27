@@ -57,17 +57,14 @@ const trackModActivity = vi.fn(async () => undefined);
 vi.mock('~/server/services/moderator.service', () => ({
   trackModActivity: (...a: unknown[]) => trackModActivity(...(a as [])),
 }));
-const removeErasedOwnerRecords = vi.fn<(userId: number) => Promise<unknown>>(async () => ({}));
-vi.mock('~/server/jobs/appeal-decision-records', () => ({
-  removeErasedOwnerRecords: (userId: number) => removeErasedOwnerRecords(userId),
-  appealOwnerHash: () => 'opaque-owner-hash',
-}));
 const hasModeratorGrant = vi.fn<(...a: unknown[]) => Promise<boolean>>(async () => true);
 vi.mock('~/server/services/moderator-grants', () => ({
   hasModeratorGrant: (...a: unknown[]) => hasModeratorGrant(...a),
 }));
 
+import { Prisma } from '@prisma/client';
 import handler from '~/server/api-routes/mod/user/delete';
+import { appealOwnerHash } from '~/server/jobs/appeal-decision-records';
 import {
   GENERIC_SERVER_ERROR_MESSAGE,
   REST_ERROR_CODE,
@@ -564,35 +561,55 @@ describe('user.delete — a failed deletion', () => {
 });
 
 describe('user.delete — appeal training copies', () => {
+  // The record delete is the one statement against "AppealDecisionRecord"; the behavior tests in
+  // appeal-training-copy.behavior.test.ts run it against a real database.
+  const recordDeletes = () =>
+    vi
+      .mocked(dbMock.dbWrite.$queryRaw)
+      .mock.calls.map(([strings, ...values]) =>
+        Prisma.sql(strings as unknown as readonly string[], ...values)
+      )
+      .filter((sql) => sql.text.includes('DELETE FROM "AppealDecisionRecord"'));
+  const appealFailures = () =>
+    vi
+      .mocked(loggingMock.logToAxiom)
+      .mock.calls.map(([entry]) => entry as { name?: string; message?: string })
+      .filter((entry) => entry.name === 'mod-delete-appeal-copies-failed');
+  const deleted = [{ swept: 0, labels: 0, keys: [] }];
+
   it("removes the erased account's appeal records once the account is deleted", async () => {
     const order: string[] = [];
     deleteUser.mockImplementationOnce(async () => (order.push('deleteUser'), {}));
-    removeErasedOwnerRecords.mockImplementationOnce(async () => (order.push('appeal'), {}));
+    vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation(
+      (async () => (order.push('appeal'), deleted)) as never
+    );
 
     expect((await call({ userId: String(TARGET), username: NAME })).status).toBe(200);
-    expect(removeErasedOwnerRecords).toHaveBeenCalledExactlyOnceWith(TARGET);
+    const [sql, ...more] = recordDeletes();
+    expect(more).toEqual([]);
+    expect(sql.values).toContainEqual([TARGET]);
     expect(order).toEqual(['deleteUser', 'appeal']);
+    expect(appealFailures()).toEqual([]);
   });
 
   it('does not touch them when the deletion is refused', async () => {
     expect((await call({ userId: String(TARGET), username: 'someone_else' })).status).toBe(400);
-    expect(removeErasedOwnerRecords).not.toHaveBeenCalled();
+    expect(recordDeletes()).toEqual([]);
   });
 
   it('still reports the erasure when the cleanup fails, and logs the owner hash, not the id', async () => {
-    removeErasedOwnerRecords.mockRejectedValueOnce(new Error('db down'));
+    setEnv({ APPEAL_OWNER_HASH_KEY: 'test-owner-hash-key' });
+    vi.mocked(dbMock.dbWrite.$queryRaw).mockRejectedValue(new Error('db down'));
 
     const { status, body } = await call({ userId: String(TARGET), username: NAME });
 
     expect(status).toBe(200);
     expect(body).toEqual({ deleted: true, userId: TARGET, auditRecorded: true });
-    const logged = vi
-      .mocked(loggingMock.logToAxiom)
-      .mock.calls.map(([entry]) => entry as { name?: string })
-      .filter((entry) => entry.name === 'mod-delete-appeal-copies-failed');
-    expect(logged).toEqual([
-      expect.objectContaining({ details: { ownerHash: 'opaque-owner-hash' } }),
+    const hash = appealOwnerHash(TARGET);
+    expect(hash).toMatch(/^[0-9a-f]{16,}$/);
+    expect(appealFailures()).toEqual([
+      expect.objectContaining({ message: `owner ${hash}: db down` }),
     ]);
-    expect(JSON.stringify(logged)).not.toContain(String(TARGET));
+    expect(JSON.stringify(appealFailures())).not.toContain(String(TARGET));
   });
 });

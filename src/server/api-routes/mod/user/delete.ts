@@ -149,8 +149,10 @@ export default defineModeratorEndpoint('user.delete', {
       logToAxiom({
         type: 'error',
         name: 'mod-delete-appeal-copies-failed',
-        message: (e as Error).message,
-        details: { ownerHash: appealOwnerHash(input.userId) },
+        // In the message: the dataset has no free field for a hash.
+        message: `owner ${appealOwnerHash(input.userId) ?? '(no hash key)'}: ${
+          (e as Error).message
+        }`,
       });
     }
 

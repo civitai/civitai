@@ -62,10 +62,6 @@ const trackModActivity = vi.fn(async () => undefined);
 vi.mock('~/server/services/moderator.service', () => ({
   trackModActivity: (...a: unknown[]) => trackModActivity(...(a as [])),
 }));
-vi.mock('~/server/jobs/appeal-decision-records', () => ({
-  removeErasedOwnerRecords: async () => ({}),
-  appealOwnerHash: () => null,
-}));
 vi.mock('~/server/services/moderator-grants', () => ({ hasModeratorGrant: async () => true }));
 
 import handler from '~/server/api-routes/mod/user/delete';
