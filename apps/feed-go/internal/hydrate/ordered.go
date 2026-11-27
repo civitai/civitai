@@ -112,6 +112,30 @@ func (r *OrderedRead) Failed() map[int]error {
 	return out
 }
 
+// Writable is, after the batch's Exec, each id whose miss Node's fetch would write back
+// (stateAbsent: no key, or a value that does not decode). A bust's debounce marker and a failed GET
+// are misses Node looks up without writing, so they are not in it, nor is any entry. nil when
+// nothing was queued (no client): then nothing can be written either.
+func (r *OrderedRead) Writable() map[int]bool {
+	if len(r.cmds) == 0 {
+		return nil
+	}
+	now := clock.Now()
+	if r.p.Now != nil {
+		now = r.p.Now()
+	}
+	var out map[int]bool
+	for i, cmd := range r.cmds {
+		if _, st := entryState(cmd, r.ttl, now, decodeOpts{ordered: true}); st == stateAbsent {
+			if out == nil {
+				out = map[int]bool{}
+			}
+			out[r.ids[i]] = true
+		}
+	}
+	return out
+}
+
 // GetOrdered is one key's raw value decoded with UnpackOrdered (a non-map value is a miss); ok false
 // for a miss or a read failure. Used for keys that are not per-id cache records.
 func (p *PackedReader) GetOrdered(ctx context.Context, key string) (superjson.Object, bool) {

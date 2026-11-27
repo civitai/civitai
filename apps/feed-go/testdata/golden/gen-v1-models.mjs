@@ -24,6 +24,8 @@ const OUT = join(HERE, 'v1-models');
 const NOW = '2026-06-15T12:00:00.000Z';
 const NOW_MS = Date.parse(NOW);
 const CACHED_AT = { $date: '2026-06-15T11:55:00.000Z' };
+// Past a day-TTL cache's day at NOW: a stale entry.
+const STALE_AT = { $date: '2026-06-13T12:00:00.000Z' };
 const date = (iso) => ({ $date: iso });
 const uuid = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const CONFIG = {
@@ -961,6 +963,32 @@ fx('fallback-list-favorites', list('favorites=false'), baseWorld(), {
   fx('list-data-miss-computed', list('limit=5'), w, { config: { serveDataMiss: true } });
 }
 
+// The same world with the other cache misses the v1 models routes compute (FEED_GO_V1_MODELS_SERVE_*
+// with the miss computation on): model 5981's model-tags entry is absent too (`coldModelTags`, computed
+// with modelTagCache's lookup over the TagsOnModels rows the Go harness builds from
+// `world.modelTags`), and tag 12's basic-tags entry is past its day (`staleTags`, named by tagCache's
+// lookup over `world.tags`, as the Node reader that wins the revalidate lock names it). Node's answer
+// is the same world's: its fetches answer the records whatever the cache holds.
+{
+  const w = baseWorld();
+  addModel(
+    w,
+    modelRow(5981, { cursorId: '9|9|5981' }),
+    [version(6981, { trainedWords: ['cold'] })],
+    {
+      files: { 6981: [file(7981, 6981)] },
+      images: { 6981: [image(8981, 6981)] },
+    }
+  );
+  addModel(w, modelRow(5982, { cursorId: '8|8|5982' }), [version(6982)], {
+    files: { 6982: [file(7982, 6982)] },
+  });
+  w.coldModelData = [5981];
+  w.coldModelTags = [5981];
+  w.staleTags = [12];
+  fx('list-cache-misses-computed', list('limit=5'), w, { config: { serveDataMiss: true } });
+}
+
 // --- writing -------------------------------------------------------------------------------------
 
 /** The world's cache values under their real keys, as the Node app writes them. */
@@ -979,8 +1007,14 @@ function redisEntries(w) {
   for (const [id, v] of Object.entries(w.modelData))
     if (!(w.coldModelData ?? []).includes(Number(id)))
       record('packed:caches:data-for-model-2', id, v);
-  for (const [id, v] of Object.entries(w.modelTags)) record('packed:caches:model-tags', id, v);
-  for (const [id, v] of Object.entries(w.tags)) record('packed:caches:basic-tags', id, v);
+  for (const [id, v] of Object.entries(w.modelTags))
+    if (!(w.coldModelTags ?? []).includes(Number(id))) record('packed:caches:model-tags', id, v);
+  for (const [id, v] of Object.entries(w.tags)) {
+    record('packed:caches:basic-tags', id, v);
+    // A stale entry: cachedAt past tagCache's day (CacheTTL.day) before the request.
+    if ((w.staleTags ?? []).includes(Number(id)))
+      out[`packed:caches:basic-tags:${id}`].value.cachedAt = STALE_AT;
+  }
   for (const [id, v] of Object.entries(w.users)) record('packed:caches:basic-users', id, v);
   for (const [id, v] of Object.entries(w.profilePictures))
     record('packed:caches:profile-pictures:v4', id, v);

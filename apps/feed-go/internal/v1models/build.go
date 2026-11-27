@@ -64,6 +64,9 @@ type Config struct {
 	// Sources' Compute) instead of falling back (`v1-models-data-miss`). A shadow sample computes it
 	// whenever ComputeMisses is on, this switch or not (ListRequest.Serving).
 	ServeDataMiss bool
+	// ServeTagsMiss, ServeTagNameStale and ServeShowcaseMiss are FEED_GO_V1_MODELS_SERVE_TAGS_MISS,
+	// _TAG_NAME_STALE and _SHOWCASE_MISS (default off). Not read yet.
+	ServeTagsMiss, ServeTagNameStale, ServeShowcaseMiss bool
 	// AnswerNotFound is FEED_GO_V1_MODELS_ANSWER_NOT_FOUND (default off): a public `[id]` request whose
 	// model statement returns no row, with the model's lag flag read clean, is answered with Node's
 	// 404 (Answer.Absent) instead of falling back (`v1-models-not-found`). Any other not-found answer

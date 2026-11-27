@@ -159,3 +159,31 @@ func TestSourcesUsers(t *testing.T) {
 		t.Error("a replica failure on the miss path is an error")
 	}
 }
+
+// OrderedRead.Writable is the misses Node's fetch writes back: no key and an undecodable value; never
+// an entry (data or a notFound marker), a bust's debounce marker, or a GET that failed.
+func TestOrderedReadWritable(t *testing.T) {
+	r := testkit.NewRedis()
+	r.SetString("k:1", packMap(t, "id", int64(1)))
+	r.SetString("k:2", packMap(t, "id", int64(2), "notFound", true))
+	r.SetString("k:3", packMap(t, "id", int64(3), "debounce", true))
+	r.SetString("k:4", []byte{0xc1}) // never a msgpack value
+	r.SetString("k:6", packMap(t, "id", int64(6)))
+	r.KeyErr = func(key string) error {
+		if key == "k:6" {
+			return testkit.ErrDown
+		}
+		return nil
+	}
+	p := &PackedReader{Redis: r}
+	b := NewBatch()
+	read := p.QueueOrdered(b, "k", []int{1, 2, 3, 4, 5, 6}, 0)
+	b.Exec(context.Background())
+	if got, want := read.Writable(), map[int]bool{4: true, 5: true}; !reflect.DeepEqual(got, want) {
+		t.Errorf("Writable = %v, want %v", got, want)
+	}
+	// No client: nothing queued, nothing writable.
+	if got := (&PackedReader{}).QueueOrdered(NewBatch(), "k", []int{1}, 0).Writable(); got != nil {
+		t.Errorf("no client: Writable = %v, want nil", got)
+	}
+}

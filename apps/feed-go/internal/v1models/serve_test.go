@@ -396,13 +396,15 @@ func TestServeDetailTagNameMissComputed(t *testing.T) {
 	if _, err := ServeDetail(context.Background(), d, DetailRequest{ID: "5001"}); err != nil || w.tagLookups != 0 {
 		t.Errorf("hit: lookups %d, %v", w.tagLookups, err)
 	}
-	// A stale entry still falls back (Node revalidates it), with or without the flag.
+	// A stale entry falls back on a public request without FEED_GO_V1_MODELS_SERVE_TAG_NAME_STALE
+	// (Node revalidates it); a shadow sample names it with the miss computation
+	// (TestServeTagNameStaleNamed).
 	w = newTestWorld()
 	o := w.entries[KeyBasicTags+":11"].(superjson.Object)
 	w.entries[KeyBasicTags+":11"] = append(omit(o, "cachedAt"), superjson.Field{Key: "cachedAt", Val: testNow.Add(-48 * time.Hour)})
 	d = w.deps(t)
 	d.Config.ComputeMisses = true
-	if _, err := ServeDetail(context.Background(), d, DetailRequest{ID: "5001"}); reason(err) != "v1-models-tag-name-stale" {
+	if _, err := ServeDetail(context.Background(), d, DetailRequest{ID: "5001", Serving: true}); reason(err) != "v1-models-tag-name-stale" {
 		t.Errorf("stale: %v", err)
 	}
 }
