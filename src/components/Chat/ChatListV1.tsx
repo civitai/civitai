@@ -99,7 +99,10 @@ export function ChatListV1() {
   const previewBlur = replaceBadWords || domainColor === 'green';
 
   const { data, isLoading } = trpc.chat.getAllByUser.useQuery();
-  const chatCounts = queryUtils.chat.getUnreadCount.getData();
+  // Subscribed (not a one-off getData) so the count repaints when it is refetched.
+  const { data: chatCounts } = trpc.chat.getUnreadCount.useQuery(undefined, {
+    enabled: !!currentUser,
+  });
 
   const pendingCount = !!data
     ? data.filter(
@@ -144,6 +147,9 @@ export function ChatListV1() {
 
   const { mutate: markAsRead } = trpc.chat.markAllAsRead.useMutation({
     onSuccess(data) {
+      // The mutation returns only the memberships it changed, so a cache that is ahead of the
+      // server (read elsewhere, or a signal over-counted) would never clear from `data` alone.
+      queryUtils.chat.getUnreadCount.invalidate();
       queryUtils.chat.getAllByUser.setData(
         undefined,
         produce((old) => {
