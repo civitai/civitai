@@ -4,7 +4,10 @@
   import { reducedMotion } from '$lib/motion';
   import { QUESTION_TIME_MS } from './question-run';
 
-  /** Shown over the stage before a run of yes/no questions; it ends by itself, or at once on a click, tap or Space. */
+  /**
+   * Shown over the stage before a run of yes/no questions; it ends by itself, or at once on a click, tap or Space. The
+   * countdown waits while the pointer rests on the card, so a slow reader can finish it.
+   */
   let {
     category,
     paused = false,
@@ -18,11 +21,13 @@
 
   let start = $state<HTMLButtonElement>();
   let countdown = $state(0);
+  let hovered = $state(false);
+  let held = $derived(paused || hovered);
 
   onMount(() => start?.focus({ preventScroll: true }));
 
   $effect(() => {
-    if (paused) return;
+    if (held) return;
     untrack(() => (countdown += 1));
     const timer = setTimeout(onstart, QUESTION_TIME_MS);
     return () => clearTimeout(timer);
@@ -37,7 +42,15 @@
   onclick={onstart}
   out:fade={{ duration: reducedMotion() ? 120 : 160 }}
 >
-  <div class="card" role="dialog" aria-labelledby="question-time-title" aria-describedby="question-time-line">
+  <!-- svelte-ignore a11y_interactive_supports_focus -- the pointer handlers only hold the countdown; focus stays on Start now. -->
+  <div
+    class="card"
+    role="dialog"
+    aria-labelledby="question-time-title"
+    aria-describedby="question-time-line"
+    onpointerenter={(event) => (hovered = event.pointerType === 'mouse')}
+    onpointerleave={() => (hovered = false)}
+  >
     <h2 class="title" id="question-time-title">Question time</h2>
     {#if category}<span class="chip">{category}</span>{/if}
     <p class="line" id="question-time-line">
@@ -45,7 +58,7 @@
       model.
     </p>
     {#key countdown}
-      <span class="bar" class:paused aria-hidden="true"><span class="fill"></span></span>
+      <span class="bar" class:paused={held} aria-hidden="true"><span class="fill"></span></span>
     {/key}
     <span class="reduced" aria-hidden="true">Starting in {QUESTION_TIME_MS / 1000} s</span>
     <button type="button" class="start" bind:this={start} onclick={onstart}>
