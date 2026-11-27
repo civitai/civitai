@@ -7,8 +7,7 @@ import { createJob } from './job';
 
 /**
  * Takedown case clocks. The moderator app evaluates them, records each threshold once, alerts the
- * moderation inbox and writes its own heartbeat; this only puts it on a schedule. A run every 15
- * minutes keeps the 48h intimate-image deadline well inside its margin.
+ * moderation inbox and writes its own heartbeat; this only puts it on a schedule.
  */
 export const caseTickJob = createJob(
   'case-tick',

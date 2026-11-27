@@ -113,6 +113,10 @@ describe('caseTick', () => {
     const decided = await file('2026-11-20T10:00:00Z');
     const imported = await file('2026-11-20T10:00:00Z');
     const counted = await file('2026-11-20T10:00:00Z');
+    const closedByParty = await file('2026-11-20T10:00:00Z');
+    await pg.query("UPDATE case_record SET state = 'closed' WHERE public_ref = $1", [
+      closedByParty.publicRef,
+    ]);
     const undone = await file('2026-11-20T10:00:00Z');
     await pg.query(
       "UPDATE case_record SET source = 'import', state = 'Undone' WHERE public_ref = $1",

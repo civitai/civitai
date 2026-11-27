@@ -1,5 +1,5 @@
 import { sendEmailStrict } from '@civitai/email';
-import type { Kysely } from 'kysely';
+import { sql, type Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { env } from '$env/dynamic/private';
 import { casesDb, type CasesDb } from './cases.db';
@@ -34,10 +34,10 @@ export type CaseTickDeps = {
 };
 
 /**
- * Evaluates every open filed case's clocks, records each threshold it crossed once (the unique
- * case_event threshold key makes a second run a no-op), and sends one alert listing only the
- * thresholds this run newly recorded. `evaluated` is the count of open cases it actually read, so a
- * run that saw nothing reports 0 instead of looking healthy.
+ * Evaluates the clocks of open, non-test, non-imported cases and records each crossed threshold once
+ * (the unique case_event threshold key makes a rerun a no-op). Alerts on the thresholds this run newly
+ * recorded, plus a note when the schedule has a gap. `evaluated` counts the cases read, so a run that
+ * saw nothing reports 0 instead of looking healthy.
  */
 export async function caseTick({
   db,
@@ -64,6 +64,19 @@ export async function caseTick({
     .where('c.import_batch_id', 'is', null)
     .where('c.is_test', '=', false)
     .where('c.decided_at', 'is', null)
+    // A party action can move a case to a terminal state without a decision; such a case is closed.
+    .where(({ not, exists, selectFrom }) =>
+      not(
+        exists(
+          selectFrom('process_definition_version as v')
+            .whereRef('v.id', '=', 'c.definition_version_id')
+            .where(
+              sql<boolean>`v.definition->'states' @> jsonb_build_array(jsonb_build_object('id', c.state, 'terminal', true))`
+            )
+            .select(sql`1`.as('one'))
+        )
+      )
+    )
     // A fixed lock order, so two overlapping runs wait on each other instead of deadlocking.
     .orderBy('c.id')
     .execute();

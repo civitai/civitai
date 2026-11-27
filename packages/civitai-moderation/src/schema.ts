@@ -416,7 +416,7 @@ const requestOrigin = {
 export const caseDefinitionsInput = z.object({});
 export type CaseDefinitionsInput = z.infer<typeof caseDefinitionsInput>;
 
-/** The scheduled clock evaluation. It takes nothing: the spoke reads the clock and the cases itself. */
+/** The scheduled clock evaluation; takes no input. */
 export const caseTickInput = z.object({});
 export type CaseTickInput = z.infer<typeof caseTickInput>;
 

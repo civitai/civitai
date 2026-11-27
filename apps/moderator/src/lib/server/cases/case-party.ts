@@ -180,12 +180,19 @@ export async function casePartyAction(input: CasePartyActionInput, deps: CasePar
         }),
       })
       .execute();
-    if (action.moveTo)
+    if (action.moveTo) {
+      // A terminal state ends the case, so it is decided now; otherwise the clocks would keep running.
+      const terminal = def.states.find((st) => st.id === action.moveTo)?.terminal;
       await tx
         .updateTable('case_record')
-        .set({ state: action.moveTo, updated_at: sql`now()` })
+        .set({
+          state: action.moveTo,
+          updated_at: sql`now()`,
+          ...(terminal ? { decided_at: at.toISOString() } : {}),
+        })
         .where('id', '=', party.caseId)
         .execute();
+    }
     return { recorded: action.records, state: action.moveTo ?? current.state };
   });
 }
