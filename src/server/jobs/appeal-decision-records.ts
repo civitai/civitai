@@ -378,28 +378,23 @@ const COPY_LABELS: string[] = [
 const RATED_COPY_LABELS: string[] = [ViolationType.RealPerson, 'poi'];
 const SCANNER_COPY_RATINGS: string[] = ['pg', 'pg13', 'pg-13'];
 
-// The scan stores its rating as a `TagSource.SpineRating` tag. `get_tag_on_image_attributes` has no
-// code for that source and packs it as 0, so it is an automated tag with source bits 0; a tag a user
-// added is source 1 and never counts.
-const scannerRatingTag = (t: Prisma.Sql) =>
-  Prisma.sql`((${t}.attributes >> 12)::integer & 15) = 0 AND ((${t}.attributes >> 11)::integer & 1) = 1`;
+/**
+ * The ratings the image scan stored for an image, as tag names. The scan writes a
+ * `TagSource.SpineRating` tag, but `get_tag_on_image_attributes` has no code for that source and
+ * packs it as 0, so it is read as an automated tag with source bits 0. A tag a user added is
+ * source 1. Give SpineRating its own code and this is the one place to switch to it.
+ */
+const scannerRatingsOf = (imageId: Prisma.Sql) => Prisma.sql`
+  SELECT sg.name FROM "TagsOnImageNew" st JOIN "Tag" sg ON sg.id = st."tagId"
+  WHERE st."imageId" = ${imageId}
+    AND ((st.attributes >> 12)::integer & 15) = 0
+    AND ((st.attributes >> 11)::integer & 1) = 1`;
 
 /** Rated by the scan, and every rating it stored for the image is in `SCANNER_COPY_RATINGS`. */
-const scannerRatedForCopy = (r: Prisma.Sql) => {
-  const st = Prisma.raw('st');
-  return Prisma.sql`(
-    EXISTS (
-      SELECT 1 FROM "TagsOnImageNew" st WHERE st."imageId" = ${r}."imageId" AND ${scannerRatingTag(
-    st
-  )}
-    )
-    AND NOT EXISTS (
-      SELECT 1 FROM "TagsOnImageNew" st JOIN "Tag" sg ON sg.id = st."tagId"
-      WHERE st."imageId" = ${r}."imageId" AND ${scannerRatingTag(st)}
-        AND sg.name <> ALL(${SCANNER_COPY_RATINGS}::text[])
-    )
-  )`;
-};
+const scannerRatedForCopy = (r: Prisma.Sql) => Prisma.sql`(
+  SELECT count(*) > 0 AND bool_and(s.name = ANY(${SCANNER_COPY_RATINGS}::text[]))
+  FROM (${scannerRatingsOf(Prisma.sql`${r}."imageId"`)}) s
+)`;
 
 // Anything not listed, with no scanner rating, or removed on a likeness request is not copied.
 const copyableRecord = (r: Prisma.Sql) => Prisma.sql`coalesce(
