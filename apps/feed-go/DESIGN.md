@@ -3862,7 +3862,7 @@ endpoints are captured (`evalcapture.Supported`); every other endpoint is skippe
   store read). A request handed back before anything resolved a viewer is resolved by the tap (T1 on
   the sample's goroutine; T3 on one of `DefaultEvalCaptureWorkers` = 2 capture workers, after the
   answer, a full pool or shutdown dropping it), with credentials redacted, so an API key is never
-  looked up here: such a request is dropped (T4 is how credentialed requests reach the corpus). The hidden
+  looked up here: such a request is unresolved (T4 is how credentialed requests reach the corpus). The hidden
   preferences and the viewer's collections cost a read and are not known here: `hiddenPrefs` is
   always false and a `collectionId` input is stored as sent.
 - **Node's answer** (`node_body`, `node_headers`) is stored only for a request with no session user
@@ -3887,11 +3887,19 @@ endpoints are captured (`evalcapture.Supported`); every other endpoint is skippe
   per endpoint; an identical case (same id) once. Every capture writes its sample row (case_id 0 when
   not admitted), so the samples weigh the traffic and the cases stay a few per shape.
 - **Outcomes.** `feed_go_eval_capture_total{feed_endpoint,source,outcome}`: `written` (admitted:
-  both rows queued), `deduped` (sample row queued, not admitted), `dropped` (a row refused by a full or
-  closed writer queue, a T3 capture with every worker busy, a viewer that could not be resolved, or a
-  request that built no case), and for corpus-only only `refused` (below). Seeded at 0 for the
-  endpoints each source captures (shadow and serve: the four first-wave endpoints; serve-parity: the
-  three tRPC ones; corpus-only: `v1-models-id`, `refused` included). It counts rows queued; a row the
+  both rows queued), `deduped` (sample row queued, not admitted), `unresolved` (nothing captured: the
+  viewer could not be resolved), `invalid` (nothing captured: the request built no case, e.g. an
+  unknown credential class), `dropped` (lost to load or shutdown only: a row refused by a full or
+  closed writer queue, a T3 capture with every worker busy or the server shutting down), and for
+  corpus-only only `refused` (below). So a `dropped` is always capacity, never a request the corpus
+  could not hold. An `unresolved` capture is counted again in
+  `feed_go_eval_capture_unresolved_total{feed_endpoint,source,reason}`, by the viewer resolve's
+  fallback reason, a closed set (`evalcapture.UnresolvedReasons`): `bearer-token` (every `bearer-*`
+  reason: an API credential, never looked up by a tap), `session-cache-miss`, `session-cache-cleared`,
+  `session-id-mismatch`, `other` (anything else). Seeded at 0 for the endpoints each source captures
+  (shadow and serve: the four first-wave endpoints; serve-parity: the three tRPC ones; corpus-only:
+  `v1-models-id`, `refused` included; the unresolved reasons for every source but corpus-only, which
+  resolves no viewer). It counts rows queued; a row the
   writers drop afterwards (a batch ClickHouse refused after its retries, shutdown) is counted in
   `feed_go_eval_capture_rows_dropped_total{table,reason}` (chwrite's reasons, seeded) and the failure
   logged (`eval capture insert failed`). A case is queued before its sample, and the sample names it
