@@ -3898,7 +3898,7 @@ endpoints are captured (`evalcapture.Supported`); every other endpoint is skippe
   reason: an API credential, never looked up by a tap), `session-cache-miss`, `session-cache-cleared`,
   `session-id-mismatch`, `other` (anything else). Seeded at 0 for the endpoints each source captures
   (shadow and serve: the four first-wave endpoints; serve-parity: the three tRPC ones; corpus-only:
-  `v1-models-id`, `refused` included; the unresolved reasons for every source but corpus-only, which
+  `v1-models-id` and `infinite`, `refused` included; the unresolved reasons for every source but corpus-only, which
   resolves no viewer). It counts rows queued; a row the
   writers drop afterwards (a batch ClickHouse refused after its retries, shutdown) is counted in
   `feed_go_eval_capture_rows_dropped_total{table,reason}` (chwrite's reasons, seeded) and the failure

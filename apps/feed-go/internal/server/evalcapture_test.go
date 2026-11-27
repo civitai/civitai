@@ -784,16 +784,20 @@ func TestEvalCaptureCorpusOnlyDiscarded(t *testing.T) {
 func TestEvalCaptureSeeded(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	m := NewMetrics(reg)
-	if n := testutil.CollectAndCount(m.EvalCapture); n != 61 {
-		t.Fatalf("feed_go_eval_capture_total has %d series, want 61 (4*5 + 3*5 + 4*5 + 1*6)", n)
+	if n := testutil.CollectAndCount(m.EvalCapture); n != 67 {
+		t.Fatalf("feed_go_eval_capture_total has %d series, want 67 (4*5 + 3*5 + 4*5 + 2*6)", n)
 	}
-	for _, o := range []string{"written", "deduped", "unresolved", "invalid", "dropped", "refused"} {
-		if v, found := metricValue(t, reg, "feed_go_eval_capture_total", map[string]string{"feed_endpoint": "v1-models-id", "source": "corpus-only", "outcome": o}); !found || v != 0 {
-			t.Errorf("eval_capture{v1-models-id,corpus-only,%s} = %v found=%v, want a 0 series", o, v, found)
+	for _, e := range []string{"v1-models-id", "infinite"} {
+		for _, o := range []string{"written", "deduped", "unresolved", "invalid", "dropped", "refused"} {
+			if v, found := metricValue(t, reg, "feed_go_eval_capture_total", map[string]string{"feed_endpoint": e, "source": "corpus-only", "outcome": o}); !found || v != 0 {
+				t.Errorf("eval_capture{%s,corpus-only,%s} = %v found=%v, want a 0 series", e, o, v, found)
+			}
 		}
 	}
-	if _, found := metricValue(t, reg, "feed_go_eval_capture_total", map[string]string{"feed_endpoint": "as-posts", "source": "corpus-only", "outcome": "written"}); found {
-		t.Error("corpus-only is sent for v1-models-id only, but an as-posts series exists")
+	for _, e := range []string{"as-posts", "model-getall"} {
+		if _, found := metricValue(t, reg, "feed_go_eval_capture_total", map[string]string{"feed_endpoint": e, "source": "corpus-only", "outcome": "written"}); found {
+			t.Errorf("corpus-only is sent for v1-models-id and infinite only, but a %s series exists", e)
+		}
 	}
 	for source, endpoints := range map[string][]string{
 		"shadow":       {"as-posts", "infinite", "model-getall", "v1-models-id"},
