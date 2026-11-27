@@ -222,7 +222,12 @@ describe('strike.service', () => {
       await shouldRateLimitStrike(1);
       const [strings, ...values] = mockDbRead.$queryRaw.mock.calls[0];
       expect((strings as string[]).join('?')).toContain('"status" != ?::"StrikeStatus"');
-      expect(values).toEqual([1, [StrikeReason.ManualModAction, StrikeReason.Scam], 'Voided']);
+      expect((strings as string[]).join('?')).toContain('"reason"::text != ALL(?::text[])');
+      expect(values).toEqual([
+        1,
+        [StrikeReason.ManualModAction, StrikeReason.Copyright, StrikeReason.Scam],
+        'Voided',
+      ]);
     });
   });
 
@@ -1133,6 +1138,17 @@ describe('strike.service', () => {
 
       await expect(createStrike({ ...baseInput, onCreated })).rejects.toThrow('deadlock');
       expect(onCreated).toHaveBeenCalledExactlyOnceWith(mockCreatedStrike);
+    });
+
+    it('never rate-limits a Copyright strike: a moderator issues it on a takedown', async () => {
+      mockDbRead.$queryRaw.mockReset();
+      mockDbRead.$queryRaw.mockResolvedValue([{ count: 1 }]);
+
+      expect(
+        await createStrike({ ...baseInput, reason: StrikeReason.Copyright, notifyUser: false })
+      ).toEqual(mockCreatedStrike);
+      expect(mockDbWrite.userStrike.create).toHaveBeenCalled();
+      expect(mockDbWrite.$transaction).toHaveBeenCalled(); // escalation still runs
     });
 
     it('never rate-limits a Scam strike: a case issues at most one', async () => {
