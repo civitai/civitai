@@ -3002,8 +3002,14 @@ const V1 = [
   },
   {
     name: 'video-thumbnails-unservable',
-    description: '`ids` of two videos whose cached thumbnails are not servable (one marked, one with no marker field): each falls back to a still cut from the video.',
-    query: 'ids=8031,8032&type=video',
+    description: '`ids` of three videos whose cached thumbnails are not servable (one marked under a block that refuses the owner, one with no marker field, one marked under a hold that leaves the owner the media): each falls back to a still cut from the video.',
+    query: 'ids=8031,8032,8033&type=video',
+  },
+  {
+    name: 'video-thumbnails-unservable-creator',
+    description: 'The same videos for their creator: servableThumbnails has no owner case, so even the thumbnail ownerMediaAllowed leaves the owner is not used; each falls back to a still.',
+    query: 'ids=8031,8032,8033&type=video',
+    viewer: 1002,
   },
   {
     name: 'signed-in-moderator',

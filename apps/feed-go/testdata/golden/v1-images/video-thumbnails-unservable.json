@@ -1,12 +1,12 @@
 {
   "name": "video-thumbnails-unservable",
-  "description": "`ids` of two videos whose cached thumbnails are not servable (one marked, one with no marker field): each falls back to a still cut from the video.",
+  "description": "`ids` of three videos whose cached thumbnails are not servable (one marked under a block that refuses the owner, one with no marker field, one marked under a hold that leaves the owner the media): each falls back to a still cut from the video.",
   "now": "2026-06-15T12:00:00.000Z",
   "config": {
     "imageLocation": "https://image.example.test/golden"
   },
   "request": {
-    "query": "ids=8031,8032&type=video",
+    "query": "ids=8031,8032,8033&type=video",
     "path": "/api/v1/images",
     "headers": {
       "host": "blue.example.test"
@@ -57,6 +57,16 @@
       },
       "packed": "3gADp2ltYWdlSWTNH2Cobm90Rm91bmTDqGNhY2hlZEF01v9qL+gU"
     },
+    "packed:caches:image-resources:8033": {
+      "value": {
+        "imageId": 8033,
+        "notFound": true,
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADp2ltYWdlSWTNH2Gobm90Rm91bmTDqGNhY2hlZEF01v9qL+gU"
+    },
     "packed:caches:profile-pictures:v4:1002": {
       "value": {
         "userId": 1002,
@@ -93,6 +103,19 @@
       },
       "packed": "3gADp2ltYWdlSWTNH2CkdGFnc5LNAfbNAguoY2FjaGVkQXTW/2ov6BQ="
     },
+    "packed:caches:tag-ids-for-images:8033": {
+      "value": {
+        "imageId": 8033,
+        "tags": [
+          503,
+          524
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADp2ltYWdlSWTNH2GkdGFnc5LNAffNAgyoY2FjaGVkQXTW/2ov6BQ="
+    },
     "packed:caches:thumbnails:8031": {
       "value": {
         "id": 8931,
@@ -123,6 +146,22 @@
       },
       "packed": "3gAHomlkzSLko3VybNkkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDA4OTMypXdpZHRozQKApmhlaWdodM0BaKluc2Z3TGV2ZWwBqHBhcmVudElkzR9gqGNhY2hlZEF01v9qL+gU"
     },
+    "packed:caches:thumbnails:8033": {
+      "value": {
+        "id": 8933,
+        "url": "00000000-0000-4000-8000-000000008933",
+        "width": 640,
+        "height": 360,
+        "nsfwLevel": 1,
+        "blockMarked": true,
+        "ownerMediaAllowed": true,
+        "parentId": 8033,
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAJomlkzSLlo3VybNkkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDA4OTMzpXdpZHRozQKApmhlaWdodM0BaKluc2Z3TGV2ZWwBq2Jsb2NrTWFya2Vkw7Fvd25lck1lZGlhQWxsb3dlZMOocGFyZW50SWTNH2GoY2FjaGVkQXTW/2ov6BQ="
+    },
     "metrics:Image:8031": {
       "hash": {
         "Like": "10",
@@ -144,6 +183,18 @@
         "commentCount": "4",
         "Collection": "12",
         "tippedAmount": "16",
+        "_populatedAt": "1781524680"
+      }
+    },
+    "metrics:Image:8033": {
+      "hash": {
+        "Like": "1",
+        "Heart": "0",
+        "Laugh": "1",
+        "Cry": "1",
+        "commentCount": "9",
+        "Collection": "6",
+        "tippedAmount": "29",
         "_populatedAt": "1781524680"
       }
     }
@@ -647,6 +698,36 @@
   "expect": {
     "body": {
       "items": [
+        {
+          "id": 8033,
+          "url": "https://image.example.test/golden/00000000-0000-4000-8000-000000008033/original=true/00000000-0000-4000-8000-000000008033.mp4",
+          "hash": "UGOLDEN8033",
+          "width": 1280,
+          "height": 720,
+          "nsfwLevel": "None",
+          "type": "video",
+          "nsfw": false,
+          "browsingLevel": 1,
+          "createdAt": "2026-06-06T05:00:00.000Z",
+          "postId": 7020,
+          "thumbnail": {
+            "url": "https://image.example.test/golden/00000000-0000-4000-8000-000000008033/anim=false,transcode=true,optimized=true/00000000-0000-4000-8000-000000008033.jpeg",
+            "width": 1280,
+            "height": 720
+          },
+          "stats": {
+            "cryCount": 1,
+            "laughCount": 1,
+            "likeCount": 1,
+            "dislikeCount": 0,
+            "heartCount": 0,
+            "commentCount": 9
+          },
+          "meta": null,
+          "username": "artist_two",
+          "baseModel": null,
+          "modelVersionIds": []
+        },
         {
           "id": 8032,
           "url": "https://image.example.test/golden/00000000-0000-4000-8000-000000008032/original=true/00000000-0000-4000-8000-000000008032.mp4",
