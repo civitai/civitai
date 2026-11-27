@@ -1,11 +1,12 @@
 package feed
 
 import (
-	"bytes"
-	"encoding/json"
+	"math"
+	"regexp"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
+	"github.com/civitai/civitai/apps/feed-go/internal/jspack"
 )
 
 // SortRecentlyAdded is ImageSort.RecentlyAdded: `ct."collectionItemId" DESC`. Node refuses it without
@@ -58,29 +59,67 @@ func collectionReadable(p *hydrate.CollectionPermission, viewer Viewer) (bool, e
 	return false, nil
 }
 
-// judgeScore is a stub over judgeScoreNull (the port is not written yet).
-func judgeScore(note *string) (any, bool) { return nil, judgeScoreNull(note) }
-
-// judgeScoreNull reports whether parseJudgeScore(note) (src/server/games/daily-challenge/
-// daily-challenge.utils.ts: `JSON.parse(note)?.score ?? null`, null when the parse throws) is null:
-// no note, a note that is not JSON, a JSON value that is not an object, or an object whose `score` is
-// absent or null. Any other score (a judge's verdict) is not rebuilt here: the caller falls back.
-func judgeScoreNull(note *string) bool {
+// judgeScore is parseJudgeScore(note) (src/server/games/daily-challenge/daily-challenge.utils.ts:
+// `JSON.parse(note)?.score ?? null`, null when the parse throws) as a wire value: nil for no note, a
+// note that is not JSON, a JSON value that is not an object, or an object whose `score` is absent or
+// null; else the score as superjson writes the parsed value (objects in JS property order, a repeated
+// key's last value). ok is false for a score this service does not rebuild byte for byte: a number
+// superjson annotates (-0, or one past float64, which JSON.parse reads as ±Infinity), a `__proto__`
+// key, and a note escaping a lone surrogate (Go's decoder replaces it, JSON.parse keeps it).
+func judgeScore(note *string) (score any, ok bool) {
 	if note == nil || *note == "" {
+		return nil, true
+	}
+	if surrogateEscape.MatchString(*note) {
+		return nil, false
+	}
+	v, err := jspack.FromJSON(*note)
+	if err != nil {
+		return nil, true // JSON.parse throws: null
+	}
+	obj, isObj := v.(jspack.Obj)
+	if !isObj {
+		return nil, true // `parsed?.score` of a string, number, boolean, array or null: undefined
+	}
+	s, present := obj.Get("score")
+	if !present || s == nil {
+		return nil, true
+	}
+	if !judgeScoreModelled(s) {
+		return nil, false
+	}
+	w, err := hydrate.JSWire(s)
+	if err != nil {
+		return nil, false
+	}
+	return w, true
+}
+
+// surrogateEscape is a `\uD800`–`\uDFFF` escape (case-insensitive hex): an escaped surrogate half.
+// A valid pair is two such escapes too; both are refused rather than told apart.
+var surrogateEscape = regexp.MustCompile(`\\u[dD][89a-fA-F][0-9a-fA-F]{2}`)
+
+// judgeScoreModelled reports whether v holds only values superjson writes as plain JSON here.
+func judgeScoreModelled(v any) bool {
+	switch t := v.(type) {
+	case float64:
+		return !math.IsInf(t, 0) && !math.IsNaN(t) && !(t == 0 && math.Signbit(t))
+	case jspack.Obj:
+		for _, kv := range t {
+			if kv.K == "__proto__" || !judgeScoreModelled(kv.V) {
+				return false
+			}
+		}
+		return true
+	case []any:
+		for _, e := range t {
+			if !judgeScoreModelled(e) {
+				return false
+			}
+		}
+		return true
+	case nil, string, bool:
 		return true
 	}
-	raw := []byte(*note)
-	if !json.Valid(raw) {
-		return true
-	}
-	trimmed := bytes.TrimLeft(raw, " \t\r\n")
-	if len(trimmed) == 0 || trimmed[0] != '{' {
-		return true
-	}
-	var obj map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &obj); err != nil {
-		return false
-	}
-	score, ok := obj["score"] // a repeated key: the last one, as JSON.parse keeps
-	return !ok || string(bytes.TrimSpace(score)) == "null"
+	return false
 }

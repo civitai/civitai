@@ -32,8 +32,9 @@ func TestServeInfiniteJudgeScorePort(t *testing.T) {
 	if err != nil {
 		t.Fatalf("port on: %v", err)
 	}
-	var scores []any
-	for _, it := range j["items"].([]any) {
+	items := j["items"].([]any)
+	scores := make([]any, 0, len(items))
+	for _, it := range items {
 		item := it.(map[string]any)
 		v, present := item["judgeScore"]
 		if !present {
