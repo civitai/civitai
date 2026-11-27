@@ -69,6 +69,25 @@ export type AppReviewAttributionDetails = {
   reviewedByModerator?: boolean;
 };
 
+/**
+ * An emitter's `details` without the attribution fields: those come only from
+ * `appReviewAttributionDetails`, so a reviewer id passed in `details` is never stored.
+ */
+export function withoutAttributionFields<T extends AppReviewAttributionDetails>(
+  details: T
+): Omit<T, keyof AppReviewAttributionDetails> {
+  const {
+    reviewerUserId: _reviewerUserId,
+    reviewRequestId: _reviewRequestId,
+    reviewedAutomatically: _reviewedAutomatically,
+    reviewedByTeam: _reviewedByTeam,
+    actor: _actor,
+    reviewedByModerator: _reviewedByModerator,
+    ...rest
+  } = details;
+  return rest;
+}
+
 /** The details fields an emitter stores for `attribution`. */
 export function appReviewAttributionDetails(
   attribution: AppReviewAttribution | undefined

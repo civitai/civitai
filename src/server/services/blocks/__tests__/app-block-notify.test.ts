@@ -181,7 +181,7 @@ describe('a moderator decision stores no reviewer account id', () => {
   });
 
   it('🔴 never copies a reviewer id handed in alongside the request', async () => {
-    // A caller that still passes the moderator's id (typed out of existence) must not get it stored.
+    // A caller that still passes the moderator's id in `attribution` must not get it stored.
     await notifyAppListingOwner({
       type: 'app-listing-approved',
       userId: 77,
@@ -193,6 +193,34 @@ describe('a moderator decision stores no reviewer account id', () => {
     expect(JSON.stringify(created())).not.toContain('90417');
   });
 
+  it('🔴 never stores attribution fields a caller passes in details', async () => {
+    // `details` is typed with the stored attribution fields, so a caller can type-check one in.
+    const stray = { reviewerUserId: 90417, reviewedByModerator: true, reviewRequestId: 'alpr_x' };
+    await notifyAppBlockSubmitter(
+      {
+        type: 'app-block-rejected',
+        userId: 77,
+        key: 'app-block-rejected:pubreq_9',
+        details: { slug: 'cool-app', reason: 'nope', ...stray },
+        attribution: { kind: 'team' },
+      },
+      async () => true
+    );
+    await notifyAppListingOwner({
+      type: 'app-listing-hidden',
+      userId: 77,
+      key: 'app-listing-hidden:evt_9',
+      details: { slug: 'cool-app', reason: 'Spam', ...stray },
+      attribution: { kind: 'team' },
+    });
+    const [block, listing] = mockCreateNotification.mock.calls.map(
+      ([arg]) => (arg as { details: unknown }).details
+    );
+    expect(block).toEqual({ slug: 'cool-app', reason: 'nope', reviewedByTeam: true });
+    expect(listing).toEqual({ slug: 'cool-app', reason: 'Spam', reviewedByTeam: true });
+  });
+
+  // Invariant guard: a takedown was already team-only before this change.
   it('a takedown stores the team only', async () => {
     await notifyAppListingOwner({
       type: 'app-listing-hidden',

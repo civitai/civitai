@@ -2,6 +2,7 @@ import type { AppListingModerationNotificationDetails } from '~/server/notificat
 import {
   appReviewAttributionDetails,
   type AppReviewAttribution,
+  withoutAttributionFields,
 } from '~/server/notifications/app-review-attribution';
 
 /**
@@ -49,6 +50,9 @@ export async function notifyAppListingOwner(opts: {
     category: NotificationCategory.System,
     type: opts.type,
     key: opts.key,
-    details: { ...opts.details, ...appReviewAttributionDetails(opts.attribution) },
+    details: {
+      ...withoutAttributionFields(opts.details),
+      ...appReviewAttributionDetails(opts.attribution),
+    },
   });
 }
