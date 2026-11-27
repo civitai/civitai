@@ -126,7 +126,9 @@ func TestParseInfiniteHatTurf(t *testing.T) {
 // With the port on, a hat key is answered as the feed without it where Node never asks whether the
 // viewer plays (signed out, or a scoped feed), and falls back on a signed-in viewer's main feed.
 func TestServeInfiniteHatTurfIgnored(t *testing.T) {
-	serve := func(m map[string]any, req InfiniteRequest) ([]string, error) {
+	// serve is the feed calls one request makes and how it ends: the fake feed answers every query a
+	// 400 (feed-status), so a request that reaches the feed ends there, the same with or without hats.
+	serve := func(m map[string]any, req InfiniteRequest) ([]string, string) {
 		t.Helper()
 		f := newInfFixture(t)
 		in, err := ParseInfiniteWith(m, InfinitePorts{HatTurfIgnored: true})
@@ -135,7 +137,10 @@ func TestServeInfiniteHatTurfIgnored(t *testing.T) {
 		}
 		req.Input = in
 		_, err = ServeInfinite(context.Background(), f.deps, req)
-		return f.feed.queries, err
+		if err != nil && fallback.Reason(err) == "" {
+			t.Fatalf("%v: %v", m, err)
+		}
+		return f.feed.queries, fallback.Reason(err)
 	}
 	with := func(base map[string]any, k string, v any) map[string]any {
 		out := map[string]any{k: v}
@@ -155,25 +160,25 @@ func TestServeInfiniteHatTurfIgnored(t *testing.T) {
 		{"signed in, a username", map[string]any{"username": "alice", "limit": num("3")}, signedIn},
 		{"signed in, a Model3D", map[string]any{"model3dId": num("4"), "limit": num("3")}, signedIn},
 	} {
-		plain, err := serve(c.base, c.req)
-		if err != nil || len(plain) != 1 {
-			t.Fatalf("%s without hats: queries %v err %v", c.name, plain, err)
+		plain, plainEnd := serve(c.base, c.req)
+		if len(plain) != 1 {
+			t.Fatalf("%s without hats: queries %v (%s)", c.name, plain, plainEnd)
 		}
 		for k, v := range map[string]any{"hatSort": "most", "hatTurfMine": true, "hatTurfExpired": true, "hideTurfHats": true, "hideWornHats": true} {
-			got, err := serve(with(with(c.base, k, v), "hatTeams", []any{"red"}), c.req)
-			if err != nil || !reflect.DeepEqual(got, plain) {
-				t.Errorf("%s, %s: queries %v err %v; want %v as without it", c.name, k, got, err, plain)
+			got, end := serve(with(with(c.base, k, v), "hatTeams", []any{"red"}), c.req)
+			if end != plainEnd || !reflect.DeepEqual(got, plain) {
+				t.Errorf("%s, %s: queries %v (%s); want %v (%s) as without it", c.name, k, got, end, plain, plainEnd)
 			}
 		}
 	}
 	for k, v := range map[string]any{"hatSort": "fewest", "hatTurfMine": true, "hideWornHats": true} {
-		got, err := serve(map[string]any{k: v, "limit": num("3")}, signedIn)
-		if fallback.Reason(err) != "infinite-hat-turf" || len(got) != 0 {
-			t.Errorf("signed in, main feed, %s: queries %v err %v; want infinite-hat-turf before the feed", k, got, err)
+		got, end := serve(map[string]any{k: v, "limit": num("3")}, signedIn)
+		if end != "infinite-hat-turf" || len(got) != 0 {
+			t.Errorf("signed in, main feed, %s: queries %v (%s); want infinite-hat-turf before the feed", k, got, end)
 		}
 	}
 	// Falsy hat values alone are no hat: a signed-in main feed is served.
-	if got, err := serve(map[string]any{"hatTurfMine": false, "hatTeams": []any{"red"}, "limit": num("3")}, signedIn); err != nil || len(got) != 1 {
-		t.Fatalf("signed in, falsy hats: queries %v err %v", got, err)
+	if got, end := serve(map[string]any{"hatTurfMine": false, "hatTeams": []any{"red"}, "limit": num("3")}, signedIn); end == "infinite-hat-turf" || len(got) != 1 {
+		t.Fatalf("signed in, falsy hats: queries %v (%s)", got, end)
 	}
 }
