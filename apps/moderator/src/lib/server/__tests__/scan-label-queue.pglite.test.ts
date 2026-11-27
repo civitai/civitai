@@ -895,8 +895,9 @@ describe('an item whose image is withheld from the claimer', () => {
       name: null,
     });
     await pg.query(`INSERT INTO "Image" (id, url, "blockedFor") VALUES (99, 'key-1', 'CSAM')`);
-    expect(await mediaForToken(token, WITHOUT_GRANT, NOW)).toBeNull();
+    // The grant first: the refusal below drops the card from the holder's queue.
     expect(await mediaForToken(token, granted(1), NOW)).toMatchObject({ url: 'key-1' });
+    expect(await mediaForToken(token, WITHOUT_GRANT, NOW)).toBeNull();
   });
 });
 
@@ -950,6 +951,23 @@ describe('a card its moderator cannot use', () => {
     expect(await claimNext(granted(1), {}, later(10 * LEASE_MS))).toBeNull();
   });
 
+  // Another tab still showing the card, or a server whose clock runs behind the one that took the
+  // skip: neither may vote on it, load it, or get it back as a held lease.
+  it('skipped: its token no longer votes or loads, even on a clock behind the skip', async () => {
+    const skipped = await seedItem(1, { flaggedAt: '2026-10-13T09:00:00Z' });
+    const other = await seedItem(2, { flaggedAt: '2026-10-13T07:00:00Z' });
+    const card = (await claimNext(granted(1), {}, NOW))!;
+    await skipCard(card.token, 1, later(2000));
+    expect((await claimNext(granted(1), {}, later(1000)))!.itemId).toBe(other);
+    expect(await mediaForToken(card.token, granted(1), later(1000))).toBeNull();
+    expect(
+      await castVote(
+        { itemId: skipped, userId: 1, choice: KEEP, msOnItem: 1, claimToken: card.token },
+        later(3000)
+      )
+    ).toEqual({ ok: false, reason: 'released' });
+  });
+
   it('skip releases nothing for a token that is not the moderator’s own claim', async () => {
     await seedItem(1);
     const card = (await claimNext(granted(1), {}, NOW))!;
@@ -957,9 +975,9 @@ describe('a card its moderator cannot use', () => {
     expect((await claimRow(card.itemId, 1)).releasedAt).toBeNull();
   });
 
-  // Red before the fix, for every moderator, grant or not. Control: the Scanned item is claimed.
+  // Blocked outside the queue: the queue's own blocks decide their item. Control: the Scanned item.
   it('whose image is blocked is never claimed, nor counted as open', async () => {
-    await seedItem(1, { votes: 2, flaggedAt: '2026-10-13T09:00:00Z' });
+    await seedItem(1, { votes: 1, flaggedAt: '2026-10-13T09:00:00Z' });
     await pg.query(`UPDATE "Image" SET ingestion = 'Blocked' WHERE id = 1`);
     const scanned = await seedItem(2, { flaggedAt: '2026-10-13T07:00:00Z' });
     expect((await claimNext(granted(1), {}, NOW))!.itemId).toBe(scanned);
@@ -998,9 +1016,18 @@ describe('a card its moderator cannot use', () => {
       expect(await claimRow(refused, 1)).toMatchObject({ releasedAt: later(2000) });
       expect(await claimNext(granted(3), {}, later(3000))).toMatchObject({ itemId: refused });
 
-      // Even once nothing withholds it, the holder is not served it again.
+      // Even once nothing withholds it and its slot is free again, the holder is not served it.
       await pg.query(`DELETE FROM "Image" WHERE id = 99`);
-      expect((await claimNext(WITHOUT_GRANT, {}, later(4000)))?.itemId).toBe(next);
+      expect((await claimNext(WITHOUT_GRANT, {}, later(4000 + LEASE_MS)))?.itemId).toBe(next);
+    });
+
+    // A failed read is likely transient: dropping on it would empty a moderator's queue in an outage.
+    it('is not dropped when the withheld read fails', async () => {
+      await seedItem(1);
+      const card = (await claimNext(WITHOUT_GRANT, {}, NOW))!;
+      await pg.query(`ALTER TABLE "Image" RENAME COLUMN "blockedFor" TO "blockedForGone"`);
+      expect(await mediaForToken(card.token, WITHOUT_GRANT, later(1000))).toBeNull();
+      expect((await claimRow(card.itemId, 1)).releasedAt).toBeNull();
     });
 
     it('is not dropped when the refusal is only a lost slot, which a reload can win back', async () => {

@@ -4,6 +4,7 @@ import { moderatorWithheldSql } from '@civitai/shared/retracted-media-tier';
 import { dbRead, dbWrite } from './db';
 import { listWithheldIds, restrictedImageIds } from './retracted-media';
 import { logToAxiom } from './axiom';
+import { createCache } from './cache';
 import {
   BLOCK_MAJORITY,
   CSAM_HOLD_REASON,
@@ -41,25 +42,30 @@ export type VoteResult =
       reachedBlockMajority: boolean;
       decided: boolean;
     }
-  | { ok: false; reason: 'not-open' | 'already-voted' | 'full' };
+  | { ok: false; reason: 'not-open' | 'already-voted' | 'full' | 'released' };
 
 type Db = Kysely<DB> | Transaction<DB>;
 
 /** Control items are a blind calibration sample: their flag version must never be a way to pick them. */
 const CONTROL_SOURCE = 'control-sample';
 
-/** Open items whose image is not blocked. Shared by the claim and the counters, so "Open in this
- *  view" counts only what can be claimed. */
+/**
+ * Open items whose image is not blocked. Shared by the claim and the counters, so "Open in this
+ * view" counts only what can be claimed. An image the queue's own majority blocked never reaches
+ * this: the sweep decides its item (`decideBlockedMajorities`).
+ */
 function openItems(db: Db, filters: ScanLabelFilters) {
   let q = db
     .selectFrom('ScanLabelItem as i')
     .where('i.status', '=', 'open')
-    .where(({ exists, selectFrom }) =>
-      exists(
-        selectFrom('Image as ci')
-          .select(sql`1`.as('one'))
-          .whereRef('ci.id', '=', 'i.imageId')
-          .where('ci.ingestion', '<>', 'Blocked')
+    .where(({ not, exists, selectFrom }) =>
+      not(
+        exists(
+          selectFrom('Image as ci')
+            .select(sql`1`.as('one'))
+            .whereRef('ci.id', '=', 'i.imageId')
+            .where('ci.ingestion', '=', 'Blocked')
+        )
       )
     );
   if (filters.day) {
@@ -172,10 +178,12 @@ async function voteRefusal(
 
   const mine = await db
     .selectFrom('ScanLabelClaim')
-    .select('expiresAt')
+    .select(['expiresAt', 'releasedAt'])
     .where('itemId', '=', itemId)
     .where('userId', '=', userId)
     .executeTakeFirst();
+  // Skipped or dropped: another tab still showing the card can neither vote nor load it.
+  if (mine?.releasedAt) return 'released';
   const holdsLiveLease = !!mine && mine.expiresAt > now;
   if (!holdsLiveLease) {
     const leases = await otherLiveLeases(db, itemId, userId, now);
@@ -225,7 +233,7 @@ async function releaseClaim(itemId: number, userId: number, now: Date): Promise<
 }
 
 /** Skip: release the claim the card's token holds, so the next load serves another card. A token
- *  that is not this moderator's live claim (another's, or already voted with) releases nothing. */
+ *  with no claim of this moderator's (another's, or voted with) releases nothing. */
 export async function skipCard(token: string, userId: number, now = new Date()): Promise<boolean> {
   const claim = await dbWrite
     .selectFrom('ScanLabelClaim')
@@ -243,8 +251,8 @@ type MediaRefusal =
   | 'withheld'
   | 'withheld-read-failed';
 
-/** Refusals that will not clear for this moderator, so their card is dropped rather than served
- *  again on the next load. A failed read may clear, so it only refuses. */
+/** Refusals that drop the card from this moderator's queue for good rather than serve it again on
+ *  the next load. A failed read is likely transient, so it only refuses. */
 const DROPPED: ReadonlySet<MediaRefusal> = new Set(['image-missing', 'withheld']);
 
 async function cardMedia(
@@ -270,7 +278,18 @@ async function cardMedia(
     .where('i.id', '=', itemId)
     .executeTakeFirst();
   if (!row) return { itemId, refused: 'image-missing' };
-  const withheld = await restrictedImageIds([row.id], { csamReview }).catch(() => null);
+  const withheld = await restrictedImageIds([row.id], { csamReview }).catch((e) => {
+    void logToAxiom({
+      name: 'image-queue-withheld-read-failed',
+      type: 'error',
+      payload: {
+        list: 'scan-label-media',
+        count: 1,
+        error: e instanceof Error ? e.name : typeof e,
+      },
+    });
+    return null;
+  });
   if (!withheld) return { itemId, refused: 'withheld-read-failed' };
   if (withheld.has(row.id)) return { itemId, refused: 'withheld' };
   return { itemId, media: { url: row.url, type: String(row.type), name: row.name } };
@@ -287,8 +306,9 @@ export async function mediaForToken(
   const result = await cardMedia(token, claimer, now);
   if ('media' in result) return result.media;
   const { itemId, refused } = result;
-  const dropped =
-    itemId !== null && DROPPED.has(refused) && (await releaseClaim(itemId, claimer.userId, now));
+  // A token that is not theirs names no item: nothing to drop or log.
+  if (itemId === null) return null;
+  const dropped = DROPPED.has(refused) && (await releaseClaim(itemId, claimer.userId, now));
   void logToAxiom({
     name: 'scan-label-media-refused',
     type: 'info',
@@ -374,6 +394,7 @@ export async function claimNext(
       .select(['c.itemId', 'c.expiresAt'])
       .where('c.userId', '=', userId)
       .where('c.expiresAt', '>', now)
+      .where('c.releasedAt', 'is', null)
       .orderBy('c.expiresAt', 'desc')
       .execute();
     // 🔴 Unlocked: it only hands back a lease the moderator already holds. Renewing or rewriting
@@ -582,7 +603,23 @@ export type ScanLabelCounters = {
   decidedToday: number;
 };
 
-// Reads the primary: it runs straight after a vote, and a lagging replica shows the count one behind.
+/** Display only, and the count walks every open item, so one fill a minute serves every moderator. */
+const openCount = createCache({
+  name: 'scan-label-open-count:v1',
+  fetch: async ({ day, flaggerVersion }: { day: string; flaggerVersion: string }) => {
+    const { n } = await openItems(dbRead, {
+      day: day || undefined,
+      flaggerVersion: flaggerVersion || undefined,
+    })
+      .select((eb) => eb.fn.countAll<string>().as('n'))
+      .executeTakeFirstOrThrow();
+    return { n: Number(n) };
+  },
+  ttlSeconds: 60,
+});
+
+// Reads the primary, but for the cached open count: it runs straight after a vote, and a lagging
+// replica shows the vote count one behind.
 export async function getCounters(
   userId: number,
   filters: ScanLabelFilters,
@@ -591,9 +628,7 @@ export async function getCounters(
 ): Promise<ScanLabelCounters> {
   const today = utcDayStart(now);
   const [open, mine, quota, decided] = await Promise.all([
-    openItems(db, filters)
-      .select((eb) => eb.fn.countAll<string>().as('n'))
-      .executeTakeFirstOrThrow(),
+    openCount.get({ day: filters.day ?? '', flaggerVersion: filters.flaggerVersion ?? '' }),
     db
       .selectFrom('ScanLabelVote')
       .select((eb) => eb.fn.countAll<string>().as('n'))
@@ -672,6 +707,28 @@ const claimableAt = (now: Date) => (eb: ExpressionBuilder<DB, 'ScanLabelItem'>) 
     eb('actionStartedAt', 'is', null),
     eb('actionStartedAt', '<', new Date(now.getTime() - ACTION_CLAIM_MS)),
   ]);
+
+/**
+ * Decides, as a block, every open item the sweep has acted on. Its image is blocked now, so a further
+ * vote could not change the outcome, and the image can no longer be shown to cast one. Also picks up
+ * items acted on before this rule, on the next sweep.
+ */
+async function decideBlockedMajorities(now: Date) {
+  await dbWrite
+    .updateTable('ScanLabelItem')
+    .set({
+      status: 'decided',
+      outcome: 'block',
+      unanimous: sql<boolean>`"blockVotes" = "votes"`,
+      decidedAt: now,
+    })
+    .where('status', '=', 'open')
+    // `votes` first, so the queue index serves it: a block majority needs that many votes.
+    .where('votes', '>=', BLOCK_MAJORITY)
+    .where('blockVotes', '>=', BLOCK_MAJORITY)
+    .where('actionedAt', 'is not', null)
+    .execute();
+}
 
 /** Reads stored state, not the triggering vote, so a failed or interrupted block is retried by the
  *  next sweep. */
@@ -783,6 +840,7 @@ export async function applyMajorityBlocks(
         .catch(() => undefined);
     }
   }
+  await decideBlockedMajorities(clock());
   return result;
 }
 

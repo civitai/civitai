@@ -17,25 +17,25 @@
   let ready = $state(false);
   const noun = $derived(type === 'video' ? 'Video' : 'Image');
 
-  // A <source> error fires per candidate; only the last one (or the <video>) means nothing can play.
-  const onError = (e: Event) => {
-    const el = e.target as HTMLElement;
-    if (el.tagName === 'IMG' || el.tagName === 'VIDEO') failed = true;
-    else if (el.tagName === 'SOURCE' && !el.nextElementSibling) failed = true;
-  };
+  const fail = () => (failed = true);
+  const markReady = () => (ready = true);
+
+  // Svelte does not replay <video> events from before hydration, so read where it already got to.
+  let video = $state<HTMLVideoElement | null>(null);
+  $effect(() => {
+    if (!video) return;
+    if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) ready = true;
+    if (video.networkState === HTMLMediaElement.NETWORK_NO_SOURCE) failed = true;
+  });
 </script>
 
-<!-- Media events do not bubble; capture on the wrapper hears the inner <video>. -->
-<div
-  class="relative flex min-h-40 justify-center"
-  onloadcapture={() => (ready = true)}
-  onloadeddatacapture={() => (ready = true)}
-  oncanplaycapture={() => (ready = true)}
-  onerrorcapture={onError}
->
+<!-- Listeners sit on the media elements, not a wrapper: Svelte replays an <img> load or error that
+     fired before hydration only for an element with its own handler. -->
+<div class="relative flex min-h-40 justify-center">
   <!-- Served by the card's token, so the page never names the media itself. -->
   {#if type === 'video'}
     <video
+      bind:this={video}
       class="max-h-[75vh] w-auto max-w-full rounded-lg object-contain"
       poster="{mediaSrc}?v=poster"
       autoplay
@@ -44,9 +44,13 @@
       controls
       playsinline
       preload="metadata"
+      onloadeddata={markReady}
+      oncanplay={markReady}
+      onerror={fail}
     >
+      <!-- A <source> error fires per candidate; only the last one means nothing can play. -->
       <source src="{mediaSrc}?v=webm" type="video/webm" />
-      <source src="{mediaSrc}?v=mp4" type="video/mp4" />
+      <source src="{mediaSrc}?v=mp4" type="video/mp4" onerror={fail} />
     </video>
   {:else if !failed}
     <!-- Neutral alt: a broken image shows its alt, which must never read as a status. -->
@@ -56,6 +60,7 @@
       width={width ?? undefined}
       height={height ?? undefined}
       decoding="async"
+      onerror={fail}
       class="max-h-[75vh] w-auto max-w-full rounded-lg object-contain"
     />
   {/if}

@@ -79,11 +79,12 @@ const voteSchema = z
     return { ...rest, choice: { block: true, reason, reasonComment: comment } as VoteChoice };
   });
 
-const REFUSAL: Record<'not-open' | 'already-voted' | 'full' | 'not-yours', string> = {
+const REFUSAL: Record<'not-open' | 'already-voted' | 'full' | 'released' | 'not-yours', string> = {
   'not-open': 'Someone else finished this one. Here is the next.',
   'not-yours': 'This card is not held by you. Here is the next.',
   full: 'Your hold on this one ran out and the others took its slots. Here is the next.',
   'already-voted': 'You already voted on this one. Here is the next.',
+  released: 'This card left your queue. Here is the next.',
 };
 
 const HOLD_FAILED =
@@ -94,11 +95,11 @@ const STALE_PAGE = 'This page is out of date. Reload it to keep voting.';
 const skipSchema = z.object({ token: z.string().uuid() });
 
 export const actions: Actions = {
-  // Records no vote: releases the card's claim, and the reload serves the next one.
   skip: async ({ request, locals }) => {
     const input = parseForm(skipSchema, await request.formData());
     if (typeof input === 'string') return fail(400, { error: STALE_PAGE });
-    await skipCard(input.token, locals.user.id);
+    if (!(await skipCard(input.token, locals.user.id)))
+      return fail(409, { error: REFUSAL['not-yours'] });
     return { skipped: true };
   },
   vote: async (event) => {

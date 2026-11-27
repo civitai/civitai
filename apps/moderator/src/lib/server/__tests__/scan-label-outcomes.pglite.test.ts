@@ -32,7 +32,7 @@ vi.mock('../db', () => ({
   },
 }));
 
-const { ACTION_CLAIM_MS, applyCsamHolds, applyMajorityBlocks, castVote } = await import(
+const { ACTION_CLAIM_MS, applyCsamHolds, applyMajorityBlocks, castVote, claimNext } = await import(
   '../scan-label.service'
 );
 const { isModerationBlocked } = await import('../image-moderation.service');
@@ -78,6 +78,7 @@ beforeEach(async () => {
   await pg.exec(migration('20261128120000_scan_label_claim_token'));
   await pg.exec(migration('20261230140000_scan_label_csam_hold'));
   await pg.exec(migration('20261231170000_scan_label_school_nsfw_reason'));
+  await pg.exec(migration('20271208120000_scan_label_claim_released'));
   await pg.exec(migration('20260626120000_add_user_roles_and_oauth_access'));
   await pg.exec(migration('20260630140000_add_role_table'));
   await pg.exec(`INSERT INTO "Role" ("id") VALUES ('moderator:scan-labels')`);
@@ -357,7 +358,11 @@ describe('csam-realistic votes', () => {
     const block = noop();
     expect((await applyMajorityBlocks({}, deps(block))).blocked).toEqual([it1]);
     expect(hold).not.toHaveBeenCalled();
-    expect(await item(it1)).toMatchObject({ status: 'open', actionResult: 'blocked' });
+    expect(await item(it1)).toMatchObject({
+      status: 'decided',
+      outcome: 'block',
+      actionResult: 'blocked',
+    });
   });
 
   it('one csam-realistic vote among block votes holds instead of blocking', async () => {
@@ -373,18 +378,16 @@ describe('csam-realistic votes', () => {
     expect(hold).toHaveBeenCalledExactlyOnceWith(IMAGE, 12);
   });
 
-  it('still holds an item a block majority already acted on', async () => {
+  // Ruled by the moderation lead: once the sweep has blocked the image, the item is decided and takes
+  // no third vote, a hold included; the blocked image can no longer be shown to cast one. Before you
+  // reopen this path, ask them.
+  it('takes no further vote, a hold included, once a block majority is acted on', async () => {
     const it1 = await seedItem(IMAGE);
     await castAs(it1, 11, MINOR_SEXUAL);
     await castAs(it1, 12, MINOR_SEXUAL);
     await applyMajorityBlocks({}, deps(noop()));
-    expect(await item(it1)).toMatchObject({ actionResult: 'blocked' });
-
-    await castAs(it1, 13, CSAM);
-    const { hold, deps: holding } = holdDeps();
-    expect((await applyCsamHolds({}, holding)).held).toEqual([it1]);
-    expect(hold).toHaveBeenCalledExactlyOnceWith(IMAGE, 13);
-    expect(await item(it1)).toMatchObject({ status: 'void', actionResult: 'csam-held' });
+    expect(await item(it1)).toMatchObject({ status: 'decided', actionResult: 'blocked' });
+    expect(await castAs(it1, 13, CSAM)).toEqual({ ok: false, reason: 'not-open' });
   });
 
   it('takes the item from every other moderator holding it', async () => {
@@ -744,5 +747,45 @@ describe('ScanLabelExport', () => {
     });
     expect([...(rows[0].flaggerVersions as string[])].sort()).toEqual(['prompt@1', 'scan@1']);
     expect((rows[0].flags as { snapshot: unknown }[])[0].snapshot).toEqual({ k: 1 });
+  });
+});
+
+// Ruled by the moderation lead: a block the sweep has applied decides the item. Its image is
+// blocked, so the third moderator could only be shown a card that cannot load.
+describe('a block majority the sweep acted on', () => {
+  const third = { userId: 13, csamReview: true };
+
+  it('decides the item with the votes so far, and it is never served to a third moderator', async () => {
+    const it1 = await seedItem(1);
+    await vote(it1, 11, true);
+    await vote(it1, 12, true, '2026-10-13T10:01:00Z');
+    await applyMajorityBlocks({}, deps());
+    expect(await item(it1)).toMatchObject({
+      status: 'decided',
+      outcome: 'block',
+      unanimous: true,
+      votes: 2,
+    });
+    expect(await claimNext(third, {}, at('2026-10-13T10:02:00Z'))).toBeNull();
+  });
+
+  // Control: one block vote is no majority; the item stays open for the next moderator.
+  it('leaves an item with one block vote open', async () => {
+    const it1 = await seedItem(1);
+    await vote(it1, 11, true);
+    await applyMajorityBlocks({}, deps());
+    expect(await item(it1)).toMatchObject({ status: 'open', outcome: null, decidedAt: null });
+  });
+
+  it('decides an item acted on before this rule on the next sweep, with nothing else pending', async () => {
+    const it1 = await seedItem(1);
+    await vote(it1, 11, true);
+    await vote(it1, 12, true, '2026-10-13T10:01:00Z');
+    await pg.query(
+      `UPDATE "ScanLabelItem" SET "actionedAt" = now(), "actionResult" = 'blocked' WHERE id = $1`,
+      [it1]
+    );
+    expect(await applyMajorityBlocks({}, deps())).toEqual({ blocked: [], skipped: [], failed: [] });
+    expect(await item(it1)).toMatchObject({ status: 'decided', outcome: 'block' });
   });
 });
