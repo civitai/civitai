@@ -27,4 +27,11 @@ describe('retractedMediaUrl', () => {
       retractedMediaUrl({ id: 7, ingestion: 'Pending' }, { isModerator: true }, failed)
     ).toBeNull();
   });
+
+  it("sends an owner's blocked image that image.get marked to the owner route, for any viewer state", () => {
+    const own = { id: 7, ingestion: 'Blocked', ownerRetractedMedia: true };
+    expect(retractedMediaUrl(own, null)).toBe('/api/retracted-media/own/7');
+    expect(retractedMediaUrl(own, { isModerator: false })).toBe('/api/retracted-media/own/7');
+    expect(retractedMediaUrl({ ...own, ownerRetractedMedia: false }, null)).toBeNull();
+  });
 });

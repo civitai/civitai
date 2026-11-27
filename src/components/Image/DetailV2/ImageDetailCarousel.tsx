@@ -52,6 +52,8 @@ type ImageProps = {
   metadata?: MixedObject | ImageMetadata | VideoMetadata | null;
   eventDecoration?: WornDecoration;
   ingestion?: string | null;
+  /** `image.get`'s: the owner loads this blocked image from the owner retracted-media route. */
+  ownerRetractedMedia?: boolean;
 };
 type CarouselItem =
   | { type: 'image'; key: string; image: ImageProps }
