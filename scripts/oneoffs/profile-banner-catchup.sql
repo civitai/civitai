@@ -26,15 +26,15 @@
 --     overlaps {all, <request domain>} (hasSome, i.e. &&).
 --
 -- The request domain is only ever green or blue: the red host is configured as blue too and
--- getRequestDomainColor is a first-match walk, so it resolves blue (server-domain.ts,
--- 213-222). A {red}-only announcement therefore never hides a banner, and the checks below
--- test {all,blue} and {all,green}, never red. Stored domains map back to read domains as:
+-- getRequestDomainColor is a first-match walk, so it resolves blue (server-domain.ts). A
+-- {red}-only announcement therefore never hides a banner, and the checks below test {all,blue}
+-- and {all,green}, never red. Stored domains map back to read domains as:
 -- shows on blue -> {blue,red}; on green -> {green}; on both -> {all}.
 --
 -- Not expressible here, so assumed: the creatorAnnouncements flag is on for every viewer (with
--- it off the hook never queries and announcementCount is 0, creator-announcements.utils.ts:
--- 16-27); and the blocked-viewer branch (creator-announcement.service.ts) is
--- per-viewer, though it hides the banner as well, so it changes no row here.
+-- it off the hook never queries and announcementCount is 0, creator-announcements.utils.ts); and
+-- the blocked-viewer branch (creator-announcement.service.ts) is per-viewer, though it hides the
+-- banner as well, so it changes no row here.
 --
 -- ============================================================================
 -- DOMAIN SPLIT, as August

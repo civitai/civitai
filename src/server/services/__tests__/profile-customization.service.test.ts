@@ -260,6 +260,22 @@ describe('getProfileCustomization', () => {
     expect(result.background).toMatchObject({ id: 71 });
   });
 
+  it('does not serve its owner a background under a safety block, on the page or in the editor', async () => {
+    subscriptions = [subscription('gold')];
+    stored({
+      backgroundImage: scannedImage(NsfwLevel.PG, { ingestion: 'Blocked', blockedFor: 'tos' }),
+    });
+    const owner = await getProfileCustomization({ userId: OWNER, viewerId: OWNER });
+    expect(owner.background).toBeNull();
+    expect(owner.stored?.backgroundImage).toBeNull();
+    const moderator = await getProfileCustomization({
+      userId: OWNER,
+      viewerId: OWNER,
+      isModerator: true,
+    });
+    expect(moderator.background).toMatchObject({ id: 70 });
+  });
+
   it('withholds an unscanned background from visitors but not from its owner', async () => {
     subscriptions = [subscription('gold')];
     stored({ backgroundImage: scannedImage(NsfwLevel.PG, { ingestion: 'Pending' }) });

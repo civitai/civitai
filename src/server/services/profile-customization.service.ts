@@ -12,6 +12,7 @@ import {
   showcaseItemSchema,
 } from '~/server/schema/user-profile.schema';
 import { isMemberTier, isMemberTierCached } from '~/server/services/subscriptions.service';
+import { ownerMediaAllowed } from '~/server/common/image-block-marker';
 import { isImageOwner } from '~/server/services/util.service';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { Flags } from '~/shared/utils/flags';
@@ -33,6 +34,7 @@ const backgroundImageSelect = {
   height: true,
   nsfwLevel: true,
   ingestion: true,
+  blockedFor: true,
   needsReview: true,
   modelRestricted: true,
 } as const;
@@ -164,10 +166,20 @@ export async function getProfileCustomization({
   if (!isSet) return empty;
 
   const canEdit = sameUser || !!isModerator;
-  // A moderator editing someone else's profile is not shown a restricted image, as with the cover.
-  const editable = <T extends { nsfwLevel: number; modelRestricted: boolean | null }>(
+  // As with the cover: a moderator editing someone else's profile is not shown a restricted image,
+  // and an owner is not served one under a safety block.
+  const ownerWithheld = (image: { ingestion: string; blockedFor: string | null }) =>
+    sameUser && !isModerator && !ownerMediaAllowed(image);
+  const editable = <
+    T extends {
+      nsfwLevel: number;
+      modelRestricted: boolean | null;
+      ingestion: string;
+      blockedFor: string | null;
+    }
+  >(
     image: T | null
-  ) => (image && !sameUser && isRestrictedImage(image) ? null : image);
+  ) => (image && ((!sameUser && isRestrictedImage(image)) || ownerWithheld(image)) ? null : image);
   const stored = canEdit
     ? {
         backgroundImage: editable(profile.backgroundImage),
@@ -188,6 +200,7 @@ export async function getProfileCustomization({
   const visible = (() => {
     if (!image) return null;
     if (green && !Flags.intersects(image.nsfwLevel, sfwBrowsingLevelsFlag)) return null;
+    if (ownerWithheld(image)) return null;
     if (sameUser) return image;
     // No blur to reveal a backdrop behind, so one outside the viewer's level is not sent at all.
     if (!Flags.intersects(image.nsfwLevel, browsingLevel)) return null;

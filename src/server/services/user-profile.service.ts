@@ -704,18 +704,33 @@ export const updateUserProfile = async ({
   }
 
   // A stored image the editor's read withheld never reached the form, so the null it sends back
-  // keeps it: for the owner, a cover `ownerMediaAllowed` refuses; for a moderator editing someone
-  // else's profile, a restricted image.
+  // keeps it: for the owner, a cover or background `ownerMediaAllowed` refuses; for a moderator
+  // editing someone else's profile, a restricted image.
   const withheld: Partial<Record<ProfileImageField, boolean>> = {};
-  if (!asModerator && (coverImage === null || sfwCoverImage === null)) {
-    const coverBlock = { select: { ingestion: true, blockedFor: true } };
+  const sentNull = (
+    [
+      ['coverImage', coverImage],
+      ['sfwCoverImage', sfwCoverImage],
+      ['backgroundImage', backgroundImage],
+      ['sfwBackgroundImage', sfwBackgroundImage],
+    ] as const
+  ).filter(([, image]) => image === null);
+  if (!asModerator && sentNull.length) {
+    const block = { select: { ingestion: true, blockedFor: true } };
     // primary: it decides what this save keeps.
     const stored = await dbWrite.userProfile.findUnique({
       where: { userId },
-      select: { coverImage: coverBlock, sfwCoverImage: coverBlock },
+      select: {
+        coverImage: block,
+        sfwCoverImage: block,
+        backgroundImage: block,
+        sfwBackgroundImage: block,
+      },
     });
-    withheld.coverImage = !!stored?.coverImage && !ownerMediaAllowed(stored.coverImage);
-    withheld.sfwCoverImage = !!stored?.sfwCoverImage && !ownerMediaAllowed(stored.sfwCoverImage);
+    for (const [field] of sentNull) {
+      const image = stored?.[field];
+      withheld[field] = !!image && !ownerMediaAllowed(image);
+    }
   }
   const hiddenFromEditor =
     isModerator && sessionUserId !== userId ? await imagesHiddenFromModerator(userId) : null;
