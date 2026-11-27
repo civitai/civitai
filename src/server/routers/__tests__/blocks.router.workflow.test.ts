@@ -139,10 +139,6 @@ const {
   mockRefundDevSessionBuzz: vi.fn(async () => undefined),
   mockChargeDevSessionOverage: vi.fn(async () => undefined),
 }));
-// 🔴 FIX 7 — the price-CHECK counter fires on EVERY step submit, not only on a
-// divergence, so a flat "no divergence" line can be told apart from a detector
-// that never ran. Mocked so the outcome label is assertable; the real emitter is
-// fail-soft and would swallow everything silently.
 // The recipe runner's attempt ledger runs over real SQL (the applied migration) in PGlite.
 const { runnerPg, runnerFlag } = vi.hoisted(() => ({
   runnerPg: { current: null as PGlite | null },
@@ -162,6 +158,10 @@ vi.mock('~/server/flipt/client', async (importOriginal) => {
         : (actual.isFlipt as (...a: unknown[]) => Promise<boolean>)(flag, ...rest),
   };
 });
+// 🔴 FIX 7 — the price-CHECK counter fires on EVERY step submit, not only on a
+// divergence, so a flat "no divergence" line can be told apart from a detector
+// that never ran. Mocked so the outcome label is assertable; the real emitter is
+// fail-soft and would swallow everything silently.
 const { mockRecordStepPriceCheck, mockRecordSubmitFailure } = vi.hoisted(() => ({
   mockRecordStepPriceCheck: vi.fn(() => undefined),
   mockRecordSubmitFailure: vi.fn((_label: string, _reason: string) => undefined),

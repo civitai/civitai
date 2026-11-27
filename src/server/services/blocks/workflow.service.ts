@@ -634,7 +634,7 @@ function labelsFor(
   });
 }
 
-const TERMINAL_SNAPSHOT_STATUSES: ReadonlySet<BlockWorkflowSnapshot['status']> = new Set<
+export const TERMINAL_SNAPSHOT_STATUSES: ReadonlySet<BlockWorkflowSnapshot['status']> = new Set<
   BlockWorkflowSnapshot['status']
 >(['succeeded', 'failed', 'expired', 'canceled']);
 

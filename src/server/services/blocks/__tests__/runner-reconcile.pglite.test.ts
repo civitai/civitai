@@ -137,6 +137,17 @@ describe('reconcileRunnerAttempts', () => {
     expect(deps.markWorkflowStatus).toHaveBeenCalledWith(`${USER}-wf-rat_f`, 'failed');
   });
 
+  it('a failed workflow that charged is failed, not refunded, and its legs keep the charge', async () => {
+    await insertAttempt({ id: 'rat_fc', state: 'submitted' });
+    await reconcileRunnerAttempts(db, orchestrator(done(40, 'failed')), NOW);
+    expect(await row('rat_fc')).toMatchObject({ state: 'failed', charged_amount: 40 });
+    expect(redisMock.sysRedis.decrBy.mock.calls).toEqual([
+      [LEGS.buzzCapKey, 50],
+      [LEGS.appSpendKey, 50],
+      [LEGS.consentBudgetKey, 50],
+    ]);
+  });
+
   it('a charge past the ceiling is adopted on every leg and alarmed as drift', async () => {
     await insertAttempt({ id: 'rat_o', state: 'submitted' });
     await reconcileRunnerAttempts(db, orchestrator(done(120)), NOW);
@@ -146,6 +157,12 @@ describe('reconcileRunnerAttempts', () => {
       [LEGS.appSpendKey, 30],
       [LEGS.consentBudgetKey, 30],
     ]);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'runner-charge-drift',
+        payload: { attemptId: 'rat_o', runId: 'rat_o', ceiling: 90, charged: 120 },
+      })
+    );
   });
 
   it('two reconcilers racing on one attempt move the legs exactly once', async () => {
@@ -284,5 +301,19 @@ describe('sweepRunnerAttempts', () => {
       updatedAt: new Date(NOW.getTime() - 61 * 60_000),
     });
     expect(await sweepRunnerAttempts(db, NOW)).toMatchObject({ unknownStale: 1 });
+  });
+
+  it('pushes an alarmed unknown attempt forward, so the next sweep does not alarm it again', async () => {
+    await insertAttempt({
+      id: 'rat_u2',
+      state: 'unknown',
+      updatedAt: new Date(NOW.getTime() - 61 * 60_000),
+    });
+    expect(await sweepRunnerAttempts(db, NOW)).toMatchObject({ unknownStale: 1 });
+    expect(await sweepRunnerAttempts(db, later())).toMatchObject({ unknownStale: 0 });
+    // …and it comes back: six hours on, the same row alarms again.
+    const sixHoursOn = new Date(Date.now() + 6 * 60 * 60_000 + 120_000);
+    expect(await sweepRunnerAttempts(db, sixHoursOn)).toMatchObject({ unknownStale: 1 });
+    expect((await row('rat_u2')).state).toBe('unknown');
   });
 });

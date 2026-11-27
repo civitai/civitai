@@ -67,6 +67,8 @@ export const MONEY_MARKERS = [
   'chargeAppSpendOverage(',
   'chargeBlockAuthorFee(',
   'chargeDevSessionOverage(',
+  // customComfy's refund of the reservation, app and dev-session legs together.
+  'refundAllLegs(',
   'refundAppSpend(',
   'refundBlockBuzzReservation(',
   'refundBlockBuzzSpend(',

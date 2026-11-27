@@ -21,7 +21,6 @@ export type RunnerAttemptState =
   | 'refunded'
   | 'failed';
 
-/** `transitionRunnerAttempt` throws on any other pair. */
 const TRANSITIONS: Readonly<Record<string, readonly RunnerAttemptState[]>> = {
   reserved: ['submitting', 'refunded'],
   submitting: ['submitted', 'refunded', 'unknown'],
