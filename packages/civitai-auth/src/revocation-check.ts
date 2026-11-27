@@ -122,7 +122,8 @@ const reasonOf = (err: unknown): RevocationFailureReason => {
 };
 
 // Transient failures a second attempt on a fresh connection or the new primary can get past. A closed or
-// refused connection is not one: it persists for the length of an outage.
+// refused connection is not one: it persists for the length of an outage. Deliberately narrower than
+// @civitai/redis's cluster retry classifiers, which also take connect errors and timeouts.
 const FAST_ERROR_CODES = new Set(['ECONNRESET', 'EPIPE']);
 const FAILOVER_REPLY = /^(?:NOTMASTER|NOT-MASTER|LOADING|MASTERDOWN)\b/;
 const RESET_TEXT = /ECONNRESET|EPIPE|connection reset|broken pipe/i;

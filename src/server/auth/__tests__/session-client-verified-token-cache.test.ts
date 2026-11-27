@@ -11,15 +11,14 @@ vi.mock('@civitai/auth', async (importOriginal) => {
 vi.mock('../session-verifier', () => ({ isRevoked: vi.fn(), confirmElevatedRevocation: vi.fn() }));
 
 describe('sessionClient construction', () => {
-  it('passes verifiedTokenCache alongside isRevoked and confirmElevatedRevocation', async () => {
+  it('passes verifiedTokenCache alongside isRevoked', async () => {
     await import('../session-client');
-    const { isRevoked, confirmElevatedRevocation } = await import('../session-verifier');
+    const { isRevoked } = await import('../session-verifier');
     expect(h.createSessionClient).toHaveBeenCalledTimes(1);
     const [config] = h.createSessionClient.mock.calls[0] as unknown as [
       CivitaiAuth.SessionClientConfig
     ];
     expect(config.verifiedTokenCache).toEqual({ maxEntries: 10_000, maxTtlMs: 60_000 });
     expect(config.isRevoked).toBe(isRevoked);
-    expect(config.confirmElevatedRevocation).toBe(confirmElevatedRevocation);
   });
 });

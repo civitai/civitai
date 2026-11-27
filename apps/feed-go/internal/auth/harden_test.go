@@ -992,3 +992,18 @@ func TestIsRevokedARequestEndedInTheBackoffDoesNotPauseRetries(t *testing.T) {
 		t.Fatalf("next failure: %d round trips, want 3 (it still retries)", r.Calls)
 	}
 }
+
+// A moderator token without a jti is never revocation-read, so it is unconfirmed and goes to Node, as
+// confirmElevated answers for claims it never checked (civitai/civitai#10695).
+func TestResolveHandsAJtiLessModeratorTokenToNode(t *testing.T) {
+	f := newResolveFixture(t)
+	f.session(t, 42, map[string]any{"id": 42, "username": "viewer-a", "isModerator": true})
+	tok := f.token(t, func(m map[string]any) { delete(m, "jti") })
+	u, err := f.r.Resolve(context.Background(), request(map[string]string{"Cookie": "__Secure-civ-token=" + tok}, "/x"))
+	if u != nil || fallback.Reason(err) != "revocation-unconfirmed" {
+		t.Fatalf("jti-less moderator: got %+v, %v; want the revocation-unconfirmed fallback", u, err)
+	}
+	if f.sys.Calls != 0 {
+		t.Fatalf("jti-less moderator: %d sys round trips, want none", f.sys.Calls)
+	}
+}

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterEach, onTestFinished, vi } from 'vitest';
 import { generateKeyPairSync } from 'crypto';
 import { createSessionSigner, type SessionSigner } from '../sign';
 import { createAuthVerifier } from '../verify';
@@ -302,6 +302,10 @@ describe('createRevocationCheck retry and confirmElevated', () => {
   });
 
   it('stops retrying for the cool-down after a retry fails, then retries again', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
     const { check, calls } = checkOver(
       store(),
       ['reset', 'reset', 'reset', 'reset', 'read'],
@@ -312,7 +316,7 @@ describe('createRevocationCheck retry and confirmElevated', () => {
     expect(calls()).toBe(2);
     await check(claimsOf());
     expect(calls()).toBe(3);
-    await new Promise((resolve) => setTimeout(resolve, 60));
+    vi.setSystemTime(Date.now() + 60);
     expect(await check(claimsOf())).toBe(false);
     expect(calls()).toBe(5);
   });

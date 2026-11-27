@@ -66,10 +66,11 @@ func (r *Revocation) IsRevoked(ctx context.Context, c *Claims) bool {
 // Check is IsRevoked that also reports whether the read failed, so the verdict came from the markers. A
 // read that fails on a transient connection or failover error is retried once after RetryDelay, as the
 // package does; one that hit the deadline or failed any other way is not, and none is for RetryCooldown
-// after a retry fails.
+// after a retry fails. A token without a jti is never read, so it is reported unconfirmed, as the package's
+// confirmElevated does for claims it never checked.
 func (r *Revocation) Check(ctx context.Context, c *Claims) (revoked, readFailed bool) {
 	if c.Jti == "" {
-		return false, false
+		return false, true
 	}
 	k := revocationKeysOf(c)
 	cmds, err := r.read(ctx, c, k)
@@ -170,8 +171,8 @@ func (r *Revocation) read(ctx context.Context, c *Claims, k revocationKeys) ([6]
 	return cmds, err
 }
 
-// fastErrorText matches the transient failures a second attempt can get past (FAST_ERROR_TEXT in
-// packages/civitai-auth/src/revocation-check.ts). A closed or refused connection is not one.
+// fastErrorText mirrors isFastError in packages/civitai-auth/src/revocation-check.ts: the transient failures a
+// second attempt can get past. A closed or refused connection is not one.
 var fastErrorText = regexp.MustCompile(`(?i)^(?:READONLY|NOTMASTER|NOT-MASTER|LOADING|MASTERDOWN)\b|ECONNRESET|EPIPE|connection reset|broken pipe`)
 
 func isFastError(err error) bool {
