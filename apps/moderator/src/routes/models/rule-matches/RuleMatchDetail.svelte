@@ -342,7 +342,7 @@
             key={i + 1}
             tone={b.tone}
             disabled={!enabled[i]}
-            aria-describedby={enabled[i] ? undefined : reasonId}
+            aria-describedby={!enabled[i] && whyDisabled(b.decision) ? reasonId : undefined}
             onclick={() => press(b.decision)}
           >
             {b.label}

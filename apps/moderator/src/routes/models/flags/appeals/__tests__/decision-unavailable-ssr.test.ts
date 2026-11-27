@@ -71,7 +71,14 @@ let render: (c: unknown, o: { props: unknown }) => { body: string };
 
 beforeAll(async () => {
   for (const [name, source] of Object.entries(STUBS)) emit(name, source);
-  emit('Bar', read('lib/components/triage/TriageDecisionBar.svelte'));
+  emit('Unavailable', read('lib/components/triage/DecisionUnavailable.svelte'));
+  emit(
+    'Bar',
+    read('lib/components/triage/TriageDecisionBar.svelte').replace(
+      "'./DecisionUnavailable.svelte'",
+      "'./Unavailable.js'"
+    )
+  );
   emit('Detail', stubImports(read('routes/models/flags/appeals/LockReviewDetail.svelte')));
   const load = async (n: string) =>
     (await import(/* @vite-ignore */ pathToFileURL(path.join(work, `${n}.js`)).href)).default;

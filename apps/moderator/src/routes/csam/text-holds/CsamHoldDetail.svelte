@@ -567,7 +567,7 @@
               key={i + 1}
               tone={k.tone}
               disabled={!enabled[i]}
-              aria-describedby={enabled[i] ? undefined : reasonId}
+              aria-describedby={!enabled[i] && whyDisabled(k.decision) ? reasonId : undefined}
               onclick={() => press(k.decision)}
             >
               {#if k.tone === 'red-outline'}<IconShield class="size-3.5" aria-hidden="true" />{/if}

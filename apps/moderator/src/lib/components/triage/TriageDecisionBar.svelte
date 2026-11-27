@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
   import { cn } from '@civitai/ui/utils.js';
+  import DecisionUnavailable from './DecisionUnavailable.svelte';
 
   /** The action area of a detail pane: the decision buttons, then the reason line, then a hint. */
   let {
@@ -32,7 +33,6 @@
 
   const uid = $props.id();
   const reasonId = `${uid}-unavailable`;
-  const reasons = $derived([...new Set(unavailable.filter((r): r is string => !!r))]);
 </script>
 
 <!-- Container query, not viewport: the same bar sits in a wide pane (CSAM, ratings) or a narrow
@@ -51,11 +51,7 @@
       {@render fields()}
     </div>
   {/if}
-  {#if reasons.length}
-    <p id={reasonId} data-testid="decision-unavailable" class="m-0 text-xs text-amber-300">
-      {reasons.join(' ')}
-    </p>
-  {/if}
+  <DecisionUnavailable id={reasonId} reasons={unavailable} />
   {#if problem}<p role="alert" class="m-0 text-xs text-red-300">{problem}</p>{/if}
   {#if hint}
     <p class={cn('m-0 text-[11px] text-dark-2', compact && 'line-clamp-2')} title={compact ? hint : undefined}>

@@ -35,6 +35,7 @@
     type TextScanLabel,
   } from '@civitai/shared/resolution-reasons';
   import type { RulingChoice } from '$lib/ruling-choices';
+  import DecisionUnavailable from '$lib/components/triage/DecisionUnavailable.svelte';
   import ResolutionReasonFields from './ResolutionReasonFields.svelte';
 
   type Verdict = ResolutionVerdict<S>;
@@ -118,9 +119,6 @@
   // A disabled button takes no pointer events, so its reason is text, not a `title`.
   const uid = $props.id();
   const unavailableId = `${uid}-unavailable`;
-  const unavailableReasons = $derived([
-    ...new Set(choices.map((c) => choiceDisabled?.(c.verdict)).filter((r): r is string => !!r)),
-  ]);
 </script>
 
 <div class={cn('grid gap-2', large && 'w-full')}>
@@ -142,11 +140,7 @@
       </Button>
     {/each}
   </div>
-  {#if unavailableReasons.length}
-    <p id={unavailableId} data-testid="decision-unavailable" class="m-0 text-xs text-amber-300">
-      {unavailableReasons.join(' ')}
-    </p>
-  {/if}
+  <DecisionUnavailable id={unavailableId} reasons={choices.map((c) => choiceDisabled?.(c.verdict))} />
   {#if chosen}
     <form
       method="POST"
