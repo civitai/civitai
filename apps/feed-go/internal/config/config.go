@@ -143,6 +143,17 @@ type Config struct {
 	// feed.InfinitePorts.HubID), reading the `user-hubs` flag per viewer from FLIPT_URL. Off, such a
 	// request is the `input-hubId` (or `input-hubExcludedSources`) fallback, as before the port.
 	InfiniteServeInputHubID bool
+	// InfiniteServeJudgeScore is FEED_GO_INFINITE_SERVE_JUDGE_SCORE (default off): on an
+	// `image.getInfinite` collection page, answer an item whose note holds a judge's score with it
+	// (`judgeScore`; feed.InfinitePorts.JudgeScore). Off, such a page is the `collection-judge-score`
+	// fallback, as before the port.
+	InfiniteServeJudgeScore bool
+	// InfiniteServeHatTurfIgnored is FEED_GO_INFINITE_SERVE_HAT_TURF_IGNORED (default off): compute an
+	// `image.getInfinite` request carrying a Hat Turf sort or Show filter where the app ignores them
+	// without a read (no session user, or a scoped feed; feed.InfinitePorts.HatTurfIgnored). Off, such a
+	// request is the `infinite-hat-turf` fallback, as before the port; on, a signed-in viewer's main
+	// feed still is.
+	InfiniteServeHatTurfIgnored bool
 	// V1ImagesServeImageID is FEED_GO_V1_IMAGES_SERVE_IMAGE_ID (default off): compute a `GET
 	// /api/v1/images` request with `imageId` on the legacy Postgres path (feed.V1Ports.ImageID). Off,
 	// such a request is the `v1-image-id` fallback, as before the port.
@@ -356,6 +367,9 @@ func Load() (*Config, error) {
 
 		InfiniteServeInputPostIDs: boolEnv("FEED_GO_INFINITE_SERVE_INPUT_POST_IDS", false),
 		InfiniteServeInputHubID:   boolEnv("FEED_GO_INFINITE_SERVE_INPUT_HUB_ID", false),
+
+		InfiniteServeJudgeScore:     boolEnv("FEED_GO_INFINITE_SERVE_JUDGE_SCORE", false),
+		InfiniteServeHatTurfIgnored: boolEnv("FEED_GO_INFINITE_SERVE_HAT_TURF_IGNORED", false),
 
 		V1ImagesServeImageID:   boolEnv("FEED_GO_V1_IMAGES_SERVE_IMAGE_ID", false),
 		V1ImagesServeModelOnly: boolEnv("FEED_GO_V1_IMAGES_SERVE_MODEL_ONLY", false),

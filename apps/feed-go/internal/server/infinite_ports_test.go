@@ -97,6 +97,19 @@ var goldenInfinitePorts = map[string]goldenInfinitePort{
 			"hub-excluded-sources-without-hub":    "input-hubExcludedSources",
 		},
 	},
+	"JudgeScore": {
+		on: func(fx *goldenFixture) *bool { return &fx.Config.ServeJudgeScore },
+		fixtures: map[string]string{
+			"collection-judge-score-served": "collection-judge-score",
+		},
+	},
+	"HatTurfIgnored": {
+		on: func(fx *goldenFixture) *bool { return &fx.Config.ServeHatTurfIgnored },
+		fixtures: map[string]string{
+			"hat-turf-signed-out-ignored": "infinite-hat-turf",
+			"hat-turf-scoped-signed-in":   "infinite-hat-turf",
+		},
+	},
 }
 
 // goldenInfinitePortCase is one fixture of one port.

@@ -514,6 +514,37 @@ func TestLoadInfiniteHubIDPortDefaultOff(t *testing.T) {
 	}
 }
 
+// FEED_GO_INFINITE_SERVE_JUDGE_SCORE and FEED_GO_INFINITE_SERVE_HAT_TURF_IGNORED are off unless set,
+// each its own switch: neither turns the other (or FEED_GO_SERVE_INFINITE) on.
+func TestLoadInfiniteJudgeScoreAndHatTurfPortsDefaultOff(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	read := func(c *Config) [3]bool {
+		return [3]bool{c.InfiniteServeJudgeScore, c.InfiniteServeHatTurfIgnored, c.ServeInfinite}
+	}
+	for _, c := range []struct {
+		judge, hat string
+		want       [3]bool
+	}{
+		{"", "", [3]bool{false, false, false}},
+		{"false", "junk", [3]bool{false, false, false}},
+		{"true", "", [3]bool{true, false, false}},
+		{"", "1", [3]bool{false, true, false}},
+		{"1", "true", [3]bool{true, true, false}},
+	} {
+		t.Setenv("FEED_GO_INFINITE_SERVE_JUDGE_SCORE", c.judge)
+		t.Setenv("FEED_GO_INFINITE_SERVE_HAT_TURF_IGNORED", c.hat)
+		cfg, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := read(cfg); got != c.want {
+			t.Errorf("JUDGE_SCORE=%q HAT_TURF_IGNORED=%q -> %v, want %v", c.judge, c.hat, got, c.want)
+		}
+	}
+}
+
 // FEED_GO_V1_IMAGES_SERVE_IMAGE_ID and FEED_GO_V1_IMAGES_SERVE_MODEL_ONLY are off unless set, each its
 // own switch: neither turns the other on.
 func TestLoadV1ImagesLegacyShapesDefaultOff(t *testing.T) {
