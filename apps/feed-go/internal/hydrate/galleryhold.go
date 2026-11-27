@@ -40,7 +40,9 @@ const sqlGalleryHold = `SELECT id, minor, "sfwOnly", jsonb_typeof("gallerySettin
 // carries that flag nothing is computed and the request falls back (`gallery-settings-miss`): Node
 // then reads the primary. A failed flag read falls back either way. Without s.Compute
 // (FEED_GO_COMPUTE_MISSES off) or a replica it falls back too, and so does a Go-first probe
-// (WithPresence), which reports the miss as before. A failed query is `gallery-settings-miss-failed`.
+// (WithPresence) without write-back, which reports the miss as before; with write-back (what the
+// GET /api/v1/images switch requires) the probe records the miss as computed and reads the hold from
+// the replica, writing nothing. A failed query is `gallery-settings-miss-failed`.
 //
 // Without write-back, concurrent calls for the same models share one query (singleflight), but no
 // answer is kept in process (MissCompute.memoized): the hold is a safety rule, and a kept answer could
@@ -59,30 +61,46 @@ func (s *Sources) GalleryHolds(ctx context.Context, modelIDs []int) (map[int]Gal
 	if len(ids) == 0 {
 		return out, nil
 	}
-	if s == nil || s.Compute == nil || s.Replica == nil || presenceOf(ctx) != nil {
+	if s == nil || s.Compute == nil || s.Replica == nil {
 		return nil, fallback.New("gallery-settings-miss")
 	}
 	c := s.Compute
 	writeBack := c.writes(MissGallerySettings)
+	p := presenceOf(ctx)
+	if p != nil && !writeBack {
+		return nil, fallback.New("gallery-settings-miss")
+	}
 	flagged, err := s.lagFlagged(ctx, "model", ids)
 	if err != nil || (flagged && !writeBack) || (writeBack && (c.Primary == nil || s.Packed == nil)) {
 		return nil, fallback.New("gallery-settings-miss")
 	}
 	cache, lookup := MissGalleryHold, s.lookupGalleryHolds
 	var records map[int]jspack.Obj
-	if writeBack {
+	switch {
+	case p != nil:
+		// The Go-first probe with write-back on (what serving would do: compute and write): the miss is
+		// recorded as one Go computes and its hold read from the replica by the hold statement alone,
+		// outside the shared flights; nothing is written or counted.
+		p.recordComputed(MissGallerySettings, len(ids))
+		records, err = lookup(ctx, ids)
+		if err != nil {
+			return nil, fallback.Wrap("gallery-settings-miss-failed", err)
+		}
+	case writeBack:
 		cache = MissGallerySettings
 		records, err = s.galleryHoldsWritten(ctx, ids, flagged)
-	} else {
+	default:
 		records, err = c.lookupShared(ctx, cache, ids, lookup)
 	}
-	if err != nil {
-		c.observe(cache, "error", len(ids))
-	} else {
-		c.observe(cache, "computed", len(ids))
-	}
-	if err != nil {
-		return nil, fallback.Wrap("gallery-settings-miss-failed", err)
+	if p == nil {
+		if err != nil {
+			c.observe(cache, "error", len(ids))
+		} else {
+			c.observe(cache, "computed", len(ids))
+		}
+		if err != nil {
+			return nil, fallback.Wrap("gallery-settings-miss-failed", err)
+		}
 	}
 	for _, id := range ids {
 		rec, ok := records[id]

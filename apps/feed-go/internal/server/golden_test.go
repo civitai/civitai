@@ -1796,7 +1796,14 @@ func seedUncuratedShowcase(r *testkit.Redis, fx *goldenFixture) {
 
 func goldenSetup(t testing.TB, fx *goldenFixture) *goldenEnv {
 	t.Helper()
-	return goldenSetupMode(t, fx, false)
+	return goldenSetupMode(t, fx, goldenV1NeedsWriteBack(fx))
+}
+
+// goldenV1NeedsWriteBack is a v1-images fixture with FEED_GO_V1_IMAGES_SERVE_GALLERY_SETTINGS_MISS on,
+// which config.Load accepts only with the gallery settings written back: its harnesses run with
+// write-back on, as the only configuration production can have.
+func goldenV1NeedsWriteBack(fx *goldenFixture) bool {
+	return fx.Config.ServeGallerySettingsMiss && fx.Request.Path == "/api/v1/images"
 }
 
 // goldenWrites is the write-back set of a golden mode: every cache with writeBack, none without.
@@ -2208,7 +2215,11 @@ func goldenRunAsPostsMode(t *testing.T, fx *goldenFixture, writeBack bool) {
 // goldenRunV1 runs a fixture with write-back off and on, as goldenRunInfinite: the endpoint shares the
 // page hydrator and the gallery-settings miss computation, so its misses are written the same way.
 func goldenRunV1(t *testing.T, fx *goldenFixture) {
-	for _, writeBack := range []bool{false, true} {
+	modes := []bool{false, true}
+	if goldenV1NeedsWriteBack(fx) {
+		modes = []bool{true} // the switch without write-back fails config.Load
+	}
+	for _, writeBack := range modes {
 		t.Run(map[bool]string{false: "writeback-off", true: "writeback-on"}[writeBack], func(t *testing.T) {
 			goldenRunV1Mode(t, fx, writeBack)
 		})

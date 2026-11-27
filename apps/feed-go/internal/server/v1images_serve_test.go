@@ -617,6 +617,7 @@ func TestServeV1ImagesNeverUsesTheV1Upstream(t *testing.T) {
 var goldenV1NoStore = map[string]bool{
 	"held-images-on-page": true, "held-model-version": true, "ids-model-version-held": true,
 	"ids-with-meta-wrapped": true, "nsfw-deprecated-name-x": true, "nsfw-true": true,
+	"cold-gallery-settings-held-model-version": true,
 }
 
 // Every v1-images golden fixture (Node's own answer to a real request over the same world) through

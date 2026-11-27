@@ -278,3 +278,26 @@ func TestGallerySettingsNotWrittenWithoutWriteBack(t *testing.T) {
 		t.Errorf("wrote %v", r.AllKeys())
 	}
 }
+
+// Under a Go-first probe with the gallery settings written back (what serving would then do), the miss
+// is recorded as one Go computes and its hold read from the replica by the hold statement; nothing is
+// written or counted. Without write-back the probe still reports the fallback
+// (TestGalleryHoldsOffFailsAndKeepsNothing).
+func TestGallerySettingsProbeRecordsWithoutWriting(t *testing.T) {
+	rep := &holdReplica{models: map[int]holdModel{7501: {sfwOnly: true}}}
+	r := testkit.NewRedis()
+	obs := &observed{}
+	probe := &PresenceProbe{}
+	src := &Sources{Packed: &PackedReader{Redis: r}, Replica: rep.db(), Compute: &MissCompute{
+		WriteBack: WriteSet{"gallery-settings": true}, Primary: rep.db(), Observe: obs.observe}}
+	got, err := src.GalleryHolds(WithPresence(context.Background(), probe), []int{7501, 7502})
+	if err != nil || !reflect.DeepEqual(got, map[int]GalleryHold{7501: {Held: true, Level: 3}}) {
+		t.Fatalf("holds %v (%v)", got, err)
+	}
+	if m := probe.Misses(); m["gallery-settings"] != 2 {
+		t.Errorf("probe misses %v, want gallery-settings 2", m)
+	}
+	if len(r.AllKeys()) != 0 || len(obs.get()) != 0 {
+		t.Errorf("wrote %v, observed %v", r.AllKeys(), obs.get())
+	}
+}
