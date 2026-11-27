@@ -186,7 +186,7 @@ func isFastError(err error) bool {
 }
 
 func defaultRetryDelay() time.Duration {
-	return 200*time.Millisecond + time.Duration(rand.Int64N(300))*time.Millisecond
+	return 200*time.Millisecond + time.Duration(rand.Int64N(300))*time.Millisecond //nolint:gosec // G404: backoff jitter, not a secret
 }
 
 // revocationKeys are the per-claims keys of the read ("" = not read).
