@@ -132,7 +132,7 @@ const BASE_SCHEMA = `
     data jsonb, "createdAt" timestamp NOT NULL DEFAULT now(),
     UNIQUE ("entityType", "entityId", type)
   );
-  CREATE TABLE "ServiceDealFileEntry" (id serial PRIMARY KEY, "imageId" int);
+  CREATE TABLE "ServiceDealFileEntry" (id serial PRIMARY KEY, "imageId" int, "scanKey" text);
 `;
 
 beforeAll(async () => {
@@ -435,6 +435,18 @@ describe('an image a deal file entry points at', () => {
     await deleteImages([imageOf(PLAIN), other], { actor: { system: 'some-other-job' } });
     expect(await imageRow(imageOf(PLAIN))).toBeDefined();
     expect(await imageRow(other)).toBeUndefined();
+  });
+
+  it('is refused to its owner by key, before the entry points at it', async () => {
+    await holder.db.query(`DELETE FROM "ServiceDealFileEntry"`);
+    await holder.db.query(
+      `INSERT INTO "ServiceDealFileEntry" ("scanKey") SELECT url FROM "Image" WHERE id = $1`,
+      [imageOf(PLAIN)]
+    );
+    await expect(
+      deleteImages([imageOf(PLAIN)], { actor: { id: PLAIN, isModerator: false } })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(await imageRow(imageOf(PLAIN))).toBeDefined();
   });
 
   it("is refused to its owner as a preview's copy, and the cleanup keeps it", async () => {

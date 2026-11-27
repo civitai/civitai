@@ -571,13 +571,31 @@ export const IMAGE_USES_WITHOUT_RELATION = { ...DEAL_FILE_IMAGE_USES };
 export const reviewCopyImageSql = (id: RawBuilder<unknown> | ReturnType<typeof sql.ref>) =>
   sql<boolean>`EXISTS (SELECT 1 FROM "ServiceDealReviewImage" ri WHERE ri."imageId" = ${id})`;
 
-/** True in SQL when a deal file points at the image whose id is `id`. */
+/** The tables of `DEAL_FILE_IMAGE_USES`, whose `scanKey` names the copy's object. */
+const DEAL_FILE_SCAN_KEY_TABLES = [
+  ...new Set(Object.values(DEAL_FILE_IMAGE_USES).map(([table]) => table)),
+];
+
+/**
+ * True in SQL when a deal file points at the image whose id is `id`, or names its object as a
+ * `scanKey`: the key is recorded before the copy's Image row and the pointer only after it.
+ * 🔴 The key leg reads the partial `scanKey` indexes of migration
+ * `20271206120000_deal_file_copy_indexes`.
+ */
 export const dealFileImageSql = (id: RawBuilder<unknown> | ReturnType<typeof sql.ref>) =>
   sql<boolean>`(${sql.join(
-    Object.values(DEAL_FILE_IMAGE_USES).map(
-      ([table, column]) =>
-        sql`EXISTS (SELECT 1 FROM ${sql.table(table)} d WHERE d.${sql.id(column)} = ${id})`
-    ),
+    [
+      ...Object.values(DEAL_FILE_IMAGE_USES).map(
+        ([table, column]) =>
+          sql`EXISTS (SELECT 1 FROM ${sql.table(table)} d WHERE d.${sql.id(column)} = ${id})`
+      ),
+      sql`EXISTS (SELECT 1 FROM "Image" si WHERE si.id = ${id} AND (${sql.join(
+        DEAL_FILE_SCAN_KEY_TABLES.map(
+          (table) => sql`EXISTS (SELECT 1 FROM ${sql.table(table)} d WHERE d."scanKey" = si.url)`
+        ),
+        sql` OR `
+      )}))`,
+    ],
     sql` OR `
   )})`;
 

@@ -3,6 +3,7 @@ import { sql } from 'kysely';
 import { dealFileImageSql, reviewCopyImageSql } from '@civitai/db-queries/content-deletion';
 import { dbWrite } from '~/server/db/client';
 import { kyselyOver } from '~/server/db/prisma-kysely';
+import { logToAxiom } from '~/server/logging/client';
 
 /**
  * Refuses images a deal file points at (`DEAL_FILE_IMAGE_USES`): a deal file's scan copy is what
@@ -30,9 +31,17 @@ export async function assertNotDealFileImages(
       }
     LIMIT 1
   `.execute(kyselyOver(dbWrite));
-  if (rows?.some((row) => row.dealFileImage === true))
+  if (rows?.some((row) => row.dealFileImage === true)) {
+    // The tRPC error log never sees a FORBIDDEN, so the refusal count is this line's.
+    logToAxiom({
+      name: 'deal_copy_refused',
+      type: 'info',
+      message: 'refused a deal file copy',
+      payload: { act, count: ids.length },
+    });
     throw new TRPCError({
       code: 'FORBIDDEN',
       message: `This image is part of a delivery file and cannot be ${act}.`,
     });
+  }
 }

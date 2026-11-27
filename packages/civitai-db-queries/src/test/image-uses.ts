@@ -1,4 +1,8 @@
-import { IMAGE_USES, IMAGE_USES_WITHOUT_RELATION } from '../content-deletion.db';
+import {
+  DEAL_FILE_IMAGE_USES,
+  IMAGE_USES,
+  IMAGE_USES_WITHOUT_RELATION,
+} from '../content-deletion.db';
 
 /**
  * DDL for a test database that runs `queueImageDeletes` or the child-safety case: every table they
@@ -58,6 +62,10 @@ export const imageUseTablesSql = [
       `CREATE TABLE IF NOT EXISTS "${table}" ()`,
       `ALTER TABLE "${table}" ADD COLUMN IF NOT EXISTS "${column}" int`,
     ]
+  ),
+  // A deal file names its copy's key before it points at the copy.
+  ...Object.values(DEAL_FILE_IMAGE_USES).map(
+    ([table]) => `ALTER TABLE "${table}" ADD COLUMN IF NOT EXISTS "scanKey" text`
   ),
   `ALTER TABLE "ServiceDealReviewImage" ADD COLUMN IF NOT EXISTS "reviewId" int`,
   `CREATE TABLE IF NOT EXISTS "ServiceDealReviewReport" ("reportId" int NOT NULL)`,

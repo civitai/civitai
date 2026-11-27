@@ -12279,6 +12279,9 @@ model ServiceDealFile {
   reviewImages   ServiceDealReviewImage[]
 
   @@index([dealId, round, kind])
+  @@index([imageId])
+  // NOTE: the partial index "ServiceDealFile_scanKey_idx" (scanKey WHERE scanKey IS NOT NULL)
+  // lives only in migration 20271206120000_deal_file_copy_indexes: Prisma has no partial indexes.
 }
 
 /// One image inside a Final, scanned on its own. Rows exist only for images; other files in a zip
@@ -12305,6 +12308,8 @@ model ServiceDealFileEntry {
 
   @@unique([fileId, entryIndex])
   @@index([imageId])
+  // NOTE: the partial index "ServiceDealFileEntry_scanKey_idx" (scanKey WHERE scanKey IS NOT NULL)
+  // lives only in migration 20271206120000_deal_file_copy_indexes: Prisma has no partial indexes.
 }
 
 /// One row per movement of Buzz for a deal, modelled on `PlacementTransaction`. A composite FK
