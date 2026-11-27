@@ -528,6 +528,32 @@ describe('the bar keeps clear of stickers and the Hide controls pill', () => {
     await expect.element(page.getByTestId('acting-on')).toHaveTextContent('4');
   });
 
+  test('a rotated sticker is measured by its turned extent when choosing the edge', async () => {
+    // Square art: upright it clears the bottom strip, turned 45 degrees it reaches in.
+    const turned = pendingAt(8, 0.5, 260 / 390);
+    turned.data = { ...turned.data, rotation: 45 };
+    renderWithProviders(crowdedStage([...cluster.slice(0, 7), turned]), { user: { id: 7 } });
+    await select(0);
+
+    const bar = rectOf(page.getByRole('group', { name: 'Pending stickers' }).element());
+    const stage = rectOf(page.getByTestId('stage').element());
+    expect(bar.top - stage.top).toBeLessThan(stage.height / 2);
+  });
+
+  test('a selection does not come back when its sticker is answered and later pending again', async () => {
+    const view = await renderWithProviders(crowdedStage(cluster), { user: { id: 7 } });
+    await select(0);
+    await expect.poll(() => approveButtons().length).toBe(1);
+
+    const answered = [{ ...cluster[0], isPending: false, status: 'Approved' }, ...cluster.slice(1)];
+    await view.rerender(crowdedStage(answered as PlacedSticker[]));
+    await expect.element(page.getByText('Pick a sticker to approve or decline')).toBeVisible();
+
+    await view.rerender(crowdedStage(cluster));
+    await expect.element(page.getByText('Pick a sticker to approve or decline')).toBeVisible();
+    await expect.poll(() => approveButtons().length).toBe(0);
+  });
+
   test('a sticker at the bottom edge is still selectable', async () => {
     renderWithProviders(crowdedStage([...cluster.slice(0, 7), pendingAt(8, 0.5, 0.95)]), {
       user: { id: 7 },
