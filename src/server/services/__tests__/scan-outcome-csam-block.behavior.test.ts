@@ -1073,9 +1073,14 @@ describe('scan result writes', () => {
       ['4', W_AI_UNVERIFIED],
     ])('keeps the stored ingestion and counts the attempt (%s)', async (_label, id) => {
       const before = await imageRow(id);
-      await failScan(id);
+      const marked = await failScan(id);
       const after = await imageRow(id);
       expect(after.ingestion).toBe('Blocked');
+      // The owner's signal is sent from these, so they must be what was stored.
+      expect({ ingestion: marked.ingestion, blockedFor: marked.blockedFor }).toEqual({
+        ingestion: 'Blocked',
+        blockedFor: before.blockedFor,
+      });
       expect({ blockedFor: after.blockedFor, nsfwLevel: after.nsfwLevel }).toEqual({
         blockedFor: before.blockedFor,
         nsfwLevel: before.nsfwLevel,
@@ -1085,8 +1090,9 @@ describe('scan result writes', () => {
     });
 
     it('still writes as before for a plain row', async () => {
-      await failScan(W_PENDING);
+      const marked = await failScan(W_PENDING);
       expect(await imageRow(W_PENDING)).toMatchObject({ ingestion: 'Error' });
+      expect(marked).toMatchObject({ ingestion: 'Error', blockedFor: null });
     });
   });
 

@@ -7,6 +7,8 @@ export type HarvestConfig = {
   maxRulingAgeDays: number;
   hiddenCheckShare: number;
   freshMaxAgeDays: number;
+  /** Reference ids per image-gate read when retiring. */
+  retireGateChunk: number;
   /** Hold harvested apprenticeship items as `pending` until a moderator confirms the rating blind. */
   spotCheck: boolean;
 };
@@ -19,6 +21,7 @@ export const HARVEST: HarvestConfig = {
   /** A single ruling is not enough to grade Knights against, so harvested rulings go to trials unless an operator opts in. */
   hiddenCheckShare: 0,
   freshMaxAgeDays: 60,
+  retireGateChunk: 1000,
   spotCheck: false,
 };
 

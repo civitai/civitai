@@ -590,6 +590,8 @@ func run(log *slog.Logger) error {
 				ServeTagsMiss:        mc.ServeTagsMiss,
 				ServeTagNameStale:    mc.ServeTagNameStale,
 				ServeShowcaseMiss:    mc.ServeShowcaseMiss,
+				ServeFilesMiss:       mc.ServeFilesMiss,
+				ServeFilename:        mc.ServeFilename,
 				AnswerNotFound:       mc.AnswerNotFound,
 				ResponseCacheTTL:     mc.ResponseCacheTTL,
 				Production:           true,

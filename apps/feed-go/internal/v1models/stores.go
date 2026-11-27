@@ -19,7 +19,7 @@ const (
 	KeyDataForModel        = "packed:caches:data-for-model-2"
 	KeyModelTags           = "packed:caches:model-tags"
 	KeyBasicTags           = "packed:caches:basic-tags"
-	KeyFilesForVersion     = "packed:caches:files-for-model-version-2"
+	KeyFilesForVersion     = hydrate.KeyVersionFiles
 	KeyPaidAccessVersion   = "packed:caches:paid-access:ModelVersion"
 	KeyMetricPrivacy       = "packed:caches:user-metric-privacy-defaults"
 	KeyMembershipValid     = "packed:caches:creator-membership-valid"
@@ -489,6 +489,11 @@ func (d *Deps) versionParts(ctx context.Context, raws []*rawItem, in RawInput, n
 	// Files, then the linked VAE versions' primary files.
 	p.files = map[int][]superjson.Object{}
 	fileEntries, filesFailed := filesRead.Entries(), filesRead.Failed()
+	if in.misses.files {
+		if err := d.computeFilesMisses(ctx, versionIDs, fileEntries, filesFailed, filesRead.Writable(), in.misses); err != nil {
+			return nil, err
+		}
+	}
 	for _, vid := range versionIDs {
 		e, ok := fileEntries[vid]
 		if !ok {
@@ -556,6 +561,58 @@ func (d *Deps) versionParts(ctx context.Context, raws []*rawItem, in RawInput, n
 		}
 	}
 	return p, nil
+}
+
+// computeFilesMisses answers the version-files entries the read left unanswered (no key, a bust's
+// debounce marker, an undecodable value) and revalidates the stale ones (past the cache's day,
+// staleWhileRevalidate), as filesForModelVersionCache.fetch does, with its lookup on the replica
+// (hydrate.Sources.ComputeVersionFiles: Node's lookup reads dbRead). On a public request (m.write)
+// with version-files written back, the misses Node would write back are written and each stale entry
+// is revalidated under Node's revalidate lock; a stale entry whose lock another reader holds is
+// served as it is, as Node's lock loser serves it. A failed GET anywhere in the read leaves
+// everything uncomputed (versionParts then falls back as `v1-models-files-read-failed`): a read
+// failure is never answered as a content miss. Without the miss computation nothing is computed.
+func (d *Deps) computeFilesMisses(ctx context.Context, ids []int, entries map[int]hydrate.OrderedEntry, failed map[int]error,
+	writable map[int]bool, m missServe) error {
+	if firstFailed(ids, failed) != nil || d.Sources == nil || d.Sources.Compute == nil {
+		return nil
+	}
+	var missing, stale []int
+	seen := make(map[int]bool, len(ids))
+	for _, id := range ids {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		e, ok := entries[id]
+		switch {
+		case !ok:
+			missing = append(missing, id)
+		case e.Stale:
+			stale = append(stale, id)
+		}
+	}
+	if len(missing)+len(stale) == 0 {
+		return nil
+	}
+	if !m.write {
+		writable = nil
+	}
+	computed, ok, err := d.Sources.ComputeVersionFiles(ctx, missing, stale, writable, m.write)
+	if err != nil || !ok {
+		return err
+	}
+	for id, e := range computed {
+		entries[id] = e
+	}
+	for _, id := range stale {
+		if e := entries[id]; e.Stale {
+			// Another reader holds the revalidate lock: served as Node's lock loser serves it.
+			e.Stale = false
+			entries[id] = e
+		}
+	}
+	return nil
 }
 
 // numberOf reads a cached number (an integer or a float) as a float64.

@@ -14,6 +14,10 @@ import (
 
 type nameModel struct {
 	name, typ string
+	// unicode: model and version names with non-ASCII text are named as Node names them (jsCanon,
+	// jsTrimText) instead of falling back (`v1-models-filename`): FEED_GO_V1_MODELS_SERVE_FILENAME on
+	// a public request, always in a shadow sample (shapeOptions.unicodeNames).
+	unicode bool
 }
 
 type nameVersion struct {
@@ -75,15 +79,19 @@ func computeFileName(m nameModel, v nameVersion, f nameFile) (string, error) {
 	if keeps {
 		return fileName, nil
 	}
-	stripped, err := replaceInsensitive(v.name, m.name)
+	stripped, err := replaceInsensitive(v.name, m.name, m.unicode)
 	if err != nil {
 		return "", err
 	}
-	stripped, err = replaceInsensitive(stripped, modelName)
+	stripped, err = replaceInsensitive(stripped, modelName, m.unicode)
 	if err != nil {
 		return "", err
 	}
-	versionName := filenamize(jsTrim(stripped))
+	trimmed := jsTrim(stripped)
+	if m.unicode {
+		trimmed = jsTrimText(stripped)
+	}
+	versionName := filenamize(trimmed)
 	if versionName == modelName {
 		versionName = ""
 	}
@@ -142,14 +150,19 @@ func joinNameParts(parts ...string) string {
 }
 
 // replaceInsensitive is `value.replace(new RegExp(escape(search), "gi"), "")`. JS's non-Unicode
-// case-insensitive match folds code units its own way; only ASCII text is matched here (other text
-// falls back), where it and Go's fold agree.
-func replaceInsensitive(value, search string) (string, error) {
+// case-insensitive match folds code units its own way (Canonicalize, through the engine's ICU). ASCII
+// text is matched here directly, where it and Go's fold agree; other text with unicode by the Node
+// engine's own table (replaceInsensitiveUTF16, jscanon.json), and without it falls back
+// (`v1-models-filename`).
+func replaceInsensitive(value, search string, unicode bool) (string, error) {
 	if search == "" {
 		return value, nil
 	}
 	if !feed.IsASCII(value) || !feed.IsASCII(search) {
-		return "", fallback.New("v1-models-filename")
+		if !unicode {
+			return "", fallback.New("v1-models-filename")
+		}
+		return replaceInsensitiveUTF16(value, search), nil
 	}
 	lv, ls := strings.ToLower(value), strings.ToLower(search)
 	var b strings.Builder
@@ -164,7 +177,8 @@ func replaceInsensitive(value, search string) (string, error) {
 	return b.String(), nil
 }
 
-// jsTrim is String.prototype.trim for ASCII text (the only text it reaches here).
+// jsTrim is String.prototype.trim for ASCII text (the only text it reaches without nameModel.unicode;
+// with it, jsTrimText).
 func jsTrim(s string) string { return strings.Trim(s, " \t\n\v\f\r") }
 
 // filenamize is filenamize (src/utils/string-helpers.ts): apostrophes dropped, every other UTF-16 code
