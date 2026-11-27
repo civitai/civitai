@@ -120,12 +120,14 @@ const GO_VERSION = /^\d{1,4}\.\d{1,4}\.\d{1,6}(?:-[0-9A-Za-z.]{1,16})?$/;
 
 /**
  * A release as a short fixed-shape value: a semver like `0.0.51` or `0.0.51-dev` as sent, `dev`
- * as sent, `other` for anything else, `undefined` when absent.
+ * as sent, `other` for anything else, `undefined` when absent. It does not say whether the answer
+ * was replayed from a cache: the edge's verdict is `cf-cache-status`, and a browser-cache replay
+ * carries the headers it was stored with.
  */
 export function goVersion(value: string | null | undefined): string | undefined {
   if (value === null || value === undefined || value === '') return undefined;
-  const v = value.trim();
-  return v === 'dev' || GO_VERSION.test(v) ? v : 'other';
+  // Fetch's Headers already strips the value's surrounding whitespace.
+  return value === 'dev' || GO_VERSION.test(value) ? value : 'other';
 }
 
 function goServedBy(value: string | null): string {

@@ -1213,7 +1213,7 @@ describe('feed-go version', () => {
 
   it.each([
     ['dev', 'dev'],
-    [' 1.2.3 ', '1.2.3'],
+    ['1.2.3', '1.2.3'],
     ['someone@example.com', 'other'],
     ['1.2.3-' + 'x'.repeat(40), 'other'],
     ['v1.2.3', 'other'],

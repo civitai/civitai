@@ -21,7 +21,11 @@ import (
 // testVersion is distinct from main's "dev" default and from any real release.
 const testVersion = "9.8.7-header"
 
-func versionOf(w *httptest.ResponseRecorder) []string { return w.Header().Values("X-Feed-Go-Version") }
+// versionOf reads the headers as written with the status (Result), not the recorder's live map: a
+// header set after the answer was written is in the map but never reaches the client.
+func versionOf(w *httptest.ResponseRecorder) []string {
+	return w.Result().Header.Values("X-Feed-Go-Version")
+}
 
 func TestVersionHeaderOnAComputedAnswer(t *testing.T) {
 	fb := &proxyRecorder{}
