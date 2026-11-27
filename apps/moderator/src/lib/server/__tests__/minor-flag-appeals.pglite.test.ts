@@ -652,6 +652,9 @@ describe('also in Auto-flagged and Needs review', () => {
     // Flagged, but the lead is for the other label: that one would still apply.
     await lead('poi');
     expect((await moot())[4]).toBe(false);
+    // Flagged on the label it waits on, real person this time.
+    await db.query(`UPDATE "Model" SET poi = true WHERE id = 4`);
+    expect((await moot())[4]).toBe(true);
   });
 
   it('drops a hash flag once its review window has closed', async () => {

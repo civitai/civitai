@@ -38,7 +38,7 @@
   import TriageDecisionBar from '$lib/components/triage/TriageDecisionBar.svelte';
   import TriageKeyButton from '$lib/components/triage/TriageKeyButton.svelte';
   import { waiting } from '$lib/minor-flags/appeal-row';
-  import { MOOT_LEAD_NOTE } from '$lib/minor-flags/moot-lead';
+  import { MOOT_LEAD_LISTED_NOTE } from '$lib/minor-flags/moot-lead';
   import { modelFlagDetail } from '$lib/minor-flags/model-detail-request';
   import { MODEL_FLAGS_APPEALS_PATH } from '$lib/minor-flags/paths';
   import type { MinorFlagAppealRow } from '$lib/server/minor-hash.service';
@@ -201,7 +201,7 @@
             first: a real person or minor flag it confirms keeps these settings locked.
           </p>
           {#if row.needsReviewMootLead}
-            <p class="m-0" data-testid="moot-lead">{MOOT_LEAD_NOTE}</p>
+            <p class="m-0" data-testid="moot-lead">{MOOT_LEAD_LISTED_NOTE}</p>
           {/if}
         </div>
       </div>

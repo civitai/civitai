@@ -4,7 +4,7 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { MOOT_LEAD_NOTE } from '$lib/minor-flags/moot-lead';
+import { MOOT_LEAD_LISTED_NOTE } from '$lib/minor-flags/moot-lead';
 
 /**
  * The lock-review appeal's Needs review notice, server-rendered. This config has no Svelte plugin, so
@@ -104,12 +104,12 @@ describe('the Needs review notice on a lock-review appeal', () => {
   it('says a lead on an already-set flag only closes the lead', () => {
     const body = draw({ needsReviewMootLead: true });
     expect(body).toContain('Needs review also lists this model');
-    expect(body).toContain(MOOT_LEAD_NOTE);
+    expect(body).toContain(MOOT_LEAD_LISTED_NOTE);
   });
 
   it('adds nothing when the lead is a real decision', () => {
     const body = draw({ needsReviewMootLead: false });
     expect(body).toContain('Needs review also lists this model');
-    expect(body).not.toContain(MOOT_LEAD_NOTE);
+    expect(body).not.toContain(MOOT_LEAD_LISTED_NOTE);
   });
 });
