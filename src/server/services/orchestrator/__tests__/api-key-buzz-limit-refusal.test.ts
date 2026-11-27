@@ -91,10 +91,10 @@ describe('the matcher', () => {
 type Site = [
   string,
   (status: number, body: unknown) => Promise<unknown>,
-  /** What a real insufficient-funds 403 gives this site, unchanged by the matcher. */
-  unknown
+  /** What a 403 that is not a Buzz-limit refusal gives this site, by its detail. */
+  (detail: string) => unknown
 ];
-const badRequest = { code: 'BAD_REQUEST', message: 'Insufficient buzz' };
+const badRequest = (message: string) => ({ code: 'BAD_REQUEST', message });
 const sites: Site[] = [
   [
     'queryWorkflows',
@@ -131,7 +131,7 @@ const sites: Site[] = [
       vi.mocked(clientUpdateWorkflow).mockResolvedValue(failed(status, body));
       return liftWorkflowMatureRestriction({ token: 't', workflowId: 'w1' });
     },
-    { outcome: 'insufficient-funds' },
+    () => ({ outcome: 'insufficient-funds' }),
   ],
   [
     'getConsumerBlobUploadUrlService',
@@ -139,11 +139,11 @@ const sites: Site[] = [
       vi.mocked(getConsumerBlobUploadUrl).mockResolvedValue(failed(status, body));
       return getConsumerBlobUploadUrlService({ token: 't' });
     },
-    { code: 'UNAUTHORIZED', message: 'Insufficient buzz' },
+    (message) => ({ code: 'UNAUTHORIZED', message }),
   ],
 ];
 
-describe.each(sites)('%s', (_, call, insufficientFunds) => {
+describe.each(sites)('%s', (_, call, unmatched403) => {
   beforeEach(() => BUZZ_LIMIT_REFUSALS.push(...FIXTURE));
   afterEach(() => BUZZ_LIMIT_REFUSALS.splice(0));
 
@@ -163,11 +163,11 @@ describe.each(sites)('%s', (_, call, insufficientFunds) => {
 
   it('leaves a real insufficient-funds 403 as it was', async () => {
     const result = await call(403, NO_FUNDS).catch((e: unknown) => e);
-    expect(result).toMatchObject(insufficientFunds as object);
+    expect(result).toStrictEqual(expect.objectContaining(unmatched403(NO_FUNDS.detail) as object));
   });
 
   it('leaves a scope 403 as it was', async () => {
     const result = await call(403, SCOPE).catch((e: unknown) => e);
-    expect(result).not.toMatchObject({ code: 'FORBIDDEN' });
+    expect(result).toStrictEqual(expect.objectContaining(unmatched403(SCOPE.detail) as object));
   });
 });

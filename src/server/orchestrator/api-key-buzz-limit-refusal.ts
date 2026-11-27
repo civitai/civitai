@@ -19,8 +19,8 @@ export interface BuzzLimitRefusalPattern {
 }
 
 /**
- * The orchestrator's over-limit responses, each taken from a captured reply (status, body, detail).
- * With none listed nothing matches, and every site maps its errors by status alone.
+ * The orchestrator's over-limit responses. Add a pattern only from a captured reply (status, body): a
+ * guessed one would turn a real insufficient-funds 403 into a limit message.
  */
 export const BUZZ_LIMIT_REFUSALS: BuzzLimitRefusalPattern[] = [];
 

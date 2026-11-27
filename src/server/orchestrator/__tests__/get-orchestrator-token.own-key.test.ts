@@ -152,6 +152,11 @@ it('in ORCHESTRATOR_MODE=dev a limited key gets the dev token, as before', async
 
 // The predicate a path that queues work asks (comics smartCreateChapter): each case follows its own flag.
 describe('callerOwnOrchestratorToken', () => {
+  // The OAuth case reads the orchestrator's spend snapshot first; it has none for this subject.
+  beforeEach(() => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('null', { status: 404 }));
+  });
+
   it.each([
     ['personal', { userKey: true, offlineGrant: false }, KEY],
     ['personal', { userKey: false, offlineGrant: true }, null],

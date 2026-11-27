@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   assertStoredUnblocked: vi.fn(),
   getOrchestratorToken: vi.fn(async () => 'token'),
   callerOwnOrchestratorToken: vi.fn(async (): Promise<string | null> => null),
+  queueStatus: vi.fn(async (): Promise<object> => ({})),
   submit: vi.fn(),
 }));
 
@@ -24,7 +25,7 @@ vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
 }));
 vi.mock('~/server/services/orchestrator/queue-limits', () => ({
   assertCanGenerate: async () => undefined,
-  getUserQueueStatus: async () => ({}),
+  getUserQueueStatus: () => mocks.queueStatus(),
 }));
 vi.mock('~/server/services/orchestrator/preset-image-gen.service', async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -478,6 +479,12 @@ describe('smartCreateChapter with panels to queue (no open slots)', () => {
     });
     expect(mocks.callerOwnOrchestratorToken).toHaveBeenCalledWith(USER_ID, req);
     expect(dbMock.dbWrite.comicChapter.create).not.toHaveBeenCalled();
+  });
+
+  it('CONTROL: goes ahead for an own-key request when every panel fits in the open slots', async () => {
+    mocks.callerOwnOrchestratorToken.mockResolvedValue('caller-key');
+    mocks.queueStatus.mockResolvedValueOnce({ canGenerate: true, available: 1 });
+    expect(await create()).toMatchObject({ message: 'chapter create reached' });
   });
 
   it('CONTROL: goes ahead when the request would use the System token', async () => {

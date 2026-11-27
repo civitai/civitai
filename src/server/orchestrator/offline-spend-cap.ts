@@ -1,4 +1,5 @@
 import { sql } from 'kysely';
+import { TRPCError } from '@trpc/server';
 import type { NextApiRequest } from 'next';
 import type { kyselyWrite } from '~/server/db/kyselyDb';
 
@@ -6,6 +7,12 @@ type KyselyWrite = typeof kyselyWrite;
 import { readRequestBearerToken } from '~/server/auth/request-bearer-token';
 import { getRequestCredential, type RequestCredential } from '~/server/auth/request-credential';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import {
+  getBuzzLimitForSubject,
+  type BuzzSpendEntry,
+  type Subject,
+} from '~/server/http/orchestrator/api-key-spend';
+import { OFFLINE_BUZZ_CAP_REACHED } from '~/server/orchestrator/api-key-buzz-limit-refusal';
 import type { BuzzLimit } from '~/server/schema/api-key.schema';
 
 // THE CALLER'S OWN KEY, sent to the orchestrator in place of the user's System token, so the
@@ -19,13 +26,8 @@ import type { BuzzLimit } from '~/server/schema/api-key.schema';
 // - A personal API key (`User`) with a Buzz limit, used by its own user (flag
 //   `user-key-buzz-limit-proxy`). Its limit is the one set on the key.
 //
-// Nothing is checked here before sending: the orchestrator enforces the limit, and its refusal
-// becomes a message naming the limit (api-key-buzz-limit-refusal.ts).
-//
-// No limit (a null or empty `buzzLimit`) changes nothing: null has always meant "no limit" for this
-// column (`buzzLimitSchema`). Flag off, another credential, or a moderator fetching another user's
-// token: null, and getOrchestratorToken sends the System token as before. Only flag-on code reads
-// `mintOrigin` (a no-type column, see schema.full.prisma).
+// Null has always meant "no limit" for the `buzzLimit` column (`buzzLimitSchema`). Only flag-on code
+// reads `mintOrigin` (a no-type column, see schema.full.prisma).
 
 /** What `getServerAuthSession` recorded on the request beside the credential. */
 type RequestContext = { buzzLimit?: unknown; session?: { user?: { id?: number } } | null };
@@ -48,6 +50,8 @@ export interface OwnKeyReads {
   offlineGrantFlagOn: () => Promise<boolean>;
   userKeyFlagOn: () => Promise<boolean>;
   mintOrigin: (apiKeyId: number) => Promise<string | null>;
+  /** The orchestrator's spend snapshot for the subject; null when it has none or cannot answer. */
+  spend: (userId: number, subject: Subject) => Promise<BuzzSpendEntry | null>;
 }
 
 /**
@@ -72,6 +76,11 @@ export async function resolveOwnKeyToken(
   if (userKey) return (await reads.userKeyFlagOn()) ? bearerToken : null;
   if (!(await reads.offlineGrantFlagOn())) return null;
   if ((await reads.mintOrigin(apiKeyId)) !== 'refresh') return null;
+
+  const snapshot = await reads.spend(input.userId, subject).catch(() => null);
+  if (snapshot?.rules.some((rule) => rule.limit > 0 && rule.remaining <= 0)) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: OFFLINE_BUZZ_CAP_REACHED });
+  }
   return bearerToken;
 }
 
@@ -93,6 +102,7 @@ export function ownKeyOrchestratorToken(
       offlineGrantFlagOn: () => isFlipt(FLIPT_FEATURE_FLAGS.OAUTH_OFFLINE_GRANT),
       userKeyFlagOn: () => isFlipt(FLIPT_FEATURE_FLAGS.USER_KEY_BUZZ_LIMIT_PROXY),
       mintOrigin: readMintOrigin,
+      spend: (id, subject) => getBuzzLimitForSubject({ userId: id, subject }),
     }
   );
 }
