@@ -84,8 +84,8 @@
     <section aria-labelledby="groups-title">
       <h2 id="groups-title">Hide content</h2>
       <p class="description" id="groups-description">
-        Images tagged with a group you hide are not served to you. Your hidden tags on Civitai don't
-        apply here.
+        Images tagged with a group you hide are not served to you, nor are yes/no questions on its
+        topic. Your hidden tags on Civitai don't apply here.
       </p>
       <div class="rows">
         {#each data.tagGroups.groups as group (group.key)}
