@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { delIfValue } from '~/server/redis/atomic';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { logToAxiom } from '~/server/logging/client';
+import { trackModActivity } from '~/server/services/moderator.service';
 import {
   dropRedetection,
   flagModelMinor,
@@ -181,6 +182,29 @@ async function resolve({
   if (!model || !detection || detection.textHash !== textHash) throw stale();
 
   // promptIds are logged so a decision can be joined to the prompt versions that produced the verdict.
+  // The label is already set, so closing the lead changes nothing on the model: this row is the only
+  // record that a moderator ruled on it. The drop has landed and nothing retries it (a retry reads
+  // stale), so a failed insert is logged, not thrown.
+  const trackClosed = async () => {
+    try {
+      await trackModActivity(userId, {
+        entityType: 'model',
+        entityId: modelId,
+        activity: `textScanRedetection:closed:${label}`,
+      });
+    } catch (error) {
+      logToAxiom({
+        name: 'text-scan',
+        type: 'error',
+        message: 'closed lead activity not recorded',
+        entityType: 'Model',
+        entityId: modelId,
+        moderatorId: userId,
+        payload: { label, error: error instanceof Error ? error.message : String(error) },
+      });
+    }
+  };
+
   const logDecision = (decision: 'kept' | 'dismissed' | 'closed') =>
     logToAxiom({
       name: 'text-scan',
@@ -211,6 +235,7 @@ async function resolve({
       throw throwBadRequestError('A keep of this flag is unfinished. Retry Keep to complete it.');
     if (model[label]) {
       if (!(await dropRedetection({ modelId, label, textHash }))) throw stale();
+      await trackClosed();
       logDecision('closed');
       return 'closed';
     }
@@ -223,6 +248,7 @@ async function resolve({
   // Flagged by another route since: there is nothing left to apply.
   if (model[label] && !ownEntry) {
     if (!(await dropRedetection({ modelId, label, textHash }))) throw stale();
+    await trackClosed();
     logDecision('closed');
     return 'closed';
   }

@@ -19,6 +19,7 @@
   import ModelFlagDetailFrame from '$lib/components/minor-flags/ModelFlagDetailFrame.svelte';
   import { LINK_CLASS, dateTime } from '$lib/format';
   import { ago } from '$lib/minor-flags/appeal-row';
+  import { MOOT_LEAD_NOTE } from '$lib/minor-flags/moot-lead';
   import { crossTabChips } from '$lib/minor-flags/cross-tab';
   import { FLAG_LABEL_NAMES, needsReviewDecisions } from '$lib/minor-flags/flagged-decision';
   import {
@@ -200,7 +201,7 @@
                 /> · {detectionCopy(detectionKind(detection)).provenance}
               {/snippet}
               {#if flag.label === 'poi' ? row.poi : row.minor}
-                <p class="m-0 text-[11px] text-dark-2">The model already carries this flag.</p>
+                <p class="m-0 text-[11px] text-amber-300" data-testid="moot-lead">{MOOT_LEAD_NOTE}</p>
               {/if}
             </FlagVerdictBlock>
           {/each}

@@ -320,6 +320,9 @@ export type MinorFlagAppealRow = {
   alsoInAutoFlagged: boolean;
   /** Needs review lists this model too (a held detection or a file match). */
   alsoInNeedsReview: boolean;
+  /** One of those leads is a held detection on a flag the model already carries: ruling it only
+   *  closes the lead. */
+  needsReviewMootLead: boolean;
   scanRows: ScanRows;
   /** The model's civitai.com face, null when it has none. */
   comFace: ComFace | null;
@@ -609,7 +612,8 @@ export async function getMinorFlagAppealsForReview({
            ${sameFileAppealsSelect},
            ya.nth AS "appealNthThisYear",
            ${inAutoFlaggedSql(sql.ref('pg.modelId'))} AS "alsoInAutoFlagged",
-           ${inNeedsReviewSql(sql.ref('pg.modelId'))} AS "alsoInNeedsReview"
+           ${inNeedsReviewSql(sql.ref('pg.modelId'))} AS "alsoInNeedsReview",
+           ${mootLeadSql(sql.ref('pg.modelId'))} AS "needsReviewMootLead"
     FROM pg
     ${modelFactsJoin}
     ${coverImagesJoin}
@@ -835,6 +839,15 @@ const inAutoFlaggedSql = (modelId: RawBuilder<unknown>) => sql`EXISTS (
     AND ((l.label = 'minor' AND ${hashFlaggedPredicate('minor')})
       OR (l.label = 'poi' AND ${hashFlaggedPredicate('poi')})
       OR (${textScanFlaggedPredicate}))
+)`;
+
+/** A held detection waits on a flag the model already carries. Ruling it closes the lead and leaves
+ *  the flag alone. Same marker the `redetectedIndexPredicate` tests, narrowed to a set label. */
+const mootLeadSql = (modelId: RawBuilder<unknown>) => sql`EXISTS (
+  SELECT 1 FROM "Model" m
+  WHERE m.id = ${modelId}
+    AND ((m.minor AND m.meta->'textScanFlags'->'minor' ? 'redetected')
+      OR (m.poi AND m.meta->'textScanFlags'->'poi' ? 'redetected'))
 )`;
 
 /** Needs review lists the model: a held detection, or a file shared with a moderator's minor seed
