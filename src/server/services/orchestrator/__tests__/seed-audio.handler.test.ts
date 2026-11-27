@@ -53,8 +53,9 @@ describe('Seed Audio', () => {
     );
   });
 
-  it('sends the prompt as typed, quotes included', async () => {
-    const typed = `A deep voice says '"And so, it begins'" and a band starts jazzing`;
+  // BytePlus, not the form, refuses a prompt with no spoken line (#10639).
+  it('sends a prompt with no quoted spoken line', async () => {
+    const typed = 'Soft piano and ocean waves';
     const [step] = await submit({ prompt: typed });
     expect(step.input).toMatchObject({ prompt: typed });
   });
