@@ -5,6 +5,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Prisma } from '@prisma/client';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import {
+  CSAM_LINK_TABLES_SQL,
+  WITHHELD_TABLES_SQL,
+} from '../../../../packages/civitai-shared/src/__tests__/csam-restriction-cases';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 
 // Regression guard for the "unblock leaves nsfwLevel stuck at Blocked" bug
@@ -741,26 +745,28 @@ describe('handleUnblockImages while the owner is deleted', () => {
   it('keeps the image Blocked, recorded as Scanned for an account restore; another owner is restored', async () => {
     const pg = new PGlite();
     await pg.exec(`CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Rescan', 'Error', 'Blocked');
-      CREATE TABLE "User" (id int PRIMARY KEY, "deletedAt" timestamp, "bannedAt" timestamp);
+      ${CSAM_LINK_TABLES_SQL}
+      ${WITHHELD_TABLES_SQL}
+      ALTER TABLE "User" ADD "deletedAt" timestamp, ADD "bannedAt" timestamp;
       CREATE TYPE "EntityType" AS ENUM ('Image');
       CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected');
       CREATE TABLE "Appeal" ("entityType" "EntityType", "entityId" int, status "AppealStatus");
-      CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int, "postId" int, "nsfwLevel" int NOT NULL,
+      CREATE TABLE "Image" (id int PRIMARY KEY, url text, "pHash" bigint, "userId" int, "postId" int, "nsfwLevel" int NOT NULL,
       "nsfwLevelLocked" boolean NOT NULL DEFAULT false,
       minor boolean NOT NULL DEFAULT false, "needsReview" text, "blockedFor" text, metadata jsonb,
       "scannedAt" timestamp, ingestion "ImageIngestionStatus", "scanJobs" jsonb);
-      CREATE TABLE "TagsOnImageDetails" ("imageId" int, disabled boolean);
       CREATE TABLE "ModActivity" ("userId" int, "entityType" text, "entityId" int, activity text);
       CREATE DOMAIN "JobQueueType" AS text;
       CREATE TABLE "JobQueue" ("entityId" int, "entityType" "EntityType", type "JobQueueType",
         "createdAt" timestamp(3) NOT NULL DEFAULT now(), PRIMARY KEY ("entityType", "entityId", type));
       INSERT INTO "JobQueue" VALUES (1, 'Image', 'BlockedImageDelete', '2026-01-01');
-      INSERT INTO "User" VALUES (1, now()), (2, NULL);
+      INSERT INTO "User" (id, "deletedAt") VALUES (1, now()), (2, NULL);
       INSERT INTO "Image" (id, "userId", "nsfwLevel", "blockedFor", metadata, ingestion) VALUES
         -- The grace block's recorded rating, a moderator's lock: it outlives the lift, so a restore
         -- puts the lock back.
         (1, 1, 4, 'moderated', '{"ruleId": 3, "keep": 1, "accountDeletionPriorNsfwLevel": 4, "accountDeletionPriorNsfwLevelLocked": true}', 'Blocked'),
-        (2, 2, 32, 'moderated', '{"ruleId": 3, "keep": 1}', 'Blocked');`);
+        (2, 2, 32, 'moderated', '{"ruleId": 3, "keep": 1}', 'Blocked');
+      UPDATE "Image" SET url = 'img-' || id;`);
     const raw = pgliteRaw(pg);
     const capture = dbWrite.$queryRaw.getMockImplementation();
     const captureExec = dbWrite.$executeRaw.getMockImplementation();

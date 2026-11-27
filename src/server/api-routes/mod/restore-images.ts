@@ -6,6 +6,10 @@ import { Tracker } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { handleUnblockImages } from '~/server/services/image.service';
 import { liftableByUnblock } from '~/server/common/image-visibility';
+import {
+  forwardedCsamGrantInBody,
+  withheldImageIds,
+} from '~/server/services/moderator-withheld.service';
 import { WebhookEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
 
@@ -14,13 +18,14 @@ const schema = z.object({
   userId: z.number().optional(),
   batchSize: z.number().default(50), // Optional batch size for processing
   force: z.boolean().default(false), // Optional force to bypass tag checking
+  csamReview: forwardedCsamGrantInBody,
 });
 
 // after an image has been deleted, it can be restored which should remove blocking properties and update the nsfwLevel
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
   try {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
-    const { imageIds, userId, batchSize, force } = schema.parse(req.body);
+    const { imageIds, userId, batchSize, force, csamReview } = schema.parse(req.body);
 
     // primary: the replica can lag a CSAM block, and this split decides what is skipped.
     const found = await dbWrite.image.findMany({
@@ -43,9 +48,15 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
       },
     });
 
-    // Not restored here: a CSAM block or a CSAM review flag is lifted only through the moderator CSAM review.
-    const skipped = found.filter((x) => !liftableByUnblock(x)).map((x) => x.id);
-    const candidates = found.filter(liftableByUnblock);
+    // Not restored here: a CSAM block or a CSAM review flag is lifted only through the moderator CSAM
+    // review, and an image withheld from the moderator is not theirs to restore.
+    const withheld = await withheldImageIds(
+      found.map((x) => x.id),
+      { csamReview }
+    );
+    const restorable = (x: (typeof found)[number]) => liftableByUnblock(x) && !withheld.has(x.id);
+    const skipped = found.filter((x) => !restorable(x)).map((x) => x.id);
+    const candidates = found.filter(restorable);
     if (candidates.length === 0) {
       return res.status(200).json({ images: 0, restored: [], skipped });
     }

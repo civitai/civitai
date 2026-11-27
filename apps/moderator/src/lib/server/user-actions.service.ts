@@ -1757,6 +1757,8 @@ export function restoredIdsOf(chunk: number[], body: Record<string, unknown>) {
 export async function restoreImages(input: {
   imageIds: number[];
   moderatorId: number;
+  /** The moderator's CSAM grant: the main app skips an image withheld from them without it. */
+  csamReview: boolean;
 }): Promise<CountResult> {
   if (!input.imageIds.length) return { ok: false, error: 'Select at least one image.' };
 
@@ -1767,7 +1769,7 @@ export async function restoreImages(input: {
         '/api/mod/restore-images',
         // `userId` is the ClickHouse actor on the Restore event; without it the restore is
         // unattributable on that side even though ModActivity records it locally.
-        { imageIds: chunk, userId: input.moderatorId },
+        { imageIds: chunk, userId: input.moderatorId, csamReview: input.csamReview },
         'Image restore'
       ),
     (chunk, body) =>
@@ -1797,6 +1799,8 @@ export async function setImageFlag(input: {
   flag: 'poi' | 'minor';
   value: boolean;
   moderatorId: number;
+  /** The moderator's CSAM grant: the main app refuses clearing a flag on an image withheld from them. */
+  csamReview: boolean;
 }): Promise<ActionResult> {
   if (!input.imageIds.length) return { ok: false, error: 'Select at least one image.' };
 
@@ -1809,6 +1813,7 @@ export async function setImageFlag(input: {
       {
         flag: input.flag,
         value: String(input.value),
+        csamReview: String(input.csamReview),
         ids: input.imageIds.slice(i, i + CHUNK).join(','),
       },
       'Image flag update'

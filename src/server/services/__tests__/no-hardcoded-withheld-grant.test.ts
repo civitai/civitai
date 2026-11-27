@@ -21,6 +21,9 @@ const ALLOWED_VALUES = [
   '!!getFeatureFlags({ user, req }).csamReports',
   '!!getFeatureFlags({ user: ctx.actor, req: ctx.req }).csamReports',
   'input.csamReview',
+  // A token route's request schema: the moderator app forwards its moderator's grant, fail-closed.
+  'forwardedCsamGrantInBody',
+  'forwardedCsamGrantInQuery',
 ];
 
 // What may follow an allowed value: the end of the argument, the object or the statement.

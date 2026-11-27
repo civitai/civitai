@@ -31,7 +31,9 @@ describe('restoreImages', () => {
   it('logs a restore only for the images the main app restored', async () => {
     answer({ images: 1, restored: [3], skipped: [1, 2] });
 
-    expect(await restoreImages({ imageIds: [1, 2, 3, 4], moderatorId: 9 })).toEqual({
+    expect(
+      await restoreImages({ imageIds: [1, 2, 3, 4], moderatorId: 9, csamReview: false })
+    ).toEqual({
       ok: true,
       count: 1,
     });
@@ -41,9 +43,21 @@ describe('restoreImages', () => {
   it('logs nothing when the main app restored nothing', async () => {
     answer({ images: 0, restored: [], skipped: [1] });
 
-    await restoreImages({ imageIds: [1], moderatorId: 9 });
+    await restoreImages({ imageIds: [1], moderatorId: 9, csamReview: false });
     expect(logged()).toEqual([]);
   });
+
+  it.each([true, false])(
+    "sends the moderator's grant (%s) for the main app to gate on",
+    async (grant) => {
+      answer({ images: 0, restored: [], skipped: [1] });
+
+      await restoreImages({ imageIds: [1], moderatorId: 9, csamReview: grant });
+
+      const [, init] = vi.mocked(fetch).mock.calls[0] as [unknown, RequestInit];
+      expect(JSON.parse(init.body as string)).toMatchObject({ csamReview: grant });
+    }
+  );
 });
 
 describe('restoredIdsOf', () => {

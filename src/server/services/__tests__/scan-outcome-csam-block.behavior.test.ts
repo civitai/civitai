@@ -85,6 +85,10 @@ import { evaluateRules } from '~/server/utils/mod-rules';
 import { createNotification } from '~/server/services/notification.service';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { ModerationRuleAction } from '~/shared/utils/prisma/enums';
+import {
+  CSAM_LINK_TABLES_SQL,
+  WITHHELD_TABLES_SQL,
+} from '../../../../packages/civitai-shared/src/__tests__/csam-restriction-cases';
 
 const holder = vi.hoisted(() => ({
   db: null as unknown as PGlite,
@@ -105,11 +109,15 @@ beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
-    CREATE TABLE "User" (id int PRIMARY KEY, "bannedAt" timestamp(3), "deletedAt" timestamp(3));
+    ${CSAM_LINK_TABLES_SQL}
+    ${WITHHELD_TABLES_SQL}
+    ALTER TABLE "User" ADD "bannedAt" timestamp(3), ADD "deletedAt" timestamp(3);
+    ALTER TABLE "CsamReport" ADD "archivedAt" timestamp(3);
     CREATE TABLE "ModActivity" (id serial PRIMARY KEY, "entityType" text, "entityId" int, activity text, "createdAt" timestamp(3) DEFAULT now());
     CREATE TABLE "Image" (
       id int PRIMARY KEY,
       "userId" int NOT NULL REFERENCES "User"(id),
+      url text,
       "postId" int,
       type text NOT NULL DEFAULT 'image',
       "updatedAt" timestamp(3),
@@ -125,6 +133,11 @@ beforeAll(async () => {
       metadata jsonb,
       "scanJobs" jsonb
     );
+    -- One url per image unless a test sets one, so no row is another's url sibling.
+    CREATE FUNCTION image_default_url() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN NEW.url := COALESCE(NEW.url, 'img-' || NEW.id); RETURN NEW; END $$;
+    CREATE TRIGGER image_default_url BEFORE INSERT ON "Image"
+      FOR EACH ROW EXECUTE FUNCTION image_default_url();
     CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
     CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected');
     CREATE TABLE "Appeal" (
@@ -132,14 +145,6 @@ beforeAll(async () => {
       "entityType" "EntityType" NOT NULL,
       "entityId" int NOT NULL,
       status "AppealStatus" NOT NULL DEFAULT 'Pending'
-    );
-    CREATE TABLE "CsamReport" (
-      id serial PRIMARY KEY,
-      "userId" int,
-      details jsonb NOT NULL DEFAULT '{}',
-      images jsonb NOT NULL DEFAULT '[]',
-      "reportSentAt" timestamp(3),
-      "archivedAt" timestamp(3)
     );
   `);
 });
@@ -170,6 +175,12 @@ beforeEach(async () => {
       ];
     if (text.includes('is_new_user')) return [{ isNewUser: false }];
     if (text.includes(' AS kept ')) return (await runOnPglite(strings, values)).rows;
+    // The restore's count of the withheld rows it left.
+    if (
+      text.includes('COUNT(*)') &&
+      Prisma.sql(strings, ...(values as never[])).text.includes('ImageCdn')
+    )
+      return (await runOnPglite(strings, values)).rows;
     if (text.includes('FROM "Image" i WHERE i.id')) {
       const { rows } = await runOnPglite(strings, values);
       if (holder.csamLandsAfterRead != null)
@@ -593,7 +604,6 @@ describe('a restore and the recorded review flag, on the real statement', () => 
         (88, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('not-a-review')}),
         (89, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('csam')}),
         (90, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs(null)}),
-        (91, ${OWNER}, 'Blocked', 'moderated', 32, 'csam', ${crumbs('minor')}),
         (92, ${OWNER}, 'Blocked', 'moderated', 32, 'poi', ${crumbs('minor')}),
         (93, ${OWNER}, 'Blocked', 'moderated', 32, 'minor', ${crumbs('newUser')}),
         (94, ${OWNER}, 'Blocked', 'moderated', 32, 'newUser', ${crumbs('poi')}),
@@ -622,10 +632,10 @@ describe('a restore and the recorded review flag, on the real statement', () => 
     await unblockAccountDeletionImages(OWNER);
 
     const rows = await reviewsOf([
-      81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 98, 99, 100, 101, 102, 103,
+      81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 92, 93, 94, 95, 96, 98, 99, 100, 101, 102, 103,
     ]);
     // Control: every row was restored, so the review flags below are the restore's doing.
-    expect(rows.map((row) => row.ingestion)).toEqual(Array(22).fill('Scanned'));
+    expect(rows.map((row) => row.ingestion)).toEqual(Array(21).fill('Scanned'));
     expect(rows.map((row) => [row.id, row.needsReview])).toEqual([
       // Nothing set since: every listed review but csam comes back.
       [81, 'poi'],
@@ -640,8 +650,6 @@ describe('a restore and the recorded review flag, on the real statement', () => 
       [88, null],
       [89, null],
       [90, null],
-      // A current csam is never overwritten.
-      [91, 'csam'],
       // Otherwise the higher of the two stays.
       [92, 'minor'],
       [93, 'minor'],
@@ -664,7 +672,6 @@ describe('a restore and the recorded review flag, on the real statement', () => 
       .filter((entry) => entry.message === 'kept the higher of two competing review flags')
       .flatMap((entry) => entry.payload?.reviews ?? []);
     expect(logged.sort((a, b) => a.imageId - b.imageId)).toEqual([
-      { imageId: 91, kept: 'csam', dropped: 'minor' },
       { imageId: 92, kept: 'minor', dropped: 'poi' },
       { imageId: 93, kept: 'minor', dropped: 'newUser' },
       { imageId: 94, kept: 'poi', dropped: 'newUser' },
@@ -688,6 +695,32 @@ describe('a restore and the recorded review flag, on the real statement', () => 
     await holder.db.exec(`UPDATE "User" SET "deletedAt" = NULL WHERE id = ${OTHER_OWNER}`);
     await unblockAccountDeletionImages(OTHER_OWNER);
     expect(await reviewsOf([97])).toEqual([{ id: 97, needsReview: 'minor', ingestion: 'Scanned' }]);
+  });
+
+  it('leaves an image withheld from moderators blocked, and restores the rest', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId", url, ingestion, "blockedFor", "nsfwLevel", metadata) VALUES
+        (110, ${OWNER}, 'plain', 'Blocked', 'moderated', 32, ${crumbs(null)}),
+        (111, ${OWNER}, 'shared', 'Blocked', 'moderated', 32, ${crumbs(null)}),
+        (112, ${OTHER_OWNER}, 'shared', 'Blocked', 'CSAM', 32, NULL);
+    `);
+
+    const result = await unblockAccountDeletionImages(OWNER);
+
+    const rows = await reviewsOf([110, 111]);
+    expect(rows.map((row) => [row.id, row.ingestion])).toEqual([
+      [110, 'Scanned'],
+      // A url sibling of a CSAM block: withheld, so the restore leaves it as the block left it.
+      [111, 'Blocked'],
+    ]);
+    expect(result).toMatchObject({ unblocked: 1, withheld: 1 });
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: 'left withheld images blocked',
+        userId: OWNER,
+        payload: { withheld: 1 },
+      })
+    );
   });
 });
 
