@@ -541,7 +541,7 @@ describe('answerPlatformUpdateResolve', () => {
     }
   });
 
-  it('a superseded or de-staffed update is refused as withdrawn BEFORE anything is saved', async () => {
+  it('an update verifyCommit does not verify (superseded, de-staffed) is refused as withdrawn BEFORE anything is saved', async () => {
     for (const verdict of [
       { verified: false, update: { ...update, status: 'superseded' } },
       { verified: false, update: { ...update, by: { username: 'staffer', verifiedStaff: false } } },

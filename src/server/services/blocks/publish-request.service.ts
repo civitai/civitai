@@ -7877,11 +7877,9 @@ export async function rejectRequest(params: RejectRequestParams): Promise<void> 
 }
 
 /**
- * Withdraw (`superseded`, by the rejecting moderator) the platform update a rejected on-behalf
- * request carried, through the platform-update record's own supersede. POST-COMMIT and
- * best-effort: the reject has landed, so a failure here is logged and never fails it. `true` when
- * the update is withdrawn (now or already); `false` when it could not be (it was merged into the
- * owner's app already, or the table is unavailable).
+ * Withdraws the platform update a rejected on-behalf request carried. `true` when it is withdrawn
+ * (now or already); `false` when it could not be (an approved version shipped it already, or the
+ * table is unavailable).
  */
 async function withdrawRejectedPlatformUpdate(args: {
   platformUpdateId: string;
@@ -7918,14 +7916,9 @@ async function currentAppOwner(slug: string): Promise<number | undefined> {
 }
 
 /**
- * The review outcome's notifications, POST-COMMIT and best-effort: the SUBMITTER always
- * (`app-block-approved` / `app-block-rejected`), and — for a staff submit on the owner's behalf
- * (`fileSummary.onBehalf`) — the app's OWNER as well (`app-platform-update-approved` /
- * `-rejected`, naming the staff member). The owner is the app's owner NOW (`currentOwnerUserId`,
- * read at the decision), not the one recorded at submit: after an ownership transfer only the new
- * owner is told. The recorded owner is used only when the current one was not read. Each send is
- * wrapped on its own, so neither a failure of one nor of both can fail or roll back the decision,
- * and one failing does not cost the other.
+ * Notifies the submitter and, for an on-behalf request, the owner as of the decision, not the one
+ * recorded at submit (ownership may have transferred; the recorded one only when the current was
+ * not read). Best-effort.
  */
 async function notifyReviewOutcome(args: {
   outcome: 'approved' | 'rejected';
