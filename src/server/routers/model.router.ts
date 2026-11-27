@@ -50,6 +50,8 @@ import {
   rateLimit,
   resolveHiddenPreferenceExclusions,
 } from '~/server/middleware.trpc';
+import { articleRegionReaderOf } from '~/server/utils/article-region';
+import { keepAnswerOutOfEdgeCache } from '~/server/utils/image-media-visibility';
 import { getAllQuerySchema, getByIdSchema } from '~/server/schema/base.schema';
 import type { EarlyAccessRefundSummary } from '~/server/services/model-early-access-refund.service';
 import { toEarlyAccessRefundSummary } from '~/server/services/model-early-access-refund.service';
@@ -514,13 +516,15 @@ export const modelRouter = router({
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getAssociatedResourcesSchema)
     .use(associationSourceVisible)
-    .query(async ({ input, ctx }) =>
-      getAssociatedResourcesSimple(
+    .query(async ({ input, ctx }) => {
+      const { items, regionDependent } = await getAssociatedResourcesSimple(
         { ...input, ...(await resolveAssociatedModelAddons(ctx)) },
-        ctx.user,
+        articleRegionReaderOf(ctx),
         ownerOrModeratorViewer(ctx)
-      )
-    ),
+      );
+      if (regionDependent) keepAnswerOutOfEdgeCache(ctx);
+      return items;
+    }),
   setAssociatedResources: guardedProcedure
     .meta({ requiredScope: TokenScope.ModelsWrite })
     .input(setAssociatedResourcesSchema)
@@ -528,6 +532,7 @@ export const modelRouter = router({
       setAssociatedResources(
         { ...input, ...(await resolveAssociatedModelAddons(ctx)) },
         ctx.user,
+        articleRegionReaderOf(ctx),
         ownerOrModeratorViewer(ctx)
       )
     ),

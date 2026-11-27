@@ -7,7 +7,6 @@ import { WITHHELD_MEDIA_TYPE } from '~/shared/constants/withheld-media.constants
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as DbLagHelpers from '~/server/db/db-lag-helpers';
 import type * as SystemCache from '~/server/services/system-cache';
-import type * as UserService from '~/server/services/user.service';
 import type * as FileService from '~/server/services/file.service';
 import { ArticleIngestionStatus, ArticleStatus } from '~/shared/utils/prisma/enums';
 
@@ -35,16 +34,14 @@ vi.mock('~/server/services/system-cache', async (importOriginal) => ({
   ...(await importOriginal<typeof SystemCache>()),
   getCategoryTags: vi.fn(async () => []),
 }));
-vi.mock('~/server/services/user.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof UserService>()),
-  amIBlockedByUser: vi.fn(async () => false),
-}));
 vi.mock('~/server/services/file.service', async (importOriginal) => ({
   ...(await importOriginal<typeof FileService>()),
   getFilesByEntity: vi.fn(async () => []),
 }));
 
 const { updateArticleNsfwLevels } = await import('~/server/services/nsfwLevels.service');
+const { BlockedByUsers } = await import('~/server/services/user-preferences.service');
+const blockedBy = vi.spyOn(BlockedByUsers, 'getCached').mockResolvedValue([]);
 const { recomputeArticleIngestionInTx, getArticleById } = await import(
   '~/server/services/article.service'
 );
@@ -293,6 +290,26 @@ describe('getArticleById banner visibility', () => {
       id: BANNER,
     });
     expect(await readBanner(restricted, { userId: READER })).toBeUndefined();
+  });
+
+  it('is not found for a reader the author blocked, and found for a moderator', async () => {
+    const blockers: Record<number, number[]> = { [READER]: [OWNER], [OWNER + 100]: [999] };
+    blockedBy.mockImplementation((async ({ userId }: { userId: number }) =>
+      (blockers[userId] ?? []).map((id) => ({ id, username: null }))) as never);
+    try {
+      await expect(readBanner(bannerRow('Scanned'), { userId: READER })).rejects.toMatchObject({
+        code: 'NOT_FOUND',
+      });
+      await expect(
+        readBanner(bannerRow('Scanned'), { userId: READER, isModerator: true })
+      ).resolves.toMatchObject({ id: BANNER });
+      // Blocked by someone who is not the author.
+      await expect(
+        readBanner(bannerRow('Scanned'), { userId: OWNER + 100 })
+      ).resolves.toMatchObject({ id: BANNER });
+    } finally {
+      blockedBy.mockResolvedValue([]);
+    }
   });
 });
 

@@ -1,6 +1,8 @@
 import type { Prisma } from '@prisma/client';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { MockInstance } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { NsfwLevel } from '~/server/common/enums';
 import { startPglitePrisma } from '~/__tests__/pglite-prisma';
 import {
   articleReadableWhere,
@@ -13,6 +15,7 @@ import {
   getAssociatedResourcesSimple,
   setAssociatedResources,
 } from '~/server/services/model.service';
+import { BlockedByUsers } from '~/server/services/user-preferences.service';
 import type { SessionUser } from '~/types/session';
 
 const OWNER = 7;
@@ -115,13 +118,19 @@ beforeAll(async () => {
       "publishedAt" timestamp(3), status "ArticleStatus" NOT NULL,
       ingestion "ArticleIngestionStatus" NOT NULL, availability "Availability" NOT NULL
     );
+    CREATE SEQUENCE assoc_id START 1000;
     CREATE TABLE "ModelAssociations" (
-      id int PRIMARY KEY, "fromModelId" int NOT NULL, "toModelId" int, "toArticleId" int,
+      id int PRIMARY KEY DEFAULT nextval('assoc_id'), "fromModelId" int NOT NULL, "toModelId" int, "toArticleId" int,
       "associatedById" int, "createdAt" timestamp(3) NOT NULL DEFAULT now(),
       type "AssociationType" NOT NULL, index int
     );
     INSERT INTO "User" (id, username) VALUES (${OWNER}, 'owner');
     CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);
+    CREATE TABLE "Image" (id int PRIMARY KEY, "nsfwLevel" int NOT NULL);
+    CREATE TABLE "ImageConnection" (
+      "imageId" int NOT NULL, "entityId" int NOT NULL, "entityType" text NOT NULL,
+      PRIMARY KEY ("imageId", "entityType", "entityId")
+    );
     INSERT INTO "Model" VALUES (${MODEL}, ${OWNER}), (${OTHER_MODEL}, ${MODEL_OWNER}), (${LEVEL_MODEL}, ${MODEL_OWNER});
   `);
   for (const [key, [id, nsfwLevel]] of Object.entries(LEVEL_ARTICLES)) {
@@ -162,19 +171,37 @@ beforeAll(async () => {
   modelAssociations.upsert.mockImplementation(((args: never) =>
     h.prisma.modelAssociations.upsert(args)) as never);
   $transaction.mockImplementation(((ops: never) => h.prisma.$transaction(ops)) as never);
+  dbMock.dbRead.imageConnection.findMany.mockImplementation(((args: never) =>
+    h.prisma.imageConnection.findMany(args)) as never);
 }, 60_000);
 
 afterAll(() => h?.stop());
 
-describe('getAssociatedResourcesSimple article side', () => {
-  const listed = async (viewer: ArticleReader) =>
-    (
-      await getAssociatedResourcesSimple(
-        { fromId: MODEL, type: 'Suggested', browsingLevel: 31 },
-        viewer
-      )
-    ).map((x) => ('title' in x.item ? x.item.title : null));
+const list = (
+  viewer: ArticleReader,
+  { fromId = MODEL, restricted = false, browsingLevel = 31 } = {}
+) =>
+  getAssociatedResourcesSimple(
+    { fromId, type: 'Suggested', browsingLevel },
+    {
+      isRestricted: () => restricted,
+      viewer: viewer ?? {},
+    }
+  );
+const save = (
+  fromId: number,
+  user: SessionUser,
+  associations: Parameters<typeof setAssociatedResources>[0]['associations'] = [],
+  { restricted = false, browsingLevel = 31 } = {}
+) =>
+  setAssociatedResources({ fromId, type: 'Suggested', associations, browsingLevel }, user, {
+    isRestricted: () => restricted,
+    viewer: user,
+  });
+const listed = async (viewer: ArticleReader) =>
+  (await list(viewer)).items.map((x) => ('title' in x.item ? x.item.title : null));
 
+describe('getAssociatedResourcesSimple article side', () => {
   it('lists only live, viewable articles to anyone but the author and moderators', async () => {
     expect(await listed(VIEWERS.anon)).toEqual(['live', 'unsearchable', 'earlyAccess']);
     expect(await listed(VIEWERS.stranger)).toEqual(['live', 'unsearchable', 'earlyAccess']);
@@ -187,11 +214,7 @@ describe('getAssociatedResourcesSimple article side', () => {
   });
 
   it('does not return the read-rule columns on the article item', async () => {
-    const [first] = await getAssociatedResourcesSimple({
-      fromId: MODEL,
-      type: 'Suggested',
-      browsingLevel: 31,
-    });
+    const [first] = (await list(undefined)).items;
     expect(Object.keys(first.item).sort()).toEqual(['id', 'nsfwLevel', 'title', 'user']);
   });
 });
@@ -237,12 +260,7 @@ describe('setAssociatedResources and articles the editor cannot list', () => {
        VALUES (201, $1, ${ARTICLES.live.id}, 'Suggested', 0), (202, $1, ${ARTICLES.draft.id}, 'Suggested', 1)`,
       [OTHER_MODEL]
     );
-    await setAssociatedResources(
-      { fromId: OTHER_MODEL, type: 'Suggested', associations: [], browsingLevel: 31 },
-      {
-        id: MODEL_OWNER,
-      } as SessionUser
-    );
+    await save(OTHER_MODEL, { id: MODEL_OWNER } as SessionUser);
     expect(await ids()).toEqual([ARTICLES.draft.id]);
   });
 
@@ -272,6 +290,220 @@ describe('setAssociatedResources and articles the editor cannot list', () => {
        VALUES (401, ${MODEL}, ${LEVEL_ARTICLES.unrated[0]}, 'Suggested', 0)`
     );
     expect(await savedLevelLinks(MODEL, OWNER, PG)).not.toContain(LEVEL_ARTICLES.unrated[0]);
+  });
+});
+
+describe('setAssociatedResources only writes rows of the model being edited', () => {
+  const A = 300;
+  const A_OWNER = 30;
+  const B = 400;
+  const B_ROW = 401;
+
+  beforeAll(async () => {
+    await h.pg.exec(`
+      INSERT INTO "Model" VALUES (${A}, ${A_OWNER}), (${B}, 40);
+      INSERT INTO "ModelAssociations" (id, "fromModelId", "toArticleId", "associatedById", type, index)
+      VALUES (${B_ROW}, ${B}, ${ARTICLES.unsearchable.id}, 40, 'Suggested', 5);
+    `);
+  });
+
+  it("leaves another model's association untouched when its id is in the payload", async () => {
+    const before = await h.prisma.modelAssociations.findUniqueOrThrow({ where: { id: B_ROW } });
+
+    await save(A, { id: A_OWNER } as SessionUser, [
+      { id: B_ROW, resourceId: ARTICLES.live.id, resourceType: 'article' },
+    ]);
+
+    expect(await h.prisma.modelAssociations.findUniqueOrThrow({ where: { id: B_ROW } })).toEqual(
+      before
+    );
+    const aRows = await h.prisma.modelAssociations.findMany({
+      where: { fromModelId: A },
+      select: { toArticleId: true, associatedById: true, index: true },
+    });
+    expect(aRows).toEqual([{ toArticleId: ARTICLES.live.id, associatedById: A_OWNER, index: 0 }]);
+  });
+});
+
+describe("a moderator editing another user's model", () => {
+  const M = 450;
+  const moderator = { id: 9, isModerator: true } as SessionUser;
+  const add = [{ resourceId: ARTICLES.live.id, resourceType: 'article' as const }];
+  const saveAs = (viewer: { id?: number; isModerator?: boolean }) =>
+    setAssociatedResources(
+      { fromId: M, type: 'Suggested', associations: add, browsingLevel: 31 },
+      moderator,
+      {
+        isRestricted: () => false,
+        viewer,
+      }
+    );
+  const rows = () => h.prisma.modelAssociations.count({ where: { fromModelId: M } });
+
+  beforeAll(() => h.pg.exec(`INSERT INTO "Model" VALUES (${M}, 45);`));
+
+  it('is refused when the reader does not count them as a moderator', async () => {
+    await expect(saveAs({ id: 9, isModerator: false })).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+    });
+    expect(await rows()).toBe(0);
+  });
+
+  it('is allowed when the reader counts them as a moderator', async () => {
+    await saveAs({ id: 9, isModerator: true });
+    expect(await rows()).toBe(1);
+  });
+});
+
+describe('associated articles whose author blocked the viewer', () => {
+  const BLOCKED_VIEWER = VIEWERS.stranger!.id!;
+  const VIEWERS_MODEL = 500;
+  const VIEWERS_ROW = 501;
+
+  beforeAll(async () => {
+    await h.pg.exec(`
+      INSERT INTO "Model" VALUES (${VIEWERS_MODEL}, ${BLOCKED_VIEWER});
+      INSERT INTO "ModelAssociations" (id, "fromModelId", "toArticleId", type, index)
+      VALUES (${VIEWERS_ROW}, ${VIEWERS_MODEL}, ${ARTICLES.live.id}, 'Suggested', 0);
+    `);
+  });
+
+  // Every article here is OWNER's. OWNER, and a user with no article here, blocked the stranger.
+  let blockedBy: MockInstance;
+  beforeEach(() => {
+    blockedBy = vi.spyOn(BlockedByUsers, 'getCached').mockImplementation((async ({
+      userId,
+    }: {
+      userId: number;
+    }) =>
+      userId === BLOCKED_VIEWER
+        ? [
+            { id: 999, username: 'other' },
+            { id: OWNER, username: 'owner' },
+          ]
+        : []) as never);
+  });
+  afterEach(() => blockedBy.mockRestore());
+
+  it('are not listed to that viewer', async () => {
+    expect(await listed(VIEWERS.stranger)).toEqual([]);
+  });
+
+  it('are still listed to everyone else, and all to a moderator', async () => {
+    expect(await listed(VIEWERS.anon)).toEqual(['live', 'unsearchable', 'earlyAccess']);
+    expect(await listed({ id: 99 })).toEqual(['live', 'unsearchable', 'earlyAccess']);
+    expect(await listed({ id: BLOCKED_VIEWER, isModerator: true })).toEqual(Object.keys(ARTICLES));
+  });
+
+  it("are kept when that viewer saves their own model's list without them", async () => {
+    await save(VIEWERS_MODEL, { id: BLOCKED_VIEWER } as SessionUser);
+    expect(
+      await h.prisma.modelAssociations.findUnique({ where: { id: VIEWERS_ROW } })
+    ).not.toBeNull();
+  });
+});
+
+describe('associated articles above SFW in a restricted region', () => {
+  const REGION_MODEL = 600;
+  const REGION_MODEL_OWNER = 60;
+  // [id, title, own level, body image levels]
+  const REGION_ARTICLES: [number, string, number, number[]][] = [
+    [11, 'mature', 4, []],
+    [12, 'matureBody', 1, [4]],
+    [13, 'sfw', 1, [2]],
+    [14, 'unrated', 0, []],
+  ];
+
+  beforeAll(async () => {
+    await h.pg.exec(`INSERT INTO "Model" VALUES (${REGION_MODEL}, ${REGION_MODEL_OWNER});`);
+    for (const [id, title, level, images] of REGION_ARTICLES) {
+      await h.pg.query(
+        `INSERT INTO "Article" VALUES ($1, $2, $3, ${OWNER}, '2026-01-01', 'Published', 'Scanned', 'Public')`,
+        [id, title, level]
+      );
+      await h.pg.query(
+        `INSERT INTO "ModelAssociations" (id, "fromModelId", "toArticleId", type, index) VALUES ($1, ${REGION_MODEL}, $2, 'Suggested', $2)`,
+        [600 + id, id]
+      );
+      for (const [i, imageLevel] of images.entries()) {
+        const imageId = id * 10 + i;
+        await h.pg.query(`INSERT INTO "Image" VALUES ($1, $2)`, [imageId, imageLevel]);
+        await h.pg.query(`INSERT INTO "ImageConnection" VALUES ($1, $2, 'Article')`, [imageId, id]);
+      }
+    }
+  });
+
+  it('withholds each one from a reader in a restricted region', async () => {
+    const result = await list(VIEWERS.stranger, { fromId: REGION_MODEL, restricted: true });
+    expect(result.items.map((x) => ('title' in x.item ? x.item.title : null))).toEqual(['sfw']);
+    expect(result.regionDependent).toBe(true);
+  });
+
+  it('lists them outside a restricted region, but marks the answer region-dependent', async () => {
+    const result = await list(undefined, { fromId: REGION_MODEL });
+    // The unrated one fails the browsing-level rule first.
+    expect(result.items.map((x) => ('title' in x.item ? x.item.title : null))).toEqual([
+      'mature',
+      'matureBody',
+      'sfw',
+    ]);
+    expect(result.regionDependent).toBe(true);
+  });
+
+  it('lists them to their author and a moderator in a restricted region', async () => {
+    for (const viewer of [VIEWERS.owner, VIEWERS.moderator]) {
+      const result = await list(viewer, { fromId: REGION_MODEL, restricted: true });
+      expect(result.items).toHaveLength(REGION_ARTICLES.length);
+    }
+  });
+
+  it('does not mark a list with no such article region-dependent', async () => {
+    expect((await list(undefined)).regionDependent).toBe(false);
+  });
+
+  it('are kept when the model owner saves the list from a restricted region', async () => {
+    await save(REGION_MODEL, { id: REGION_MODEL_OWNER } as SessionUser, [], { restricted: true });
+    const kept = await h.prisma.modelAssociations.findMany({
+      where: { fromModelId: REGION_MODEL },
+      select: { toArticleId: true },
+      orderBy: { toArticleId: 'asc' },
+    });
+    expect(kept.map((x) => x.toArticleId)).toEqual([11, 12, 14]);
+  });
+});
+
+describe('associated articles above the browsing level', () => {
+  const LEVEL_MODEL = 800;
+  const LEVEL_MODEL_OWNER = 80;
+  const MATURE = 21;
+  const { PG, X } = NsfwLevel;
+
+  beforeAll(async () => {
+    await h.pg.exec(`
+      INSERT INTO "Model" VALUES (${LEVEL_MODEL}, ${LEVEL_MODEL_OWNER});
+      INSERT INTO "Article" VALUES (${MATURE}, 'mature', ${X}, ${OWNER}, '2026-01-01', 'Published', 'Scanned', 'Public');
+      INSERT INTO "ModelAssociations" (id, "fromModelId", "toArticleId", type, index)
+      VALUES (821, ${LEVEL_MODEL}, ${MATURE}, 'Suggested', 0);
+    `);
+  });
+
+  const count = async (viewer: ArticleReader, browsingLevel: number) =>
+    (await list(viewer, { fromId: LEVEL_MODEL, browsingLevel })).items.length;
+
+  it('are not listed to a reader browsing below them', async () => {
+    expect(await count(undefined, PG)).toBe(0);
+    expect(await count(VIEWERS.stranger, PG)).toBe(0);
+  });
+
+  it('are listed to a reader whose level includes them, and to the author and a moderator', async () => {
+    expect(await count(undefined, PG | X)).toBe(1);
+    expect(await count(VIEWERS.owner, PG)).toBe(1);
+    expect(await count(VIEWERS.moderator, PG)).toBe(1);
+  });
+
+  it('are kept when the model owner saves the list browsing below them', async () => {
+    await save(LEVEL_MODEL, { id: LEVEL_MODEL_OWNER } as SessionUser, [], { browsingLevel: PG });
+    expect(await h.prisma.modelAssociations.findUnique({ where: { id: 821 } })).not.toBeNull();
   });
 });
 

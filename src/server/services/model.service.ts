@@ -33,7 +33,7 @@ import {
   recordModelOwnershipSql,
 } from '~/server/services/model-ownership.sql';
 import type { ManipulateType } from 'dayjs';
-import { uniq } from 'lodash-es';
+import { groupBy, uniq } from 'lodash-es';
 import dayjs from '~/shared/utils/dayjs';
 import { publishedRangeBounds, publishedRangeError } from '~/shared/utils/published-range';
 import type { SearchParams, SearchResponse } from 'meilisearch';
@@ -53,7 +53,11 @@ import {
   isMatureRestricted,
   matureRestrictedBaseModels,
 } from '~/shared/constants/basemodel.constants';
-import { ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import {
+  ImageConnectionType,
+  ModelSort,
+  SearchIndexUpdateQueueAction,
+} from '~/server/common/enums';
 import { toApiModelFile } from '~/server/common/model-helpers';
 import type { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -70,6 +74,8 @@ import {
   selectNewlyAddedModelIds,
 } from '~/server/services/model-association.utils';
 import type { AssociationType } from '~/shared/utils/prisma/enums';
+import { connectionImageExists } from '~/server/selectors/image.selector';
+import { articleRegionGate, type ArticleRegionReader } from '~/server/utils/article-region';
 import {
   getDbWithoutLag,
   getKyselyWithoutLag,
@@ -106,7 +112,10 @@ import { syncReviewsOfMovedPosts } from '~/server/services/resourceReview.visibi
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { clusterCacheGuard } from '~/server/redis/cluster-cache-guard';
 import { listModelStake, listRecentlyVersionedModels } from '@civitai/db-queries/model';
-import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
+import {
+  getAllHiddenForUser,
+  getUsersBlockingViewer,
+} from '~/server/services/user-preferences.service';
 import {
   bustModelGallerySettings,
   getCreatorGalleryHiddenUserIds,
@@ -6275,9 +6284,56 @@ export const setModelsCategory = async ({
 };
 
 // #region [associated models]
+/**
+ * The associated articles a reader is shown: readable, within their browsing level, not by an
+ * author who blocked them, and not withheld in their region. The editor lists the same set, so a
+ * save never removes an article this hides.
+ */
+async function filterAssociatedArticles(
+  articles: (Parameters<typeof canReadArticle>[0] & {
+    id: number;
+    nsfwLevel: number;
+    userId: number;
+  })[],
+  reader: ArticleRegionReader,
+  browsingLevel: number
+) {
+  const { viewer } = reader;
+  const [blockedBy, connections] = await Promise.all([
+    getUsersBlockingViewer(viewer),
+    articles.length
+      ? dbRead.imageConnection.findMany({
+          where: {
+            entityType: ImageConnectionType.Article,
+            entityId: { in: articles.map((a) => a.id) },
+            ...connectionImageExists,
+          },
+          select: { entityId: true, image: { select: { nsfwLevel: true } } },
+        })
+      : [],
+  ]);
+  let regionDependent = false;
+  const shown = new Set<number>();
+  const imagesOf = groupBy(connections, (c) => c.entityId);
+  for (const article of articles) {
+    if (
+      !canReadArticle(article, viewer) ||
+      !articleWithinBrowsingLevel(article, viewer, browsingLevel) ||
+      blockedBy.has(article.userId)
+    )
+      continue;
+    // Every connected image, where getById counts those the reader may see: stricter, never looser.
+    const contentImages = (imagesOf[article.id] ?? []).map((c) => c.image);
+    const gate = articleRegionGate({ ...article, contentImages }, reader);
+    regionDependent ||= gate.regionDependent;
+    if (!gate.withheld) shown.add(article.id);
+  }
+  return { shown, regionDependent };
+}
+
 export const getAssociatedResourcesSimple = async (
   { fromId, type, browsingLevel, ...addons }: GetAssociatedResourcesInput & AssociatedModelAddons,
-  viewer?: ArticleReader,
+  reader: ArticleRegionReader,
   modelViewer?: ArticleReader
 ) => {
   const associations = await dbWrite.modelAssociations.findMany({
@@ -6299,21 +6355,21 @@ export const getAssociatedResourcesSimple = async (
     },
   });
 
+  const { shown, regionDependent } = await filterAssociatedArticles(
+    associations.map((x) => x.toArticle).filter(isDefined),
+    reader,
+    browsingLevel
+  );
   const items = associations
     .map(({ id, toModel, toArticle }) => {
       if (toModel) return associatedModelItem(id, toModel, modelViewer, browsingLevel, addons);
-      if (
-        !toArticle ||
-        !canReadArticle(toArticle, viewer) ||
-        !articleWithinBrowsingLevel(toArticle, viewer, browsingLevel)
-      )
-        return null;
+      if (!toArticle || !shown.has(toArticle.id)) return null;
       const { userId, publishedAt, status, ingestion, availability, ...item } = toArticle;
       return { id, item, resourceType: 'article' as const };
     })
     .filter(isDefined);
 
-  return items;
+  return { items, regionDependent };
 };
 
 function associatedModelItem<T extends AssociatedModelVisibility & ModelSfwFaceSource>(
@@ -6338,7 +6394,8 @@ export const setAssociatedResources = async (
     browsingLevel,
     ...addons
   }: SetAssociatedResourcesInput & AssociatedModelAddons,
-  user?: SessionUser,
+  user: SessionUser | undefined,
+  reader: ArticleRegionReader,
   modelViewer?: ArticleReader
 ) => {
   const fromModel = await dbWrite.model.findUnique({
@@ -6351,7 +6408,7 @@ export const setAssociatedResources = async (
           id: true,
           toModelId: true,
           toModel: { select: associatedModelVisibilitySelect },
-          toArticle: { select: articleReadSelect },
+          toArticle: { select: { id: true, nsfwLevel: true, ...articleReadSelect } },
         },
         orderBy: { index: 'asc' },
       },
@@ -6360,24 +6417,46 @@ export const setAssociatedResources = async (
 
   if (!fromModel) throw throwNotFoundError();
   // only allow moderators or model owners to add/remove associated models
-  if (!user?.isModerator && fromModel.userId !== user?.id) throw throwAuthorizationError();
+  if (!reader.viewer.isModerator && fromModel.userId !== user?.id) throw throwAuthorizationError();
 
-  // The editor never lists a link the caller cannot see (an unreadable article, a model withheld
-  // from them), so its absence from the payload is not a removal.
+  // The editor never lists a link the caller cannot see (an article or a model withheld from
+  // them), so its absence from the payload is not a removal.
+  const { shown } = await filterAssociatedArticles(
+    fromModel.associations.map((x) => x.toArticle).filter(isDefined),
+    reader,
+    browsingLevel
+  );
   const existingAssociations = fromModel.associations
-    .filter(
-      (x) =>
-        !x.toArticle ||
-        (canReadArticle(x.toArticle, user) &&
-          articleWithinBrowsingLevel(x.toArticle, user, browsingLevel))
-    )
+    .filter((x) => !x.toArticle || shown.has(x.toArticle.id))
     .filter(
       (x) => !x.toModel || canListAssociatedModel(x.toModel, modelViewer, browsingLevel, addons)
     )
     .map((x) => x.id);
+  const ownIds = new Set(fromModel.associations.map((x) => x.id));
   const existingModelTargets = new Set(
     fromModel.associations.map((x) => x.toModelId).filter(isDefined)
   );
+  // Only a model the editor could list may be newly linked.
+  const newModelTargets = [
+    ...new Set(
+      associations
+        .filter((x) => x.resourceType === 'model' && !existingModelTargets.has(x.resourceId))
+        .map((x) => x.resourceId)
+    ),
+  ];
+  if (newModelTargets.length) {
+    // primary: a check guarding this write
+    const targets = await dbWrite.model.findMany({
+      where: { id: { in: newModelTargets } },
+      select: associatedModelVisibilitySelect,
+    });
+    const linkable = new Set(
+      targets
+        .filter((x) => canListAssociatedModel(x, modelViewer, browsingLevel, addons))
+        .map((x) => x.id)
+    );
+    if (newModelTargets.some((id) => !linkable.has(id))) throw throwNotFoundError();
+  }
   const associationsToRemove = existingAssociations.filter(
     (existingToId) => !associations.find((item) => item.id === existingToId)
   );
@@ -6398,8 +6477,10 @@ export const setAssociatedResources = async (
           ? { fromModelId: fromId, toModelId: association.resourceId, type }
           : { fromModelId: fromId, toArticleId: association.resourceId, type };
 
+      // An id this model does not hold, foreign or stale, is a new row for this model.
+      const id = association.id !== undefined && ownIds.has(association.id) ? association.id : -1;
       return dbWrite.modelAssociations.upsert({
-        where: { id: association.id ?? -1 },
+        where: { id },
         update: { index },
         create: { ...data, associatedById: user?.id, index },
       });

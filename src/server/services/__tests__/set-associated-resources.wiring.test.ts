@@ -112,11 +112,23 @@ function givenSourceModel(associations: Array<[number, number | null]> = []) {
  * the query would let a test pass while the service asked for the wrong ids — which is the
  * decision these tests exist to check.
  */
+const visibleModel = {
+  nsfwLevel: 1,
+  status: 'Published',
+  availability: 'Public',
+  mode: null,
+  poi: false,
+  minor: false,
+};
+
 function givenTargets(targets: Array<{ id: number; userId: number }>) {
   dbMock.dbWrite.model.findMany.mockImplementation(async (args: unknown) => {
     const ids = (args as { where?: { id?: { in?: number[] } } })?.where?.id?.in;
     if (!ids) throw new Error('model.findMany called without where.id.in');
-    return targets.filter((target) => ids.includes(target.id));
+    // Every target is a public, published PG model, so the link-visibility check passes.
+    return targets
+      .filter((target) => ids.includes(target.id))
+      .map((target) => ({ ...visibleModel, ...target }));
   });
 }
 
@@ -135,6 +147,11 @@ const save = (
 ) =>
   setAssociatedResources(
     { fromId: SOURCE, type: 'Suggested', associations, reciprocal, browsingLevel: 31 },
+    user,
+    {
+      isRestricted: () => false,
+      viewer: user,
+    },
     user
   );
 

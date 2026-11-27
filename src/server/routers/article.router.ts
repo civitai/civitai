@@ -1,5 +1,5 @@
 import * as z from 'zod';
-import { actsAsModerator } from '~/server/utils/image-media-visibility';
+import { actsAsModerator, keepAnswerOutOfEdgeCache } from '~/server/utils/image-media-visibility';
 import { reportListedViewerOf } from '~/server/utils/report-listed-viewer';
 import {
   router,
@@ -61,8 +61,7 @@ import { eventViewerOf } from '~/server/events/event-viewer';
 import { CacheTTL } from '~/server/common/constants';
 import { dbRead } from '~/server/db/client';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
-import { isArticleServableWhenRestricted } from '~/server/utils/article-region';
-import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
+import { articleRegionGate, articleRegionReaderOf } from '~/server/utils/article-region';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { getCaller } from '~/server/routers/remix-app.router';
 import {
@@ -152,18 +151,9 @@ export const articleRouter = router({
       // Region-dependent above SFW: a restricted region gets the same NOT_FOUND as a missing article
       // (as on /api/v1/articles/[id]), its owner and moderators excepted, and the answer stays out of
       // the edge cache, which does not key on region.
-      if (!isArticleServableWhenRestricted(article)) {
-        // A moderator only on a session or a full-access personal key, as for moderatorProcedure.
-        const viewerMayRead =
-          eventViewerOf(ctx).isModerator || (!!ctx.user && ctx.user.id === article.userId);
-        if (!viewerMayRead && isRegionRestricted(getRegion(ctx.req)))
-          throw throwNotFoundError(`No article with id ${input.id}`);
-        if (ctx.cache) {
-          ctx.cache.edgeTTL = 0;
-          ctx.cache.browserTTL = 0;
-          ctx.cache.staleWhileRevalidate = 0;
-        }
-      }
+      const gate = articleRegionGate(article, articleRegionReaderOf(ctx));
+      if (gate.withheld) throw throwNotFoundError(`No article with id ${input.id}`);
+      if (gate.regionDependent) keepAnswerOutOfEdgeCache(ctx);
       return { ...article, eventDecoration: eventDecorations[article.id] ?? null };
     }),
   // Deliberately narrower than `getScanStatus`, which is owner/moderator-facing and returns

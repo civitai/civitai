@@ -276,6 +276,14 @@ export const BlockedByUsers = createUserCache({
       `,
 });
 
+/** Users who blocked this viewer, for hiding their content; none for signed-out viewers and moderators. */
+export async function getUsersBlockingViewer(
+  viewer: { id?: number; isModerator?: boolean | null } | undefined
+): Promise<Set<number>> {
+  if (viewer?.id === undefined || viewer.isModerator) return new Set();
+  return new Set((await BlockedByUsers.getCached({ userId: viewer.id })).map((u) => u.id));
+}
+
 // User ids the given user has a block relationship with, in either direction.
 // A block hides the pair's shop content from each other and forbids purchases
 // and resale pairings between them.
