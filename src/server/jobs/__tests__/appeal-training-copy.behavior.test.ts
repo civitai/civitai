@@ -19,27 +19,6 @@ vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   clickhouse: null,
 }));
-vi.mock('~/server/jobs/job', async (importOriginal) => ({
-  ...(await importOriginal<object>()),
-  createJob: (name: string, cron: string, fn: (e: unknown) => Promise<unknown>) => ({
-    name,
-    cron,
-    run: () => fn(undefined),
-  }),
-  getJobDate: async () => [new Date(0), async () => undefined],
-}));
-// The vote job's writes, against the same database. Only the delete matters here.
-vi.mock('~/server/services/tagsOnImageNew.service', () => ({
-  insertTagsOnImageNew: async () => undefined,
-  upsertTagsOnImageNew: async () => undefined,
-  deleteTagsOnImageNew: async (rows: { imageId: number; tagId: number }[]) => {
-    for (const { imageId, tagId } of rows)
-      await holder.db.query(`DELETE FROM "TagsOnImageNew" WHERE "imageId" = $1 AND "tagId" = $2`, [
-        imageId,
-        tagId,
-      ]);
-  },
-}));
 
 type Raw = ReturnType<typeof pgliteRaw>;
 dbMock.dbWrite.$executeRaw.mockImplementation(((...a: Parameters<Raw['executeRaw']>) =>
@@ -65,7 +44,7 @@ const {
   removeErasedOwnerRecords,
   sweepExcludedRecords,
 } = await import('~/server/jobs/appeal-decision-records');
-const { applyVotedTags } = await import('~/server/jobs/apply-voted-tags');
+const { downvotedTagsToDelete } = await import('~/server/jobs/apply-voted-tags');
 
 const MIGRATIONS = [
   '20261020120000_appeal_decision_record',
@@ -1364,7 +1343,12 @@ describe('community downvotes and the scanner rating', () => {
     await downvote(101, 'r');
     await downvote(101, 'woman');
 
-    await applyVotedTags.run({} as never);
+    // What the vote job deletes, deleted as its write does.
+    for (const { imageId, tagId } of await downvotedTagsToDelete(new Date(0)))
+      await holder.db.query(`DELETE FROM "TagsOnImageNew" WHERE "imageId" = $1 AND "tagId" = $2`, [
+        imageId,
+        tagId,
+      ]);
 
     expect(await tagsOf(101)).toEqual(['pg', 'r']);
     const store = fakeStore();
