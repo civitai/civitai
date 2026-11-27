@@ -131,7 +131,9 @@ export interface MessageSpec {
    * Every error reply may also carry `rateLimit` (`UNIVERSAL_ERROR_KEYS`): a host spreads
    * `rateLimitReplyFields(err)` into each error built from a caught server error, so the key is
    * accepted on any type without being listed here. A list may still name it. The workflow
-   * family (`'none'`, below) reports a refusal inside its failure snapshot and carries no meta.
+   * family (`'none'`, below) reports a refusal inside its snapshot, so its meta rides there:
+   * `snapshot.rateLimit`, set by `failureSnapshot` / `pollFailureSnapshot` from the same
+   * `rateLimitReplyFields(err)`, and by the server on a shed poll or cancel.
    *
    * `'none'` means the host never sends a top-level `error` for this type. That covers two
    * cases. The workflow family reports failure INSIDE the success shape: a `snapshot` whose

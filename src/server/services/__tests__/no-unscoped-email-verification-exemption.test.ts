@@ -144,6 +144,10 @@ const DERIVED_BASES: Record<string, string> = {
   storylineTextProcedure: 'guardedProcedure',
   storylineWriteProcedure: 'guardedProcedure',
   userCodeReviewProcedure: 'remixAppAdminProcedure',
+  // `app-listings.router.ts`: the review reply thread, behind `appReviewReplies`. The reads and the
+  // moderator queue count need no verified email; the post itself is on `guardedProcedure`.
+  reviewThreadProcedure: 'protectedProcedure',
+  reviewThreadModeratorProcedure: 'moderatorProcedure',
 };
 
 const stripComments = (s: string) =>

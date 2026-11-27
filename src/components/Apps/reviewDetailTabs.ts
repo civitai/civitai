@@ -40,7 +40,23 @@ export const REVIEW_DETAIL_TAB_VALUES = [
   'sessions',
 ] as const;
 
-export type ReviewDetailTab = (typeof REVIEW_DETAIL_TAB_VALUES)[number];
+/**
+ * Tabs shown only behind a flag, appended after the base set. `conversation` is the reply thread
+ * with the submission's developer, rendered only while `features.appReviewReplies` is on; with
+ * it off, `?tab=conversation` resolves to the default like any unknown value.
+ */
+export const REVIEW_DETAIL_FLAGGED_TAB_VALUES = ['conversation'] as const;
+
+export type ReviewDetailTab =
+  | (typeof REVIEW_DETAIL_TAB_VALUES)[number]
+  | (typeof REVIEW_DETAIL_FLAGGED_TAB_VALUES)[number];
+
+/** The tabs this viewer gets, in render order. */
+export function reviewDetailTabsFor(opts: { replies: boolean }): readonly ReviewDetailTab[] {
+  return opts.replies
+    ? [...REVIEW_DETAIL_TAB_VALUES, ...REVIEW_DETAIL_FLAGGED_TAB_VALUES]
+    : REVIEW_DETAIL_TAB_VALUES;
+}
 
 /** The tab a bare `/apps/review/<id>` opens on. */
 export const DEFAULT_REVIEW_DETAIL_TAB: ReviewDetailTab = 'overview';
@@ -63,12 +79,15 @@ export const REVIEW_DETAIL_TAB_LABELS: Record<ReviewDetailTab, string> = {
   preview: 'Preview',
   console: 'Console',
   sessions: 'Build sessions',
+  conversation: 'Conversation',
 };
 
-export function isReviewDetailTab(value: unknown): value is ReviewDetailTab {
-  return (
-    typeof value === 'string' && (REVIEW_DETAIL_TAB_VALUES as readonly string[]).includes(value)
-  );
+/** Is `value` one of `tabs` (the base set unless told otherwise)? */
+export function isReviewDetailTab(
+  value: unknown,
+  tabs: readonly ReviewDetailTab[] = REVIEW_DETAIL_TAB_VALUES
+): value is ReviewDetailTab {
+  return typeof value === 'string' && (tabs as readonly string[]).includes(value);
 }
 
 /**
@@ -96,10 +115,10 @@ export function isReviewDetailTab(value: unknown): value is ReviewDetailTab {
  */
 export function resolveReviewDetailTab(
   raw: unknown,
-  opts: { hash?: string } = {}
+  opts: { hash?: string; tabs?: readonly ReviewDetailTab[] } = {}
 ): ReviewDetailTab {
   const first = Array.isArray(raw) ? raw[0] : raw;
-  if (isReviewDetailTab(first)) return first;
+  if (isReviewDetailTab(first, opts.tabs)) return first;
   const hash = opts.hash;
   if (typeof hash === 'string' && parseReportHash(hash).tab) return 'agent';
   return DEFAULT_REVIEW_DETAIL_TAB;

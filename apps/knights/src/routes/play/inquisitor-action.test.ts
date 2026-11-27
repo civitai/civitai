@@ -39,7 +39,9 @@ const fetchMock = vi.fn<typeof fetch>();
 const SESSION = `${sessionCookieName()}=mod-session`;
 
 beforeAll(async () => {
-  ({ pg, db } = await createQueueDb());
+  // The view runs the review read and the stats read at once, each in its own transaction; in prod each has its own
+  // pool connection, so the harness hands its one connection to one transaction at a time.
+  ({ pg, db } = await createQueueDb({ serialize: true }));
   holder.db = db;
 });
 afterAll(() => pg.close());

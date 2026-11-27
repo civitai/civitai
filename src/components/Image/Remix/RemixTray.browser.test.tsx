@@ -137,6 +137,8 @@ describe('RemixTray', () => {
     renderWithProviders(<RemixTray />, { user: { id: 9 } });
 
     await expect.element(pill()).toHaveAccessibleName('Remix runs: 2 in progress, 2 ready');
+    // Named on screen, not only by its counts: an icons-only pill read as part of the sidebar.
+    await expect.element(pill().getByText('Remix', { exact: true })).toBeVisible();
     await pill().click();
     expect(rows().all()).toHaveLength(4);
     await expect.element(rows().getByText('Failed')).toBeVisible();

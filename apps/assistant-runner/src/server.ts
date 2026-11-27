@@ -6,6 +6,7 @@ import { CivitaiCovers, runnerCoverEstimator } from './app-assistant/cover';
 import { CivitaiAppActivity } from './app-assistant/app-activity';
 import { CivitaiSleepingApps } from './app-assistant/sleeping-apps';
 import { CivitaiSourceSaves } from './app-assistant/source-save';
+import { CivitaiPlatformUpdates } from './app-assistant/platform-updates';
 import { CivitaiAppFeedback } from './app-assistant/app-feedback';
 import { CivitaiDevTunnels } from './app-assistant/dev-tunnel';
 import { CivitaiTurnReports } from './app-assistant/turn-report';
@@ -126,6 +127,13 @@ if (civitai) {
     secret: civitai.secret,
     log,
   });
+  // Staff platform updates to the open app, which civitai lists and records as a run's user, by
+  // its grant (none while the `app-blocks-platform-updates` flag is off).
+  const platformUpdates = new CivitaiPlatformUpdates({
+    civitaiUrl: civitai.civitaiUrl,
+    secret: civitai.secret,
+    log,
+  });
   // App hibernate: the user's sleeping apps and the seed to wake one, which civitai reads and mints
   // as a run's user, by its grant (nothing while the `app-hibernate` flag is off for them).
   const sleepingApps = new CivitaiSleepingApps({
@@ -146,6 +154,7 @@ if (civitai) {
         appFeedback: (runId, signal) => appFeedback.forRun(() => grants.forRun(runId), signal),
         appActivity: (runId, signal) => appActivity.forRun(() => grants.forRun(runId), signal),
         sourceSaves: (runId) => sourceSaves.forRun(() => grants.forRun(runId)),
+        platformUpdates: (runId) => platformUpdates.forRun(() => grants.forRun(runId)),
         sleepingApps: (runId, signal) => sleepingApps.forRun(() => grants.forRun(runId), signal),
         log,
       })

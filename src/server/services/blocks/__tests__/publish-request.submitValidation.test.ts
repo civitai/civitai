@@ -418,6 +418,108 @@ describe('submitVersion — advisories', () => {
     await settleFollowUps();
   });
 
+  /** An own accent, so the only advisory a case can get is the SDK one. */
+  const OWN_ACCENT = { 'src/index.css': '.app { --civitai-color-primary: #7c3aed; }' };
+  const lock = (sdk: string, react: string) =>
+    JSON.stringify({
+      lockfileVersion: 3,
+      packages: {
+        'node_modules/@civitai/sdk': { version: sdk },
+        'node_modules/@civitai/blocks-react': { version: react },
+      },
+    });
+  const storedFileSummary = () =>
+    (
+      db.createPublishRequest.mock.calls[0]![0] as unknown as {
+        data: { fileSummary: Record<string, unknown> };
+      }
+    ).data.fileSummary;
+
+  it('a below-floor lockfile is queued with an sdk-below-floor advisory per package, and the override is recorded', async () => {
+    const result = await submitVersion({
+      bundleBuffer: await bundle(VALID, {
+        ...OWN_ACCENT,
+        'package.json': JSON.stringify({ dependencies: { '@civitai/sdk': '^0.33.0' } }),
+        'package-lock.json': lock('0.31.4', '0.80.2'),
+      }),
+      submittedByUserId: 1,
+      submitterIsModerator: false,
+      sdkFloorOverride: [{ package: '@civitai/sdk', installed: '0.31.4', minimum: '0.33.0' }],
+    });
+    expect(db.createPublishRequest).toHaveBeenCalledTimes(1);
+    expect(result.advisories.map((a) => [a.code, a.message])).toEqual([
+      [
+        'sdk-below-floor',
+        "This app's package-lock.json installs @civitai/sdk 0.31.4, below the platform minimum 0.33.0. Upgrade with `npm install @civitai/sdk@latest` and resubmit. The submit was not refused; a moderator sees the version.",
+      ],
+      [
+        'sdk-below-floor',
+        "This app's package-lock.json installs @civitai/blocks-react 0.80.2, below the platform minimum 0.87.0. Upgrade with `npm install @civitai/blocks-react@latest` and resubmit. The submit was not refused; a moderator sees the version.",
+      ],
+    ]);
+    expect(storedFileSummary().sdkFloor).toEqual({
+      lockfile: 'package-lock.json',
+      lockfileStatus: 'read',
+      below: [
+        { package: '@civitai/sdk', installed: '0.31.4', minimum: '0.33.0' },
+        { package: '@civitai/blocks-react', installed: '0.80.2', minimum: '0.87.0' },
+      ],
+      override: [{ package: '@civitai/sdk', installed: '0.31.4', minimum: '0.33.0' }],
+    });
+    // The file diff the review reads is still there beside it.
+    expect(Array.isArray(storedFileSummary().files)).toBe(true);
+    await settleFollowUps();
+  });
+
+  it('CONTROL: an at-floor lockfile answers no SDK advisory and records nothing', async () => {
+    const result = await submitVersion({
+      bundleBuffer: await bundle(VALID, {
+        ...OWN_ACCENT,
+        'package-lock.json': lock('0.33.0', '0.87.0'),
+      }),
+      submittedByUserId: 1,
+      submitterIsModerator: false,
+    });
+    expect(result.advisories).toEqual([]);
+    expect(storedFileSummary()).not.toHaveProperty('sdkFloor');
+    await settleFollowUps();
+  });
+
+  it('a malformed lockfile: the submit still succeeds, with no SDK advisory and nothing recorded', async () => {
+    const result = await submitVersion({
+      bundleBuffer: await bundle(VALID, {
+        ...OWN_ACCENT,
+        'package-lock.json': '{"lockfileVersion": 3, "packages": {"node_modules/@civitai/sdk": ',
+      }),
+      submittedByUserId: 1,
+      submitterIsModerator: false,
+    });
+    expect(db.createPublishRequest).toHaveBeenCalledTimes(1);
+    expect(result.advisories).toEqual([]);
+    expect(storedFileSummary()).not.toHaveProperty('sdkFloor');
+    await settleFollowUps();
+  });
+
+  it('a malformed lockfile with an override: the reading is recorded as unreadable, not absent', async () => {
+    const result = await submitVersion({
+      bundleBuffer: await bundle(VALID, {
+        ...OWN_ACCENT,
+        'package-lock.json': 'not json at all',
+      }),
+      submittedByUserId: 1,
+      submitterIsModerator: false,
+      sdkFloorOverride: [{ package: '@civitai/sdk', installed: '0.29.1', minimum: '0.33.0' }],
+    });
+    expect(result.advisories).toEqual([]);
+    expect(storedFileSummary().sdkFloor).toEqual({
+      lockfile: 'package-lock.json',
+      lockfileStatus: 'unreadable',
+      below: [],
+      override: [{ package: '@civitai/sdk', installed: '0.29.1', minimum: '0.33.0' }],
+    });
+    await settleFollowUps();
+  });
+
   it('with tracing on, the advisory is the same', async () => {
     tracing.on = true;
     dbMock.dbRead.appAssistantSessionLink.findMany.mockResolvedValueOnce([]);

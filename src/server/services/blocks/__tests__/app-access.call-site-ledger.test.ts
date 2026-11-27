@@ -105,6 +105,13 @@ const GATE_LEDGER: Record<string, string> = {
     "repo's owner never had is NOT bound, so a squatter's block owner cannot reach it. " +
     'creationGate uses the same assertAppEditAccess before a repo may be created for a ' +
     'slug that has a block. Pinned in app-source-repo.service.test.ts.',
+  'src/server/services/blocks/app-platform-update.service.ts':
+    'appForOwner gates the OWNER half of staff platform updates (listPending, verifyCommit, ' +
+    'resolve) on assertAppEditAccess: owner | ACCEPTED collaborator, the same cell as the ' +
+    "build and source repos, so a collaborator who pulls the app sees and merges staff's " +
+    'updates too. NO mod bypass on that half; the staff half (push, supersede, modList) is a ' +
+    'separate moderatorProcedure, never a bypass here. "No such app" and "not yours" answer ' +
+    'the same NOT_FOUND. Pinned in app-platform-update.service.test.ts.',
   'src/server/services/blocks/app-listing-visibility-write.service.ts':
     'setListingVisibilityAsOwner is THE gate on the owner path for the per-listing ' +
     'VISIBILITY LEVEL: owner | ACCEPTED collaborator, resolved by resolveListingAccess ' +
@@ -312,6 +319,13 @@ const GATE_LEDGER: Record<string, string> = {
     'Collaborators are NOT included by default (an editor consented to edit, not to ' +
     'receive moderation correspondence); `includeCollaborators` opts in per message and ' +
     'reads the ACCEPTED set via listAcceptedCollaboratorUserIds, ignoring `displayed`.',
+  'src/server/services/blocks/app-review-thread.service.ts':
+    'NOT a caller-identity gate on the listing. The review reply thread asks ' +
+    "resolveListingAccess (with `userId: null`) only for a store-listing request's " +
+    'CANONICAL owner, who is a thread participant beside the submitter and who is ' +
+    "notified of a moderator's reply. The denormalized AppListing.userId could name a " +
+    'former owner on a drifted onsite row, which would hand that user the thread. ' +
+    'Collaborators are not participants.',
   'src/pages/api/v1/blocks/dev-token.ts':
     'NOT widened, deliberately. This is a THIRD gate shape the ledger surfaced: a ' +
     'positive-match BRANCH CONDITION (`block.app.userId === user.id`) rather than a ' +

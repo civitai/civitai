@@ -43,8 +43,8 @@ func decodedString(t *testing.T, s string) string {
 }
 
 // FuzzSerialize: for any key, string, number and bool, Serialize never panics, writes valid JSON in
-// the `{json, meta}` shape, carries the values through, and annotates the undefined members and the
-// Date at their escaped paths. A non-finite float is refused, never written. Seed corpus:
+// the `{json, meta}` shape, carries the values through, writes an undefined member as null, and
+// annotates the undefined members and the Date at their escaped paths. A non-finite float is refused, never written. Seed corpus:
 // testdata/fuzz/FuzzSerialize.
 func FuzzSerialize(f *testing.F) {
 	f.Add("key", "value", int64(1), 1.5, true)
@@ -93,8 +93,8 @@ func FuzzSerialize(f *testing.F) {
 		if got, ok := env.JSON.K[wantKey]; !ok || got != wantVal || len(env.JSON.K) != 1 {
 			t.Fatalf("k = %v, want {%q: %q}", env.JSON.K, wantKey, wantVal)
 		}
-		if len(env.JSON.U) != 0 {
-			t.Fatalf("an undefined member was written: u = %v", env.JSON.U)
+		if u, ok := env.JSON.U[wantKey]; !ok || u != nil || len(env.JSON.U) != 1 {
+			t.Fatalf("an undefined member must be written as null: u = %v, want {%q: null}", env.JSON.U, wantKey)
 		}
 		if env.JSON.N.String() != strconv.FormatInt(n, 10) || env.JSON.F != fl || env.JSON.B != b {
 			t.Fatalf("scalars: n %s f %v b %v, want %d %v %v", env.JSON.N, env.JSON.F, env.JSON.B, n, fl, b)

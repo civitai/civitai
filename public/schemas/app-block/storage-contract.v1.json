@@ -9,7 +9,7 @@
     "rateLimits": "Each fixed-window limit is per (app, viewer): reads 300/min (an anonymous reader per client IP), private document writes and every delete 120/min. Shared document creates and updates spend the document store's shared write budget, per (app, viewer), three token buckets refilling continuously: burst 30 (one token back every minute), daily 300 (one back every 4.8 minutes), and rejections 10 (one back every 30 minutes). A write takes one burst and one daily token and is refused while either, or the rejection bucket, is empty; a write that does not land gives both back, and if the refusal was about the request rather than an outage it also spends one rejection token.",
     "keys": "A document key is 1-128 characters of [A-Za-z0-9._:-] and must not consist only of dots: URL clients rewrite `.` and `..` path segments, so such a key could never be addressed.",
     "publish": "Server-side publish was removed: POST /_publish/<to> and POST /_unpublish/<to> answer 404 not_found exactly as an unknown route. A client copies a private document into a shared collection by reading it and writing it (put).",
-    "tallies": "Marks, counters and their tallies were removed: a collection may still declare `marks`, `counters` or write \"none\" in an approved manifest, but nothing serves them. Info lists every collection's `counters` and `marks` as []. A document is answered with `counters: {}`, `marks: {}` and `viewer` ({marks: []} for a signed-in viewer, null otherwise) for compatibility with older SDKs. PATCH /<c>/<key> is 405 method_not_allowed (Allow: GET, PUT, DELETE); /<c>/<key>/counters/<name> and /<c>/<key>/marks/<name> are 404 not_found, as any unknown route. A write \"none\" collection is read-only: every create, put and delete is 403 write_policy. A list refuses markedBy and mark as unknown parameters, and sort=counter:… / mark:… as an undeclared sort field."
+    "tallies": "Marks, counters and their tallies were removed: a collection may still declare `marks`, `counters` or write \"none\" in an approved manifest, but nothing serves them. An info reply's collections carry no `counters` or `marks`. A document is answered with `counters: {}`, `marks: {}` and `viewer` ({marks: []} for a signed-in viewer, null otherwise) for compatibility with older SDKs. PATCH /<c>/<key> is 405 method_not_allowed (Allow: GET, PUT, DELETE); /<c>/<key>/counters/<name> and /<c>/<key>/marks/<name> are 404 not_found, as any unknown route. A write \"none\" collection is read-only: every create, put and delete is 403 write_policy. A list refuses markedBy and mark as unknown parameters, and sort=counter:… / mark:… as an undeclared sort field."
   },
   "storage": {
     "collections": {
@@ -106,13 +106,15 @@
               "collections": {
                 "prefs": {
                   "visibility": "private",
-                  "write": "$absent"
+                  "write": "$absent",
+                  "marks": "$absent",
+                  "counters": "$absent"
                 },
                 "posts": {
                   "visibility": "shared",
                   "write": "own",
-                  "marks": [],
-                  "counters": [],
+                  "marks": "$absent",
+                  "counters": "$absent",
                   "indexes": {
                     "status": "string"
                   },
@@ -120,8 +122,8 @@
                 },
                 "plays": {
                   "write": "none",
-                  "counters": [],
-                  "marks": []
+                  "counters": "$absent",
+                  "marks": "$absent"
                 }
               },
               "limits": {

@@ -238,6 +238,12 @@ export type SubmitVersionParams = {
    * 🔴 A credential: never logged or echoed.
    */
   githubOidcToken?: string;
+  /**
+   * The packages the client reported submitting below the platform minimum with
+   * `--allow-outdated-sdk` (`sdk-floor.ts`). A claim, recorded beside the server's own lockfile
+   * reading under `fileSummary.sdkFloor`; it changes nothing else.
+   */
+  sdkFloorOverride?: { package: string; installed: string; minimum: string }[];
 };
 
 export type SubmitVersionResult = {
@@ -269,9 +275,10 @@ export type SubmitVersionResult = {
    */
   actionsRunSourceRecorded?: boolean;
   /**
-   * Notes that never refuse or delay the submit (`submitAdvisories`): today only `default-theme`,
-   * when the bundle reads as Civitai's stock look. Empty when there is nothing to say, or when they
-   * could not be worked out in time. Part of the submit API's response (both routes).
+   * Notes that never refuse or delay the submit: `default-theme` (`submitAdvisories`), when the
+   * bundle reads as Civitai's stock look, and `sdk-below-floor` (`sdk-floor.ts`), one per package
+   * the bundle's lockfile installs below the platform minimum. Empty when there is nothing to
+   * say, or when they could not be worked out in time. Part of the submit API's response (both routes).
    */
   advisories: Advisory[];
 };
@@ -1145,6 +1152,7 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     sourceCommit,
     sourceDirty,
     githubOidcToken,
+    sdkFloorOverride,
   } = params;
 
   const { assertAcceptedAppDeveloperTerms } = await import('./app-developer-terms.service');
@@ -1524,6 +1532,14 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     throw new Error(`could not push bundle to review repo: ${(err as Error).message}`);
   }
 
+  // OUTDATED SDK: the server's own lockfile reading (never throws, time-bounded) and the client's
+  // `--allow-outdated-sdk` claim, stored for the moderator under `fileSummary.sdkFloor` (absent
+  // when there is nothing to say). Never refuses. The lockfile read is the one the manifest's
+  // `buildCommand` installs from, chosen as the CLI chooses it. See `sdk-floor.ts`.
+  const { judgeBundleSdkFloor, sdkFloorRecord, sdkFloorAdvisories } = await import('./sdk-floor');
+  const sdkFloor = await judgeBundleSdkFloor(bundleBuffer, manifest.buildCommand);
+  const sdkFloorRecorded = sdkFloorRecord(sdkFloor, sdkFloorOverride);
+
   const publishRequestId = `pubreq_${newUlid()}`;
   try {
     await dbWrite.appBlockPublishRequest.create({
@@ -1537,7 +1553,9 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
         bundleKey: key,
         bundleSha256,
         bundleSizeBytes: BigInt(bundleBuffer.length),
-        fileSummary: fileSummary as object,
+        fileSummary: (sdkFloorRecorded
+          ? { ...fileSummary, sdkFloor: sdkFloorRecorded }
+          : fileSummary) as object,
         manifestDiffSummary: manifestDiffSummary as object,
         status: 'pending',
         // #4059 — the client's UNVERIFIED provenance claim, stored as a claim.
@@ -1717,7 +1735,7 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     listing,
     storageMigrationWarnings: storageMigrations.warnings,
     ...(actionsRunSourceRecorded === undefined ? {} : { actionsRunSourceRecorded }),
-    advisories,
+    advisories: [...advisories, ...sdkFloorAdvisories(sdkFloor.lockfile, sdkFloor.below)],
   };
 }
 
@@ -5287,10 +5305,12 @@ async function approveRequestUnderClaim(
       type: 'app-block-approved',
       userId: request.submittedByUserId,
       key: `app-block-approved:${params.publishRequestId}`,
+      attribution: { kind: 'moderator', requestId: params.publishRequestId },
       details: {
         slug: request.slug,
         name: typeof manifest.name === 'string' ? manifest.name : null,
         version: request.version,
+        approvalNote: params.approvalNotes?.trim() || null,
         hasPage: manifestDeclaresPage(manifest),
         mature: isMatureContentRating(
           typeof manifest.contentRating === 'string' ? manifest.contentRating : null
@@ -7487,26 +7507,52 @@ async function getPreviousApprovedFiles(
 export async function getPublishRequestDiff(opts: {
   publishRequestId: string;
 }): Promise<BundleLineDiff> {
+  return diffPendingBundle(opts.publishRequestId, await loadPendingBundle(opts.publishRequestId));
+}
+
+/**
+ * The line diff of a pending bundle already loaded with {@link loadPendingBundle}, so a caller
+ * that also reads the files (the review agent chat) extracts the bundle once.
+ */
+export async function diffPendingBundle(
+  publishRequestId: string,
+  pending: PendingBundle
+): Promise<BundleLineDiff> {
+  // A row with neither bundle pointer is unexpected → no diffable artifact.
+  if (!pending.files) return { files: [], truncated: false };
+  // Diff against the version BEFORE this row (exclude self so re-reviewing an
+  // approved row doesn't compare it to itself → an all-empty diff).
+  const previousFiles = await getPreviousApprovedFiles(pending.slug, publishRequestId);
+  return computeBundleLineDiff(pending.files, previousFiles);
+}
+
+/** Whether a bundle file is binary, by the same rule the line diff elides binaries with. */
+export function isBinaryBundleFile(path: string, content: Buffer): boolean {
+  return isBinaryExtension(path) || looksBinary(content);
+}
+
+export type PendingBundle = {
+  slug: string;
+  files: Array<{ path: string; content: Buffer }> | null;
+};
+
+/**
+ * A publish request's pending bundle, extracted (same caps as the diff, `readZipEntryCapped`).
+ * PUSH-ORIGINATED requests carry an empty bundleKey, so they are reconstructed from Forgejo at
+ * the pushed sha (as approveRequest does). `files` is null for a row with neither pointer.
+ */
+export async function loadPendingBundle(publishRequestId: string): Promise<PendingBundle> {
   const { dbRead } = await import('~/server/db/client');
   const row = await dbRead.appBlockPublishRequest.findUnique({
-    where: { id: opts.publishRequestId },
+    where: { id: publishRequestId },
     select: { bundleKey: true, slug: true, forgejoCommitSha: true },
   });
-  if (!row) throw new Error(`publish request ${opts.publishRequestId} not found`);
-  // PUSH-ORIGINATED requests carry an empty bundleKey — reconstruct from Forgejo
-  // at the pushed sha (as approveRequest / getPublishRequestScreenshots do). A
-  // row with neither pointer is unexpected → no diffable artifact.
-  if (!row.bundleKey && !row.forgejoCommitSha) {
-    return { files: [], truncated: false };
-  }
+  if (!row) throw new Error(`publish request ${publishRequestId} not found`);
+  if (!row.bundleKey && !row.forgejoCommitSha) return { slug: row.slug, files: null };
   const bundleBuffer = row.bundleKey
     ? await fetchBundleBuffer(row.bundleKey)
     : await reconstructBundleFromForgejo(row.slug, row.forgejoCommitSha as string);
-  const currentFiles = await extractBundleFilesFromBuffer(bundleBuffer);
-  // Diff against the version BEFORE this row (exclude self so re-reviewing an
-  // approved row doesn't compare it to itself → an all-empty diff).
-  const previousFiles = await getPreviousApprovedFiles(row.slug, opts.publishRequestId);
-  return computeBundleLineDiff(currentFiles, previousFiles);
+  return { slug: row.slug, files: await extractBundleFilesFromBuffer(bundleBuffer) };
 }
 
 export type RejectRequestParams = {
@@ -7629,6 +7675,7 @@ export async function rejectRequest(params: RejectRequestParams): Promise<void> 
       type: 'app-block-rejected',
       userId: row.submittedByUserId,
       key: `app-block-rejected:${params.publishRequestId}`,
+      attribution: { kind: 'moderator', requestId: params.publishRequestId },
       details: {
         slug: row.slug,
         name: typeof rejectManifest.name === 'string' ? rejectManifest.name : null,
