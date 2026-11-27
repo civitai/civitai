@@ -807,9 +807,17 @@ export async function sourceRepoGoverningBlockId(row: SourceRepoRow): Promise<st
   return (await governingBlock(row))?.id ?? null;
 }
 
-export type SeedFromBuildRepoResult =
-  | (EnsureSourceRepoResult & { approvedCommitSha: string })
-  | { kind: 'no-approved-version' };
+/** The build-repo commit of the app block's latest APPROVED publish request, or `null`. */
+export async function latestApprovedCommitSha(appBlockId: string): Promise<string | null> {
+  const approved = await dbRead.appBlockPublishRequest.findFirst({
+    where: { appBlockId, status: 'approved', forgejoCommitSha: { not: null } },
+    orderBy: [{ reviewedAt: 'desc' }, { submittedAt: 'desc' }],
+    select: { forgejoCommitSha: true },
+  });
+  return approved?.forgejoCommitSha ?? null;
+}
+
+export type SeedFromBuildRepoResult = EnsureSourceRepoResult | { kind: 'no-approved-version' };
 
 /**
  * Create `slug`'s source repo for a staff platform update, as a FORK of the app's build repo: the
@@ -817,9 +825,9 @@ export type SeedFromBuildRepoResult =
  * never written). An update branch cut from it therefore shares history with an owner's existing
  * checkout of the build repo, and merges into it like any branch would.
  *
- * Returns the app's latest approved commit (`approvedCommitSha`), which the caller cuts the
- * update from: the build repo's `main` may hold a newer push nobody approved. The git host has no
- * API to move a branch to an older commit, so `main` is left where the fork put it.
+ * The caller cuts every update to such a repo from the app's latest approved commit
+ * ({@link latestApprovedCommitSha}), never its `main`: the build repo's `main` may hold a newer
+ * push nobody approved.
  *
  * Only for an app with an approved version (a live app); the fork lineage is recorded from
  * `app_blocks.fork_of_*` when the block has one. Idempotent like {@link ensureSourceRepoLocked};
@@ -830,12 +838,7 @@ export async function seedSourceRepoFromBuildRepoLocked(args: {
   appBlockId: string;
   ownerUserId: number;
 }): Promise<SeedFromBuildRepoResult> {
-  const approved = await dbRead.appBlockPublishRequest.findFirst({
-    where: { appBlockId: args.appBlockId, status: 'approved', forgejoCommitSha: { not: null } },
-    orderBy: [{ reviewedAt: 'desc' }, { submittedAt: 'desc' }],
-    select: { forgejoCommitSha: true },
-  });
-  if (!approved?.forgejoCommitSha) return { kind: 'no-approved-version' };
+  if (!(await latestApprovedCommitSha(args.appBlockId))) return { kind: 'no-approved-version' };
   const lineageRows = (await dbRead.$queryRaw`SELECT
         ab."fork_of_app_block_id" AS "parentAppBlockId",
         ab."fork_of_commit_sha" AS "parentCommitSha",
@@ -857,7 +860,7 @@ export async function seedSourceRepoFromBuildRepoLocked(args: {
           parentAppBlockId: fork.parentAppBlockId,
         }
       : null;
-  const ensured = await ensureSourceRepoLocked({
+  return ensureSourceRepoLocked({
     slug: args.slug,
     ownerUserId: args.ownerUserId,
     origin: 'backfill',
@@ -871,7 +874,6 @@ export async function seedSourceRepoFromBuildRepoLocked(args: {
         }
       : {}),
   });
-  return { ...ensured, approvedCommitSha: approved.forgejoCommitSha };
 }
 
 /** The files a candidate is seeded with. */

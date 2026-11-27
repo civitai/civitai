@@ -7,8 +7,9 @@
  * a publish request in the owner's name and withdraw the one they have pending.
  *
  * An app with no source repo yet gets one first: a FORK of its build repo (its whole history), so
- * the update branch shares history with an owner's existing checkout of the build repo. That
- * first update is cut from the app's latest APPROVED commit, not the fork's `main`.
+ * the update branch shares history with an owner's existing checkout of the build repo. Every
+ * update to such a fork is cut from the app's latest APPROVED commit, never the fork's `main`
+ * ({@link approvedBaseFor}).
  *
  * THE RECORD IS THE PROOF. Each update is a row in `app_platform_updates` written by the server
  * after the commit landed, carrying the moderator's user id from the session. The commit's author
@@ -367,9 +368,9 @@ export type PushPlatformUpdateResult = {
  *
  * Refuses: an account that is not a moderator; a blank or too-long reason; no changes, too many,
  * too large, a path a source repo never holds; an app with neither a source repo nor an approved
- * version; a source repo under the slug that belongs to a different app; a new source repo that
- * does not hold the approved commit; `main` moving during the write. Nothing is recorded for a
- * refused push.
+ * version; a source repo under the slug that belongs to a different app; a fork of the build repo
+ * that does not hold (and cannot be synced to hold) the latest approved commit; `main` moving
+ * during the write. Nothing is recorded for a refused push.
  */
 export async function pushPlatformUpdate(args: {
   staffUserId: number;
@@ -469,9 +470,6 @@ async function pushLocked(args: {
 
   let row = read.row;
   let seeded = false;
-  // Set when this push created the repo: the update is cut from the app's latest APPROVED commit,
-  // never the fork's `main` (the build repo's `main` may hold a newer push nobody approved).
-  let approvedBase: string | null = null;
   if (!row) {
     const seed = await repo.seedSourceRepoFromBuildRepoLocked({
       slug: app.slug,
@@ -491,7 +489,6 @@ async function pushLocked(args: {
       });
     row = seed.row;
     seeded = seed.kind === 'created';
-    if (seeded) approvedBase = seed.approvedCommitSha;
   }
   // A repo under the slug that is not this app's (someone else's fork or assistant app took the
   // slug before this block existed) is never written for it.
@@ -502,11 +499,7 @@ async function pushLocked(args: {
     });
 
   const forgejo = await import('~/server/services/blocks/forgejo.service');
-  if (approvedBase && !(await forgejo.hasCommit(FORGEJO_SOURCE_ORG, app.slug, approvedBase)))
-    throw new TRPCError({
-      code: 'CONFLICT',
-      message: 'The app’s approved version is not in its source repo; nothing was pushed',
-    });
+  const approvedBase = await approvedBaseFor(app);
   const base =
     approvedBase ?? (await forgejo.getBranchHead(FORGEJO_SOURCE_ORG, app.slug, SOURCE_MAIN_BRANCH));
   if (!base)
@@ -528,7 +521,6 @@ async function pushLocked(args: {
 
   const id = newAppPlatformUpdateId();
   const branch = platformUpdateBranch(id);
-  // Cut from the approved commit: the branch is made there first, and the commit goes onto it.
   if (
     approvedBase &&
     (await forgejo.createBranchAt({
@@ -600,6 +592,44 @@ async function pushLocked(args: {
     paths,
     touchesManifest,
   };
+}
+
+/**
+ * The commit an update is cut from when it is not the source repo's `main`, decided from the repo
+ * as it IS (never from whether this call created it, so a retry after a failed first push and
+ * every later update get the same answer):
+ *   - a FORK of the build repo (a source repo a platform update created): its `main` is the build
+ *     repo's `main` as it was when forked (or last synced), which may hold a push nobody approved,
+ *     and owners keep pushing to the build repo, so `main` is never the base. The base is the
+ *     app's latest APPROVED commit. One approved after the fork is brought in by fast-forwarding
+ *     the fork's `main` from the build repo's; when the host refuses (the fork's `main` has
+ *     commits of its own) or the build repo's `main` does not hold it, the push is refused.
+ *   - any other source repo (App Assistant, fork start, backfill): `null`, cut from `main`, which
+ *     is the owner's working copy.
+ */
+async function approvedBaseFor(app: ResolvedApp): Promise<string | null> {
+  const forgejo = await import('~/server/services/blocks/forgejo.service');
+  if (!(await forgejo.sourceRepoIsForkOfBuildRepo(app.slug))) return null;
+  const { latestApprovedCommitSha } = await import(
+    '~/server/services/blocks/app-source-repo.service'
+  );
+  const approved = await latestApprovedCommitSha(app.id);
+  if (!approved)
+    throw new TRPCError({
+      code: 'PRECONDITION_FAILED',
+      message: 'The app has no approved version to base the update on',
+    });
+  if (await forgejo.hasCommit(FORGEJO_SOURCE_ORG, app.slug, approved)) return approved;
+  await forgejo.syncForkBranch({
+    org: FORGEJO_SOURCE_ORG,
+    slug: app.slug,
+    branch: SOURCE_MAIN_BRANCH,
+  });
+  if (await forgejo.hasCommit(FORGEJO_SOURCE_ORG, app.slug, approved)) return approved;
+  throw new TRPCError({
+    code: 'CONFLICT',
+    message: 'The app’s approved version is not in its source repo yet; nothing was pushed',
+  });
 }
 
 /** The first parent of `sha` in the slug's source repo; `null` (logged) when it cannot be read. */
@@ -714,7 +744,7 @@ export async function supersedePlatformUpdate(args: {
   return { id: row.id, status: 'superseded' };
 }
 
-/** The app's 200 most recent updates, newest first, for staff. */
+/** The app's most recent updates (capped by readRows), newest first, for staff. */
 export async function listPlatformUpdatesForModerator(args: {
   app: AppRef;
 }): Promise<Array<OwnerPlatformUpdate & { staffUserId: number; mergeCommitSha: string | null }>> {

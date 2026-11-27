@@ -1422,24 +1422,58 @@ export async function forkBuildRepoIntoSourceOrg(slug: string): Promise<ForkBuil
   );
   if (res.status === 409 || res.status === 422) {
     await res.text().catch(() => '');
-    const got = await fjFetch(`/api/v1/repos/${FORGEJO_SOURCE_ORG}/${encodeURIComponent(slug)}`);
-    const repo = await unwrap<{ fork?: boolean; parent?: { full_name?: string } | null }>(got);
-    return {
-      kind: 'exists',
-      forkOfBuildRepo: repo?.fork === true && repo.parent?.full_name === `${FORGEJO_ORG}/${slug}`,
-    };
+    return { kind: 'exists', forkOfBuildRepo: await sourceRepoIsForkOfBuildRepo(slug) };
   }
   await unwrap<unknown>(res);
   return { kind: 'forked' };
 }
 
-/** The parent commit ids of `sha`, in order (empty for a root commit). */
-export async function getCommitParents(org: string, slug: string, sha: string): Promise<string[]> {
+/**
+ * Whether `civitai-apps-src/<slug>` is a fork of the build repo `civitai-apps/<slug>` (the git
+ * host's own `fork` / `parent` fields). Only {@link forkBuildRepoIntoSourceOrg} makes one.
+ */
+export async function sourceRepoIsForkOfBuildRepo(slug: string): Promise<boolean> {
+  const got = await fjFetch(`/api/v1/repos/${FORGEJO_SOURCE_ORG}/${encodeURIComponent(slug)}`);
+  const repo = await unwrap<{ fork?: boolean; parent?: { full_name?: string } | null }>(got);
+  return repo?.fork === true && repo.parent?.full_name === `${FORGEJO_ORG}/${slug}`;
+}
+
+/**
+ * Fast-forward a fork's `branch` to its parent repo's `branch` (`POST /sync_fork/{branch}`).
+ * `refused` when the host will not: the fork's branch has commits of its own, it is already up to
+ * date, or the repo is not a fork (all a 400). Nothing is ever force-moved.
+ */
+export async function syncForkBranch(opts: {
+  org: string;
+  slug: string;
+  branch: string;
+}): Promise<'synced' | 'refused'> {
   const res = await fjFetch(
+    `/api/v1/repos/${opts.org}/${encodeURIComponent(opts.slug)}/sync_fork/${encodeURIComponent(
+      opts.branch
+    )}`,
+    { method: 'POST' },
+    commitTimeoutMs()
+  );
+  if (res.status === 400) {
+    await res.text().catch(() => '');
+    return 'refused';
+  }
+  await unwrap<unknown>(res);
+  return 'synced';
+}
+
+function fetchCommit(org: string, slug: string, sha: string): Promise<Response> {
+  return fjFetch(
     `/api/v1/repos/${org}/${encodeURIComponent(slug)}/git/commits/${encodeURIComponent(
       sha
     )}?stat=false&verification=false&files=false`
   );
+}
+
+/** The parent commit ids of `sha`, in order (empty for a root commit). */
+export async function getCommitParents(org: string, slug: string, sha: string): Promise<string[]> {
+  const res = await fetchCommit(org, slug, sha);
   const commit = await unwrap<{ parents?: Array<{ sha?: string }> | null }>(res);
   return (commit?.parents ?? []).map((p) => p.sha).filter((s): s is string => !!s);
 }
@@ -1458,11 +1492,7 @@ export async function getBranchHead(
 
 /** Whether the repo holds commit `sha` (a 404 is `false`; any other failure throws). */
 export async function hasCommit(org: string, slug: string, sha: string): Promise<boolean> {
-  const res = await fjFetch(
-    `/api/v1/repos/${org}/${encodeURIComponent(slug)}/git/commits/${encodeURIComponent(
-      sha
-    )}?stat=false&verification=false&files=false`
-  );
+  const res = await fetchCommit(org, slug, sha);
   if (res.status === 404) {
     await res.text().catch(() => '');
     return false;
