@@ -34,6 +34,7 @@ import {
 import { reviewOfImageSql } from '~/server/services/creator-service-review-image-sql';
 import { BlockedByUsers, BlockedUsers } from '~/server/services/user-preferences.service';
 import { shownReviewImageLevelsFor } from '~/server/utils/review-image-levels';
+import { childSafetyCaseTablesSql } from '~/server/services/__tests__/child-safety-case-tables';
 import {
   allBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
@@ -60,8 +61,10 @@ beforeAll(async () => {
       id int PRIMARY KEY, "bannedAt" timestamp, "deletedAt" timestamp, username text, image text,
       "profilePictureId" int, muted boolean NOT NULL DEFAULT false, settings jsonb DEFAULT '{}'
     );
-    CREATE TABLE "ServiceDealFileEntry" (id serial PRIMARY KEY, "imageId" int);
+    CREATE TABLE "ServiceDealFileEntry" (id serial PRIMARY KEY, "fileId" int, "imageId" int);
     CREATE TABLE "ServiceDealFile" (id serial PRIMARY KEY, "imageId" int);
+    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, images jsonb NOT NULL DEFAULT '[]',
+      details jsonb NOT NULL DEFAULT '{}', "reportSentAt" timestamp, "archivedAt" timestamp);
     CREATE TABLE "Image" (
       id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, "nsfwLevel" int DEFAULT 1,
       "needsReview" text, "blockedFor" text, ingestion "ImageIngestionStatus" DEFAULT 'Scanned',
@@ -110,8 +113,10 @@ beforeAll(async () => {
       id int PRIMARY KEY, "dealId" int NOT NULL, "buyerId" int NOT NULL, "sellerId" int NOT NULL,
       "publishedAt" timestamp, "hiddenAt" timestamp
     );
-    CREATE TABLE "ServiceDealReviewImage" ("reviewId" int NOT NULL, "imageId" int NOT NULL UNIQUE);
+    CREATE TABLE "ServiceDealReviewImage" ("reviewId" int NOT NULL, "imageId" int NOT NULL UNIQUE, "sourceFileId" int);
+    CREATE TABLE "Report" (id serial PRIMARY KEY, status text NOT NULL DEFAULT 'Pending');
   `);
+  await db.exec(childSafetyCaseTablesSql);
   const triggers = readFileSync(
     path.resolve(
       __dirname,
@@ -134,7 +139,8 @@ let blocks: Array<[number, number]> = [];
 beforeEach(async () => {
   await db.exec(`
     TRUNCATE "User", "Image", "Post", "Article", "CollectionContributor", "Bounty", "BountyEntry",
-      "ImageConnection", "ServiceOffering", "ServiceDeal", "ServiceDealReview", "ServiceDealReviewImage";
+      "ImageConnection", "ServiceOffering", "ServiceDeal", "ServiceDealReview", "ServiceDealReviewImage",
+      "ServiceDealFile", "ServiceDealFileEntry";
     INSERT INTO "User" (id) VALUES (${SELLER}), (${BUYER}), (${OTHER});
     UPDATE "User" SET settings = '{"creatorShop":{"enabled":true}}' WHERE id = ${SELLER};
     INSERT INTO "ServiceOffering" (id, "sellerId") VALUES (1, ${SELLER});
@@ -255,6 +261,41 @@ describe('the image page opt-in', () => {
     await db.exec(`UPDATE "ServiceDealReview" SET "hiddenAt" = now()`);
     expect(await opens(MOD, allBrowsingLevelsFlag)).toBe(true);
     expect(await opens(MOD, undefined)).toBe(true);
+  });
+});
+
+describe('a review copy whose source Final is held', () => {
+  const SCAN = 990000020;
+  /** Points the copy at a source Final whose scan image is `SCAN`, with `held` applied to it. */
+  async function sourced(held: boolean, fileId = 1) {
+    await db.exec(`
+      TRUNCATE "ServiceDealFile", "ServiceDealFileEntry";
+      DELETE FROM "Image" WHERE id = ${SCAN};
+      INSERT INTO "Image" (id, "userId", minor) VALUES (${SCAN}, ${SELLER}, ${held});
+      INSERT INTO "ServiceDealFile" (id) VALUES (1), (2);
+      INSERT INTO "ServiceDealFileEntry" ("fileId", "imageId") VALUES (${fileId}, ${SCAN});
+      UPDATE "ServiceDealReviewImage" SET "sourceFileId" = 1;
+    `);
+  }
+
+  it('is refused to its buyer by id once the source is held', async () => {
+    await sourced(true);
+    expect(await opens({ userId: BUYER }, allBrowsingLevelsFlag)).toBe(false);
+    expect(await opens(STRANGER, allBrowsingLevelsFlag)).toBe(false);
+  });
+
+  it('stays open to its buyer while the source is unheld, or held on another file', async () => {
+    await sourced(false);
+    expect(await opens({ userId: BUYER }, allBrowsingLevelsFlag)).toBe(true);
+    await sourced(true, 2);
+    expect(await opens({ userId: BUYER }, allBrowsingLevelsFlag)).toBe(true);
+    // An ordinary postless image of the same buyer is untouched.
+    expect(await opens({ userId: BUYER }, undefined, UNRELATED)).toBe(true);
+  });
+
+  it('still opens to a moderator', async () => {
+    await sourced(true);
+    expect(await opens(MOD, allBrowsingLevelsFlag)).toBe(true);
   });
 });
 

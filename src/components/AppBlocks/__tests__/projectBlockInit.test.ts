@@ -3,6 +3,7 @@ import {
   projectBlockInitContext,
   projectBlockInitMaturity,
   projectBlockInitViewer,
+  projectBlockInitViewerImage,
   withSignedInFlag,
 } from '../projectBlockInit';
 import type { BlockCheckpointInfo, ModelSlotContext, ShowcaseImage } from '../types';
@@ -546,5 +547,89 @@ describe('projectBlockInitMaturity — effectiveBrowsingLevel (per-viewer ceilin
         projectBlockInitMaturity({ domain: 'red', maxBrowsingLevel: 31, effectiveBrowsingLevel: 5 })
       ).sort()
     ).toEqual(['domain', 'effectiveBrowsingLevel', 'maxBrowsingLevel']);
+  });
+});
+
+/**
+ * `viewer.image` — the mint's server-decided avatar, forwarded by both hosts through
+ * `withSignedInFlag`. The host only shape-checks; anything that is not one of the three
+ * contract shapes is DROPPED (key absent), never forwarded.
+ */
+describe('projectBlockInitViewerImage + viewer.image', () => {
+  const URL_A = 'https://image.example/key-a/width=320/key-a.jpeg';
+
+  it('forwards the three contract shapes, copied by field', () => {
+    expect(projectBlockInitViewerImage({ url: URL_A, nsfwLevel: 'pg13', extra: 'x' })).toEqual({
+      url: URL_A,
+      nsfwLevel: 'pg13',
+    });
+    // A withheld avatar carries no url and no reason, whatever the value held.
+    expect(
+      projectBlockInitViewerImage({ restricted: true, reason: 'ceiling', url: URL_A })
+    ).toEqual({ restricted: true });
+    expect(projectBlockInitViewerImage({ restricted: true })).toEqual({ restricted: true });
+    expect(projectBlockInitViewerImage(null)).toBeNull();
+  });
+
+  it('drops anything else', () => {
+    for (const bad of [
+      undefined,
+      'https://image.example/a.jpeg',
+      [],
+      { url: URL_A },
+      { url: URL_A, nsfwLevel: 'nc17' },
+      { url: 'javascript:alert(1)', nsfwLevel: 'pg' },
+      { url: 'key-a/width=320/key-a.jpeg', nsfwLevel: 'pg' },
+      { restricted: 'true' },
+    ]) {
+      expect(projectBlockInitViewerImage(bad)).toBeUndefined();
+    }
+  });
+
+  it('both hosts stamp it onto the viewer; absent stays absent', () => {
+    const viewer = { id: 6021, username: 'tamsin-orb' };
+    expect(withSignedInFlag(viewer, { url: URL_A, nsfwLevel: 'pg' })).toEqual({
+      id: 6021,
+      username: 'tamsin-orb',
+      signedIn: true,
+      image: { url: URL_A, nsfwLevel: 'pg' },
+    });
+    expect(withSignedInFlag(viewer, null)).toEqual({
+      id: 6021,
+      username: 'tamsin-orb',
+      signedIn: true,
+      image: null,
+    });
+    expect(Object.keys(withSignedInFlag(viewer) ?? {}).sort()).toEqual([
+      'id',
+      'signedIn',
+      'username',
+    ]);
+    expect(Object.keys(withSignedInFlag(viewer, { url: URL_A }) ?? {})).not.toContain('image');
+    expect(
+      projectBlockInitViewer(
+        {
+          slotId: 'model.sidebar',
+          viewerUserId: 6021,
+          viewerUsername: 'tamsin-orb',
+        } as unknown as ModelSlotContext,
+        { restricted: true }
+      )
+    ).toEqual({
+      id: 6021,
+      username: 'tamsin-orb',
+      signedIn: true,
+      image: { restricted: true },
+    });
+  });
+
+  it('an anonymous viewer stays null whatever the mint sent', () => {
+    expect(withSignedInFlag(null, { url: URL_A, nsfwLevel: 'pg' })).toBeNull();
+    expect(
+      projectBlockInitViewer(
+        { slotId: 'model.sidebar', viewerUserId: null } as unknown as ModelSlotContext,
+        { url: URL_A, nsfwLevel: 'pg' }
+      )
+    ).toBeNull();
   });
 });

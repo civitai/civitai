@@ -36,6 +36,7 @@ export const PROMPT_AUDITED_STEP_TYPES = [
   'aceStepAudio',
   'miniMaxMusic3',
   'soniloAudioGen',
+  'seedAudioGen',
   'yuE2',
   'textToSpeech',
   'liveTextToSpeech',

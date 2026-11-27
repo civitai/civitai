@@ -807,6 +807,16 @@ export async function sourceRepoGoverningBlockId(row: SourceRepoRow): Promise<st
   return (await governingBlock(row))?.id ?? null;
 }
 
+/** The build-repo commit of the app block's latest APPROVED publish request, or `null`. */
+export async function latestApprovedCommitSha(appBlockId: string): Promise<string | null> {
+  const approved = await dbRead.appBlockPublishRequest.findFirst({
+    where: { appBlockId, status: 'approved', forgejoCommitSha: { not: null } },
+    orderBy: [{ reviewedAt: 'desc' }, { submittedAt: 'desc' }],
+    select: { forgejoCommitSha: true },
+  });
+  return approved?.forgejoCommitSha ?? null;
+}
+
 export type SeedFromBuildRepoResult = EnsureSourceRepoResult | { kind: 'no-approved-version' };
 
 /**
@@ -814,6 +824,10 @@ export type SeedFromBuildRepoResult = EnsureSourceRepoResult | { kind: 'no-appro
  * build repo's whole history, `main` where the build repo's `main` is (the build repo is read,
  * never written). An update branch cut from it therefore shares history with an owner's existing
  * checkout of the build repo, and merges into it like any branch would.
+ *
+ * The caller cuts every update to such a repo from the app's latest approved commit
+ * ({@link latestApprovedCommitSha}), never its `main`: the build repo's `main` may hold a newer
+ * push nobody approved.
  *
  * Only for an app with an approved version (a live app); the fork lineage is recorded from
  * `app_blocks.fork_of_*` when the block has one. Idempotent like {@link ensureSourceRepoLocked};
@@ -824,12 +838,7 @@ export async function seedSourceRepoFromBuildRepoLocked(args: {
   appBlockId: string;
   ownerUserId: number;
 }): Promise<SeedFromBuildRepoResult> {
-  const approved = await dbRead.appBlockPublishRequest.findFirst({
-    where: { appBlockId: args.appBlockId, status: 'approved', forgejoCommitSha: { not: null } },
-    orderBy: [{ reviewedAt: 'desc' }, { submittedAt: 'desc' }],
-    select: { forgejoCommitSha: true },
-  });
-  if (!approved?.forgejoCommitSha) return { kind: 'no-approved-version' };
+  if (!(await latestApprovedCommitSha(args.appBlockId))) return { kind: 'no-approved-version' };
   const lineageRows = (await dbRead.$queryRaw`SELECT
         ab."fork_of_app_block_id" AS "parentAppBlockId",
         ab."fork_of_commit_sha" AS "parentCommitSha",

@@ -9,6 +9,7 @@ import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import { OnboardingSteps } from '~/server/common/enums';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import type * as FliptClient from '~/server/flipt/client';
+import type { SubmitVersionParams } from '~/server/services/blocks/publish-request.service';
 
 /**
  * Staff platform updates end to end: the real services and router, against
@@ -26,6 +27,9 @@ import type * as FliptClient from '~/server/flipt/client';
  *     the record, and the owner's notification;
  *   - an app with no source repo gets one as a FORK of its build repo first (the build repo is
  *     only read), so an owner's existing checkout of the build repo merges the update cleanly;
+ *     every update to such a fork (a retry after a failed first push and every later one too) is
+ *     cut from the latest approved commit, never a newer unapproved push; a newer approval is
+ *     synced into the fork, or the push is refused; any other source repo is cut from its main;
  *   - the record names the commit's real parent, and whether the update touches the manifest;
  *   - the owner list returns this app's OPEN updates (pending AND conflicted, oldest first, each
  *     with its status; never merged or superseded), to the owner or an accepted collaborator only;
@@ -218,6 +222,31 @@ class FakeGit {
       const parent = this.forkOf.get(key);
       return json(200, { fork: !!parent, parent: parent ? { full_name: parent } : null });
     }
+    if (
+      (m = p.match(/^\/api\/v1\/repos\/([^/]+)\/([^/]+)\/sync_fork\/(.+)$/)) &&
+      method === 'POST'
+    ) {
+      // As Forgejo 17 answers (measured): a fast-forward of the fork's branch to its parent's is a
+      // 204; a fork branch with commits of its own, one already up to date, or a repo that is not
+      // a fork is a 400 and moves nothing.
+      const key = `${m[1]}/${decodeURIComponent(m[2])}`;
+      const name = decodeURIComponent(m[3]);
+      const parent = this.forkOf.get(key);
+      const ours = this.refs.get(key)?.get(name);
+      const theirs = parent ? this.refs.get(parent)?.get(name) : undefined;
+      if (!ours || !theirs || ours === theirs || !this.ancestors(theirs).has(ours))
+        return json(400, { message: 'You can’t sync this branch' });
+      this.refs.get(key)!.set(name, theirs);
+      return json(204);
+    }
+    if ((m = p.match(/^\/api\/v1\/repos\/([^/]+)\/([^/]+)\/branches$/)) && method === 'POST') {
+      // As the real host answers: 409 for a taken name, 500 for a sha the repo does not hold.
+      const key = `${m[1]}/${decodeURIComponent(m[2])}`;
+      if (this.branch(m[1], decodeURIComponent(m[2]), body.new_branch_name)) return json(409, {});
+      if (!this.reachable(key, body.old_ref_name)) return json(500, {});
+      this.refs.get(key)!.set(body.new_branch_name, body.old_ref_name);
+      return json(201, { name: body.new_branch_name });
+    }
     if ((m = p.match(/^\/api\/v1\/repos\/([^/]+)\/([^/]+)\/branches\/(.+)$/))) {
       const b = this.branch(m[1], m[2], decodeURIComponent(m[3]));
       return b ? json(200, { commit: { id: b.head } }) : json(404, {});
@@ -312,7 +341,21 @@ const blocks = [
 ];
 const listings = [{ id: 'apl_app', appBlockId: 'ab_app' }];
 const seats = [{ appListingId: 'apl_app', userId: EDITOR }];
-let approved: Record<string, { forgejoCommitSha: string; version: string }>;
+type ApprovedRow = { forgejoCommitSha: string; version: string };
+/** The latest approved version per block, as the PRIMARY has it. */
+let approved: Record<string, ApprovedRow>;
+/** The same as the REPLICA has it, when it lags the primary; `null` = caught up. */
+let replicaApproved: Record<string, ApprovedRow> | null;
+/** Pending publish requests by slug (the database allows one per app). */
+let pending: Record<string, { id: string; submittedByUserId: number; fileSummary: unknown }>;
+/** Publish requests filed by a staff on-behalf submit (`fileSummary.onBehalf`), on the primary. */
+let filed: Array<{
+  id: string;
+  slug: string;
+  status: string;
+  fileSummary: unknown;
+  appBlockId?: string;
+}>;
 
 function installModelReads() {
   const shape = (b: (typeof blocks)[number]) => ({
@@ -332,12 +375,61 @@ function installModelReads() {
   dbMock.dbRead.user.findUnique.mockImplementation(async (a: { where: { id: number } }) =>
     users[a.where.id] ? { ...users[a.where.id] } : null
   );
-  dbMock.dbRead.appBlockPublishRequest.findFirst.mockImplementation(
-    async (a: { where: { appBlockId?: string; status?: string } }) =>
-      a.where.status === 'approved' && a.where.appBlockId && approved[a.where.appBlockId]
-        ? { ...approved[a.where.appBlockId] }
-        : null
-  );
+  type Where = {
+    appBlockId?: string;
+    slug?: string;
+    status?: string | { in: string[] };
+    fileSummary?: { path: string[]; equals: string };
+  };
+  const onBehalfIdOf = (fileSummary: unknown) =>
+    (fileSummary as { onBehalf?: { platformUpdateId?: string } } | null)?.onBehalf
+      ?.platformUpdateId;
+  const readers = (replica: boolean) => {
+    const approvedFor = (where: Where) => {
+      const id = where.appBlockId ?? blocks.find((x) => x.blockId === where.slug)?.id;
+      return id ? ((replica ? replicaApproved : null) ?? approved)[id] : undefined;
+    };
+    const findFirst = async (a: { where: Where }) => {
+      const w = a.where;
+      if (w.fileSummary) {
+        // `fileSummary->'onBehalf'->>'platformUpdateId' = …` among the listed statuses.
+        expect(w.fileSummary.path).toEqual(['onBehalf', 'platformUpdateId']);
+        const statuses = typeof w.status === 'object' ? w.status.in : [w.status];
+        const hit = [...filed]
+          .reverse()
+          .find(
+            (r) =>
+              (!w.appBlockId || r.appBlockId === w.appBlockId) &&
+              statuses.includes(r.status) &&
+              onBehalfIdOf(r.fileSummary) === w.fileSummary!.equals
+          );
+        return hit ? { id: hit.id, status: hit.status } : null;
+      }
+      if (w.status === 'pending') {
+        if (w.slug && pending[w.slug]) return { ...pending[w.slug] };
+        const staff = filed.find((r) => r.slug === w.slug && r.status === 'pending');
+        return staff
+          ? { id: staff.id, submittedByUserId: MOD, fileSummary: staff.fileSummary }
+          : null;
+      }
+      const hit = w.status === 'approved' ? approvedFor(w) : undefined;
+      // The approved build is read back from the build repo at its commit (no stored bundle).
+      return hit ? { ...hit, bundleKey: '', slug: w.slug ?? SLUG } : null;
+    };
+    const findMany = async (a: { where: Where }) => {
+      const hit = a.where.status === 'approved' ? approvedFor(a.where) : undefined;
+      return hit ? [{ version: hit.version }] : [];
+    };
+    return { findFirst, findMany };
+  };
+  for (const [client, replica] of [
+    [dbMock.dbRead, true],
+    [dbMock.dbWrite, false],
+  ] as const) {
+    const r = readers(replica);
+    client.appBlockPublishRequest.findFirst.mockImplementation(r.findFirst);
+    client.appBlockPublishRequest.findMany.mockImplementation(r.findMany);
+  }
   dbMock.dbRead.appListing.findUnique.mockImplementation(
     async (a: { where: { appBlockId: string } }) =>
       listings.find((l) => l.appBlockId === a.where.appBlockId) ?? null
@@ -416,6 +508,9 @@ beforeEach(async () => {
   commitSeq = 0;
   git = new FakeGit();
   approved = {};
+  replicaApproved = null;
+  pending = {};
+  filed = [];
   installModelReads();
   installRaw();
   installRedis();
@@ -624,6 +719,18 @@ describe('push', () => {
     });
   });
 
+  it('a source repo that is not a fork of the build repo is cut from its main, even with an approved version elsewhere', async () => {
+    git.addRepo(BUILD, SLUG, { 'package.json': PKG_OLD, 'src/app.ts': 'export const v = 9;\n' });
+    approved.ab_app = { forgejoCommitSha: git.branch(BUILD, SLUG)!.head, version: '1.0.0' };
+    await existingSourceRepo({ 'package.json': PKG_OLD, 'src/app.ts': 'export const v = 1;\n' });
+    const main = git.branch(SRC, SLUG)!.head;
+    const result = await pushAsMod();
+    expect(result.baseCommitSha).toBe(main);
+    expect(git.parents(result.commitSha)).toEqual([main]);
+    expect(git.branch(SRC, SLUG, result.branch)!.files['src/app.ts']).toBe('export const v = 1;\n');
+    expect(git.writes.filter((w) => w.path.includes('sync_fork'))).toEqual([]);
+  });
+
   it('a source repo under the slug that is not this app’s is never written', async () => {
     git.addRepo(SRC, SLUG, { 'package.json': PKG_OLD });
     // Bound to the OTHER app's block: someone else's repo under this slug.
@@ -727,6 +834,178 @@ describe('an app with no source repo', () => {
       status: 'pending',
       base_commit_sha: head,
     });
+  });
+
+  it('is cut from the latest APPROVED commit, not a newer unapproved push on the build repo’s main', async () => {
+    const { head: approvedSha } = buildRepoWithOwnerCheckout();
+    // The owner pushed again after approval; nobody has reviewed it.
+    const unapproved = git.devPush(
+      BUILD,
+      SLUG,
+      { 'src/app.ts': 'export const v = 3; // unreviewed\n' },
+      'wip'
+    );
+    // Their checkout is at the build repo's main (the unapproved push is theirs), plus a local commit.
+    const ownerCheckout = git.localCommit(unapproved, { 'README.md': '# Pixel Garden (mine)\n' });
+
+    const result = await pushAsMod();
+    expect(result.seededSourceRepo).toBe(true);
+    expect(result.baseCommitSha).toBe(approvedSha);
+    expect(git.parents(result.commitSha)).toEqual([approvedSha]);
+    expect((await updateRows())[0]).toMatchObject({ base_commit_sha: approvedSha });
+    // The update holds the approved code plus its change, none of the unapproved push.
+    expect(git.branch(SRC, SLUG, result.branch)!.files).toEqual({
+      'block.manifest.json': '{"blockId":"pixel-garden"}',
+      'package.json': PKG_NEW,
+      'README.md': '# Pixel Garden\n',
+      '.env': 'K=1',
+      'src/app.ts': 'export const v = 2;\n',
+      'src/sdk-shim.ts': 'export {};\n',
+    });
+    // The source repo's main stays where the fork put it: the git host cannot move a branch back.
+    expect(git.branch(SRC, SLUG)!.head).toBe(unapproved);
+
+    // The owner's checkout merges it cleanly, keeping their unapproved push and their local commit.
+    expect(git.merge(ownerCheckout, result.commitSha)).toEqual({
+      kind: 'clean',
+      files: {
+        'block.manifest.json': '{"blockId":"pixel-garden"}',
+        'package.json': PKG_NEW,
+        'README.md': '# Pixel Garden (mine)\n',
+        '.env': 'K=1',
+        'src/app.ts': 'export const v = 3; // unreviewed\n',
+        'src/sdk-shim.ts': 'export {};\n',
+      },
+    });
+  });
+
+  it('is planned against the APPROVED tree: a file the unapproved push also changed still updates', async () => {
+    const { head: approvedSha } = buildRepoWithOwnerCheckout();
+    git.devPush(BUILD, SLUG, { 'package.json': '{"wip":true}' }, 'wip');
+    const result = await pushAsMod();
+    expect(result.baseCommitSha).toBe(approvedSha);
+    expect(result.paths).toEqual([
+      { path: 'src/sdk-shim.ts', operation: 'create' },
+      { path: 'package.json', operation: 'update' },
+    ]);
+    expect(git.branch(SRC, SLUG, result.branch)!.files['package.json']).toBe(PKG_NEW);
+  });
+
+  it('an approved commit the new source repo does not hold refuses the push', async () => {
+    const { head } = buildRepoWithOwnerCheckout();
+    // Recorded as approved, but on no branch of the build repo, so the fork does not have it.
+    approved.ab_app = {
+      forgejoCommitSha: git.localCommit(head, { 'src/app.ts': 'gone\n' }),
+      version: '1.3.0',
+    };
+    await expect(pushAsMod()).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: 'The app’s approved version is not in its source repo yet; nothing was pushed',
+    });
+    expect([...git.refs.get(`${SRC}/${SLUG}`)!.keys()]).toEqual(['main']);
+    expect(git.commits.filter((c) => c.branch !== 'main')).toEqual([]);
+    expect(await updateRows()).toEqual([]);
+  });
+
+  it('a retry after a first push that failed once the repo existed is still cut from the APPROVED commit', async () => {
+    const { head: approvedSha } = buildRepoWithOwnerCheckout();
+    const unapproved = git.devPush(BUILD, SLUG, { 'src/app.ts': 'export const v = 3;\n' }, 'wip');
+    // The fork is made, then the git host fails the commit.
+    git.beforeCommit = () => {
+      git.beforeCommit = null;
+      throw new Error('git host down');
+    };
+    await expect(pushAsMod()).rejects.toThrow();
+    expect(await updateRows()).toEqual([]);
+    expect(git.branch(SRC, SLUG)!.head).toBe(unapproved);
+
+    const retry = await pushAsMod();
+    expect(retry.seededSourceRepo).toBe(false);
+    expect(retry.baseCommitSha).toBe(approvedSha);
+    expect(git.parents(retry.commitSha)).toEqual([approvedSha]);
+    expect(git.branch(SRC, SLUG, retry.branch)!.files['src/app.ts']).toBe('export const v = 2;\n');
+    expect((await updateRows())[0]).toMatchObject({ base_commit_sha: approvedSha });
+  });
+
+  it('a LATER update to that repo is cut from the approved commit, not the fork’s main', async () => {
+    const { head: approvedSha } = buildRepoWithOwnerCheckout();
+    const unapproved = git.devPush(BUILD, SLUG, { 'src/app.ts': 'export const v = 3;\n' }, 'wip');
+    const first = await pushAsMod();
+    expect(first.seededSourceRepo).toBe(true);
+    expect(git.branch(SRC, SLUG)!.head).toBe(unapproved);
+
+    const later = await svc.pushPlatformUpdate({
+      staffUserId: MOD,
+      app: { slug: SLUG },
+      reason: REASON,
+      changes: [put('README.md', '# Pixel Garden v2\n')],
+    });
+    expect(later.seededSourceRepo).toBe(false);
+    expect(later.baseCommitSha).toBe(approvedSha);
+    expect(git.parents(later.commitSha)).toEqual([approvedSha]);
+    expect(git.branch(SRC, SLUG, later.branch)!.files['src/app.ts']).toBe('export const v = 2;\n');
+  });
+
+  it('a later update after a NEWER approval syncs the fork from the build repo and is cut from it', async () => {
+    const { head: firstApproved } = buildRepoWithOwnerCheckout();
+    const first = await pushAsMod();
+    expect(first.baseCommitSha).toBe(firstApproved);
+
+    // The owner ships 1.3.0 to the build repo, it is approved, then they push more, unreviewed.
+    const newer = git.devPush(BUILD, SLUG, { 'src/app.ts': 'export const v = 4;\n' }, 'v1.3.0');
+    approved.ab_app = { forgejoCommitSha: newer, version: '1.3.0' };
+    const unapproved = git.devPush(BUILD, SLUG, { 'src/app.ts': 'export const v = 5;\n' }, 'wip');
+    const ownerCheckout = git.localCommit(unapproved, { 'README.md': '# Pixel Garden (mine)\n' });
+    const buildBefore = git.branch(BUILD, SLUG);
+
+    const later = await pushAsMod();
+    expect(later.baseCommitSha).toBe(newer);
+    expect(git.parents(later.commitSha)).toEqual([newer]);
+    expect(git.branch(SRC, SLUG, later.branch)!.files).toEqual({
+      'block.manifest.json': '{"blockId":"pixel-garden"}',
+      'package.json': PKG_NEW,
+      'README.md': '# Pixel Garden\n',
+      '.env': 'K=1',
+      'src/app.ts': 'export const v = 4;\n',
+      'src/sdk-shim.ts': 'export {};\n',
+    });
+    // The sync fast-forwarded the fork's main (the build repo is only read).
+    expect(git.branch(SRC, SLUG)!.head).toBe(unapproved);
+    expect(git.branch(BUILD, SLUG)).toEqual(buildBefore);
+    expect(git.writes.filter((w) => w.path.includes(`/${BUILD}/`))).toEqual([
+      { method: 'POST', path: `/api/v1/repos/${BUILD}/${SLUG}/forks` },
+    ]);
+    // An owner's checkout at the build repo's main merges it cleanly.
+    expect(git.merge(ownerCheckout, later.commitSha)).toEqual({
+      kind: 'clean',
+      files: {
+        'block.manifest.json': '{"blockId":"pixel-garden"}',
+        'package.json': PKG_NEW,
+        'README.md': '# Pixel Garden (mine)\n',
+        '.env': 'K=1',
+        'src/app.ts': 'export const v = 5;\n',
+        'src/sdk-shim.ts': 'export {};\n',
+      },
+    });
+  });
+
+  it('a newer approval the fork cannot be synced to (its main has commits of its own) refuses the push', async () => {
+    buildRepoWithOwnerCheckout();
+    await pushAsMod();
+    // Someone pushed to the source repo's main, so it no longer fast-forwards to the build repo's.
+    const own = git.devPush(SRC, SLUG, { 'NOTES.md': 'mine\n' }, 'notes');
+    const newer = git.devPush(BUILD, SLUG, { 'src/app.ts': 'export const v = 4;\n' }, 'v1.3.0');
+    approved.ab_app = { forgejoCommitSha: newer, version: '1.3.0' };
+    const branchesBefore = [...git.refs.get(`${SRC}/${SLUG}`)!.entries()];
+    const rowsBefore = await updateRows();
+
+    await expect(pushAsMod()).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: 'The app’s approved version is not in its source repo yet; nothing was pushed',
+    });
+    expect([...git.refs.get(`${SRC}/${SLUG}`)!.entries()]).toEqual(branchesBefore);
+    expect(git.branch(SRC, SLUG)!.head).toBe(own);
+    expect(await updateRows()).toEqual(rowsBefore);
   });
 
   it('an update to the same file the owner changed is a conflict, not a silent overwrite', async () => {
@@ -1164,5 +1443,337 @@ describe('the flag off, for the owner procedures', () => {
     expect(
       await caller(OWNER).verifyCommit({ slug: SLUG, commitSha: pushed.commitSha })
     ).toMatchObject({ verified: true });
+  });
+});
+
+const JSZip = (await import('jszip')).default;
+const submitSvc = await import('~/server/services/blocks/app-platform-update-submit.service');
+
+describe('submit on the owner’s behalf', () => {
+  const PUBREQ = 'pubreq_01JONBEHALF0000000000000000';
+  const MANIFEST = '{"blockId":"pixel-garden","name":"Pixel Garden","version":"1.2.0"}';
+
+  /** The approved build in the build repo; the source repo is then forked from it by the push. */
+  function approvedBuild(files: Record<string, string> = {}) {
+    git.addRepo(BUILD, SLUG, {
+      'block.manifest.json': MANIFEST,
+      'package.json': PKG_OLD,
+      'index.html': '<p>approved</p>',
+      ...files,
+    });
+    approved.ab_app = { forgejoCommitSha: git.branch(BUILD, SLUG)!.head, version: '1.2.0' };
+  }
+
+  /** `submitVersion`, recorded: what the staff submit hands the ordinary submit path. */
+  function recordingSubmit() {
+    const calls: SubmitVersionParams[] = [];
+    const submitVersion = async (params: SubmitVersionParams) => {
+      calls.push(params);
+      const publishRequestId = calls.length === 1 ? PUBREQ : `${PUBREQ}_${calls.length}`;
+      // The request as the primary then holds it, `fileSummary.onBehalf` and all.
+      filed.push({
+        id: publishRequestId,
+        slug: SLUG,
+        appBlockId: 'ab_app',
+        status: 'pending',
+        fileSummary: { files: [], onBehalf: { ...params.onBehalf, staffUserId: MOD } },
+      });
+      return { publishRequestId, version: '1.2.1' };
+    };
+    return { calls, deps: { submitVersion } };
+  }
+
+  const bundleText = async (buf: Buffer) => {
+    const zip = await JSZip.loadAsync(buf);
+    const out: Record<string, string> = {};
+    for (const [path, entry] of Object.entries(zip.files))
+      if (!entry.dir) out[path] = await entry.async('string');
+    return out;
+  };
+
+  it('a non-moderator is refused, by the router and by the service’s database re-check', async () => {
+    approvedBuild();
+    const pushed = await pushAsMod();
+    await expect(caller(NOT_MOD).submitOnBehalf({ id: pushed.id })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    const { calls, deps } = recordingSubmit();
+    await expect(
+      submitSvc.submitPlatformUpdateOnBehalf({ staffUserId: NOT_MOD, id: pushed.id }, deps)
+    ).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'Only Civitai staff can submit updates',
+    });
+    expect(calls).toEqual([]);
+  });
+
+  it('the flag off: refused', async () => {
+    approvedBuild();
+    const pushed = await pushAsMod();
+    flags.platformUpdates = false;
+    await expect(caller(MOD).submitOnBehalf({ id: pushed.id })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'Platform updates are not enabled',
+    });
+    expect((await updateRows())[0]).toMatchObject({ status: 'pending' });
+    expect(filed).toEqual([]);
+  });
+
+  it('🔴 the owner has a pending request: refused with the exact message, and theirs is untouched', async () => {
+    approvedBuild();
+    const pushed = await pushAsMod();
+    pending[SLUG] = { id: 'pubreq_owner', submittedByUserId: OWNER, fileSummary: { files: [] } };
+    const { calls, deps } = recordingSubmit();
+    createNotification.mockClear();
+    const writes = ['update', 'updateMany', 'create', 'delete', 'deleteMany'] as const;
+    for (const write of writes) dbMock.dbWrite.appBlockPublishRequest[write].mockClear();
+
+    await expect(
+      submitSvc.submitPlatformUpdateOnBehalf({ staffUserId: MOD, id: pushed.id }, deps)
+    ).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message:
+        'The owner has a pending publish request for this app. The update stays on its branch ' +
+        'and merges on their next submit, or retry after that request is reviewed.',
+    });
+    expect(calls).toEqual([]);
+    // Nothing touched the owner's request: no publish-request write of any kind.
+    for (const write of writes)
+      expect(dbMock.dbWrite.appBlockPublishRequest[write]).not.toHaveBeenCalled();
+    expect(createNotification).not.toHaveBeenCalled();
+    expect((await updateRows())[0]).toMatchObject({ status: 'pending' });
+
+    // Positive control: the same call files once the owner's request is reviewed.
+    delete pending[SLUG];
+    await submitSvc.submitPlatformUpdateOnBehalf({ staffUserId: MOD, id: pushed.id }, deps);
+    expect(calls).toHaveLength(1);
+  });
+
+  it('files the approved build plus the update, as the moderator, for the owner, and tells the owner', async () => {
+    approvedBuild();
+    const pushed = await pushAsMod();
+    // The owner's unsubmitted work on the source repo's main never reaches the bundle.
+    git.devPush(SRC, SLUG, { 'wip.ts': 'unsubmitted\n' }, 'wip');
+    const { calls, deps } = recordingSubmit();
+    createNotification.mockClear();
+
+    const result = await submitSvc.submitPlatformUpdateOnBehalf(
+      { staffUserId: MOD, id: pushed.id },
+      deps
+    );
+    expect(result).toEqual({
+      updateId: pushed.id,
+      slug: SLUG,
+      publishRequestId: PUBREQ,
+      version: '1.2.1',
+    });
+
+    expect(calls).toHaveLength(1);
+    const { bundleBuffer, ...params } = calls[0];
+    expect(params).toEqual({
+      submittedByUserId: MOD,
+      submitterIsModerator: true,
+      submittedOnBehalf: true,
+      onBehalf: {
+        platformUpdateId: pushed.id,
+        staffUsername: 'mod-ana',
+        ownerUserId: OWNER,
+        ownerUsername: 'owner-olga',
+      },
+    });
+    expect(await bundleText(bundleBuffer)).toEqual({
+      'block.manifest.json':
+        '{\n  "blockId": "pixel-garden",\n  "name": "Pixel Garden",\n  "version": "1.2.1"\n}\n',
+      'index.html': '<p>approved</p>',
+      'package.json': PKG_NEW,
+      'src/sdk-shim.ts': 'export {};\n',
+    });
+
+    // The update stays pending for the owner's own checkout.
+    expect((await updateRows())[0]).toMatchObject({ status: 'pending' });
+
+    expect(createNotification).toHaveBeenCalledTimes(1);
+    expect(createNotification.mock.calls[0][0]).toMatchObject({
+      userId: OWNER,
+      type: 'app-platform-update-submitted',
+      key: `app-platform-update-submitted:${PUBREQ}`,
+      details: {
+        slug: SLUG,
+        updateId: pushed.id,
+        publishRequestId: PUBREQ,
+        version: '1.2.1',
+        byUsername: 'mod-ana',
+        reason: REASON,
+      },
+    });
+
+    // A second submit while that request is pending is refused.
+    await expect(
+      submitSvc.submitPlatformUpdateOnBehalf({ staffUserId: MOD, id: pushed.id }, deps)
+    ).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: `This update was already submitted (${PUBREQ}, pending)`,
+    });
+    expect(calls).toHaveLength(1);
+  });
+
+  it('"already submitted" is read from the publish requests: pending or approved refuses, rejected does not', async () => {
+    approvedBuild();
+    const pushed = await pushAsMod();
+    const { calls, deps } = recordingSubmit();
+    await submitSvc.submitPlatformUpdateOnBehalf({ staffUserId: MOD, id: pushed.id }, deps);
+
+    filed[0]!.status = 'approved';
+    await expect(
+      submitSvc.submitPlatformUpdateOnBehalf({ staffUserId: MOD, id: pushed.id }, deps)
+    ).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: `This update was already submitted (${PUBREQ}, approved)`,
+    });
+    expect(calls).toHaveLength(1);
+
+    // Another update's request never counts against this one.
+    filed[0]!.fileSummary = { onBehalf: { platformUpdateId: 'apu_someone_else' } };
+    await submitSvc.submitPlatformUpdateOnBehalf({ staffUserId: MOD, id: pushed.id }, deps);
+    expect(calls).toHaveLength(2);
+
+    // A rejected one does not either: the update may be submitted again.
+    filed.length = 0;
+    filed.push({
+      id: PUBREQ,
+      slug: SLUG,
+      status: 'rejected',
+      fileSummary: { onBehalf: { platformUpdateId: pushed.id } },
+    });
+    await submitSvc.submitPlatformUpdateOnBehalf({ staffUserId: MOD, id: pushed.id }, deps);
+    expect(calls).toHaveLength(3);
+  });
+
+  it('🔴 builds on the approved version the PRIMARY has, when the replica still has the one before', async () => {
+    approvedBuild();
+    const pushed = await pushAsMod();
+    // The owner's 1.3.0 was approved a moment ago; the replica still says 1.2.0.
+    const before = approved.ab_app!;
+    const later = git.devPush(
+      BUILD,
+      SLUG,
+      {
+        'block.manifest.json': MANIFEST.replace('1.2.0', '1.3.0'),
+        'index.html': '<p>owner 1.3.0</p>',
+      },
+      'v1.3.0'
+    );
+    approved.ab_app = { forgejoCommitSha: later, version: '1.3.0' };
+    replicaApproved = { ab_app: before };
+    const { calls, deps } = recordingSubmit();
+
+    await submitSvc.submitPlatformUpdateOnBehalf({ staffUserId: MOD, id: pushed.id }, deps);
+    expect(calls).toHaveLength(1);
+    // The owner's 1.3.0 files, the update applied, and a version above 1.3.0: nothing rolled back.
+    expect(await bundleText(calls[0]!.bundleBuffer)).toEqual({
+      'block.manifest.json':
+        '{\n  "blockId": "pixel-garden",\n  "name": "Pixel Garden",\n  "version": "1.3.1"\n}\n',
+      'index.html': '<p>owner 1.3.0</p>',
+      'package.json': PKG_NEW,
+      'src/sdk-shim.ts': 'export {};\n',
+    });
+  });
+
+  it('refuses when the approved build differs from what the update was written against', async () => {
+    approvedBuild();
+    const pushed = await pushAsMod();
+    // A later approved version changed package.json after the source repo was forked.
+    const later = git.devPush(BUILD, SLUG, { 'package.json': '{"approved":"later"}' }, 'v1.3.0');
+    approved.ab_app = { forgejoCommitSha: later, version: '1.3.0' };
+    const { calls, deps } = recordingSubmit();
+    await expect(
+      submitSvc.submitPlatformUpdateOnBehalf({ staffUserId: MOD, id: pushed.id }, deps)
+    ).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message:
+        'The approved version differs from what the update was written against in ' +
+        'package.json; the owner has to merge this update and submit it themselves',
+    });
+    expect(calls).toEqual([]);
+  });
+
+  it('a staff submission already pending for the app: a second update is refused as such', async () => {
+    approvedBuild();
+    const first = await pushAsMod();
+    const second = await pushAsMod(MOD, 'A second fix');
+    const { calls, deps } = recordingSubmit();
+    await submitSvc.submitPlatformUpdateOnBehalf({ staffUserId: MOD, id: first.id }, deps);
+    await expect(
+      submitSvc.submitPlatformUpdateOnBehalf({ staffUserId: MOD, id: second.id }, deps)
+    ).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message:
+        'A staff submission for this app is already waiting for review; retry after it is reviewed.',
+    });
+    expect(calls).toHaveLength(1);
+  });
+
+  it('a withdrawn update is refused', async () => {
+    approvedBuild();
+    const pushed = await pushAsMod();
+    await svc.supersedePlatformUpdate({ staffUserId: MOD, id: pushed.id });
+    const { calls, deps } = recordingSubmit();
+    await expect(
+      submitSvc.submitPlatformUpdateOnBehalf({ staffUserId: MOD, id: pushed.id }, deps)
+    ).rejects.toMatchObject({ code: 'CONFLICT', message: 'This update was withdrawn' });
+    expect(calls).toEqual([]);
+  });
+
+  describe('🔴 the update’s AUTHOR must be verified staff now (PR #10605)', () => {
+    const AUTHOR_REFUSAL = {
+      code: 'FORBIDDEN',
+      message:
+        "This update's author is no longer verified Civitai staff; withdraw it or push a new one",
+    };
+
+    it('an author who is no longer a moderator: refused, nothing filed, nobody told', async () => {
+      approvedBuild();
+      const pushed = await pushAsMod(EX_MOD);
+      await pg.query(`UPDATE "User" SET "isModerator" = false WHERE id = $1`, [EX_MOD]);
+      const { calls, deps } = recordingSubmit();
+      createNotification.mockClear();
+
+      await expect(
+        submitSvc.submitPlatformUpdateOnBehalf({ staffUserId: MOD, id: pushed.id }, deps)
+      ).rejects.toMatchObject(AUTHOR_REFUSAL);
+      expect(calls).toEqual([]);
+      expect(filed).toEqual([]);
+      expect(createNotification).not.toHaveBeenCalled();
+      expect((await updateRows())[0]).toMatchObject({ status: 'pending' });
+
+      // Positive control: the same submit by the same moderator proceeds once the author is
+      // staff again.
+      await pg.query(`UPDATE "User" SET "isModerator" = true WHERE id = $1`, [EX_MOD]);
+      await submitSvc.submitPlatformUpdateOnBehalf({ staffUserId: MOD, id: pushed.id }, deps);
+      expect(calls).toHaveLength(1);
+    });
+
+    it('an author who is banned now, though still flagged a moderator: refused', async () => {
+      approvedBuild();
+      const pushed = await pushAsMod(EX_MOD);
+      await pg.query(`UPDATE "User" SET "bannedAt" = now() WHERE id = $1`, [EX_MOD]);
+      const { calls, deps } = recordingSubmit();
+      await expect(
+        submitSvc.submitPlatformUpdateOnBehalf({ staffUserId: MOD, id: pushed.id }, deps)
+      ).rejects.toMatchObject(AUTHOR_REFUSAL);
+      expect(calls).toEqual([]);
+      expect(filed).toEqual([]);
+    });
+
+    it('an author who is deleted now: refused', async () => {
+      approvedBuild();
+      const pushed = await pushAsMod(EX_MOD);
+      await pg.query(`UPDATE "User" SET "deletedAt" = now() WHERE id = $1`, [EX_MOD]);
+      const { calls, deps } = recordingSubmit();
+      await expect(
+        submitSvc.submitPlatformUpdateOnBehalf({ staffUserId: MOD, id: pushed.id }, deps)
+      ).rejects.toMatchObject(AUTHOR_REFUSAL);
+      expect(calls).toEqual([]);
+    });
   });
 });

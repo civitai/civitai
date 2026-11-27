@@ -72,6 +72,7 @@ import type {
   StickerCosmetic,
   NamePlateCosmetic,
   ProfileBackgroundCosmetic,
+  SidebarBackgroundCosmetic,
   WithClaimKey,
 } from '~/server/selectors/cosmetic.selector';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
@@ -659,6 +660,7 @@ export const updateUserHandler = async ({
     profileDecorationId,
     profileBackgroundId,
     cardDecorationId,
+    sidebarBackgroundId,
     username,
     source,
     landingPage,
@@ -749,6 +751,14 @@ export const updateUserHandler = async ({
     else if (cardDecorationId === null)
       unequipPromises.push(
         unequipCosmeticByType({ userId: id, type: CosmeticType.CardDecoration })
+      );
+
+    // Only the redesigned profile draws a sidebar background, so only its customizer sets one.
+    const sidebarId = ctx.features?.profileRedesign ? sidebarBackgroundId : undefined;
+    if (sidebarId) payloadCosmeticIds.push(sidebarId);
+    else if (sidebarId === null)
+      unequipPromises.push(
+        unequipCosmeticByType({ userId: id, type: CosmeticType.SidebarBackground })
       );
 
     await Promise.all(unequipPromises);
@@ -1489,6 +1499,11 @@ export const getUserCosmeticsHandler = async ({
           acc.sticker.push({ ...sharedData, data: data as StickerCosmetic['data'] });
         else if (type === CosmeticType.CardDecoration)
           acc.cardDecorations.push({ ...sharedData, data: data as CardDecorationCosmetic['data'] });
+        else if (type === CosmeticType.SidebarBackground)
+          acc.sidebarBackgrounds.push({
+            ...sharedData,
+            data: data as SidebarBackgroundCosmetic['data'],
+          });
 
         return acc;
       },
@@ -1500,6 +1515,7 @@ export const getUserCosmeticsHandler = async ({
         contentDecorations: [] as OwnedCosmetic<ContentDecorationCosmetic>[],
         sticker: [] as OwnedCosmetic<StickerCosmetic>[],
         cardDecorations: [] as OwnedCosmetic<CardDecorationCosmetic>[],
+        sidebarBackgrounds: [] as OwnedCosmetic<SidebarBackgroundCosmetic>[],
       }
     );
 

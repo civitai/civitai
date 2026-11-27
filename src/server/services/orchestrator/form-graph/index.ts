@@ -54,6 +54,7 @@ import { createAceAudioInput } from './ace.handler';
 import { createMiniMaxMusicInput } from './minimax-music.handler';
 import { createYuE2Input } from './yue2.handler';
 import { createSoniloInput } from './sonilo.handler';
+import { createSeedAudioInput } from './seed-audio.handler';
 import {
   createPolyGenInput,
   createTripoInput,
@@ -113,6 +114,7 @@ export { createAceAudioInput } from './ace.handler';
 export { createMiniMaxMusicInput } from './minimax-music.handler';
 export { createYuE2Input } from './yue2.handler';
 export { createSoniloInput } from './sonilo.handler';
+export { createSeedAudioInput } from './seed-audio.handler';
 export {
   createPolyGenInput,
   createTripoInput,
@@ -310,6 +312,9 @@ function createStep(
 
     case 'Sonilo':
       return createSoniloInput(data, handlerCtx);
+
+    case 'SeedAudio':
+      return createSeedAudioInput(data, handlerCtx);
 
     case 'PolyGen':
       return createPolyGenInput(data, handlerCtx);

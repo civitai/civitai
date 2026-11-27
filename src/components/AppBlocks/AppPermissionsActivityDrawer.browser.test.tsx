@@ -221,7 +221,7 @@ describe('AppPermissionsActivityDrawer (Part B — per-app permissions & activit
 
     // Granted scope for ab-1 shows, by its plain title; ab-2's scope must NOT leak.
     await expect
-      .element(page.getByText('See your username and account status'))
+      .element(page.getByText('See your username, profile picture and account status'))
       .toBeInTheDocument();
     expect(page.getByText('See your Buzz balance').elements()).toHaveLength(0);
 
@@ -350,7 +350,7 @@ describe('AppPermissionsActivityDrawer (Part B — per-app permissions & activit
     );
     // The retained grant for THIS app still renders, and the other app's still does not leak.
     await expect
-      .element(page.getByText('See your username and account status'))
+      .element(page.getByText('See your username, profile picture and account status'))
       .toBeInTheDocument();
     expect(page.getByText('See your Buzz balance').elements()).toHaveLength(0);
     // 🔴 WHICH ASSERTION KILLS THE MUTANT — MEASURED, NOT ASSUMED. Reverting the guard to bare

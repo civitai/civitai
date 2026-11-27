@@ -189,6 +189,53 @@ export const REPORTABLE_KEYS: ReadonlySet<string> = new Set([
 
 const hasOwn = (obj: object, key: string) => Object.prototype.hasOwnProperty.call(obj, key);
 
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === 'object' && !Array.isArray(value);
+
+/**
+ * A tRPC answer's text without superjson's `meta.referentialEqualities` (at
+ * `$.result.data.meta.referentialEqualities`), or `undefined` when there is nothing to remove or
+ * the text cannot be rewritten without changing anything else.
+ *
+ * The Node writer adds that member when one object instance appears at several paths (a creator's
+ * `cosmetics` shared by all their images). For a shared, non-circular object, which is what these
+ * feeds' database rows produce, it changes object identity after decode, never a decoded value, and
+ * the Go service deliberately never writes it (apps/feed-go/internal/superjson), so it would otherwise
+ * make nearly every image-feed compare a mismatch. A CIRCULAR reference is different: superjson
+ * writes `null` at the back-reference and restores the cycle from this member, so there it does carry
+ * a value. None of the shadowed procedures returns one.
+ *
+ * Only that one member goes. `meta.values` and everything else stay. When `v` is all that is left of
+ * `meta`, `meta` goes too: that is what superjson writes when there is nothing to annotate, and what
+ * the Go service writes for the same value.
+ *
+ * The rewrite is `JSON.stringify` of the parsed text, so it applies only to a text that is already
+ * exactly `JSON.stringify` output (as the Node writer's is). Any other text is left alone, so its
+ * encoding is still compared byte for byte.
+ */
+export function withoutReferentialEqualities(text: string): string | undefined {
+  if (text.length > SHADOW_DIFF_BUDGET.maxTextLength) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  if (!isPlainObject(parsed)) return undefined;
+  const result = parsed.result;
+  if (!isPlainObject(result)) return undefined;
+  const data = result.data;
+  if (!isPlainObject(data)) return undefined;
+  const meta = data.meta;
+  if (!isPlainObject(meta) || !hasOwn(meta, 'referentialEqualities')) return undefined;
+  if (JSON.stringify(parsed) !== text) return undefined;
+
+  delete meta.referentialEqualities;
+  const rest = Object.keys(meta);
+  if (rest.length === 1 && rest[0] === 'v') delete data.meta;
+  return JSON.stringify(parsed);
+}
+
 function keySegment(key: string): string {
   return REPORTABLE_KEYS.has(key) ? `.${key}` : '.*';
 }

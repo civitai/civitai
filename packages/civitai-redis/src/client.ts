@@ -2733,12 +2733,10 @@ export const REDIS_SYS_KEYS = {
   },
   LIMITS: {
     EMAIL_VERIFICATIONS: 'limits:email-verifications',
-    HISTORY_DOWNLOADS: 'limits:history-downloads',
     CHAT_MESSAGES: 'limits:chat-messages',
   },
   COUNTERS: {
     EMAIL_VERIFICATIONS: 'counters:email-verifications',
-    HISTORY_DOWNLOADS: 'counters:history-downloads',
     CHAT_MESSAGES: 'counters:chat-messages',
   },
   INDEXES: {
@@ -3534,6 +3532,7 @@ const REDIS_KEYS_UNPREFIXED = {
     // change via `invalidateSubscriptionCaches`; TTL backstops the non-webhook paths.
     // See `getValidCreatorMembershipMap` in creator-membership.service.
     CREATOR_MEMBERSHIP_VALID: 'packed:caches:creator-membership-valid',
+    PROFILE_MEMBER_TIER: 'packed:caches:profile-member-tier',
     // Per-user `id -> { hideModelBuzz, hideModelDownloads, hideModelGenerations }` — the
     // three model-metric-privacy DEFAULT flags read off `User.settings` at read time
     // (#3266). A tiny derived slice so the hot model-read paths (feed / v1 list /
@@ -3586,7 +3585,6 @@ const REDIS_KEYS_UNPREFIXED = {
   COUNTERS: {
     REDEMPTION_ATTEMPTS: 'counters:redemption-attempts',
     EMAIL_VERIFICATIONS: 'counters:email-verifications',
-    HISTORY_DOWNLOADS: 'counters:history-downloads',
     BUG_REPORTS: 'counters:bug-reports',
     FEATURE_PAGES_LIFTS: 'counters:feature-pages-lifts',
   },

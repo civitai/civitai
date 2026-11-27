@@ -8,6 +8,7 @@ import { OnSaleSection } from '~/components/Profile/Sections/OnSaleSection';
 import { ShopSection } from '~/components/Profile/Sections/ShopSection';
 import { ShowcaseSection } from '~/components/Profile/Sections/ShowcaseSection';
 import { CreatorJourneySection } from '~/components/Profile/Sections/CreatorJourneySection';
+import { RecentSection } from '~/components/Profile/Sections/RecentSection';
 import type {
   CustomShowcaseKey,
   ProfileSectionSchema,
@@ -33,6 +34,7 @@ export const defaultProfileSectionStatus: Record<ProfileSectionType, boolean> = 
   onSale: false,
   // Renders nothing until the creator has earned something, so it can be on for everyone.
   creatorJourney: true,
+  recent: true,
 } as const;
 
 export const ProfileSectionComponent: Record<
@@ -48,6 +50,7 @@ export const ProfileSectionComponent: Record<
   shop: ShopSection,
   onSale: OnSaleSection,
   creatorJourney: CreatorJourneySection,
+  recent: RecentSection,
 } as const;
 
 export const profileSectionLabels: Record<ProfileSectionType, string> = {
@@ -60,6 +63,7 @@ export const profileSectionLabels: Record<ProfileSectionType, string> = {
   shop: 'Shop',
   onSale: 'On sale',
   creatorJourney: 'Creator Journey',
+  recent: 'Most recent',
 } as const;
 export const isCustomShowcaseKey = (key: string): key is CustomShowcaseKey =>
   key.startsWith(customShowcaseKeyPrefix);
@@ -71,6 +75,13 @@ export const getShowcaseSectionByKey = (
   isCustomShowcaseKey(key)
     ? showcaseSections.find((s) => customShowcaseKey(s.id) === key)
     : undefined;
+
+// A creator who never saved an order opens on "Most recent"; a saved order keeps its place and
+// gets new sections at the end.
+const defaultSectionOrder = (unsaved: boolean) => {
+  const keys = Object.keys(defaultProfileSectionStatus) as ProfileSectionType[];
+  return unsaved ? ['recent' as const, ...keys.filter((k) => k !== 'recent')] : keys;
+};
 
 /** Placed by its `custom:<id>` row; a row with no section is dropped and a section with no row goes last, enabled, so create/delete never rewrites `profileSectionsSettings`. */
 export const getAllAvailableProfileSections = (
@@ -85,7 +96,7 @@ export const getAllAvailableProfileSections = (
         Object.keys(ProfileSectionComponent).includes(key) ||
         customKeys.includes(key as CustomShowcaseKey)
     ),
-    ...Object.keys(defaultProfileSectionStatus)
+    ...defaultSectionOrder(userSections.length === 0)
       .filter((k) => !userSections.find((u) => u.key === k))
       .map((k) => ({
         key: k as ProfileSectionType,
@@ -103,17 +114,22 @@ export const shouldDisplayUserNullState = ({
   overview,
   userWithProfile,
   showcaseSections = [],
+  withRecentSection = false,
 }: {
   overview?: Partial<UserOverview>;
   userWithProfile: UserWithProfile;
   /** Only when the viewer has the `profileShowcases` flag: otherwise they render nothing. */
   showcaseSections?: ShowcaseSectionSchema[];
+  /** Only when the viewer has the `profileRedesign` flag: otherwise it renders nothing. */
+  withRecentSection?: boolean;
 }) => {
   if (userWithProfile.bannedAt) return true;
   const userSections = (userWithProfile?.profile?.profileSectionsSettings ??
     []) as ProfileSectionSchema[];
 
-  const sections = getAllAvailableProfileSections(userSections, showcaseSections);
+  const sections = getAllAvailableProfileSections(userSections, showcaseSections).filter(
+    (s) => withRecentSection || s.key !== 'recent'
+  );
   const sectionEnabled = sections.find((s) => s.enabled);
 
   if (!sectionEnabled) return true;
@@ -134,6 +150,8 @@ export const shouldDisplayUserNullState = ({
     (overview?.modelCount === 0 || !someSectionEnabled(['modelsOverview', 'popularModels'])) &&
     (overview?.imageCount === 0 || !someSectionEnabled(['imagesOverview'])) &&
     (overview?.articleCount === 0 || !someSectionEnabled(['popularArticles'])) &&
+    ((overview?.imageCount === 0 && overview?.videoCount === 0 && overview?.articleCount === 0) ||
+      !someSectionEnabled(['recent'])) &&
     (!overview?.hasReceivedReviews || !someSectionEnabled(['recentReviews']))
   );
 };

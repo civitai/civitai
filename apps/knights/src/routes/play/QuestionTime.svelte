@@ -51,6 +51,11 @@
     <button type="button" class="start" bind:this={start} onclick={onstart}>
       Start now<kbd aria-hidden="true">Space</kbd>
     </button>
+    <!-- Only Knights and up see Question time, and they can all turn questions off. The click must not start the run. -->
+    <p class="hint">
+      Rather rate only? Turn questions off in
+      <a href="/settings" onclick={(event) => event.stopPropagation()}>Settings</a>.
+    </p>
   </div>
 </div>
 
@@ -164,6 +169,25 @@
 
   .reduced {
     display: none;
+  }
+
+  .hint {
+    margin: 0;
+    color: var(--io-parchment-muted);
+    font: 13px/1.4 var(--io-font-ui);
+  }
+
+  /* The card is a click-to-start target, so the link gets room around it. */
+  .hint a {
+    display: inline-block;
+    padding: 6px 0;
+    color: var(--io-gold);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  .hint a:hover {
+    color: var(--io-parchment);
   }
 
   @media (hover: none) {

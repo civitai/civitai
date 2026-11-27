@@ -7,7 +7,11 @@ import { useQueryCreatorShop } from '~/components/CreatorShop/creator-shop.util'
 import { useQueryShopServices } from '~/components/CreatorShop/Services/creator-service.util';
 import { ServiceHappyLine } from '~/components/CreatorShop/Services/ServiceHappyLine';
 import { ServiceOfferingCard } from '~/components/CreatorShop/Services/ServiceOfferingCard';
-import { serviceHref, storefrontSectionKeys } from '~/components/CreatorShop/section-meta';
+import {
+  serviceHref,
+  storefrontServicesSectionShown,
+  storefrontShowsServices,
+} from '~/components/CreatorShop/section-meta';
 import { useOwnedCosmeticIds } from '~/components/CreatorShop/Storefront/storefront.util';
 import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -131,8 +135,7 @@ export const ShopSection = ({ user }: ProfileSectionProps) => {
 
   if (!features.creatorShop) return null;
 
-  const servicesShown =
-    !!shop && storefrontSectionKeys(shop.settings.sections, features).includes('services');
+  const servicesShown = storefrontServicesSectionShown(shop, features);
   const hasItems = shopSectionHasItems({
     enabled: shop?.settings.enabled === true,
     cosmeticCount: (shop?.featured.length ?? 0) + (shop?.cosmetics.length ?? 0),
@@ -142,7 +145,7 @@ export const ShopSection = ({ user }: ProfileSectionProps) => {
   const loading = isLoading || (!!features.creatorServices && servicesLoading);
   if (!loading && !hasItems) return null;
   const hasCosmetics = !!shop && shop.featured.length + shop.cosmetics.length > 0;
-  const showServices = servicesShown && offerings.length > 0;
+  const showServices = storefrontShowsServices(shop, offerings.length, features);
 
   return (
     <div ref={ref} className={classes.profileSection}>

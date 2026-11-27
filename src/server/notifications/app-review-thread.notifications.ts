@@ -18,6 +18,10 @@ import {
  * nobody individual can take is not notified at all: it waits in the queue's Replies tab.
  * `app-review-reply-to-developer` goes to the developer side and names the moderator who wrote it
  * ("From @name, Civitai App Review"), resolved at read time by `appReviewReplyDetailFetcher`.
+ *
+ * 🔴 No account id is stored in the details. They reach the browser as stored (the realtime
+ * push and the notification list), so the to-developer copy stores the message id and the
+ * fetcher looks the author up from the message row, server-side.
  */
 
 export type AppReviewReplyNotificationDetails = {
@@ -27,8 +31,11 @@ export type AppReviewReplyNotificationDetails = {
   name?: string | null;
   /** The message, trimmed to one line (`reviewReplyExcerpt`). */
   excerpt: string;
-  /** To-developer only: the moderator who wrote it. Resolved into `actor` at read time. */
-  authorUserId?: number | null;
+  /**
+   * To-developer only: the `app_review_messages` row. The fetcher resolves its author into
+   * `actor` at read time; the author's account id is never stored here.
+   */
+  messageId?: number | null;
   /** Filled by `appReviewReplyDetailFetcher`; never stored. */
   actor?: AppReviewActor | null;
 };

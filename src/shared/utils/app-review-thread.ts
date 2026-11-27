@@ -83,6 +83,49 @@ export function routeReply({
 }
 
 /**
+ * Who owns what a request is for, as the service resolved it (`loadSubject`). Ownership follows
+ * the canonical owner (`resolveListingAccess`), so a transfer or a moderator claim moves the
+ * developer side of every thread on the app with it.
+ */
+export type ReviewThreadOwnership =
+  /**
+   * The request's app or listing exists (or the listing its slug names already held the slug when
+   * the request was submitted): its canonical owner (`null`: it resolves to none).
+   */
+  | { via: 'app'; ownerUserId: number | null }
+  /**
+   * No app or listing on the request, and the listing its slug names was created after the
+   * request: it may be the submitter's own (a draft made with it, since transferred) or one a
+   * stranger took after the slug was released, and the two cannot be told apart from the rows.
+   */
+  | { via: 'slug'; ownerUserId: number }
+  /** Nothing the request is for exists: its submitter is the only owner it has. */
+  | { via: 'none' };
+
+/**
+ * The developer side of a thread: one user, the request's current owner, or `null` for nobody.
+ *
+ * - The app or listing exists: its canonical owner. The submitter takes part only while they are
+ *   that owner, so a former owner loses the thread with the app.
+ * - No app or listing on the request, and the listing its slug names came later: the submitter
+ *   while they own it, or while no such listing exists. One someone else owns gives nobody:
+ *   handing it to that owner could show a stranger another developer's review, and keeping the
+ *   submitter would keep a former owner in after a transfer.
+ *
+ * Accepted editors are not on it: only the owner (and moderators) read, post and are notified.
+ */
+export function reviewThreadDeveloperUserId(
+  submittedByUserId: number,
+  ownership: ReviewThreadOwnership
+): number | null {
+  if (ownership.via === 'app') return ownership.ownerUserId;
+  if (ownership.via === 'slug') {
+    return ownership.ownerUserId === submittedByUserId ? submittedByUserId : null;
+  }
+  return submittedByUserId;
+}
+
+/**
  * Which side of a thread the viewer is on, or `null` for a non-participant (who must not learn
  * the thread exists). The developer side wins: a moderator on their own app's submission writes
  * as its developer, so their reply goes to a reviewer and never reads as Civitai App Review.
@@ -90,30 +133,15 @@ export function routeReply({
 export function reviewThreadViewerRole({
   viewerUserId,
   viewerIsModerator,
-  submittedByUserId,
-  listingOwnerUserId,
+  developerUserId,
 }: {
   viewerUserId: number;
   viewerIsModerator: boolean;
-  submittedByUserId: number;
-  listingOwnerUserId: number | null | undefined;
+  /** {@link reviewThreadDeveloperUserId}. */
+  developerUserId: number | null;
 }): ReviewMessageAuthorRole | null {
-  if (viewerUserId === submittedByUserId || viewerUserId === listingOwnerUserId) {
-    return 'developer';
-  }
+  if (developerUserId != null && viewerUserId === developerUserId) return 'developer';
   return viewerIsModerator ? 'moderator' : null;
-}
-
-/** The developer side notified of a moderator's message: submitter and listing owner, once each. */
-export function developerSideRecipients(
-  submittedByUserId: number,
-  listingOwnerUserId: number | null | undefined
-): number[] {
-  const ids = [submittedByUserId];
-  if (typeof listingOwnerUserId === 'number' && listingOwnerUserId !== submittedByUserId) {
-    ids.push(listingOwnerUserId);
-  }
-  return ids;
 }
 
 /** The message as one line of at most {@link REVIEW_REPLY_EXCERPT_MAX} characters. */

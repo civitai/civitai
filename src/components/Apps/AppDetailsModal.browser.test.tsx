@@ -200,10 +200,14 @@ describe('AppDetailsModal', () => {
     // The section heading.
     await expect.element(page.getByText(/this app can/i)).toBeInTheDocument();
     await expect
-      .element(page.getByText('See your username and account status'))
+      .element(page.getByText('See your username, profile picture and account status'))
       .toBeInTheDocument();
     await expect
-      .element(page.getByText("Read the viewer's username and account status", { exact: false }))
+      .element(
+        page.getByText("Read the viewer's username, profile picture and account status", {
+          exact: false,
+        })
+      )
       .toBeInTheDocument();
     await expect.element(page.getByText('Run AI work with your Buzz')).toBeInTheDocument();
     const text = document.querySelector('[role="dialog"]')?.textContent ?? '';
@@ -225,7 +229,7 @@ describe('AppDetailsModal', () => {
     const title: Record<string, string> = {
       'ai:write:budgeted': 'Run AI work with your Buzz',
       'apps:storage:shared:write': 'Post to community data',
-      'user:read:self': 'See your username and account status',
+      'user:read:self': 'See your username, profile picture and account status',
       'models:read:self': 'See the model it sits on',
       [unknown]: 'Zz not a real scope',
     };

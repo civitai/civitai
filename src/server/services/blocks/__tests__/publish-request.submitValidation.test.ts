@@ -1,5 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import JSZip from 'jszip';
+import { CIVITAI_BLOCKS_REACT_FLOOR, CIVITAI_SDK_FLOOR } from '@civitai/app-assistant/sdk-floor';
 import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
 import type * as ReviewAutodeployService from '~/server/services/blocks/review-autodeploy.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -66,6 +67,7 @@ vi.mock('~/server/flipt/client', async (importOriginal) => {
 });
 
 const { submitVersion } = await import('~/server/services/blocks/publish-request.service');
+const terms = await import('~/server/services/blocks/app-developer-terms.service');
 const { ManifestValidationRefusal } = await import(
   '~/server/services/blocks/manifest-submit-validation'
 );
@@ -444,27 +446,33 @@ describe('submitVersion — advisories', () => {
       }),
       submittedByUserId: 1,
       submitterIsModerator: false,
-      sdkFloorOverride: [{ package: '@civitai/sdk', installed: '0.31.4', minimum: '0.33.0' }],
+      sdkFloorOverride: [
+        { package: '@civitai/sdk', installed: '0.31.4', minimum: CIVITAI_SDK_FLOOR },
+      ],
     });
     expect(db.createPublishRequest).toHaveBeenCalledTimes(1);
     expect(result.advisories.map((a) => [a.code, a.message])).toEqual([
       [
         'sdk-below-floor',
-        "This app's package-lock.json installs @civitai/sdk 0.31.4, below the platform minimum 0.33.0. Upgrade with `npm install @civitai/sdk@latest` and resubmit. The submit was not refused; a moderator sees the version.",
+        `This app's package-lock.json installs @civitai/sdk 0.31.4, below the platform minimum ${CIVITAI_SDK_FLOOR}. Upgrade with \`npm install @civitai/sdk@latest\` and resubmit. The submit was not refused; a moderator sees the version.`,
       ],
       [
         'sdk-below-floor',
-        "This app's package-lock.json installs @civitai/blocks-react 0.80.2, below the platform minimum 0.87.0. Upgrade with `npm install @civitai/blocks-react@latest` and resubmit. The submit was not refused; a moderator sees the version.",
+        `This app's package-lock.json installs @civitai/blocks-react 0.80.2, below the platform minimum ${CIVITAI_BLOCKS_REACT_FLOOR}. Upgrade with \`npm install @civitai/blocks-react@latest\` and resubmit. The submit was not refused; a moderator sees the version.`,
       ],
     ]);
     expect(storedFileSummary().sdkFloor).toEqual({
       lockfile: 'package-lock.json',
       lockfileStatus: 'read',
       below: [
-        { package: '@civitai/sdk', installed: '0.31.4', minimum: '0.33.0' },
-        { package: '@civitai/blocks-react', installed: '0.80.2', minimum: '0.87.0' },
+        { package: '@civitai/sdk', installed: '0.31.4', minimum: CIVITAI_SDK_FLOOR },
+        {
+          package: '@civitai/blocks-react',
+          installed: '0.80.2',
+          minimum: CIVITAI_BLOCKS_REACT_FLOOR,
+        },
       ],
-      override: [{ package: '@civitai/sdk', installed: '0.31.4', minimum: '0.33.0' }],
+      override: [{ package: '@civitai/sdk', installed: '0.31.4', minimum: CIVITAI_SDK_FLOOR }],
     });
     // The file diff the review reads is still there beside it.
     expect(Array.isArray(storedFileSummary().files)).toBe(true);
@@ -475,13 +483,54 @@ describe('submitVersion — advisories', () => {
     const result = await submitVersion({
       bundleBuffer: await bundle(VALID, {
         ...OWN_ACCENT,
-        'package-lock.json': lock('0.33.0', '0.87.0'),
+        'package-lock.json': lock(CIVITAI_SDK_FLOOR, CIVITAI_BLOCKS_REACT_FLOOR),
       }),
       submittedByUserId: 1,
       submitterIsModerator: false,
     });
     expect(result.advisories).toEqual([]);
     expect(storedFileSummary()).not.toHaveProperty('sdkFloor');
+    await settleFollowUps();
+  });
+
+  it('pnpm run build: the at-floor pnpm-lock.yaml is read, never the stale package-lock.json beside it', async () => {
+    const pnpmLock = [
+      "lockfileVersion: '9.0'",
+      'importers:',
+      '  .:',
+      '    dependencies:',
+      "      '@civitai/blocks-react':",
+      `        specifier: ^${CIVITAI_BLOCKS_REACT_FLOOR}`,
+      `        version: ${CIVITAI_BLOCKS_REACT_FLOOR}(react@19.0.0)`,
+      "      '@civitai/sdk':",
+      `        specifier: ^${CIVITAI_SDK_FLOOR}`,
+      `        version: ${CIVITAI_SDK_FLOOR}`,
+      '',
+    ].join('\n');
+    // The override makes the reading recorded, so the lockfile it names is observable.
+    const override = [{ package: '@civitai/sdk', installed: '0.29.1', minimum: CIVITAI_SDK_FLOOR }];
+    const result = await submitVersion({
+      bundleBuffer: await bundle(
+        { ...VALID, buildCommand: 'pnpm run build', outputDir: 'dist' },
+        {
+          ...OWN_ACCENT,
+          'package.json': JSON.stringify({ scripts: { build: 'vite build' } }),
+          'package-lock.json': lock('0.30.0', '0.79.0'),
+          'pnpm-lock.yaml': pnpmLock,
+        }
+      ),
+      submittedByUserId: 1,
+      submitterIsModerator: false,
+      sdkFloorOverride: override,
+    });
+    expect(db.createPublishRequest).toHaveBeenCalledTimes(1);
+    expect(result.advisories).toEqual([]);
+    expect(storedFileSummary().sdkFloor).toEqual({
+      lockfile: 'pnpm-lock.yaml',
+      lockfileStatus: 'read',
+      below: [],
+      override,
+    });
     await settleFollowUps();
   });
 
@@ -508,14 +557,16 @@ describe('submitVersion — advisories', () => {
       }),
       submittedByUserId: 1,
       submitterIsModerator: false,
-      sdkFloorOverride: [{ package: '@civitai/sdk', installed: '0.29.1', minimum: '0.33.0' }],
+      sdkFloorOverride: [
+        { package: '@civitai/sdk', installed: '0.29.1', minimum: CIVITAI_SDK_FLOOR },
+      ],
     });
     expect(result.advisories).toEqual([]);
     expect(storedFileSummary().sdkFloor).toEqual({
       lockfile: 'package-lock.json',
       lockfileStatus: 'unreadable',
       below: [],
-      override: [{ package: '@civitai/sdk', installed: '0.29.1', minimum: '0.33.0' }],
+      override: [{ package: '@civitai/sdk', installed: '0.29.1', minimum: CIVITAI_SDK_FLOOR }],
     });
     await settleFollowUps();
   });
@@ -533,6 +584,227 @@ describe('submitVersion — advisories', () => {
       () => expect(dbMock.dbWrite.appPublishRequestTrace.create).toHaveBeenCalledTimes(1),
       { timeout: 15_000 }
     );
+    await settleFollowUps();
+  });
+});
+
+describe('submitVersion — a staff submit on the owner’s behalf (platform update)', () => {
+  const ON_BEHALF = {
+    platformUpdateId: 'apu_01JABCDEFGHJKMNPQRSTVWXYZ0',
+    staffUsername: 'mod-ana',
+    ownerUserId: 7101,
+    ownerUsername: 'owner-olga',
+  };
+  const existingApp = () =>
+    db.appBlockFindFirst.mockResolvedValue({
+      id: 'apb_1',
+      appId: 'app_1',
+      trustTier: 'unverified',
+      app: { userId: 7101, allowedOrigins: ['https://my-app.civit.ai'] },
+    });
+
+  it('files the request with the MODERATOR as its submitter, and records who it was for', async () => {
+    existingApp();
+    await submitVersion({
+      bundleBuffer: await bundle({ ...VALID, version: '0.2.0' }),
+      submittedByUserId: 8001,
+      submitterIsModerator: true,
+      onBehalf: ON_BEHALF,
+    });
+    expect(db.createPublishRequest).toHaveBeenCalledTimes(1);
+    const data = (
+      db.createPublishRequest.mock.calls[0]![0] as unknown as {
+        data: {
+          submittedByUserId: number;
+          appBlockId: string;
+          fileSummary: Record<string, unknown>;
+        };
+      }
+    ).data;
+    expect(data.submittedByUserId).toBe(8001);
+    expect(data.appBlockId).toBe('apb_1');
+    expect(data.fileSummary.onBehalf).toEqual({ ...ON_BEHALF, staffUserId: 8001 });
+    expect(Array.isArray(data.fileSummary.files)).toBe(true);
+    await settleFollowUps();
+  });
+
+  it('refuses an on-behalf submit from a non-moderator, before anything is stored', async () => {
+    existingApp();
+    await expect(
+      submitVersion({
+        bundleBuffer: await bundle({ ...VALID, version: '0.2.0' }),
+        submittedByUserId: 8002,
+        submitterIsModerator: false,
+        onBehalf: ON_BEHALF,
+      })
+    ).rejects.toThrow('only a moderator can submit on behalf of an app owner');
+    expect(db.createPublishRequest).not.toHaveBeenCalled();
+  });
+
+  describe('the App Developer Terms: the OWNER’s acceptance, never the moderator’s (PR #10605)', () => {
+    const MODERATOR = 8001;
+    const OWNER_REFUSAL = "The app's owner has not accepted the current App Developer Terms yet.";
+    const SUBMITTER_REFUSAL = 'Accept the App Developer Terms';
+    const accepted = (ids: number[]) => {
+      vi.mocked(terms.hasAcceptedAppDeveloperTerms).mockImplementation(async (id) =>
+        ids.includes(id)
+      );
+      vi.mocked(terms.assertAcceptedAppDeveloperTerms).mockImplementation(async (id) => {
+        if (!ids.includes(id)) throw new Error(`${SUBMITTER_REFUSAL} (user ${id})`);
+      });
+    };
+    afterEach(() => {
+      vi.mocked(terms.hasAcceptedAppDeveloperTerms).mockImplementation(async () => true);
+      vi.mocked(terms.assertAcceptedAppDeveloperTerms).mockImplementation(async () => undefined);
+    });
+
+    it('files when the owner accepted and the moderator never did', async () => {
+      existingApp();
+      accepted([ON_BEHALF.ownerUserId]);
+      await submitVersion({
+        bundleBuffer: await bundle({ ...VALID, version: '0.2.0' }),
+        submittedByUserId: MODERATOR,
+        submitterIsModerator: true,
+        onBehalf: ON_BEHALF,
+      });
+      expect(db.createPublishRequest).toHaveBeenCalledTimes(1);
+      expect(terms.assertAcceptedAppDeveloperTerms).not.toHaveBeenCalled();
+      expect(terms.hasAcceptedAppDeveloperTerms).toHaveBeenCalledWith(ON_BEHALF.ownerUserId);
+      await settleFollowUps();
+    });
+
+    it('refuses, naming the owner, when the owner has not accepted (even though the moderator has)', async () => {
+      existingApp();
+      accepted([MODERATOR]);
+      const err = await submitVersion({
+        bundleBuffer: await bundle({ ...VALID, version: '0.2.0' }),
+        submittedByUserId: MODERATOR,
+        submitterIsModerator: true,
+        onBehalf: ON_BEHALF,
+      }).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(terms.AppDeveloperTermsNotAcceptedError);
+      expect((err as Error).message.startsWith(OWNER_REFUSAL)).toBe(true);
+      expect(db.createPublishRequest).not.toHaveBeenCalled();
+    });
+
+    it('a moderator who OWNS the app still needs their acceptance as owner on an on-behalf submit', async () => {
+      existingApp();
+      accepted([]);
+      const err = await submitVersion({
+        bundleBuffer: await bundle({ ...VALID, version: '0.2.0' }),
+        submittedByUserId: ON_BEHALF.ownerUserId,
+        submitterIsModerator: true,
+        onBehalf: ON_BEHALF,
+      }).catch((e: unknown) => e);
+      expect((err as Error).message.startsWith(OWNER_REFUSAL)).toBe(true);
+      expect(db.createPublishRequest).not.toHaveBeenCalled();
+    });
+
+    it('refuses an on-behalf submit whose recorded owner is not the app’s owner', async () => {
+      db.appBlockFindFirst.mockResolvedValue({
+        id: 'apb_1',
+        appId: 'app_1',
+        trustTier: 'unverified',
+        app: { userId: 7202, allowedOrigins: ['https://my-app.civit.ai'] },
+      });
+      await expect(
+        submitVersion({
+          bundleBuffer: await bundle({ ...VALID, version: '0.2.0' }),
+          submittedByUserId: MODERATOR,
+          submitterIsModerator: true,
+          onBehalf: ON_BEHALF,
+        })
+      ).rejects.toThrow(
+        "the app's owner is not the owner this update was submitted for; reload and retry"
+      );
+      expect(db.createPublishRequest).not.toHaveBeenCalled();
+    });
+
+    it('CONTROL: an ordinary moderator submit still needs the moderator’s own acceptance', async () => {
+      existingApp();
+      accepted([ON_BEHALF.ownerUserId]);
+      await expect(
+        submitVersion({
+          bundleBuffer: await bundle({ ...VALID, version: '0.2.0' }),
+          submittedByUserId: MODERATOR,
+          submitterIsModerator: true,
+        })
+      ).rejects.toThrow(`${SUBMITTER_REFUSAL} (user ${MODERATOR})`);
+      expect(terms.assertAcceptedAppDeveloperTerms).toHaveBeenCalledWith(MODERATOR);
+      expect(db.createPublishRequest).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('the owner submits while a staff submission is pending', () => {
+    // The owner may ship the app (the access read the submit gates on).
+    beforeEach(() => {
+      dbMock.dbRead.appBlock.findUnique.mockResolvedValue({
+        id: 'apb_1',
+        app: { userId: ON_BEHALF.ownerUserId },
+        appListing: null,
+      });
+    });
+    afterEach(() => {
+      dbMock.dbRead.appBlock.findUnique.mockResolvedValue(null);
+      db.pubReqFindFirst.mockReset();
+    });
+    it('is refused with a message naming the staff submission and the staff member', async () => {
+      existingApp();
+      db.pubReqFindFirst.mockImplementation(async (a: { where: { status?: string } }) =>
+        a.where.status === 'pending'
+          ? {
+              id: 'pubreq_staff',
+              submittedByUserId: 8001,
+              fileSummary: { files: [], onBehalf: { ...ON_BEHALF, staffUserId: 8001 } },
+            }
+          : null
+      );
+      await expect(
+        submitVersion({
+          bundleBuffer: await bundle({ ...VALID, version: '0.3.0' }),
+          submittedByUserId: ON_BEHALF.ownerUserId,
+          submitterIsModerator: false,
+        })
+      ).rejects.toThrow(
+        'slug my-app has a pending Civitai staff submission of a platform update by mod-ana, ' +
+          'under review; your submit can go through once it is reviewed'
+      );
+      expect(db.createPublishRequest).not.toHaveBeenCalled();
+    });
+
+    it('CONTROL: another user’s ordinary pending request keeps the generic refusal', async () => {
+      existingApp();
+      db.pubReqFindFirst.mockImplementation(async (a: { where: { status?: string } }) =>
+        a.where.status === 'pending'
+          ? { id: 'pubreq_other', submittedByUserId: 7202, fileSummary: { files: [] } }
+          : null
+      );
+      await expect(
+        submitVersion({
+          bundleBuffer: await bundle({ ...VALID, version: '0.3.0' }),
+          submittedByUserId: ON_BEHALF.ownerUserId,
+          submitterIsModerator: false,
+        })
+      ).rejects.toThrow(
+        'slug my-app already has a pending submission from another user; wait for it to be ' +
+          'reviewed before submitting a different bundle'
+      );
+    });
+  });
+
+  it('CONTROL: an ordinary submit records no on-behalf line', async () => {
+    existingApp();
+    await submitVersion({
+      bundleBuffer: await bundle({ ...VALID, version: '0.2.0' }),
+      submittedByUserId: 8001,
+      submitterIsModerator: true,
+    });
+    const data = (
+      db.createPublishRequest.mock.calls[0]![0] as unknown as {
+        data: { fileSummary: Record<string, unknown> };
+      }
+    ).data;
+    expect(data.fileSummary).not.toHaveProperty('onBehalf');
     await settleFollowUps();
   });
 });

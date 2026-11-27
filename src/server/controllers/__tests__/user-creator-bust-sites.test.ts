@@ -218,7 +218,7 @@ describe('creator-card bust in the profile and user write handlers', () => {
     const cards = await cardsAfter(() =>
       updateUserProfileHandler({
         input: { userId: OWNER, bio: 'hello' },
-        ctx: { user: { id: MODERATOR, isModerator: true, muted: false } },
+        ctx: { features: {}, user: { id: MODERATOR, isModerator: true, muted: false } },
       } as never)
     );
     expect(cards).toEqual({ owner: 'owner-after', moderator: 'mod-before' });
@@ -231,7 +231,7 @@ describe('creator-card bust in the profile and user write handlers', () => {
     const edit = (ctxUser: { id: number; isModerator: boolean }) =>
       updateUserProfileHandler({
         input: { userId: OWNER, bio: '' },
-        ctx: { user: { ...ctxUser, muted: false } },
+        ctx: { features: {}, user: { ...ctxUser, muted: false } },
       } as never);
 
     it('records the edit, and archives nothing for a user no report names', async () => {
@@ -294,7 +294,7 @@ describe('creator-card bust in the profile and user write handlers', () => {
       it('archives before an edit of only the profile section settings', async () => {
         await updateUserProfileHandler({
           input: { userId: OWNER, profileSectionsSettings: [] },
-          ctx: { user: { id: MODERATOR, isModerator: true, muted: false } },
+          ctx: { features: {}, user: { id: MODERATOR, isModerator: true, muted: false } },
         } as never);
         expect(upload.done.some((k) => k.endsWith('_profile.json'))).toBe(true);
       });
@@ -302,7 +302,7 @@ describe('creator-card bust in the profile and user write handlers', () => {
       it('archives before an edit of only the showcase', async () => {
         await updateUserProfileHandler({
           input: { userId: OWNER, showcaseItems: [] },
-          ctx: { user: { id: MODERATOR, isModerator: true, muted: false } },
+          ctx: { features: {}, user: { id: MODERATOR, isModerator: true, muted: false } },
         } as never);
         expect(upload.done.some((k) => k.endsWith('_profile.json'))).toBe(true);
       });
@@ -310,7 +310,7 @@ describe('creator-card bust in the profile and user write handlers', () => {
       it('archives before an edit of only the civitai.com copies', async () => {
         await updateUserProfileHandler({
           input: { userId: OWNER, sfwBio: '' },
-          ctx: { user: { id: MODERATOR, isModerator: true, muted: false } },
+          ctx: { features: {}, user: { id: MODERATOR, isModerator: true, muted: false } },
         } as never);
         expect(upload.done.some((k) => k.endsWith('_profile.json'))).toBe(true);
       });
@@ -320,7 +320,7 @@ describe('creator-card bust in the profile and user write handlers', () => {
         async (key) => {
           await updateUserProfileHandler({
             input: { userId: OWNER, [key]: '' },
-            ctx: { user: { id: MODERATOR, isModerator: true, muted: false } },
+            ctx: { features: {}, user: { id: MODERATOR, isModerator: true, muted: false } },
           } as never);
           expect(upload.done.some((k) => k.endsWith('_profile.json'))).toBe(true);
         }
@@ -334,7 +334,7 @@ describe('creator-card bust in the profile and user write handlers', () => {
           ] as never);
           await updateUserProfileHandler({
             input: { userId: OWNER, [key]: [] },
-            ctx: { user: { id: MODERATOR, isModerator: true, muted: false } },
+            ctx: { features: {}, user: { id: MODERATOR, isModerator: true, muted: false } },
           } as never);
           const archived = JSON.parse(upload.bodies[0]);
           expect(archived.links).toEqual([
@@ -347,7 +347,7 @@ describe('creator-card bust in the profile and user write handlers', () => {
       it('archives nothing for an edit that touches no profile text', async () => {
         await updateUserProfileHandler({
           input: { userId: OWNER, coverImageId: null },
-          ctx: { user: { id: MODERATOR, isModerator: true, muted: false } },
+          ctx: { features: {}, user: { id: MODERATOR, isModerator: true, muted: false } },
         } as never);
         expect(reportLookups()).toBe(0);
         expect(upload.done).toEqual([]);
@@ -365,7 +365,7 @@ describe('creator-card bust in the profile and user write handlers', () => {
     const cards = await cardsAfter(() =>
       addEntityToShowcaseHandler({
         input: { entityType: 'Model', entityId: 77 },
-        ctx: { user: { id: OWNER, isModerator: false } },
+        ctx: { features: {}, user: { id: OWNER, isModerator: false } },
       } as never)
     );
     expect(cards).toEqual({ owner: 'owner-after', moderator: 'mod-before' });
@@ -378,7 +378,7 @@ describe('creator-card bust in the profile and user write handlers', () => {
     const cards = await cardsAfter(() =>
       updateUserHandler({
         input: { id: OWNER, username: 'owner-after' },
-        ctx: { user: { id: OWNER } },
+        ctx: { features: {}, user: { id: OWNER } },
       } as never)
     );
     expect(cards).toEqual({ owner: 'owner-after', moderator: 'mod-before' });

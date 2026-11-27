@@ -174,6 +174,15 @@ export const submitVersionSchema = z.object({
     .max(8)
     .nullish()
     .transform((v) => v ?? undefined),
+  // `civitai app submit --allow-unmerged-platform-update`: queue the bundle even though it lacks a
+  // staff platform update no approved version has shipped. Without it such a bundle is refused
+  // (`platform_update_missing`); with it, what the bundle left out is recorded for the moderator.
+  // OPTIONAL, same wire contract as the fields above (omit or `null` = not sent). A malformed value
+  // rejects, for the reason `sourceCommit`'s does.
+  allowUnmergedPlatformUpdate: z
+    .boolean()
+    .nullish()
+    .transform((v) => v ?? undefined),
 });
 
 export type SubmitVersionInput = z.infer<typeof submitVersionSchema>;
@@ -189,6 +198,7 @@ const SUBMIT_VERSION_FIELD_HINTS: Record<string, string> = {
   githubOidcToken: 'githubOidcToken must be a non-empty string of at most 16384 characters',
   sdkFloorOverride:
     'sdkFloorOverride must be a list of at most 8 { package, installed, minimum } strings',
+  allowUnmergedPlatformUpdate: 'allowUnmergedPlatformUpdate must be a boolean',
 };
 
 /** The message both submit routes have always returned for a parse failure. */
