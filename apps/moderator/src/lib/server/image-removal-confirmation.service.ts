@@ -197,18 +197,26 @@ export async function confirmRemoval({
       throw e;
     }
   // The image is down either way, so the reports the removal answered are actioned, unless it is
-  // held. One a moderator has reviewed since the hold keeps its status.
-  const openReportIds =
-    skipped || !claimed.reportIds.length
-      ? []
-      : (
-          await dbWrite
-            .selectFrom('Report')
-            .select('id')
-            .where('id', 'in', claimed.reportIds)
-            .where('status', 'in', OPEN_REPORT_STATUSES)
-            .execute()
-        ).map((r) => r.id);
+  // held: the ones kept on the request, and any TOS report filed since the hold. Only reports on
+  // this image; one a moderator has reviewed since the hold keeps its status.
+  const openReportIds = skipped
+    ? []
+    : (
+        await dbWrite
+          .selectFrom('ImageReport as ir')
+          .innerJoin('Report as r', 'r.id', 'ir.reportId')
+          .select('r.id')
+          .distinct()
+          .where('ir.imageId', '=', row.imageId)
+          .where('r.status', 'in', OPEN_REPORT_STATUSES)
+          .where((eb) =>
+            eb.or([
+              ...(claimed.reportIds.length ? [eb('r.id', 'in', claimed.reportIds)] : []),
+              eb(sql<string>`r.reason::text`, '=', 'TOSViolation'),
+            ])
+          )
+          .execute()
+      ).map((r) => r.id);
   for (const reportId of openReportIds)
     await setReportStatus({
       id: reportId,

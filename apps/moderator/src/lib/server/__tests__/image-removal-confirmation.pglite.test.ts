@@ -113,8 +113,10 @@ CREATE TABLE "Appeal" (
 CREATE TABLE "AppealDecisionRecord" ("appealId" INTEGER UNIQUE, "removalLabel" TEXT);
 CREATE TABLE "ModActivity" (id SERIAL PRIMARY KEY, "userId" INTEGER, "entityType" TEXT, "entityId" INTEGER, activity TEXT, "createdAt" TIMESTAMP(3) DEFAULT now());
 CREATE TYPE "ReportStatus" AS ENUM ('Pending', 'Processing', 'Actioned', 'Unactioned');
-CREATE TABLE "Report" (id INTEGER PRIMARY KEY, status "ReportStatus" NOT NULL);
+CREATE TABLE "Report" (id INTEGER PRIMARY KEY, status "ReportStatus" NOT NULL, reason TEXT NOT NULL DEFAULT 'NSFW');
+CREATE TABLE "ImageReport" ("imageId" INTEGER NOT NULL, "reportId" INTEGER NOT NULL);
 INSERT INTO "Report" (id, status) VALUES (7, 'Pending'), (8, 'Processing');
+INSERT INTO "ImageReport" ("imageId", "reportId") VALUES (50, 7), (50, 8);
 `;
 
 const REQUESTER = 2;
@@ -528,6 +530,36 @@ describe('deciding a held removal', () => {
     expect(setReportStatus).toHaveBeenCalledWith(
       expect.objectContaining({ fromStatuses: ['Pending', 'Processing'] })
     );
+  });
+
+  it('actions only the kept reports that are on this image', async () => {
+    await db.exec(`
+      INSERT INTO "Report" (id, status) VALUES (9, 'Pending');
+      INSERT INTO "ImageReport" ("imageId", "reportId") VALUES (51, 9);
+    `);
+    await approve();
+    const { held } = await blockImage({
+      imageId: IMAGE,
+      userId: REQUESTER,
+      violationType: 'animatedMinorNsfw',
+      reportIds: [7, 9],
+    });
+
+    await confirmRemoval({ id: held!.confirmationId, userId: CONFIRMER });
+
+    expect(setReportStatus.mock.calls.map(([a]) => a.id)).toEqual([7]);
+  });
+
+  it('also actions a TOS report on the image filed after the hold, but no other new report', async () => {
+    const id = await hold();
+    await db.exec(`
+      INSERT INTO "Report" (id, status, reason) VALUES (10, 'Pending', 'TOSViolation'), (11, 'Pending', 'NSFW');
+      INSERT INTO "ImageReport" ("imageId", "reportId") VALUES (50, 10), (50, 11);
+    `);
+
+    await confirmRemoval({ id, userId: CONFIRMER });
+
+    expect(setReportStatus.mock.calls.map(([a]) => a.id).sort((a, b) => a - b)).toEqual([7, 8, 10]);
   });
 
   it('runs the removal once when two moderators confirm', async () => {
