@@ -255,31 +255,37 @@ async function restrictedUsers(event: RefereeEvent, window: Window, deadline: nu
   );
   const ids = [...new Set([...(users?.actors ?? []), ...(users?.owners ?? [])].map(Number))];
 
+  const newAccountCutoff = new Date(
+    event.startDate.getTime() - event.scoring.newAccountDays * DAY_MS
+  );
   const hidden: RestrictedUser[] = [];
+  let newAccountMinId = MAX_INT32;
   for (const part of chunk(ids, 10_000)) {
-    const rows = await dbRead.$queryRaw<{ id: number; fromMs: bigint | number }[]>`
-      SELECT id, (extract(epoch FROM "from"::timestamp) * 1000)::bigint AS "fromMs"
+    const rows = await dbRead.$queryRaw<{ id: number; fromMs: bigint | number; isNew: boolean }[]>`
+      SELECT id, (extract(epoch FROM "from"::timestamp) * 1000)::bigint AS "fromMs", "isNew"
       FROM (
-        SELECT u.id, ${eventPointsExcludedFromSql()} AS "from" FROM "User" u
+        SELECT u.id, ${eventPointsExcludedFromSql()} AS "from",
+          u."createdAt" >= ${newAccountCutoff} AS "isNew"
+        FROM "User" u
         WHERE u.id = ANY(${part}::int[])
       ) restricted
       WHERE "from" IS NOT NULL
     `;
     hidden.push(...rows.map((r) => ({ id: r.id, fromMs: Number(r.fromMs) })));
+    for (const r of rows) if (r.isNew) newAccountMinId = Math.min(newAccountMinId, r.id);
   }
 
-  const newAccountCutoff = new Date(
-    event.startDate.getTime() - event.scoring.newAccountDays * DAY_MS
-  );
   // Ordered by createdAt with the deletedAt filter so it walks the partial createdAt index; min(id)
-  // would scan the primary key from the oldest account. A deleted account is restricted as hidden.
+  // would scan the primary key from the oldest account. The filter skips deleted accounts, which are
+  // restricted only from their delete day, so a deleted new account found above lowers the threshold
+  // to its id: it gives nothing before its delete either.
   const [first] = await dbRead.$queryRaw<{ id: number }[]>`
     SELECT id FROM "User"
     WHERE "createdAt" >= ${newAccountCutoff} AND "deletedAt" IS NULL
     ORDER BY "createdAt"
     LIMIT 1
   `;
-  return { hidden, newAccountMinId: first?.id ?? MAX_INT32 };
+  return { hidden, newAccountMinId: Math.min(newAccountMinId, first?.id ?? MAX_INT32) };
 }
 
 export async function queryReferee(

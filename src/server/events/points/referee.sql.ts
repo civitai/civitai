@@ -16,8 +16,8 @@
 //   count only while its latest row is an add: removing the last reaction nets it out, reacting
 //   again brings it back.
 // - People in restrictedUsers (banned, deleted, excluded from event points) neither give nor earn,
-//   from their restrictedFrom on: rows before it stand. Banned and deleted people are restricted from
-//   0, the whole season.
+//   from their restrictedFrom on: rows before it stand. Banned people are restricted from 0, the
+//   whole season; deleted people from the UTC day of their delete.
 //   Actors with an id from newAccountMinId (registered inside the new-account window) give nothing.
 //   Both are read from Postgres "User" by the caller.
 // - Nobody earns from acting on their own hat.
