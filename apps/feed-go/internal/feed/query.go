@@ -47,9 +47,10 @@ type ImagesQuery struct {
 	// ImageID is the REST endpoint's `imageId` (0 = none): `i.id = <imageId>`, after the post clauses.
 	// getAllImages marks that query personalized, so it is never cached.
 	ImageID int
-	// RequiringMeta is the REST endpoint's `requiringMeta` on its legacy path: `i."blockedFor" =
-	// 'AiNotVerified'`, after the visibility gates. Node drops those gates for it on the red domain
-	// only, and this route passes no domain, so they stay.
+	// RequiringMeta is the input's `requiringMeta` (getAllImages, every caller that spreads its input:
+	// image.getInfinite's Postgres page, the gallery's page and its pinned and sponsored posts, the
+	// REST endpoint's legacy path): `i."blockedFor" = 'AiNotVerified'`, after the visibility gates.
+	// With Domain "red" those gates (the level and the reviewed clause) are left out for it.
 	RequiringMeta bool
 	// Domain is getAllImages' `domain` (getRequestBoardDomainColor of the request's host; "" when the
 	// caller passes none, as the REST endpoint does). Read only beside RequiringMeta.
@@ -415,8 +416,12 @@ func (q *ImagesQuery) Build() Built {
 		default:
 			and = append(and, `i."acceptableMinor" = FALSE`)
 		}
-		and = append(and, `(i."nsfwLevel" & `+a.add(browsingLevel)+`) != 0 AND i."nsfwLevel" != 0`)
-		and = append(and, hydrate.ImageReviewedSQL("i"))
+		// `if (!requiringMeta || domain !== 'red')`: a metadata-blocked image reads Blocked for its
+		// ingestion and its level, which these gates drop, so only red, which shows every level, lists it.
+		if !q.RequiringMeta || q.Domain != "red" {
+			and = append(and, `(i."nsfwLevel" & `+a.add(browsingLevel)+`) != 0 AND i."nsfwLevel" != 0`)
+			and = append(and, hydrate.ImageReviewedSQL("i"))
+		}
 	}
 	if q.RequiringMeta {
 		// `if (requiringMeta) AND.push(i."blockedFor" = BlockedReason.AiNotVerified)`, after the gates.
