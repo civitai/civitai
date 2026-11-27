@@ -309,7 +309,7 @@ describe('setAssociatedResources model side', () => {
       );
 
     it('refuses an owner browsing at PG a mature target, and links it at a mature level', async () => {
-      await expect(linkTo(MODELS.mature.id, PG)).rejects.toThrow();
+      await expect(linkTo(MODELS.mature.id, PG)).rejects.toMatchObject({ code: 'NOT_FOUND' });
       expect(await remaining(107)).toEqual([]);
       await linkTo(MODELS.mature.id, ALL);
       expect(await remaining(107)).toEqual([MODELS.mature.id]);
@@ -318,7 +318,7 @@ describe('setAssociatedResources model side', () => {
     it.each(['private', 'unpublished', 'takenDown'] as const)(
       'refuses a %s model of another user',
       async (state) => {
-        await expect(linkTo(MODELS[state].id, ALL)).rejects.toThrow();
+        await expect(linkTo(MODELS[state].id, ALL)).rejects.toMatchObject({ code: 'NOT_FOUND' });
         expect(await remaining(107)).not.toContain(MODELS[state].id);
       }
     );
