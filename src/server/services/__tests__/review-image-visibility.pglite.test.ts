@@ -32,6 +32,7 @@ import {
   imageVisibilityConditions,
 } from '~/server/services/image-visibility.service';
 import { reviewOfImageSql } from '~/server/services/creator-service-review-image-sql';
+import { getOwnRetractedMedia } from '~/server/services/retracted-media.service';
 import { BlockedByUsers, BlockedUsers } from '~/server/services/user-preferences.service';
 import { shownReviewImageLevelsFor } from '~/server/utils/review-image-levels';
 import { childSafetyCaseTablesSql } from '~/server/services/__tests__/child-safety-case-tables';
@@ -296,6 +297,26 @@ describe('a review copy whose source Final is held', () => {
   it('still opens to a moderator', async () => {
     await sourced(true);
     expect(await opens(MOD, allBrowsingLevelsFlag)).toBe(true);
+  });
+
+  // The owner retracted-media route holds a moderated copy to the same rule as the image page.
+  it('is refused to its buyer by the owner route once the source is held, as by the page', async () => {
+    // What the owner route's CSAM check reads, beyond this file's tables.
+    await db.exec(`
+      ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS "pHash" bigint;
+      CREATE TABLE IF NOT EXISTS "BlockedImage" (hash bigint, reason text);
+      CREATE TABLE IF NOT EXISTS "ScanLabelItem" (id int PRIMARY KEY, "imageId" int, "voidReason" text);
+      CREATE TABLE IF NOT EXISTS "ScanLabelFlag" ("itemId" int, snapshot jsonb);
+      CREATE TABLE IF NOT EXISTS "ScanLabelVote" ("itemId" int, reason text);
+      CREATE TABLE IF NOT EXISTS "ImageCdnModeratorDelete" ("imageId" int, url text, "userId" int, "csamReview" boolean);
+      UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'moderated', url = 'copy-key' WHERE id = ${IMAGE};
+    `);
+    const own = () =>
+      getOwnRetractedMedia(IMAGE, BUYER, { shownReviewImageLevels: allBrowsingLevelsFlag });
+    await sourced(false);
+    expect(await own()).toMatchObject({ url: 'copy-key' });
+    await sourced(true);
+    expect(await own()).toBeNull();
   });
 });
 

@@ -37,6 +37,7 @@ const REASONS = [
   'moderated,zzz',
   'moderated,',
   '',
+  'tos\n',
 ] as const;
 
 type Mark = {
@@ -103,12 +104,29 @@ const MARKS: (Mark & { marked: boolean })[] = [
     setup: `INSERT INTO "ImageCdnModeratorDelete" ("imageId", url, "userId", "csamReview") VALUES ($id + 1000, '$url', 1, true)`,
     marked: true,
   },
+  // By the Moderation Lead's ruling of 2026-11-27, a copy listed on a CSAM report withholds from
+  // the owner whatever its report's state; only the owner's own row's listing does not.
   {
-    label: 'moderated + a url copy deleted for CSAM review, its verified report sent',
+    label: 'moderated + a url copy deleted for CSAM review, listed on a sent, verified report',
     blockedFor: 'moderated',
     setup: `INSERT INTO "ImageCdnModeratorDelete" ("imageId", url, "userId", "csamReview") VALUES ($id + 1000, '$url', 1, true);
       INSERT INTO "CsamReport" ("userId", details, images, "reportSentAt") VALUES (1, '{"evidenceVerifiedAt": "2026-11-01T00:00:00Z"}', jsonb_build_array(jsonb_build_object('id', $id + 1000)), now())`,
-    marked: false,
+    marked: true,
+  },
+  {
+    label: 'moderated + another row on its url listed on a CSAM report',
+    blockedFor: 'moderated',
+    setup: `INSERT INTO "Image" (id, "userId", url, ingestion) VALUES ($id + 1000, 9, '$url', 'Scanned');
+      INSERT INTO "CsamReport" (images) VALUES (jsonb_build_array($id + 1000))`,
+    marked: true,
+  },
+  {
+    label: "moderated + the pHash of another user's listed image",
+    blockedFor: 'moderated',
+    pHash: 5151,
+    setup: `INSERT INTO "Image" (id, "userId", url, ingestion, "pHash") VALUES ($id + 1000, 9, 'elsewhere-$id', 'Scanned', 5151);
+      INSERT INTO "CsamReport" (images) VALUES (jsonb_build_array($id + 1000))`,
+    marked: true,
   },
   {
     label: 'moderated + a url copy deleted, not for CSAM review',
@@ -119,6 +137,8 @@ const MARKS: (Mark & { marked: boolean })[] = [
   {
     label: 'moderated + report-listed, no CSAM mark',
     blockedFor: 'moderated',
+    // Its own pHash: its own listing must not count through the pHash check either.
+    pHash: 8282,
     setup: `INSERT INTO "CsamReport" (images) VALUES ('[{"id": $id}]'::jsonb)`,
     marked: false,
   },
@@ -260,7 +280,6 @@ describe('ownerMediaAllowed, reviewedBlocks on', () => {
       ...INGESTIONS.flatMap((ingestion) =>
         ['tos', 'moderated', 'moderated,tos', ' tos , moderated'].map((r) => `${ingestion}/${r}`)
       ),
-      'moderated + a url copy deleted for CSAM review, its verified report sent',
       'moderated + a url copy deleted, not for CSAM review',
       'moderated + report-listed, no CSAM mark',
       'moderated + clean url sibling',
@@ -272,6 +291,7 @@ describe('ownerMediaAllowed, reviewedBlocks on', () => {
     const allowed = new Set(named(tsAllowed(true)));
     for (const cell of MARK_CELLS) expect(allowed.has(cell.label!)).toBe(!cell.marked);
     for (const reason of [
+      'tos\n',
       'CSAM',
       'zzz',
       'moderated,CSAM',
@@ -355,5 +375,24 @@ describe('ownerCsamMarkedColumnSql', () => {
     expect(await read(OWNER, csam.id)).toEqual([{ marked: true, id: csam.id }]);
     expect(await read(STRANGER, csam.id)).toEqual([{ marked: null, id: csam.id }]);
     expect(await read(OWNER, unblocked.id)).toEqual([{ marked: null, id: unblocked.id }]);
+  });
+});
+
+describe("an unblocked image with the pHash of another user's listed image", () => {
+  it('is still served to its owner: the report checks apply only under a reviewed block', async () => {
+    await h.prisma.$executeRawUnsafe(`
+      INSERT INTO "Image" (id, url, ingestion, "pHash") VALUES (9100, 'u-9100', 'Scanned', 6161)`);
+    await h.prisma.$executeRawUnsafe(`
+      INSERT INTO "Image" (id, "userId", url, ingestion, "pHash") VALUES (9101, 9, 'u-9101', 'Scanned', 6161)`);
+    await h.prisma.$executeRawUnsafe(`INSERT INTO "CsamReport" (images) VALUES ('[9101]'::jsonb)`);
+    const [{ marked }] = await h.prisma.$queryRawUnsafe<{ marked: boolean }[]>(
+      `SELECT ${ownerCsamMarkedSql('i')} AS marked FROM "Image" i WHERE i.id = 9100`
+    );
+    expect(marked).toBe(true);
+    const ids = await sqlAllowed(ownerMediaAllowedSql('i', { reviewedBlocks: true }));
+    expect(ids).toContain(9100);
+    expect(
+      ownerMediaAllowed({ ingestion: 'Scanned', blockedFor: null }, { reviewedBlocks: true })
+    ).toBe(true);
   });
 });

@@ -10,8 +10,12 @@ import {
   csamCaseCleanupSql,
 } from '../../../../packages/civitai-shared/src/__tests__/csam-restriction-cases';
 import { POST_PENDING_DELETE_REASON } from '@civitai/db-queries/content-deletion';
-import { heldImageSql, heldUserSql } from '@civitai/shared/held-media';
-import { heldUrlSql, reportListedUrlSql } from '@civitai/shared/held-url';
+import {
+  CSAM_REPORT_LISTED_IMAGE_IDS_SQL,
+  heldImageSql,
+  heldUserSql,
+} from '@civitai/shared/held-media';
+import { heldUrlSql } from '@civitai/shared/held-url';
 import { semanticImageHeldText } from '~/server/services/semantic-image-flags.sql';
 
 /**
@@ -739,6 +743,38 @@ describe('getOwnRetractedMedia', () => {
     await pg.exec(`
       CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
       ALTER TABLE "Image" ALTER COLUMN ingestion TYPE "ImageIngestionStatus" USING ingestion::"ImageIngestionStatus";
+      -- What \`imageVisibilityConditions\` reads beyond the tables above.
+      DO $$ BEGIN CREATE TYPE "Availability" AS ENUM ('Public', 'Unsearchable', 'Private', 'EarlyAccess'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      DO $$ BEGIN CREATE TYPE "CollectionContributorPermission" AS ENUM ('VIEW', 'ADD', 'ADD_REVIEW', 'MANAGE'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      DO $$ BEGIN CREATE TYPE "ServiceOfferingStatus" AS ENUM ('Draft', 'Active', 'Paused', 'Removed'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS "nsfwLevelLocked" boolean DEFAULT false,
+        ADD COLUMN IF NOT EXISTS metadata jsonb NOT NULL DEFAULT '{}', ADD COLUMN IF NOT EXISTS "scanJobs" jsonb,
+        ADD COLUMN IF NOT EXISTS "modelRestricted" boolean NOT NULL DEFAULT false,
+        ADD COLUMN IF NOT EXISTS poi boolean NOT NULL DEFAULT false,
+        ADD COLUMN IF NOT EXISTS "tosViolation" boolean NOT NULL DEFAULT false;
+      ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS availability "Availability" DEFAULT 'Public',
+        ADD COLUMN IF NOT EXISTS "collectionId" int;
+      ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "bannedAt" timestamp, ADD COLUMN IF NOT EXISTS "deletedAt" timestamp,
+        ADD COLUMN IF NOT EXISTS muted boolean NOT NULL DEFAULT false, ADD COLUMN IF NOT EXISTS settings jsonb DEFAULT '{}';
+      ALTER TABLE "Model" ADD COLUMN IF NOT EXISTS mode text, ADD COLUMN IF NOT EXISTS minor boolean,
+        ADD COLUMN IF NOT EXISTS "sfwOnly" boolean, ADD COLUMN IF NOT EXISTS "gallerySettings" jsonb;
+      ALTER TABLE "Article" ADD COLUMN IF NOT EXISTS status text, ADD COLUMN IF NOT EXISTS "publishedAt" timestamp,
+        ADD COLUMN IF NOT EXISTS ingestion text, ADD COLUMN IF NOT EXISTS availability "Availability" DEFAULT 'Public',
+        ADD COLUMN IF NOT EXISTS "userId" int;
+      CREATE TABLE IF NOT EXISTS "CollectionContributor" ("collectionId" int, "userId" int, permissions "CollectionContributorPermission"[]);
+      CREATE TABLE IF NOT EXISTS "Bounty" (id int PRIMARY KEY, "userId" int, availability "Availability" DEFAULT 'Public');
+      CREATE TABLE IF NOT EXISTS "BountyEntry" (id int PRIMARY KEY, "bountyId" int NOT NULL, "userId" int);
+      CREATE TABLE IF NOT EXISTS "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
+      ALTER TABLE "ServiceOffering" ADD COLUMN IF NOT EXISTS "sellerId" int,
+        ADD COLUMN IF NOT EXISTS "allowReviewWork" boolean NOT NULL DEFAULT true,
+        ADD COLUMN IF NOT EXISTS status "ServiceOfferingStatus" NOT NULL DEFAULT 'Active';
+      CREATE TABLE IF NOT EXISTS "ServiceDeal" (id int PRIMARY KEY, "offeringId" int NOT NULL, "sellerId" int NOT NULL,
+        "buyerId" int NOT NULL, "maxNsfwLevel" int NOT NULL DEFAULT 1);
+      CREATE TABLE IF NOT EXISTS "ServiceDealReview" (id int PRIMARY KEY, "dealId" int NOT NULL, "buyerId" int NOT NULL,
+        "sellerId" int NOT NULL, "publishedAt" timestamp, "hiddenAt" timestamp);
+      CREATE TABLE IF NOT EXISTS "ServiceDealReviewImage" ("reviewId" int NOT NULL, "imageId" int NOT NULL UNIQUE, "sourceFileId" int);
+      CREATE TABLE IF NOT EXISTS "ServiceDealFile" (id serial PRIMARY KEY, "imageId" int);
+      CREATE TABLE IF NOT EXISTS "ServiceDealFileEntry" (id serial PRIMARY KEY, "fileId" int, "imageId" int);
       INSERT INTO "Image" (id, url, ingestion, "blockedFor", "userId") VALUES
         (900, 'key-900', 'Blocked', 'moderated', 1400),
         (901, 'key-900', 'Blocked', 'CSAM', 1401),
@@ -802,18 +838,19 @@ describe('getOwnRetractedMedia', () => {
   });
 
   // Whatever row shape makes the moderator route refuse a moderator without the CSAM grant (and
-  // serve one with it), the owner route refuses too, except where the only mark is a CSAM report
-  // listing, which owners keep by ruling.
+  // serve one with it), the owner route refuses too, except where the mark is the image's own
+  // listing on a CSAM report, which its owner keeps by ruling.
   describe('refuses the owner whatever the moderator route keeps to the CSAM grant', () => {
     const target = { id: 990900000, url: 'key-990900000' };
     const OWNER = 990910000;
     afterEach(async () => {
       await pg.exec(csamCaseCleanupSql(target));
     });
-    const reportListed = async () =>
+    /** The one divergence the ruling allows: the target's own row listed on a CSAM report. */
+    const ownListed = async () =>
       (
         await pg.query<{ listed: boolean }>(
-          `SELECT ${reportListedUrlSql('i."url"')} AS listed FROM "Image" i WHERE i.id = $1`,
+          `SELECT (i.id)::text IN (${CSAM_REPORT_LISTED_IMAGE_IDS_SQL}) AS listed FROM "Image" i WHERE i.id = $1`,
           [target.id]
         )
       ).rows[0].listed;
@@ -832,7 +869,7 @@ describe('getOwnRetractedMedia', () => {
       if (!withheld) return;
       grantOnly.push(label);
       if ((await getOwnRetractedMedia(target.id, OWNER)) === null) return;
-      expect({ label, reportListed: await reportListed() }).toEqual({ label, reportListed: true });
+      expect({ label, ownListed: await ownListed() }).toEqual({ label, ownListed: true });
       listedOnly.push(label);
     });
 

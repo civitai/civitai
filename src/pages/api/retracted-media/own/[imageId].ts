@@ -8,19 +8,21 @@ import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 import { serveOwnRetractedMedia } from '~/server/utils/own-retracted-media';
 import { checkFixedWindow } from '~/server/utils/public-api-rate-limit';
 import { isFullScopeSession } from '~/server/utils/require-full-scope-session';
+import { shownReviewImageLevelsFor } from '~/server/utils/review-image-levels';
 import type { Session, SessionUser } from '~/types/session';
 
 export const config = { api: { responseLimit: false } };
 
 const endpoint = AuthedEndpoint(
-  (req: NextApiRequest, res: NextApiResponse, user: SessionUser, session: Session) =>
-    serveOwnRetractedMedia(req, res, {
+  (req: NextApiRequest, res: NextApiResponse, user: SessionUser, session: Session) => {
+    const features = getFeatureFlagsAsync({ user, req });
+    return serveOwnRetractedMedia(req, res, {
       viewer: {
         id: user.id,
         impersonated: session.impersonatedBy != null,
         fullScope: isFullScopeSession(req),
       },
-      enabled: async () => !!(await getFeatureFlagsAsync({ user, req })).ownerBlockedMedia,
+      enabled: async () => !!(await features).ownerBlockedMedia,
       rateLimit: () =>
         checkFixedWindow(
           prefixCacheKey(`retracted-media:own:rate-limit:${user.id}`),
@@ -28,9 +30,18 @@ const endpoint = AuthedEndpoint(
           60,
           { failOpen: false }
         ),
-      readMedia: (imageId) => getOwnRetractedMedia(imageId, user.id),
+      // The image page's own opt-in levels, so a review image opens here as it does there.
+      readMedia: async (imageId) =>
+        getOwnRetractedMedia(imageId, user.id, {
+          shownReviewImageLevels: shownReviewImageLevelsFor({
+            features: await features,
+            user,
+            req,
+          }),
+        }),
       heldFor: async (postId) => (await getHeldLevelsByPost([postId])).get(postId),
-    }),
+    });
+  },
   ['GET']
 );
 

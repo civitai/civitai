@@ -177,13 +177,13 @@ function buildCsamRestrictedSql(image: string): string {
 /**
  * Whether the "Image" row aliased `image` carries a CSAM mark that keeps a moderated or tos block's
  * media from its owner: `csamRowSql` on it, csam anywhere in its comma list of block reasons, or the
- * same on one of the other rows on its url, or a copy on its url a moderator deleted for CSAM review
+ * same on one of the other rows on its url, a copy on its url a moderator deleted for CSAM review
  * that no verified report covers (`heldUrlSql` with `owners: false`, a deleted row the sibling scan
- * cannot see). A url with `URL_SIBLING_CAP` or more other rows counts as marked, since the rows past
- * the cap go unread. A NULL reads as marked.
+ * cannot see), or reported bytes (`reportedCopySql`). A url with `URL_SIBLING_CAP` or more other rows
+ * counts as marked, since the rows past the cap go unread. A NULL reads as marked.
  *
- * It leaves out `csamRestrictedSql`'s CSAM report listing and its owner-level held legs on purpose:
- * an owner keeps seeing their own report-listed and held media.
+ * Unlike `moderatorWithheldSql`, the row's own listing on a CSAM report does not count, on purpose:
+ * an owner keeps seeing their own report-listed media. Nor does an owner-level hold.
  */
 export function ownerCsamMarkedSql(image: string): string {
   if (!/^[a-z_][a-z0-9_]*$/i.test(image) || OWNER_CSAM_MARKED_ALIASES.has(image.toLowerCase()))
@@ -206,7 +206,37 @@ function buildOwnerCsamMarkedSql(image: string): string {
     OR EXISTS (SELECT 1 FROM (${siblings('os')}) os WHERE COALESCE(${marked('os')}, true))
     OR (SELECT count(*) FROM (${siblings('oc')}) oc) >= ${URL_SIBLING_CAP}
     OR ${heldUrlSql(`${image}."url"`, { owners: false })}
+    OR ${reportedCopySql(image)}
   ), true)`;
+}
+
+/**
+ * `reportListedUrlSql` for the "Image" row aliased `image`, less its own listing: another row or a
+ * moderator-deleted copy on its url is listed on a CSAM report, or a row on its url has the pHash of
+ * an image listed on one, whoever's it is.
+ */
+function reportedCopySql(image: string): string {
+  const url = `${image}."url"`;
+  const id = `${image}.id`;
+  return `(
+    EXISTS (
+      SELECT 1 FROM "Image" orl_i
+      WHERE orl_i.url = ${url} AND orl_i.id <> ${id}
+        AND (orl_i.id)::text IN (${CSAM_REPORT_LISTED_IMAGE_IDS_SQL})
+    )
+    OR EXISTS (
+      SELECT 1 FROM "ImageCdnModeratorDelete" orl_d
+      WHERE orl_d.url = ${url} AND (orl_d."imageId")::text IN (${CSAM_REPORT_LISTED_IMAGE_IDS_SQL})
+    )
+    OR EXISTS (
+      SELECT 1 FROM "Image" orl_p
+      WHERE orl_p.url = ${url} AND orl_p."pHash" IN (
+        SELECT orl_x."pHash" FROM "Image" orl_x
+        WHERE orl_x.id <> ${id} AND orl_x."pHash" IS NOT NULL
+          AND (orl_x.id)::text IN (${CSAM_REPORT_LISTED_IMAGE_IDS_SQL})
+      )
+    )
+  )`;
 }
 
 const OWNER_CSAM_MARKED_ALIASES = new Set(

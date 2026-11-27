@@ -35,9 +35,14 @@ export const OWNER_MEDIA_REVIEWED_BLOCKS: readonly string[] = [
   BlockedReason.TOS,
 ];
 
-/** Whether every reason in a comma list of block reasons is in `OWNER_MEDIA_REVIEWED_BLOCKS`. */
+/**
+ * Whether every reason in a comma list of block reasons is in `OWNER_MEDIA_REVIEWED_BLOCKS`. Trims
+ * spaces only, as the SQL twin's `btrim` does.
+ */
 export const isReviewedBlock = (blockedFor: string) =>
-  blockedFor.split(',').every((reason) => OWNER_MEDIA_REVIEWED_BLOCKS.includes(reason.trim()));
+  blockedFor
+    .split(',')
+    .every((reason) => OWNER_MEDIA_REVIEWED_BLOCKS.includes(reason.replace(/^ +| +$/g, '')));
 
 /**
  * Whether an image's owner may be served its media: it carries no block, or only an exempt one, or
