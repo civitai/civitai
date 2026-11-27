@@ -488,10 +488,7 @@ export const reviewKeptWhenLiftedSql = Prisma.sql`(CASE
   THEN "metadata"->>${PRIOR_NEEDS_REVIEW_KEY}::text
 END)`;
 
-/**
- * The row holds a CSAM block, anywhere in its comma list of block reasons. A scan's block write,
- * `keepPendingAppealFlags` and an appeal filing never give such a row the 'appeal' review.
- */
+/** The row holds a CSAM block, anywhere in its comma list of block reasons. */
 export const csamBlockedSql = (alias?: 'i' | 'o') =>
   csamInBlockedFor(Prisma.raw(`${alias ? `"${alias}".` : ''}"blockedFor"`));
 

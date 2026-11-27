@@ -48,6 +48,7 @@ const matching = async (where: Prisma.Sql) =>
 
 const expected = (csam: boolean) => CASES.flatMap(([, isCsam], n) => (isCsam === csam ? [n] : []));
 
+// The comma-list rule: civitai/civitai#10677.
 describe('a CSAM block in a comma list of block reasons', () => {
   it('is read the same by the SQL and the JS predicate', async () => {
     expect(await matching(Prisma.sql`${csamBlockedSql()}`)).toEqual(expected(true));

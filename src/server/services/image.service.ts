@@ -1405,7 +1405,6 @@ export async function handleUnblockImages({
   csamReview,
 }: ImageModerationUnblockSchema) {
   // Re-checked by the UPDATE itself, so a mark that lands after the caller's own check still holds.
-  // The target takes no alias because the shared SET fragments name "Image".
   const notWithheld = Prisma.raw(notWithheldTargetSql({ csamReview }));
   const found = await dbRead.image.findMany({
     where: { id: { in: imageIds } },
