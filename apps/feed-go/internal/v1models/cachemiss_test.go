@@ -237,6 +237,30 @@ func TestServeDataMissWrittenBackAndLagAware(t *testing.T) {
 		}
 	}
 
+	// A shadow sample, model-data written back and a primary configured: it writes nothing and never
+	// reads the primary; a flagged model falls back, a clean one is computed on the replica.
+	for _, c := range []struct {
+		name    string
+		flagged bool
+		reason  string
+		replica int
+	}{
+		{"shadow, flag set", true, "v1-models-data-miss", 0},
+		{"shadow, clean flag", false, "", 1},
+	} {
+		w := newTestWorld()
+		w.entries[key] = nil
+		if c.flagged {
+			w.raw["lag-helper:model:5001"] = "1"
+		}
+		e := newMissEnv(t, w, dataOn, writes, true)
+		_, err := e.list(false)
+		if reason(err) != c.reason || e.dataReads != c.replica || e.primaryDataReads != 0 || w.cache.Has(key) {
+			t.Errorf("%s: %q (%v), replica %d primary %d, written %v; want %q, %d, 0, false", c.name, reason(err), err,
+				e.dataReads, e.primaryDataReads, w.cache.Has(key), c.reason, c.replica)
+		}
+	}
+
 	// `[id]` computes it too now (DetailRequest.Serving).
 	w := newTestWorld()
 	w.entries[key] = nil
