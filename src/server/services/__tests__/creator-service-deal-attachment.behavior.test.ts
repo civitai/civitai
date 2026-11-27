@@ -875,6 +875,25 @@ describe('who may attach, and when', () => {
     expect(await list(dealId, BUYER)).toEqual([]);
   });
 
+  it('refuses a PDF attachment, whatever the case of its extension', async () => {
+    const dealId = await accepted();
+    for (const fileName of ['brief.pdf', 'Brief.PDF'])
+      await expect(
+        files.requestServiceDealAttachment({
+          ...ATTESTED,
+          dealId,
+          userId: BUYER,
+          fileName,
+          mimeType: 'application/pdf',
+          size: 10,
+        })
+      ).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: expect.stringMatching(/PDF files can't be delivered or attached/),
+      });
+    expect(await q(`SELECT 1 FROM "ServiceDealFile"`)).toEqual([]);
+  });
+
   it('refuses a seller upload of kind Attachment, even past the input schema', async () => {
     const dealId = await accepted();
     await expect(
