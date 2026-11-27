@@ -9,6 +9,7 @@ import (
 
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
+	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
 )
 
 // withItem is r as a collection page returns it: joined to an item with this status, adder and note.
@@ -100,38 +101,59 @@ func TestCollectionReadable(t *testing.T) {
 }
 
 // parseJudgeScore is null for no note, a note JSON.parse rejects, a JSON value that is not an object,
-// and an object without a score or with a null one; any other score is not null.
-func TestJudgeScoreNull(t *testing.T) {
+// and an object without a score or with a null one; any other score is the parsed value, as superjson
+// writes it (JS property order: integer keys ascending first; a repeated key keeps its first position
+// and its last value). A score superjson would annotate, a `__proto__` key, or a note escaping a
+// surrogate half is not rebuilt (ok false).
+func TestJudgeScore(t *testing.T) {
 	str := func(s string) *string { return &s }
+	type O = superjson.Object
+	type F = superjson.Field
 	for _, c := range []struct {
 		note *string
-		null bool
+		want any
+		ok   bool
 	}{
-		{nil, true},
-		{str(""), true},
-		{str("not json"), true},
-		{str(`{"score":`), true},
-		{str(`{"score":1} trailing`), true},
-		{str(`[{"score":1}]`), true},
-		{str(`"score"`), true},
-		{str(`7`), true},
-		{str(`null`), true},
-		{str(`{}`), true},
-		{str(`{"comment":"no score"}`), true},
-		{str(` {"score": null }`), true},
-		{str(`{"score":1,"score":null}`), true},
-		{str(`{"score":{"theme":7}}`), false},
-		{str(`{"score":0}`), false},
-		{str(`{"score":false}`), false},
-		{str(`{"score":"7"}`), false},
-		{str(`{"score":null,"score":[1]}`), false},
+		{nil, nil, true},
+		{str(""), nil, true},
+		{str("not json"), nil, true},
+		{str(`{"score":`), nil, true},
+		{str(`{"score":1} trailing`), nil, true},
+		{str(`[{"score":1}]`), nil, true},
+		{str(`"score"`), nil, true},
+		{str(`7`), nil, true},
+		{str(`null`), nil, true},
+		{str(`{}`), nil, true},
+		{str(`{"comment":"no score"}`), nil, true},
+		{str(` {"score": null }`), nil, true},
+		{str(`{"score":1,"score":null}`), nil, true},
+		{str(`{"score":{"theme":7}}`), O{F{Key: "theme", Val: 7.0}}, true},
+		{str(`{"score":0}`), 0.0, true},
+		{str(`{"score":false}`), false, true},
+		{str(`{"score":"7"}`), "7", true},
+		{str(`{"score":null,"score":[1]}`), []any{1.0}, true},
+		{str(`{"score":{}}`), O{}, true},
+		{str(`{"score":{"theme":7.50,"wittiness":1e2,"humor":-3}}`), O{F{Key: "theme", Val: 7.5}, F{Key: "wittiness", Val: 100.0}, F{Key: "humor", Val: -3.0}}, true},
+		{str(`{"score":{"b":1,"10":2,"a":3,"2":4}}`), O{F{Key: "2", Val: 4.0}, F{Key: "10", Val: 2.0}, F{Key: "b", Val: 1.0}, F{Key: "a", Val: 3.0}}, true},
+		{str(`{"score":{"x":1,"y":2,"x":3}}`), O{F{Key: "x", Val: 3.0}, F{Key: "y", Val: 2.0}}, true},
+		{str(`{"summary":"ok","score":{"theme":7,"notes":["a",null,true]},"judgeId":4}`), O{F{Key: "theme", Val: 7.0}, F{Key: "notes", Val: []any{"a", nil, true}}}, true},
+		{str(`{"score":"caf\u00e9"}`), "café", true},
+		// Not rebuilt here.
+		{str(`{"score":-0}`), nil, false},
+		{str(`{"score":{"theme":-0.0}}`), nil, false},
+		{str(`{"score":1e999}`), nil, false},
+		{str(`{"score":[1,-1e999]}`), nil, false},
+		{str(`{"score":{"__proto__":{"a":1}}}`), nil, false},
+		{str(`{"score":"\ud800"}`), nil, false},
+		{str(`{"note":"\uDC00","score":1}`), nil, false},
 	} {
-		if got := judgeScoreNull(c.note); got != c.null {
-			note := "<nil>"
-			if c.note != nil {
-				note = *c.note
-			}
-			t.Errorf("judgeScoreNull(%s) = %v, want %v", note, got, c.null)
+		got, ok := judgeScore(c.note)
+		note := "<nil>"
+		if c.note != nil {
+			note = *c.note
+		}
+		if ok != c.ok || !reflect.DeepEqual(got, c.want) {
+			t.Errorf("judgeScore(%s) = %#v, %v; want %#v, %v", note, got, ok, c.want, c.ok)
 		}
 	}
 }

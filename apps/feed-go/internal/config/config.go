@@ -143,6 +143,9 @@ type Config struct {
 	// feed.InfinitePorts.HubID), reading the `user-hubs` flag per viewer from FLIPT_URL. Off, such a
 	// request is the `input-hubId` (or `input-hubExcludedSources`) fallback, as before the port.
 	InfiniteServeInputHubID bool
+	// InfiniteServeJudgeScore / InfiniteServeHatTurfIgnored: stubs, not loaded yet.
+	InfiniteServeJudgeScore     bool
+	InfiniteServeHatTurfIgnored bool
 	// V1ImagesServeImageID is FEED_GO_V1_IMAGES_SERVE_IMAGE_ID (default off): compute a `GET
 	// /api/v1/images` request with `imageId` on the legacy Postgres path (feed.V1Ports.ImageID). Off,
 	// such a request is the `v1-image-id` fallback, as before the port.

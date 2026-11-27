@@ -387,6 +387,9 @@ const COLLECTIONS = {
     ],
   },
   9103: { id: 9103, read: 'Public', userId: 1002, contributors: [] },
+  // A judged item whose score superjson annotates (-0): FEED_GO_INFINITE_SERVE_JUDGE_SCORE does not
+  // rebuild it.
+  9104: { id: 9104, read: 'Public', userId: 1002, contributors: [] },
 };
 const COLLECTION_ITEMS = [
   { id: 95001, collectionId: 9101, imageId: 8001, status: 'ACCEPTED', addedById: 1001, note: null, tagId: null },
@@ -400,6 +403,11 @@ const COLLECTION_ITEMS = [
   { id: 95103, collectionId: 9102, imageId: 8105, status: 'ACCEPTED', addedById: 1002, note: null, tagId: null },
   { id: 95201, collectionId: 9103, imageId: 8201, status: 'ACCEPTED', addedById: 1001, note: null, tagId: null },
   { id: 95202, collectionId: 9103, imageId: 8202, status: 'ACCEPTED', addedById: 1001, note: '{"score":{"theme":7,"wittiness":5}}', tagId: null },
+  // The judge job's note shape (score, summary, judge), integer-like keys (JS lists them first, ascending),
+  // a fraction and an exponent; and a judge that declined (an empty score object, which is not null).
+  { id: 95203, collectionId: 9103, imageId: 8203, status: 'ACCEPTED', addedById: 1002, note: '{"score":{"wittiness":1e1,"10":2,"theme":7.50,"2":-3},"summary":"judged","judgeId":4}', tagId: null },
+  { id: 95204, collectionId: 9103, imageId: 8204, status: 'ACCEPTED', addedById: 1001, note: '{"score":{},"summary":"declined"}', tagId: null },
+  { id: 95301, collectionId: 9104, imageId: 8201, status: 'ACCEPTED', addedById: 1001, note: '{"score":{"theme":-0}}', tagId: null },
 ];
 // User-composed hubs (UserHub rows and their UserHubSource rows: prisma/schema.full.prisma), read by
 // image.getInfinite's `hubId` (resolveHubSources). 9301 is public (1001's): a creator, a version, a
@@ -2240,7 +2248,26 @@ const isViewerScopedImageFeed = (input) =>
   !!input.reactions?.length ||
   ['followed', 'hidden', 'pending', 'notPublished', 'scheduled', 'poiOnly', 'minorOnly', 'pendingReviewOnly'].some((k) => !!input[k]);
 const isViewerScopedInfiniteFeed = (input) =>
-  isViewerScopedImageFeed(input) || ['hatSort', 'hatTurfMine', 'hideTurfHats', 'hideWornHats'].some((k) => !!input[k]);
+  isViewerScopedImageFeed(input) || ['hatSort', 'hatTurfMine', 'hatTurfExpired', 'hideTurfHats', 'hideWornHats'].some((k) => !!input[k]);
+
+/** isScopedImageFeed (image.controller.ts): a feed scoped to a model, hub, creator, collection or
+ *  picked images, not the main one. */
+const isScopedImageFeed = (input) =>
+  !!(
+    input.modelId ||
+    input.modelVersionId ||
+    input.model3dId ||
+    input.hubId ||
+    input.collectionId ||
+    input.postId ||
+    input.postIds?.length ||
+    input.userId ||
+    input.username ||
+    input.ids?.length ||
+    input.imageId ||
+    input.reviewId ||
+    input.remixOfId
+  );
 
 /** requiresImageDbPath (src/server/schema/image.schema.ts), for the inputs these fixtures send. */
 const requiresImageDbPath = (input) =>
@@ -2286,20 +2313,24 @@ function withoutHeldFromViewer(user, images) {
   });
 }
 
-/** getInfiniteImagesHandler (image.controller.ts) without Hat Turf (no fixture sends a hat key); then
+/** getInfiniteImagesHandler (image.controller.ts) with Hat Turf only where it reads nothing (no session
+ *  user, or a scoped feed: `turfEvent` is null and the hat keys are stripped; a signed-in viewer's main
+ *  feed asks the flags and the event engine, which is not modelled: such a fixture is a fallback); then
  *  withSharedFeedUsers, which changes no decoded value (one shared `user` object per
  *  creator is a superjson referential equality, not a different value). */
 function infiniteHandler({ input, ctx }) {
   const { user, features } = ctx;
   // `hubId` is a plain feed input behind the `userHubs` feature: refused (UNAUTHORIZED) while it is off.
   if (input.hubId && !features.userHubs) throw new NodeError(401, 'Hubs are not available yet');
-  const { hatSort: _s, hatTeams: _t, hatTurfMine: _m, hideTurfHats: _h, hideWornHats: _w, ...unhatted } = input;
+  const { hatSort, hatTeams: _t, hatTurfMine, hatTurfExpired, hideTurfHats, hideWornHats, ...unhatted } = input;
   // `publishedOnly` beside a `userId` that is not the caller's own is withdrawn (the own-content
   // submit pickers only ever send their own id): it neither pins the DB path nor reaches the mapper.
   let scopedInput =
     unhatted.publishedOnly && unhatted.userId && unhatted.userId !== user?.id
       ? { ...unhatted, publishedOnly: undefined }
       : unhatted;
+  if ((hatSort || hatTurfMine || hatTurfExpired || hideTurfHats || hideWornHats) && !isScopedImageFeed(scopedInput) && user?.id)
+    throw new Error('getHatTurfFeedEvent for a signed-in viewer is not modelled: declare the fixture a fallback');
   // A hub is only expressible on the feed service, so it pins the feed path whatever the flag says.
   const useIndex = !!input.hubId || (features.imageIndexFeed && !requiresImageDbPath(scopedInput));
   const moderatorView = !!user?.isModerator;
@@ -3258,6 +3289,37 @@ const INFINITE = [
       'levels=1&excludedTags=9901&excludePoi=1&sort=reactions&limit=4': { body: { items: [8005, 8001, 8003, 8007], ...fc('1718000000000', '8007') } },
     },
   },
+  // FEED_GO_INFINITE_SERVE_HAT_TURF_IGNORED: the hat keys where Node never asks whether the viewer plays.
+  {
+    name: 'hat-turf-signed-out-ignored',
+    description: 'A Hat Turf sort with its teams, signed out: getHatTurfFeedEvent is null without a read, so the handler strips the keys and serves the global feed; the answer is viewer-scoped (never edge-cached).',
+    goConfig: { serveHatTurfIgnored: true },
+    viewer: null,
+    host: HOST.green,
+    input: { hatSort: 'most', hatTeams: ['red'], sort: 'Most Reactions', period: 'AllTime', browsingLevel: 31, limit: 4 },
+    replies: {
+      'levels=1&excludedTags=9901&excludePoi=1&sort=reactions&limit=4': { body: { items: [8005, 8001, 8003, 8007], ...fc('1718000000000', '8007') } },
+    },
+  },
+  {
+    name: 'hat-turf-scoped-signed-in',
+    description: 'Show filters on a model version’s feed, signed in: a scoped feed never reads the hat-turf flags, so the keys are stripped and the version’s feed is served.',
+    goConfig: { serveHatTurfIgnored: true },
+    viewer: 1003,
+    host: HOST.blue,
+    input: { modelId: 5001, modelVersionId: 6001, hatTurfMine: true, hideWornHats: true, sort: 'Newest', browsingLevel: 31, limit: 3 },
+    replies: {
+      'levels=1%2C2%2C4%2C8%2C16&excludedTags=9911%2C9901&versionIds=6001&excludeMinor=1&excludePoi=1&viewerId=1003&sort=newest&limit=3': { body: { items: [8001, 8007, 8006], ...fc('1718000000000', '8006') } },
+    },
+  },
+  {
+    name: 'collection-judge-score-served',
+    description: 'FEED_GO_INFINITE_SERVE_JUDGE_SCORE on, collection 9103: each item’s parseJudgeScore: 8202’s score, 8203’s in JS key order (2, 10, then as written) with 7.5 and 10, 8204’s empty score object, 8201’s null.',
+    goConfig: { serveJudgeScore: true },
+    viewer: null,
+    host: HOST.green,
+    input: { collectionId: 9103, sort: 'Newest', browsingLevel: 1, limit: 10 },
+  },
   {
     name: 'global-signed-in-blue-newest',
     description: 'Signed in on an NSFW host: level 31 uncapped, both addons (minor + POI exclusions, viewerId), Newest, the viewer’s own reactions, the last page (no cursor).',
@@ -4106,6 +4168,32 @@ const INFINITE = [
     viewer: null,
     host: HOST.green,
     input: { someNewFilter: true, useIndex: true, browsingLevel: 1, limit: 2 },
+  },
+  {
+    name: 'fallback-hat-turf-signed-in-switch-on',
+    description: 'FEED_GO_INFINITE_SERVE_HAT_TURF_IGNORED on, a Show filter on a signed-in viewer’s main feed: Node asks the hat-turf flags and the event engine whether the viewer plays; not read here.',
+    goConfig: { serveHatTurfIgnored: true },
+    fallback: 'infinite-hat-turf',
+    viewer: 1003,
+    host: HOST.blue,
+    input: { hideTurfHats: true, browsingLevel: 31, limit: 10 },
+  },
+  {
+    name: 'fallback-hat-sort-invalid',
+    description: '`hatSort: ""`: not one of HAT_SORTS, so getInfiniteImagesSchema’s BAD_REQUEST, whatever the switch (it used to be served as no sort).',
+    fallback: 'input-invalid',
+    viewer: null,
+    host: HOST.green,
+    input: { hatSort: '', browsingLevel: 31, limit: 4 },
+  },
+  {
+    name: 'fallback-collection-judge-score-unmodelled',
+    description: 'FEED_GO_INFINITE_SERVE_JUDGE_SCORE on, a judge’s score of -0 (9104’s 8201): superjson annotates it, so it is not rebuilt here.',
+    goConfig: { serveJudgeScore: true },
+    fallback: 'collection-judge-score',
+    viewer: null,
+    host: HOST.green,
+    input: { collectionId: 9104, sort: 'Newest', browsingLevel: 1, limit: 10 },
   },
   {
     name: 'fallback-hat-turf-sort',

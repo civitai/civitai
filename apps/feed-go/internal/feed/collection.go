@@ -58,6 +58,9 @@ func collectionReadable(p *hydrate.CollectionPermission, viewer Viewer) (bool, e
 	return false, nil
 }
 
+// judgeScore is a stub over judgeScoreNull (the port is not written yet).
+func judgeScore(note *string) (any, bool) { return nil, judgeScoreNull(note) }
+
 // judgeScoreNull reports whether parseJudgeScore(note) (src/server/games/daily-challenge/
 // daily-challenge.utils.ts: `JSON.parse(note)?.score ?? null`, null when the parse throws) is null:
 // no note, a note that is not JSON, a JSON value that is not an object, or an object whose `score` is

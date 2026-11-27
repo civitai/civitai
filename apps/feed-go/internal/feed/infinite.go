@@ -88,6 +88,8 @@ type InfiniteInput struct {
 	// request is always the feed path (`useIndex = !!input.hubId || …`), filtered by the hub's resolved
 	// sources (hub.go).
 	HubID int
+	// Hat is a truthy Hat Turf key (stub: not read yet).
+	Hat bool
 	// HubExcludedSources is `hubExcludedSources` (read only with InfinitePorts.HubID): the sources the
 	// viewer switched off for the session, a subtraction from what HubID resolves to. Entries whose
 	// targetId is past int4 are dropped: no source row can carry one, so they subtract nothing.
@@ -113,6 +115,10 @@ type InfinitePorts struct {
 	// `hubExcludedSources`), a user-composed hub (hub.go). Off, either key present is the
 	// `input-hubId` / `input-hubExcludedSources` fallback.
 	HubID bool
+	// JudgeScore is FEED_GO_INFINITE_SERVE_JUDGE_SCORE (stub: not read yet).
+	JudgeScore bool
+	// HatTurfIgnored is FEED_GO_INFINITE_SERVE_HAT_TURF_IGNORED (stub: not read yet).
+	HatTurfIgnored bool
 }
 
 // maxInputIDs is the `ids` schema's `.max(200)`: a longer list is Node's BAD_REQUEST.
