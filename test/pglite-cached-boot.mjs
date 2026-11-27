@@ -18,9 +18,19 @@ function withEmptyDataDir(dataDirOrOptions, options) {
   return emptyDataDir && inMemory && !o.loadDataDir ? { ...o, loadDataDir: emptyDataDir } : o;
 }
 
+// src/__tests__/setup.ts closes what a test file leaves open, so a worker that outlives the file
+// doesn't keep its WASM heap.
+const openInstances = (globalThis[Symbol.for('civitai.openPglites')] ??= new Set());
+
 export class PGlite extends RealPGlite {
   constructor(dataDirOrOptions, options) {
     super(withEmptyDataDir(dataDirOrOptions, options));
+    openInstances.add(this);
+  }
+
+  async close() {
+    openInstances.delete(this);
+    return super.close();
   }
 
   static async create(dataDirOrOptions, options) {

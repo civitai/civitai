@@ -211,6 +211,16 @@ const failOnUnmockedNotificationCalls = () => {
 afterEach(failOnUnmockedNotificationCalls);
 afterAll(failOnUnmockedNotificationCalls);
 
+// Filled by test/pglite-cached-boot.mjs. Registered here, before the file's own hooks, so it runs
+// after the file's own afterAll closes.
+afterAll(async () => {
+  const open = (globalThis as Record<symbol, Set<{ close(): Promise<void> }> | undefined>)[
+    Symbol.for('civitai.openPglites')
+  ];
+  if (!open) return;
+  for (const db of [...open]) await db.close();
+});
+
 // The test env has no Flipt, and from 2026-11-10 an unanswered `app-blocks-legacy-stores-removed`
 // removes the legacy App Blocks stores (legacy-store-shutdown.ts). Pin it explicitly off so the
 // suites exercising those stores do not all flip on that date; the shutdown's own suites mock or
