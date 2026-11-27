@@ -440,41 +440,6 @@ export const agentReviewRequestSchema = z.object({
 
 export type GetAgentReviewInput = z.infer<typeof getAgentReviewSchema>;
 
-/** Longest assistant message the chat accepts back as history. A previous reply
- *  is re-sent on every later turn, so this must hold any reply the server
- *  returns: 32,000 characters is ~8 per token at the reply cap
- *  (AGENT_REVIEW_CHAT_MAX_TOKENS = 4096), well above what prose or code averages,
- *  and the service clips a longer reply to this length so it can never fail the
- *  next turn. */
-export const AGENT_REVIEW_CHAT_ASSISTANT_MAX_CHARS = 32_000;
-
-/** One turn of the MOD-ONLY in-modal agent chat (P3). The CLIENT sends the
- *  running conversation; the server prepends its own grounding system context.
- *  A moderator's message stays short; an assistant message is a previous reply
- *  being re-sent, so it takes the reply-sized cap above. */
-export const agentReviewChatMessageSchema = z.discriminatedUnion('role', [
-  z.object({ role: z.literal('user'), content: z.string().min(1).max(4000) }),
-  z.object({
-    role: z.literal('assistant'),
-    content: z.string().min(1).max(AGENT_REVIEW_CHAT_ASSISTANT_MAX_CHARS),
-  }),
-]);
-
-export type AgentReviewChatMessage = z.infer<typeof agentReviewChatMessageSchema>;
-
-/** Input for the MOD-ONLY in-modal agent chat proxy `blocks.agentReviewChat`
- *  (P3). The client sends the pending request id + the running conversation
- *  (bounded); the server prepends a grounding system message and proxies to the
- *  review agent pod's in-cluster gateway. */
-export const agentReviewChatSchema = z.object({
-  publishRequestId: z.string().min(1).max(64),
-  messages: z.array(agentReviewChatMessageSchema).min(1).max(20),
-  /** The run the moderator is viewing; the chat grounds on it. Omitted ⇒ the latest run. */
-  reportId: z.string().min(1).max(64).optional(),
-});
-
-export type AgentReviewChatInput = z.infer<typeof agentReviewChatSchema>;
-
 export const teardownPreviewSchema = z.object({
   publishRequestId: z.string().min(1).max(64),
 });

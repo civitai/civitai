@@ -806,6 +806,16 @@ export type AppReviewAgentReportCheck = {
   fingerprint: string;
   created_at: Generated<Timestamp>;
 };
+export type AppReviewMessage = {
+  id: Generated<number>;
+  publish_request_id: string | null;
+  listing_publish_request_id: string | null;
+  author_user_id: number | null;
+  author_role: string;
+  body: string;
+  recipient_user_id: number | null;
+  created_at: Generated<Timestamp>;
+};
 export type AppSubListing = {
   id: string;
   parent_listing_id: string;
@@ -7165,6 +7175,7 @@ export type DB = {
   app_publish_request_traces: AppPublishRequestTrace;
   app_review_agent_report_checks: AppReviewAgentReportCheck;
   app_review_agent_reports: AppReviewAgentReport;
+  app_review_messages: AppReviewMessage;
   app_sub_listing_parents: AppSubListingParent;
   app_sub_listings: AppSubListing;
   app_user_scope_grants: AppUserScopeGrant;

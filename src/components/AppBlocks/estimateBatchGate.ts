@@ -1,3 +1,4 @@
+import { rateLimitReplyFields } from '~/components/AppBlocks/bridgeRateLimit';
 import { resolveEstimateBatchRequest } from '~/components/AppBlocks/pageBlockHostLogic';
 import type {
   BlockEstimateBatchAggregate,
@@ -13,7 +14,7 @@ import type {
  *
  *   `ESTIMATE_WORKFLOW_BATCH { requestId, bodies: WorkflowBody[] }`
  *     → `ESTIMATE_BATCH_RESULT { requestId, snapshots, aggregate }`
- *     | `ESTIMATE_BATCH_RESULT { requestId, error }`
+ *     | `ESTIMATE_BATCH_RESULT { requestId, error, rateLimit? }` (`rateLimit` on a rate-limited refusal)
  *
  * `snapshots[i]` answers `bodies[i]`: the snapshot a single ESTIMATE_WORKFLOW
  * would have produced for that body, or the failure-shape snapshot when that
@@ -124,6 +125,7 @@ export async function handleEstimateBatch(opts: {
     send(ESTIMATE_BATCH_REPLY, {
       requestId,
       error: err instanceof Error ? err.message : 'estimate batch failed',
+      ...rateLimitReplyFields(err),
     });
   }
 }

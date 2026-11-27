@@ -378,14 +378,32 @@ describe('blocks.pollWorkflow — the POLL bucket', () => {
   // The refusal is a poll the host could not serve, and says so: without `throttled` it is
   // indistinguishable from a real non-terminal snapshot, and a block would wipe its queue/ETA/
   // progress display on every shed poll. Pinned as the WHOLE object.
-  it('a shed poll answers exactly { workflowId, status: processing, throttled: true }', async () => {
-    mockCheckBlockPollRateLimit.mockResolvedValue(REFUSED);
+  // `rateLimit` is the meta a thrown refusal by the same limit carries, so the block can read
+  // when to retry without a 429 (see the comment on the return).
+  it('a shed poll answers exactly { workflowId, status: processing, throttled: true, rateLimit }', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-03-04T05:06:07.000Z'));
+    try {
+      mockCheckBlockPollRateLimit.mockResolvedValue(REFUSED);
 
-    const result = await caller().pollWorkflow({ blockToken: 'tok', workflowId: OWN_ID });
+      const result = await caller().pollWorkflow({ blockToken: 'tok', workflowId: OWN_ID });
 
-    expect(result).toStrictEqual({
-      snapshot: { workflowId: OWN_ID, status: 'processing', throttled: true },
-    });
+      expect(result).toStrictEqual({
+        snapshot: {
+          workflowId: OWN_ID,
+          status: 'processing',
+          throttled: true,
+          rateLimit: {
+            retryAfterSeconds: 7,
+            retryAt: '2026-03-04T05:06:14.000Z',
+            id: 'apps.poll',
+            kind: 'abuse',
+          },
+        },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('a served poll carries no `throttled` key at all', async () => {
@@ -435,14 +453,32 @@ describe('blocks.cancelWorkflow — the asymmetry with cancelAppWorkflow, resolv
   });
 
   // Same placeholder, same reason: the cancel was not issued and nothing was read.
-  it('a shed cancel answers exactly { workflowId, status: processing, throttled: true }', async () => {
-    mockCheckBlockCatalogRateLimit.mockResolvedValue(REFUSED);
+  // `rateLimit` is the meta a thrown refusal by the same limit carries, so the block can read
+  // when to retry without a 429 (see the comment on the return).
+  it('a shed cancel answers exactly { workflowId, status: processing, throttled: true, rateLimit }', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-03-04T05:06:07.000Z'));
+    try {
+      mockCheckBlockCatalogRateLimit.mockResolvedValue(REFUSED);
 
-    const result = await caller().cancelWorkflow({ blockToken: 'tok', workflowId: OWN_ID });
+      const result = await caller().cancelWorkflow({ blockToken: 'tok', workflowId: OWN_ID });
 
-    expect(result).toStrictEqual({
-      snapshot: { workflowId: OWN_ID, status: 'processing', throttled: true },
-    });
+      expect(result).toStrictEqual({
+        snapshot: {
+          workflowId: OWN_ID,
+          status: 'processing',
+          throttled: true,
+          rateLimit: {
+            retryAfterSeconds: 7,
+            retryAt: '2026-03-04T05:06:14.000Z',
+            id: 'apps.catalog',
+            kind: 'abuse',
+          },
+        },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('a served cancel carries no `throttled` key at all', async () => {

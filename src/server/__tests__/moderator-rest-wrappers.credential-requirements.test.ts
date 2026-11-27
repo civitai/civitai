@@ -26,7 +26,9 @@ vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
 }));
 
 const { ModEndpoint } = await import('~/server/utils/endpoint-helpers');
-const { defineModeratorEndpoint } = await import('~/server/utils/moderator-endpoint');
+const { defineModeratorEndpoint, defineModeratorStreamEndpoint } = await import(
+  '~/server/utils/moderator-endpoint'
+);
 
 type Handler = (req: NextApiRequest, res: NextApiResponse) => Promise<unknown>;
 
@@ -34,6 +36,9 @@ const modEndpointHandler = vi.fn(async (_req: NextApiRequest, res: NextApiRespon
   res.status(200).json({ ok: true });
 });
 const moderatorEndpointHandler = vi.fn(async () => ({ ok: true }));
+const moderatorStreamHandler = vi.fn(async ({ res }: { res: NextApiResponse }) => {
+  res.status(200).json({ ok: true });
+});
 
 const wrappers: {
   name: string;
@@ -54,6 +59,14 @@ const wrappers: {
       handler: moderatorEndpointHandler,
     }) as unknown as Handler,
     inner: moderatorEndpointHandler,
+    notModerator: 403,
+  },
+  {
+    name: 'defineModeratorStreamEndpoint',
+    handler: defineModeratorStreamEndpoint('test.credentialProbeStream', {
+      handler: moderatorStreamHandler,
+    }) as unknown as Handler,
+    inner: moderatorStreamHandler,
     notModerator: 403,
   },
 ];

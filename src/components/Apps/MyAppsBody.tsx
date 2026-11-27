@@ -1,5 +1,6 @@
 import {
   Alert,
+  Anchor,
   Badge,
   Button,
   Card,
@@ -57,6 +58,7 @@ import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { ReviewerByline, type DecisionReviewerView } from '~/components/Apps/ReviewerByline';
+import { isDecidedReviewStatus, reviewThreadDeveloperUrl } from '~/shared/utils/app-review-thread';
 
 /**
  * `/apps/mine` — THE author's single view of every app they can act on.
@@ -503,6 +505,8 @@ export type MyAppsBodyViewProps = {
   onWithdrawOrphan?: (row: OrphanedSubmissionRow) => void;
   /** `appFeedback.countNewForMyListings`: `{ [appListingId]: new-feedback count }`. */
   newFeedbackCounts?: Readonly<Record<string, number>>;
+  /** Offer the review conversation on decided orphan rows (`features.appReviewReplies`). */
+  conversationEnabled?: boolean;
 };
 
 export function MyAppsBodyView({
@@ -517,6 +521,7 @@ export function MyAppsBodyView({
   orphanedLoading = false,
   onWithdrawOrphan,
   newFeedbackCounts,
+  conversationEnabled = false,
 }: MyAppsBodyViewProps) {
   const [inactiveOpen, setInactiveOpen] = useState(false);
   const [inactivePage, setInactivePage] = useState(1);
@@ -744,6 +749,7 @@ export function MyAppsBodyView({
           onWithdraw={onWithdrawOrphan}
           withdrawing={withdrawing}
           withdrawEnabled={withdrawEnabled}
+          conversationEnabled={conversationEnabled}
         />
       )}
 
@@ -818,11 +824,13 @@ function OrphanedSubmissionsSection({
   onWithdraw,
   withdrawing,
   withdrawEnabled,
+  conversationEnabled,
 }: {
   rows: OrphanedSubmissionRow[];
   onWithdraw?: (row: OrphanedSubmissionRow) => void;
   withdrawing: boolean;
   withdrawEnabled: boolean;
+  conversationEnabled: boolean;
 }) {
   /**
    * Initial state ONLY — deliberately not re-derived on every `rows` change. Once the
@@ -917,6 +925,18 @@ function OrphanedSubmissionsSection({
                     />
                   </div>
                 ) : null}
+                {conversationEnabled && isDecidedReviewStatus(r.status) ? (
+                  <Anchor
+                    component={Link}
+                    href={reviewThreadDeveloperUrl(r.id)}
+                    size="xs"
+                    mt={4}
+                    display="inline-block"
+                    data-testid={`apps-mine-orphaned-conversation-${r.id}`}
+                  >
+                    Conversation
+                  </Anchor>
+                ) : null}
               </Paper>
             ))}
           </Stack>
@@ -996,6 +1016,7 @@ export function MyAppsBody() {
       withdrawing={withdrawVersion.isPending}
       withdrawEnabled={!!features?.appBlocks}
       newFeedbackCounts={feedbackCountsQuery.data}
+      conversationEnabled={!!features?.appReviewReplies}
     />
   );
 }

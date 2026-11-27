@@ -96,6 +96,9 @@ export const REGISTRY: Record<string, RegistryEntry> = {
   AppListingPublishRequest: { subject: ['submittedByUserId'], staff: ['reviewedByUserId'] },
   AppListingReport: { subject: ['reporterUserId'], staff: ['resolvedByUserId'] },
   AppListingModerationEvent: { subject: ['actorUserId'] },
+  // The review-thread messages the user wrote. Who was notified (a reviewer, for a developer's
+  // reply) is written as `[staff]`; a moderator's reply to them is the moderator's row, not theirs.
+  AppReviewMessage: { subject: ['authorUserId'], staff: ['recipientUserId'] },
   AppSubListing: { subject: ['authorUserId'], staff: ['moderatedById'] },
   BlockUserSettings: { subject: ['userId'] },
   BlockUserSubscription: { subject: ['userId', 'installedByUserId'] },

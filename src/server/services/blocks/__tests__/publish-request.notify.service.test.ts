@@ -274,7 +274,8 @@ describe('approveRequest — submitter notification (post-commit, best-effort)',
     });
 
     const arg = mockNotify.mock.calls[0][0] as Record<string, unknown>;
-    expect(arg.attribution).toEqual({ kind: 'moderator', userId: 9 });
+    expect(arg.attribution).toEqual({ kind: 'moderator', requestId: 'req_appr_1' });
+    expect(arg.details).not.toHaveProperty('reviewerUserId');
     expect((arg.details as { approvalNote?: unknown }).approvalNote).toBe(
       'Nice work on the onboarding.'
     );
@@ -406,7 +407,8 @@ describe('rejectRequest — submitter notification (post-commit, best-effort)', 
       version: '1.2.0',
       reason: 'Uses a disallowed scope',
     });
-    expect(arg.attribution).toEqual({ kind: 'moderator', userId: 9 });
+    expect(arg.attribution).toEqual({ kind: 'moderator', requestId: 'req_rej_1' });
+    expect(arg.details).not.toHaveProperty('reviewerUserId');
     // The rejection row committed before the notify.
     expect(db.write.appBlockPublishRequest.update).toHaveBeenCalledWith({
       where: { id: 'req_rej_1' },
