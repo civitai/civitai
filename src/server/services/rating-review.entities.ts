@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+import { songTitle } from '~/server/services/audio-scan/song-title';
 import {
   collectionRatingLevel,
   modelRatingLevel,
@@ -346,12 +347,11 @@ const loaders: Record<RatingReviewEntityType, Loader> = {
       },
     });
     if (!i || i.type !== MediaType.audio) return null;
-    const title = (i.metadata as { title?: unknown } | null)?.title;
     return {
       ownerId: i.userId,
       currentLevel: ratedLevel(i.nsfwLevel),
       updatedAt: i.updatedAt,
-      title: typeof title === 'string' && title.trim() ? title : `Song #${id}`,
+      title: songTitle(i.metadata) ?? `Song #${id}`,
       parentId: null,
       override: null,
       overrideBasis: null,

@@ -54,3 +54,25 @@ export async function submitTextModeration({
     rearmRetries,
   });
 }
+
+/** Rates the text's language (`languageLevel`) under its own row; it never blocks. */
+export async function submitProfanityModeration({
+  entityType,
+  entityId,
+  content,
+  rearmRetries = false,
+}: {
+  entityType: string;
+  entityId: number;
+  content: string;
+  /** A fresh submit, not a retry: reset the row's retry budget. */
+  rearmRetries?: boolean;
+}) {
+  return createXGuardModerationRequest({
+    mode: 'profanity',
+    entityType,
+    entityId,
+    content,
+    rearmRetries,
+  });
+}

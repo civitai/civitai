@@ -35,6 +35,7 @@ import {
   refreshImageResources,
 } from '~/server/services/image.service';
 import { getSongCoversForPlayer, setSongCover } from '~/server/services/post.service';
+import { rerateSong } from '~/server/services/image-scan-pipeline';
 import { getSongGenreTagIds } from '~/server/services/song-genre.service';
 import { getRisingSongIds } from '~/server/services/song-rising.service';
 import { getSongLyrics } from '~/server/services/track-lyrics.service';
@@ -50,7 +51,7 @@ import {
   verifiedProcedure,
 } from '~/server/trpc';
 import { requestServableLevels } from '~/server/utils/browsing-level';
-import { throwAuthorizationError } from '~/server/utils/errorHandling';
+import { handleLogError, throwAuthorizationError } from '~/server/utils/errorHandling';
 import { getApprovedImageAppeal } from '~/server/services/image-removal-hold.service';
 import { canAppealOwnImage } from '~/server/services/report.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -298,7 +299,12 @@ export const imageRouter = router({
     .meta({ requiredScope: TokenScope.MediaWrite })
     .input(setSongCoverSchema)
     .use(isOwnerOrModerator)
-    .mutation(({ input, ctx }) => setSongCover({ ...input, user: ctx.user })),
+    .mutation(async ({ input, ctx }) => {
+      const result = await setSongCover({ ...input, user: ctx.user });
+      // A reused cover row that was already scanned gets no new scan verdict to re-rate the song.
+      await rerateSong(input.id).catch(handleLogError);
+      return result;
+    }),
   // Per viewer (visibility, domain level and the music flag), so no `edgeCacheIt`.
   getSongCovers: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })

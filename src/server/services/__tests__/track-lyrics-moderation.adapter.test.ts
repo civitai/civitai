@@ -59,6 +59,51 @@ describe('the TrackLyrics text-scan profile', () => {
       fields: [{ heading: 'Lyrics', text: 'la la' }],
     });
   });
+
+  it("scans the song's title with its lyrics, so the title's level counts too", async () => {
+    w.trackLyrics.findMany.mockResolvedValue([
+      { imageId: 7, text: 'la la', image: { userId: 3, metadata: { title: 'Night drive' } } },
+    ] as never);
+
+    const subjects = await getTextScanProfile('TrackLyrics')!.load([7]);
+
+    expect(subjects.get(7)?.fields).toEqual([
+      { heading: 'Title', text: 'Night drive' },
+      { heading: 'Lyrics', text: 'la la' },
+    ]);
+  });
+});
+
+describe('the TrackLyrics text-scan profile, for a song with a title and no lyrics', () => {
+  it('scans its title alone; the song never waits on that verdict', async () => {
+    w.trackLyrics.findMany.mockResolvedValue([] as never);
+    w.image.findMany.mockResolvedValue([
+      { id: 8, userId: 3, metadata: { title: 'Solo' } },
+      { id: 9, userId: 3, metadata: {} },
+    ] as never);
+
+    const subjects = await getTextScanProfile('TrackLyrics')!.load([8, 9]);
+
+    expect(subjects.get(8)).toEqual({
+      userId: 3,
+      declared: {},
+      fields: [{ heading: 'Title', text: 'Solo' }],
+    });
+    expect(subjects.has(9)).toBe(false);
+  });
+
+  it('is kept by the retry cron, which resubmits its title rather than dropping the row as gone', async () => {
+    dbMock.dbRead.trackLyrics.findMany.mockResolvedValue([] as never);
+    dbMock.dbRead.image.findMany.mockResolvedValue([
+      { id: 8, metadata: { title: 'Solo' } },
+      { id: 9, metadata: {} },
+    ] as never);
+
+    const content = await getModerationAdapter('TrackLyrics')!.resolveContent([8, 9]);
+
+    expect(content.get(8)).toBe('Solo');
+    expect(content.has(9)).toBe(false);
+  });
 });
 
 describe('the TrackLyrics moderation adapter', () => {

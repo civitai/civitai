@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { resolveIngestionError } from '~/server/services/image.service';
+import { setSongReRater } from '~/server/services/audio-scan/song-rating';
 
 const IMAGE_ID = 4242;
 // Not a bare-uuid key, so the missing-media probe is skipped and never reaches storage.
@@ -129,5 +130,18 @@ describe('resolveIngestionError and blockedFor', () => {
     await expect(resolve()).rejects.toMatchObject({ code: 'BAD_REQUEST' });
 
     expect(purgeRowDrops()).toHaveLength(0);
+  });
+
+  // A song's level includes its own cover's (docs/features/music.md "A song's rating").
+  it('re-rates the song whose own cover, a postless image, it publishes', async () => {
+    const rerate = vi.fn<(songId: number) => Promise<void>>(async () => undefined);
+    setSongReRater(rerate);
+    armImage({});
+    dbMock.dbWrite.track.findUnique.mockResolvedValue({ imageId: 4243 } as never);
+
+    await resolve();
+
+    expect(rerate).toHaveBeenCalledTimes(1);
+    expect(rerate).toHaveBeenCalledWith(4243);
   });
 });

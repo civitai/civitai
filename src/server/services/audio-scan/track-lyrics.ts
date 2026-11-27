@@ -1,6 +1,13 @@
 import { SONG_LYRICS_MAX_LENGTH } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
-import { submitTextModeration } from '~/server/services/text-moderation.service';
+import {
+  TRACK_LYRICS_ENTITY_TYPE,
+  TRACK_LYRICS_LANGUAGE_ENTITY_TYPE,
+} from '~/server/services/audio-scan/song-rating';
+import {
+  submitProfanityModeration,
+  submitTextModeration,
+} from '~/server/services/text-moderation.service';
 import {
   submitTextModerationOrScan,
   TEXT_SCAN_ENTITY_GONE,
@@ -8,7 +15,7 @@ import {
 import { parseLyricLines } from '~/shared/form-graph/generation/audio/song-metadata';
 import { EntityModerationStatus, TrackLyricsSource } from '~/shared/utils/prisma/enums';
 
-export const TRACK_LYRICS_ENTITY_TYPE = 'TrackLyrics';
+export { TRACK_LYRICS_ENTITY_TYPE };
 
 /** Cuts text over the cap at its last whole line; a single line past the cap is cut where it hits. */
 function capLyrics(text: string) {
@@ -70,8 +77,9 @@ export async function saveTranscribedTrackLyrics({
 }
 
 /**
- * Sends a song's lyrics for their verdict: the text scan while it is active for them, XGuard
- * otherwise, so a verdict always comes.
+ * Sends a song's lyrics, and its title, for their verdict: the text scan while it is active for
+ * them, XGuard otherwise, so a verdict always comes for lyrics. A song with a title and no lyrics
+ * gets the text scan only; XGuard rates nothing, so it sends nothing then.
  */
 export async function submitTrackLyricsScan({
   imageId,
@@ -98,6 +106,47 @@ export async function submitTrackLyricsScan({
         rearmRetries: !fromRetry,
       });
     },
+  });
+}
+
+/**
+ * Sends a song's lyrics for their language level (`TrackLyricsLanguage`), which raises the song's
+ * rating (`songLevel`). The song never waits on it: a null level is not rated, never clean.
+ */
+export async function submitTrackLyricsLanguageScan({
+  imageId,
+  fromRetry,
+}: {
+  imageId: number;
+  fromRetry?: boolean;
+}) {
+  // primary: the lyrics are written just before their scan is submitted
+  const lyrics = await dbWrite.trackLyrics.findUnique({
+    where: { imageId },
+    select: { text: true },
+  });
+  if (!lyrics) return TEXT_SCAN_ENTITY_GONE;
+  return submitProfanityModeration({
+    entityType: TRACK_LYRICS_LANGUAGE_ENTITY_TYPE,
+    entityId: imageId,
+    content: lyrics.text,
+    rearmRetries: !fromRetry,
+  });
+}
+
+/**
+ * A song whose title was cleared and that has no lyrics has no text left: its title verdict goes,
+ * so it cannot raise the song at a later re-rate. With lyrics the verdict still rates them.
+ */
+export async function dropTitleVerdictWithoutLyrics(imageId: number) {
+  // primary: decides a delete of the verdict that still rates any lyrics
+  const lyrics = await dbWrite.trackLyrics.findUnique({
+    where: { imageId },
+    select: { imageId: true },
+  });
+  if (lyrics) return;
+  await dbWrite.entityModeration.deleteMany({
+    where: { entityType: TRACK_LYRICS_ENTITY_TYPE, entityId: imageId },
   });
 }
 

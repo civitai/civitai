@@ -406,6 +406,42 @@ there; a line without one is text. Image and video cards are unchanged.
   unpublishes the post that contains the song. Dismiss releases the song, so it is back on the site
   and in search. The decisions are the main app's (`csam-hold-decision.ts`).
 
+## A song's rating
+
+A clean song's level is the highest of PG, its lyrics text-scan verdict (`EntityModeration`
+`TrackLyrics`, a text-scan verdict only: an XGuard one rates nothing), its lyrics language and its own
+cover's rating, once the cover is scanned and carries no block (`songLevel`,
+`src/server/services/audio-scan/song-rating.ts`). An nsfw lyrics verdict raises the song; it never
+blocks it. The song's own scan sets it when it decides the song (`decideSong`), then re-rates it once
+so a verdict that landed during the decision counts. After that, `rerateSong`
+(`image-scan-pipeline.ts`) raises it, with a scan verdict's side effects, when an input arrives: the
+cover's scan lands, a moderator or a Knights consensus rates the cover (`afterImageNsfwLevelSet`,
+through `rerateSongOfRatedCover`), the owner replaces the cover, or a lyrics or language verdict
+lands. A re-rate
+only raises the level, never lowers it: a level above the inputs may be the owner's own raise, which
+is not locked. So a removed cover or a cleared title leaves the song at its higher level, and the
+owner can dispute it. A collection judge's rating stays a floor, a blocked or undecided song is left
+to its scan, and a locked level (a moderator's ruling) is never changed. A re-rate whose write finds
+the level moved since its read reads again, up to three times.
+
+The song's title (`Image.metadata.title`) is a field of the lyrics text-scan subject
+(`track-lyrics.profile.ts`, one `TrackLyrics` row for both), so its level counts with theirs; a
+title edit sends them for a new verdict. A song with a title and no lyrics is scanned on its title
+alone, and never waits on it: it goes public on its audio verdict, its title is sent once it is
+decided (and on each title edit), and the verdict only re-rates it (`rerateSong`). It still counts as
+a song without lyrics everywhere else (`readLyricsVerdict`, the lyrics wait, visibility, the lyrics
+shown). The title scan runs only while the text scan is active for `TrackLyrics`, since an XGuard
+verdict rates nothing. Clearing the title of such a song deletes its title verdict, so it cannot
+raise the song later.
+
+The language level comes from XGuard's profanity mode on the lyrics text, sent when the lyrics are
+saved, generator lyrics at post time and transcribed ones when the scan's transcript is promoted
+(`submitTrackLyricsLanguageScan`), under its own `EntityModeration` row, `TrackLyricsLanguage`. Its
+`languageLevel` 0, 1 and 2 are stored as PG, PG-13 and R on that row's `nsfwLevel`
+(`track-lyrics-language-moderation.adapter.ts`); a null level (scoring failed) stores nothing and is
+not read as clean. The song never waits on this verdict, and it never blocks; the retry cron
+resubmits a failed one from the lyrics text.
+
 ## Rating disputes
 
 A song's owner disputes its rating from the song menu's Dispute rating, which opens the shared
