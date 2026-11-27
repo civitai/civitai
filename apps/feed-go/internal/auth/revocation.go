@@ -3,7 +3,11 @@ package auth
 import (
 	"context"
 	"errors"
+	"math/rand/v2"
+	"regexp"
 	"strconv"
+	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -44,13 +48,69 @@ type Revocation struct {
 	Markers *MarkerCache
 	// OnDegraded is called when the read failed, with the verdict then given from the markers.
 	OnDegraded func(err error, verdict string)
+	// RetryDelay is the backoff before the one retry after a fast error (default 200-500 ms, random).
+	RetryDelay func() time.Duration
+	// RetryCooldown is how long retries stop after a retry fails (default 10 s, as
+	// REVOCATION_RETRY_COOLDOWN_MS in the package).
+	RetryCooldown time.Duration
+
+	retryPausedUntil atomic.Int64 // unix nanos
 }
 
 // IsRevoked reports whether the session has been signed out, banned or cut.
 func (r *Revocation) IsRevoked(ctx context.Context, c *Claims) bool {
+	revoked, _ := r.Check(ctx, c)
+	return revoked
+}
+
+// Check is IsRevoked that also reports readFailed: the session's state was not read from the store (the read
+// failed, so the verdict came from the markers, or the token has no jti). A
+// read that fails on a transient connection or failover error is retried once after RetryDelay, as the
+// package does; one that hit the deadline or failed any other way is not, and none is for RetryCooldown
+// after a retry fails. A token without a jti is never read, so it is reported unconfirmed: the package's
+// confirmElevated never confirms one either.
+func (r *Revocation) Check(ctx context.Context, c *Claims) (revoked, readFailed bool) {
 	if c.Jti == "" {
-		return false
+		return false, true
 	}
+	k := revocationKeysOf(c)
+	cmds, err := r.read(ctx, c, k)
+	if err != nil && isFastError(err) && time.Now().UnixNano() >= r.retryPausedUntil.Load() {
+		delay := defaultRetryDelay()
+		if r.RetryDelay != nil {
+			delay = r.RetryDelay()
+		}
+		t := time.NewTimer(delay)
+		select {
+		case <-t.C:
+			if cmds, err = r.read(ctx, c, k); err != nil {
+				cooldown := r.RetryCooldown
+				if cooldown == 0 {
+					cooldown = 10 * time.Second
+				}
+				r.retryPausedUntil.Store(time.Now().Add(cooldown).UnixNano())
+			}
+		case <-ctx.Done():
+			t.Stop()
+		}
+	}
+	if err != nil {
+		revoked := r.Markers != nil && r.decideFromMarkers(c, k)
+		verdict := VerdictAllowUnknown
+		if revoked {
+			verdict = VerdictDenyCached
+		}
+		if r.OnDegraded != nil {
+			r.OnDegraded(err, verdict)
+		}
+		return revoked, true
+	}
+	return Decide(c, val(cmds[0]), val(cmds[1]), val(cmds[2]), val(cmds[3]), val(cmds[4]), val(cmds[5])), false
+}
+
+// read is one pipelined round trip, bounded by Timeout, recording what came back in Markers. A non-nil error
+// means the read failed.
+func (r *Revocation) read(ctx context.Context, c *Claims, k revocationKeys) ([6]*redis.StringCmd, error) {
 	timeout := r.Timeout
 	if timeout == 0 {
 		timeout = time.Second // DEFAULT_REVOCATION_READ_TIMEOUT_MS
@@ -58,7 +118,6 @@ func (r *Revocation) IsRevoked(ctx context.Context, c *Claims) bool {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	k := revocationKeysOf(c)
 	var (
 		state, familyState, all, userCut, impUserCut, impCut *redis.StringCmd
 	)
@@ -80,7 +139,8 @@ func (r *Revocation) IsRevoked(ctx context.Context, c *Claims) bool {
 	// Pipelined returns the FIRST command error, and an absent key (redis.Nil) is one, so a command that
 	// failed after one that found nothing is only visible on the command itself.
 	failed := err != nil && !errors.Is(err, redis.Nil)
-	for _, cmd := range []*redis.StringCmd{state, familyState, all, userCut, impUserCut, impCut} {
+	cmds := [6]*redis.StringCmd{state, familyState, all, userCut, impUserCut, impCut}
+	for _, cmd := range cmds {
 		if cmd == nil {
 			continue
 		}
@@ -106,18 +166,28 @@ func (r *Revocation) IsRevoked(ctx context.Context, c *Claims) bool {
 			m.observeKey(k.impCut, obs(impCut))
 		}
 	}
-	if failed {
-		revoked := r.Markers != nil && r.decideFromMarkers(c, k)
-		verdict := VerdictAllowUnknown
-		if revoked {
-			verdict = VerdictDenyCached
-		}
-		if r.OnDegraded != nil {
-			r.OnDegraded(err, verdict)
-		}
-		return revoked
+	if !failed {
+		return cmds, nil
 	}
-	return Decide(c, val(state), val(familyState), val(all), val(userCut), val(impUserCut), val(impCut))
+	return cmds, err
+}
+
+// fastErrorText mirrors isFastError in packages/civitai-auth/src/revocation-check.ts: the transient failures a
+// second attempt can get past. A closed or refused connection is not one.
+var fastErrorText = regexp.MustCompile(`(?i)^(?:READONLY|NOTMASTER|NOT-MASTER|LOADING|MASTERDOWN)\b|ECONNRESET|EPIPE|connection reset|broken pipe`)
+
+func isFastError(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return false
+	}
+	if errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) {
+		return true
+	}
+	return fastErrorText.MatchString(err.Error())
+}
+
+func defaultRetryDelay() time.Duration {
+	return 200*time.Millisecond + time.Duration(rand.Int64N(300))*time.Millisecond //nolint:gosec // G404: backoff jitter, not a secret
 }
 
 // revocationKeys are the per-claims keys of the read ("" = not read).

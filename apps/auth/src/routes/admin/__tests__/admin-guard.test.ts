@@ -62,9 +62,19 @@ vi.mock('$lib/server/db/db', () => {
 vi.mock('$lib/server/oauth/first-party', () => ({ invalidateDomainCache: vi.fn() }));
 vi.mock('$lib/server/oauth/access', () => ({ invalidateRoleCache: vi.fn() }));
 
-vi.mock('$lib/server/auth/verifier', () => ({
-  verifier: { verifyToken: async (token: string) => ({ sub: token, jti: 'jti-test' }) },
-}));
+// A token ending `:unconfirmed` verifies as the hub verifier does when the revocation read failed.
+vi.mock('$lib/server/auth/verifier', async () => {
+  const { markUnconfirmedSession } = await import('$lib/server/auth/unconfirmed-session');
+  return {
+    verifier: {
+      verifyToken: async (token: string) => {
+        const claims = { sub: token.replace(/:unconfirmed$/, ''), jti: 'jti-test' };
+        if (token.endsWith(':unconfirmed')) markUnconfirmedSession(claims);
+        return claims;
+      },
+    },
+  };
+});
 
 vi.mock('$lib/server/auth/session-producer', () => ({
   getOrProduceSessionUser: async (id: number) => ({ id, username: `user${id}` }),
@@ -271,6 +281,7 @@ async function post(
   scenario: Scenario,
   opts: {
     sessionUserId?: number;
+    unconfirmed?: boolean;
     origin?: string | null;
     rawPath?: string;
     routedId?: string | null;
@@ -285,7 +296,8 @@ async function post(
   if (origin !== null) headers.set('origin', origin);
 
   const cookies = new Map<string, string>();
-  if (opts.sessionUserId !== undefined) cookies.set(SESSION_COOKIE, String(opts.sessionUserId));
+  if (opts.sessionUserId !== undefined)
+    cookies.set(SESSION_COOKIE, `${opts.sessionUserId}${opts.unconfirmed ? ':unconfirmed' : ''}`);
 
   const request = new Request(url, {
     method: 'POST',
@@ -336,6 +348,17 @@ describe('hub /admin authorization', () => {
       expect(actionRan).toBe(true);
       expect(writes).toEqual([scenario.write]);
       expect(response.status).toBe(200);
+    });
+
+    it('answers 503 and performs no write for a hub admin whose session is unconfirmed', async () => {
+      const { response, actionRan } = await post(scenario, {
+        sessionUserId: ADMIN_USER_ID,
+        unconfirmed: true,
+      });
+
+      expect(writes).toEqual([]);
+      expect(actionRan).toBe(false);
+      expect(response.status).toBe(503);
     });
 
     it('is rejected with 403 and performs no write without a session', async () => {
