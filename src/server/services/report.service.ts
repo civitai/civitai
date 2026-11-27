@@ -1557,6 +1557,9 @@ function closeUnreviewedAppeals(limit: number) {
  * one `closedSilently` gets no refund and no notice, and one whose owner is deleted no notice.
  */
 function closeDismissedReviewAppeals(limit: number) {
+  const appellantHoldsCsamBlock = Prisma.sql`EXISTS (
+    SELECT 1 FROM "Image" o WHERE o."userId" = "Appeal"."userId" AND ${csamBlockedSql('o')}
+  )`;
   return dbWrite.$queryRaw<(ClaimedOrphan & { closedSilently: boolean; ownerDeleted: boolean })[]>`
     UPDATE "Appeal"
     SET status = 'Void'::"AppealStatus", "resolvedReason" = ${
@@ -1579,9 +1582,7 @@ function closeDismissedReviewAppeals(limit: number) {
     ) AND status = 'Pending'::"AppealStatus"
     RETURNING id, "userId", "entityType", "entityId", "buzzTransactionId",
       (
-        EXISTS (
-          SELECT 1 FROM "Image" o WHERE o."userId" = "Appeal"."userId" AND ${csamBlockedSql('o')}
-        )
+        ${appellantHoldsCsamBlock}
         OR EXISTS (
           SELECT 1 FROM "UserReport" ur JOIN "Report" r ON r.id = ur."reportId"
           WHERE ur."userId" = "Appeal"."userId" AND r.reason = 'CSAM'
