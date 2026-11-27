@@ -19,8 +19,7 @@ import type { BuzzLimit } from '~/server/schema/api-key.schema';
 // - A personal API key (`User`) with a Buzz limit, used by its own user (flag
 //   `user-key-buzz-limit-proxy`). Its limit is the one set on the key.
 //
-// Nothing is checked here before sending: the orchestrator enforces the limit when work would spend
-// past it, and reads (get, query, cancel, whatif) keep working once the limit is spent. Its refusal
+// Nothing is checked here before sending: the orchestrator enforces the limit, and its refusal
 // becomes a message naming the limit (api-key-buzz-limit-refusal.ts).
 //
 // No limit (a null or empty `buzzLimit`) changes nothing: null has always meant "no limit" for this

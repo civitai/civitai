@@ -10,8 +10,8 @@ import { ApiKeyType } from '~/shared/utils/prisma/enums';
 // Which requests reach the orchestrator as their own limited key: a refresh-minted OAuth token whose
 // consent has a cap (flag `oauth-offline-grant`), or a personal API key with a Buzz limit used by its
 // own user (flag `user-key-buzz-limit-proxy`). Everything else gets null, which leaves
-// getOrchestratorToken on the System token. Nothing here reads the spend snapshot: the orchestrator
-// enforces the limit, so reads keep working once it is spent.
+// getOrchestratorToken on the System token. Nothing here reads the spend: the orchestrator enforces
+// the limit.
 
 const USER = 4242;
 const LIMIT = [{ type: 'sliding' as const, limit: 500, window: 'day' as const, unit: 1 }];

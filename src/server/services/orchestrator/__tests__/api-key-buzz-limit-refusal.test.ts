@@ -1,15 +1,13 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type * as Refusal from '~/server/orchestrator/api-key-buzz-limit-refusal';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * The orchestrator's refusal of a call that would spend past a key's Buzz limit becomes a FORBIDDEN
  * naming that limit, at every site that maps an orchestrator 403 or 429. It is recognised by the
- * body, so a real insufficient-funds 403 and a scope 403 keep their meaning. The real response is
- * captured on dev before the flag is turned on; until then the shipped list is empty and nothing
- * matches. These tests run the sites against a FIXTURE pattern.
+ * body, so a real insufficient-funds 403 and a scope 403 keep their meaning. The sites run against
+ * the shipped list with a FIXTURE pattern added to it.
  */
 
-const FIXTURE = vi.hoisted(() => [
+const FIXTURE = [
   {
     status: 403,
     subject: 'apiKey' as const,
@@ -20,16 +18,7 @@ const FIXTURE = vi.hoisted(() => [
     subject: 'oauth' as const,
     matches: (body: unknown) => (body as { type?: string })?.type === 'fixture:oauth-buzz-limit',
   },
-]);
-
-vi.mock('~/server/orchestrator/api-key-buzz-limit-refusal', async (importOriginal) => {
-  const actual = await importOriginal<typeof Refusal>();
-  return {
-    ...actual,
-    throwIfApiKeyBuzzLimitRefusal: (status: number | undefined, body: unknown) =>
-      actual.throwIfApiKeyBuzzLimitRefusal(status, body, FIXTURE),
-  };
-});
+];
 
 vi.mock('@civitai/orchestration-client', () => ({
   addWorkflowTag: vi.fn(),
@@ -85,8 +74,8 @@ beforeEach(() => vi.clearAllMocks());
 
 describe('the matcher', () => {
   it('matches nothing as shipped, so every site maps errors as before', () => {
-    expect(BUZZ_LIMIT_REFUSALS).toEqual([]);
     expect(isApiKeyBuzzLimitRefusal(403, OVER_LIMIT)).toBeNull();
+    expect(isApiKeyBuzzLimitRefusal(429, OAUTH_OVER_LIMIT)).toBeNull();
   });
 
   it('keys on the body, not the status', () => {
@@ -155,6 +144,9 @@ const sites: Site[] = [
 ];
 
 describe.each(sites)('%s', (_, call, insufficientFunds) => {
+  beforeEach(() => BUZZ_LIMIT_REFUSALS.push(...FIXTURE));
+  afterEach(() => BUZZ_LIMIT_REFUSALS.splice(0));
+
   it("maps a personal key's over-limit 403 to FORBIDDEN naming the key's limit", async () => {
     expect(await caught(call(403, OVER_LIMIT))).toMatchObject({
       code: 'FORBIDDEN',

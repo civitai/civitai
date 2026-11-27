@@ -77,8 +77,8 @@ export async function getOrchestratorToken(
   if (!standing || !standing.exists || (standing.muted && !options.allowRestricted))
     throw new TRPCError({ code: 'FORBIDDEN', message: RESTRICTED_ACCOUNT_MESSAGE });
 
-  // A limited key is sent as itself and never cached under the user. Null otherwise, and nothing
-  // below changes.
+  // Before both caches and never written to them: a cached limited key would be served to the
+  // user's later requests made with other credentials.
   if (ctx?.req) {
     const own = await callerOwnOrchestratorToken(userId, ctx.req);
     if (own) return own;

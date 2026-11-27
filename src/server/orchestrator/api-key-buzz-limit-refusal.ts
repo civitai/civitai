@@ -19,10 +19,10 @@ export interface BuzzLimitRefusalPattern {
 }
 
 /**
- * The over-limit responses the orchestrator sends. Empty until the exact response (status, body,
- * detail) is captured on dev, so until then nothing matches and every site maps its errors as before.
+ * The orchestrator's over-limit responses, each taken from a captured reply (status, body, detail).
+ * With none listed nothing matches, and every site maps its errors by status alone.
  */
-export const BUZZ_LIMIT_REFUSALS: readonly BuzzLimitRefusalPattern[] = [];
+export const BUZZ_LIMIT_REFUSALS: BuzzLimitRefusalPattern[] = [];
 
 /** Whose limit refused the call, or null when the response is not a Buzz-limit refusal. */
 export function isApiKeyBuzzLimitRefusal(
