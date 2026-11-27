@@ -103,6 +103,23 @@ describe('unblockModeratedImages', () => {
     expect(result).toEqual({ updated: 1, withheld: 1 });
   });
 
+  it('writes in chunks, each re-checking its own rows', async () => {
+    const result = await unblockModeratedImages({ id: 9 }, { csamReview: false, updateChunk: 1 });
+
+    const updates = vi
+      .mocked(dbMock.dbWrite.$queryRaw)
+      .mock.calls.filter(([strings]) =>
+        (strings as TemplateStringsArray).join('').includes('UPDATE "Image"')
+      );
+    expect(updates).toHaveLength(2);
+    expect(await blockedFor()).toEqual([
+      [WITHHELD, 'moderated'],
+      [PLAIN, null],
+      [MARKED_MID_RUN, null],
+    ]);
+    expect(result).toEqual({ updated: 2, withheld: 1 });
+  });
+
   it('clears every one for a moderator holding the grant', async () => {
     const result = await unblockModeratedImages({ id: 9 }, { csamReview: true });
 

@@ -28,9 +28,13 @@ const ID_RANGE = 500_000;
 
 const WITHHELD_CHECK_CHUNK = 5_000;
 
+// Ids per primary UPDATE: each row re-reads the withheld rule, so one statement over every candidate
+// holds its row locks for the whole run.
+const UPDATE_CHUNK = 1_000;
+
 export async function unblockModeratedImages(
   user: { id: number },
-  { csamReview }: { csamReview: boolean }
+  { csamReview, updateChunk = UPDATE_CHUNK }: { csamReview: boolean; updateChunk?: number }
 ) {
   const candidateIds: number[] = [];
   const [{ maxId }] = await dbRead.$queryRaw<{ maxId: number | null }[]>`
@@ -64,18 +68,22 @@ export async function unblockModeratedImages(
 
   console.log(`[unblock-images] Updating ${unblockIds.length} images in the database...`);
   // The scan read the replica: the primary re-checks every condition.
-  const unblocked = unblockIds.length
-    ? await dbWrite.$queryRaw<{ id: number }[]>`
+  const unblocked: { id: number }[] = [];
+  for (let i = 0; i < unblockIds.length; i += updateChunk) {
+    const ids = unblockIds.slice(i, i + updateChunk);
+    unblocked.push(
+      ...(await dbWrite.$queryRaw<{ id: number }[]>`
         UPDATE "Image" i SET "blockedFor" = NULL, "updatedAt" = now()
-        WHERE i.id = ANY(${unblockIds}::int[])
+        WHERE i.id = ANY(${ids}::int[])
           AND i."blockedFor" IN ('moderated', 'Moderated')
           AND i."needsReview" IS NULL
           AND i."nsfwLevel" NOT IN (0, ${NsfwLevel.Blocked})
           AND i.ingestion <> ${ImageIngestionStatus.Blocked}::"ImageIngestionStatus"
           AND NOT ${Prisma.raw(moderatorWithheldSql('i', { csamReview }))}
         RETURNING i.id
-      `
-    : [];
+      `)
+    );
+  }
   const unblockedIds = unblocked.map((image) => image.id);
   console.log(
     `[unblock-images] DB update complete: cleared ${unblockedIds.length} of ${candidateIds.length} candidates.`
