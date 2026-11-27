@@ -347,6 +347,21 @@ func (q *PageQuery) Build() (SQL, error) {
 	if multiDriven {
 		rankP = "mbm"
 	}
+	// The `ranged` CTE leads the statement, so Prisma numbers its values first: bound before any
+	// clause. getModelsRaw builds it only with both bounds (publishedRangeError refuses one).
+	ranged := ""
+	if !q.PublishedGte.IsZero() && !q.PublishedLt.IsZero() {
+		// `!sessionUser?.isModerator || !status?.length`: status is not ported, so always Published.
+		ranged = `
+    WITH ranged AS MATERIALIZED (
+        SELECT "id" FROM "Model"
+        WHERE "status" = 'Published'::"ModelStatus" AND "publishedAt" >= ` + b.arg(q.PublishedGte) + ` AND "publishedAt" < ` + b.arg(q.PublishedLt)
+		if len(q.Types) > 0 {
+			ranged += ` AND "type" = ANY(` + b.arg(q.Types) + `::text[]::"ModelType"[])`
+		}
+		ranged += `
+      )`
+	}
 
 	if !q.Archived {
 		and = append(and, `(`+p+`."mode" IS NULL OR `+p+`."mode" != 'Archived'::"ModelModifier")`)
@@ -408,6 +423,15 @@ func (q *PageQuery) Build() (SQL, error) {
 			and = append(and, `mm."userId" = ANY(`+b.arg(q.FollowedUserIDs)+`::int[])`)
 		}
 	}
+	// `newCreators`: the board's creators (`IN (…)`), or no row for an empty board. The `integer[]`
+	// cast (the same type as `int[]`) keeps its text apart from `followed`'s.
+	if q.NewCreators {
+		if len(q.NewCreatorUserIDs) == 0 {
+			and = append(and, `1 = 0`)
+		} else {
+			and = append(and, `mm."userId" = ANY(`+b.arg(q.NewCreatorUserIDs)+`::integer[])`)
+		}
+	}
 	switch {
 	case useBM && len(q.BaseModels) == 1:
 		and = append(and, `mbm."baseModel" = `+b.arg(q.BaseModels[0]))
@@ -420,6 +444,13 @@ func (q *PageQuery) Build() (SQL, error) {
 	}
 	if !q.PeriodCutoff.IsZero() {
 		and = append(and, `(mm."lastVersionAt" >= `+b.arg(q.PeriodCutoff)+`)`)
+	}
+	// publishedRangeBounds: `[from 00:00Z, to + 1 day 00:00Z)`.
+	if !q.PublishedGte.IsZero() {
+		and = append(and, `m."publishedAt" >= `+b.arg(q.PublishedGte))
+	}
+	if !q.PublishedLt.IsZero() {
+		and = append(and, `m."publishedAt" < `+b.arg(q.PublishedLt))
 	}
 	// `!sessionUser?.isModerator || !status?.length`: status is not ported, so always Published.
 	and = append(and, p+`."status" = 'Published'::"ModelStatus"`)
@@ -601,6 +632,10 @@ func (q *PageQuery) Build() (SQL, error) {
           mbs."mode", mbs."minor", mbs."poi"
       ) mbm`
 	}
+	if ranged != "" {
+		from += `
+      JOIN ranged ON ranged."id" = m."id"`
+	}
 
 	// The enum and citext columns are read as text, which is what node-postgres hands Node for them.
 	sel := p + `."modelId" as "id",
@@ -675,6 +710,7 @@ func (q *PageQuery) Build() (SQL, error) {
     LIMIT ` + limit + `
   `
 	}
+	text = ranged + text
 	// Bound last, so the clause leaves every other placeholder's number as it was. A split cursor
 	// puts the WHERE in both UNION ALL branches: one bind, every occurrence.
 	if strings.Contains(text, withheldViewerSlot) {

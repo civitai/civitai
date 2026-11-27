@@ -857,8 +857,9 @@ request header. The public route applies it as follows, before the origin check 
   pattern and the IP is in that crawler's published ranges. A request whose user agent matches one of
   the patterns (generated into the same file) falls back as `crawler-user-agent`, because only the app
   holds the ranges and the header changes the answer. One that matches none can never be verified, so a
-  header it carries is one the app would strip: `image.getInfinite` reads it as absent (§14.2), the
-  other procedures still fall back (`verified-bot`).
+  header it carries is one the app would strip: `image.getInfinite` reads it as absent (§14.2), and so
+  does `model.getAll` with `FEED_GO_GETALL_SERVE_VERIFIED_BOT` on (§15.2.8); the other procedures, and
+  `model.getAll` with that switch off, still fall back (`verified-bot`).
 - **Default response headers.** Every answer written here carries its Cache-Control: the app's
   `PRIVATE_CACHE_CONTROL` (from the same file) unless the answer is edge-cacheable (signed out, §4, and
   for `image.getInfinite` an input that is not viewer-scoped).
@@ -1331,7 +1332,8 @@ will show.
 - a failed miss computation (§3.1, `<reason>-failed`; for tag ids also a browsing gate this service
   cannot read when a row needs it), cache misses on metric hashes without a ClickHouse reader
   (`metrics-miss`), session users (auth hub fetch not ported), gallery settings (rebuild not ported);
-- API keys other than those §4.2 serves, verified crawlers (but on `image.getInfinite`, §14.2), POST
+- API keys other than those §4.2 serves, verified crawlers (but on `image.getInfinite`, §14.2, and on
+  `model.getAll` with its switch on, §15.2.8), POST
   (`methodOverride`) requests;
 - public requests from an origin the app's allow-list does not hold (reason `origin`, see §4).
 
@@ -2580,8 +2582,8 @@ read would see. Serving needs a Go-first miss measurement and Go-side miss filli
 
 | Area | Ported | Falls back (reason) |
 |---|---|---|
-| Input | every sort but Recently Added; `period` / `periodMode`; `limit`; the keyset cursor; `types`, `checkpointType`, `baseModels`, `tag` / `tagname`, `username` / `user`, `fileFormats`, `fromPlatform`, `earlyAccess`, `paidAccess`, `onSale`, `archived`, the licensing filters, `excludedTagIds`, `excludedUserIds`, `disablePoi`, `disableMinor`, `collectionId` with `collectionTagId` (§15.2.1); Hot with a base-model filter (the official-checkpoint pin, §15.2.2); `ids` and `followed`, each only behind its own switch (§15.2.4) | `query` (Meilisearch), `hidden`, `followed` and `ids` with their switches off (§15.2.4), `newCreators`, `modelVersionIds`, `status`, `needsReview`, `pending`, `supportsGeneration`, `isFeatured`, `availability`, `publishedFrom` / `publishedTo`, `poiOnly` / `minorOnly`, `page` (`input-<key>`); `hidePaid` true with its switch off, the default (`input-hidePaid`, §15.2.7); Recently Added, with or without a collection (`model-sort-recently-added`); a `collectionId` or `collectionTagId` that is not an int4 integer (`model-collection-id`; not a number, `null` included, is `input-invalid`); a cursor Node answers with a 400, or a date token not in Postgres' CONCAT form (`model-cursor`); `ids` present at all, `[]` and `""` included, with its switch off (`input-ids`); with it on, an id JS `Number` does not read as an int4 integer (`model-ids`) |
-| Viewer | as §4 | as §4; a signed-in request with no level (`model-level-absent`: the saved level is not read); a viewer the `personal-hot-lead` flag is on for on any page of a Hot feed Node leads, or one it could not be read for (`model-getall-personal-hot-lead`, `model-getall-personal-hot-lead-unknown`; temporary, §15.2.3) |
+| Input | every sort but Recently Added; `period` / `periodMode`; `limit`; the keyset cursor; `types`, `checkpointType`, `baseModels`, `tag` / `tagname`, `username` / `user`, `fileFormats`, `fromPlatform`, `earlyAccess`, `paidAccess`, `onSale`, `archived`, the licensing filters, `excludedTagIds`, `excludedUserIds`, `disablePoi`, `disableMinor`, `collectionId` with `collectionTagId` (§15.2.1); Hot with a base-model filter (the official-checkpoint pin, §15.2.2); `ids` and `followed`, each only behind its own switch (§15.2.4); `newCreators` (§15.2.9) and `publishedFrom` / `publishedTo` (§15.2.10), each only behind its own switch | `query` (Meilisearch), `hidden`, `followed` and `ids` with their switches off (§15.2.4), `newCreators` with its switch off (§15.2.9), `modelVersionIds`, `status`, `needsReview`, `pending`, `supportsGeneration`, `isFeatured`, `availability`, `publishedFrom` / `publishedTo` with their switch off (§15.2.10), `poiOnly` / `minorOnly`, `page` (`input-<key>`); with the published-range switch on, a range getModelsRaw refuses (`input-published-range`) or a day the schema refuses (`input-invalid`); with the `newCreators` switch on, a board entry Node would rebuild or refresh (`new-creators-miss`, `new-creators-stale`, `new-creators-read-failed`); `hidePaid` true with its switch off, the default (`input-hidePaid`, §15.2.7); Recently Added, with or without a collection (`model-sort-recently-added`); a `collectionId` or `collectionTagId` that is not an int4 integer (`model-collection-id`; not a number, `null` included, is `input-invalid`); a cursor Node answers with a 400, or a date token not in Postgres' CONCAT form (`model-cursor`); `ids` present at all, `[]` and `""` included, with its switch off (`input-ids`); with it on, an id JS `Number` does not read as an int4 integer (`model-ids`) |
+| Viewer | as §4; a verified crawler with its switch on (§15.2.8) | as §4; a verified crawler with its switch off (`verified-bot`); a signed-in request, or a verified crawler where nothing caps it, with no level (`model-level-absent`: the saved level is not read); a viewer the `personal-hot-lead` flag is on for on any page of a Hot feed Node leads, or one it could not be read for (`model-getall-personal-hot-lead`, `model-getall-personal-hot-lead-unknown`; temporary, §15.2.3) |
 | Flags | the state production runs (§15.3) | any model flag mirror off (`flag-off-state`) |
 | Lookups | the tag by name and the creator by name on the replica; the blocked tag list; the collection read permission on the replica | a creator the replica does not hold (`model-username-miss`: Node reads the primary, then 404s); the blocked list absent or unreadable (`blocked-tags-miss`, `blocked-tags-stale`) |
 | Covers | the owner's image on the shown version, or located on another of the model's versions (§15.1 step 4); a chosen cover neither finds and that has no featured community showcase row for the model (Node's `withCommunityCovers` finds nothing either) | a chosen cover neither finds that has a Community, not-removed `ModelVersionShowcaseItem` row on a version of the model (`model-community-cover`: Node may serve that community image as the cover, §16.9) |
@@ -2773,6 +2775,77 @@ statement with its `array_agg(pa."entityId")`, read on every page. The SQL arm r
 `TestIntegrationModelHidePaidFreeVersion`; the card is held to Node by the `hide-paid-*` golden
 fixtures.
 
+### 15.2.8 Verified crawlers (behind a switch, default off)
+
+`FEED_GO_GETALL_SERVE_VERIFIED_BOT` (default off; `Ports.VerifiedBot`, serve, shadow and probe alike).
+Off, a request carrying `x-civitai-verified-bot` with any value is the `verified-bot` fallback, as it
+always was. On, `prepareModelGetAllViewer` reads the header as `image.getInfinite` does
+(`verifiedCrawler`, §14.2):
+
+- **What Node reads.** `requestVerifiedCrawler` (`src/server/utils/browsing-level.ts`,
+  `parseVerifiedBotHeader`: `googlebot` or `bingbot`, anything else is no crawler) in two places on
+  this procedure: `requestDomainBrowsingLevelCap` (`applyDomainFeature` and
+  `resolveRequestBrowsingLevels`: a crawler counts as signed in where mature content is viewable), and
+  createContext's `cacheable` (no session user, no batch, no crawler; `edgeCacheIt` zeroes a
+  crawler's TTL too). Nothing else on the `getModelsFeed` path reads it.
+- **Here.** On a Node sample (shadow, probe) the header is the app's decision, read as Node parses it;
+  on the public route it is read as absent whatever it says: a crawler's user agent was handed back
+  first (`crawler-user-agent`), and the app's policy strips the header from every other one, so a
+  header that `verifiedCrawler` does not accept is a signed-out visitor's request (PG cap,
+  edge-cacheable), as in Node. A crawler is no viewer (`Request.Crawler`): the cap is
+  `DomainCap(authorized || (crawler && canViewNsfw), canViewNsfw)` (uncapped on blue and red, PG on
+  green), the answer carries no public TTL, and it is counted under the `crawler` viewer class
+  (`feedViewerClass`, probe included). Uncapped and with no `browsingLevel`, it stays
+  `model-level-absent` (Node binds no level and answers an empty page).
+
+### 15.2.9 `newCreators` (behind a switch, default off)
+
+`FEED_GO_GETALL_SERVE_INPUT_NEW_CREATORS` (default off; `Ports.NewCreators`). Off, a truthy value is
+the `input-newCreators` fallback, as before. On:
+
+- **Input.** `booleanString().optional()`: a boolean, a `z.stringbool` word or a number (true for 1
+  only); null and any other string are the schema's 400 (`input-invalid`).
+- **The board.** `getNewCreatorUserIds({ entity: 'models', domain })`
+  (`src/server/services/new-creators.service.ts`): `domain` is `getRequestBoardDomainColor`
+  (`Request.BoardColor`, `HostColors.BoardColorOf`), the board `new_creators-red` for red and
+  `new_creators` for every other color (`feed.NewCreatorModelBoardID`), read from its
+  fetchThroughCache entry `packed:caches:new-creators:<board>` with the image feed's reader
+  (`feed.NewCreatorBoards`): only a fresh entry is answered; a missing, expired or unreadable one
+  falls back (`new-creators-miss`, `-stale`, `-read-failed`; no reader: `-unconfigured`), because
+  Node would rebuild or refresh it from `LeaderboardResult`, which is not read here. Node reads it on
+  every `getModelsRaw` call; here once per request, on the first page that reaches it, after the
+  blocked-tag check, the creator lookup and the follows and before the collection check (Node's
+  order), and every page binds it.
+- **SQL.** `mm."userId" = ANY($n::integer[])` (Node's `IN (…)`, after `followed`; the `integer[]` cast
+  keeps its text apart from `followed`'s), or `1 = 0` for an empty board (never the unfiltered feed).
+- **Addons.** `enforceBlockedBrowsingTagsForModels` resolves the browsing-settings addons under the
+  `newCreators` scope for such a request (`resolveAddons`), so a scoped entry's exclusions apply to
+  the page query and the per-row tag drop. The showcase image filter resolves its own, unscoped.
+- **Cache policy.** Unchanged: the board is global per domain, so Node marks nothing private.
+
+### 15.2.10 Published range (behind a switch, default off)
+
+`FEED_GO_GETALL_SERVE_INPUT_PUBLISHED_RANGE` (default off; `Ports.PublishedRange`). Off, a non-empty
+`publishedFrom` or `publishedTo` is `input-publishedFrom` / `input-publishedTo`, as before. On:
+
+- **Input.** Each is `publishedDateSchema.optional()` (`src/shared/utils/published-range.ts`): a string
+  `YYYY-MM-DD` (ASCII digits) naming a real UTC calendar day; anything else, null and `""` included,
+  is the schema's 400 (`input-invalid`). Then `publishedRangeError`, thrown by `getModelsRaw` before
+  any read: one end only, an end before the start, or more than 31 days between them is Node's 400
+  (`input-published-range`, seeded: the request alone decides it). A day in year 0 (Postgres has none)
+  or 0001-01-01 (this port's zero time) falls back the same way.
+- **SQL.** `publishedRangeBounds`: `[from 00:00Z, to + 1 day 00:00Z)`, as `m."publishedAt" >= $n AND
+  m."publishedAt" < $n` after the period clause and before the status one, and the `ranged` CTE that
+  leads both query shapes (the single branch and the split-cursor UNION ALL):
+  `WITH ranged AS MATERIALIZED (SELECT "id" FROM "Model" WHERE "status" = 'Published'::"ModelStatus"
+  AND "publishedAt" >= $1 AND "publishedAt" < $2 [AND "type" = ANY(…)])`, joined after the FROM of
+  every base-model path (`JOIN ranged ON ranged."id" = m."id"`). Its values are bound first, as
+  Prisma numbers them; `status` is not ported, so the CTE always holds the Published condition.
+- **Load.** Measured before the port: a plain `EXPLAIN` of the CTE body on a replica uses
+  `Model_status_publishedAt_idx` (an index scan, about 20k rows for 31 days). The text is pinned by
+  `TestBuildPublishedRange*` and run against Postgres by
+  `TestIntegrationModelPagePublishedRangeAndNewCreators`.
+
 ### 15.3 Flags
 
 Only the state each flag runs in production is ported. A `FEED_GO_*` mirror below that reads off is
@@ -2856,6 +2929,8 @@ topk(10, sum by (reason) (rate(feed_go_fallback_total{feed_endpoint="model-getal
   falls back;
 - the collection read permission: Node's read also joins the viewer's accepted invite, which feeds
   only `isCollaborator`, not `read`; it is not read here;
+- `newCreators` (§15.2.9): the board is read once per request where Node reads it on every
+  `getModelsRaw` call; a board refreshed between two of Node's pages is the one difference;
 - `ids` falls back whenever it is present, empty included, while its switch is off (§15.2.4); on,
   an element JS `Number` reads other than as a plain integer falls back (`model-ids`) where Node
   would bind it (a fraction or an id past int4 matches no row there);

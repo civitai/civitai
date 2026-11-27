@@ -509,7 +509,8 @@ func (s *Server) prepareInfiniteViewer(ctx context.Context, r *http.Request) (fe
 // computeModelGetAll answers a `model.getAll` request (getModelsInfiniteHandler), or returns a
 // fallback/other error. Viewer, domain cap and region rules are read as for the gallery procedure.
 // Cache policy is createContext's, not edgeCacheIt's (model.router.ts's skipEdgeCache hands it a copy
-// of ctx.cache): public TTL signed out, none for a session.
+// of ctx.cache): public TTL signed out, none for a session or a verified crawler (read only with
+// Ports.VerifiedBot; edgeCacheIt also zeroes a crawler's TTL).
 //
 // A viewer the `personal-hot-lead` flag is on for falls back on every page of a feed Node leads
 // (personalHotLead), here and so in the shadow too (an `unsupported` sample, never a diff). The
@@ -522,14 +523,15 @@ func (s *Server) computeModelGetAll(ctx context.Context, r *http.Request) (*comp
 	if err := s.personalHotLead(ctx, req, user); err != nil {
 		return nil, err
 	}
-	signedOut := user == nil
+	cacheable := user == nil && !req.Crawler
 	ans, err := modelfeed.Serve(ctx, s.Models, req)
 	if err != nil {
 		return nil, err
 	}
-	out := &computed{value: ans.Value, trivial: ans.Trivial, viewerClass: feedViewerClass(user, false)}
-	if signedOut {
-		// createContext: cacheable without a session user (a banned user still has one).
+	out := &computed{value: ans.Value, trivial: ans.Trivial, viewerClass: feedViewerClass(user, req.Crawler)}
+	if cacheable {
+		// createContext: cacheable without a session user (a banned user still has one) and without a
+		// verified crawler.
 		out.ttl = &trpc.SignedOutTTL
 	}
 	if err := out.encode(ctx); err != nil {
@@ -539,7 +541,12 @@ func (s *Server) computeModelGetAll(ctx context.Context, r *http.Request) (*comp
 }
 
 // prepareModelGetAllViewer is computeModelGetAll up to the handler call, with the session user it
-// resolved (nil: none); the Go-first probe runs the same steps.
+// resolved (nil: none); the Go-first probe runs the same steps. With Ports.VerifiedBot a verified
+// crawler is read as image.getInfinite reads it (verifiedCrawler: on a Node sample its
+// `googlebot` / `bingbot`; on the public route never) and counts as signed in for the domain cap
+// where mature content is viewable (requestDomainBrowsingLevelCap); it is no viewer
+// (Request.Crawler). Off, any value of the header is the `verified-bot` fallback, as before. The
+// request carries its board color for `newCreators`.
 func (s *Server) prepareModelGetAllViewer(ctx context.Context, r *http.Request) (modelfeed.Request, *auth.SessionUser, error) {
 	if s.Models == nil {
 		return modelfeed.Request{}, nil, fallback.New("model-getall-unconfigured")
@@ -555,9 +562,11 @@ func (s *Server) prepareModelGetAllViewer(ctx context.Context, r *http.Request) 
 	if err != nil {
 		return modelfeed.Request{}, nil, err
 	}
-	if r.Header.Get(verifiedBotHeader) != "" {
+	ports := s.Models.Config.Ports
+	if !ports.VerifiedBot && r.Header.Get(verifiedBotHeader) != "" {
 		return modelfeed.Request{}, nil, fallback.New("verified-bot")
 	}
+	crawler := ports.VerifiedBot && verifiedCrawler(r)
 	user, err := s.Resolver.Resolve(ctx, r)
 	if err != nil {
 		return modelfeed.Request{}, nil, err
@@ -566,7 +575,13 @@ func (s *Server) prepareModelGetAllViewer(ctx context.Context, r *http.Request) 
 	isModerator := authorized && user.IsModerator
 	color := s.Hosts.ColorOf(r.Host)
 	restricted := regionMatches(s.RegionRules, r)
-	req := modelfeed.Request{Input: in, Cap: browsing.DomainCap(authorized, browsing.CanViewNsfw(color, restricted, isModerator))}
+	canViewNsfw := browsing.CanViewNsfw(color, restricted, isModerator)
+	req := modelfeed.Request{
+		Input:      in,
+		Cap:        browsing.DomainCap(authorized || (crawler && canViewNsfw), canViewNsfw),
+		Crawler:    crawler,
+		BoardColor: s.Hosts.BoardColorOf(r.Host, s.HostPrimaries),
+	}
 	if authorized {
 		req.Viewer = &modelfeed.Viewer{ID: user.ID, Username: user.Username, IsModerator: isModerator}
 	}

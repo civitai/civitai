@@ -160,7 +160,12 @@ samplers for `image.getInfinite` and `model.getAll` are their own Flipt flags,
 `FEED_GO_SHADOW_URL` and the rate and in-flight knobs with the other routes; `model.getAll`'s own flags
 are mirrored by the `FEED_GO_*` variables in `.env.example` (DESIGN.md §15.3). Its `ids` and `followed` input shapes are
 computed only behind `FEED_GO_GETALL_SERVE_INPUT_IDS` / `FEED_GO_GETALL_SERVE_INPUT_FOLLOWED` (both
-default off: the `input-ids` / `input-followed` fallbacks; DESIGN.md §15.2.4). An owner's user-cosmetics miss on a
+default off: the `input-ids` / `input-followed` fallbacks; DESIGN.md §15.2.4), a verified crawler only behind
+`FEED_GO_GETALL_SERVE_VERIFIED_BOT` (default off: the `verified-bot` fallback; DESIGN.md §15.2.8), its
+`newCreators` input only behind `FEED_GO_GETALL_SERVE_INPUT_NEW_CREATORS` (default off: the
+`input-newCreators` fallback; DESIGN.md §15.2.9), and `publishedFrom` / `publishedTo` only behind
+`FEED_GO_GETALL_SERVE_INPUT_PUBLISHED_RANGE` (default off: the `input-publishedFrom` /
+`input-publishedTo` fallbacks; DESIGN.md §15.2.10). An owner's user-cosmetics miss on a
 `model.getAll` page is computed only with `FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS` (default off: the
 `user-cosmetics-miss` fallback; DESIGN.md §15.2.5), and an owner's creator-membership miss only with
 `FEED_GO_GETALL_SERVE_MEMBERSHIP_MISS` (default off: the `membership-miss` fallback; DESIGN.md §15.2.6),

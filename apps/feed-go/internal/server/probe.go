@@ -71,8 +71,9 @@ const (
 	// CacheUserFollows is the viewer's follow list (image.getInfinite with `followed`): read before
 	// the page, and a miss on it falls back without the miss computation (hydrate.MissUserFollows).
 	CacheUserFollows = hydrate.MissUserFollows
-	// CacheNewCreators is the "new & upcoming" board (image.getInfinite with `newCreators`): read
-	// before the page; a missing or expired entry falls back (Node rebuilds or refreshes it).
+	// CacheNewCreators is the "new & upcoming" board (image.getInfinite with `newCreators`, and
+	// model.getAll with its port on): read before the page; a missing or expired entry falls back
+	// (Node rebuilds or refreshes it).
 	CacheNewCreators = "new-creators"
 )
 
@@ -273,9 +274,9 @@ func (s *Server) probeModelGetAll(ctx context.Context, req ProbeRequest, rec *hy
 	}
 	mreq, user, err := s.prepareModelGetAllViewer(ctx, r)
 	if err != nil {
-		return s.probeViewer(ctx, r, false), err
+		return s.probeViewer(ctx, r, s.Models != nil && s.Models.Config.Ports.VerifiedBot), err
 	}
-	viewer := feedViewerClass(user, false) // as computeModelGetAll reports it
+	viewer := feedViewerClass(user, mreq.Crawler) // as computeModelGetAll reports it
 	_, err = modelfeed.Serve(ctx, s.Models, mreq)
 	return viewer, err
 }
@@ -304,8 +305,9 @@ func (s *Server) probeV1Images(ctx context.Context, req ProbeRequest, rec *hydra
 // session is read as the prepare step reads it (Resolver.Resolve, read-only; the probe's credentials
 // are redacted), whatever the step's error, which the probe still returns unchanged. "" (unknown)
 // where serving cannot resolve a viewer either: a verified bot on the procedures that hand one back
-// (crawlerAware false: as-posts, model.getAll), an API credential (bearer-token), a session-cache miss.
-// crawlerAware is image.getInfinite's: a verified crawler is its own class (feedViewerClass).
+// (crawlerAware false: as-posts, model.getAll with its verified-crawler port off), an API credential
+// (bearer-token), a session-cache miss. crawlerAware is image.getInfinite's, and model.getAll's with
+// the port on: a verified crawler is its own class (feedViewerClass).
 func (s *Server) probeViewer(ctx context.Context, r *http.Request, crawlerAware bool) string {
 	crawler := false
 	if crawlerAware {
