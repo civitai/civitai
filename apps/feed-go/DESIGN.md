@@ -2410,7 +2410,7 @@ and `answerWithoutFeed` throws `SERVICE_UNAVAILABLE` ("Image search is temporari
 retry.", `isTransientFeedReason`). Handed back as the `feed-unavailable` / `feed-status` fallback, the
 request makes the app call the feed again, which in an outage usually fails again: the slow call runs
 twice and the 503 comes about twice as late. With the switch on, the public route writes that 503
-here instead (`writeFeedUnavailable`), counted as request outcome `feed_unavailable`, neither `served`
+here instead, after making that second call itself (the retry, below) (`writeFeedUnavailable`), counted as request outcome `feed_unavailable`, neither `served`
 nor a fallback.
 
 - **Which failures.** A failed call (a transport error, the 5 s `FEED_PRIMARY_TIMEOUT_MS`, a body that
@@ -2446,9 +2446,29 @@ nor a fallback.
   The bytes are derived from the app's code and its own superjson and devalue, not captured from a
   running server; `internal/trpc/apperror_test.go` and `internal/server/feed_unavailable_test.go`
   pin them as literals.
-- **Shadow and Go-first probe.** Unchanged: they write to no client, and count the fallback
-  (`unsupported` with its reason) as before.
-- **Rollback.** Switch off: every such request is the fallback again.
+- **The retry.** Node's `serveFromFeed` makes one feed call and has no retry of its own (`fetchFeedAnswer`:
+  one `fetch`, `AbortSignal.timeout(FEED_PRIMARY_TIMEOUT_MS)`, no second attempt; `answerWithoutFeed`
+  then throws the 503). But a request this service hands back makes the app call the feed itself, so at
+  the request level a failed call has always had a second one: this service's, then the app's (the same
+  query, at once, with its own whole 5 s). Answering the 503 here removes that second call, so with the
+  switch on the route makes it here instead (`feed.WithFeedRetry`, set only by `ServeInfiniteHTTP` when
+  the switch is on; `fetchInfiniteFeed`): once, at once (no delay), the same GET query, and only when
+  the first call failed as the app's 503 (`UnavailableError`: a failed call or a 5xx, on a page no
+  last-good copy can answer). A page, a 4xx, an unmarked anonymous first page's failure and the
+  request's own context ending are never retried. The second call gets a whole call's time, as the
+  app's does: if the request budget (`FEED_GO_REQUEST_BUDGET_MS`, 6 s) leaves less than the feed
+  client's per-call timeout (`feedsvc.Client.AttemptTimeout`, 5 s), there is no second call here and
+  the failure is handed back unmarked, the app's call being the retry. So a 503 is answered here only
+  after two whole calls failed, as the app answers it after a hand-back. With the switch off there is
+  no retry here: the hand-back already gives the second call, and a retry would make a third.
+  Outcomes on `feed_go_feed_retry_total{feed_endpoint, outcome}` (seeded on `infinite`): `recovered`
+  (the second call answered 200: the page is served), `failed` (it failed as the 503 again: the 503),
+  `other` (any other answer, or the request ending: handled as that answer always is), `handed_back`
+  (too little budget for a whole call). A `failed` retry is also on `feed_go_feed_unavailable_total`,
+  with the second call's cause.
+- **Shadow and Go-first probe.** Unchanged: they write to no client, count the fallback
+  (`unsupported` with its reason) as before, and never retry (Node's shadow call is one call too).
+- **Rollback.** Switch off: every such request is the fallback again, with no retry here.
 
 ## 15. `model.getAll` (tRPC, shadow; served only behind `FEED_GO_SERVE_MODEL_GETALL`, default off)
 
