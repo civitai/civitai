@@ -1,3 +1,4 @@
+import { serverCopyTablesSql } from '@civitai/db-queries/test/image-uses';
 import { PGlite } from '@electric-sql/pglite';
 import { readFileSync } from 'fs';
 import path from 'path';
@@ -115,6 +116,7 @@ beforeAll(async () => {
       "publishedAt" timestamp, "hiddenAt" timestamp
     );
     CREATE TABLE "ServiceDealReviewImage" ("reviewId" int NOT NULL, "imageId" int NOT NULL UNIQUE, "sourceFileId" int);
+    ${serverCopyTablesSql};
     CREATE TABLE "Report" (id serial PRIMARY KEY, status text NOT NULL DEFAULT 'Pending');
   `);
   await db.exec(childSafetyCaseTablesSql);
@@ -374,6 +376,52 @@ describe('by-id readers without the opt-in', () => {
     expect(await getImageIdsVisibleToViewer({ ids: [UNRELATED], userId: BUYER })).toEqual(
       new Set([UNRELATED])
     );
+  });
+});
+
+// A deal file's own copy is the seller's postless image, yet no one but a moderator opens it.
+describe("a deal file's own copy", () => {
+  const POINTED = 990000020;
+  const KEYED = 990000021;
+  const PLAIN = 990000022;
+  beforeEach(() =>
+    db.exec(`
+      INSERT INTO "Image" (id, "userId", url) VALUES
+        (${POINTED}, ${SELLER}, 'pointed-key'), (${KEYED}, ${SELLER}, 'keyed-key'),
+        (${PLAIN}, ${SELLER}, 'plain-key');
+      INSERT INTO "ServiceDealFile" ("imageId") VALUES (${POINTED});
+      INSERT INTO "ServiceDealFileEntry" ("scanKey") VALUES ('keyed-key');
+    `)
+  );
+
+  it.each([
+    ['pointed at by its file', POINTED],
+    ['named only by its key', KEYED],
+  ])('opens to no one but moderators, its seller included (%s)', async (_, id) => {
+    for (const levels of [undefined, allBrowsingLevelsFlag]) {
+      expect(await opens({ userId: SELLER }, levels, id)).toBe(false);
+      expect(await opens(STRANGER, levels, id)).toBe(false);
+      expect(await opens(MOD, levels, id)).toBe(true);
+    }
+  });
+
+  it("leaves the seller's own plain postless image open to them (control)", async () => {
+    expect(await opens({ userId: SELLER }, undefined, PLAIN)).toBe(true);
+    expect(await opens({ userId: SELLER }, allBrowsingLevelsFlag, PLAIN)).toBe(true);
+  });
+
+  it('is never served as a collection cover, even from an item its seller added', async () => {
+    const { servableCollectionCoverSql, itemUploadSql } = await import(
+      '~/server/services/collection-cover-visibility'
+    );
+    const cover = (id: number) =>
+      pgliteRaw(db).queryRaw`SELECT i.id FROM "Image" i LEFT JOIN "Post" p ON p.id = i."postId"
+        WHERE i.id = ${id} AND ${servableCollectionCoverSql({
+        postlessAllowed: itemUploadSql(Prisma.sql`${SELLER}`),
+      })}`;
+    expect(await cover(PLAIN)).toHaveLength(1);
+    expect(await cover(POINTED)).toHaveLength(0);
+    expect(await cover(KEYED)).toHaveLength(0);
   });
 });
 

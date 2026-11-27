@@ -13,7 +13,7 @@ import {
 import { heldGalleryImageSql } from '~/server/utils/held-gallery-level.sql';
 import { isRatingWithinCap } from '~/shared/utils/rating-cap';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
-import { notReviewImageSql } from '~/server/services/creator-service-review-image-sql';
+import { notServerCopySql } from '~/server/services/creator-service-review-image-sql';
 
 /**
  * Scanned, rated, not awaiting review, not removed or a ToS violation, allowed by its base model:
@@ -93,7 +93,7 @@ export function servableCollectionCoverSql({
         AND ${notOnTakenDownModelSql}
         AND ${withinHeldGallerySql(heldExempt)}
       )
-      OR (i."postId" IS NULL AND ${postlessAllowed} AND ${notReviewImageSql})
+      OR (i."postId" IS NULL AND ${postlessAllowed} AND ${notServerCopySql})
     )
   )`;
 }
