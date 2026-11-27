@@ -1,4 +1,6 @@
 import { PGlite } from '@electric-sql/pglite';
+import { readFileSync } from 'fs';
+import path from 'path';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Prisma } from '@prisma/client';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
@@ -989,6 +991,99 @@ describe('rescanUnratedImages after a lift kept blocked for a deleted owner', ()
         { id: 1, ingestion: 'Scanned' },
         { id: 2, ingestion: 'Rescan' },
       ]);
+    } finally {
+      if (capture) dbWrite.$queryRaw.mockImplementation(capture);
+      await pg.close();
+    }
+  });
+});
+
+describe('handleUnblockImages and the feed sort', () => {
+  const TRIGGERS = path.resolve(
+    __dirname,
+    '../../../../packages/civitai-db-schema/prisma/programmability/image_post_triggers.sql'
+  );
+  const pause = () => new Promise((r) => setTimeout(r, 20));
+
+  it('moves an image first shown by the release, and no other', async () => {
+    const pg = new PGlite();
+    await pg.exec(`CREATE TYPE "ImageIngestionStatus" AS ENUM
+        ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
+      CREATE TABLE "User" (id int PRIMARY KEY, "deletedAt" timestamp, "bannedAt" timestamp);
+      CREATE TABLE "Post" (id int PRIMARY KEY, "publishedAt" timestamp(3));
+      CREATE TABLE "Image" (
+        id serial PRIMARY KEY, "userId" int, "postId" int,
+        "createdAt" timestamp(3) NOT NULL DEFAULT now(), "updatedAt" timestamp(3) NOT NULL DEFAULT now(),
+        "scannedAt" timestamp(3), "sortAt" timestamp(3), "firstVisibleAt" timestamp(3),
+        ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Pending',
+        "needsReview" text, "blockedFor" text, "tosViolation" boolean NOT NULL DEFAULT false,
+        "acceptableMinor" boolean NOT NULL DEFAULT false, minor boolean NOT NULL DEFAULT false,
+        poi boolean NOT NULL DEFAULT false, "modelRestricted" boolean NOT NULL DEFAULT false,
+        "nsfwLevel" int NOT NULL DEFAULT 0, "nsfwLevelLocked" boolean NOT NULL DEFAULT false,
+        metadata jsonb NOT NULL DEFAULT '{}', "scanJobs" jsonb);
+      CREATE TABLE "TagsOnImageDetails" ("imageId" int, disabled boolean);
+      CREATE TABLE "ModActivity" ("userId" int, "entityType" text, "entityId" int, activity text);
+      INSERT INTO "User" VALUES (1, NULL, NULL);
+      INSERT INTO "Post" VALUES (1, now() - interval '2 days');`);
+    await pg.exec(readFileSync(TRIGGERS, 'utf8'));
+    const insert = (id: number, needsReview: string | null) =>
+      pg.query(
+        `INSERT INTO "Image" (id, "userId", "postId", "createdAt", "scannedAt", ingestion, "nsfwLevel", "needsReview", poi)
+         VALUES ($1, 1, 1, now() - interval '2 days', now() - interval '2 days', 'Scanned', 1, $2, $3)`,
+        [id, needsReview, needsReview === 'poi']
+      );
+    // Above image_first_visible_min_id(), which the empty sequence puts at 1.
+    const SERVED = 11; // shown, then held again
+    const NEVER_SHOWN = 12; // held from upload
+    const NEVER_HELD = 13;
+    await insert(SERVED, null);
+    await insert(NEVER_SHOWN, 'poi');
+    await insert(NEVER_HELD, null);
+    await pause();
+    await pg.query(`UPDATE "Image" SET "needsReview" = 'poi', poi = true WHERE id = $1`, [SERVED]);
+    const sortAt = async () =>
+      new Map(
+        (await pg.query<{ id: number; sortAt: Date }>(`SELECT id, "sortAt" FROM "Image"`)).rows.map(
+          (row) => [row.id, row.sortAt.getTime()]
+        )
+      );
+    const before = await sortAt();
+    const { rows: shown } = await pg.query<{ id: number }>(
+      `SELECT id FROM "Image" WHERE "firstVisibleAt" IS NOT NULL ORDER BY id`
+    );
+    expect(shown.map((row) => row.id)).toEqual([SERVED, NEVER_HELD]);
+    await pause();
+
+    const raw = pgliteRaw(pg);
+    const capture = dbWrite.$queryRaw.getMockImplementation();
+    dbWrite.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) =>
+      strings.join('').includes('UPDATE "Image"')
+        ? raw.queryRaw(strings, ...values)
+        : Promise.resolve([])) as never);
+    mockFindMany.mockResolvedValue(
+      [SERVED, NEVER_SHOWN].map((id) => ({
+        id,
+        userId: 1,
+        pHash: null,
+        postId: 1,
+        nsfwLevel: 1,
+        blockedFor: null,
+        needsReview: 'poi',
+      })) as never
+    );
+
+    try {
+      const releasedAt = Date.now();
+      await handleUnblockImages({ ids: [SERVED, NEVER_SHOWN], moderatorId: undefined } as any);
+      const after = await sortAt();
+      const { rows } = await pg.query<{ needsReview: string | null }>(
+        `SELECT "needsReview" FROM "Image" ORDER BY id`
+      );
+      expect(rows.map((row) => row.needsReview)).toEqual([null, null, null]);
+      expect(after.get(SERVED)).toBe(before.get(SERVED));
+      expect(after.get(NEVER_HELD)).toBe(before.get(NEVER_HELD));
+      // Its first showing, within a week of publish: the feed lists it from the release.
+      expect(after.get(NEVER_SHOWN)).toBeGreaterThanOrEqual(releasedAt - 1000);
     } finally {
       if (capture) dbWrite.$queryRaw.mockImplementation(capture);
       await pg.close();

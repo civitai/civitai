@@ -22,7 +22,6 @@ const SYS_KEY_LEDGER = [
   'collection:random-seed',
   'counters:chat-messages',
   'counters:email-verifications',
-  'counters:history-downloads',
   'creator-program:bankable-snapshot',
   'creator-program:bankable-spent',
   'creator-program:counterparty-review-indirect',
@@ -77,7 +76,6 @@ const SYS_KEY_LEDGER = [
   'job',
   'limits:chat-messages',
   'limits:email-verifications',
-  'limits:history-downloads',
   'linked-account-review:config',
   'linked-account-review:filed',
   'message-as-civitai:idempotency',
@@ -250,7 +248,7 @@ describe('REDIS_SYS_KEYS ledger', () => {
   });
 
   // The ledger's size, written out: a change to it is a change to this number too.
-  it('holds 194 keys', () => {
-    expect(SYS_KEY_LEDGER.length).toBe(194);
+  it('holds 192 keys', () => {
+    expect(SYS_KEY_LEDGER.length).toBe(192);
   });
 });

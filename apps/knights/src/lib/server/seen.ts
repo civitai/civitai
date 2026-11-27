@@ -1,5 +1,6 @@
 import { rankIndex } from './ranks';
 import { REDIS_TIMEOUT_MS, within } from './redis-timeout';
+import { LATEST_UPDATE_ID } from './whats-new/entries';
 
 /**
  * What the player has been shown: the rank and level they were last told about, whether they dismissed the rating guide and the
@@ -11,6 +12,11 @@ export type Seen = {
   guide: boolean;
   whatsNew: boolean;
   consent: boolean;
+  /**
+   * The newest "What's new" entry the player has seen (`whats-new/entries.ts`). Null: none, as on a record from before entries
+   * existed, whose player saw the launch and so is shown every entry.
+   */
+  updatesSeen?: string | null;
 };
 export type Standing = { rank: string; level: number };
 
@@ -35,6 +41,16 @@ type RedisClient = {
 
 const keyOf = (userId: number) => `knights:seen:${userId}`;
 
+/** A player's first record: nothing dismissed, and every "What's new" entry so far counted as seen. */
+const freshSeen = (now: Standing): Seen => ({
+  rank: now.rank,
+  level: now.level,
+  guide: false,
+  whatsNew: false,
+  consent: false,
+  updatesSeen: LATEST_UPDATE_ID,
+});
+
 function parse(raw: string | null): Seen | null {
   if (!raw) return null;
   try {
@@ -51,6 +67,7 @@ function parse(raw: string | null): Seen | null {
         guide: value.guide,
         whatsNew: value.whatsNew === true,
         consent: value.consent === true,
+        updatesSeen: typeof value.updatesSeen === 'string' ? value.updatesSeen : null,
       };
     }
   } catch {
@@ -66,8 +83,11 @@ export function redisSeenStore(client: () => RedisClient): SeenStore {
       return parse(await client().get(keyOf(userId)));
     },
     async set(userId, seen) {
-      const { rank, level, guide, whatsNew, consent } = seen;
-      await client().set(keyOf(userId), JSON.stringify({ rank, level, guide, whatsNew, consent }));
+      const { rank, level, guide, whatsNew, consent, updatesSeen = null } = seen;
+      await client().set(
+        keyOf(userId),
+        JSON.stringify({ rank, level, guide, whatsNew, consent, updatesSeen })
+      );
     },
   };
 }
@@ -103,10 +123,7 @@ export async function readNotices(
   try {
     const seen = await within(store.get(userId), timeoutMs);
     if (!seen) {
-      await within(
-        store.set(userId, { ...now, guide: false, whatsNew: false, consent: false }),
-        timeoutMs
-      );
+      await within(store.set(userId, freshSeen(now)), timeoutMs);
       return { whatsNew: true, guide: false, progress: null };
     }
     if (!ahead(now, seen)) {
@@ -135,12 +152,13 @@ export async function readNotices(
 async function update(
   store: SeenStore,
   userId: number,
-  change: (seen: Seen | null) => Seen,
+  /** Null writes nothing. */
+  change: (seen: Seen | null) => Seen | null,
   timeoutMs: number
 ): Promise<boolean> {
   try {
-    const seen = await within(store.get(userId), timeoutMs);
-    await within(store.set(userId, change(seen)), timeoutMs);
+    const next = change(await within(store.get(userId), timeoutMs));
+    if (next) await within(store.set(userId, next), timeoutMs);
     return true;
   } catch (error) {
     console.error('knights: could not store what the player has seen', { userId, error });
@@ -154,13 +172,7 @@ export const dismissGuide = (
   userId: number,
   now: Standing,
   timeoutMs = REDIS_TIMEOUT_MS
-) =>
-  update(
-    store,
-    userId,
-    (seen) => ({ ...(seen ?? { ...now, whatsNew: false, consent: false }), guide: true }),
-    timeoutMs
-  );
+) => update(store, userId, (seen) => ({ ...(seen ?? freshSeen(now)), guide: true }), timeoutMs);
 
 /** False when it could not be stored. */
 export const dismissWhatsNew = (
@@ -172,7 +184,8 @@ export const dismissWhatsNew = (
   update(
     store,
     userId,
-    (seen) => ({ ...(seen ?? { ...now, guide: false, consent: false }), whatsNew: true }),
+    // Closing the launch dialog covers every entry written so far.
+    (seen) => ({ ...(seen ?? freshSeen(now)), whatsNew: true, updatesSeen: LATEST_UPDATE_ID }),
     timeoutMs
   );
 
@@ -186,12 +199,7 @@ export const dismissProgress = (
   update(
     store,
     userId,
-    (seen) => ({
-      ...now,
-      guide: seen?.guide ?? false,
-      whatsNew: seen?.whatsNew ?? false,
-      consent: seen?.consent ?? false,
-    }),
+    (seen) => ({ ...(seen ?? freshSeen(now)), rank: now.rank, level: now.level }),
     timeoutMs
   );
 
@@ -218,10 +226,27 @@ export const recordConsent = (
   userId: number,
   now: Standing,
   timeoutMs = REDIS_TIMEOUT_MS
-) =>
-  update(
-    store,
-    userId,
-    (seen) => ({ ...(seen ?? { ...now, guide: false, whatsNew: false }), consent: true }),
-    timeoutMs
-  );
+) => update(store, userId, (seen) => ({ ...(seen ?? freshSeen(now)), consent: true }), timeoutMs);
+
+/**
+ * What the header's "What's new" needs: whether the launch dialog was closed (until then it shows instead), and the newest
+ * entry seen. Null with no record yet (the first look on /home or /play makes one, up to date) or when the store cannot be
+ * read, which only costs the dot.
+ */
+export async function readUpdatesSeen(
+  store: SeenStore,
+  userId: number,
+  timeoutMs = REDIS_TIMEOUT_MS
+): Promise<{ launchSeen: boolean; updatesSeen: string | null } | null> {
+  try {
+    const seen = await within(store.get(userId), timeoutMs);
+    return seen ? { launchSeen: seen.whatsNew, updatesSeen: seen.updatesSeen ?? null } : null;
+  } catch (error) {
+    console.error('knights: could not read the seen updates', { userId, error });
+    return null;
+  }
+}
+
+/** Records every entry so far as seen. A player with no record has nothing to record. False when it could not be stored. */
+export const dismissUpdates = (store: SeenStore, userId: number, timeoutMs = REDIS_TIMEOUT_MS) =>
+  update(store, userId, (seen) => seen && { ...seen, updatesSeen: LATEST_UPDATE_ID }, timeoutMs);

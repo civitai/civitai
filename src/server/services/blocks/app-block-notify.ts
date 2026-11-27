@@ -2,6 +2,7 @@ import type { AppBlockModerationNotificationDetails } from '~/server/notificatio
 import {
   appReviewAttributionDetails,
   type AppReviewAttribution,
+  withoutAttributionFields,
 } from '~/server/notifications/app-review-attribution';
 
 /**
@@ -50,7 +51,7 @@ export async function notifyAppBlockSubmitter(
     import('~/server/common/enums'),
   ]);
   const attributed: AppBlockModerationNotificationDetails = {
-    ...opts.details,
+    ...withoutAttributionFields(opts.details),
     ...appReviewAttributionDetails(opts.attribution),
   };
   const details: AppBlockModerationNotificationDetails =

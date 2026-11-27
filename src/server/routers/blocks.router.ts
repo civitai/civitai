@@ -163,7 +163,6 @@ import {
   placePublishRequestHoldSchema,
   backfillPublishRequestSchema,
   getMyPendingForSlugSchema,
-  agentReviewChatSchema,
   agentReviewRequestSchema,
   getAgentReviewSchema,
   getPublishRequestDiffSchema,
@@ -302,6 +301,10 @@ import {
   pendingOutputMessage,
   restrictedOutputMessage,
 } from '~/server/services/blocks/block-output-restriction';
+import {
+  blockViewerImageUserSelect,
+  projectBlockViewerImage,
+} from '~/server/services/blocks/block-viewer-image';
 import {
   resolveBlockOutputRules,
   resolveBlockOutputView,
@@ -3362,8 +3365,10 @@ export const blocksRouter = router({
    * isAppBlocksAgenticReviewEnabled fail-closes to false and this rejects.
    *
    * CONNECT LANE: an `alpr_` id is an OAuth-connect listing request, gated instead on its own
-   * `app-listings-agentic-review` flag (`isAgentReviewLaneEnabled`), here and on the read and
-   * chat procedures below. Advisory only: no agent-review procedure approves or rejects.
+   * `app-listings-agentic-review` flag (`isAgentReviewLaneEnabled`), here and on the read
+   * procedures below and the review agent chat endpoint
+   * (`/api/mod/apps/review-agent/v1/chat/completions`). Advisory only: none of them approves or
+   * rejects.
    */
   startAgentReview: moderatorProcedure
     .use(enforceAppBlocksFlag)
@@ -3476,52 +3481,6 @@ export const blocksRouter = router({
           error: safeError(err),
         });
         return { available: false, models: [] };
-      }
-    }),
-
-  /**
-   * AGENTIC MOD CODE-REVIEW (App Blocks P3) — in-modal CHAT. A moderator viewing a
-   * report can ask follow-up questions ("why did you flag scope X", "show the call
-   * site"). Non-streaming request/response (v1); streaming SSE is a follow-up.
-   *
-   * Gated IDENTICALLY to startAgentReview / getAgentReview (moderatorProcedure +
-   * the isModerator belt + enforceAppBlocksFlag + the dedicated mod-only
-   * `app-blocks-agentic-review` flag) so it ships DARK — the flag does not exist
-   * in Flipt yet, so isAppBlocksAgenticReviewEnabled fail-closes to false and this
-   * rejects. The service loads the PERSISTED report and answers as a STATELESS
-   * civitai→LLM completion grounded on that report (no live agent — a `failed`
-   * report is still chattable; only a missing/torn-down review → PRECONDITION_FAILED),
-   * returning `{ reply }`.
-   */
-  agentReviewChat: moderatorProcedure
-    .use(enforceAppBlocksFlag)
-    .input(agentReviewChatSchema)
-    .mutation(async ({ ctx, input }) => {
-      // Moderator, then the request's lane flag (on-site or connect): one gate for every
-      // agent-review procedure.
-      const { assertAgentReviewAccess } = await import(
-        '~/server/services/blocks/agent-review-lane'
-      );
-      await assertAgentReviewAccess(ctx.user, input.publishRequestId);
-      const { agentReviewChat } = await import('~/server/services/blocks/agent-review.service');
-      try {
-        return await agentReviewChat({
-          publishRequestId: input.publishRequestId,
-          messages: input.messages,
-          // The run on screen (report picker). Looked up within this request in the service.
-          reportId: input.reportId,
-        });
-      } catch (err) {
-        // Preserve the service's typed codes (PRECONDITION_FAILED = pod not up;
-        // BAD_GATEWAY = agent unreachable/timeout/non-200) so the client can
-        // render the right inline message; only opaque errors collapse to
-        // BAD_REQUEST. NEVER a 500 leak.
-        if (err instanceof TRPCError) throw err;
-        throw new TRPCError({
-          code: 'BAD_REQUEST',
-          message: (err as Error).message,
-          cause: err,
-        });
       }
     }),
 
@@ -5897,6 +5856,8 @@ export const blocksRouter = router({
             status: 'processing' as const,
             // Not an observation: a block keeps its previous snapshot's values.
             throttled: true as const,
+            // The meta a thrown refusal by this limit would carry, so the block can wait it out.
+            rateLimit: appRateLimitMeta('apps.poll', pollRate.retryAfterSeconds),
           },
         };
       }
@@ -6233,6 +6194,8 @@ export const blocksRouter = router({
             status: 'processing' as const,
             // Not an observation: a block keeps its previous snapshot's values.
             throttled: true as const,
+            // The meta a thrown refusal by this limit would carry, so the block can wait it out.
+            rateLimit: appRateLimitMeta('apps.catalog', rate.retryAfterSeconds),
           },
         };
       }
@@ -9707,7 +9670,14 @@ export const blocksRouter = router({
       // viewer surface to the block as active.
       const user = await dbWrite.user.findUnique({
         where: { id: userId },
-        select: { id: true, username: true, bannedAt: true, muted: true, deletedAt: true },
+        select: {
+          id: true,
+          username: true,
+          bannedAt: true,
+          muted: true,
+          deletedAt: true,
+          ...blockViewerImageUserSelect,
+        },
       });
       if (!user || user.deletedAt) {
         throw new TRPCError({ code: 'NOT_FOUND', message: 'User not found' });
@@ -9721,6 +9691,8 @@ export const blocksRouter = router({
         username: user.username,
         // Muted viewers pass through so the block can suppress write UI.
         status: (user.muted ? 'muted' : 'active') as 'active' | 'muted',
+        // The viewer's avatar against this token's output ceiling (mirrors /blocks/me).
+        image: projectBlockViewerImage(user, blockOutputCeilingFromClaims(claims)),
         // Per-call spend cap the block was issued with — surfaced so the block
         // can clamp UI without a second call (mirrors /blocks/me).
         buzzBudget: claims.buzzBudget ?? null,
@@ -10637,7 +10609,7 @@ export const blocksRouter = router({
       const { recordPendingFromPush } = await import(
         '~/server/services/blocks/publish-request.service'
       );
-      const { publishRequestId } = await recordPendingFromPush({
+      const { publishRequestId, advisories } = await recordPendingFromPush({
         slug,
         sha,
         appBlockId: block.id,
@@ -10651,6 +10623,8 @@ export const blocksRouter = router({
         version: newVersion,
         sha,
         status: 'pending' as const,
+        // Never refuses: e.g. the commit lacks a staff platform update (recorded for the moderator).
+        advisories: advisories ?? [],
       };
     }),
 

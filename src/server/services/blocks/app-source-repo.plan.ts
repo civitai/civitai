@@ -45,8 +45,22 @@ export const SOURCE_SLUG_RE = /^[a-z][a-z0-9-]{1,38}[a-z0-9]$/;
 /** A lowercase SHA-1 or SHA-256 commit id. */
 const COMMIT_SHA_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 
+export function isCommitSha(value: string): boolean {
+  return COMMIT_SHA_RE.test(value);
+}
+
 /** The most bytes one source commit may carry (the fork seed's uncompressed cap). */
 export const SOURCE_MAX_TOTAL_BYTES = 100 * 1024 * 1024;
+
+/**
+ * Whether `path` is a file a source repo never holds: what the CLI's package leaves out
+ * (`cliLeavesOut`) or a fork's seed leaves out (`forkSeedExclusionReason`). Matched as those two
+ * lists match (mostly case-sensitive); {@link platformUpdatePathRefusal} also checks the
+ * lowercased path.
+ */
+export function sourceRepoNeverHolds(path: string): boolean {
+  return cliLeavesOut(path) || !!forkSeedExclusionReason(path);
+}
 
 /** git's blob id of `content`: sha1("blob <len>\0" + bytes). */
 export function gitBlobSha(content: Buffer): string {
@@ -92,7 +106,7 @@ export function sourceFilesFromExport(
   for (const entry of entries) {
     if (!entry.path.startsWith(prefix) || entry.path.endsWith('/')) continue;
     const rel = entry.path.slice(prefix.length).replace(/^\/+/, '');
-    if (!rel || cliLeavesOut(rel) || forkSeedExclusionReason(rel)) continue;
+    if (!rel || sourceRepoNeverHolds(rel)) continue;
     // A path git would refuse, or one that escapes the tree.
     if (rel.split('/').some((s) => s === '' || s === '.' || s === '..')) continue;
     total += entry.content.byteLength;
@@ -247,6 +261,176 @@ export function approvedSeedCommitMessage(args: {
     ['Approved-Commit', sha],
     ['Forked-From-App', parentSlug],
     ['Forked-From-Commit', parentSha],
+  ])}`;
+}
+
+/** Every platform update is committed to its own branch, named for the update's id. */
+export const PLATFORM_UPDATE_BRANCH_PREFIX = 'platform-update/';
+
+export function platformUpdateBranch(updateId: string): string {
+  return `${PLATFORM_UPDATE_BRANCH_PREFIX}${updateId.toLowerCase()}`;
+}
+
+/** One change a moderator asks for: write `content` at `path`, or delete `path`. */
+export type PlatformUpdateChange =
+  | { operation: 'put'; path: string; content: Buffer }
+  | { operation: 'delete'; path: string };
+
+/**
+ * Why `path` may not be written by a platform update, or `null` when it may: a path git would
+ * refuse or that escapes the tree, and anything a source repo never holds
+ * ({@link sourceRepoNeverHolds}: env files, keys, credentials, dependencies, build output),
+ * in ANY letter case (`.ENV`, `.Env.local`, `Node_Modules/…`): a checkout on a case-insensitive
+ * file system reads those as the lowercase name. Also anything under a folder the CLI's package
+ * drops at every depth ({@link CLI_PACKAGE_DROPPED_DIRS}: `src/build/…`, `packages/x/coverage/…`).
+ * The shared lists themselves (fork seed, App Assistant export) are unchanged.
+ */
+/**
+ * Directory names the CLI's packager (`civitai/cli` `internal/pkgzip`, `excludedDirs`) drops at
+ * EVERY depth: VCS metadata, dependency installs, build output and tooling caches. A platform
+ * update under one of them could never reach a submitted bundle, so the submit check would refuse
+ * every bundle of the app until staff withdrew it. Platform updates only: the shared source-repo
+ * lists ({@link sourceRepoNeverHolds}) match build output at the top level alone.
+ */
+const CLI_PACKAGE_DROPPED_DIRS = new Set([
+  '.git',
+  '.hg',
+  '.svn',
+  'node_modules',
+  '.venv',
+  'venv',
+  '.pnpm-store',
+  'dist',
+  'build',
+  'out',
+  '.next',
+  '.vite',
+  '.cache',
+  'coverage',
+  '.pytest_cache',
+  '.mypy_cache',
+  '.ruff_cache',
+  '.turbo',
+]);
+
+export function platformUpdatePathRefusal(path: string): string | null {
+  if (!path || path.length > 400) return 'is empty or too long';
+  // eslint-disable-next-line no-control-regex
+  if (path.startsWith('/') || path.includes('\\') || /[\x00-\x1f\x7f]/.test(path))
+    return 'is not a relative repo path';
+  if (path.split('/').some((s) => s === '' || s === '.' || s === '..'))
+    return 'is not a relative repo path';
+  if (sourceRepoNeverHolds(path) || sourceRepoNeverHolds(path.toLowerCase()))
+    return 'is a file a source repo never holds';
+  // Every directory on the path (not the file's own name), in any letter case.
+  if (
+    path
+      .split('/')
+      .slice(0, -1)
+      .some((dir) => CLI_PACKAGE_DROPPED_DIRS.has(dir.toLowerCase()))
+  )
+    return "is in a folder the app's package always leaves out";
+  return null;
+}
+
+export class PlatformUpdatePlanError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PlatformUpdatePlanError';
+  }
+}
+
+/**
+ * The commit that applies `changes` on top of a branch whose tree is `current`. Each operation
+ * names the blob `current` holds, so a branch that moved after it was read refuses the commit.
+ *
+ * A `put` of the bytes already there is left out; a `delete` of a path `current` does not hold is
+ * refused ({@link PlatformUpdatePlanError}), as is a path named twice or a refused path. Empty
+ * `operations` means the update changes nothing.
+ */
+export function planPlatformUpdateCommit(
+  current: BlobTree,
+  changes: readonly PlatformUpdateChange[]
+): CommitPlan {
+  const plan: CommitPlan = { operations: [], added: [], updated: [], deleted: [] };
+  const seen = new Set<string>();
+  for (const change of changes) {
+    const refusal = platformUpdatePathRefusal(change.path);
+    if (refusal) throw new PlatformUpdatePlanError(`${change.path} ${refusal}`);
+    if (seen.has(change.path))
+      throw new PlatformUpdatePlanError(`${change.path} is named more than once`);
+    seen.add(change.path);
+    const before = current[change.path];
+    if (change.operation === 'delete') {
+      if (before === undefined)
+        throw new PlatformUpdatePlanError(`${change.path} does not exist on ${SOURCE_MAIN_BRANCH}`);
+      plan.operations.push({ operation: 'delete', path: change.path, sha: before });
+      plan.deleted.push(change.path);
+      continue;
+    }
+    if (before === gitBlobSha(change.content)) continue;
+    if (before === undefined) {
+      plan.operations.push({ operation: 'create', path: change.path, content: change.content });
+      plan.added.push(change.path);
+    } else {
+      plan.operations.push({
+        operation: 'update',
+        path: change.path,
+        content: change.content,
+        sha: before,
+      });
+      plan.updated.push(change.path);
+    }
+  }
+  return plan;
+}
+
+/** The longest reason the platform stores (the table's CHECK). */
+export const PLATFORM_UPDATE_REASON_MAX = 2000;
+
+/** A reason as stored: control characters other than newline and tab removed, trimmed. */
+export function normalisePlatformUpdateReason(reason: string): string {
+  // eslint-disable-next-line no-control-regex
+  return reason
+    .replace(/\r\n?/g, '\n')
+    .replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '')
+    .trim();
+}
+
+/** The reason as one trailer line: whitespace collapsed, at most 200 characters. */
+function reasonTrailer(reason: string): string {
+  const line = reason.replace(/\s+/g, ' ').trim();
+  return line.length > 200 ? `${line.slice(0, 197)}...` : line;
+}
+
+/**
+ * A platform update's commit message: a summary derived from the change, the moderator's reason
+ * as the body, and the `Platform-Update*` trailers.
+ *
+ * 🔴 The trailers are for humans reading `git log`. They prove nothing — anyone with push access
+ * can write the same lines — so no reader may treat them as proof the commit came from staff;
+ * that answer comes only from the update's server record (`app_platform_updates`).
+ */
+export function platformUpdateCommitMessage(args: {
+  plan: CommitPlan;
+  updateId: string;
+  byUsername: string | null;
+  reason: string;
+}): string {
+  const parts = [
+    listed(args.plan.added, 'add'),
+    listed(args.plan.updated, 'update'),
+    listed(args.plan.deleted, 'delete'),
+  ].filter((p): p is string => !!p);
+  const subject = `Platform update: ${parts.length ? parts.join(', ') : 'no changes'}`.slice(
+    0,
+    100
+  );
+  const body = normalisePlatformUpdateReason(args.reason);
+  return `${subject}${body ? `\n\n${body}` : ''}${trailerBlock([
+    ['Platform-Update', args.updateId],
+    ['Platform-Update-By', args.byUsername],
+    ['Reason', reasonTrailer(body)],
   ])}`;
 }
 

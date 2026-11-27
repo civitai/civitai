@@ -40,19 +40,20 @@ describe('submitVersionSchema — sdkFloorOverride', () => {
     }
   });
 
-  it('a malformed override REJECTS, naming the field (not the bundle)', () => {
-    const parsed = parse({ sdkFloorOverride: [{ package: '@civitai/sdk', installed: 31 }] });
-    expect(parsed.success).toBe(false);
-    if (parsed.success) return;
-    expect(submitVersionParseErrorMessage(parsed.error)).toBe(
+  it('a malformed override REJECTS naming the field; a bundle problem beside it still reads as the bundle', () => {
+    const reject = (body: Record<string, unknown>) => {
+      const parsed = submitVersionSchema.safeParse(body);
+      expect(parsed.success).toBe(false);
+      return parsed.success ? null : submitVersionParseErrorMessage(parsed.error);
+    };
+    expect(
+      reject({
+        bundleBase64: BUNDLE,
+        sdkFloorOverride: [{ package: '@civitai/sdk', installed: 31 }],
+      })
+    ).toBe(
       'Invalid submit payload: sdkFloorOverride must be a list of at most 8 { package, installed, minimum } strings'
     );
-  });
-
-  it('a bundle problem beside it still reads as the bundle message', () => {
-    const parsed = submitVersionSchema.safeParse({ bundleBase64: '', sdkFloorOverride: 'x' });
-    expect(parsed.success).toBe(false);
-    if (parsed.success) return;
-    expect(submitVersionParseErrorMessage(parsed.error)).toBe(INVALID_BUNDLE_MESSAGE);
+    expect(reject({ bundleBase64: '', sdkFloorOverride: 'x' })).toBe(INVALID_BUNDLE_MESSAGE);
   });
 });

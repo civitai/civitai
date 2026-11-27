@@ -41,6 +41,7 @@ import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-setti
 import {
   type SearchRefusalMark,
   type SearchRefusedBy,
+  WORD_CHECK_LABEL,
 } from '~/shared/constants/search-refusal.constants';
 import { Flags } from '~/shared/utils/flags';
 import type { SessionUser } from '~/types/session';
@@ -181,11 +182,11 @@ export function refusedByWord(refusal: QueryRefusal): SearchRefusedBy | undefine
     case 'minor':
     case 'minor-safe':
     case 'poi-minor':
-      return 'minor';
+      return WORD_CHECK_LABEL.minor;
     case 'poi':
-      return 'real people';
+      return WORD_CHECK_LABEL.poi;
     case 'blocked':
-      return 'blocked words';
+      return WORD_CHECK_LABEL.blocked;
     default:
       // 'error', and any verdict added later: the check could not complete.
       return 'error';
@@ -298,9 +299,9 @@ export function makeRefusalOf({
 
 /**
  * What a semantic search settles before it searches: the viewer's level (clamped, then capped by
- * the site), their hidden users, and the query audit. `{ refusedBy }` when the query is refused. The returned
- * `browsingLevel` is the level the feed filters on, and `refusalOf` audits at it, so a correction is
- * judged at the level the query was narrowed to.
+ * the site), their hidden users, and the query audit. Returns `{ refusedBy }` when the query is
+ * refused. The returned `browsingLevel` is the level the feed filters on, and `refusalOf` audits at
+ * it, so a correction is judged at the level the query was narrowed to.
  */
 export async function semanticSearchPrelude({
   index,
@@ -419,10 +420,7 @@ export function beginSemanticAudit({
             searchPath ?? (wordVerdict ? 'narrowed' : 'served')
           )
         );
-      // A refused_ path (own images narrowed, a refused query by image) names its word verdict,
-      // except refused_upload_level (an upload above the viewer's level), which is not marked
-      // refused; a served page is refused only when it is empty and the search service refused its
-      // text.
+      // refused_upload_level (an upload above the viewer's level) is deliberately not marked refused.
       const path = searchPath ?? 'served';
       const by =
         path === 'refused_upload_level'

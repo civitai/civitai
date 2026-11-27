@@ -985,6 +985,10 @@ const featureFlags = createFeatureFlags({
   // OAuth-connect listing request. `[]` for the `appBlocksAgenticReview` reason; the server half
   // is `isAppListingsAgenticReviewEnabled`, on the same key.
   appListingsAgenticReview: { availability: [], fliptKey: APP_LISTINGS_AGENTIC_REVIEW_FLAG },
+  // The reply thread on an app review decision (`app_review_messages`, applied by hand). `[]`:
+  // dark for everyone, mods included, until the Flipt flag turns it on, so nothing reads or writes
+  // the table before it exists. Gates the thread procs server-side and every thread UI.
+  appReviewReplies: { availability: [], fliptKey: 'app-review-replies' },
   appDeveloperRateCard: { availability: [], fliptKey: 'app-developer-rate-card' },
   // App Assistant (on `/apps/build`); read only through `canAccessAppAssistant`. `[]` rather than
   // `['mod']` for the `appBlocksAgenticReview` reason: client and server agree while the flag is absent.

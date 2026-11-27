@@ -1,6 +1,7 @@
-import { CSAM_REPORT_LISTED_IMAGE_IDS_SQL, heldItemImageSql } from '@civitai/shared/held-media';
+import { CSAM_REPORT_LISTED_IMAGE_IDS_SQL } from '@civitai/shared/held-media';
 import { childSafetyImageCase } from '@civitai/db-queries/child-safety-case';
 import { toPrismaSql } from '~/server/db/prisma-sql-kysely';
+import { finalCsamHeldSql } from '~/server/services/creator-service-deal-file-held-sql';
 import { constants } from '~/server/common/constants';
 import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
@@ -1250,11 +1251,7 @@ export type ServiceDealFileDownload = {
 /** The columns `finalLevelGate` reads, over the file row `f`. */
 const finalLevelColumns = Prisma.sql`f."scannedEtag",
       (SELECT max(e."nsfwLevel") FROM "ServiceDealFileEntry" e WHERE e."fileId" = f."id") AS "contentLevel",
-      EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e JOIN "Image" i ON i."id" = e."imageId"
-        -- Refuses serving; entryOnlyOverLevel, which keeps evidence, also counts poi and ingestion.
-        WHERE e."fileId" = f."id" AND (${Prisma.raw(heldItemImageSql('i'))} OR i.minor IS TRUE
-          OR (i.id)::text IN (${Prisma.raw(CSAM_REPORT_LISTED_IMAGE_IDS_SQL)})
-          OR ${toPrismaSql(childSafetyImageCase('i'))} IS TRUE)) AS "csamHeld",
+      ${finalCsamHeldSql(Prisma.sql`f."id"`)} AS "csamHeld",
       EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e JOIN "Image" i ON i."id" = e."imageId"
         WHERE e."fileId" = f."id" AND i."blockedFor" IS NOT NULL) AS "imageBlocked",
       -- Not entryImageGone: a rated entry whose copy was let go (imageId cleared) counts here too.

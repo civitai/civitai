@@ -29,7 +29,6 @@ const {
   mockGetAgentReport,
   mockListAgentReports,
   mockStartAgentReview,
-  mockAgentReviewChat,
   mockPreviewRequest,
   mockGetReviewStatus,
   mockMintReviewBlockToken,
@@ -47,7 +46,6 @@ const {
   mockGetAgentReport: vi.fn(),
   mockListAgentReports: vi.fn(),
   mockStartAgentReview: vi.fn(),
-  mockAgentReviewChat: vi.fn(),
   mockPreviewRequest: vi.fn(),
   mockGetReviewStatus: vi.fn(),
   mockMintReviewBlockToken: vi.fn(),
@@ -71,7 +69,6 @@ vi.mock('~/server/services/blocks/app-review-report.service', () => ({
 }));
 vi.mock('~/server/services/blocks/agent-review.service', () => ({
   startAgentReview: mockStartAgentReview,
-  agentReviewChat: mockAgentReviewChat,
 }));
 vi.mock('~/server/services/blocks/publish-request.service', () => ({
   previewRequest: mockPreviewRequest,
@@ -187,8 +184,6 @@ beforeEach(() => {
   mockGetAgentReport.mockResolvedValue(REPORT);
   mockStartAgentReview.mockReset();
   mockStartAgentReview.mockResolvedValue({ reportId: 'arar_1', status: 'running' });
-  mockAgentReviewChat.mockReset();
-  mockAgentReviewChat.mockResolvedValue({ reply: 'because scope X is used in wallet.js:10' });
   mockListAgentReports.mockReset();
   mockListAgentReports.mockResolvedValue([]);
   getAgentReviewModelOptions.clear();
@@ -321,115 +316,10 @@ describe('blocks.startAgentReview — CONFLICT preservation', () => {
   });
 });
 
-describe('blocks.agentReviewChat', () => {
-  const CHAT_INPUT = {
-    publishRequestId: PUBREQ,
-    messages: [{ role: 'user' as const, content: 'why did you flag scope X?' }],
-  };
-
-  it('moderator + flags on: reaches the service with the id + messages, returns the reply', async () => {
-    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
-    const res = await caller.agentReviewChat(CHAT_INPUT);
-    expect(res).toEqual({ reply: 'because scope X is used in wallet.js:10' });
-    expect(mockAgentReviewChat).toHaveBeenCalledWith({
-      publishRequestId: PUBREQ,
-      messages: CHAT_INPUT.messages,
-    });
-  });
-
-  it('non-moderator: UNAUTHORIZED, service NOT reached', async () => {
-    const caller = blocksRouter.createCaller(fakeCtx(normalUser) as never);
-    await expect(caller.agentReviewChat(CHAT_INPUT)).rejects.toBeInstanceOf(TRPCError);
-    expect(mockAgentReviewChat).not.toHaveBeenCalled();
-  });
-
-  it('anonymous: UNAUTHORIZED', async () => {
-    const caller = blocksRouter.createCaller(fakeCtx(undefined) as never);
-    await expect(caller.agentReviewChat(CHAT_INPUT)).rejects.toBeInstanceOf(TRPCError);
-    expect(mockAgentReviewChat).not.toHaveBeenCalled();
-  });
-
-  it('moderator but the agentic-review flag OFF (fail-closed): UNAUTHORIZED (dark)', async () => {
-    mockIsAgenticEnabled.mockResolvedValue(false);
-    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
-    await expect(caller.agentReviewChat(CHAT_INPUT)).rejects.toBeInstanceOf(TRPCError);
-    expect(mockAgentReviewChat).not.toHaveBeenCalled();
-  });
-
-  it('preserves a service PRECONDITION_FAILED (pod not up), not flattened to BAD_REQUEST', async () => {
-    mockAgentReviewChat.mockRejectedValue(
-      new TRPCError({ code: 'PRECONDITION_FAILED', message: 'the review agent is not available' })
-    );
-    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
-    await expect(caller.agentReviewChat(CHAT_INPUT)).rejects.toMatchObject({
-      code: 'PRECONDITION_FAILED',
-    });
-  });
-
-  it('preserves a service BAD_GATEWAY (agent unreachable), not flattened to BAD_REQUEST', async () => {
-    mockAgentReviewChat.mockRejectedValue(
-      new TRPCError({ code: 'BAD_GATEWAY', message: 'the review agent did not respond' })
-    );
-    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
-    await expect(caller.agentReviewChat(CHAT_INPUT)).rejects.toMatchObject({ code: 'BAD_GATEWAY' });
-  });
-
-  it('an opaque (non-TRPC) service error collapses to BAD_REQUEST (no 500 leak)', async () => {
-    mockAgentReviewChat.mockRejectedValue(new Error('kaboom'));
-    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
-    await expect(caller.agentReviewChat(CHAT_INPUT)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
-  });
-
-  // A previous reply is re-sent as history on every later turn. A detailed answer runs well
-  // past the moderator's 4,000-character message cap, and used to fail the next turn.
-  const withPreviousReply = (reply: string) => ({
-    publishRequestId: PUBREQ,
-    messages: [
-      { role: 'user' as const, content: 'walk me through every finding' },
-      { role: 'assistant' as const, content: reply },
-      { role: 'user' as const, content: 'continue' },
-    ],
-  });
-
-  it('🔴 a long previous assistant reply is accepted as history, not rejected BAD_REQUEST', async () => {
-    const reply = 'x'.repeat(16_000);
-    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
-    await expect(caller.agentReviewChat(withPreviousReply(reply))).resolves.toEqual({
-      reply: 'because scope X is used in wallet.js:10',
-    });
-    expect(mockAgentReviewChat.mock.calls[0][0].messages[1]).toEqual({
-      role: 'assistant',
-      content: reply,
-    });
-  });
-
-  it('an assistant message takes up to 32,000 characters; one more is rejected', async () => {
-    const cap = 32_000; // pinned literal, not the exported constant
-    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
-    await expect(caller.agentReviewChat(withPreviousReply('x'.repeat(cap)))).resolves.toBeTruthy();
-    await expect(
-      caller.agentReviewChat(withPreviousReply('x'.repeat(cap + 1)))
-    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
-    expect(mockAgentReviewChat).toHaveBeenCalledTimes(1);
-  });
-
-  it('a moderator message is still capped at 4,000 characters', async () => {
-    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
-    await expect(
-      caller.agentReviewChat({
-        publishRequestId: PUBREQ,
-        messages: [{ role: 'user', content: 'x'.repeat(4001) }],
-      })
-    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
-    expect(mockAgentReviewChat).not.toHaveBeenCalled();
-  });
-});
-
 describe('agent review CONNECT lane — gated on its own flag', () => {
   const ALPR = 'alpr_0123456789ABCDEFGHJKMNPQRS';
-  const CHAT = [{ role: 'user' as const, content: 'why offline?' }];
 
-  it('🔴 connect flag OFF (as shipped), on-site flag ON: start, read and chat all refuse; no dispatch', async () => {
+  it('🔴 connect flag OFF (as shipped), on-site flag ON: start and read refuse; no dispatch', async () => {
     const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
     await expect(caller.startAgentReview({ publishRequestId: ALPR })).rejects.toMatchObject({
       code: 'UNAUTHORIZED',
@@ -437,12 +327,8 @@ describe('agent review CONNECT lane — gated on its own flag', () => {
     await expect(caller.getAgentReview({ publishRequestId: ALPR })).rejects.toMatchObject({
       code: 'UNAUTHORIZED',
     });
-    await expect(
-      caller.agentReviewChat({ publishRequestId: ALPR, messages: CHAT })
-    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
     expect(mockStartAgentReview).not.toHaveBeenCalled();
     expect(mockGetAgentReport).not.toHaveBeenCalled();
-    expect(mockAgentReviewChat).not.toHaveBeenCalled();
     // The on-site flag was never the one asked about a connect request.
     expect(mockIsAgenticEnabled).not.toHaveBeenCalled();
   });
@@ -513,17 +399,6 @@ describe('agent review — choosing a model and a run', () => {
     const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
     await caller.getAgentReview({ publishRequestId: PUBREQ, reportId: 'arar_old' });
     expect(mockGetAgentReport).toHaveBeenCalledWith(PUBREQ, 'arar_old');
-  });
-
-  it('agentReviewChat forwards the run on screen, so the chat grounds on it', async () => {
-    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
-    const messages = [{ role: 'user' as const, content: 'why?' }];
-    await caller.agentReviewChat({ publishRequestId: PUBREQ, messages, reportId: 'arar_old' });
-    expect(mockAgentReviewChat).toHaveBeenCalledWith({
-      publishRequestId: PUBREQ,
-      messages,
-      reportId: 'arar_old',
-    });
   });
 });
 
