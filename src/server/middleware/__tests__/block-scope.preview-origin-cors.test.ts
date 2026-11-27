@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 // Setup-order import: installs the ~/env/server, db and redis mocks before the middleware loads.
 import '~/__tests__/setup';
 import type { NextApiRequest, NextApiResponse } from 'next';
@@ -6,7 +6,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { _internalsForTests, withBlockScope } from '../block-scope.middleware';
-import { mintPreviewLabel } from '~/server/services/blocks/preview-session-host';
+import { mintPreviewLabel, previewHostHash } from '~/server/services/blocks/preview-session-host';
 
 /**
  * Block CORS for an app running in its preview. A dev tunnel or an App Assistant direct preview
@@ -90,13 +90,14 @@ const route = withBlockScope(
   { endpoint: 'me', allowOpaqueOrigin: true }
 );
 
-async function call(method: 'OPTIONS' | 'GET', origin: string) {
+async function call(method: 'OPTIONS' | 'GET', origin: string, extra: Record<string, string> = {}) {
   const res = makeRes();
   await route(
     {
       method,
       headers: {
         origin,
+        ...extra,
         ...(method === 'OPTIONS'
           ? {
               'access-control-request-method': 'GET',
@@ -200,6 +201,25 @@ describe('block CORS refuses a preview-shaped origin with no live session', () =
     records[`system:blocks:dev-tunnel:host:${UNKNOWN_PREVIEW_HOST}`] = 'sess_null';
     records['system:blocks:dev-tunnel:session:sess_null'] = 'null';
     expectNoCors(await call('OPTIONS', `https://${UNKNOWN_PREVIEW_HOST}`));
+  });
+
+  it('the refusal warning logs a direct-preview host only as its hash', async () => {
+    // The warning fires only for a request carrying a bearer (a script, or a call made after its
+    // session ended), never a browser preflight. The host is the session's credential.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      await call('GET', `https://${UNKNOWN_PREVIEW_HOST}`, {
+        authorization: 'Bearer not-a-block-token',
+      }).catch(() => undefined);
+      const lines = warn.mock.calls.map((args) => args.map(String).join(' '));
+      const refusal = lines.filter((l) => l.includes('rejected CORS preflight'));
+      expect(refusal).toHaveLength(1);
+      expect(refusal[0]).toContain(`<preview session ${previewHostHash(UNKNOWN_PREVIEW_HOST)}>`);
+      const label = UNKNOWN_PREVIEW_HOST.split('.')[0];
+      for (const l of lines) expect(l).not.toContain(label.slice(0, 16));
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('a live host over http, or on another port', async () => {
