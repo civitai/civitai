@@ -40,6 +40,15 @@ const definition = processDefinitionSchema.parse({
       from: ['received'],
     },
     {
+      id: 'reinstate',
+      role: 'claimant',
+      label: 'Reinstate',
+      fields: [],
+      records: 'reinstated',
+      moveTo: 'suit-filed',
+      from: ['withdrawn'],
+    },
+    {
       id: 'withdraw',
       role: 'claimant',
       label: 'Withdraw',
@@ -179,6 +188,13 @@ describe('casePartyAction', () => {
       ['suit-filed', null],
       ['withdrawn', now.toISOString()],
     ]);
+
+    await act(ended, 'reinstate');
+    const reopened = await pg.query<{ decided_at: string | null }>(
+      'SELECT decided_at FROM case_record WHERE public_ref = $1',
+      [ended.publicRef]
+    );
+    expect(reopened.rows[0].decided_at).toBeNull();
   });
 
   it('adds only items the case does not already have', async () => {

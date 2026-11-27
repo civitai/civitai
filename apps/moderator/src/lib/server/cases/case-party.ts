@@ -182,13 +182,16 @@ export async function casePartyAction(input: CasePartyActionInput, deps: CasePar
       .execute();
     if (action.moveTo) {
       // A terminal state ends the case, so it is decided now; otherwise the clocks would keep running.
-      const terminal = def.states.find((st) => st.id === action.moveTo)?.terminal;
+      // Moving out of a terminal state reopens it, so that decision is cleared and the clocks resume.
+      const isTerminal = (id: string) => !!def.states.find((st) => st.id === id)?.terminal;
+      const terminal = isTerminal(action.moveTo);
+      const reopened = !terminal && isTerminal(current.state);
       await tx
         .updateTable('case_record')
         .set({
           state: action.moveTo,
           updated_at: sql`now()`,
-          ...(terminal ? { decided_at: at.toISOString() } : {}),
+          ...(terminal ? { decided_at: at.toISOString() } : reopened ? { decided_at: null } : {}),
         })
         .where('id', '=', party.caseId)
         .execute();
