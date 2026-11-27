@@ -5305,7 +5305,7 @@ async function approveRequestUnderClaim(
       type: 'app-block-approved',
       userId: request.submittedByUserId,
       key: `app-block-approved:${params.publishRequestId}`,
-      attribution: { kind: 'moderator', userId: params.reviewerUserId },
+      attribution: { kind: 'moderator', requestId: params.publishRequestId },
       details: {
         slug: request.slug,
         name: typeof manifest.name === 'string' ? manifest.name : null,
@@ -7675,7 +7675,7 @@ export async function rejectRequest(params: RejectRequestParams): Promise<void> 
       type: 'app-block-rejected',
       userId: row.submittedByUserId,
       key: `app-block-rejected:${params.publishRequestId}`,
-      attribution: { kind: 'moderator', userId: params.reviewerUserId },
+      attribution: { kind: 'moderator', requestId: params.publishRequestId },
       details: {
         slug: row.slug,
         name: typeof rejectManifest.name === 'string' ? rejectManifest.name : null,

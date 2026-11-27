@@ -3,12 +3,17 @@
  * `-rejected`, `app-listing-approved` / `-rejected`) carry, so a decision reads as coming from a
  * person rather than from the platform. `app-listing-hidden` (a takedown) carries the team only.
  *
- * What is STORED on the notification is the fact the emitter knew: the deciding moderator's
- * `reviewerUserId`, `reviewedAutomatically: true` for a decision no person made, or
- * `reviewedByTeam: true` for a decision attributed to the team and never to a person. The
- * reviewer's name and avatar are NOT stored: `appReviewDetailFetcher` resolves them into
- * `actor` when the notification is read or emailed, so a renamed reviewer shows the current
- * name and a deleted one shows none, and removes `reviewerUserId` from what it returns.
+ * What is STORED on the notification names no account. A moderator's decision stores
+ * `reviewedByModerator: true` and `reviewRequestId`, the publish request that was decided; an
+ * automated one `reviewedAutomatically: true`; a team-attributed one `reviewedByTeam: true`.
+ * `appReviewDetailFetcher` resolves the reviewer server-side from that request's
+ * `reviewedByUserId` into `actor` when the notification is read or emailed, so a renamed
+ * reviewer shows the current name and a deleted one shows none. The stored details also go to
+ * the browser as they are (the realtime new-notification push), which is why no reviewer id is
+ * stored: there is nothing for that path to leak.
+ *
+ * Notifications sent before this carry the moderator's `reviewerUserId` instead. The fetcher
+ * still resolves it and removes it from what it returns.
  *
  * Pure and dependency-free: the processors that call it are in the client graph.
  */
@@ -20,12 +25,16 @@ export const APP_REVIEW_TEAM_NAME = 'Civitai App Review';
 /**
  * How an emitter states who decided. A decision path must name one; nothing is inferred.
  *
+ * `moderator` names the publish request that was decided (`AppBlockPublishRequest` for an
+ * `app-block-*` notification, `AppListingPublishRequest` for an `app-listing-*` one); its
+ * `reviewedByUserId` is the reviewer. It carries no account id, so none can be stored.
+ *
  * `team` names no individual and stores no moderator id. It is what a TAKEDOWN uses
  * (`app-listing-hidden`): the owner of a taken-down listing is never told which moderator acted,
  * the same rule the owner's moderation history follows (`ownerModerationEventSelect`).
  */
 export type AppReviewAttribution =
-  | { kind: 'moderator'; userId: number }
+  | { kind: 'moderator'; requestId: string }
   | { kind: 'automated' }
   | { kind: 'team' };
 
@@ -36,8 +45,16 @@ export type AppReviewActor = {
 };
 
 export type AppReviewAttributionDetails = {
-  /** The moderator who decided. Absent on notifications sent before attribution existed. */
+  /**
+   * LEGACY: the moderator who decided, as notifications sent before `reviewRequestId` stored it.
+   * Never written now; read only by `appReviewDetailFetcher`, which removes it.
+   */
   reviewerUserId?: number | null;
+  /**
+   * The publish request a moderator decided. `appReviewDetailFetcher` reads its reviewer and
+   * removes this from what it returns.
+   */
+  reviewRequestId?: string | null;
   /** The decision was made by an automated review, not a person. */
   reviewedAutomatically?: boolean;
   /** The decision is attributed to the team, naming no individual (a takedown). */
@@ -45,24 +62,43 @@ export type AppReviewAttributionDetails = {
   /** Filled at read time by `appReviewDetailFetcher`; never stored. */
   actor?: AppReviewActor | null;
   /**
-   * Set at read time by `appReviewDetailFetcher` in place of `reviewerUserId`, which it removes
-   * so the id never reaches the client: a person decided, so the byline falls back to the team
-   * when no actor resolved (the account is gone). Never stored.
+   * A person decided, so the byline falls back to the team when no actor resolved (the account
+   * is gone). Stored on a moderator decision; also set by `appReviewDetailFetcher` on a legacy
+   * notification in place of the `reviewerUserId` it removes.
    */
   reviewedByModerator?: boolean;
 };
+
+/**
+ * An emitter's `details` without the attribution fields: those come only from
+ * `appReviewAttributionDetails`, so a reviewer id passed in `details` is never stored.
+ */
+export function withoutAttributionFields<T extends AppReviewAttributionDetails>(
+  details: T
+): Omit<T, keyof AppReviewAttributionDetails> {
+  const {
+    reviewerUserId: _reviewerUserId,
+    reviewRequestId: _reviewRequestId,
+    reviewedAutomatically: _reviewedAutomatically,
+    reviewedByTeam: _reviewedByTeam,
+    actor: _actor,
+    reviewedByModerator: _reviewedByModerator,
+    ...rest
+  } = details;
+  return rest;
+}
 
 /** The details fields an emitter stores for `attribution`. */
 export function appReviewAttributionDetails(
   attribution: AppReviewAttribution | undefined
 ): Pick<
   AppReviewAttributionDetails,
-  'reviewerUserId' | 'reviewedAutomatically' | 'reviewedByTeam'
+  'reviewRequestId' | 'reviewedByModerator' | 'reviewedAutomatically' | 'reviewedByTeam'
 > {
   if (!attribution) return {};
   if (attribution.kind === 'automated') return { reviewedAutomatically: true };
   if (attribution.kind === 'team') return { reviewedByTeam: true };
-  return { reviewerUserId: attribution.userId };
+  return { reviewedByModerator: true, reviewRequestId: attribution.requestId };
 }
 
 /**
