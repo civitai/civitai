@@ -6,6 +6,8 @@ const svc = vi.hoisted(() => ({
   reword: vi.fn(),
   keep: vi.fn(),
   remove: vi.fn(),
+  returnPull: vi.fn(),
+  orphans: vi.fn(),
   items: vi.fn(),
   axes: vi.fn(),
 }));
@@ -16,6 +18,9 @@ vi.mock('$lib/server/knights/yesno-question.service', () => ({
   rewordYesNoQuestion: svc.reword,
   keepReportedQuestion: svc.keep,
   removeReportedQuestion: svc.remove,
+  returnImagePull: svc.returnPull,
+  getOrphanImagePulls: svc.orphans,
+  imagePullImageIds: vi.fn(async () => []),
   getYesNoQuestionItems: svc.items,
   getYesNoAxes: svc.axes,
   yesNoQuestionImageIds: vi.fn(async () => []),
@@ -100,6 +105,15 @@ describe('Knights of New Order question actions', () => {
     expect(svc.remove).toHaveBeenCalledWith({ id: 12, by: 77 });
   });
 
+  it('returns a pulled image as the acting moderator', async () => {
+    svc.returnPull.mockResolvedValueOnce({ ok: true });
+    expect(await actions.returnImage(formEvent({ id: '9' }))).toEqual({
+      success: true,
+      agreed: undefined,
+    });
+    expect(svc.returnPull).toHaveBeenCalledWith({ id: 9, by: 77 });
+  });
+
   it('restores a question as the acting moderator', async () => {
     svc.unretire.mockResolvedValueOnce({ ok: true });
     await actions.unretireQuestion(formEvent({ id: '12' }));
@@ -137,7 +151,14 @@ describe('Knights of New Order questions tab load', () => {
   });
 
   it('labels the axes once and passes an unknown axis from the URL through', async () => {
-    expect((await loadQuestions('&status=reported')).questionQueue.filters.status).toBe('reported');
+    svc.orphans.mockResolvedValueOnce([{ id: 9, imageId: 5, imageKey: 'k5', imageName: null }]);
+    const reported = await loadQuestions('&status=reported');
+    expect(reported.questionQueue.filters.status).toBe('reported');
+    expect(reported.questionQueue.pulledImages).toEqual([
+      { id: 9, imageId: 5, imageKey: 'k5', imageName: null, restricted: false },
+    ]);
+    expect((await loadQuestions('&status=open')).questionQueue.pulledImages).toEqual([]);
+    expect(svc.orphans).toHaveBeenCalledTimes(1);
     svc.items.mockClear();
     const data = await loadQuestions('&axis=knights.yesno.gone&status=closed');
     expect(data.questionQueue.axes).toEqual([{ key: 'knights.yesno.violence', label: 'violence' }]);

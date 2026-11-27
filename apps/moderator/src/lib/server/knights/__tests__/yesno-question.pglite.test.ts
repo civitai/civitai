@@ -25,7 +25,9 @@ vi.mock('../../db', () => ({
 const {
   getYesNoAxes,
   getYesNoQuestionItems,
+  getOrphanImagePulls,
   keepReportedQuestion,
+  returnImagePull,
   removeReportedQuestion,
   retireYesNoQuestion,
   rewordYesNoQuestion,
@@ -499,20 +501,26 @@ describe('rewordYesNoQuestion', () => {
 });
 
 describe('reported questions', () => {
-  const report = (itemId: number, playerId: number, reason: 'image' | 'question', imageId = 1) =>
+  const report = (
+    itemId: number,
+    playerId: number,
+    reason: 'image' | 'question',
+    imageId = 1,
+    counted = true
+  ) =>
     db.query(
-      `INSERT INTO "KnightsQuestionReport" ("playerId","itemId","reason","questionKey","imageId") VALUES ($1,$2,$3,$4,$5)`,
-      [playerId, itemId, reason, AXIS, imageId]
+      `INSERT INTO "KnightsQuestionReport" ("playerId","itemId","reason","questionKey","imageId","counted") VALUES ($1,$2,$3,$4,$5,$6)`,
+      [playerId, itemId, reason, AXIS, imageId, counted]
     );
-  const pullImage = (imageId: number, reportId: number | null) =>
+  const pullImage = (imageId: number, itemId: number, reportId: number | null, filing = 'filed') =>
     db.query(
-      `INSERT INTO "KnightsImagePull" ("imageId","reason","reportId") VALUES ($1,'players-reported',$2)`,
-      [imageId, reportId]
+      `INSERT INTO "KnightsImagePull" ("imageId","itemId","reason","reportId","filing") VALUES ($1,$2,'players-reported',$3,$4)`,
+      [imageId, itemId, reportId, filing]
     );
   const reports = async (itemId: number) =>
     (
       await db.query<{ resolvedBy: number | null; resolved: boolean }>(
-        `SELECT "resolvedBy", "resolvedAt" IS NOT NULL AS resolved FROM "KnightsQuestionReport" WHERE "itemId" = $1 ORDER BY "playerId"`,
+        `SELECT "resolvedBy", "resolvedAt" IS NOT NULL AS resolved FROM "KnightsQuestionReport" WHERE "itemId" = $1 AND counted ORDER BY "playerId"`,
         [itemId]
       )
     ).rows;
@@ -522,6 +530,8 @@ describe('reported questions', () => {
         `SELECT "imageId" FROM "KnightsImagePull" WHERE "resolvedAt" IS NULL ORDER BY "imageId"`
       )
     ).rows.map((r) => r.imageId);
+  const reportedItems = async () =>
+    (await getYesNoQuestionItems({ page: 1, status: 'reported' })).items;
 
   beforeEach(async () => {
     await seedItem(1, { imageId: 1, status: 'Reported', voteCount: 1 });
@@ -534,12 +544,13 @@ describe('reported questions', () => {
       [12, 'question'],
     ] as const)
       await report(1, player, reason);
+    await report(1, 19, 'image', 1, false);
     await report(2, 13, 'question', 2);
-    await pullImage(1, 55);
+    await pullImage(1, 1, 55);
     await db.query(`INSERT INTO "Report" ("id","status") VALUES (55,'Pending')`);
   });
 
-  it('are listed on their own, with the reason counts, the reporters and the main-app report of an image pull', async () => {
+  it('are listed on their own, with the counted reasons, the reporters and the image pull they caused', async () => {
     const { items, total } = await getYesNoQuestionItems({ page: 1, status: 'reported' });
     expect(total).toBe(2);
     expect(items.map((i) => i.id)).toEqual([2, 1]);
@@ -547,14 +558,9 @@ describe('reported questions', () => {
       image: 2,
       question: 1,
       reporters: [10, 11, 12],
-      pull: { reportId: 55, reportStatus: 'Pending' },
+      pull: { causedHere: true, reportId: 55, reportStatus: 'Pending', filing: 'filed' },
     });
-    expect(items[0].reported).toEqual({
-      image: 0,
-      question: 1,
-      reporters: [13],
-      pull: null,
-    });
+    expect(items[0].reported).toEqual({ image: 0, question: 1, reporters: [13], pull: null });
   });
 
   it('are neither open nor closed', async () => {
@@ -565,13 +571,17 @@ describe('reported questions', () => {
     expect((await getYesNoQuestionItems({ page: 1, status: 'open' })).items[0].reported).toBeNull();
   });
 
-  it('shows an image pull the main app has no report for yet', async () => {
-    await db.query(`UPDATE "KnightsImagePull" SET "reportId" = NULL`);
-    const { items } = await getYesNoQuestionItems({ page: 1, status: 'reported' });
-    expect(items[1].reported?.pull).toEqual({ reportId: null, reportStatus: null });
+  it('show whether the image report is still to file or not needed', async () => {
+    await db.query(`UPDATE "KnightsImagePull" SET "reportId" = NULL, "filing" = 'pending'`);
+    expect((await reportedItems())[1].reported?.pull).toMatchObject({
+      reportId: null,
+      filing: 'pending',
+    });
+    await db.query(`UPDATE "KnightsImagePull" SET "filing" = 'not-needed'`);
+    expect((await reportedItems())[1].reported?.pull).toMatchObject({ filing: 'not-needed' });
   });
 
-  it('keep opens the question again, resolves its reports and keeps the image', async () => {
+  it('keep opens the question again, resolves its reports and the image pull it caused', async () => {
     expect(await keepReportedQuestion({ id: 1, by: MOD, now: NOW })).toEqual({ ok: true });
 
     expect(await row(1)).toMatchObject({
@@ -587,6 +597,25 @@ describe('reported questions', () => {
     ]);
     expect(await openPulls()).toEqual([]);
     expect(await reports(2)).toEqual([{ resolvedBy: null, resolved: false }]);
+  });
+
+  it('keeping another question on a pulled image leaves the pull it did not cause', async () => {
+    await seedItem(5, { imageId: 1, status: 'Reported' });
+    await report(5, 30, 'question');
+    expect((await reportedItems()).find((i) => i.id === 5)?.reported?.pull).toMatchObject({
+      causedHere: false,
+    });
+
+    expect(await keepReportedQuestion({ id: 5, by: MOD, now: NOW })).toEqual({ ok: true });
+
+    expect(await row(5)).toMatchObject({ status: 'Open' });
+    expect(await openPulls()).toEqual([1]);
+  });
+
+  it('keep refuses a question whose image can no longer be shown, as a restore does', async () => {
+    await db.query(`UPDATE "Image" SET "ingestion" = 'Blocked' WHERE id = 1`);
+    expect(await keepReportedQuestion({ id: 1, by: MOD, now: NOW })).toMatchObject({ ok: false });
+    expect(await row(1)).toMatchObject({ status: 'Reported' });
   });
 
   it('remove closes the question for good with no label: pending answers inconclusive, reports resolved, the image stays pulled', async () => {
@@ -605,6 +634,35 @@ describe('reported questions', () => {
     expect((await reports(1)).every((r) => r.resolved && r.resolvedBy === MOD)).toBe(true);
     expect(await openPulls()).toEqual([1]);
     expect(await unretireYesNoQuestion({ id: 1, by: MOD, now: NOW })).toMatchObject({ ok: false });
+  });
+
+  it('lists a pull whose question was removed, with that question and its reasons, and returns the image', async () => {
+    expect(await getOrphanImagePulls()).toEqual([]);
+    await removeReportedQuestion({ id: 1, by: MOD, now: NOW });
+
+    const [pull] = await getOrphanImagePulls();
+    expect(pull).toMatchObject({
+      imageId: 1,
+      imageKey: 'k1',
+      itemId: 1,
+      prompt: 'Question 1?',
+      image: 2,
+      question: 1,
+      reportId: 55,
+      reportStatus: 'Pending',
+      filing: 'filed',
+    });
+
+    expect(await returnImagePull({ id: pull.id, by: MOD, now: NOW })).toEqual({ ok: true });
+    expect(await openPulls()).toEqual([]);
+    expect(await getOrphanImagePulls()).toEqual([]);
+    expect(await returnImagePull({ id: pull.id, by: MOD, now: NOW })).toMatchObject({ ok: false });
+  });
+
+  it('return refuses a pull whose question still waits for a keep or remove', async () => {
+    const id = (await db.query<{ id: number }>(`SELECT id FROM "KnightsImagePull"`)).rows[0].id;
+    expect(await returnImagePull({ id, by: MOD, now: NOW })).toMatchObject({ ok: false });
+    expect(await openPulls()).toEqual([1]);
   });
 
   it('keep and remove refuse a question that is not reported', async () => {

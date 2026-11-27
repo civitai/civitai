@@ -90,17 +90,23 @@ graded, as with "Not sure").
 
 - A report is one `KnightsQuestionReport` row per player and item (migration `20271208120000_knights_question_report`, by hand),
   with the question key and image as a snapshot. The reporter is never dealt that item again (`pickYesNo`), and the report counts as
-  a question served for the run cadence, like a "Not sure".
-- `recordReport` takes the item row lock, as a vote does, and no player lock. When the item's unresolved reports reach the Config
+  a question served for the run cadence, like a "Not sure". A report from a player whose vote would not count (held, so weighing
+  0, or due a career reset) is stored with `counted` false and does not count toward the threshold.
+- `recordReport` takes the item row lock, as a vote does, and no player lock. When the item's counted, unresolved reports reach the Config
   page's `yesNoReportThreshold` distinct players, the item becomes `Reported`: serving and voting read only `Open`, so nobody is dealt
   it, and the sweep, which reads only `Open`, never closes it. Below the threshold nothing changes for anyone else.
-- When most of those reports name the image, the image is pulled too: an open `KnightsImagePull` row (one per image). The yes/no
+- When most of those reports name the image, the image is pulled too: an open `KnightsImagePull` row (one per image) naming the
+  item that caused it (`itemId`). The yes/no
   pick, the vote and the Acolyte pair pick read it through `yesNoServableImage` in `image-gate.ts`, the `KnightsImageGate` check plus
   "no open pull", so the image leaves every yes/no question and practice pair. The sweep's `servableImageForSweeps` does not read it,
   so the image's other questions are hidden, not closed. Knights then files one main-app Report on the image through
   `POST /api/mod/image/kono-report-image` (`image-report.ts`, `{ imageId }` only, the same token as the rating write-back) and keeps
-  its `reportId` on the pull. An image whose pull already has a report id files nothing more. A failed filing is logged and the
-  image stays pulled; the tick (`fileOpenImagePulls`) files it again.
+  its `reportId` on the pull (`filing` 'filed'). An image an earlier pull filed for files nothing more. The route's own 404 (the
+  main app no longer has the image) marks the filing 'not-needed' and it is never tried again. Any other failure is logged and the
+  image stays pulled; the tick (`fileOpenImagePulls`) retries pending filings, fewest attempts first, each waiting out the
+  write-back's backoff, four at a time within a 45 s budget.
+- The import treats a `Reported` item like a moderated one: a changed file row does not rewrite it. A producer withdrawing it closes
+  it as `retired` and resolves its reports.
 
 ## Moderator cleanup
 
@@ -113,10 +119,13 @@ by text or image. A moderator can:
 - **Restore** a `moderator-retired` question that has no answers. Restore is refused while a reworded copy of it is open (retire the copy first), so a question never has two live versions.
 - **Reword** a question. This always retires it and opens a new item `<producer id>:rN` with `meta.rewordOf`, so answers under a producer
   id are always answers to the producer's wording.
-- Under the **Reported** filter, see each reported question's reason counts and reporters and, for an image pull, the main-app
-  report's status with a link to it. **Keep** opens the question again and resolves its reports and the image's pull, so the image is
-  served again. **Remove** closes it for good as `report-removed`, with no label and no write-back; its pending answers become
-  `inconclusive` and the image stays pulled. The Closed filter leaves reported questions out.
+- Under the **Reported** filter, see each reported question's counted reason counts and reporters and, for an image pull, whether
+  this question caused it and the main-app report's status with a link to it. **Keep** (refused, as Restore is, when the image can
+  no longer be shown) opens the question again and resolves its reports and the pull it caused, so the image's open questions and
+  Acolyte pairs are served again; answered questions on it that the stale sweep closed meanwhile stay closed. **Remove** closes it
+  for good as `report-removed`, with no label and no write-back; its pending answers become `inconclusive` and the image stays
+  pulled. A pull whose question is no longer `Reported` (removed, or withdrawn by the import) is listed under Pulled images with that
+  question's reason counts, and **Return image** resolves it. The Closed filter leaves reported questions out.
 
 Closing a row is shared with Knights (`closeYesNoItemRow` in `@civitai/db/knights`). The moderator locks only the item row and its
 votes, never player rows.

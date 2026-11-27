@@ -10,8 +10,8 @@
   import { FormState } from '$lib/form-state.svelte';
   import { LINK_CLASS } from '$lib/format';
   import { NOTE_MAX, YESNO_PROMPT_MAX } from '$lib/knights/trials-limits';
-  import { ReportEntity, reportActionPath, reportStatusVariant } from '$lib/reports';
   import type { YesNoQuestionItem } from '$lib/server/knights/yesno-question.service';
+  import PullFiling from './PullFiling.svelte';
   import TrialMedia from './TrialMedia.svelte';
 
   let { item }: { item: YesNoQuestionItem & { restricted: boolean } } = $props();
@@ -117,19 +117,12 @@
           {reported.reporters.length === 1 ? 'player' : 'players'}: {reported.image} image, {reported.question} question
         </p>
         <p>Players {reported.reporters.map((id) => `#${id}`).join(', ')}</p>
-        {#if reported.pull}
+        {#if reported.pull && !reported.pull.causedHere}
+          <p>Another question's reports pulled this image; keeping this question does not return it.</p>
+        {:else if reported.pull}
           <p class="flex flex-wrap items-center gap-2">
-            The image is out of every Knights question and Acolyte pair until this is kept.
-            {#if reported.pull.reportId}
-              <a href={reportActionPath(ReportEntity.Image, reported.pull.reportId)} class={LINK_CLASS}
-                >Image report #{reported.pull.reportId}</a
-              >
-              {#if reported.pull.reportStatus}
-                <Badge variant={reportStatusVariant(reported.pull.reportStatus)}>{reported.pull.reportStatus}</Badge>
-              {/if}
-            {:else}
-              <span>Its image report is not filed yet; Knights files it on its next run.</span>
-            {/if}
+            These reports pulled the image from Knights questions and Acolyte pairs; keeping this question returns it.
+            <PullFiling pull={reported.pull} />
           </p>
         {/if}
       </div>
@@ -261,10 +254,11 @@
       <AlertDialog.Description>
         {#if confirming === 'keep'}
           Players are served this question for image #{item.imageId} again and its reports are resolved.
-          {#if reported?.pull}The image comes back into every Knights question and Acolyte pair.{/if}
+          {#if reported?.pull?.causedHere}The image's open questions and Acolyte pairs are served again; questions on it
+            that closed meanwhile stay closed.{/if}
         {:else if confirming === 'remove'}
           This question for image #{item.imageId} is closed for good, with no label and nothing written back.
-          {#if reported?.pull}The image stays out of Knights.{/if}
+          {#if reported?.pull?.causedHere}The image stays out of Knights until you return it under Pulled images.{/if}
           {pending}
         {:else if confirming === 'reword'}
           This question is retired and a new one with the new words replaces it for image #{item.imageId}.

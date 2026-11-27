@@ -18,6 +18,7 @@
   import LevelPicker from './LevelPicker.svelte';
   import ListSearch from './ListSearch.svelte';
   import SpotCheckCard from './SpotCheckCard.svelte';
+  import PulledImageCard from './PulledImageCard.svelte';
   import QuestionCard from './QuestionCard.svelte';
   import YesNoReferenceCard from './YesNoReferenceCard.svelte';
   import type { PageData } from './$types';
@@ -232,6 +233,14 @@
     </Select.Root>
   </div>
   {#key data.tab}<ListSearch {...searchProps} placeholder="Image id, image URL or question text" />{/key}
+  {#if data.questionQueue.pulledImages.length > 0}
+    <h3 class="mb-2 text-sm font-medium text-dark-0">Pulled images</h3>
+    <div class="mb-4 flex flex-col gap-3">
+      {#each data.questionQueue.pulledImages as pull (pull.id)}
+        <PulledImageCard {pull} />
+      {/each}
+    </div>
+  {/if}
   {#if data.questionQueue.items.length === 0}
     <p class="text-sm text-dark-2">{empty.questions}</p>
   {:else}

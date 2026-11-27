@@ -1,5 +1,7 @@
 import { sql, type Kysely, type Transaction } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
+import { utc } from '@civitai/db/kysely';
+import { KNIGHTS_IMAGE_REPORT_REASON } from '@civitai/shared/new-order';
 import {
   closeYesNoItemRow,
   mergeMeta,
@@ -55,8 +57,35 @@ export type Reported = {
   question: number;
   /** Player ids, ascending. */
   reporters: number[];
-  /** The image's open pull, when most reports named the image; `reportId` is null until Knights filed it. */
-  pull: { reportId: number | null; reportStatus: string | null } | null;
+  /**
+   * The image's open pull, if any. `causedHere`: this question's reports pulled it, so keeping this question returns the
+   * image; otherwise another question's did. `filing` is 'pending' until Knights filed the main-app report (`reportId`),
+   * or 'not-needed' when the main app no longer has the image.
+   */
+  pull: {
+    causedHere: boolean;
+    reportId: number | null;
+    reportStatus: string | null;
+    filing: string;
+  } | null;
+};
+
+/** An image still pulled though the question that pulled it was removed or withdrawn: only Return gives it back. */
+export type OrphanImagePull = {
+  id: number;
+  imageId: number;
+  imageKey: string;
+  imageName: string | null;
+  itemId: number;
+  prompt: string;
+  questionKey: string;
+  /** The pulling question's counted reports, by reason. */
+  image: number;
+  question: number;
+  reportId: number | null;
+  reportStatus: string | null;
+  filing: string;
+  createdAt: Date;
 };
 
 const originOf = (item: { externalId: string | null; meta: unknown }) =>
@@ -147,7 +176,12 @@ export async function getYesNoQuestionItems(
   return { items, total, page };
 }
 
-/** The unresolved reports of each reported question, and its image's open pull with the main-app report's status. */
+const reasonCounts = (reports: { reason: string }[]) => ({
+  image: reports.filter((r) => r.reason === KNIGHTS_IMAGE_REPORT_REASON).length,
+  question: reports.filter((r) => r.reason !== KNIGHTS_IMAGE_REPORT_REASON).length,
+});
+
+/** The counted, unresolved reports of each reported question, and its image's open pull with the main-app report's status. */
 async function reportsOf(items: { id: number; imageId: number }[]): Promise<Map<number, Reported>> {
   if (items.length === 0) return new Map();
   const [reports, pulls] = await Promise.all([
@@ -159,13 +193,14 @@ async function reportsOf(items: { id: number; imageId: number }[]): Promise<Map<
         'in',
         items.map((i) => i.id)
       )
+      .where('counted', '=', true)
       .where('resolvedAt', 'is', null)
       .orderBy('playerId', 'asc')
       .execute(),
     dbWrite
       .selectFrom('KnightsImagePull as ip')
       .leftJoin('Report as r', 'r.id', 'ip.reportId')
-      .select(['ip.imageId', 'ip.reportId', 'r.status as reportStatus'])
+      .select(['ip.imageId', 'ip.itemId', 'ip.reportId', 'ip.filing', 'r.status as reportStatus'])
       .where(
         'ip.imageId',
         'in',
@@ -182,14 +217,104 @@ async function reportsOf(items: { id: number; imageId: number }[]): Promise<Map<
       return [
         item.id,
         {
-          image: mine.filter((r) => r.reason === 'image').length,
-          question: mine.filter((r) => r.reason === 'question').length,
+          ...reasonCounts(mine),
           reporters: mine.map((r) => r.playerId),
-          pull: pull ? { reportId: pull.reportId, reportStatus: pull.reportStatus ?? null } : null,
+          pull: pull
+            ? {
+                causedHere: pull.itemId === item.id,
+                reportId: pull.reportId,
+                reportStatus: pull.reportStatus ?? null,
+                filing: pull.filing,
+              }
+            : null,
         },
       ];
     })
   );
+}
+
+/** Open image pulls whose question is no longer `Reported` (removed, or withdrawn by the import), oldest first. */
+export async function getOrphanImagePulls(): Promise<OrphanImagePull[]> {
+  const pulls = await dbWrite
+    .selectFrom('KnightsImagePull as ip')
+    .innerJoin('KnightsQueueItem as i', 'i.id', 'ip.itemId')
+    .innerJoin('Image as img', 'img.id', 'ip.imageId')
+    .leftJoin('Report as r', 'r.id', 'ip.reportId')
+    .select([
+      'ip.id',
+      'ip.imageId',
+      'ip.itemId',
+      'ip.reportId',
+      'ip.filing',
+      'ip.createdAt',
+      'r.status as reportStatus',
+      'i.prompt',
+      'i.questionKey',
+      'img.url as imageKey',
+      'img.name as imageName',
+    ])
+    .where('ip.resolvedAt', 'is', null)
+    .where('i.status', '<>', YESNO_REPORTED)
+    .orderBy('ip.id', 'asc')
+    .execute();
+  if (pulls.length === 0) return [];
+  const reports = await dbWrite
+    .selectFrom('KnightsQuestionReport')
+    .select(['itemId', 'reason'])
+    .where(
+      'itemId',
+      'in',
+      pulls.map((p) => p.itemId)
+    )
+    .where('counted', '=', true)
+    .execute();
+  return pulls.map(({ prompt, reportStatus, ...pull }) => ({
+    ...pull,
+    prompt: prompt ?? '',
+    reportStatus: reportStatus ?? null,
+    ...reasonCounts(reports.filter((r) => r.itemId === pull.itemId)),
+  }));
+}
+
+/** The image an open orphan pull holds; none when the pull is gone. */
+export async function imagePullImageIds(id: number): Promise<number[]> {
+  const row = await dbWrite
+    .selectFrom('KnightsImagePull')
+    .select('imageId')
+    .where('id', '=', id)
+    .executeTakeFirst();
+  return row ? [row.imageId] : [];
+}
+
+/**
+ * Returns an image whose pulling question was removed or withdrawn: the pull is resolved, so the image's open questions and
+ * Acolyte pairs are served again. A pull whose question still waits under Reported is that question's keep or remove.
+ */
+export async function returnImagePull(input: {
+  id: number;
+  by: number;
+  now?: Date;
+}): Promise<Outcome> {
+  const now = input.now ?? new Date();
+  return dbWrite.transaction().execute(async (trx) => {
+    const pull = await trx
+      .selectFrom('KnightsImagePull as ip')
+      .innerJoin('KnightsQueueItem as i', 'i.id', 'ip.itemId')
+      .select(['ip.id', 'i.status'])
+      .where('ip.id', '=', input.id)
+      .where('ip.resolvedAt', 'is', null)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!pull) return { ok: false, error: 'This image is no longer pulled. Reload the page.' };
+    if (pull.status === YESNO_REPORTED)
+      return { ok: false, error: 'Keep or remove the reported question that pulled this image.' };
+    await trx
+      .updateTable('KnightsImagePull')
+      .set({ resolvedAt: utc(now), resolvedBy: input.by })
+      .where('id', '=', pull.id)
+      .execute();
+    return { ok: true };
+  });
 }
 
 /** Open reworded copies by origin producer id. Filters on audience, status and `meta->>'rewordOf'`, so no index beyond the open-items one is assumed. */
@@ -295,6 +420,30 @@ export async function retireYesNoQuestion(input: {
   });
 }
 
+/** Opens a question to players again, recording who did it; refused when its image can no longer be shown. */
+async function reopen(
+  trx: Trx,
+  item: { id: number; imageId: number },
+  action: 'restored' | 'kept',
+  by: number,
+  now: Date
+): Promise<Outcome> {
+  const problem = await unservableReason(item.imageId, trx);
+  if (problem) return { ok: false, error: problem };
+  await trx
+    .updateTable('KnightsQueueItem')
+    .set({
+      status: 'Open',
+      reason: null,
+      resolvedAt: null,
+      updatedAt: utc(now),
+      meta: mergeMeta(moderationMeta(action, by, '', now)),
+    })
+    .where('id', '=', item.id)
+    .execute();
+  return { ok: true };
+}
+
 /** Reopens a question a moderator retired, as long as nobody answered it. */
 export async function unretireYesNoQuestion(input: {
   id: number;
@@ -311,23 +460,10 @@ export async function unretireYesNoQuestion(input: {
     if (item.voteCount > 0) {
       return { ok: false, error: 'Players have answered this question, so it stays retired.' };
     }
-    const problem = await unservableReason(item.imageId, trx);
-    if (problem) return { ok: false, error: problem };
     const origin = originOf(item);
     const copy = origin && (await openCopies(trx, [origin])).get(origin);
     if (copy) return { ok: false, error: `Retire ${copy} first: it replaced this question.` };
-    await trx
-      .updateTable('KnightsQueueItem')
-      .set({
-        status: 'Open',
-        reason: null,
-        resolvedAt: null,
-        updatedAt: sql<Date>`${now.toISOString()}::timestamp`,
-        meta: mergeMeta(moderationMeta('restored', input.by, '', now)),
-      })
-      .where('id', '=', item.id)
-      .execute();
-    return { ok: true };
+    return reopen(trx, item, 'restored', input.by, now);
   });
 }
 
@@ -427,15 +563,16 @@ const NOT_REPORTED = 'Only a reported question can be kept or removed. Reload th
 async function resolveReports(trx: Trx, itemId: number, by: number, now: Date) {
   await trx
     .updateTable('KnightsQuestionReport')
-    .set({ resolvedAt: sql<Date>`${now.toISOString()}::timestamp`, resolvedBy: by })
+    .set({ resolvedAt: utc(now), resolvedBy: by })
     .where('itemId', '=', itemId)
     .where('resolvedAt', 'is', null)
     .execute();
 }
 
 /**
- * Keeps a question players reported: it is open again and served as before, its reports resolved. When the report pulled
- * the image too, the pull is resolved, so the image is back in every yes/no question and Acolyte pair. The main-app report,
+ * Keeps a question players reported: it is open again and served as before, its reports resolved; refused, as a restore is,
+ * when its image can no longer be shown. When this question's reports pulled the image, the pull is resolved too, so the
+ * image's open questions and Acolyte pairs are served again; a pull another question caused stays. The main-app report,
  * if one was filed, is its own moderators' to rule on.
  */
 export async function keepReportedQuestion(input: {
@@ -448,22 +585,13 @@ export async function keepReportedQuestion(input: {
     const item = await lockItem(trx, input.id);
     if (!item) return { ok: false, error: GONE };
     if (item.status !== YESNO_REPORTED) return { ok: false, error: NOT_REPORTED };
-    await trx
-      .updateTable('KnightsQueueItem')
-      .set({
-        status: 'Open',
-        reason: null,
-        resolvedAt: null,
-        updatedAt: sql<Date>`${now.toISOString()}::timestamp`,
-        meta: mergeMeta(moderationMeta('kept', input.by, '', now)),
-      })
-      .where('id', '=', item.id)
-      .execute();
+    const reopened = await reopen(trx, item, 'kept', input.by, now);
+    if (!reopened.ok) return reopened;
     await resolveReports(trx, item.id, input.by, now);
     await trx
       .updateTable('KnightsImagePull')
-      .set({ resolvedAt: sql<Date>`${now.toISOString()}::timestamp`, resolvedBy: input.by })
-      .where('imageId', '=', item.imageId)
+      .set({ resolvedAt: utc(now), resolvedBy: input.by })
+      .where('itemId', '=', item.id)
       .where('resolvedAt', 'is', null)
       .execute();
     return { ok: true };
@@ -472,7 +600,8 @@ export async function keepReportedQuestion(input: {
 
 /**
  * Removes a question players reported: closed for good, as a retire closes one, with no label and no write-back; its
- * pending answers become inconclusive. An image pull stays open, so the image stays out of Knights.
+ * pending answers become inconclusive. An image pull it caused stays open, listed with the orphan pulls
+ * (`getOrphanImagePulls`) until a moderator returns the image.
  */
 export async function removeReportedQuestion(input: {
   id: number;
