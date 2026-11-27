@@ -370,9 +370,9 @@ describe('ClickHouse', () => {
   });
 
   /**
-   * Ruled by the Moderation Lead: a job the site ran on the user's content (a scan, a hash, a
-   * tagging pass) is not written, so the archive does not reveal an automated check. Fail closed:
-   * only listed user job types are written, so an unknown type stays out.
+   * Decided in civitai/civitai#10668: a job the site ran on the user's content (a scan, a hash, a
+   * tagging pass) is not written or counted, so the archive does not reveal an automated check.
+   * Fail closed: only listed user job types are written, so an unknown type stays out.
    */
   it("writes only jobs the user started, and leaves out the site's own and unknown job types", async () => {
     const row = (jobId: string, jobType?: unknown) => ({
@@ -394,6 +394,7 @@ describe('ClickHouse', () => {
       row('empty', ''),
       row('missing'),
       row('not-text', 7),
+      { ...row('scan-bad-date', 'CivitaiImageScanning'), createdAt: '1900-01-01 00:00:00' },
     ];
     const ch: ClickhouseReader = {
       async query({ query }) {

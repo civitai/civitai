@@ -60,7 +60,7 @@ type ChTable = {
   required?: boolean;
   /** Applied to each kept record last. */
   redact?: (row: Record<string, unknown>) => Record<string, unknown>;
-  /** Only rows this returns true for are written; the rest are left out, not counted. */
+  /** Only rows this returns true for are written; the rest are left out, never counted. */
   include?: (row: Record<string, unknown>) => boolean;
   /**
    * A record that cannot be reliably attributed (corrupted in storage): left out, not rewritten, and
@@ -458,11 +458,12 @@ export async function exportClickhouse({
           for await (const rows of rs.stream())
             for (const row of rows) {
               const raw = row.json<Record<string, unknown>>();
+              // A row that is not the user's own is dropped before anything counts it.
+              if (table.include && !table.include(raw)) continue;
               if (table.unreliable?.(raw)) {
                 entry.leftOut = (entry.leftOut ?? 0) + 1;
                 continue;
               }
-              if (table.include && !table.include(raw)) continue;
               yield reduceChRow(table, raw);
             }
         }
