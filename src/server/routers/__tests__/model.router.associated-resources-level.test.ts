@@ -87,6 +87,7 @@ beforeEach(() => {
   ] as never);
 });
 
+// Visibility rule for linked models set in civitai/civitai#10680.
 describe('model.getAssociatedResourcesSimple browsing level', () => {
   // Signed-out answers are edge-cached by URL, so the result cannot vary with the requested level.
   it('a signed-out request asking for every level gets PG only', async () => {

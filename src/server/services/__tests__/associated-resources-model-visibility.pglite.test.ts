@@ -125,6 +125,7 @@ const listed = async (viewer: SessionUser | undefined, browsingLevel: number, fr
     await getAssociatedResourcesSimple({ fromId, type: 'Suggested', browsingLevel }, viewer, viewer)
   ).map(({ item }) => item.id);
 
+// Visibility rule for linked models set in civitai/civitai#10680.
 describe('getAssociatedResourcesSimple model side', () => {
   it('hides a mature model from a PG viewer and a signed-out viewer, shows it at a mature level', async () => {
     expect(await listed(stranger, PG)).not.toContain(MODELS.mature.id);
