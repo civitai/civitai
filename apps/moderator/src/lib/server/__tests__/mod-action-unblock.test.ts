@@ -64,7 +64,12 @@ describe('imageModerate', () => {
       userId: 2,
     });
 
-    expect(acceptImage).toHaveBeenCalledWith({ imageId: 52, userId: 2, restoreRemoved: true });
+    expect(acceptImage).toHaveBeenCalledWith({
+      imageId: 52,
+      userId: 2,
+      restoreRemoved: true,
+      csamReview: false,
+    });
   });
 });
 

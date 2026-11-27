@@ -14,7 +14,7 @@ import { sql } from 'kysely';
 import { uniq } from 'lodash-es';
 import { toPrismaSql } from '~/server/db/prisma-sql-kysely';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
-import { BlockedReason, NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
@@ -29,8 +29,13 @@ import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { IMAGE_REVIEW_PRECEDENCE, RESTORABLE_REVIEWS } from '@civitai/shared/image-review-types';
 import { getPendingAppealImageIds } from '~/server/services/image-appeal-flag';
-import { csamBlockedSql, pendingImageAppealSql } from '~/server/common/image-visibility';
+import {
+  csamBlockedSql,
+  csamInBlockedFor,
+  pendingImageAppealSql,
+} from '~/server/common/image-visibility';
 import { Prisma } from '@prisma/client';
+import { blockedForNamesCsam } from '@civitai/shared/csam-blocked-for';
 import { moderatorWithheldSql } from '@civitai/shared/retracted-media-tier';
 import {
   PRIOR_BLOCKED_FOR_KEY,
@@ -173,7 +178,7 @@ const recordedLevelSql = (kind: 'restore' | 'floor', alias?: 'i') => {
     WHEN ${col('nsfwLevel')} = ${NsfwLevel.Blocked}
       AND to_jsonb(${col('nsfwLevelLocked')}) = ${meta}->${PRIOR_NSFW_LOCKED_KEY}::text
       AND (${csamBlockedSql(alias)}) IS NOT TRUE
-      AND ${meta}->>${PRIOR_BLOCKED_FOR_KEY}::text IS DISTINCT FROM ${BlockedReason.CSAM}
+      AND NOT ${csamInBlockedFor(Prisma.sql`(${meta}->>${PRIOR_BLOCKED_FOR_KEY}::text)`)}
       AND jsonb_typeof(${meta}->${PRIOR_NSFW_LEVEL_KEY}::text) = 'number'
       AND ${meta}->>${PRIOR_NSFW_LEVEL_KEY}::text ~ '^[1-9][0-9]{0,1}$'
       AND (${meta}->${PRIOR_NSFW_LOCKED_KEY}::text = 'true'::jsonb
@@ -239,14 +244,13 @@ export function restoreAccountDeletionImageBatch(userId: number) {
   >`
     UPDATE "Image"
     SET ingestion = CASE
-          WHEN "blockedFor" = ${
-            BlockedReason.CSAM
-          } OR "metadata"->>${PRIOR_BLOCKED_FOR_KEY}::text = ${BlockedReason.CSAM}
+          WHEN ${csamBlockedSql()}
+            OR ${csamInBlockedFor(Prisma.sql`("metadata"->>${PRIOR_BLOCKED_FOR_KEY}::text)`)}
           THEN 'Blocked'::"ImageIngestionStatus"
           ELSE ("metadata"->>${PRIOR_INGESTION_KEY}::text)::"ImageIngestionStatus"
         END,
         "blockedFor" = CASE
-          WHEN "blockedFor" = ${BlockedReason.CSAM} THEN "blockedFor"
+          WHEN ${csamBlockedSql()} THEN "blockedFor"
           ELSE "metadata"->>${PRIOR_BLOCKED_FOR_KEY}::text
         END,
         -- The one column holds one review: of the current flag and the recorded one, the higher in
@@ -274,7 +278,7 @@ export function restoreAccountDeletionImageBatch(userId: number) {
           WHEN i."metadata"->>${PRIOR_NEEDS_REVIEW_KEY}::text = 'appeal' AND (
             NOT ${pendingImageAppealSql(Prisma.sql`i.id`)}
             OR (${csamBlockedSql('i')}) IS TRUE
-            OR i."metadata"->>${PRIOR_BLOCKED_FOR_KEY}::text = ${BlockedReason.CSAM}
+            OR ${csamInBlockedFor(Prisma.sql`(i."metadata"->>${PRIOR_BLOCKED_FOR_KEY}::text)`)}
           ) THEN NULL
           ELSE i."metadata"->>${PRIOR_NEEDS_REVIEW_KEY}::text
         END AS "recordedReview",
@@ -352,7 +356,7 @@ export async function unblockAccountDeletionImages(userId: number) {
     }
 
     const visible = restored.filter(
-      (x) => x.ingestion !== 'Blocked' && x.blockedFor !== BlockedReason.CSAM
+      (x) => x.ingestion !== 'Blocked' && !blockedForNamesCsam(x.blockedFor)
     );
     const ids = visible.map((x) => x.id);
     const postIds = uniq(visible.map((x) => x.postId).filter((id): id is number => id != null));

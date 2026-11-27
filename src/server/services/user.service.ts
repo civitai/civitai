@@ -208,7 +208,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { imageRemovalMode, PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
-import { withoutGraceMarkersSql } from '~/server/common/image-visibility';
+import { csamBlockedSql, withoutGraceMarkersSql } from '~/server/common/image-visibility';
 import { generateKey, generateSecretHash } from '~/server/utils/key-generator';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { invalidateSession, refreshSession } from '~/server/auth/session-invalidation';
@@ -3052,7 +3052,7 @@ export async function blockBannedUserImages(userId: number) {
       "nsfwLevel" = CASE WHEN ingestion = 'Blocked'::"ImageIngestionStatus" THEN "nsfwLevel"
         ELSE ${NsfwLevel.Blocked} END,
       "blockedFor" = CASE
-        WHEN ingestion = 'Blocked'::"ImageIngestionStatus" OR "blockedFor" = ${BlockedReason.CSAM}
+        WHEN ingestion = 'Blocked'::"ImageIngestionStatus" OR ${csamBlockedSql()}
         THEN "blockedFor" ELSE ${BlockedReason.Moderated} END,
       "metadata" = ${withoutGraceMarkersSql()},
       "updatedAt" = NOW()

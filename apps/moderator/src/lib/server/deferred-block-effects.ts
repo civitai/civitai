@@ -1,5 +1,6 @@
 import { sql } from '@civitai/db/kysely';
 import { isFeedbackCaptureOwner } from '@civitai/shared/feedback-capture';
+import { blockedForNamesCsam } from '@civitai/shared/csam-blocked-for';
 import type { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { OPEN_REPORT_STATUSES } from '@civitai/db-queries/image-removal-confirmation';
@@ -136,7 +137,7 @@ export async function fireDeferredBlockEffects(
   }
   const reported = await imagesInCsamReport(images.map((i) => i.id));
   // Removed for CSAM since the block: as at the block itself, nothing fires.
-  for (const i of images) if (i.blockedFor === 'CSAM') reported.add(i.id);
+  for (const i of images) if (blockedForNamesCsam(i.blockedFor)) reported.add(i.id);
   for (const id of reported)
     await log({ type: 'warning', name: DEFERRED_NOTICE_LOG.skipped, imageId: id });
   images = images.filter((i) => !reported.has(i.id));

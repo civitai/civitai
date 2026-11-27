@@ -5,6 +5,7 @@ import { canAccess } from '$lib/server/access';
 import { parseForm, parseQuery } from '$lib/server/query';
 import { validNsfwLevels } from '@civitai/shared';
 import { updateImageNsfwLevel } from '$lib/server/image-nsfw-level';
+import { holdsCsamReview } from '$lib/server/held-media';
 import { withheldRefusal, withheldRow, withheldRows } from '$lib/server/retracted-media';
 import {
   getSweep,
@@ -134,6 +135,7 @@ export const actions: Actions = {
         nsfwLevel: input.nsfwLevel,
         reason: 'front-page-audit',
         userId: locals.user.id,
+        csamReview: holdsCsamReview(locals.user),
       });
     } catch (e) {
       console.error('[front-page-audit] setRating failed', e);

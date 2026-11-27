@@ -34,7 +34,7 @@ describe('spoke updateImageNsfwLevel: models index', () => {
   it('hands the re-rated post image over', async () => {
     h.postId = 5;
 
-    await updateImageNsfwLevel({ id: 41, nsfwLevel: 8, userId: 1 });
+    await updateImageNsfwLevel({ csamReview: true, id: 41, nsfwLevel: 8, userId: 1 });
 
     expect(queueDocumentsForImageMinorChanges).toHaveBeenCalledWith({ levelImageIds: [41] });
   });
@@ -42,7 +42,7 @@ describe('spoke updateImageNsfwLevel: models index', () => {
   it('skips an image on no post', async () => {
     h.postId = null;
 
-    await updateImageNsfwLevel({ id: 41, nsfwLevel: 8, userId: 1 });
+    await updateImageNsfwLevel({ csamReview: true, id: 41, nsfwLevel: 8, userId: 1 });
 
     expect(queueDocumentsForImageMinorChanges).not.toHaveBeenCalled();
   });

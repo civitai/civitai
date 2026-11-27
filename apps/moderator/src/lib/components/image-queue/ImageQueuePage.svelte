@@ -1,5 +1,6 @@
 <script lang="ts">
   import AgentBadge from '$lib/components/AgentBadge.svelte';
+  import { blockedForNamesCsam } from '@civitai/shared/csam-blocked-for';
   import { enhance } from '$app/forms';
   import { SvelteMap, SvelteSet } from 'svelte/reactivity';
   import { untrack } from 'svelte';
@@ -79,7 +80,7 @@
   const removedTitle = (item: { needsReview: string | null; blockedFor: string | null; ruleBlocked: boolean }) =>
     item.needsReview === FLAG_KEPT_THROUGH_BLOCK
       ? 'Under CSAM review: that queue decides it, and neither verdict acts on it here.'
-      : item.blockedFor === 'CSAM'
+      : blockedForNamesCsam(item.blockedFor)
         ? 'Removed for CSAM: Unaction is refused.'
         : item.blockedFor === 'moderated' && item.ruleBlocked
           ? 'Blocked by an automated rule: Unaction restores it, Remove makes it a moderator removal.'

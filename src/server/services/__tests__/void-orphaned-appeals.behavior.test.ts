@@ -565,9 +565,12 @@ describe('voidOrphanedAppeals against Postgres', () => {
           INSERT INTO "User" (id, "deletedAt") VALUES (19, now()) ON CONFLICT (id) DO UPDATE SET "deletedAt" = now();
           INSERT INTO "Image" (id, "userId", "needsReview", "blockedFor") VALUES
             (1046, 16, 'csam', 'CSAM'), (1047, 17, 'csam', 'moderated'), (2047, 17, NULL, 'CSAM'),
-            (1048, 18, 'csam', 'moderated'), (1049, 19, 'csam', 'moderated');
+            (1048, 18, 'csam', 'moderated'), (1049, 19, 'csam', 'moderated'),
+            (1050, 20, 'csam', 'moderated'), (2050, 20, NULL, 'TOS,csam'),
+            (1051, 21, 'csam', 'moderated'), (2051, 21, NULL, 'TOS,Moderated');
           INSERT INTO "CsamQueueSetAside" ("imageId", outcome) VALUES
-            (1046, 'Dismissed'), (1047, 'Dismissed'), (1048, 'Dismissed'), (1049, 'Dismissed');
+            (1046, 'Dismissed'), (1047, 'Dismissed'), (1048, 'Dismissed'), (1049, 'Dismissed'),
+            (1050, 'Dismissed'), (1051, 'Dismissed');
           INSERT INTO "Report" (id, reason) VALUES (9048, 'CSAM');
           INSERT INTO "UserReport" ("userId", "reportId") VALUES (18, 9048);
         `);
@@ -577,7 +580,9 @@ describe('voidOrphanedAppeals against Postgres', () => {
              (46, 16, 'Image', 1046, 'Pending', now() - make_interval(days => $1, mins => 1), now(), 'appeal-16-46'),
              (47, 17, 'Image', 1047, 'Pending', now() - make_interval(days => $1, mins => 1), now(), 'appeal-17-47'),
              (48, 18, 'Image', 1048, 'Pending', now() - make_interval(days => $1, mins => 1), now(), 'appeal-18-48'),
-             (49, 19, 'Image', 1049, 'Pending', now() - make_interval(days => $1, mins => 1), now(), 'appeal-19-49')`,
+             (49, 19, 'Image', 1049, 'Pending', now() - make_interval(days => $1, mins => 1), now(), 'appeal-19-49'),
+             (50, 20, 'Image', 1050, 'Pending', now() - make_interval(days => $1, mins => 1), now(), 'appeal-20-50'),
+             (51, 21, 'Image', 1051, 'Pending', now() - make_interval(days => $1, mins => 1), now(), 'appeal-21-51')`,
           [ROUTED_APPEAL_REVIEW_DAYS]
         );
       });
@@ -597,6 +602,13 @@ describe('voidOrphanedAppeals against Postgres', () => {
           });
         expect((await withheldRows()).map((r) => r.entityId)).not.toContain(1046);
         expect(await seenBy(41, 'appeal-12-41')).toMatchObject({ refunded: true });
+      });
+
+      it('reads a CSAM block inside a comma list as one, and a list without one as not', async () => {
+        await voidOrphanedAppeals();
+
+        expect(await seenBy(50, 'appeal-20-50')).toMatchObject({ notices: [], refunded: false });
+        expect(await seenBy(51, 'appeal-21-51')).toMatchObject({ refunded: true });
       });
 
       it('refunds a deleted appellant without a notice', async () => {

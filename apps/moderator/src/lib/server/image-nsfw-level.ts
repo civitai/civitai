@@ -9,6 +9,7 @@ import { invalidateThumbnails, thumbnailParentId } from './thumbnail-cache';
 import { recordModActivity } from './mod-activity';
 import { queueDocumentsForImageMinorChanges } from './image-models-reindex';
 import { ratingRecordedUnderGrace } from '@civitai/shared/account-deletion-grace';
+import { assertNotWithheld, notWithheldTarget } from './withheld-write';
 
 type ReportStatus = 'Pending' | 'Processing' | 'Actioned' | 'Unactioned';
 
@@ -20,12 +21,16 @@ export async function updateImageNsfwLevel({
   status,
   reason,
   userId,
+  csamReview,
 }: {
   id: number;
   nsfwLevel: number;
   status?: ReportStatus;
   reason?: string;
   userId: number;
+  /** The moderator's CSAM grant: an image withheld from them is left as it is, and this throws
+   *  `WithheldImageError`. */
+  csamReview: boolean;
 }): Promise<void> {
   const image = await dbWrite
     .selectFrom('Image')
@@ -41,7 +46,7 @@ export async function updateImageNsfwLevel({
     ...ratingRecordedUnderGrace(stored, nsfwLevel),
   };
 
-  await dbWrite
+  const written = await dbWrite
     .updateTable('Image')
     .set({
       nsfwLevel,
@@ -49,7 +54,9 @@ export async function updateImageNsfwLevel({
       metadata: sql`${JSON.stringify(metadata)}::jsonb`,
     })
     .where('id', '=', id)
-    .execute();
+    .where(notWithheldTarget(csamReview))
+    .executeTakeFirst();
+  if (Number(written.numUpdatedRows) === 0) await assertNotWithheld([id], csamReview);
   if (status) {
     await dbWrite
       .updateTable('ImageRatingRequest')
