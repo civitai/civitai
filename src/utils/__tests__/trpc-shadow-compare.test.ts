@@ -519,6 +519,20 @@ describe('verdicts', () => {
       expect(shadowPushes()[0][1].context.verdict).toBe('match');
     });
 
+    it('a text that is not exact JSON.stringify output is not rewritten, so its encoding still mismatches', async () => {
+      shadowOn();
+      // NODE_WITH_REFEQ with nextCursor's "88" escaped as 88: the same value, other bytes.
+      replies.node.body = NODE_WITH_REFEQ.replace('"n-88"', '"n-\\u0038\\u0038"');
+      replies.go.body = GO_SAME_VALUE;
+      await callQuery(INFINITE, INFINITE_INPUT);
+      await vi.waitFor(() => expect(shadowPushes()).toHaveLength(1));
+      expect(shadowPushes()[0][1].context).toMatchObject({
+        verdict: 'mismatch',
+        diff_path: '$.result.data.meta.referentialEqualities',
+        diff_kind: 'missing_in_candidate',
+      });
+    });
+
     it('a real value difference beside it is still a mismatch, at that value', async () => {
       shadowOn();
       replies.node.body = NODE_WITH_REFEQ;

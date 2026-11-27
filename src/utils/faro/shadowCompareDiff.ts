@@ -198,9 +198,12 @@ const isPlainObject = (value: unknown): value is Record<string, unknown> =>
  * the text cannot be rewritten without changing anything else.
  *
  * The Node writer adds that member when one object instance appears at several paths (a creator's
- * `cosmetics` shared by all their images). It changes object identity after decode, never a decoded
- * value, and the Go service deliberately never writes it (apps/feed-go/internal/superjson), so it
- * would otherwise make nearly every image-feed compare a mismatch.
+ * `cosmetics` shared by all their images). For a shared, non-circular object, which is what these
+ * feeds' database rows produce, it changes object identity after decode, never a decoded value, and
+ * the Go service deliberately never writes it (apps/feed-go/internal/superjson), so it would otherwise
+ * make nearly every image-feed compare a mismatch. A CIRCULAR reference is different: superjson
+ * writes `null` at the back-reference and restores the cycle from this member, so there it does carry
+ * a value. None of the shadowed procedures returns one.
  *
  * Only that one member goes. `meta.values` and everything else stay. When `v` is all that is left of
  * `meta`, `meta` goes too: that is what superjson writes when there is nothing to annotate, and what
