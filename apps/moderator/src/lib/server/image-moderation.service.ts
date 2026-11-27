@@ -62,7 +62,8 @@ import type { DB } from '@civitai/db-schema/kysely';
 const NOT_FLAG_ONLY_REMAINING = sql<boolean>`("needsReview" IS DISTINCT FROM ${FLAG_KEPT_THROUGH_BLOCK} OR "ingestion" <> 'Blocked')`;
 
 const BLOCKED_REASON_MODERATED = 'moderated';
-/** The block reason of a CSAM removal; the main app's `csamBlockedSql` reads the same literal. */
+/** The row holds a CSAM block, anywhere in its comma list of block reasons (main app: `csamBlockedSql`). */
+const CSAM_BLOCKED = sql<boolean>`${sql.raw(csamBlockedForSql('"Image"'))}`;
 const BLOCKED_REASON_CSAM = 'CSAM';
 
 /**
@@ -363,7 +364,7 @@ async function acceptImageUnder(
         : {}),
     })
     .where('id', '=', imageId)
-    .where(sql<boolean>`NOT ${sql.raw(csamBlockedForSql('"Image"'))}`)
+    .where(sql<boolean>`NOT ${CSAM_BLOCKED}`)
     .$if(!clearsCsamReview, (qb) =>
       qb.where('needsReview', 'is distinct from', FLAG_KEPT_THROUGH_BLOCK)
     )
@@ -642,7 +643,7 @@ export async function blockImage({
         >`CASE WHEN "needsReview" = ${FLAG_KEPT_THROUGH_BLOCK} THEN "needsReview" END`,
         ingestion: 'Blocked',
         nsfwLevel: NsfwLevel.Blocked,
-        blockedFor: sql<string>`CASE WHEN "blockedFor" = ${BLOCKED_REASON_CSAM} THEN "blockedFor" ELSE ${BLOCKED_REASON_MODERATED} END`,
+        blockedFor: sql<string>`CASE WHEN ${CSAM_BLOCKED} THEN "blockedFor" ELSE ${BLOCKED_REASON_MODERATED} END`,
         updatedAt: new Date(),
         // Two things happen to `metadata` on a block, and they compose in one expression:
         //   - the account-deletion breadcrumbs come off, always. `jsonb - key` NULL-propagates, so a
@@ -902,7 +903,7 @@ export async function keepPendingAppealFlags(db: Kysely<DB>, imageIds: readonly 
     .where('id', 'in', [...imageIds])
     .where('needsReview', 'is distinct from', FLAG_KEPT_THROUGH_BLOCK)
     // A row holding a CSAM block never takes the appeal flag (main app: keepPendingAppealFlags).
-    .where(sql<boolean>`("blockedFor" = ${BLOCKED_REASON_CSAM}) IS NOT TRUE`)
+    .where(sql<boolean>`NOT ${CSAM_BLOCKED}`)
     .where((eb) =>
       eb.exists(
         eb
@@ -1108,7 +1109,7 @@ export async function resolveImageAppeal({
       })
       .where('id', '=', imageId)
       .where('needsReview', 'is distinct from', FLAG_KEPT_THROUGH_BLOCK)
-      .where('blockedFor', 'is distinct from', BLOCKED_REASON_CSAM)
+      .where(sql<boolean>`NOT ${CSAM_BLOCKED}`)
       .returning(LIFT_KEPT_BLOCKED.as('keptBlocked'))
       .executeTakeFirst();
     written = !!row;

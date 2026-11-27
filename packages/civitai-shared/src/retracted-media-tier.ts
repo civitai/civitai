@@ -6,6 +6,7 @@ import {
   heldItemImageSql,
   unreadableImageSql,
 } from './held-media';
+import { csamInBlockedForSql } from './csam-blocked-for';
 import { heldUrlSql, reportListedUrlSql } from './held-url';
 import { blockedForSignal, type BlockedForPatterns, type ScannerVerdict } from './media-signals';
 
@@ -194,10 +195,7 @@ export function moderatorWithheldSql(
 
 /** Whether `row."blockedFor"`, a comma list of block reasons, names CSAM anywhere in it. NULL reads false. */
 export function csamBlockedForSql(row: string): string {
-  return `EXISTS (
-      SELECT 1 FROM unnest(string_to_array(${row}."blockedFor", ',')) AS mw_reason(value)
-      WHERE lower(btrim(mw_reason.value)) = 'csam'
-    )`;
+  return csamInBlockedForSql(`${row}."blockedFor"`);
 }
 
 function buildModeratorWithheldSql(image: string): string {

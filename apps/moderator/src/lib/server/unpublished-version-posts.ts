@@ -1,4 +1,5 @@
 import { sql } from '@civitai/db/kysely';
+import { csamBlockedForSql } from '@civitai/shared/retracted-media-tier';
 import type { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { dbRead, dbWrite } from './db';
@@ -83,7 +84,9 @@ async function candidatePage(
       EXISTS (
         SELECT 1 FROM "Image" i
         WHERE i."postId" = cand."postId"
-          AND (i.ingestion <> 'Scanned' OR i."needsReview" = ${FLAG_KEPT_THROUGH_BLOCK} OR i."blockedFor" = 'CSAM')
+          AND (i.ingestion <> 'Scanned' OR i."needsReview" = ${FLAG_KEPT_THROUGH_BLOCK} OR ${sql.raw(
+    csamBlockedForSql('i')
+  )})
       ) AS "imageNotClear",
       EXISTS (SELECT 1 FROM "User" u WHERE u.id = cand."posterId" AND u."bannedAt" IS NOT NULL) AS "posterBanned",
       (${sql.join(Object.values(held), sql` OR `)}) AS "posterHeld",

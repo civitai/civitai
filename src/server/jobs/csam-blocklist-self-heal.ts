@@ -4,6 +4,7 @@ import {
   NEWEST_BLOCKLIST_ROW_SQL,
 } from '@civitai/shared/held-media';
 import { REDACT_LOG_MARKER } from '@civitai/db';
+import { csamInBlockedForSql } from '@civitai/shared/csam-blocked-for';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
@@ -25,7 +26,9 @@ import { createJob } from './job';
  */
 
 const LISTED_IDS = `ARRAY(SELECT l.id::bigint FROM (${CSAM_REPORT_LISTED_IMAGE_IDS_SQL}) l WHERE l.id ~ '^[0-9]{1,18}$')`;
-const CSAM_BLOCKED = `ingestion IN ('Blocked', 'Error') AND "blockedFor" = 'CSAM' AND "pHash" IS NOT NULL`;
+const CSAM_BLOCKED = `ingestion IN ('Blocked', 'Error') AND ${csamInBlockedForSql(
+  '"blockedFor"'
+)} AND "pHash" IS NOT NULL`;
 
 /** With each image's earliest report, which decides whether a never-listed hash may be healed. */
 export const REPORTED_CANDIDATES_SQL = `WITH listed AS (

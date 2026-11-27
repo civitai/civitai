@@ -92,6 +92,7 @@ import {
   reviewKeyAfterSql,
   liftedNsfwLevelSql,
   liftKeptBlockedSql,
+  csamBlockedSql,
   liftableByUnblock,
   liftableByUnblockSql,
   CSAM_REVIEW_FLAG,
@@ -1430,7 +1431,7 @@ export async function handleUnblockImages({
           await dbWrite.$queryRaw<{ id: number }[]>`
             SELECT id FROM "Image"
             WHERE id IN (${Prisma.join(found.map((image) => image.id))})
-              AND ("blockedFor" = ${BlockedReason.CSAM} OR "needsReview" = ${CSAM_REVIEW_FLAG})
+              AND (${csamBlockedSql()} OR "needsReview" = ${CSAM_REVIEW_FLAG})
           `
         ).map((row) => row.id)
       )
@@ -1617,7 +1618,9 @@ export async function writeModeratorBlock(
       UPDATE "Image" SET
         ingestion = 'Blocked',
         "nsfwLevel" = ${NsfwLevel.Blocked},
-        "blockedFor" = CASE WHEN "blockedFor" = ${BlockedReason.CSAM} THEN "blockedFor" ELSE ${BlockedReason.Moderated} END,
+        "blockedFor" = CASE WHEN ${csamBlockedSql()} THEN "blockedFor" ELSE ${
+      BlockedReason.Moderated
+    } END,
         "updatedAt" = NOW(),
         "metadata" = CASE WHEN jsonb_typeof("metadata") = 'object' THEN "metadata" - 'ruleId' - 'ruleReason' ELSE "metadata" END
       WHERE id = ANY(${ids}::int[])
@@ -8708,7 +8711,7 @@ export const updateImagesFlag = async ({
   if (withheldFor) {
     const rows = await kyselyWrite
       .updateTable('Image as i')
-      .set({ [flag]: value })
+      .set({ [flag]: value, updatedAt: new Date() })
       .where('i.id', 'in', ids)
       .where(sql<boolean>`NOT ${sql.raw(moderatorWithheldSql('i', withheldFor))}`)
       .returning('i.id')

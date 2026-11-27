@@ -45,7 +45,9 @@ beforeAll(async () => {
       (7, ${ME}, NULL, NULL, false, 'Scanned'),
       (8, ${ME}, NULL, NULL, true, 'Scanned'),
       (9, ${OTHER}, NULL, NULL, false, 'Scanned'),
-      (10, 30, NULL, NULL, false, 'Scanned');
+      (10, 30, NULL, NULL, false, 'Scanned'),
+      (11, ${ME}, 'tos, Csam', NULL, false, 'Blocked'),
+      (12, ${ME}, 'tos,moderated', NULL, false, 'Blocked');
     INSERT INTO "CsamReport" VALUES (1, NULL, '[{"id": 7}]'), (2, 30, '[]'), (3, NULL, '{"bad": 1}');
 
     CREATE TABLE "ChatMember" ("chatId" int, "userId" int, status text, "leftAt" timestamp,
@@ -95,12 +97,12 @@ afterAll(() => db?.close());
 
 describe('export WHERE clauses, run', () => {
   it("returns the user's images, without those the safety rules leave out", async () => {
-    expect(await ids('Image', planFor('Image').where)).toEqual([1, 2, 8]);
+    expect(await ids('Image', planFor('Image').where)).toEqual([1, 2, 8, 12]);
   });
 
   it('flags the same images as unreleasable (the hold reads this condition)', async () => {
     expect(await ids('Image', `"Image"."userId" = ${ME} AND ${IMAGE_SAFETY_CONDITION}`)).toEqual([
-      3, 4, 5, 6, 7,
+      3, 4, 5, 6, 7, 11,
     ]);
     expect(await ids('Image', `"Image"."userId" = 30 AND ${IMAGE_SAFETY_CONDITION}`)).toEqual([10]);
   });

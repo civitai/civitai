@@ -4,6 +4,7 @@ import { fromPrismaSql } from '~/server/db/prisma-sql-kysely';
 import { Prisma } from '@prisma/client';
 import { chunk, uniq } from 'lodash-es';
 import { BlockedReason, NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { csamBlockedSql } from '~/server/common/image-visibility';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
@@ -300,9 +301,9 @@ async function blockUserImages(
             UPDATE "Image"
             SET ingestion = 'Blocked'::"ImageIngestionStatus",
                 "nsfwLevel" = ${NsfwLevel.Blocked},
-                "blockedFor" = CASE WHEN "blockedFor" = ${
-                  BlockedReason.CSAM
-                } THEN "blockedFor" ELSE ${BlockedReason.Moderated} END,
+                "blockedFor" = CASE WHEN ${csamBlockedSql()} THEN "blockedFor" ELSE ${
+            BlockedReason.Moderated
+          } END,
                 "needsReview" = CASE WHEN "needsReview" = 'csam' THEN 'csam' END,
                 "metadata" = "metadata" || jsonb_build_object(${PRIOR_INGESTION_KEY}::text, ingestion::text, ${PRIOR_BLOCKED_FOR_KEY}::text, "blockedFor", ${PRIOR_NEEDS_REVIEW_KEY}::text, "needsReview", ${PRIOR_NSFW_LEVEL_KEY}::text, "nsfwLevel", ${PRIOR_NSFW_LOCKED_KEY}::text, "nsfwLevelLocked"),
                 "updatedAt" = now()

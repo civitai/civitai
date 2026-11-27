@@ -298,6 +298,15 @@ describe('the candidate SQL, on real Postgres', () => {
     expect(await query(STILL_BLOCKED_SQL, [[10]])).toEqual([{ id: 10, pHash: '210' }]);
   });
 
+  it('reads a CSAM block anywhere in a comma list of block reasons', async () => {
+    await pg.exec(`
+      INSERT INTO "Image" VALUES (11, 7, 'Blocked', 'TOS,csam', 211), (12, 7, 'Blocked', 'TOS,Moderated', 212);
+      INSERT INTO "CsamReport" ("userId", images, "createdAt") VALUES (7, '[11, 12]', '2026-11-20');
+    `);
+    expect((await candidates()).map((c) => c.id).sort((a, b) => a - b)).toEqual([1, 5, 11]);
+    expect(await query(STILL_BLOCKED_SQL, [[11, 12]])).toEqual([{ id: 11, pHash: '211' }]);
+  });
+
   it('re-reads on the write only the ids still removed for CSAM', async () => {
     expect(await query(STILL_BLOCKED_SQL, [[1, 3, 4, 6]])).toEqual([
       { id: 1, pHash: '-4276845791567733103' },

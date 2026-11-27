@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { sql, type Kysely, type RawBuilder } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { GRACE_PRIOR_KEYS } from '@civitai/shared/account-deletion-grace';
+import { csamInBlockedForSql } from '@civitai/shared/csam-blocked-for';
 import {
   IMAGE_REVIEW_PRECEDENCE,
   REVIEWS_KEPT_WHEN_LIFTED,
@@ -64,6 +65,9 @@ export type ImageFiles = {
   /** An object that shop artwork still uses stays. */
   keepShopArtwork?: RawBuilder<boolean>;
 };
+
+/** The image row, unqualified, holds a CSAM block anywhere in its comma list of block reasons. */
+const CSAM_BLOCKED = sql<boolean>`${sql.raw(csamInBlockedForSql('"blockedFor"'))}`;
 
 /** Not under CSAM review or blocked for CSAM. Read against the image row, unqualified. */
 const notCsamFlagged = sql<boolean>`"needsReview" IS DISTINCT FROM 'csam' AND "blockedFor" IS DISTINCT FROM 'CSAM'`;
@@ -169,11 +173,11 @@ function deleteStatement(table: 'Image' | 'Post', options: DeleteOptions, ids: n
   if (hides)
     ctes.push(sql`hidden AS (
       UPDATE "Image" SET ingestion = 'Blocked', "nsfwLevel" = ${NSFW_LEVEL_BLOCKED},
-        "blockedFor" = CASE WHEN "blockedFor" = 'CSAM' THEN "blockedFor" ELSE 'moderated' END,
+        "blockedFor" = CASE WHEN ${CSAM_BLOCKED} THEN "blockedFor" ELSE 'moderated' END,
         -- Out of every review queue but the CSAM one, so no queue's accept lifts the block; a pending
         -- appeal keeps its flag unless the image is CSAM-blocked (as keepPendingAppealFlags does).
         "needsReview" = CASE WHEN "needsReview" = 'csam' THEN "needsReview"
-          WHEN "blockedFor" IS DISTINCT FROM 'CSAM' AND EXISTS (SELECT 1 FROM "Appeal" a WHERE a."entityType" = 'Image'
+          WHEN NOT ${CSAM_BLOCKED} AND EXISTS (SELECT 1 FROM "Appeal" a WHERE a."entityType" = 'Image'
             AND a."entityId" = "Image".id AND a.status = 'Pending') THEN 'appeal' END,
         metadata = CASE WHEN jsonb_typeof(metadata) = 'object'
             THEN ${withoutGrace} || COALESCE(${marker}, '{}'::jsonb)

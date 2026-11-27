@@ -2,7 +2,7 @@ import type { MediaRatingOutput } from '@civitai/orchestration-client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { computePerceptualHash } from '~/server/services/orchestrator/orchestrator.service';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
-import { BlockedReason, NsfwLevel } from '~/server/common/enums';
+import { NsfwLevel } from '~/server/common/enums';
 import { isDefined } from '~/utils/type-guards';
 import { orchestratorNsfwLevelMap } from '~/shared/constants/browsingLevel.constants';
 import type { MediaMetadata } from '~/server/schema/media.schema';
@@ -14,7 +14,7 @@ import { handleLogError } from '~/server/utils/errorHandling';
 import { refreshProfilePicturesForImagesLazy } from '~/server/services/refresh-profile-pictures-lazy';
 import { bustPostCachesLazy } from '~/server/services/bust-post-caches-lazy';
 import { evictHomeBlocksForImages } from '~/server/services/home-block-cache.service';
-import { withoutGraceMarkersSql } from '~/server/common/image-visibility';
+import { csamBlockedSql, withoutGraceMarkersSql } from '~/server/common/image-visibility';
 import {
   readJobFailureReason,
   sendIngestionSignal,
@@ -461,9 +461,7 @@ export async function blockImageFromRating({
       "pHash" = COALESCE(${pHash ?? null}, "pHash"),
       ingestion = ${ImageIngestionStatus.Blocked}::"ImageIngestionStatus",
       "nsfwLevel" = ${NsfwLevel.Blocked}::int,
-      "blockedFor" = CASE WHEN "blockedFor" = ${BlockedReason.CSAM} OR ${
-    blockedReason === undefined
-  }
+      "blockedFor" = CASE WHEN ${csamBlockedSql()} OR ${blockedReason === undefined}
         THEN "blockedFor" ELSE ${blockedReason ?? null} END,
       "metadata" = ${withoutGraceMarkersSql()}
     WHERE id = ${imageId}
