@@ -87,7 +87,7 @@ const REFUSAL: Record<'not-open' | 'already-voted' | 'full' | 'released' | 'not-
   released: 'This card left your queue. Here is the next.',
 };
 
-// A refused hold says so, never the generic refusal: a moderator must not take it as having landed.
+// A moderator must not take a refused hold as having landed.
 const HOLD_REFUSED =
   'Your CSAM hold was not recorded: this card was already decided or left your queue. Tell a lead if the image still needs CSAM review. Here is the next.';
 
@@ -113,10 +113,13 @@ export const actions: Actions = {
     if (!form.has('token')) return fail(400, { error: STALE_PAGE });
     const input = parseForm(voteSchema, form);
     if (typeof input === 'string') return fail(400, { error: input });
+    // A refused hold says so, whatever refused it; only a hold that already landed is not "refused".
+    const hold = input.choice.block && input.choice.reason === CSAM_HOLD_REASON;
+    const refuse = (reason: keyof typeof REFUSAL) =>
+      fail(409, { error: hold && reason !== 'already-voted' ? HOLD_REFUSED : REFUSAL[reason] });
     const itemId = await itemForToken(input.token, locals.user.id);
-    if (itemId === null) return fail(409, { error: REFUSAL['not-yours'] });
-    if (await itemWithheld(itemId, holdsCsamReview(locals.user)))
-      return fail(409, { error: REFUSAL['not-open'] });
+    if (itemId === null) return refuse('not-yours');
+    if (await itemWithheld(itemId, holdsCsamReview(locals.user))) return refuse('not-open');
     const result = await castVote({
       itemId,
       userId: locals.user.id,
@@ -124,10 +127,7 @@ export const actions: Actions = {
       msOnItem: input.ms,
       claimToken: input.token,
     });
-    if (!result.ok) {
-      const holdRefused = input.choice.block && input.choice.reason === CSAM_HOLD_REASON;
-      return fail(409, { error: holdRefused ? HOLD_REFUSED : REFUSAL[result.reason] });
-    }
+    if (!result.ok) return refuse(result.reason);
     // Holds first, and retried here like the blocks below. Must not fail the vote, which has landed.
     const holds = await applyCsamHolds(
       {},

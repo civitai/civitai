@@ -298,6 +298,25 @@ describe('vote action', () => {
       expect(keep.data.error).not.toMatch(/CSAM hold/);
     }
   );
+
+  it('tells a moderator their CSAM hold did not land when the card is refused before the vote', async () => {
+    const hold = () => event({ token: TOKEN, block: '1', reason: CSAM_HOLD_REASON });
+    itemForToken.mockResolvedValueOnce(null);
+    const notYours = (await actions.vote(hold())) as { data: { error: string } };
+    expect(notYours.data.error).toMatch(/CSAM hold was not recorded/);
+    itemWithheld.mockResolvedValueOnce(true);
+    const withheld = (await actions.vote(hold())) as { data: { error: string } };
+    expect(withheld.data.error).toMatch(/CSAM hold was not recorded/);
+    expect(castVote).not.toHaveBeenCalled();
+  });
+
+  // A repeat of a hold that landed (a second tab, a retry) must not say it was not recorded.
+  it('does not tell a moderator a hold that landed was refused', async () => {
+    castVote.mockResolvedValue({ ok: false, reason: 'already-voted' });
+    const hold = event({ token: TOKEN, block: '1', reason: CSAM_HOLD_REASON });
+    const result = (await actions.vote(hold)) as { data: { error: string } };
+    expect(result.data.error).toMatch(/already voted/);
+  });
 });
 
 describe('load', () => {
