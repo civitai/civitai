@@ -58,10 +58,16 @@ export function imageGateViewSql(): string {
   );
 }
 
-/** `column` of "KnightsImageGate" for `img`. Carries the JIT marker: the view still runs the CSAM subplans. */
+/**
+ * `column` of "KnightsImageGate" for `img`. Carries the JIT marker: the view still runs the CSAM subplans.
+ * OFFSET 0 keeps the EXISTS a subplan run per outer image (Image and Post primary-key probes). Without it Postgres may
+ * plan a semi join that scans all of Image and Post on every call; `image-gate.pglite.test.ts` pins the subplan.
+ */
 export const imageGate = (column: ImageGateColumn) =>
   sql<SqlBool>`${sql.raw(SERVABLE_IMAGE_CONTENT_MARKER)} EXISTS (
-    SELECT 1 FROM "KnightsImageGate" g WHERE g."imageId" = img.id AND g.${sql.raw(`"${column}"`)}
+    SELECT 1 FROM "KnightsImageGate" g WHERE g."imageId" = img.id AND g.${sql.raw(
+      `"${column}"`
+    )} OFFSET 0
   )`;
 
 /** `servableImage`, through the gate. Expects `Image as img` joined to `Post as p`. */

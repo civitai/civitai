@@ -13,6 +13,9 @@ import (
 // shapeOptions are what differs between the two.
 type shapeOptions struct {
 	level int
+	// unicodeNames: a file name over a non-ASCII model or version name is computed (nameModel.unicode)
+	// instead of falling back; missServe.filename.
+	unicodeNames bool
 	// detail: the `[id]` shaper (removeEmpty per version, removeEmpty file metadata, pinned per-file
 	// download URLs, images without `id`, includeImages by TakenDown only).
 	detail bool
@@ -66,7 +69,7 @@ func shapeModel(it *item, o shapeOptions) (superjson.Object, error) {
 	}
 	versions := make([]any, 0, len(it.versions))
 	name, _ := getVal(it.base, "name").(string)
-	model := nameModel{name: name, typ: it.typ}
+	model := nameModel{name: name, typ: it.typ, unicode: o.unicodeNames}
 	for _, v := range it.versions {
 		// The list's `supportsGeneration` filter is a fallback upstream, so only the status filters.
 		if s, _ := getVal(v, "status").(string); s != "Published" {

@@ -141,9 +141,10 @@ func TestLoadV1ModelsServeDataMiss(t *testing.T) {
 func TestLoadV1ModelsMissSwitches(t *testing.T) {
 	t.Setenv("FEED_GO_SERVE_V1_MODELS", "true")
 	names := []string{"FEED_GO_V1_MODELS_SERVE_DATA_MISS", "FEED_GO_V1_MODELS_SERVE_TAGS_MISS",
-		"FEED_GO_V1_MODELS_SERVE_TAG_NAME_STALE", "FEED_GO_V1_MODELS_SERVE_SHOWCASE_MISS"}
+		"FEED_GO_V1_MODELS_SERVE_TAG_NAME_STALE", "FEED_GO_V1_MODELS_SERVE_SHOWCASE_MISS", "FEED_GO_V1_MODELS_SERVE_FILES_MISS",
+		"FEED_GO_V1_MODELS_SERVE_FILENAME"}
 	get := func(c V1Models) []bool {
-		return []bool{c.ServeDataMiss, c.ServeTagsMiss, c.ServeTagNameStale, c.ServeShowcaseMiss}
+		return []bool{c.ServeDataMiss, c.ServeTagsMiss, c.ServeTagNameStale, c.ServeShowcaseMiss, c.ServeFilesMiss, c.ServeFilename}
 	}
 	for i, name := range names {
 		for in, want := range map[string]bool{"": false, "false": false, "junk": false, "true": true, "1": true} {
@@ -157,8 +158,10 @@ func TestLoadV1ModelsMissSwitches(t *testing.T) {
 					t.Errorf("%s=%q: %s -> %v, want %v", name, in, names[j], got, w)
 				}
 			}
-			if err := c.ValidateMisses(false); (err == nil) != !want {
-				t.Errorf("%s=%q without FEED_GO_COMPUTE_MISSES: %v, want refused %v", name, in, err, want)
+			// The file name reads nothing, so it needs no miss computation.
+			refused := want && name != "FEED_GO_V1_MODELS_SERVE_FILENAME"
+			if err := c.ValidateMisses(false); (err == nil) != !refused {
+				t.Errorf("%s=%q without FEED_GO_COMPUTE_MISSES: %v, want refused %v", name, in, err, refused)
 			}
 			if err := c.ValidateMisses(true); err != nil {
 				t.Errorf("%s=%q with FEED_GO_COMPUTE_MISSES: %v", name, in, err)

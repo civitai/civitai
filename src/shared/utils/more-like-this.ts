@@ -1,4 +1,5 @@
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import { isImageShownBlocked } from '~/shared/utils/image-blocked';
 
 export type MoreLikeThisAnchor = {
   ingestion?: ImageIngestionStatus | string | null;
@@ -13,7 +14,7 @@ export type MoreLikeThisAnchor = {
  * unscanned image is refused.
  */
 export function isMoreLikeThisRefused(image: MoreLikeThisAnchor) {
-  if (image.ingestion === ImageIngestionStatus.Blocked || image.blockedFor) return true;
+  if (isImageShownBlocked(image)) return true;
   if (image.minor || image.poi) return true;
   return image.ingestion != null && image.ingestion !== ImageIngestionStatus.Scanned;
 }
