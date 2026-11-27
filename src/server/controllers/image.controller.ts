@@ -56,6 +56,7 @@ import {
 import { clearAccountDeletionImageMarkers } from '~/server/services/account-deletion-image-markers';
 import { getRequestBrowsingLevel, requestServableLevels } from '~/server/utils/browsing-level';
 import { shownReviewImageLevelsFor } from '~/server/utils/review-image-levels';
+import { holdLeavesImage } from '~/server/utils/held-level';
 import { resolveStrictestPoiMinor } from '~/shared/constants/browsing-settings-addons';
 import { DELETE_PROCESSING_MESSAGE } from '~/shared/constants/delete-after-review.constants';
 import { filterImagesForViewer } from '~/server/utils/model-getall-images';
@@ -479,8 +480,8 @@ async function withoutHeldFromViewer<T extends { postId?: number | null; nsfwLev
   const held = await getHeldLevelsByPost(postIds);
   return images.filter((image) => {
     const hold = image.postId ? held.get(image.postId) : undefined;
-    const owner = !!ctx.user && isSessionOrFullUserKey(ctx) && hold?.ownerId === ctx.user.id;
-    return !hold || owner || Flags.intersects(hold.level, image.nsfwLevel);
+    const viewerId = ctx.user && isSessionOrFullUserKey(ctx) ? ctx.user.id : undefined;
+    return holdLeavesImage(hold, viewerId, image.nsfwLevel);
   });
 }
 

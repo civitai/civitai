@@ -147,31 +147,34 @@ describe("an owner's blocked slide that image.get sends to the owner route", () 
         attributes: true,
         attributeFilter: ['src'],
       });
-      renderWithProviders(
-        <div data-slide style={{ width: 400, height: 300, display: 'flex' }}>
-          <ImageDetailCarousel
-            images={[
-              {
-                id: 4104,
-                name: 'mine.png',
-                nsfwLevel: 1,
-                height: 600,
-                width: 400,
-                type,
-                url: null,
-                ingestion: 'Blocked',
-                ownerRetractedMedia: true,
-              },
-            ]}
-            index={0}
-            next={noop}
-            previous={noop}
-            canNavigate={false}
-          />
-        </div>
-      );
-      await expect.element(page.getByText('Not viewable here')).toBeVisible();
-      observer.disconnect();
+      try {
+        renderWithProviders(
+          <div data-slide style={{ width: 400, height: 300, display: 'flex' }}>
+            <ImageDetailCarousel
+              images={[
+                {
+                  id: 4104,
+                  name: 'mine.png',
+                  nsfwLevel: 1,
+                  height: 600,
+                  width: 400,
+                  type,
+                  url: null,
+                  ingestion: 'Blocked',
+                  ownerRetractedMedia: true,
+                },
+              ]}
+              index={0}
+              next={noop}
+              previous={noop}
+              canNavigate={false}
+            />
+          </div>
+        );
+        await expect.element(page.getByText('Not viewable here')).toBeVisible();
+      } finally {
+        observer.disconnect();
+      }
       expect([...new Set(srcs)]).toEqual(['/api/retracted-media/own/4104']);
     }
   );

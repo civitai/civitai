@@ -7,8 +7,8 @@ import {
 } from '@civitai/shared/retracted-media';
 import type { OwnRetractedMedia } from '~/server/services/retracted-media.service';
 import { isFullScopeSession } from '~/server/utils/require-full-scope-session';
+import { holdLeavesImage } from '~/server/utils/held-level';
 import { streamStoredMedia } from '~/server/utils/stream-stored-media';
-import { Flags } from '~/shared/utils/flags';
 
 const query = z.object({ imageId: z.coerce.number().int().positive().max(2_147_483_647) });
 
@@ -78,7 +78,7 @@ export async function serveOwnRetractedMedia(
     : undefined;
   if (hold === 'failed')
     return void res.status(503).json({ error: 'Could not check this image; retry' });
-  if (hold && hold.ownerId !== viewer.id && !Flags.intersects(hold.level, media.nsfwLevel))
+  if (!holdLeavesImage(hold, viewer.id, media.nsfwLevel))
     return void res.status(404).json({ error: 'Not available here' });
   if (req.query.probe === '1') return void res.status(204).end();
 

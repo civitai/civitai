@@ -47,8 +47,8 @@ export const isReviewedBlock = (blockedFor: string) =>
 /**
  * Whether an image's owner may be served its media: it carries no block, or only an exempt one, or
  * with `reviewedBlocks` a reviewed one (`isReviewedBlock`) on an image whose scan ended Blocked and
- * where `ownerCsamMarked` was read as false; unread, it withholds. For the owner a Blocked level alone is a rating, not a block
- * (`hasBlockMarker` counts it for everyone else).
+ * where `ownerCsamMarked` was read as false (unread, it withholds). For the owner a Blocked level
+ * alone is a rating, not a block (`hasBlockMarker` counts it for everyone else).
  */
 export function ownerMediaAllowed(
   image: {

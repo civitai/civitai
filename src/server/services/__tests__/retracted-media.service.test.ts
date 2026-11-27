@@ -837,6 +837,72 @@ describe('getOwnRetractedMedia', () => {
     expect(await own(905)).not.toBeNull();
   });
 
+  // `ownerMediaAllowedSql` in getOwnRetractedMedia is the only clause keeping a CSAM-marked row out
+  // of the owner route: its visibility conditions keep the owner's blocked rows.
+  describe('the owner route on a CSAM-marked row', () => {
+    const MARKED = { id: 907, url: '0d6f0c1e-7a3b-4c5d-9e8f-1a2b3c4d5e6f' };
+    const CLEAN = { id: 909, url: '5e4d3c2b-1a0f-4e9d-8c7b-6a5f4e3d2c1b' };
+    beforeAll(async () => {
+      await pg.exec(`
+        INSERT INTO "Image" (id, url, ingestion, "blockedFor", "userId") VALUES
+          (${MARKED.id}, '${MARKED.url}', 'Blocked', 'moderated', ${ownerOf(MARKED.id)}),
+          (908, '${MARKED.url}', 'Blocked', 'CSAM', 1408),
+          (${CLEAN.id}, '${CLEAN.url}', 'Blocked', 'moderated', ${ownerOf(CLEAN.id)});
+      `);
+    });
+
+    const serve = async (id: number, query: Record<string, string> = {}) => {
+      const { serveOwnRetractedMedia } = await import('~/server/utils/own-retracted-media');
+      const res = {
+        statusCode: 200,
+        headers: {} as Record<string, string>,
+        setHeader(name: string, value: string) {
+          this.headers[name.toLowerCase()] = value;
+          return this;
+        },
+        status(code: number) {
+          this.statusCode = code;
+          return this;
+        },
+        json() {
+          return this;
+        },
+        end() {
+          return this;
+        },
+      };
+      await serveOwnRetractedMedia(
+        { method: 'GET', query: { imageId: String(id), ...query }, headers: {} } as never,
+        res as never,
+        {
+          viewer: { id: ownerOf(id), impersonated: false, fullScope: true },
+          enabled: async () => true,
+          rateLimit: async () => ({ allowed: true }),
+          readMedia: (imageId) => getOwnRetractedMedia(imageId, ownerOf(id)),
+          heldFor: async () => undefined,
+        }
+      );
+      return res.statusCode;
+    };
+
+    it('reads nothing for it, and the route answers 404 without reaching storage', async () => {
+      const fetchSpy = vi.fn();
+      vi.stubGlobal('fetch', fetchSpy);
+      try {
+        expect(await own(MARKED.id)).toBeNull();
+        expect(await serve(MARKED.id)).toBe(404);
+        expect(fetchSpy).not.toHaveBeenCalled();
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it('serves the same row shape with no mark (the control)', async () => {
+      expect(await own(CLEAN.id)).toMatchObject({ url: CLEAN.url });
+      expect(await serve(CLEAN.id, { probe: '1' })).toBe(204);
+    });
+  });
+
   // Whatever row shape makes the moderator route refuse a moderator without the CSAM grant (and
   // serve one with it), the owner route refuses too, except where the mark is the image's own
   // listing on a CSAM report, which its owner keeps by ruling.

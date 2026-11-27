@@ -82,6 +82,8 @@ export async function getOwnRetractedMedia(
         AND ${Prisma.join(visible, ' AND ')}
         AND i."blockedFor" IS NOT NULL
         AND i."blockedFor" NOT IN (${Prisma.join(OWNER_MEDIA_EXEMPT_BLOCKS)})
+        -- The only clause keeping a CSAM-marked row out, since visible keeps the owner's blocked rows.
+        -- Pinned by the test "the owner route on a CSAM-marked row" in retracted-media.service.test.ts.
         AND ${ownerMediaAllowedSql('i', { reviewedBlocks: true })}
     `;
   });

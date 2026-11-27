@@ -176,11 +176,11 @@ function buildCsamRestrictedSql(image: string): string {
 
 /**
  * Whether the "Image" row aliased `image` carries a CSAM mark that keeps a moderated or tos block's
- * media from its owner: `csamRowSql` on it, csam anywhere in its comma list of block reasons, or the
- * same on one of the other rows on its url, a copy on its url a moderator deleted for CSAM review
- * that no verified report covers (`heldUrlSql` with `owners: false`, a deleted row the sibling scan
- * cannot see), or reported bytes (`reportListedUrlSql`, less this row's own listing). A url with `URL_SIBLING_CAP` or more other rows
- * counts as marked, since the rows past the cap go unread. A NULL reads as marked.
+ * media from its owner: csam on the row (`csamRowSql` or its block reasons) or on another row on its
+ * url, a CSAM-review moderator delete on the url that no verified report covers (`heldUrlSql`,
+ * `owners: false`), reported bytes (`reportListedUrlSql`, less this row's own listing), or
+ * `URL_SIBLING_CAP` or more other rows on the url (the rows past the cap go unread). NULL reads as
+ * marked.
  *
  * Unlike `moderatorWithheldSql`, the row's own listing on a CSAM report does not count, on purpose:
  * an owner keeps seeing their own report-listed media. Nor does an owner-level hold.
