@@ -234,13 +234,14 @@ async function retireStale(db: Kysely<DB>, now: Date, config: HarvestConfig): Pr
 
   const live = await db
     .selectFrom('KnightsReferenceImage')
-    .select('id')
+    .select(['id', 'answer'])
     .where('status', 'in', LIVE_STATUSES)
     .where('source', '!=', REFERENCE_SOURCE.core)
     .orderBy('id')
     .execute();
   for (let at = 0; at < live.length; at += config.retireGateChunk) {
-    const chunk = live.slice(at, at + config.retireGateChunk).map((r) => r.id);
+    const refs = live.slice(at, at + config.retireGateChunk);
+    const chunk = refs.map((r) => r.id);
     const standing = await readWithoutJit(db, (trx) =>
       trx
         .selectFrom('KnightsReferenceImage as r')
@@ -254,10 +255,17 @@ async function retireStale(db: Kysely<DB>, now: Date, config: HarvestConfig): Pr
         .execute()
     );
     const stands = new Set(standing.map((r) => r.id));
-    const gone = chunk.filter((id) => !stands.has(id));
+    const gone = refs.filter((r) => !stands.has(r.id));
     if (gone.length === 0) continue;
+    // Matched on the answer the gate read judged, and never core: a reference converted to core or re-confirmed at
+    // another answer since that read is left alone, as the single statement's re-check did.
     const result = await retire(db)
-      .where('id', '=', sql<number>`any(${gone}::int[])`)
+      .where('source', '!=', REFERENCE_SOURCE.core)
+      .where(
+        sql<boolean>`("id", "answer") IN (SELECT * FROM unnest(${gone.map(
+          (r) => r.id
+        )}::int[], ${gone.map((r) => r.answer)}::text[]))`
+      )
       .executeTakeFirst();
     retired += Number(result.numUpdatedRows);
   }

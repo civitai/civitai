@@ -265,6 +265,123 @@ describe('harvestRulings', () => {
       [5, 'retired'],
     ]);
   });
+
+  it('retires exactly the rows the single-statement retire did', async () => {
+    const live = { harvestedAt: daysAgo(1) };
+    const rows: [number, string, string, string, ImageOpts, string?][] = [
+      // [imageId, source, status, harvestedAt, image, answer]
+      [1, 'harvested', 'active', live.harvestedAt, {}],
+      [2, 'harvested', 'active', daysAgo(100), {}],
+      [3, 'inquisitor', 'active', daysAgo(100), {}],
+      [4, 'inquisitor', 'active', live.harvestedAt, { level: 8 }],
+      [5, 'harvested', 'active', live.harvestedAt, { ingestion: 'Blocked' }],
+      [6, 'core', 'active', daysAgo(100), { level: 8 }],
+      [7, 'agreement', 'probation', live.harvestedAt, { published: false }],
+      [8, 'harvested', 'pending', live.harvestedAt, { needsReview: 'minor' }],
+      [9, 'harvested', 'retired', live.harvestedAt, { level: 8 }],
+      [10, 'harvested', 'active', live.harvestedAt, { locked: false }],
+    ];
+    for (const [imageId, source, status, harvestedAt, opts] of rows) {
+      await image(imageId, opts);
+      await pg.query(
+        `INSERT INTO "KnightsReferenceImage" ("imageId","pool","answer","source","status","harvestedAt")
+         VALUES ($1,'trials','4',$2,$3,$4)`,
+        [imageId, source, status, harvestedAt]
+      );
+    }
+    // The statement this replaced, as a SELECT of what it would retire.
+    const single = await pg.query<{ imageId: number }>(
+      `SELECT r."imageId" FROM "KnightsReferenceImage" r
+       WHERE r.status IN ('active','pending','probation') AND r.source <> 'core'
+         AND ((r."harvestedAt" < $1 AND r.source <> 'inquisitor')
+           OR NOT EXISTS (
+             SELECT 1 FROM "Image" img JOIN "Post" p ON p.id = img."postId"
+             WHERE img.id = r."imageId" AND img."nsfwLevel"::text = r.answer AND img."nsfwLevelLocked" = true
+               AND EXISTS (SELECT 1 FROM "KnightsImageGate" g WHERE g."imageId" = img.id AND g."sweepServable")
+               AND p."publishedAt" IS NOT NULL AND p."publishedAt" < (now() AT TIME ZONE 'utc')))
+       ORDER BY 1`,
+      [daysAgo(HARVEST.freshMaxAgeDays)]
+    );
+    expect(single.rows.map((r) => r.imageId)).toEqual([2, 4, 5, 7, 8, 10]);
+
+    const result = await harvestRulings(db, {
+      now: NOW,
+      config: { ...HARVEST, retireGateChunk: 3 },
+    });
+
+    expect(result.retired).toBe(6);
+    expect(
+      (await references()).filter((r) => r.status === 'retired').map((r) => r.imageId)
+    ).toEqual([2, 4, 5, 7, 8, 9, 10]);
+  });
+
+  it('leaves a reference changed after the gate read judged it: made core, or re-confirmed at another answer', async () => {
+    for (const id of [1, 2, 3]) await image(id, { level: 8 });
+    await pg.query(
+      `INSERT INTO "KnightsReferenceImage" ("imageId","pool","answer","source") VALUES
+       (1,'trials','4','harvested'), (2,'trials','4','harvested'), (3,'skillCheck','4','inquisitor')`
+    );
+    let gateRead: unknown;
+    let raced = false;
+    const racing = db.withPlugin({
+      transformQuery: ({ node, queryId }) => {
+        if (db.getExecutor().compileQuery(node, queryId).sql.includes('"KnightsImageGate"'))
+          gateRead = queryId;
+        return node;
+      },
+      // Lands after the gate read judged all three gone, before the retire.
+      transformResult: async ({ result, queryId }) => {
+        if (queryId === gateRead && !raced) {
+          raced = true;
+          await pg.query(`UPDATE "KnightsReferenceImage" SET "source"='core' WHERE "imageId"=1`);
+          await pg.query(`UPDATE "KnightsReferenceImage" SET "answer"='8' WHERE "imageId"=3`);
+        }
+        return result;
+      },
+    });
+
+    const result = await harvestRulings(racing, { now: NOW });
+
+    expect(raced).toBe(true);
+    expect(result.retired).toBe(1);
+    expect((await references()).map((r) => [r.imageId, r.status])).toEqual([
+      [1, 'active'],
+      [2, 'retired'],
+      [3, 'active'],
+    ]);
+  });
+
+  it('fails the run when a gate chunk errors, keeping what earlier chunks retired', async () => {
+    for (const id of [1, 2, 3, 4, 5]) await image(id, { level: id === 1 ? 4 : 8 });
+    await pg.query(
+      `INSERT INTO "KnightsReferenceImage" ("imageId","pool","answer","source") VALUES
+       (1,'trials','4','harvested'), (2,'trials','4','harvested'), (3,'trials','4','harvested'),
+       (4,'trials','4','harvested'), (5,'trials','4','harvested')`
+    );
+    let gateReads = 0;
+    const failing = db.withPlugin({
+      transformQuery: ({ node, queryId }) => {
+        const { sql } = db.getExecutor().compileQuery(node, queryId);
+        if (sql.includes('"KnightsImageGate"') && ++gateReads === 2)
+          throw new Error('canceling statement due to statement timeout');
+        return node;
+      },
+      transformResult: async ({ result }) => result,
+    });
+
+    await expect(
+      harvestRulings(failing, { now: NOW, config: { ...HARVEST, retireGateChunk: 2 } })
+    ).rejects.toThrow('statement timeout');
+
+    // Chunk 1 (1, 2) retired 2 before chunk 2 (3, 4) failed; chunk 3 (5) never ran.
+    expect((await references()).map((r) => [r.imageId, r.status])).toEqual([
+      [1, 'active'],
+      [2, 'retired'],
+      [3, 'active'],
+      [4, 'active'],
+      [5, 'active'],
+    ]);
+  });
 });
 
 describe('harvest defaults and the job switch', () => {
