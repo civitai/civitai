@@ -66,6 +66,14 @@ type PageQuery struct {
 	// the viewer follows, or to nothing (`1 = 0`) when they follow no one.
 	Followed        bool
 	FollowedUserIDs []int
+	// NewCreators is `newCreators`: the page is held to NewCreatorUserIDs, the creators on the
+	// request's "new & upcoming" board, or to nothing (`1 = 0`) for an empty board.
+	NewCreators       bool
+	NewCreatorUserIDs []int
+	// PublishedGte / PublishedLt are a published range's half-open bounds `[gte, lt)` (zero: none;
+	// both or neither).
+	PublishedGte time.Time
+	PublishedLt  time.Time
 }
 
 // SQL is one statement and its arguments.

@@ -51,7 +51,7 @@ const (
 	goldenMinAsPosts  = 35
 	goldenMinV1       = 52
 	goldenMinInfinite = 155
-	goldenMinModels   = 53
+	goldenMinModels   = 75
 	goldenIssuer      = "https://auth.example.test"
 	goldenCookieName  = "__Secure-civ-token"
 )
@@ -119,6 +119,13 @@ type goldenFixture struct {
 		ServeInputFollowed bool `json:"serveInputFollowed"`
 		// ServeHidePaid is FEED_GO_GETALL_SERVE_HIDE_PAID (absent: off, Hide Paid falls back).
 		ServeHidePaid bool `json:"serveHidePaid"`
+		// ServeVerifiedBot, ServeInputNewCreators and ServePublishedRange are
+		// FEED_GO_GETALL_SERVE_VERIFIED_BOT, FEED_GO_GETALL_SERVE_INPUT_NEW_CREATORS and
+		// FEED_GO_GETALL_SERVE_INPUT_PUBLISHED_RANGE (model-getall/; absent: off, a verified-crawler
+		// header, `newCreators` or a published range falls back).
+		ServeVerifiedBot      bool `json:"serveVerifiedBot"`
+		ServeInputNewCreators bool `json:"serveInputNewCreators"`
+		ServePublishedRange   bool `json:"servePublishedRange"`
 		// ServeUserCosmeticsMiss is FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS (model-getall/; absent:
 		// off, an owner's user-cosmetics miss falls back).
 		ServeUserCosmeticsMiss bool `json:"serveUserCosmeticsMiss"`
@@ -159,7 +166,10 @@ type goldenFixture struct {
 		Fallback  string          `json:"fallback"`
 		Envelope  json.RawMessage `json:"envelope"`
 		Cacheable *bool           `json:"cacheable"`
-		Body      json.RawMessage `json:"body"`
+		// ViewerClass is the viewer class a model-getall fixture sending headers is counted under
+		// (FeedViewerClasses: `crawler` for a verified crawler); "" = derived from the session.
+		ViewerClass string          `json:"viewerClass"`
+		Body        json.RawMessage `json:"body"`
 		// Writes is every cache key Node's fetches write for the request's misses (a served
 		// fixture; none when the caches are warm): a packed value, with its expiry.
 		Writes map[string]goldenWrite `json:"writes"`
@@ -393,6 +403,16 @@ type goldenDB struct {
 		// (`mm."userId" IN (…)`; absent: none), FollowedNone its `1 = 0` for a viewer who follows no one.
 		FollowedUserIDs []int `json:"followedUserIds"`
 		FollowedNone    bool  `json:"followedNone"`
+		// NewCreatorUserIDs is the "new & upcoming" board Node binds for `newCreators`
+		// (`mm."userId" IN (…)`; absent: none), NewCreatorsNone its `1 = 0` for an empty board.
+		NewCreatorUserIDs []int `json:"newCreatorUserIds"`
+		NewCreatorsNone   bool  `json:"newCreatorsNone"`
+		// Published is a published range's bounds Node binds (`m."publishedAt" >= gte` and `< lt`, and
+		// the same pair in the `ranged` CTE; absent: none).
+		Published *struct {
+			Gte goldenTime `json:"gte"`
+			Lt  goldenTime `json:"lt"`
+		} `json:"published"`
 	} `json:"modelPages"`
 	// UserFollows are the Follow rows of UserEngagement (userId, targetUserId) a model-getall fixture's
 	// `followed` read, and FollowsRead how many times Node read them (once per getModelsRaw call).
@@ -2334,8 +2354,27 @@ func newGoldenModelPG(t testing.TB, fx *goldenFixture) *goldenModelPG {
 			if err := goldenCheckIDFilter("followedUserIds", goldenReModelFollowed, page.FollowedUserIDs, sql, args); err != nil {
 				return nil, fmt.Errorf("golden: page %d: %w", g.pages, err)
 			}
-			if none := strings.Contains(sql, "1 = 0"); none != page.FollowedNone {
-				return nil, fmt.Errorf("golden: page %d: node's followed-nobody clause (1 = 0) %v, feed-go's %v", g.pages, page.FollowedNone, none)
+			if err := goldenCheckIDFilter("newCreatorUserIds", goldenReNewCreators, page.NewCreatorUserIDs, sql, args); err != nil {
+				return nil, fmt.Errorf("golden: page %d: %w", g.pages, err)
+			}
+			// `1 = 0` is the followed-nobody clause and the empty board's: Node's count of them, in
+			// every keyset branch of the query.
+			branches := 1
+			if strings.Contains(sql, "UNION ALL") {
+				branches = 2
+			}
+			want := 0
+			for _, none := range []bool{page.FollowedNone, page.NewCreatorsNone} {
+				if none {
+					want += branches
+				}
+			}
+			if got := strings.Count(sql, "1 = 0"); got != want {
+				return nil, fmt.Errorf("golden: page %d: node's `1 = 0` clauses (followed nobody %v, an empty board %v) appear %d time(s), feed-go's %d",
+					g.pages, page.FollowedNone, page.NewCreatorsNone, want, got)
+			}
+			if err := goldenCheckPublished(page.Published, sql, args); err != nil {
+				return nil, fmt.Errorf("golden: page %d: %w", g.pages, err)
 			}
 			rows := make([][]any, len(page.Rows))
 			for i, r := range page.Rows {
@@ -2627,7 +2666,78 @@ var (
 	// goldenReInputIDs finds the `ids` filter, goldenReModelFollowed a signed-in `followed`'s follow list.
 	goldenReInputIDs      = regexp.MustCompile(`mm\."modelId" = ANY\(\$(\d+)::integer\[\]\)`)
 	goldenReModelFollowed = regexp.MustCompile(`mm\."userId" = ANY\(\$(\d+)::int\[\]\)`)
+	// goldenReNewCreators finds the `newCreators` board filter (its `integer[]` cast keeps it apart
+	// from `followed`'s).
+	goldenReNewCreators = regexp.MustCompile(`mm\."userId" = ANY\(\$(\d+)::integer\[\]\)`)
 )
+
+// goldenPublishedClauses are a published range's bound comparisons, each capturing the placeholder it
+// binds and whether it is the range's start (gte) or its end (lt): the WHERE's two, and the `ranged`
+// CTE's pair.
+var goldenPublishedClauses = []struct {
+	name  string
+	re    *regexp.Regexp
+	start bool
+}{
+	{`m."publishedAt" >=`, regexp.MustCompile(`m\."publishedAt" >= \$(\d+)`), true},
+	{`m."publishedAt" <`, regexp.MustCompile(`m\."publishedAt" < \$(\d+)`), false},
+	{`ranged "publishedAt" >=`, regexp.MustCompile(`ranged AS MATERIALIZED \(\s*SELECT "id" FROM "Model"\s+WHERE [^)]*?"publishedAt" >= \$(\d+)`), true},
+	{`ranged "publishedAt" <`, regexp.MustCompile(`ranged AS MATERIALIZED \(\s*SELECT "id" FROM "Model"\s+WHERE [^)]*?"publishedAt" < \$(\d+)`), false},
+}
+
+// goldenCheckPublished checks a page query against the published range Node bound: no bound clause,
+// CTE or join where Node had no range; otherwise every copy of each bound clause binds Node's instant,
+// the CTE leads the statement and the page joins it.
+func goldenCheckPublished(want *struct {
+	Gte goldenTime `json:"gte"`
+	Lt  goldenTime `json:"lt"`
+}, sql string, args []any) error {
+	const join = `JOIN ranged ON ranged."id" = m."id"`
+	if want == nil {
+		for _, c := range goldenPublishedClauses {
+			if m := c.re.FindString(sql); m != "" {
+				return fmt.Errorf("node binds no published range; feed-go's page query has %s", m)
+			}
+		}
+		if strings.Contains(sql, "ranged") {
+			return errors.New("node builds no ranged CTE; feed-go's page query has one")
+		}
+		return nil
+	}
+	if want.Gte.T == nil || want.Lt.T == nil {
+		return errors.New("the fixture records a published range without both bounds")
+	}
+	if !strings.HasPrefix(strings.TrimSpace(sql), "WITH ranged AS MATERIALIZED (") {
+		return fmt.Errorf("node's statement starts with the ranged CTE; feed-go's starts %.40q", strings.TrimSpace(sql))
+	}
+	branches := 1
+	if strings.Contains(sql, "UNION ALL") {
+		branches = 2
+	}
+	if n := strings.Count(sql, join); n != branches {
+		return fmt.Errorf("node joins the ranged CTE in each of %d branch(es); feed-go's page query does %d time(s)", branches, n)
+	}
+	for _, c := range goldenPublishedClauses {
+		m := c.re.FindAllStringSubmatch(sql, -1)
+		if len(m) == 0 {
+			return fmt.Errorf("node binds %s; feed-go's page query has no such clause", c.name)
+		}
+		wantT := *want.Lt.T
+		if c.start {
+			wantT = *want.Gte.T
+		}
+		for _, mm := range m {
+			n, err := strconv.Atoi(mm[1])
+			if err != nil || n < 1 || n > len(args) {
+				return fmt.Errorf("feed-go's %s has placeholder $%s; its query has %d argument(s)", c.name, mm[1], len(args))
+			}
+			if got, ok := args[n-1].(time.Time); !ok || !got.Equal(wantT) {
+				return fmt.Errorf("node binds %s %s; feed-go binds $%d = %v", c.name, wantT.Format(time.RFC3339Nano), n, args[n-1])
+			}
+		}
+	}
+	return nil
+}
 
 // goldenCheckIDFilter checks a page's id filter against what Node bound: none in Node, none in
 // feed-go's query; else every copy of the clause (each keyset branch repeats the WHERE) binds exactly
@@ -2718,11 +2828,14 @@ func goldenSetupModelsMode(t testing.TB, fx *goldenFixture, writeBack bool) *gol
 			BaseModelMetrics: fx.Config.BaseModelMetrics, ImagesSlim: fx.Config.ModelImagesSlim,
 			CoverageNext: fx.Config.CoverageNext, LoadingOpenToAll: fx.Config.LoadingOpenToAll,
 			VisibleDecorationEvents: events,
-			Ports:                   modelfeed.Ports{IDs: fx.Config.ServeInputIDs, Followed: fx.Config.ServeInputFollowed, HidePaid: fx.Config.ServeHidePaid},
-			ServeUserCosmeticsMiss:  fx.Config.ServeUserCosmeticsMiss,
-			ServeMembershipMiss:     fx.Config.ServeMembershipMiss,
+			Ports: modelfeed.Ports{IDs: fx.Config.ServeInputIDs, Followed: fx.Config.ServeInputFollowed, HidePaid: fx.Config.ServeHidePaid,
+				VerifiedBot: fx.Config.ServeVerifiedBot, NewCreators: fx.Config.ServeInputNewCreators, PublishedRange: fx.Config.ServePublishedRange},
+			ServeUserCosmeticsMiss: fx.Config.ServeUserCosmeticsMiss,
+			ServeMembershipMiss:    fx.Config.ServeMembershipMiss,
 		},
-		Now: env.now,
+		// The "new & upcoming" boards' cached entries, read-only (as main wires them).
+		NewCreators: &feed.NewCreatorBoards{Cache: env.cache, Now: env.now},
+		Now:         env.now,
 	}
 	// gen-models.mjs models getModelsFeed with the personal-hot-lead flag off for every viewer.
 	env.server.PersonalHotLead = &stubUserFlag{}
@@ -2764,19 +2877,29 @@ func goldenRunModelsMode(t *testing.T, fx *goldenFixture, writeBack bool) {
 	for _, p := range goldenWriteProblems(fx, state[0], state[1], writeBack) {
 		t.Error(p)
 	}
-	// The cache policy computeModelGetAll documents: the public TTL exactly when there is no session,
-	// none for a session.
-	if fx.Request.Session == nil && (c.ttl == nil || *c.ttl != trpc.SignedOutTTL) {
+	// The cache policy computeModelGetAll documents (createContext's): the public TTL exactly when
+	// there is no session and no verified crawler, none otherwise. A fixture sending headers records
+	// Node's own answer (expect.cacheable); every other one is cacheable exactly when signed out.
+	cacheable := fx.Request.Session == nil
+	if fx.Expect.Cacheable != nil {
+		cacheable = *fx.Expect.Cacheable
+	}
+	if cacheable && (c.ttl == nil || *c.ttl != trpc.SignedOutTTL) {
 		t.Errorf("signed out: want the public cache TTL %+v, got %v", trpc.SignedOutTTL, c.ttl)
 	}
-	if fx.Request.Session != nil && c.ttl != nil {
-		t.Errorf("a session: want no cache TTL, got %+v", *c.ttl)
+	if !cacheable && c.ttl != nil {
+		t.Errorf("a session or a verified crawler: want no cache TTL, got %+v", *c.ttl)
 	}
-	// The per-class shadow series count a signed-out answer as `anon`, a session's never.
-	if fx.Request.Session == nil && c.viewerClass != FeedViewerAnon {
+	// The per-class shadow series count a signed-out answer as `anon` (a verified crawler's as
+	// `crawler`, expect.viewerClass), a session's never.
+	if want := fx.Expect.ViewerClass; want != "" {
+		if c.viewerClass != want {
+			t.Errorf("viewer class %q, want %q", c.viewerClass, want)
+		}
+	} else if fx.Request.Session == nil && c.viewerClass != FeedViewerAnon {
 		t.Errorf("signed out: viewer class %q, want %q", c.viewerClass, FeedViewerAnon)
 	}
-	if fx.Request.Session != nil && (c.viewerClass == FeedViewerAnon || c.viewerClass == "") {
+	if fx.Request.Session != nil && (c.viewerClass == FeedViewerAnon || c.viewerClass == FeedViewerCrawler || c.viewerClass == "") {
 		t.Errorf("a session: viewer class %q, want a session class", c.viewerClass)
 	}
 }

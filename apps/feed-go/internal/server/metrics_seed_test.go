@@ -179,7 +179,7 @@ func TestComputeFallbackReasonsAreSeeded(t *testing.T) {
 	// The sum, in order: each serve route x (bulkhead, error, deadline, canceled, panic); each
 	// shadow endpoint x (deadline, canceled, panic); each probe endpoint x the same three; and the
 	// request-determined serve series (TestRequestFallbackReasonsAreSeeded).
-	const want = 7*5 + 8*3 + 4*3 + 216
+	const want = 7*5 + 8*3 + 4*3 + 217
 	if n := testutil.CollectAndCount(m.Fallbacks); n != want {
 		t.Fatalf("feed_go_fallback_total has %d series at construction, want %d", n, want)
 	}
@@ -258,6 +258,7 @@ var wantRequestFallbackReasons = map[string][]string{
 		"bearer-malformed", "bearer-multiple-headers", "bearer-query-token", "verified-bot",
 		"input-envelope", "input-invalid", "input-unknown-key", "input-ids",
 		"model-cursor", "model-sort-recently-added", "model-collection-id", "model-ids", "input-hidePaid",
+		"input-published-range",
 		"input-query", "input-hidden", "input-followed", "input-newCreators", "input-modelVersionIds",
 		"input-status", "input-needsReview", "input-pending", "input-supportsGeneration",
 		"input-isFeatured", "input-availability", "input-publishedFrom", "input-publishedTo",
@@ -315,8 +316,8 @@ func TestRequestFallbackReasonsAreSeeded(t *testing.T) {
 		}
 		total += len(want)
 	}
-	if total != 216 {
-		t.Errorf("the literal holds %d (endpoint, reason) pairs, want 216", total)
+	if total != 217 {
+		t.Errorf("the literal holds %d (endpoint, reason) pairs, want 217", total)
 	}
 
 	reg := prometheus.NewRegistry()

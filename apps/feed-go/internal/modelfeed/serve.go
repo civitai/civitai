@@ -49,6 +49,12 @@ type Sources interface {
 	OfficialModels(ctx context.Context) ([]hydrate.OfficialModel, error)
 }
 
+// NewCreatorBoards reads a "new & upcoming" board's creator ids (implemented by
+// *feed.NewCreatorBoards: a fresh cached entry, else a fallback).
+type NewCreatorBoards interface {
+	UserIDs(ctx context.Context, boardID string) ([]int, error)
+}
+
 // Gallery reads the cached gallery settings the showcase hold reads (implemented by
 // *feed.GalleryStore).
 type Gallery interface {
@@ -91,8 +97,11 @@ type Deps struct {
 	Addons func(context.Context) []browsing.Addon
 	// Blocked is the blocked browsing tag list, shared with image.getInfinite (one memo, as in Node).
 	Blocked *feed.BlockedTags
-	Config  Config
-	Now     func() time.Time
+	// NewCreators reads the "new & upcoming" boards `newCreators` filters by (nil: such a request
+	// falls back, `new-creators-unconfigured`).
+	NewCreators NewCreatorBoards
+	Config      Config
+	Now         func() time.Time
 }
 
 // Viewer is the session user; nil in a Request when signed out or banned.
@@ -108,6 +117,12 @@ type Request struct {
 	Viewer *Viewer
 	// Cap is the domain cap (browsing.DomainCap); 0 = uncapped.
 	Cap int
+	// Crawler is whether the request is a verified crawler's (read only with Ports.VerifiedBot): it is
+	// no viewer, and its answer is never edge-cached.
+	Crawler bool
+	// BoardColor is the request's board color (getRequestBoardDomainColor): which "new & upcoming"
+	// board `newCreators` reads.
+	BoardColor string
 }
 
 // Answer is one computed answer.

@@ -100,6 +100,12 @@ type Config struct {
 	// request with Hide Paid on, with the port of the free-version rule (DESIGN.md §15.2.7). Off, it
 	// is the `input-hidePaid` fallback.
 	GetAllServeHidePaid bool
+	// GetAllServeVerifiedBot is FEED_GO_GETALL_SERVE_VERIFIED_BOT (default off).
+	GetAllServeVerifiedBot bool
+	// GetAllServeInputNewCreators is FEED_GO_GETALL_SERVE_INPUT_NEW_CREATORS (default off).
+	GetAllServeInputNewCreators bool
+	// GetAllServeInputPublishedRange is FEED_GO_GETALL_SERVE_INPUT_PUBLISHED_RANGE (default off).
+	GetAllServeInputPublishedRange bool
 	// GetAllServeUserCosmeticsMiss is FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS (default off): on, a
 	// model.getAll page computes its owners' user-cosmetics misses (the image pages' lookup) instead
 	// of falling back (`user-cosmetics-miss`); written back only as FEED_GO_CACHE_WRITEBACK lists

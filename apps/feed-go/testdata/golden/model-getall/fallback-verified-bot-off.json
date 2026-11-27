@@ -1,0 +1,36 @@
+{
+  "name": "fallback-verified-bot-off",
+  "description": "A verified crawler with its switch off (the default): not served.",
+  "now": "2026-06-15T12:00:00.000Z",
+  "config": {
+    "baseModelMetrics": true,
+    "modelImagesSlim": true,
+    "coverageNext": true,
+    "loadingOpenToAll": true,
+    "decorationEvents": []
+  },
+  "request": {
+    "input": "{\"json\":{\"sort\":\"Highest Rated\",\"limit\":2,\"browsingLevel\":31}}",
+    "headers": {
+      "host": "blue.example.test",
+      "x-civitai-verified-bot": "googlebot"
+    },
+    "session": null
+  },
+  "redis": {},
+  "sysRedis": {
+    "system:browsing-setting-addons": {
+      "raw": "[{\"type\":\"some\",\"nsfwLevels\":[4,8,16],\"disableMinor\":true,\"excludedTagIds\":[9911]},{\"type\":\"some\",\"nsfwLevels\":[1,2,4,8,16],\"disablePoi\":true,\"excludedTagIds\":[9901]}]"
+    }
+  },
+  "db": {
+    "modelPages": [],
+    "paidAccess": [],
+    "coverImages": [],
+    "tags": [],
+    "creators": []
+  },
+  "expect": {
+    "fallback": "verified-bot"
+  }
+}

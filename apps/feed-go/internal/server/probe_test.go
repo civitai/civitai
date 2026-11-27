@@ -71,7 +71,7 @@ var goldenProbeCases = []goldenProbeCase{
 	{"infinite", ProcedureInfinite, goldenMinInfinite, goldenSetup, (*Server).computeInfinite, SyntheticInfiniteRequest,
 		[]string{hydrate.CacheMetrics, CacheNewCreators}, []string{hydrate.CacheTagIDs}, true},
 	{"model-getall", ProcedureModelGetAll, goldenMinModels, goldenSetupModels, (*Server).computeModelGetAll, SyntheticModelGetAllRequest,
-		[]string{hydrate.CacheUserCosmetics}, []string{CacheModelData, CacheModelTags, CacheModelFrames, CacheModelDecorations, hydrate.CacheTagIDs,
+		[]string{hydrate.CacheUserCosmetics, CacheNewCreators}, []string{CacheModelData, CacheModelTags, CacheModelFrames, CacheModelDecorations, hydrate.CacheTagIDs,
 			CacheOfficialModels}, false},
 	// GET /api/v1/images: the probe runs the public route's compute (a session is handed back there),
 	// under hydrate.WithPresence as model.getAll's does. The golden server reads no ClickHouse and no
@@ -1047,11 +1047,13 @@ func TestProbeCountsGoFirstByViewer(t *testing.T) {
 	probe("infinite", goldenSetup, ProcedureInfinite, "fallback-published-only-off", 7)
 	probe("infinite", goldenSetup, ProcedureInfinite, "global-moderator-oldest", 4)
 	probe("model-getall", goldenSetupModels, ProcedureModelGetAll, "base-models-multi-signed-in", 5)
+	// A verified crawler (its port on): its own class, as computeModelGetAll reports it.
+	probe("model-getall", goldenSetupModels, ProcedureModelGetAll, "verified-bot-nsfw-host", 8)
 
 	want := map[string]map[string]float64{
 		EndpointAsPosts:     {FeedViewerAnon: 1 + 6, FeedViewerUser: 2, GoFirstViewerUnknown: 3},
 		EndpointInfinite:    {FeedViewerModerator: 4, FeedViewerUser: 7},
-		EndpointModelGetAll: {FeedViewerUser: 5},
+		EndpointModelGetAll: {FeedViewerUser: 5, FeedViewerCrawler: 8},
 		EndpointV1Images:    {},
 	}
 	for e, byViewer := range want {

@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/inputschema"
@@ -104,6 +105,14 @@ type Input struct {
 	// falls back): any truthy value turns hidePrivateModels off, and for a signed-in viewer the page is
 	// held to the creators they follow.
 	Followed bool
+	// NewCreators is `newCreators` (booleanString; read only with Ports.NewCreators, otherwise a truthy
+	// value falls back): the page is held to the creators on the request's "new & upcoming" board.
+	NewCreators bool
+	// PublishedFrom / PublishedTo are `publishedFrom` / `publishedTo` (read only with
+	// Ports.PublishedRange, otherwise a non-empty one falls back): each a UTC day (its midnight),
+	// both set or neither (zero).
+	PublishedFrom time.Time
+	PublishedTo   time.Time
 }
 
 // Ports are the input shapes ported behind their own serve switch, each off by default: off, the
@@ -117,6 +126,14 @@ type Ports struct {
 	// HidePaid is FEED_GO_GETALL_SERVE_HIDE_PAID: compute a request with `hidePaid` true (the
 	// free-version rule, DESIGN.md §15.2.7). Off, it is the `input-hidePaid` fallback.
 	HidePaid bool
+	// VerifiedBot is FEED_GO_GETALL_SERVE_VERIFIED_BOT: compute a request carrying the verified-crawler
+	// header. Off, any value of it is the `verified-bot` fallback.
+	VerifiedBot bool
+	// NewCreators is FEED_GO_GETALL_SERVE_INPUT_NEW_CREATORS: compute a request with `newCreators`.
+	NewCreators bool
+	// PublishedRange is FEED_GO_GETALL_SERVE_INPUT_PUBLISHED_RANGE: compute a request with
+	// `publishedFrom` / `publishedTo`.
+	PublishedRange bool
 }
 
 // modelsSchema is model.getAll's allow-list and defaults (why: the inputschema package doc).

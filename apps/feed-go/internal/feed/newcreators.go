@@ -30,6 +30,11 @@ func NewCreatorBoardID(boardColor string) string {
 	return "images-new"
 }
 
+// NewCreatorModelBoardID is getNewCreatorBoardId('models', domain).
+func NewCreatorModelBoardID(boardColor string) string {
+	return ""
+}
+
 // NewCreatorBoards reads getNewCreatorUserIds' cached board for image.getInfinite's `newCreators`
 // (no maxFollowers: the procedure never sets it). Only a fresh entry is answered: Node rebuilds a
 // missing one from the database and refreshes an expired one (or serves it stale while another
