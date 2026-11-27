@@ -3,6 +3,8 @@ import type { LIFT_KEPT_ACTIVITY } from '@civitai/shared/account-deletion-grace'
 import { LIKENESS_REQUEST_ACTIVITY } from '@civitai/db-queries/image-removal-confirmation';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { likenessRequestMarkFailedCounter } from '~/server/prom/likeness-request.metrics';
+import { sleep } from '~/server/utils/concurrency-helpers';
 
 type TagActivities = 'moderateTag' | 'disableTag' | 'addTag' | 'deleteTag';
 
@@ -311,22 +313,36 @@ export async function trackModActivity(
 /**
  * Marks images removed on a likeness request. The appeal-decision-records sweep deletes their appeal
  * training copies by this row; the moderator app's `recordLikenessRequest` writes the same row.
- * Best-effort and never throws: it runs after the removal committed, and the steps after it (report
- * actioning, the search-index delete, the DeleteTOS events) must still run.
+ * Never throws: it runs after the removal committed, and the steps after it (report actioning, the
+ * search-index delete, the DeleteTOS events) must still run. A failed insert is retried; one that
+ * still fails is counted on `likeness_request_mark_failed_total` for alerting.
  */
-export async function trackLikenessRequests(userId: number, imageIds: number[]) {
+export async function trackLikenessRequests(
+  userId: number,
+  imageIds: number[],
+  { tries = 3, backoffMs = 200 }: { tries?: number; backoffMs?: number } = {}
+) {
   if (!imageIds.length) return;
-  try {
-    await trackModActivity(userId, {
-      entityType: 'image',
-      entityId: imageIds,
-      activity: LIKENESS_REQUEST_ACTIVITY,
-    });
-  } catch (e) {
-    logToAxiom({
-      type: 'error',
-      name: 'likeness-request-mark-failed',
-      message: `${imageIds.length} images: ${(e as Error).message}`,
-    });
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await trackModActivity(userId, {
+        entityType: 'image',
+        entityId: imageIds,
+        activity: LIKENESS_REQUEST_ACTIVITY,
+      });
+      return;
+    } catch (e) {
+      if (attempt < tries) {
+        await sleep(backoffMs * 2 ** (attempt - 1));
+        continue;
+      }
+      likenessRequestMarkFailedCounter.inc();
+      logToAxiom({
+        type: 'error',
+        name: 'likeness-request-mark-failed',
+        message: `${imageIds.length} images after ${tries} tries: ${(e as Error).message}`,
+      });
+      return;
+    }
   }
 }

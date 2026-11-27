@@ -163,7 +163,7 @@ describe('setTosViolationHandler on a likeness request', () => {
       executeRaw.mockImplementation((async () => 0) as never);
     }
 
-    expect(likenessMarks()).toHaveLength(1);
+    expect(likenessMarks()).toHaveLength(3); // every try
     expect(reportsActioned).toHaveBeenCalledTimes(1);
   });
 

@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Prisma } from '@prisma/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { likenessRequestMarkFailedCounter } from '~/server/prom/likeness-request.metrics';
 
 const { handleBlockImages, trackImages, holdRemovals, getOpenImageReportIdsByImage } = vi.hoisted(
   () => ({
@@ -193,15 +195,44 @@ describe('/api/mod/remove-images likeness requests', () => {
     expect(mark.values).toEqual(expect.arrayContaining([9, 'image', [11, 13]]));
   });
 
-  it('still sends the removal events and succeeds when the mark fails', async () => {
+  const failedMarks = async () =>
+    (await likenessRequestMarkFailedCounter.get()).values.reduce((n, v) => n + v.value, 0);
+
+  it('retries a failed mark, and the retry lands the row', async () => {
     handleBlockImages.mockResolvedValue([{ id: 11, userId: 3, nsfwLevel: 1 }]);
     vi.mocked(dbMock.dbWrite.$executeRaw).mockRejectedValueOnce(new Error('db down'));
+    const failedBefore = await failedMarks();
 
     const res = await call({ imageIds: [11], moderatorId: 9, violationType: 'likenessRequest' });
 
-    expect(likenessMarks()).toHaveLength(1);
+    expect(likenessMarks()).toHaveLength(2);
+    expect(await vi.mocked(dbMock.dbWrite.$executeRaw).mock.results[1].value).toBe(0);
+    expect(await failedMarks()).toBe(failedBefore);
     expect(trackImages).toHaveBeenCalledTimes(1);
     expect(res.status).toHaveBeenCalledWith(200);
+  });
+
+  it('counts a mark that fails every try, and still sends the events with no id logged', async () => {
+    handleBlockImages.mockResolvedValue([{ id: 4711, userId: 3, nsfwLevel: 1 }]);
+    vi.mocked(dbMock.dbWrite.$executeRaw).mockRejectedValue(new Error('db down'));
+    vi.mocked(loggingMock.logToAxiom).mockClear();
+    const failedBefore = await failedMarks();
+
+    try {
+      const res = await call({
+        imageIds: [4711],
+        moderatorId: 9,
+        violationType: 'likenessRequest',
+      });
+      expect(res.status).toHaveBeenCalledWith(200);
+    } finally {
+      vi.mocked(dbMock.dbWrite.$executeRaw).mockImplementation((async () => 0) as never);
+    }
+
+    expect(likenessMarks()).toHaveLength(3);
+    expect(await failedMarks()).toBe(failedBefore + 1);
+    expect(trackImages).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(vi.mocked(loggingMock.logToAxiom).mock.calls)).not.toContain('4711');
   });
 
   it('marks nothing for any other reason', async () => {
