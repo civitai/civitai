@@ -48,10 +48,6 @@ const mocks = vi.hoisted(() => ({
   cancelAppWorkflow: vi.fn(),
 }));
 
-// AppBlockChrome (in the host frame) calls useCurrentUser() for the platform-nav
-// moderator gate; these suites render the real host without a CivitaiSessionProvider.
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-
 vi.mock('~/utils/trpc', () => ({
   // FeatureFlagsProvider (in PageBlockHost's real render graph) statically imports
   // `setTrpcBatchingEnabled` from this module (#2946). vi.mock replaces the module
@@ -157,7 +153,11 @@ function listenForReply() {
   if (!cw) throw new Error('iframe contentWindow missing');
   const handler = (e: MessageEvent) => {
     const d = e.data as { type?: string; payload?: unknown } | null;
-    if (d && typeof d.type === 'string') received.push({ type: d.type, payload: d.payload });
+    // Re-clone into THIS realm: the payload was deserialised in the iframe's realm, so its
+    // prototypes differ and `toStrictEqual` would reject an otherwise equal object.
+    if (d && typeof d.type === 'string') {
+      received.push({ type: d.type, payload: structuredClone(d.payload) });
+    }
   };
   cw.addEventListener('message', handler);
   return {
@@ -442,5 +442,94 @@ describe('PageBlockHost workflow bridge (W10 money-path wiring)', () => {
     // Still exactly the control's reply — the malformed post added none.
     expect(buzzReplies()).toHaveLength(1);
     replies.stop();
+  });
+
+  // A workflow call refused under a rate limit reports the refusal INSIDE its snapshot, so the
+  // retry meta rides there too: the same `rateLimit` every other bridge error reply carries.
+  // Driven through the real host handlers; the meta's values are distinct from each other.
+  describe('a rate-limited workflow refusal carries its `rateLimit` meta', () => {
+    const META = {
+      retryAfterSeconds: 37,
+      retryAt: '2026-05-06T07:08:45.000Z',
+      id: 'apps.submit',
+      kind: 'abuse' as const,
+    };
+    const rateLimited = (code: string, meta: object = META) =>
+      Object.assign(new Error('Rate limit exceeded, please retry shortly.'), {
+        data: { code, rateLimit: meta },
+      });
+
+    test('SUBMIT_WORKFLOW: the failure snapshot carries the meta', async () => {
+      mocks.submit.mockRejectedValue(rateLimited('TOO_MANY_REQUESTS'));
+      renderWithProviders(<PageBlockHost {...baseProps} />);
+      await driveToReady();
+      const replies = listenForReply();
+
+      postFromBlock('SUBMIT_WORKFLOW', {
+        requestId: 'rq_submit_rl',
+        body: { kind: 'textToImage' },
+      });
+
+      await vi.waitFor(() => {
+        const r = replies.last('WORKFLOW_SUBMITTED');
+        if (!r) throw new Error('no reply yet');
+        expect(r.payload).toEqual({
+          requestId: 'rq_submit_rl',
+          snapshot: {
+            workflowId: 'failed',
+            status: 'failed',
+            error: 'Rate limit exceeded, please retry shortly.',
+            rateLimit: META,
+          },
+        });
+      });
+      replies.stop();
+    });
+
+    test('POLL_WORKFLOW: a rate-limited throw keeps polling AND carries the meta', async () => {
+      const pollMeta = { ...META, id: 'apps.poll', retryAfterSeconds: 23 };
+      mocks.poll.mockRejectedValue(rateLimited('TOO_MANY_REQUESTS', pollMeta));
+      renderWithProviders(<PageBlockHost {...baseProps} />);
+      await driveToReady();
+      const replies = listenForReply();
+
+      postFromBlock('POLL_WORKFLOW', { requestId: 'rq_poll_rl', workflowId: 'wf_kept' });
+
+      await vi.waitFor(() => {
+        const r = replies.last('WORKFLOW_STATUS');
+        if (!r) throw new Error('no reply yet');
+        expect(r.payload).toEqual({
+          requestId: 'rq_poll_rl',
+          snapshot: {
+            workflowId: 'wf_kept',
+            status: 'processing',
+            throttled: true,
+            rateLimit: pollMeta,
+          },
+        });
+      });
+      replies.stop();
+    });
+
+    test('a failure that is not a rate limit carries no `rateLimit` key', async () => {
+      mocks.cancel.mockRejectedValue(
+        Object.assign(new Error('workflow not found'), { data: { code: 'NOT_FOUND' } })
+      );
+      renderWithProviders(<PageBlockHost {...baseProps} />);
+      await driveToReady();
+      const replies = listenForReply();
+
+      postFromBlock('CANCEL_WORKFLOW', { requestId: 'rq_cancel_nf', workflowId: 'wf_kept' });
+
+      await vi.waitFor(() => {
+        const r = replies.last('WORKFLOW_CANCELED');
+        if (!r) throw new Error('no reply yet');
+        expect(r.payload).toStrictEqual({
+          requestId: 'rq_cancel_nf',
+          snapshot: { workflowId: 'failed', status: 'failed', error: 'workflow not found' },
+        });
+      });
+      replies.stop();
+    });
   });
 });

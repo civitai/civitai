@@ -27,7 +27,8 @@
 // `_unpublish` a `404 not_found`, but for the report mark alias below. A list naming `markedBy` or
 // `mark` is refused as any unknown parameter, and `sort=counter:` / `sort=mark:` as any undeclared
 // sort field. A document is presented with empty `counters: {}`, `marks: {}` and `viewer`
-// (`presentDocs`, which says why). Reports go through the report API (`doc-store-report-api.ts`);
+// (`PresentedDoc`, which says why); a collection's info entry carries no `counters` or `marks`
+// (`presentDeclaration`). Reports go through the report API (`doc-store-report-api.ts`);
 // votes and per-viewer entries are viewer-keyed documents (`@me`).
 //
 // THE REPORT MARK ALIAS. Apps bundled with an SDK older than 0.30 report with
@@ -623,12 +624,14 @@ export type PresentedDoc = {
   updatedAt: string;
   author: PresentedAuthor;
   /**
-   * 🔴 SDK COMPATIBILITY, NOT DATA. The store serves no counters or marks, but `@civitai/sdk` up
-   * to 0.30 refuses a document reply without `counters` and `marks` (each an object of numbers)
-   * and without `viewer` (`null`, or `{ marks: string[] }`): `toDocument` throws "malformed". So
-   * every document is sent with them EMPTY, on every collection, whatever its manifest declares:
-   * `{}`, `{}`, and `{ marks: [] }` for a signed-in viewer (`null` for an anonymous one). They
-   * stay while any approved app runs `@civitai/sdk` 0.31 or older.
+   * 🔴 SDK COMPATIBILITY, NOT DATA. The store serves no counters or marks, but `@civitai/sdk`
+   * 0.14 through 0.32 refuses a document reply without `counters` and `marks` (each an object of
+   * numbers) and without `viewer` (`null`, or `{ marks: string[] }`): its `toDocument`, the same
+   * code in every one of those releases, throws "malformed". 0.33 is the first that ignores them.
+   * So every document is sent with them EMPTY, on every collection, whatever its manifest
+   * declares: `{}`, `{}`, and `{ marks: [] }` for a signed-in viewer (`null` for an anonymous
+   * one). They stay while any approved app runs `@civitai/sdk` 0.32 or older (on 0.32 the strict
+   * parser still reads every reply from this route; only its app-data service parser is lenient).
    */
   counters: Record<string, never>;
   marks: Record<string, never>;
@@ -688,17 +691,17 @@ async function presentDoc(doc: DocRecord, decl: DeclaredStorageCollection, signe
 
 /**
  * `open`: whether a viewer-keyed collection takes `@me` writes (`isViewerKeyedWritable`).
- * `counters` and `marks` are always empty, whatever the manifest declares: the store serves
- * neither (docs/app-storage-generic-core.md); the SDK's `StorageCollectionInfo`
- * still types both as lists.
+ * No `counters` or `marks`, whatever the manifest declares: the store serves neither
+ * (docs/app-storage-generic-core.md), and no `@civitai/sdk` release reads them from an info
+ * reply (`info()` checks only that `collections`, `limits` and `usage` are objects). Unlike a
+ * document's empty compatibility fields (`PresentedDoc`), nothing refuses a declaration without
+ * them.
  */
 function presentDeclaration(decl: DeclaredStorageCollection, open: boolean) {
   return {
     kind: decl.kind,
     visibility: decl.visibility,
     ...(decl.visibility === 'shared' ? { write: decl.write ?? 'own' } : {}),
-    counters: [],
-    marks: [],
     indexes: Object.fromEntries(decl.indexes),
     showAuthor: decl.showAuthor,
     ...(decl.keyedBy ? { keyedBy: decl.keyedBy, open } : {}),
@@ -1183,7 +1186,7 @@ async function run(
           // changed or not (the field keeps its name).
           privateWritesPerMinute: DOC_STORE_PRIVATE_WRITE_RATE_LIMIT_MAX,
           // No marks or counters, so no bucket for them: 0, never dropped, as every SDK from 0.14
-          // to 0.31 types it as a required number.
+          // to 0.32 types it as a required number.
           marksAndCountersPerMinute: 0,
           // The report API's daily budget (`assertReportGate`).
           reportsPerDay: DOC_STORE_REPORT_RATE_LIMIT_MAX,

@@ -50,8 +50,6 @@ const { followMutate, unfollowMutate, getByIdFetch } = vi.hoisted(() => ({
   getByIdFetch: vi.fn(),
 }));
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
   setTrpcBatchingEnabled: vi.fn(),

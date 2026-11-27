@@ -93,4 +93,9 @@ export type StickerCosmetic = Omit<SimpleCosmetic, 'data'> & {
 export type CardGlow = { color?: string; intensity?: number; animated?: boolean };
 export type CardDecorationCosmetic = Omit<SimpleCosmetic, 'data'> & { data: { glow?: CardGlow } };
 
+/** Art behind the profile sidebar header. Never in `getCosmeticsForUsers`: only the profile draws it. */
+export type SidebarBackgroundCosmetic = Omit<SimpleCosmetic, 'data'> & {
+  data: { url?: string; type?: MediaType };
+};
+
 export type WithClaimKey<T> = T & { claimKey: string };

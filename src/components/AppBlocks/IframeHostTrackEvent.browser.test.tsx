@@ -10,8 +10,6 @@ import { makeInertSubRouter, makeTrpcProxy } from '../../../test/trpcProxyStub';
  * the block puts in its payload, and the block gets no reply.
  */
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 42 }) }));
-
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ appBlocks: false, appBlocksPages: false }),
   useOptionalFeatureFlags: () => ({ appBlocks: false, appBlocksPages: false }),
@@ -116,7 +114,8 @@ async function mountAndReady() {
       context={context}
       token="tok_abc"
       expiresAt={new Date(Date.now() + 15 * 60_000).toISOString()}
-    />
+    />,
+    { user: { id: 42 } }
   );
   await vi.waitFor(() => {
     if (!iframeEl().contentWindow) throw new Error('not mounted yet');

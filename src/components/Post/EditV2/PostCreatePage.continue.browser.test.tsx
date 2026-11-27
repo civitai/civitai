@@ -27,7 +27,6 @@ vi.mock('~/providers/FeatureFlagsProvider', async (orig) => ({
   ...(await orig<typeof FeatureFlagsMod>()),
   useFeatureFlags: () => ({}),
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 1, muted: false }) }));
 
 vi.mock('~/server/utils/server-side-helpers', () => ({
   createServerSideProps: () => async () => ({ props: {} }),
@@ -47,7 +46,7 @@ beforeEach(() => {
 describe('the create post page heading', () => {
   test('continuing a chapter says it is the next chapter, not a generic image post', async () => {
     router.query = { continues: '31', n: '2' };
-    renderWithProviders(<CreatePostPage />);
+    renderWithProviders(<CreatePostPage />, { user: { id: 1, muted: false } });
 
     await expect
       .element(page.getByRole('heading', { name: 'Write the next chapter' }))
@@ -56,7 +55,7 @@ describe('the create post page heading', () => {
   });
 
   test('without ?continues= the generic heading stays', async () => {
-    renderWithProviders(<CreatePostPage />);
+    renderWithProviders(<CreatePostPage />, { user: { id: 1, muted: false } });
 
     await expect.element(page.getByRole('heading', { name: 'Create Image Post' })).toBeVisible();
     expect(page.getByText('Write the next chapter').elements()).toHaveLength(0);

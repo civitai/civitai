@@ -674,10 +674,18 @@ export async function resolveScanOutcome({
       axesSet,
       axesTarget
     );
+    // The caller's block write keeps a stored CSAM reason. Read the row as stored now, not as
+    // loaded: a moderator can lift that block while the scan runs. A failed read falls back to the
+    // loaded copy, so a CSAM reason is never dropped for want of a read.
+    const stored = await dbWrite.$queryRaw<{ blockedFor: string | null }[]>`
+      SELECT i."blockedFor" FROM "Image" i WHERE i.id = ${image.id}
+    `.then(
+      ([row]) => row?.blockedFor ?? null,
+      () => image.blockedFor
+    );
     return {
       ingestion: ImageIngestionStatus.Blocked,
-      // The caller's block write keeps a stored CSAM reason, and `image` was loaded after it.
-      blockedFor: image.blockedFor === BlockedReason.CSAM ? BlockedReason.CSAM : blocked.reason,
+      blockedFor: stored === BlockedReason.CSAM ? BlockedReason.CSAM : blocked.reason,
       reviewKey: null,
     };
   }
@@ -749,14 +757,24 @@ export async function resolveScanOutcome({
   // the row already has, which must not turn a grace block into a permanent one.
   const blocking = toUpdate.ingestion === ImageIngestionStatus.Blocked;
 
+  // Read fresh, not from `image`: a moderator can lift or set a block while the scan runs. Only a
+  // verdict that does not block reads it, as both checks below keep a block only then.
+  const [current] = blocking
+    ? []
+    : await dbWrite.$queryRaw<
+        { ingestion: ImageIngestionStatus; blockedFor: string | null; nsfwLevel: number }[]
+      >`
+        SELECT i.ingestion, i."blockedFor", i."nsfwLevel" FROM "Image" i WHERE i.id = ${image.id}
+      `;
+
   // The appeal is the open decision on this image's block: a scan may tighten it, never lift it.
   // A rescan request may already have cleared `ingestion` and `blockedFor`; it leaves the Blocked level.
   if ((await getPendingAppealImageIds([image.id])).size) {
     toUpdate.needsReview = 'appeal';
     reviewKey = 'appeal';
-    if (hasBlockMarker(image) && toUpdate.ingestion !== ImageIngestionStatus.Blocked) {
+    if (current && hasBlockMarker(current) && toUpdate.ingestion !== ImageIngestionStatus.Blocked) {
       toUpdate.ingestion = ImageIngestionStatus.Blocked;
-      toUpdate.blockedFor = image.blockedFor ?? BlockedReason.Moderated;
+      toUpdate.blockedFor = current.blockedFor ?? BlockedReason.Moderated;
       toUpdate.nsfwLevel = NsfwLevel.Blocked;
     }
   }
@@ -769,13 +787,8 @@ export async function resolveScanOutcome({
   }
 
   // A block on a banned owner's image is that decision, not a stale automated one, so a scan never
-  // lifts it. Read fresh, not from `image`: the ban can block the row after this scan loaded it.
+  // lifts it. Uses `current`: the ban can block the row after this scan loaded it.
   if (toUpdate.ingestion !== ImageIngestionStatus.Blocked) {
-    const [current] = await dbWrite.$queryRaw<
-      { ingestion: ImageIngestionStatus; blockedFor: string | null; nsfwLevel: number }[]
-    >`
-      SELECT i.ingestion, i."blockedFor", i."nsfwLevel" FROM "Image" i WHERE i.id = ${image.id}
-    `;
     if (current && hasBlockMarker(current) && (await isBlockKeptByBan(image.id))) {
       toUpdate.ingestion = ImageIngestionStatus.Blocked;
       toUpdate.blockedFor = current.blockedFor ?? BlockedReason.Moderated;
@@ -788,8 +801,7 @@ export async function resolveScanOutcome({
   const metadataJson = metadataUpdate ? JSON.stringify(metadataUpdate) : null;
   // Decided on the row, so a stored CSAM block holds whatever this scan loaded or decided.
   const csamBlocked = csamBlockedSql();
-  // The CSAM block the row holds once this write lands: the stored one, or one this scan writes back
-  // from the loaded copy after it was lifted.
+  // The CSAM block the row holds once this write lands: the stored one, or one this verdict writes.
   const csamAfterWrite = Prisma.sql`(${csamBlocked} OR ${
     (toUpdate.blockedFor as string) ?? null
   }::text = ${BlockedReason.CSAM})`;

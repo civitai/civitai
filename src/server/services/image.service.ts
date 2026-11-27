@@ -1,6 +1,7 @@
 import { fallbackUserImageColumn } from '~/server/services/profile-picture-fallback.sql';
 import {
   assertMayLoosenImages,
+  assertMayLoosenImagesAs,
   loosensImageLevel,
   loosensImageLevelSql,
 } from '~/server/services/moderator-withheld.service';
@@ -1447,11 +1448,6 @@ export async function handleUnblockImages({
                 ? removeMinorFlag
                   ? Prisma.sql`"minor" = FALSE,`
                   : Prisma.sql`"minor" = CASE WHEN "nsfwLevel" >= 4 THEN FALSE ELSE TRUE END,`
-                : Prisma.sql``
-            }
-            ${
-              ['minor', 'poi', 'newUser', 'bestiality'].includes(needsReview)
-                ? Prisma.sql`"scannedAt" = NOW(),`
                 : Prisma.sql``
             }
             "ingestion" = ${liftedIngestionSql}
@@ -6895,9 +6891,24 @@ export async function updateImageNsfwLevel({
       ...ratingRecordedUnderGrace(metadata, nsfwLevel),
     };
 
+    if (activity === 'setNsfwLevelKono') {
+      // The write itself refuses a consensus that loosens a withheld image, as the webhook's does.
+      const written = await dbWrite.$executeRaw`
+        UPDATE "Image" i SET "nsfwLevel" = ${nsfwLevel}, "nsfwLevelLocked" = TRUE
+        WHERE i.id = ${id}
+          AND NOT (
+            ${Prisma.raw(loosensImageLevelSql(nsfwLevel, 'i."nsfwLevel"'))}
+            AND ${Prisma.raw(moderatorWithheldSql('i', { csamReview: false }))}
+          )
+      `;
+      if (!written) return image.nsfwLevel;
+    }
     await dbWrite.image.update({
       where: { id },
-      data: { nsfwLevel, nsfwLevelLocked: true, metadata: updatedMetadata },
+      data:
+        activity === 'setNsfwLevelKono'
+          ? { metadata: updatedMetadata }
+          : { nsfwLevel, nsfwLevelLocked: true, metadata: updatedMetadata },
     });
     await afterImageNsfwLevelSet({
       id,
@@ -7201,6 +7212,8 @@ export async function resolveIngestionError({
       url: true,
       blockedFor: true,
       needsReview: true,
+      scannedAt: true,
+      createdAt: true,
       user: { select: { bannedAt: true, deletedAt: true } },
     },
   });
@@ -7285,7 +7298,8 @@ export async function resolveIngestionError({
       nsfwLevelLocked: true,
       ingestion: ImageIngestionStatus.Scanned,
       blockedFor: null,
-      scannedAt: new Date(),
+      // Not now(): resolving must not move the image in feeds. firstVisibleAt does that, once.
+      scannedAt: image.scannedAt ?? image.createdAt,
     },
   });
   if (count === 0) throw throwBadRequestError('This image changed; reload and try again.');
@@ -8146,8 +8160,9 @@ export async function updateImageAcceptableMinor({
   id,
   acceptableMinor,
   csamReview,
-}: UpdateImageAcceptableMinorInput & { csamReview: boolean }) {
-  if (acceptableMinor) await assertMayLoosenImages([id], { csamReview });
+  isModerator,
+}: UpdateImageAcceptableMinorInput & { csamReview: boolean; isModerator: boolean }) {
+  if (acceptableMinor) await assertMayLoosenImagesAs([id], { isModerator, csamReview });
   // primary: whether this write changes the flag decides whether shared caches are purged.
   const before = await dbWrite.image.findUnique({
     where: { id },

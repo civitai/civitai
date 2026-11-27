@@ -278,7 +278,7 @@ async function renderAndMeasure(measurePx: AppsMeasure | undefined, collapsed: b
 }
 
 describe('the /apps route set that renders the shared chrome', () => {
-  test('🔴 is exactly these 13 routes (fails when it GROWS or SHRINKS)', () => {
+  test('🔴 is exactly these 14 routes (fails when it GROWS or SHRINKS)', () => {
     // A ledger, not a floor. The alignment assertions below loop over this set, so a
     // set that silently shrank — or emptied — would make them pass while checking
     // nothing. Adding an apps page is meant to fail here and be added deliberately.
@@ -304,12 +304,14 @@ describe('the /apps route set that renders the shared chrome', () => {
       // The store, moved from `/apps` (now the viewer's app home); measure-free like it was.
       '/apps/store',
       '/apps/store-preview/[slug]',
+      // The developer's conversation on one review decision (measured, readable).
+      '/apps/submissions/[subjectId]',
       '/apps/submit',
     ]);
     // Both classes are represented, so the loops below exercise the measured AND the
-    // measure-free branch of the layout rather than one of them 13 times.
+    // measure-free branch of the layout rather than one of them 14 times.
     expect(ROUTES.filter((r) => r.measure === undefined)).toHaveLength(7);
-    expect(ROUTES.filter((r) => r.measure !== undefined)).toHaveLength(6);
+    expect(ROUTES.filter((r) => r.measure !== undefined)).toHaveLength(7);
   });
 });
 

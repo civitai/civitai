@@ -303,6 +303,7 @@ describe('GET /api/v1/blocks/me', () => {
       id: 42,
       username: 'viewer',
       status: 'active',
+      image: null,
       buzzBudget: 250,
     });
   });

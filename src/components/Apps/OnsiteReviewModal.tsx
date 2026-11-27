@@ -53,6 +53,8 @@ import {
 } from '~/components/Apps/reviewRelativeTime';
 import { useReviewPreview } from '~/components/Apps/useReviewPreview';
 import { reviewProvenanceLines } from '~/components/Apps/reviewSourceProvenance';
+import { reviewSdkFloorLines } from '~/components/Apps/reviewSdkFloor';
+import { reviewPlatformUpdatesLines } from '~/components/Apps/reviewPlatformUpdates';
 import type { ReviewSourceProvenance } from '~/server/schema/blocks/actions-run-source.schema';
 import { PREVIEW_CHIP_COLORS, previewChipState } from '~/components/Apps/reviewQueueSignals';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -376,6 +378,54 @@ export function ReviewSourceProvenanceMeta({
             </Text>
           ) : null}
         </div>
+      ))}
+    </Stack>
+  );
+}
+
+/**
+ * The OUTDATED-SDK lines a submit recorded (`reviewSdkFloorLines`): the bundle lockfile's packages
+ * below the platform minimum, and whether the client submitted past its own check with
+ * `--allow-outdated-sdk`. Renders nothing when the request records neither.
+ */
+export function ReviewSdkFloorMeta({ fileSummary }: { fileSummary: unknown }) {
+  const lines = reviewSdkFloorLines(fileSummary);
+  if (lines.length === 0) return null;
+  return (
+    <Stack gap={2} data-testid="apps-review-sdk-floor">
+      {lines.map((line) => (
+        <Text size="xs" key={line.key} data-review-sdk-floor-line={line.key}>
+          <Text span size="xs" c="orange">
+            {line.heading}:{' '}
+          </Text>
+          <Text span size="xs" ff="monospace">
+            {line.value}
+          </Text>
+        </Text>
+      ))}
+    </Stack>
+  );
+}
+
+/**
+ * The MISSING PLATFORM UPDATES line a submit or push recorded (`reviewPlatformUpdatesLines`): the
+ * staff platform updates, not yet shipped, that this version's files do not contain, and why it was
+ * queued anyway (the submit override, or a git push). Renders nothing when none are recorded.
+ */
+export function ReviewPlatformUpdatesMeta({ fileSummary }: { fileSummary: unknown }) {
+  const lines = reviewPlatformUpdatesLines(fileSummary);
+  if (lines.length === 0) return null;
+  return (
+    <Stack gap={2} data-testid="apps-review-platform-updates">
+      {lines.map((line) => (
+        <Text size="xs" key={line.key} data-review-platform-updates-line={line.key}>
+          <Text span size="xs" c="orange">
+            {line.heading}:{' '}
+          </Text>
+          <Text span size="xs" ff="monospace">
+            {line.value}
+          </Text>
+        </Text>
       ))}
     </Stack>
   );
@@ -776,6 +826,8 @@ export function OnsiteReviewModalBody({
     <Stack gap="md">
       <ReviewSubmitterMeta request={request} now={now} />
       <ReviewSourceProvenanceMeta provenance={request.sourceProvenance} />
+      <ReviewSdkFloorMeta fileSummary={request.fileSummary} />
+      <ReviewPlatformUpdatesMeta fileSummary={request.fileSummary} />
 
       <ReviewDecisionAlert selection={selection} now={now} />
 

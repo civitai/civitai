@@ -20,8 +20,6 @@ import { makeInertSubRouter, makeTrpcProxy } from '../../../test/trpcProxyStub';
 
 const mocks = vi.hoisted(() => ({ resolve: vi.fn(), fetch: vi.fn() }));
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-
 // Short enough for a test to wait out, far longer than any other case here takes.
 const { TEST_DEADLINE_MS } = vi.hoisted(() => ({ TEST_DEADLINE_MS: 3000 }));
 vi.mock('~/components/AppBlocks/resourceFileParse', async (importOriginal) => ({

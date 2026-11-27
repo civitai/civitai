@@ -21,7 +21,6 @@ const mocks = vi.hoisted(() => ({
   inputs: [] as Record<string, unknown>[],
 }));
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
   trpc: makeTrpcProxy({

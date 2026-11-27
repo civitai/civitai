@@ -24,9 +24,12 @@ function useMuteControl(creatorId: number, muted: boolean, creatorName?: string 
 export function AnnouncementMuteToggle({
   creatorId,
   creatorName,
+  solid,
 }: {
   creatorId: number;
   creatorName?: string | null;
+  /** A solid dark circle, to sit beside the redesigned sidebar's filled buttons. */
+  solid?: boolean;
 }) {
   const muted = useIsCreatorMuted(creatorId);
   const { isLoading, handleToggle, visible } = useMuteControl(creatorId, muted, creatorName);
@@ -39,8 +42,8 @@ export function AnnouncementMuteToggle({
       <LegacyActionIcon
         size={36}
         radius="xl"
-        variant={muted ? 'filled' : 'light'}
-        color="gray"
+        variant={muted || solid ? 'filled' : 'light'}
+        color={solid && !muted ? 'dark' : 'gray'}
         loading={isLoading}
         onClick={handleToggle}
         aria-label={label}

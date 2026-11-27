@@ -771,7 +771,10 @@ export const addTagVotes = async ({
   tags,
   isModerator,
   vote,
-}: TagVotingInput & { vote: number }) => {
+  csamReview = false,
+}: TagVotingInput & { vote: number; csamReview?: boolean }) => {
+  if (isModerator && type === 'image' && vote < 0)
+    await assertMayLoosenImages([id], { csamReview });
   // Determine vote weight
   let isCreator = false;
   if (type === 'model') {
@@ -822,6 +825,54 @@ export const addTagVotes = async ({
     await modelVotableTagsCache.bust(id);
   }
 };
+/** A moderator's weighted votes on image tags, applied whole or not at all on what is withheld. */
+export async function voteImageTagsAsModerator({
+  votes,
+  userId,
+  csamReview,
+}: {
+  votes: { imageId: number; tagId: number; vote: number }[];
+  userId: number;
+  csamReview: boolean;
+}) {
+  // Grouped by (imageId, vote) so each group is one service call with an array of tag ids.
+  const removals = new Map<number, number[]>();
+  const additions = new Map<string, { imageId: number; vote: number; tagIds: number[] }>();
+  for (const v of votes) {
+    if (v.vote === 0) {
+      const arr = removals.get(v.imageId) ?? [];
+      arr.push(v.tagId);
+      removals.set(v.imageId, arr);
+    } else {
+      const key = `${v.imageId}:${v.vote}`;
+      const cur = additions.get(key) ?? { imageId: v.imageId, vote: v.vote, tagIds: [] };
+      cur.tagIds.push(v.tagId);
+      additions.set(key, cur);
+    }
+  }
+
+  await assertMayLoosenImages(
+    votes.filter((v) => v.vote < 0).map((v) => v.imageId),
+    { csamReview }
+  );
+
+  await Promise.all([
+    ...Array.from(removals.entries()).map(([id, tagIds]) =>
+      removeTagVotes({ userId, type: 'image', id, tags: tagIds })
+    ),
+    ...Array.from(additions.values()).map((group) =>
+      addTagVotes({
+        userId,
+        type: 'image',
+        id: group.imageId,
+        tags: group.tagIds,
+        vote: group.vote,
+        isModerator: true,
+        csamReview,
+      })
+    ),
+  ]);
+}
 // #endregion
 
 export const addTags = async ({ tags, entityIds, entityType, relationship }: AdjustTagsSchema) => {

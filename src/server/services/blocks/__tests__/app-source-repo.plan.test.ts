@@ -7,13 +7,18 @@ import {
   gitBlobSha,
   isTrailerSafe,
   planAssistantCommit,
+  planPlatformUpdateCommit,
   planReplaceCommit,
+  platformUpdatePathRefusal,
+  platformUpdateCommitMessage,
+  PlatformUpdatePlanError,
   sourceFilesFromExport,
   sourceRepoHttpUrl,
   treeOf,
   SourceFilesError,
 } from '~/server/services/blocks/app-source-repo.plan';
 import { MAX_FILES_IN_BUNDLE } from '~/server/schema/blocks/publish-request.schema';
+import { forkSeedExclusionReason } from '~/server/services/blocks/fork-seed-exclusions';
 
 /**
  * Source repos — the pure decisions: what a commit changes (the compare-and-set plan), what its
@@ -206,5 +211,135 @@ describe('sourceRepoHttpUrl', () => {
       expect(sourceRepoHttpUrl(host, 'civitai-apps-src', 'my-app')).toBe(
         'https://git.example.test/civitai-apps-src/my-app.git'
       );
+  });
+});
+
+describe('platform updates', () => {
+  const tree = { 'package.json': gitBlobSha(buf('old')), 'README.md': gitBlobSha(buf('r')) };
+  const put = (path: string, c: string) => ({ operation: 'put' as const, path, content: buf(c) });
+
+  it('plans create / update / delete against the blobs main holds, skipping unchanged bytes', () => {
+    const plan = planPlatformUpdateCommit(tree, [
+      put('package.json', 'new'),
+      put('README.md', 'r'),
+      put('src/new.ts', 'n'),
+    ]);
+    expect(plan.operations.map((o) => [o.operation, o.path, 'sha' in o ? o.sha : null])).toEqual([
+      ['update', 'package.json', gitBlobSha(buf('old'))],
+      ['create', 'src/new.ts', null],
+    ]);
+    const del = planPlatformUpdateCommit(tree, [{ operation: 'delete', path: 'README.md' }]);
+    expect(del.operations).toEqual([
+      { operation: 'delete', path: 'README.md', sha: gitBlobSha(buf('r')) },
+    ]);
+  });
+
+  it('refuses a delete of a missing path, a path named twice, and paths a source repo never holds', () => {
+    for (const [changes, message] of [
+      [[{ operation: 'delete', path: 'gone.ts' }], 'gone.ts does not exist on main'],
+      [[put('a.ts', '1'), put('a.ts', '2')], 'a.ts is named more than once'],
+      [[put('.env', 'K=1')], '.env is a file a source repo never holds'],
+      [
+        [put('node_modules/x/index.js', '1')],
+        'node_modules/x/index.js is a file a source repo never holds',
+      ],
+      [
+        [put('src/build/x.js', '1')],
+        "src/build/x.js is in a folder the app's package always leaves out",
+      ],
+      [[put('../escape.ts', '1')], '../escape.ts is not a relative repo path'],
+      [[put('/abs.ts', '1')], '/abs.ts is not a relative repo path'],
+    ] as const) {
+      expect(() => planPlatformUpdateCommit(tree, changes as never)).toThrow(
+        new PlatformUpdatePlanError(message)
+      );
+    }
+  });
+
+  it('refuses those paths in any letter case, while the shared fork-seed list stays as it was', () => {
+    for (const path of [
+      '.ENV',
+      '.Env.local',
+      'src/.ENV.production',
+      'Node_Modules/x/index.js',
+      '.GIT/config',
+      '.SSH/id_rsa',
+      'ID_RSA',
+      '.NPMRC',
+      'Dist/app.js',
+      'SCRATCH/notes.md',
+    ]) {
+      expect(platformUpdatePathRefusal(path)).toBe('is a file a source repo never holds');
+    }
+    // Positive control: ordinary paths with capitals are still writable.
+    for (const path of ['README.md', 'src/Env.ts', 'src/Components/Gallery.tsx'])
+      expect(platformUpdatePathRefusal(path)).toBeNull();
+    // The shared list is untouched: a fork's seed and an App Assistant save match it as before.
+    expect(forkSeedExclusionReason('.ENV')).toBeNull();
+    expect(forkSeedExclusionReason('.env')).toBe('env');
+  });
+
+  it("refuses a path under a folder the CLI's package drops at every depth, not only the root", () => {
+    for (const path of [
+      'src/build/x.js',
+      'packages/ui/out/index.js',
+      'app/.cache/data.json',
+      'web/coverage/lcov.info',
+      'web/.vite/deps/a.js',
+      'tools/venv/lib/site.py',
+      'a/b/dist/c.js',
+      'pkg/.next/server.js',
+      'pkg/.turbo/log',
+      'py/.pytest_cache/v',
+      'py/.mypy_cache/v',
+      'py/.ruff_cache/v',
+      'x/.pnpm-store/v3/a',
+      'x/.hg/store',
+      'x/.svn/entries',
+      'x/.venv/bin/python',
+      'src/Build/x.js',
+    ]) {
+      expect(platformUpdatePathRefusal(path), path).toBe(
+        "is in a folder the app's package always leaves out"
+      );
+    }
+    // Positive control: the same names as a FILE, or inside a longer folder name, are writable.
+    for (const path of ['src/build.ts', 'src/out', 'src/builder/x.ts', 'docs/coverage.md'])
+      expect(platformUpdatePathRefusal(path), path).toBeNull();
+    // The shared fork-seed list is untouched: it drops build output at the top level only.
+    expect(forkSeedExclusionReason('src/build/x.js')).toBeNull();
+  });
+
+  it('commit message: summary, the reason as the body, and the trailers last', () => {
+    const plan = planPlatformUpdateCommit(tree, [put('package.json', 'new')]);
+    expect(
+      platformUpdateCommitMessage({
+        plan,
+        updateId: 'apu_01JABCDEFGHJKMNPQRSTVWXYZ0',
+        byUsername: 'mod-ana',
+        reason: '  Bump the SDK.\r\nThe old floor stops working on Dec 1.\u0007  ',
+      })
+    ).toBe(
+      'Platform update: update package.json\n\n' +
+        'Bump the SDK.\nThe old floor stops working on Dec 1.\n\n' +
+        'Platform-Update: apu_01JABCDEFGHJKMNPQRSTVWXYZ0\n' +
+        'Platform-Update-By: mod-ana\n' +
+        'Reason: Bump the SDK. The old floor stops working on Dec 1.'
+    );
+  });
+
+  it('a reason no trailer can carry (non-ASCII) stays in the body and its trailer is left out', () => {
+    const plan = planPlatformUpdateCommit(tree, [put('package.json', 'new')]);
+    expect(
+      platformUpdateCommitMessage({
+        plan,
+        updateId: 'apu_01JABCDEFGHJKMNPQRSTVWXYZ0',
+        byUsername: 'mod-ana',
+        reason: 'Mise à jour du SDK',
+      })
+    ).toBe(
+      'Platform update: update package.json\n\nMise à jour du SDK\n\n' +
+        'Platform-Update: apu_01JABCDEFGHJKMNPQRSTVWXYZ0\nPlatform-Update-By: mod-ana'
+    );
   });
 });

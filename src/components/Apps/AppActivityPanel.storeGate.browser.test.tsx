@@ -82,7 +82,6 @@ const mocks = vi.hoisted(() => ({
 // `DaysFromNow` reads `useIsClient()` from this provider and THROWS outside it;
 // `renderWithProviders` supplies Mantine + a QueryClient only. `true` is the post-mount
 // value, which is the state every assertion here is about.
-vi.mock('~/providers/IsClientProvider', () => ({ useIsClient: () => true }));
 
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => mocks.flags ?? {},

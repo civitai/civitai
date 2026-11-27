@@ -511,6 +511,8 @@ export const IMAGE_USES = {
   collections: ['Collection', 'imageId'],
   UserProfile: ['UserProfile', 'coverImageId'],
   userProfileSfwCover: ['UserProfile', 'sfwCoverImageId'],
+  userProfileBackground: ['UserProfile', 'backgroundImageId'],
+  userProfileSfwBackground: ['UserProfile', 'sfwBackgroundImageId'],
   announcementCovers: ['Announcement', 'coverId'],
   clubCover: ['Club', 'coverImageId'],
   clubHeader: ['Club', 'headerImageId'],

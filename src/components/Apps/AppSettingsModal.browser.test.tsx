@@ -51,7 +51,7 @@ describe('AppSettingsModal — permission list', () => {
   const EXPECTED: [scope: string, title: string][] = [
     ['ai:write:budgeted', 'Run AI work with your Buzz'],
     ['apps:storage:shared:write', 'Post to community data'],
-    ['user:read:self', 'See your username and account status'],
+    ['user:read:self', 'See your username, profile picture and account status'],
     ['models:read:self', 'See the model it sits on'],
     [UNKNOWN, 'Zz not a real scope'],
   ];

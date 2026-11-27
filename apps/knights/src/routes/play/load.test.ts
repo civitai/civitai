@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { LATEST_UPDATE_ID } from '$lib/server/whats-new/entries';
 
 const getPlayerStatus = vi.hoisted(() => vi.fn());
 const getApprentice = vi.hoisted(() => vi.fn());
@@ -14,6 +15,7 @@ const pickYesNo = vi.hoisted(() => vi.fn());
 const burstDue = vi.hoisted(() => vi.fn());
 const servedHistory = vi.hoisted(() => vi.fn());
 const yesNoSettings = vi.hoisted(() => ({ share: 0.7, stretch: 8 }));
+const playerPrefs = vi.hoisted(() => vi.fn());
 const queueDeps = vi.hoisted(() => ({
   now: () => new Date('2026-12-15T12:00:00Z'),
 }));
@@ -73,6 +75,7 @@ vi.mock('$lib/server/yesno/cadence', () => ({
 }));
 vi.mock('$lib/server/yesno/vote', () => ({ castYesNoVote: vi.fn() }));
 vi.mock('$lib/server/yesno/runtime', () => ({ yesNoConfig: () => yesNoSettings }));
+vi.mock('$lib/server/player-prefs', () => ({ playerPrefs }));
 vi.mock('$lib/server/apprenticeship/runtime', () => ({
   apprenticeDeps: { now: () => new Date('2026-12-15T12:00:00Z') },
 }));
@@ -149,6 +152,8 @@ beforeEach(() => {
   servedHistory.mockReset();
   servedHistory.mockResolvedValue([]);
   yesNoSettings.share = 0.7;
+  playerPrefs.mockReset();
+  playerPrefs.mockResolvedValue({ yesNo: true });
 });
 
 describe('play load', () => {
@@ -693,6 +698,17 @@ describe('play load yes/no questions', () => {
     expect((await run()).item).toBeNull();
     expect(pickYesNo).not.toHaveBeenCalled();
   });
+
+  it('serves the rating, never a question, to a player who turned questions off in Knights settings', async () => {
+    playerPrefs.mockResolvedValue({ yesNo: false });
+    pickYesNo.mockResolvedValue(offer);
+
+    const page = await run();
+
+    expect(pickYesNo).not.toHaveBeenCalled();
+    expect(page.question.kind).not.toBe('bool');
+    expect(page.banner).toBeNull();
+  });
 });
 
 describe('play load notices', () => {
@@ -768,6 +784,7 @@ describe("play load: what's new", () => {
       level: 4,
       guide: false,
       whatsNew: true,
+      updatesSeen: LATEST_UPDATE_ID,
     });
   });
 

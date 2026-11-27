@@ -148,6 +148,7 @@ export async function sendNotificationEmails({
         message: prepared.message,
         url: prepared.url,
         btnLabel: prepared.emailButtonLabel,
+        byline: prepared.byline,
         unsubscribeUrl: getEmailUnsubscribeUrl(recipient.id, type),
       });
       outcome.sent++;

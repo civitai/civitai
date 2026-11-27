@@ -44,9 +44,6 @@ const conditionalPerform = vi.fn((amount: number, perform: () => void) => {
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ buzz: true, isGreen: false }),
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({
-  useCurrentUser: () => ({ id: 1, isModerator: false, muted: false }),
-}));
 vi.mock('~/components/Buzz/useBuzz', async (importOriginal) => ({
   ...(await importOriginal<typeof UseBuzz>()),
   useQueryBuzz: () => ({ data: { total: BALANCE } }),
@@ -120,7 +117,8 @@ const openTipPopover = async () => {
   renderWithProviders(
     <InteractiveTipBuzzButton toUserId={2} entityId={3} entityType="Image">
       <span>tip</span>
-    </InteractiveTipBuzzButton>
+    </InteractiveTipBuzzButton>,
+    { user: { id: 1, isModerator: false, muted: false } }
   );
 
   await userEvent.click(page.getByText('tip', { exact: true }));

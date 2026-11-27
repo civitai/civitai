@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   isSectionAvailable,
   storefrontSectionKeys,
+  storefrontShowsServices,
   withMissingSections,
 } from '~/components/CreatorShop/section-meta';
 import { isStorefrontEmpty } from '~/components/CreatorShop/Storefront/storefront.util';
@@ -53,5 +54,25 @@ describe('storefront section keys', () => {
   it('includes Services for a shop with no saved order, after Cosmetics', () => {
     const keys = storefrontSectionKeys(null, flags(true));
     expect(keys.indexOf('services')).toBe(keys.indexOf('cosmetics') + 2);
+  });
+});
+
+describe('storefront shows Services', () => {
+  const shop = (sections?: { key: 'services'; visible: boolean }[]) => ({ settings: { sections } });
+
+  it('shows Services with an Active offering on a shop saved before Services existed', () => {
+    expect(storefrontShowsServices(shop(), 1, flags(true))).toBe(true);
+  });
+
+  it('hides Services the seller switched off, even with Active offerings', () => {
+    expect(
+      storefrontShowsServices(shop([{ key: 'services', visible: false }]), 2, flags(true))
+    ).toBe(false);
+  });
+
+  it('hides Services with no Active offering, no loaded shop, or creatorServices off', () => {
+    expect(storefrontShowsServices(shop(), 0, flags(true))).toBe(false);
+    expect(storefrontShowsServices(undefined, 1, flags(true))).toBe(false);
+    expect(storefrontShowsServices(shop(), 1, flags(false))).toBe(false);
   });
 });

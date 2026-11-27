@@ -105,6 +105,13 @@ const GATE_LEDGER: Record<string, string> = {
     "repo's owner never had is NOT bound, so a squatter's block owner cannot reach it. " +
     'creationGate uses the same assertAppEditAccess before a repo may be created for a ' +
     'slug that has a block. Pinned in app-source-repo.service.test.ts.',
+  'src/server/services/blocks/app-platform-update.service.ts':
+    'appForOwner gates the OWNER half of staff platform updates (listPending, verifyCommit, ' +
+    'resolve) on assertAppEditAccess: owner | ACCEPTED collaborator, the same cell as the ' +
+    "build and source repos, so a collaborator who pulls the app sees and merges staff's " +
+    'updates too. NO mod bypass on that half; the staff half (push, supersede, modList) is a ' +
+    'separate moderatorProcedure, never a bypass here. "No such app" and "not yours" answer ' +
+    'the same NOT_FOUND. Pinned in app-platform-update.service.test.ts.',
   'src/server/services/blocks/app-listing-visibility-write.service.ts':
     'setListingVisibilityAsOwner is THE gate on the owner path for the per-listing ' +
     'VISIBILITY LEVEL: owner | ACCEPTED collaborator, resolved by resolveListingAccess ' +
@@ -312,6 +319,15 @@ const GATE_LEDGER: Record<string, string> = {
     'Collaborators are NOT included by default (an editor consented to edit, not to ' +
     'receive moderation correspondence); `includeCollaborators` opts in per message and ' +
     'reads the ACCEPTED set via listAcceptedCollaboratorUserIds, ignoring `displayed`.',
+  'src/server/services/blocks/app-review-thread.service.ts':
+    'NOT a caller-identity gate on the listing. The review reply thread asks ' +
+    'resolveListingAccess / resolveAppAccess (with `userId: null`) only for the CANONICAL ' +
+    "owner of the request's listing or app, who is the thread's developer side and the one " +
+    "notified of a moderator's reply; the submitter counts only while they are that owner " +
+    '(or while nothing the request is for exists yet), so a former owner loses the thread ' +
+    'after a transfer or claim. The denormalized AppListing.userId could name a former ' +
+    'owner on a drifted onsite row. Collaborators are not participants (operator decision: ' +
+    'current owner only).',
   'src/pages/api/v1/blocks/dev-token.ts':
     'NOT widened, deliberately. This is a THIRD gate shape the ledger surfaced: a ' +
     'positive-match BRANCH CONDITION (`block.app.userId === user.id`) rather than a ' +

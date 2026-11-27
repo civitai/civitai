@@ -57,6 +57,19 @@ export const storefrontSectionKeys = (
     .filter((s) => s.visible && isSectionAvailable(s.key, features))
     .map((s) => s.key);
 
+type StorefrontShop = { settings: { sections?: SectionSetting[] | null } } | null | undefined;
+
+/** Whether the shop's settings show the Services section, offerings aside. */
+export const storefrontServicesSectionShown = (shop: StorefrontShop, features: FeatureAccess) =>
+  !!shop && storefrontSectionKeys(shop.settings.sections, features).includes('services');
+
+/** Whether the storefront renders its Services section: an Active offering, and the section shown. */
+export const storefrontShowsServices = (
+  shop: StorefrontShop,
+  activeServiceCount: number,
+  features: FeatureAccess
+) => activeServiceCount > 0 && storefrontServicesSectionShown(shop, features);
+
 /** The storefront section's element id, so a link can jump to it. */
 export const storefrontSectionId = (key: CreatorShopSectionKey) => `shop-${key}`;
 

@@ -105,7 +105,8 @@ func TestScoreAgreesWithServerSelection(t *testing.T) {
 		// as-posts would read these items as postless (fields); a flat page reads them by id.
 		{evalcorpus.EndpointInfinite, `{"json":{"items":[{"id":21},{"id":22}]}}`, `{"json":{"items":[{"id":22},{"id":21}]}}`, "order"},
 		{evalcorpus.EndpointModelGetAll, `{"json":{"items":[{"id":31,"name":"a"}]}}`, `{"json":{"items":[{"id":31,"name":"b"}]}}`, "fields"},
-		// Go omits an undefined member, Node writes null; both annotate it (decoded: the same).
+		// An omitted undefined member (feed-go before 0.0.51) against Node's annotated null: both
+		// annotate it, decoded the same.
 		{evalcorpus.EndpointModelGetAll, `{"json":{"items":[{"id":31}]},"meta":{"values":{"nextCursor":["undefined"]}}}`,
 			`{"json":{"items":[{"id":31}],"nextCursor":null},"meta":{"values":{"nextCursor":["undefined"]}}}`, "match"},
 		{evalcorpus.EndpointV1ModelsID, `{"error":"No model with id 41"}`, `{"id":41}`, "membership"},

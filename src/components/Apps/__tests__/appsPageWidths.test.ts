@@ -462,7 +462,7 @@ describe('APPS_PAGE_MEASURES — the decided CONTENT measure per route', () => {
     expect((1700 * 8) / 12).toBeGreaterThan(APPS_READABLE_MEASURE.min);
   });
 
-  test('the readable band is 1068 → 1368, and these five form/prose routes take it', () => {
+  test('the readable band is 1068 → 1368, and these six form/prose routes take it', () => {
     expect(APPS_READABLE_MEASURE).toEqual({ min: 1068, max: 1368, grow: 55 });
     const takers = Object.entries(APPS_PAGE_MEASURES)
       .filter(([, m]) => m === APPS_READABLE_MEASURE)
@@ -478,6 +478,7 @@ describe('APPS_PAGE_MEASURES — the decided CONTENT measure per route', () => {
       '/apps/[appBlockId]/revenue',
       '/apps/invites',
       '/apps/listing/[appListingId]/edit',
+      '/apps/submissions/[subjectId]',
       '/apps/submit',
     ]);
   });
@@ -959,9 +960,12 @@ describe('every /apps page on disk is classified', () => {
         // prefix sorts before its longer sibling, so it precedes `store-preview`.
         '/apps/store',
         '/apps/store-preview/[slug]',
+        // The developer's conversation on one review decision. 'submissions' sorts before
+        // 'submit' ('s' < 't' at index 11).
+        '/apps/submissions/[subjectId]',
         '/apps/submit',
       ]);
-      expect(RENDERING_ROUTES).toHaveLength(13);
+      expect(RENDERING_ROUTES).toHaveLength(14);
     });
 
     test('every RETURN of every page renders the layout (AST, not text)', () => {

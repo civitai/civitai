@@ -25,8 +25,6 @@ const h = vi.hoisted(() => ({
   gate: vi.fn(),
 }));
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-
 vi.mock('~/hooks/useCFImageUpload', async (importOriginal) => ({
   ...(await importOriginal<typeof CfUploadMod>()),
   useCFImageUpload: () => ({

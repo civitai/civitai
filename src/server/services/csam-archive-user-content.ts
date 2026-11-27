@@ -157,6 +157,7 @@ export const userContentReaders: { name: string; rows: Reader }[] = [
             'sfwBio',
             'sfwMessage',
             'location',
+            'about',
           ])
           .where('userId', '=', userId)
           .execute(),

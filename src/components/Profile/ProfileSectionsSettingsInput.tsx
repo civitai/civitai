@@ -2,6 +2,7 @@ import type { InputWrapperProps } from '@mantine/core';
 import {
   ActionIcon,
   Button,
+  Chip,
   Group,
   Input,
   Paper,
@@ -90,6 +91,14 @@ export const ProfileSectionsSettingsInput = ({
     );
   };
 
+  const onToggleHalfWidth = (key: string) => {
+    setSections((current) =>
+      current.map((s) =>
+        s.key === key ? { ...s, width: s.width === 'half' ? 'full' : 'half' } : s
+      )
+    );
+  };
+
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
 
   const handleDragEnd = (event: DragEndEvent) => {
@@ -122,6 +131,7 @@ export const ProfileSectionsSettingsInput = ({
               {sections.map((s) => {
                 // Kept in the saved list either way; only the toggle waits for the flag.
                 if (s.key === 'creatorJourney' && !features.creatorJourney) return null;
+                if (s.key === 'recent' && !features.profileRedesign) return null;
                 const showcase = getShowcaseSectionByKey(s.key, showcaseSections);
                 if (isCustomShowcaseKey(s.key) && (!features.profileShowcases || !showcase))
                   return null;
@@ -154,12 +164,23 @@ export const ProfileSectionsSettingsInput = ({
                             <IconPencil size={16} />
                           </ActionIcon>
                         )}
+                        {features.profileRedesign && (
+                          <Chip
+                            size="xs"
+                            ml="auto"
+                            checked={s.width === 'half'}
+                            onChange={() => onToggleHalfWidth(s.key)}
+                            aria-label={`Show ${label} at half width`}
+                          >
+                            Half width
+                          </Chip>
+                        )}
                         <Switch
                           checked={s.enabled}
                           onChange={() => onToggleSection(s.key)}
                           labelPosition="left"
                           aria-label={label}
-                          ml="auto"
+                          ml={features.profileRedesign ? undefined : 'auto'}
                         />
                       </Group>
                     </Paper>

@@ -1,6 +1,10 @@
 import { escape as escapeHtml } from 'he';
 import { createEmail } from '~/server/email/templates/base.email';
-import { emailTheme, simpleEmailWithTemplate } from '~/server/email/templates/util';
+import {
+  EMAIL_MUTED_CLASS,
+  emailTheme,
+  simpleEmailWithTemplate,
+} from '~/server/email/templates/util';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 
 export type NotificationEmailData = {
@@ -10,6 +14,8 @@ export type NotificationEmailData = {
   url?: string;
   /** The button's label; a prepared notification message can set its own (`emailButtonLabel`). */
   btnLabel?: string;
+  /** Who it is from, under the message (`byline` on a prepared notification message). */
+  byline?: string;
   unsubscribeUrl: string;
 };
 
@@ -33,7 +39,7 @@ export const notificationEmail = createEmail({
       'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
     },
   }),
-  html: ({ typeName, message, url, btnLabel, unsubscribeUrl }: NotificationEmailData) => {
+  html: ({ typeName, message, url, btnLabel, byline, unsubscribeUrl }: NotificationEmailData) => {
     const link = absoluteUrl(url);
     const footer = `You're getting this because email is on for
       "${escapeHtml(typeName)}". <a href="${notificationSettingsUrl()}" style="color: ${
@@ -48,16 +54,23 @@ export const notificationEmail = createEmail({
       eyebrow: 'Notification',
       header: escapeHtml(subjectFor(typeName)),
       preheader: escapeHtml(message),
-      body: `<p style="margin: 0;">${escapeHtml(message)}</p>`,
+      body: `<p style="margin: 0;">${escapeHtml(message)}</p>${
+        byline
+          ? `<p class="${EMAIL_MUTED_CLASS}" style="margin: 12px 0 0 0; font-size: 14px; color: ${
+              emailTheme.muted
+            };">${escapeHtml(byline)}</p>`
+          : ''
+      }`,
       btnUrl: link ? escapeHtml(link) : undefined,
       btnLabel: link ? escapeHtml(btnLabel ?? DEFAULT_NOTIFICATION_BUTTON_LABEL) : undefined,
       footer,
     });
   },
-  text: ({ typeName, message, url, btnLabel, unsubscribeUrl }: NotificationEmailData) => {
+  text: ({ typeName, message, url, btnLabel, byline, unsubscribeUrl }: NotificationEmailData) => {
     const link = absoluteUrl(url);
     return [
       message,
+      byline ?? '',
       link ? `${btnLabel ?? DEFAULT_NOTIFICATION_BUTTON_LABEL}: ${link}` : '',
       `You're getting this because email is on for "${typeName}".`,
       `Manage notification emails: ${notificationSettingsUrl()}`,

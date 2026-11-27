@@ -172,6 +172,21 @@ export const NAME_TAKEN =
 export const REFUSED_PLAINLY =
   'Not submitted: the submission was refused. Ask App Assistant to check the app, then submit again.';
 
+/**
+ * The route refused a bundle that lacks staff platform updates (`platform_update_missing`, 409).
+ * Its own message names the CLI override, which the card cannot send: say what to do here instead.
+ */
+export function platformUpdateMissingRefusal(details: unknown): string {
+  const updates = (details as { updates?: unknown } | null)?.updates;
+  const ids = Array.isArray(updates)
+    ? updates.flatMap((u) =>
+        u && typeof (u as { id?: unknown }).id === 'string' ? [(u as { id: string }).id] : []
+      )
+    : [];
+  const which = ids.length ? ` (${ids.join(', ')})` : '';
+  return `Not submitted: this app does not contain the latest updates from Civitai staff yet${which}. Ask App Assistant to bring in the platform updates, then submit again.`;
+}
+
 /** What the user reads when the route refused: its own message, and what to do about it. */
 function refusalMessage(status: number, message: string | null): string {
   if (message && OWN_PENDING.test(message)) return PENDING_SUBMISSION;
@@ -215,6 +230,8 @@ export async function sendForReview(
         : typeof data?.error === 'string'
         ? data.error
         : null;
+    if (data?.code === 'platform_update_missing')
+      throw new SubmitError(platformUpdateMissingRefusal(data.details), res.status);
     throw new SubmitError(refusalMessage(res.ok ? 0 : res.status, message), res.status);
   }
   return {

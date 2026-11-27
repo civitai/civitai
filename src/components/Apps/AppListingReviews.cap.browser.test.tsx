@@ -26,9 +26,6 @@ const mocks = vi.hoisted(() => ({
   fetchNextPage: vi.fn(),
 }));
 
-// `DaysFromNow` throws 'missing IsClientContext' outside the app shell.
-vi.mock('~/providers/IsClientProvider', () => ({ useIsClient: () => true }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
   trpc: makeTrpcProxy({

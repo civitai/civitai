@@ -88,3 +88,54 @@ describe('saving a profile answers with the saved profile as its saver sees it',
     expect(saved.cosmetics[0]).toMatchObject({ cosmeticId: 1, claimKey: CLAIM_KEY });
   });
 });
+
+// A moderator's editor holds null for a restricted image it is not shown, and sends it back.
+describe("a moderator's save keeps the images their editor could not show", () => {
+  let update: ReturnType<typeof vi.fn>;
+  beforeEach(() => {
+    update = vi.fn(async () => ({ userId: OWNER, coverImage: null }));
+    dbMock.dbWrite.$transaction.mockImplementation((async (fn: (c: unknown) => unknown) =>
+      fn({
+        userLink: { deleteMany: vi.fn(), createMany: vi.fn(), updateMany: vi.fn() },
+        userProfile: { update },
+      })) as never);
+    const restricted = { nsfwLevel: 4, modelRestricted: true };
+    dbMock.dbWrite.userProfile.findUnique.mockResolvedValue({
+      coverImage: restricted,
+      sfwCoverImage: { nsfwLevel: 1, modelRestricted: false },
+      backgroundImage: restricted,
+      sfwBackgroundImage: restricted,
+    } as never);
+  });
+  const savedData = () => (update.mock.calls[0][0] as { data: Record<string, unknown> }).data;
+
+  it('leaves a restricted cover and background in place when a moderator saves null', async () => {
+    await updateUserProfile({
+      userId: OWNER,
+      sessionUserId: 99,
+      isModerator: true,
+      coverImage: null,
+      backgroundImage: null,
+      sfwBackgroundImage: null,
+      profileRedesign: true,
+    });
+    expect(savedData().coverImage).toBeUndefined();
+    expect(savedData().backgroundImage).toBeUndefined();
+    expect(savedData().sfwBackgroundImage).toBeUndefined();
+  });
+
+  it('still clears an image the moderator was shown', async () => {
+    await updateUserProfile({
+      userId: OWNER,
+      sessionUserId: 99,
+      isModerator: true,
+      sfwCoverImage: null,
+    });
+    expect(savedData().sfwCoverImage).toEqual({ disconnect: true });
+  });
+
+  it('still lets the owner clear them', async () => {
+    await updateUserProfile({ userId: OWNER, sessionUserId: OWNER, coverImage: null });
+    expect(savedData().coverImage).toEqual({ disconnect: true });
+  });
+});

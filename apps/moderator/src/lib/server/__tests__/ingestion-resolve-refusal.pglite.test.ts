@@ -53,6 +53,7 @@ CREATE TABLE "Image" (
   "metadata" JSONB,
   "nsfwLevel" INTEGER NOT NULL DEFAULT 0,
   "nsfwLevelLocked" BOOLEAN NOT NULL DEFAULT FALSE,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now(),
   "scannedAt" TIMESTAMP(3)
 );
 CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER, "data" JSONB,
@@ -223,5 +224,23 @@ describe('spoke resolveIngestionError: models index', () => {
     await resolve();
 
     expect(queueDocumentsForImageMinorChanges).not.toHaveBeenCalled();
+  });
+});
+
+// sortAt reads scannedAt uncapped, so a resolve stamping now() would list the image as new.
+describe('spoke resolveIngestionError and the feed sort', () => {
+  it.each([
+    ['a scan that never finished takes the upload time', null, '2026-01-01T00:00:00.000Z'],
+    ['an earlier scan time stays', '2026-01-02T00:00:00.000Z', '2026-01-02T00:00:00.000Z'],
+  ])('%s', async (_label, scannedAt, expected) => {
+    await seed({});
+    await db.query(
+      `UPDATE "Image" SET "createdAt" = '2026-01-01T00:00:00Z', "scannedAt" = $2 WHERE "id" = $1`,
+      [IMAGE_ID, scannedAt]
+    );
+    await resolve();
+    const row = await imageRow();
+    expect(row.ingestion).toBe('Scanned');
+    expect((row.scannedAt as Date).toISOString()).toBe(expected);
   });
 });

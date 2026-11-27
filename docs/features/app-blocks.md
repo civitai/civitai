@@ -275,10 +275,11 @@ viewer-keyed documents (above); reports go through the report API
   `markedBy` and `mark` as unknown parameters and `sort=counter:` / `sort=mark:` as an undeclared
   sort field. No `Deprecation` header is sent any more; the preflight no longer allows PATCH.
 - **SDK compatibility:** every presented document still carries `counters: {}`, `marks: {}` and
-  `viewer` (`{marks: []}` signed in, `null` anonymous), because `@civitai/sdk` up to 0.30 refuses a
-  document without them (`PresentedDoc` in `doc-store-api.ts`). Info lists every collection's
-  `counters` and `marks` as `[]` and keeps `rate.marksAndCountersPerMinute` at `0` (SDKs 0.14 to
-  0.31 type it as a required number).
+  `viewer` (`{marks: []}` signed in, `null` anonymous), because `@civitai/sdk` 0.14 through 0.32
+  refuses a document without them (`PresentedDoc` in `doc-store-api.ts`); they stay while any
+  approved app runs 0.32 or older. Info's collections carry no `counters` or `marks` (no SDK
+  release reads them there), and info keeps `rate.marksAndCountersPerMinute` at `0` (SDKs 0.14 to
+  0.32 type it as a required number).
 - **The `report` mark alias:** `PUT /:c/:key/marks/report`, which SDKs older than 0.30 send for
   `mark(key, 'report')`, stays. It files the report through the report API's own code
   (`fileReport`: same gates, budget, row, dedupe and moderator queue) and answers `{marked: true}`;
@@ -363,6 +364,10 @@ the token endpoint has resolved. Matches `@civitai/app-sdk/blocks` v1:
     username: string | null;
     signedIn?: true;                   // v2. Literally `true`; ABSENT when anon,
                                        // because an anon viewer has no object at all.
+    image?:                            // the viewer's avatar — ONLY when the token
+      | { url: string; nsfwLevel: 'pg' | 'pg13' | 'r' | 'x' | 'xxx' }
+      | { restricted: true }
+      | null;                          // carries `user:read:self`; see "Viewer avatar"
     // NOTE: moderation `status` (ban/mute) is intentionally NOT sent to the
     // iframe in this render-time payload — it's a viewer-privacy leak. A block
     // that needs a fresh, authoritative viewer (incl. `status: 'active'|'muted'`)
@@ -378,6 +383,32 @@ the token endpoint has resolved. Matches `@civitai/app-sdk/blocks` v1:
                                        // src/components/AppBlocks/blockInitFragmentGate.ts.
 }
 ```
+
+#### Viewer avatar (`viewer.image`, `/blocks/me` `image`)
+
+`GET /api/v1/blocks/me`, its twin `blocks.getMyViewer` (`useViewer()`), and
+`BLOCK_INIT.viewer.image` all carry the viewer's avatar, under the same
+`user:read:self` scope. One rule decides it, `projectBlockViewerImage`
+(`src/server/services/blocks/block-viewer-image.ts`), judged against the token's
+OUTPUT ceiling (`blockOutputCeilingFromClaims` — the ceiling a workflow output is
+restricted against) and the site's `avatarAtLevel` (`src/server/utils/public-avatar.ts`):
+
+- `{ url, nsfwLevel }` — a scanned profile picture with one known rating inside the
+  ceiling. `url` is a CDN url (320 px, single-frame WebP); `nsfwLevel` uses the
+  workflow-output vocabulary.
+- `{ restricted: true }` — rated above the ceiling (an X avatar in an SFW app), a level
+  that is not exactly one rating, not scanned yet, a scan error, or only a legacy
+  `User.image` url (never rated). No url, no rating, and deliberately no reason: telling
+  the two apart would tell an SFW app that the viewer's avatar is mature.
+- `null` — no avatar, or a picture blocked by moderation.
+
+For BLOCK_INIT the token mint computes it (`mintViewerImage` in
+`src/pages/api/v1/block-tokens/index.ts`) and both hosts forward it after a shape
+check (`projectBlockInitViewerImage`). The key is ABSENT when the token lacks
+`user:read:self` (it is not re-sent after a later consent grant — call
+`/blocks/me`), for an anonymous viewer, on the review preview, and when the read
+fails. The mint reads the avatar from the replica, so just after a viewer changes it
+BLOCK_INIT can briefly lag `/blocks/me` (which reads the primary).
 
 #### `viewer.signedIn`, and what "deprecated" means here (v2)
 
