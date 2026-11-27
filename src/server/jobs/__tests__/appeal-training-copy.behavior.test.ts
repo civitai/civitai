@@ -876,15 +876,17 @@ describe('records removed on erasure or on request', () => {
     await ownedRecord(2, 10);
     await ownedRecord(3, 11);
     await ownedRecord(4, 12);
+    await ownedRecord(5, 13);
     await deletedUser(9, 2, 'grace'); // inside the grace
     await deletedUser(10, null, 'grace'); // restored: no deletedAt
     await deletedUser(11, 8, 'grace'); // past the grace
     await deletedUser(12, 0, 'immediate');
-    for (const id of [9, 10, 11, 12]) await modActivity('user', id, 'deleteAccount');
+    await deletedUser(13, null, 'immediate'); // restored, meta still naming the old removal
+    for (const id of [9, 10, 11, 12, 13]) await modActivity('user', id, 'deleteAccount');
     const store = fakeStore();
 
     expect((await sweepExcludedRecords(store)).swept).toBe(2);
-    expect((await states()).map((row) => row.appealId)).toEqual([1, 2]);
+    expect((await states()).map((row) => row.appealId)).toEqual([1, 2, 5]);
     expect(removedKeys(store)).toEqual(['k-3', 'k-4']);
   });
 
