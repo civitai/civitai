@@ -70,9 +70,6 @@ func judgeScore(note *string) (score any, ok bool) {
 	if note == nil || *note == "" {
 		return nil, true
 	}
-	if surrogateEscape.MatchString(*note) {
-		return nil, false
-	}
 	v, err := jspack.FromJSON(*note)
 	if err != nil {
 		return nil, true // JSON.parse throws: null
@@ -85,7 +82,9 @@ func judgeScore(note *string) (score any, ok bool) {
 	if !present || s == nil {
 		return nil, true
 	}
-	if !judgeScoreModelled(s) {
+	// Whether the score is null cannot turn on a surrogate escape (no key spells one), so only a
+	// non-null score is refused for it: a null one is answered as before the port.
+	if surrogateEscape.MatchString(*note) || !judgeScoreModelled(s) {
 		return nil, false
 	}
 	w, err := hydrate.JSWire(s)

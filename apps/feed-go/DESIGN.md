@@ -2264,8 +2264,8 @@ already selects, so the port reads nothing more: the score is the parsed value, 
 order with a repeated key's last value, as superjson writes it. Off, a page holding any score but
 null is the `collection-judge-score` fallback, as before. On, a score this service does not rebuild
 byte for byte still falls back: a number superjson annotates (-0, or one past float64 that JSON.parse
-reads as ±Infinity), a `__proto__` key, and a note that escapes a surrogate half (Go's decoder replaces
-a lone one; JSON.parse keeps it).
+reads as ±Infinity), a `__proto__` key, and a score whose note escapes a surrogate half (Go's decoder
+replaces a lone one; JSON.parse keeps it). A null score is answered whatever its note escapes, as before.
 
 ### 14.2.5 Hat Turf keys Node ignores (behind its own switch, default off)
 
