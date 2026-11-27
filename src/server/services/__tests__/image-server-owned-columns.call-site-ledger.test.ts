@@ -617,6 +617,11 @@ const IMAGE_FK_WRITE_LEDGER: Record<
     writes: ['imageId'],
     decision: 'server-derived',
   },
+  // The song its scan callback is deciding.
+  'src/server/services/audio-scan/track-lyrics.ts#saveTranscribedTrackLyrics': {
+    writes: ['imageId'],
+    decision: 'server-derived',
+  },
   'src/server/services/auto-feature-images.service.ts#runAutoFeatureImages': {
     writes: ['imageId: p.imageId'],
     decision: 'server-derived',
@@ -860,6 +865,17 @@ const RAW_IMAGE_USE_WRITE_LEDGER: Record<
   },
   'src/server/services/creator-service-deal-unpack.service.ts#submitEntryImage': {
     writes: ['ServiceDealFileEntry.imageId', 'ServiceDealFileEntry.imageId'],
+    decision: 'server-derived',
+  },
+  // The cover createImage just made from the workflow's output.
+  'src/server/services/post.service.ts#linkGeneratedSongCover': {
+    writes: ['Track.coverImageId'],
+    decision: 'server-derived',
+  },
+  // The cover createImage just made, or the row on that key when it is already this song's own
+  // cover (a retry): any other row on the key is refused first.
+  'src/server/services/post.service.ts#setSongCover': {
+    writes: ['Track.coverImageId'],
     decision: 'server-derived',
   },
 };

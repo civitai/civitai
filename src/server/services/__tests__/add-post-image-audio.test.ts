@@ -20,7 +20,10 @@ const mocks = vi.hoisted(() => ({
   getWorkflow: vi.fn(),
   createImage: vi.fn(),
   submitTrackLyricsScan: vi.fn(async () => undefined),
-  alignLyrics: vi.fn(async () => ({ data: undefined, response: { status: 204 } })),
+  alignLyrics: vi.fn(async (_options: { body: { mediaUrl: string; lyrics: string } }) => ({
+    data: undefined,
+    response: { status: 204 },
+  })),
   submitWorkflow: vi.fn(async () => ({ data: { id: 'wf-language' }, response: { status: 200 } })),
   throwOnBlockedUserContent: vi.fn(),
   stageGenerationOutputImage: vi.fn(),
@@ -355,7 +358,7 @@ describe('addPostImage — audio', () => {
     );
     // Not awaited by the post: the saved lyrics go to the recipe with the song's own audio.
     await vi.waitFor(() => expect(mocks.alignLyrics).toHaveBeenCalledTimes(1));
-    expect(mocks.alignLyrics.mock.calls[0][0].body).toEqual({
+    expect(mocks.alignLyrics.mock.calls[0]?.[0].body).toEqual({
       mediaUrl: expect.stringContaining(`${KEY}/original=true/`),
       lyrics: 'sun',
     });
