@@ -9,6 +9,8 @@ const mocks = vi.hoisted(() => ({
   assertInputs: vi.fn(),
   assertStoredUnblocked: vi.fn(),
   getOrchestratorToken: vi.fn(async () => 'token'),
+  callerOwnOrchestratorToken: vi.fn(async (): Promise<string | null> => null),
+  queueStatus: vi.fn(async (): Promise<object> => ({})),
   submit: vi.fn(),
 }));
 
@@ -19,10 +21,11 @@ vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
 vi.mock('~/utils/signal-client', () => ({ signalClient: { send: async () => undefined } }));
 vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
   getOrchestratorToken: mocks.getOrchestratorToken,
+  callerOwnOrchestratorToken: mocks.callerOwnOrchestratorToken,
 }));
 vi.mock('~/server/services/orchestrator/queue-limits', () => ({
   assertCanGenerate: async () => undefined,
-  getUserQueueStatus: async () => ({}),
+  getUserQueueStatus: () => mocks.queueStatus(),
 }));
 vi.mock('~/server/services/orchestrator/preset-image-gen.service', async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -43,12 +46,13 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { OnboardingSteps } from '~/server/common/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { LAYOUT_OPTIONS } from '~/components/Comics/LayoutPicker';
+import { QUEUED_PANELS_REFUSED_FOR_OWN_KEY } from '../comics.router';
 
 const USER_ID = 7;
 const SOURCE = 'ab12cd34-ef56-4a7b-8c9d-0e1f2a3b4c5d';
 const REF = 'cd34ab12-ef56-4a7b-8c9d-0e1f2a3b4c5d';
 
-const caller = () =>
+const caller = (req?: object) =>
   comicsRouter.createCaller({
     user: { id: USER_ID, isModerator: false, onboarding: OnboardingSteps.Buzz, muted: false },
     domain: 'red',
@@ -56,7 +60,7 @@ const caller = () =>
     needsUpdate: false,
     tokenScope: TokenScope.Full,
     features: { comicCreator: true },
-    req: undefined,
+    req,
     res: { setHeader: () => undefined },
     cache: { edgeTTL: 0 },
     track: {},
@@ -450,5 +454,41 @@ describe('comics generation inputs the server loads', () => {
       expect.objectContaining({ where: { id: { in: [5] }, userId: USER_ID } })
     );
     expect(dbMock.dbRead.comicReference.findUnique).not.toHaveBeenCalled();
+  });
+});
+
+// Queued panels are submitted later by a job on the user's System token, so a request that would be
+// sent to the orchestrator as its own limited key cannot queue them (callerOwnOrchestratorToken; its
+// cases and flags are tested in get-orchestrator-token.own-key.test.ts).
+describe('smartCreateChapter with panels to queue (no open slots)', () => {
+  const req = { headers: {}, context: {} };
+  const create = () =>
+    caller(req)
+      .smartCreateChapter({ projectId: 11, referenceIds: [], panels: [{ prompt: 'p' }] })
+      .catch((e: unknown) => e);
+
+  beforeEach(() => {
+    dbMock.dbWrite.comicChapter.create.mockRejectedValue(new Error('chapter create reached'));
+  });
+
+  it('is refused for a request sent as its own limited key, before the chapter is created', async () => {
+    mocks.callerOwnOrchestratorToken.mockResolvedValue('caller-key');
+    expect(await create()).toMatchObject({
+      code: 'FORBIDDEN',
+      message: QUEUED_PANELS_REFUSED_FOR_OWN_KEY,
+    });
+    expect(mocks.callerOwnOrchestratorToken).toHaveBeenCalledWith(USER_ID, req);
+    expect(dbMock.dbWrite.comicChapter.create).not.toHaveBeenCalled();
+  });
+
+  it('CONTROL: goes ahead for an own-key request when every panel fits in the open slots', async () => {
+    mocks.callerOwnOrchestratorToken.mockResolvedValue('caller-key');
+    mocks.queueStatus.mockResolvedValueOnce({ canGenerate: true, available: 1 });
+    expect(await create()).toMatchObject({ message: 'chapter create reached' });
+  });
+
+  it('CONTROL: goes ahead when the request would use the System token', async () => {
+    mocks.callerOwnOrchestratorToken.mockResolvedValue(null);
+    expect(await create()).toMatchObject({ message: 'chapter create reached' });
   });
 });
