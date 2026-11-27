@@ -208,9 +208,10 @@ export const USER_JOB_TYPES: ReadonlySet<string> = new Set(
     'chatCompletion',
     'webSearch',
     'webScrape',
-    // Submitted only for a user's own request: an App Block run or a sticker the user placed
-    // (customComfy), and captioning of the user's own training dataset or an App Block step
-    // (MediaCaptioning). The job record only.
+    // On the user's own token only for their request: an App Block run (customComfy), and
+    // captioning in an App Block step (MediaCaptioning). The site's own runs of these types
+    // (sticker tracking, dataset auto-captioning) use the site token and carry userId 0, which
+    // isUserJob drops. The job record only.
     'customComfy',
     'MediaCaptioning',
   ].map((t) => t.toLowerCase())
