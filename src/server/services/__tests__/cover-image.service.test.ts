@@ -28,6 +28,7 @@ import {
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { imageUrlOwnersFake } from '~/server/services/__tests__/image-url-ownership.fake';
+import { dealCopyCheckFor } from '~/server/services/__tests__/deal-file-copy.fake';
 
 const dbWriteMock = dbMock.dbWrite;
 
@@ -155,22 +156,7 @@ describe('resolveCoverImageId — an image restricted by its base model', () => 
       nsfwLevel: 1,
       modelRestricted: false,
     } as never);
-    dbWriteMock.$queryRaw.mockImplementationOnce((async (strings: TemplateStringsArray) =>
-      [...strings].join('').includes('ServiceDealFile') ? [{ dealFileImage: true }] : []) as never);
-    await expect(productionCoverImageDeps.assertUsableAsCover(42)).rejects.toMatchObject({
-      code: 'FORBIDDEN',
-    });
-  });
-
-  it("in production, refuses a service review's copy, its buyer's own row", async () => {
-    dbWriteMock.image.findUnique.mockResolvedValue({
-      nsfwLevel: 1,
-      modelRestricted: false,
-    } as never);
-    dbWriteMock.$queryRaw.mockImplementationOnce((async (strings: TemplateStringsArray) =>
-      [...strings].join('').includes('ServiceDealReviewImage')
-        ? [{ dealFileImage: true }]
-        : []) as never);
+    dbWriteMock.$queryRaw.mockImplementationOnce(dealCopyCheckFor(42));
     await expect(productionCoverImageDeps.assertUsableAsCover(42)).rejects.toMatchObject({
       code: 'FORBIDDEN',
     });

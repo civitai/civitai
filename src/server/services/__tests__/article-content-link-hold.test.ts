@@ -1,3 +1,4 @@
+import { serverCopyTablesSql } from '@civitai/db-queries/test/image-uses';
 import { HeadObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { PGlite } from '@electric-sql/pglite';
 import { readFileSync } from 'fs';
@@ -212,7 +213,7 @@ beforeAll(async () => {
       "coverId" int, status "ArticleStatus" NOT NULL DEFAULT 'Published', "publishedAt" timestamp(3),
       ingestion "ArticleIngestionStatus" NOT NULL DEFAULT 'Scanned', "contentScannedAt" timestamp(3),
       "moderatorNsfwLevel" int);
-    CREATE TABLE "ServiceDealReviewImage" ("reviewId" int NOT NULL, "imageId" int NOT NULL);
+    ${serverCopyTablesSql};
     CREATE TABLE "Image" (id serial PRIMARY KEY, url text NOT NULL UNIQUE, "userId" int NOT NULL,
       ingestion text NOT NULL DEFAULT 'Pending');
     CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, PRIMARY KEY ("imageId", "entityId"));

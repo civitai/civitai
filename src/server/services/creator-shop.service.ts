@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
+import { assertNotDealFileImages } from '~/server/services/deal-file-image';
 import { createHash } from 'node:crypto';
 import sharp from 'sharp';
 import { isEqual } from 'lodash-es';
@@ -3302,6 +3303,15 @@ export const updateCreatorShopSettings = async ({
   servicesEnabled = false,
   ...patch
 }: UpdateCreatorShopSettingsInput & { userId: number; servicesEnabled?: boolean }) => {
+  if (patch.coverImageId != null) {
+    // primary: the image's owner as of this write.
+    const owned = await dbWrite.image.findFirst({
+      where: { id: patch.coverImageId, userId },
+      select: { id: true },
+    });
+    if (!owned) throw throwBadRequestError('Choose one of your own images as the cover.');
+    await assertNotDealFileImages([patch.coverImageId], 'used here');
+  }
   // The merge happens in Postgres, over the stored column. Reading the blob into JS
   // and writing the whole object back replaced every other settings key with the value
   // it held at read time, discarding any write that landed in between (a notice

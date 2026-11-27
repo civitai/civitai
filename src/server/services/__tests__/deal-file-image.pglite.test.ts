@@ -7,19 +7,28 @@ import { assertNotDealFileImages } from '~/server/services/deal-file-image';
 const ENTRY_COPY = 1;
 const PREVIEW_COPY = 2;
 const PLAIN = 3;
-const REVIEW_COPY = 4;
+const UNPOINTED_ENTRY_COPY = 4;
+const UNPOINTED_PREVIEW_COPY = 5;
+const REVIEW_COPY = 6;
 
 let db: PGlite;
 
 beforeAll(async () => {
   db = new PGlite();
   await db.exec(`
-    CREATE TABLE "ServiceDealFileEntry" (id serial PRIMARY KEY, "imageId" int);
-    CREATE TABLE "ServiceDealFile" (id serial PRIMARY KEY, "imageId" int);
+    CREATE TABLE "Image" (id int PRIMARY KEY, url text NOT NULL);
+    CREATE TABLE "ServiceDealFileEntry" (id serial PRIMARY KEY, "imageId" int, "scanKey" text);
+    CREATE TABLE "ServiceDealFile" (id serial PRIMARY KEY, "imageId" int, "scanKey" text);
     CREATE TABLE "ServiceDealReviewImage" ("reviewId" int NOT NULL, "imageId" int NOT NULL);
     INSERT INTO "ServiceDealReviewImage" VALUES (1, ${REVIEW_COPY});
-    INSERT INTO "ServiceDealFileEntry" ("imageId") VALUES (${ENTRY_COPY}), (NULL);
-    INSERT INTO "ServiceDealFile" ("imageId") VALUES (${PREVIEW_COPY}), (NULL);
+    INSERT INTO "Image" (id, url) VALUES
+      (${ENTRY_COPY}, 'entry-key'), (${PREVIEW_COPY}, 'preview-key'), (${PLAIN}, 'plain-key'),
+      (${UNPOINTED_ENTRY_COPY}, 'unpointed-entry-key'),
+      (${UNPOINTED_PREVIEW_COPY}, 'unpointed-preview-key'), (${REVIEW_COPY}, 'review-key');
+    INSERT INTO "ServiceDealFileEntry" ("imageId", "scanKey")
+      VALUES (${ENTRY_COPY}, 'entry-key'), (NULL, 'unpointed-entry-key'), (NULL, NULL);
+    INSERT INTO "ServiceDealFile" ("imageId", "scanKey")
+      VALUES (${PREVIEW_COPY}, 'preview-key'), (NULL, 'unpointed-preview-key'), (NULL, NULL);
   `);
   const raw = pgliteRaw(db);
   vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation(((
@@ -34,6 +43,9 @@ describe('assertNotDealFileImages', () => {
   it.each([
     ["a Final or Attachment entry's copy", ENTRY_COPY],
     ["a preview's copy", PREVIEW_COPY],
+    // The key is recorded before the copy's Image row, the pointer only after it.
+    ["an entry's copy whose pointer is not written yet", UNPOINTED_ENTRY_COPY],
+    ["a preview's copy whose pointer is not written yet", UNPOINTED_PREVIEW_COPY],
   ])('refuses %s', async (_, id) => {
     await expect(assertNotDealFileImages([PLAIN, id], 'used here')).rejects.toMatchObject({
       code: 'FORBIDDEN',

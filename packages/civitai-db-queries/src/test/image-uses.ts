@@ -1,4 +1,8 @@
-import { IMAGE_USES, IMAGE_USES_WITHOUT_RELATION } from '../content-deletion.db';
+import {
+  DEAL_FILE_IMAGE_USES,
+  IMAGE_USES,
+  IMAGE_USES_WITHOUT_RELATION,
+} from '../content-deletion.db';
 
 /**
  * DDL for a test database that runs `queueImageDeletes` or the child-safety case: every table they
@@ -59,6 +63,10 @@ export const imageUseTablesSql = [
       `ALTER TABLE "${table}" ADD COLUMN IF NOT EXISTS "${column}" int`,
     ]
   ),
+  // A deal file names its copy's key before it points at the copy.
+  ...Object.values(DEAL_FILE_IMAGE_USES).map(
+    ([table]) => `ALTER TABLE "${table}" ADD COLUMN IF NOT EXISTS "scanKey" text`
+  ),
   `ALTER TABLE "ServiceDealReviewImage" ADD COLUMN IF NOT EXISTS "reviewId" int`,
   `CREATE TABLE IF NOT EXISTS "ServiceDealReviewReport" ("reportId" int NOT NULL)`,
   `ALTER TABLE "ServiceDealReviewReport" ADD COLUMN IF NOT EXISTS "serviceDealReviewId" int`,
@@ -67,4 +75,14 @@ export const imageUseTablesSql = [
   `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS id int`,
   `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "deletedAt" timestamp(3)`,
   `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "bannedAt" timestamp(3)`,
+].join(';\n');
+
+/** DDL for a test database that runs `serverCopyImageSql`: the deal file and review copy tables. */
+export const serverCopyTablesSql = [
+  `CREATE TABLE IF NOT EXISTS "ServiceDealReviewImage" ("reviewId" int NOT NULL, "imageId" int NOT NULL)`,
+  ...Object.values(DEAL_FILE_IMAGE_USES).flatMap(([table, column]) => [
+    `CREATE TABLE IF NOT EXISTS "${table}" (id serial PRIMARY KEY)`,
+    `ALTER TABLE "${table}" ADD COLUMN IF NOT EXISTS "${column}" int`,
+    `ALTER TABLE "${table}" ADD COLUMN IF NOT EXISTS "scanKey" text`,
+  ]),
 ].join(';\n');

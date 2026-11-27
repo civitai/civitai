@@ -25,6 +25,7 @@ import {
 } from '~/server/services/user-profile.service';
 import { addEntityToShowcaseHandler } from '~/server/controllers/user-profile.controller';
 import type { ShowcaseItemSchema } from '~/server/schema/user-profile.schema';
+import { dealCopyCheckFor } from '~/server/services/__tests__/deal-file-copy.fake';
 
 const OWNER_ID = 100;
 const STRANGER_ID = 200;
@@ -196,28 +197,7 @@ describe('assertShowcaseItemsOwned', () => {
   it.each([false, true])(
     "refuses a deal file's scan copy, the caller a moderator: %s",
     async (isModerator) => {
-      db.$queryRaw.mockImplementationOnce((async (strings: TemplateStringsArray) =>
-        [...strings].join('').includes('ServiceDealFile')
-          ? [{ dealFileImage: true }]
-          : []) as never);
-      await expect(
-        assertShowcaseItemsOwned({
-          userId: OWNER_ID,
-          isModerator,
-          showcaseItems: [{ entityType: 'Image', entityId: OWN_IMAGE }],
-          currentShowcaseItems: [],
-        })
-      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
-    }
-  );
-
-  it.each([false, true])(
-    "refuses a service review's copy, the caller a moderator: %s",
-    async (isModerator) => {
-      db.$queryRaw.mockImplementationOnce((async (strings: TemplateStringsArray) =>
-        [...strings].join('').includes('ServiceDealReviewImage')
-          ? [{ dealFileImage: true }]
-          : []) as never);
+      db.$queryRaw.mockImplementationOnce(dealCopyCheckFor(OWN_IMAGE));
       await expect(
         assertShowcaseItemsOwned({
           userId: OWNER_ID,

@@ -1,14 +1,16 @@
 import { TRPCError } from '@trpc/server';
 import { sql } from 'kysely';
-import { dealFileImageSql, reviewCopyImageSql } from '@civitai/db-queries/content-deletion';
+import { dealFileImageSql, serverCopyImageSql } from '@civitai/db-queries/content-deletion';
 import { dbWrite } from '~/server/db/client';
 import { kyselyOver } from '~/server/db/prisma-kysely';
+import { logToAxiom } from '~/server/logging/client';
 
 /**
- * Refuses images a deal file points at (`DEAL_FILE_IMAGE_USES`): a deal file's scan copy is what
- * its file is checked against, never user content, so a user neither attaches one anywhere nor
- * deletes it. A use also refuses a service review's copy of a deal file, which serves its review
- * only. `act` names what was refused.
+ * Refuses a deal file's copy of its file (`DEAL_FILE_IMAGE_USES`, pointed or named by `scanKey`):
+ * what the file is checked against, never user content, so a user neither attaches one anywhere
+ * nor deletes it. With `act` 'used here' it also refuses a service review's copy, which serves its
+ * review only. 'deleted' lets a review copy go: deleting it takes only that review's image, while
+ * deleting a deal file's copy leaves its file with nothing to be checked against.
  */
 export async function assertNotDealFileImages(
   ids: number[],
@@ -17,12 +19,11 @@ export async function assertNotDealFileImages(
   { ownerId }: { ownerId?: number } = {}
 ) {
   if (!ids.length) return;
+  const copySql = act === 'used here' ? serverCopyImageSql : dealFileImageSql;
   // primary: a copy recorded moments ago must already refuse.
   const { rows } = await sql<{ dealFileImage: boolean }>`
     SELECT true AS "dealFileImage" FROM unnest(${ids}::int[]) AS t(id)
-    WHERE (${dealFileImageSql(sql.ref('t.id'))}${
-    act === 'used here' ? sql` OR ${reviewCopyImageSql(sql.ref('t.id'))}` : sql``
-  })
+    WHERE ${copySql(sql.ref('t.id'))}
       ${
         ownerId === undefined
           ? sql``
@@ -30,9 +31,17 @@ export async function assertNotDealFileImages(
       }
     LIMIT 1
   `.execute(kyselyOver(dbWrite));
-  if (rows?.some((row) => row.dealFileImage === true))
+  if (rows?.some((row) => row.dealFileImage === true)) {
+    // The tRPC error log never sees a FORBIDDEN, so the refusal count is this line's.
+    logToAxiom({
+      name: 'deal_copy_refused',
+      type: 'info',
+      message: 'refused a deal file copy',
+      payload: { act, count: ids.length },
+    });
     throw new TRPCError({
       code: 'FORBIDDEN',
-      message: `This image is part of a delivery file and cannot be ${act}.`,
+      message: `This image is a copy of a delivery file and cannot be ${act}.`,
     });
+  }
 }
