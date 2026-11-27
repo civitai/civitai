@@ -134,7 +134,7 @@ beforeEach(async () => {
 // A SpineRating tag written before it had its own code: source 0, automated, confidence 16.
 const SCAN_RATING_ATTRIBUTES = (1 << 11) | 16;
 // As the packing does once SpineRating has its own code (10): bit 15 set, so a negative smallint.
-const SPINE_CODE_RATING_ATTRIBUTES = ((10 << 12) | (1 << 11) | 16) - 65536;
+const SPINE_CODE_RATING_ATTRIBUTES = ((10 << 12) | (1 << 11) | 16) - (1 << 16);
 // A tag a user added: source 1 (User), not automated.
 const USER_TAG_ATTRIBUTES = 1 << 12;
 // An automated tag from another source: WD14 (3).
