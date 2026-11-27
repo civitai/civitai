@@ -199,14 +199,14 @@ export function slotRemountKey(args: {
  * server-side against the token's output ceiling (the rule that decides whether a
  * workflow output is restricted):
  *   - `{ url, nsfwLevel }`: a ready-to-render CDN url and the picture's rating;
- *   - `{ restricted: true, reason }`: the viewer has an avatar the app may not be
- *     given — `'ceiling'` (rated above the ceiling) or `'unrated'` (not rated yet,
- *     or a legacy avatar that never was). No url, no rating;
+ *   - `{ restricted: true }`: the viewer has an avatar the app may not be given —
+ *     rated above the ceiling, or not rated (yet, or ever). No url, no rating, and
+ *     no reason: which of the two would disclose the avatar's rating;
  *   - `null`: no avatar to show.
  */
 export type BlockInitViewerImage =
   | { url: string; nsfwLevel: 'pg' | 'pg13' | 'r' | 'x' | 'xxx' }
-  | { restricted: true; reason: 'ceiling' | 'unrated' }
+  | { restricted: true }
   | null;
 
 /**

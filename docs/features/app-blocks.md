@@ -366,7 +366,7 @@ the token endpoint has resolved. Matches `@civitai/app-sdk/blocks` v1:
                                        // because an anon viewer has no object at all.
     image?:                            // the viewer's avatar — ONLY when the token
       | { url: string; nsfwLevel: 'pg' | 'pg13' | 'r' | 'x' | 'xxx' }
-      | { restricted: true; reason: 'ceiling' | 'unrated' }
+      | { restricted: true }
       | null;                          // carries `user:read:self`; see "Viewer avatar"
     // NOTE: moderation `status` (ban/mute) is intentionally NOT sent to the
     // iframe in this render-time payload — it's a viewer-privacy leak. A block
@@ -391,15 +391,15 @@ the token endpoint has resolved. Matches `@civitai/app-sdk/blocks` v1:
 `user:read:self` scope. One rule decides it, `projectBlockViewerImage`
 (`src/server/services/blocks/block-viewer-image.ts`), judged against the token's
 OUTPUT ceiling (`blockOutputCeilingFromClaims` — the ceiling a workflow output is
-restricted against):
+restricted against) and the site's `avatarAtLevel` (`src/server/utils/public-avatar.ts`):
 
 - `{ url, nsfwLevel }` — a scanned profile picture with one known rating inside the
   ceiling. `url` is a CDN url (320 px, single-frame WebP); `nsfwLevel` uses the
   workflow-output vocabulary.
-- `{ restricted: true, reason: 'ceiling' }` — rated above the ceiling (an X avatar in
-  an SFW app), or a level that is not exactly one rating. No url, no rating.
-- `{ restricted: true, reason: 'unrated' }` — not scanned yet, a scan error, or only a
-  legacy `User.image` url (never rated).
+- `{ restricted: true }` — rated above the ceiling (an X avatar in an SFW app), a level
+  that is not exactly one rating, not scanned yet, a scan error, or only a legacy
+  `User.image` url (never rated). No url, no rating, and deliberately no reason: telling
+  the two apart would tell an SFW app that the viewer's avatar is mature.
 - `null` — no avatar, or a picture blocked by moderation.
 
 For BLOCK_INIT the token mint computes it (`mintViewerImage` in

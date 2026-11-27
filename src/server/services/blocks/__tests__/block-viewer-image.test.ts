@@ -40,7 +40,7 @@ const scanned = (url: string, nsfwLevel: number) => ({
 describe('projectBlockViewerImage', () => {
   it('an X avatar in an SFW app is WITHHELD — no url, no rating', () => {
     const out = projectBlockViewerImage(scanned('key-x-sfw', 8), SFW_APP);
-    expect(out).toEqual({ restricted: true, reason: 'ceiling' });
+    expect(out).toEqual({ restricted: true });
     expect(JSON.stringify(out)).not.toContain('key-x-sfw');
   });
 
@@ -56,7 +56,6 @@ describe('projectBlockViewerImage', () => {
   it('an R avatar in a mature app is withheld from a viewer whose own level is SFW', () => {
     expect(projectBlockViewerImage(scanned('key-r-sfwviewer', 4), MATURE_APP_SFW_VIEWER)).toEqual({
       restricted: true,
-      reason: 'ceiling',
     });
   });
 
@@ -82,25 +81,22 @@ describe('projectBlockViewerImage', () => {
           { profilePicture: { url: `key-${ingestion}`, nsfwLevel: 1, ingestion } },
           MATURE_APP
         )
-      ).toEqual({ restricted: true, reason: 'unrated' });
+      ).toEqual({ restricted: true });
     }
   });
 
   it('a scanned avatar with no level (0) is withheld as unrated', () => {
     expect(projectBlockViewerImage(scanned('key-zero', 0), MATURE_APP)).toEqual({
       restricted: true,
-      reason: 'unrated',
     });
   });
 
   it('a level that is not exactly one rating (Blocked, a multi-bit flag) fails closed', () => {
     expect(projectBlockViewerImage(scanned('key-blockedlevel', 32), MATURE_APP)).toEqual({
       restricted: true,
-      reason: 'ceiling',
     });
     expect(projectBlockViewerImage(scanned('key-multibit', 1 | 8), MATURE_APP)).toEqual({
       restricted: true,
-      reason: 'ceiling',
     });
   });
 
@@ -119,7 +115,7 @@ describe('projectBlockViewerImage', () => {
         { image: 'https://avatars.example/legacy.png', profilePicture: null },
         MATURE_APP
       )
-    ).toEqual({ restricted: true, reason: 'unrated' });
+    ).toEqual({ restricted: true });
     expect(projectBlockViewerImage({ image: null, profilePicture: null }, MATURE_APP)).toBeNull();
     expect(projectBlockViewerImage(null, MATURE_APP)).toBeNull();
   });
@@ -140,7 +136,6 @@ describe('projectBlockViewerImage', () => {
     const noViewerLevel = blockOutputCeilingFromClaims({ sub: 'user:42', maxBrowsingLevel: 31 });
     expect(projectBlockViewerImage(scanned('key-pg13-nolevel', 2), noViewerLevel)).toEqual({
       restricted: true,
-      reason: 'ceiling',
     });
   });
 });

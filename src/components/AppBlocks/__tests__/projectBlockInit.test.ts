@@ -563,13 +563,11 @@ describe('projectBlockInitViewerImage + viewer.image', () => {
       url: URL_A,
       nsfwLevel: 'pg13',
     });
+    // A withheld avatar carries no url and no reason, whatever the value held.
     expect(
       projectBlockInitViewerImage({ restricted: true, reason: 'ceiling', url: URL_A })
-    ).toEqual({ restricted: true, reason: 'ceiling' });
-    expect(projectBlockInitViewerImage({ restricted: true, reason: 'unrated' })).toEqual({
-      restricted: true,
-      reason: 'unrated',
-    });
+    ).toEqual({ restricted: true });
+    expect(projectBlockInitViewerImage({ restricted: true })).toEqual({ restricted: true });
     expect(projectBlockInitViewerImage(null)).toBeNull();
   });
 
@@ -582,8 +580,7 @@ describe('projectBlockInitViewerImage + viewer.image', () => {
       { url: URL_A, nsfwLevel: 'nc17' },
       { url: 'javascript:alert(1)', nsfwLevel: 'pg' },
       { url: 'key-a/width=320/key-a.jpeg', nsfwLevel: 'pg' },
-      { restricted: true, reason: 'pool' },
-      { restricted: 'true', reason: 'ceiling' },
+      { restricted: 'true' },
     ]) {
       expect(projectBlockInitViewerImage(bad)).toBeUndefined();
     }
@@ -616,13 +613,13 @@ describe('projectBlockInitViewerImage + viewer.image', () => {
           viewerUserId: 6021,
           viewerUsername: 'tamsin-orb',
         } as unknown as ModelSlotContext,
-        { restricted: true, reason: 'ceiling' }
+        { restricted: true }
       )
     ).toEqual({
       id: 6021,
       username: 'tamsin-orb',
       signedIn: true,
-      image: { restricted: true, reason: 'ceiling' },
+      image: { restricted: true },
     });
   });
 

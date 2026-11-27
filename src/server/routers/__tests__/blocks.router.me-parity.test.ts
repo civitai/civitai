@@ -608,7 +608,7 @@ describe('/api/v1/blocks/me and blocks.getMyViewer return the SAME authorization
         id: SUBJECT_ID,
         username: 'viewer',
         status: 'active',
-        image: { restricted: true, reason: 'ceiling' },
+        image: { restricted: true },
         buzzBudget: 250,
       },
     });

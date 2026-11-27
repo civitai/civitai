@@ -249,7 +249,6 @@ export function withSignedInFlag(
 }
 
 const VIEWER_IMAGE_RATINGS: ReadonlySet<string> = new Set(['pg', 'pg13', 'r', 'x', 'xxx']);
-const VIEWER_IMAGE_RESTRICTED_REASONS: ReadonlySet<string> = new Set(['ceiling', 'unrated']);
 
 /**
  * The mint's `viewerImage` → `BLOCK_INIT.viewer.image`, or `undefined` (the key is then
@@ -263,11 +262,8 @@ export function projectBlockInitViewerImage(raw: unknown): BlockInitViewerImage 
   if (raw === null) return null;
   if (typeof raw !== 'object' || Array.isArray(raw)) return undefined;
   const value = raw as Record<string, unknown>;
-  if (value.restricted === true) {
-    return typeof value.reason === 'string' && VIEWER_IMAGE_RESTRICTED_REASONS.has(value.reason)
-      ? { restricted: true, reason: value.reason as 'ceiling' | 'unrated' }
-      : undefined;
-  }
+  // No reason is forwarded even if one arrives: see `BlockViewerImage` for why there is none.
+  if (value.restricted === true) return { restricted: true };
   if (
     typeof value.url === 'string' &&
     /^https?:\/\//i.test(value.url) &&

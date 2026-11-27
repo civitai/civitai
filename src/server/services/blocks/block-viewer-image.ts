@@ -2,6 +2,7 @@ import { getEdgeUrl } from '~/client-utils/edge-url';
 import { imageRatingOfNsfwLevel } from '~/shared/constants/browsingLevel.constants';
 import type { BlockOutputCeiling } from '~/server/services/blocks/block-output-restriction';
 import type { BlockWorkflowOutputRating } from '~/server/schema/blocks/workflow.schema';
+import { avatarAtLevel } from '~/server/utils/public-avatar';
 import { isBlobUrl } from '~/utils/type-guards';
 
 /**
@@ -12,16 +13,21 @@ import { isBlobUrl } from '~/utils/type-guards';
  *
  *   - `{ url, nsfwLevel }` — a ready-to-render CDN url and the picture's rating, in the
  *     same vocabulary as a workflow output's `nsfwLevel` (`pg` … `xxx`).
- *   - `{ restricted: true, reason }` — the viewer HAS an avatar the app may not be given:
- *     `'ceiling'` when its rating is above the token's output ceiling, `'unrated'` while
- *     it has no rating (still being scanned, a scan error, or a legacy avatar url that
- *     was never rated). No url, no rating — the same shape a restricted output has.
+ *   - `{ restricted: true }` — the viewer HAS an avatar the app may not be given: rated
+ *     above the token's output ceiling, or not rated (still being scanned, a scan error,
+ *     or a legacy avatar url that was never rated). No url, no rating.
  *   - `null` — no avatar to show (none set, or the picture was blocked by moderation,
  *     which the site also renders as no picture).
+ *
+ * 🔴 `restricted` CARRIES NO REASON, ON PURPOSE. A workflow output's restricted entry says
+ * `'ceiling'` / `'unrated'` because it describes the app's OWN output. Here the subject is
+ * the viewer: `'ceiling'` would tell an SFW app that this viewer's avatar is rated mature,
+ * which is exactly what withholding it is meant not to disclose. Merging the two leaves
+ * the app able to tell only "an avatar exists that I may not show".
  */
 export type BlockViewerImage =
   | { url: string; nsfwLevel: BlockWorkflowOutputRating }
-  | { restricted: true; reason: 'ceiling' | 'unrated' }
+  | { restricted: true }
   | null;
 
 /** Render width of the avatar url: a rung of the image CDN's width ladder (`COMMON_IMAGE_WIDTHS`). */
@@ -45,11 +51,14 @@ export type BlockViewerImageSource = {
   } | null;
 };
 
+const WITHHELD: BlockViewerImage = { restricted: true };
+
 /**
  * The viewer's avatar for an app, judged against the token's OUTPUT ceiling
  * (`blockOutputCeilingFromClaims`) — the same ceiling that decides whether a workflow
- * output may be handed to the app (`classifyBlockOutput`, rule 3). Fails closed: only a
- * SCANNED picture with exactly one known rating inside the ceiling gets a url.
+ * output may be handed to the app (`classifyBlockOutput`, rule 3) — with the site's own
+ * avatar-at-level rule (`avatarAtLevel`). Fails closed: only a SCANNED picture with
+ * exactly one known rating inside the ceiling gets a url.
  *
  * The owner exemption the site's own avatar component has (an owner sees their own
  * pending picture) does NOT apply: the reader here is a third-party app, not the owner.
@@ -61,14 +70,11 @@ export function projectBlockViewerImage(
   const picture = user?.profilePicture;
   if (picture && typeof picture.url === 'string' && picture.url && !isBlobUrl(picture.url)) {
     if (picture.ingestion === 'Blocked') return null;
-    if (picture.ingestion !== 'Scanned') return { restricted: true, reason: 'unrated' };
-    if (!picture.nsfwLevel) return { restricted: true, reason: 'unrated' };
+    if (picture.ingestion !== 'Scanned') return WITHHELD;
+    // Unrated (0), Blocked (32), a multi-bit flag or an unknown level: no rating to show.
     const rating = imageRatingOfNsfwLevel(picture.nsfwLevel);
-    // Blocked (32), a multi-bit flag, or an unknown level: no rating to judge, fail closed.
-    if (rating === null) return { restricted: true, reason: 'ceiling' };
-    if ((picture.nsfwLevel & ceiling.maxBrowsingLevel) === 0) {
-      return { restricted: true, reason: 'ceiling' };
-    }
+    if (rating === null) return WITHHELD;
+    if (!avatarAtLevel(picture, ceiling.maxBrowsingLevel)) return WITHHELD;
     return {
       url: getEdgeUrl(picture.url, {
         width: BLOCK_VIEWER_IMAGE_WIDTH,
@@ -79,8 +85,6 @@ export function projectBlockViewerImage(
     };
   }
   // No usable profile picture. A legacy `User.image` url has no rating at all.
-  if (typeof user?.image === 'string' && user.image && !isBlobUrl(user.image)) {
-    return { restricted: true, reason: 'unrated' };
-  }
+  if (typeof user?.image === 'string' && user.image && !isBlobUrl(user.image)) return WITHHELD;
   return null;
 }
