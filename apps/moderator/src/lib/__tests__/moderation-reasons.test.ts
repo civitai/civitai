@@ -49,6 +49,13 @@ describe('canned reason ToS citations', () => {
 });
 
 describe('canned removal messages', () => {
+  // Its type is what deletes the image's appeal training copies; filed under 'other' it keeps them.
+  it('files Likeness/DMCA as a likeness request, notified in the canned sentence', () => {
+    const rows = TOS_REASONS.filter((r) => r.label === 'Likeness/DMCA');
+    expect(rows.map((r) => r.violation)).toEqual(['likenessRequest']);
+    expect(violationUserMessage('likenessRequest')).toBe(rows[0].message);
+  });
+
   // The canned message is sent to the owner as typed, beside the notification built from
   // `violationUserMessage`; a reason reworded in one and not the other still accuses.
   it.each(['schoolNsfw', 'minorViolence'] as const)(

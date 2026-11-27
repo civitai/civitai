@@ -61,8 +61,9 @@ const (
 	// back; no Node answer.
 	SourceServe = "serve"
 	// SourceCorpusOnly: a Node corpus-only sample (FEED_GO_SHADOW_CORPUS_ONLY_RATE, DESIGN.md §19.6
-	// T4): a credentialed `/api/v1/models/[id]` request with its credential taken out by Node, kept
-	// as its class (evalcorpus.Request.CredentialClass); never compared, no Node answer.
+	// T4): a credentialed `/api/v1/models/[id]` or tRPC `image.getInfinite` request with its
+	// credential taken out by Node, kept as its class (evalcorpus.Request.CredentialClass); never
+	// compared, no Node answer.
 	SourceCorpusOnly = "corpus-only"
 )
 

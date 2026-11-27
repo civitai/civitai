@@ -415,34 +415,56 @@ export async function settleCustomComfySpend(input: {
 
   // Accounting for Buzz already spent, not a gate; charged on the keys the
   // submit reserved. Legs are independent and best-effort.
-  const overage = record.correctOverage ? actual - ceiling : 0;
+  await settleReservedLegs(record, ceiling, actual, record.correctOverage === true);
+}
+
+/** The cap counters a reservation holds, as named by a settle record or a runner attempt row. */
+export interface ReservedLegs {
+  buzzCapKey: string | null;
+  appSpendKey: string | null;
+  consentBudgetKey?: string | null;
+  devSessionId?: string | null;
+}
+
+/**
+ * Bring every leg from the `ceiling` it was reserved for to the `actual` cost: refund the
+ * difference, or, with `correctOverage`, charge what ran over. Best-effort per leg; a lost refund
+ * over-counts (the stricter cap).
+ */
+export async function settleReservedLegs(
+  legs: ReservedLegs,
+  ceiling: number,
+  actual: number,
+  correctOverage: boolean
+): Promise<void> {
+  const overage = correctOverage ? actual - ceiling : 0;
   if (overage > 0) {
-    if (record.buzzCapKey) {
-      await sysRedis.incrBy(record.buzzCapKey as BuzzCapKey, overage).catch(() => {
+    if (legs.buzzCapKey) {
+      await sysRedis.incrBy(legs.buzzCapKey as BuzzCapKey, overage).catch(() => {
         /* best-effort correction */
       });
     }
-    if (record.appSpendKey) {
+    if (legs.appSpendKey) {
       try {
         const { chargeAppSpendOverage } = await import(
           '~/server/services/blocks/app-spend-cap.service'
         );
-        await chargeAppSpendOverage(record.appSpendKey as AppSpendDailyKey, overage);
+        await chargeAppSpendOverage(legs.appSpendKey as AppSpendDailyKey, overage);
       } catch {
         /* best-effort correction */
       }
     }
-    if (record.consentBudgetKey) {
-      await sysRedis.incrBy(record.consentBudgetKey as ConsentBudgetKey, overage).catch(() => {
+    if (legs.consentBudgetKey) {
+      await sysRedis.incrBy(legs.consentBudgetKey as ConsentBudgetKey, overage).catch(() => {
         /* best-effort correction */
       });
     }
-    if (record.devSessionId) {
+    if (legs.devSessionId) {
       try {
         const { chargeDevSessionOverage } = await import(
           '~/server/services/blocks/dev-tunnel.service'
         );
-        await chargeDevSessionOverage(record.devSessionId, overage);
+        await chargeDevSessionOverage(legs.devSessionId, overage);
       } catch {
         /* best-effort correction */
       }
@@ -459,25 +481,25 @@ export async function settleCustomComfySpend(input: {
   // run-for-real session key for a review run-for-real submit (#2831). Pinning the
   // stored key (not re-deriving) settles the right window either way and avoids a
   // midnight-UTC / re-derivation race (mirrors refundBlockBuzzSpend).
-  if (record.buzzCapKey) {
-    await sysRedis.decrBy(record.buzzCapKey as BuzzCapKey, refund).catch(() => {
+  if (legs.buzzCapKey) {
+    await sysRedis.decrBy(legs.buzzCapKey as BuzzCapKey, refund).catch(() => {
       /* best-effort — a lost refund over-counts (stricter cap) */
     });
   }
 
   // Per-app aggregate cap: reuse the service's own pinned-key refund. Absent for
   // dev tokens (no per-app reservation was made).
-  if (record.appSpendKey) {
+  if (legs.appSpendKey) {
     const { refundAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
-    await refundAppSpend(record.appSpendKey as AppSpendDailyKey, refund);
+    await refundAppSpend(legs.appSpendKey as AppSpendDailyKey, refund);
   }
 
   // CONSENT BUDGET: present ONLY when the viewer set a per-app daily budget, which
   // the submit reserved the same CEILING against. Refund the SAME over-reservation
   // so the user's own limit converges on their real accrued spend like every other
   // counter. Best-effort (a lost refund over-counts — stricter) and never throws.
-  if (record.consentBudgetKey) {
-    await sysRedis.decrBy(record.consentBudgetKey as ConsentBudgetKey, refund).catch(() => {
+  if (legs.consentBudgetKey) {
+    await sysRedis.decrBy(legs.consentBudgetKey as ConsentBudgetKey, refund).catch(() => {
       /* best-effort — a lost refund over-counts (stricter cap) */
     });
   }
@@ -487,8 +509,8 @@ export async function settleCustomComfySpend(input: {
   // cumulative cap. Refund the SAME over-reservation there so the session cap
   // converges on the real accrued cost like the other two. `refundDevSessionBuzz`
   // is itself best-effort (a lost refund over-counts — stricter) and never throws.
-  if (record.devSessionId) {
+  if (legs.devSessionId) {
     const { refundDevSessionBuzz } = await import('~/server/services/blocks/dev-tunnel.service');
-    await refundDevSessionBuzz(record.devSessionId, refund);
+    await refundDevSessionBuzz(legs.devSessionId, refund);
   }
 }

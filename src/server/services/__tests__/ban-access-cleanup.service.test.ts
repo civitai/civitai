@@ -72,6 +72,7 @@ afterEach(async () => {
 });
 
 describe('disableOauthForBannedUser', () => {
+  // The two run-authorization pins below are civitai/civitai#10573's ban leg: keep both.
   it("🔴 revokes every run authorization the user gave any runner, and no one else's", async () => {
     await pgRef.current!.exec(`
       INSERT INTO runner_run_authorizations (id, user_id, runner_client_id) VALUES

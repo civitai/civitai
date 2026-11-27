@@ -1,6 +1,7 @@
 import * as z from 'zod';
 import { isModerationAccountRow } from '~/server/auth/moderation-account';
 import { dbWrite } from '~/server/db/client';
+import { appealOwnerHash, removeErasedOwnerRecords } from '~/server/jobs/appeal-decision-records';
 import { logToAxiom } from '~/server/logging/client';
 import { hasModeratorGrant } from '~/server/services/moderator-grants';
 import { trackModActivity } from '~/server/services/moderator.service';
@@ -138,6 +139,24 @@ export default defineModeratorEndpoint('user.delete', {
       if (e instanceof MemorializedAccountError)
         throw new TRPCError({ code: 'FORBIDDEN', message: e.message, cause: e });
       throw e;
+    }
+
+    // Only an immediate removal: a grace deletion can be restored, so its records wait for the nightly
+    // sweep after the grace. The sweep finds the account by the audit row below, so it repairs a
+    // failure here unless that write fails too.
+    if (input.removeImages) {
+      try {
+        await removeErasedOwnerRecords(input.userId);
+      } catch (e) {
+        logToAxiom({
+          type: 'error',
+          name: 'mod-delete-appeal-copies-failed',
+          // In the message: the dataset has no free field for a hash.
+          message: `owner ${appealOwnerHash(input.userId) ?? '(no hash key)'}: ${
+            (e as Error).message
+          }`,
+        });
+      }
     }
 
     // 🔴 THE SPOKE DELIBERATELY DOES NOT LOG THIS ONE — see `deleteAccount` in

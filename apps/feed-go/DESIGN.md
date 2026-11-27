@@ -2408,9 +2408,10 @@ unheld model), each with the key absent; the `GallerySettingsMiss` rows of
 When the feed-service call fails, Node's `serveFromFeed` returns `timeout`, `error` or `status:5xx`
 and `answerWithoutFeed` throws `SERVICE_UNAVAILABLE` ("Image search is temporarily overloaded — please
 retry.", `isTransientFeedReason`). Handed back as the `feed-unavailable` / `feed-status` fallback, the
-request makes the app call the feed again, which in an outage usually fails again: the slow call runs
-twice and the 503 comes about twice as late. With the switch on, the public route writes that 503
-here instead (`writeFeedUnavailable`), counted as request outcome `feed_unavailable`, neither `served`
+request makes the app call the feed again, and the app answers the 503 only when that second call
+fails too. With the switch on, the public route writes that 503 here instead (`writeFeedUnavailable`),
+after making the second call itself when the request budget has room for it, and otherwise still
+hands the request back (the retry, below). It is counted as request outcome `feed_unavailable`, neither `served`
 nor a fallback.
 
 - **Which failures.** A failed call (a transport error, the 5 s `FEED_PRIMARY_TIMEOUT_MS`, a body that
@@ -2446,9 +2447,42 @@ nor a fallback.
   The bytes are derived from the app's code and its own superjson and devalue, not captured from a
   running server; `internal/trpc/apperror_test.go` and `internal/server/feed_unavailable_test.go`
   pin them as literals.
-- **Shadow and Go-first probe.** Unchanged: they write to no client, and count the fallback
-  (`unsupported` with its reason) as before.
-- **Rollback.** Switch off: every such request is the fallback again.
+- **The retry.** Node's `serveFromFeed` makes one feed call and has no retry of its own (`fetchFeedAnswer`:
+  one `fetch`, `AbortSignal.timeout(FEED_PRIMARY_TIMEOUT_MS)`, no second attempt; `answerWithoutFeed`
+  then throws the 503). But a request this service hands back makes the app call the feed itself, so at
+  the request level a failed call has always had a second one: this service's, then the app's (the same
+  query, at once, with its own whole 5 s). Answering the 503 here removes that second call, so with the
+  switch on the route makes it here instead (`feed.WithFeedRetry`, set only by `ServeInfiniteHTTP` when
+  the switch is on; `fetchInfiniteFeed`): once, at once (no delay), the same GET query, and only when
+  the first call failed as the app's 503 (`UnavailableError`: a failed call or a 5xx, on a page no
+  last-good copy can answer). A page, a 4xx, an unmarked anonymous first page's failure and the
+  request's own context ending are never retried. The second call gets a whole call's time, as the
+  app's does: if the request budget (`FEED_GO_REQUEST_BUDGET_MS`, 6 s) leaves less than the feed
+  client's per-call timeout (`feedsvc.Client.AttemptTimeout`, 5 s), there is no second call here and
+  the failure is handed back unmarked, the app's call being the retry. So a 503 is answered here only
+  after two whole calls failed, as the app answers it after a hand-back. That keeps the 503 rate
+  the app's, and gives up part of what answering it here was for: a first call that timed out
+  (5 s of the 6 s budget) is always handed back, so a hung feed's 503 still arrives after the app's
+  own call (about 10 s), as with the switch off. Only a fast failure (a refused connection, a 5xx)
+  is retried here and, failing again, answered here at once. With the switch off there is
+  no retry here: the hand-back already gives the second call, and a retry would make a third.
+- **The app's breaker.** With `feed-service-degrade` on and its breaker open, the app answers a
+  handed-back request's 503 without calling the feed (`breaker`, also `isTransientFeedReason`). This
+  service cannot see that breaker, so its retry is made anyway: while the breaker is open a retried
+  request costs the feed two calls where the hand-back cost one. Accepted, not mirrored: only fast
+  failures are retried (a timed-out call, the load the breaker is for, is handed back and meets the
+  breaker), and a fast failure costs the failing service little. `feed_go_feed_retry_total{outcome="failed"}`
+  is the rate of those extra calls. A retry that answers 200 can still end the request past its
+  budget (the hydrate after the call), which is the `deadline` fallback and a hand-back; it is
+  counted `recovered` all the same.
+  Outcomes on `feed_go_feed_retry_total{feed_endpoint, outcome}` (seeded on `infinite`): `recovered`
+  (the second call answered 200), `failed` (it failed as the 503 again: the 503),
+  `other` (any other answer, or the request ending: handled as that answer always is), `handed_back`
+  (too little budget for a whole call). A `failed` retry is also on `feed_go_feed_unavailable_total`,
+  with the second call's cause.
+- **Shadow and Go-first probe.** Unchanged: they write to no client, count the fallback
+  (`unsupported` with its reason) as before, and never retry (Node's shadow call is one call too).
+- **Rollback.** Switch off: every such request is the fallback again, with no retry here.
 
 ## 15. `model.getAll` (tRPC, shadow; served only behind `FEED_GO_SERVE_MODEL_GETALL`, default off)
 
@@ -3764,7 +3798,7 @@ trailing newline) of:
 | `viewer` | the viewer descriptor: `class` (anon / crawler / banned / user / moderator), `browsingLevel`, `showNsfw`, `hiddenPrefs` (any hidden preference non-empty), `self` (the input named the viewer's own user or collection) |
 | `host` | the domain color of the `Host` (green / blue / red), `other`, or `unmapped` (no host colors configured) |
 | `region` | `none` (no country header), `open`, `restricted` (REGION_RESTRICTION_CONFIG), `blocked` (REGION_BLOCK_CONFIG); the country read as the server reads it (`x-isuk`, then `cf-ipcountry`, `cf-region-code` for a US state) |
-| `credential` | REST only: `none`, or `header` / `query` / `session` joined with `+` (`Authorization` or the sampler's credential header; a non-empty `token` query value; a session cookie name) |
+| `credential` | REST: `none`, or `header` / `query` / `session` joined with `+` (`Authorization` or the sampler's credential header; a non-empty `token` query value; a session cookie name). tRPC: only when the class holds `header` or `query` (an API credential), so a signed-out or session-cookie request's tRPC shape has no `credential` key |
 | `response`, `outcome` | optional, supplied by the caller, and always classes of the **Node** (reference) answer, never of Go's: a signature must not move when a Go handback is closed |
 
 The **signature** is xxhash64 of the shape's bytes as 16 lowercase hex digits (`github.com/cespare/xxhash/v2`,
@@ -3856,7 +3890,7 @@ endpoints are captured (`evalcapture.Supported`); every other endpoint is skippe
 | T1 | `shadow` | `compare`: the hand-back branch (result `unsupported` / `deadline`, its reason), the compute-error branch (`go_error`), and after the comparison (its result, header result, diff categories) | the sample's `node` and `responseHeaders` | 1 / the sample's `sampleRate` (the Node sampler's effective rate, below); when absent (an older sampler) or outside (0, 1], 1 / `FEED_GO_EVAL_CAPTURE_SHADOW_RATE` (its configured rate; 0 when unset: unknown) |
 | T2 | `serve-parity` | `replay`, after a compared replay | the replay's `result.data` and picked headers | 1 / `FEED_GO_SERVE_PARITY_SAMPLE_RATE` |
 | T3 | `serve` | the public routes (`serve`, `serveV1Models`), after the answer is written or the request handed back, at `FEED_GO_EVAL_CAPTURE_SERVE_RATE` (default 0: off) | none; the result is `served`, `handback` (with the fallback reason) or `error` | 1 / that rate |
-| T4 | `corpus-only` | the `v1-models-id` shadow handler, for a sample marked `corpusOnly` (below); never computed or compared | none; the result is `corpus-only` | 1 / the sample's `sampleRate`; 0 when absent or outside (0, 1] (the shadow's configured rate is not its rate) |
+| T4 | `corpus-only` | the `v1-models-id` and `infinite` shadow handlers, for a sample marked `corpusOnly` (below); never computed or compared | none; the result is `corpus-only` | 1 / the sample's `sampleRate`; 0 when absent or outside (0, 1] (the shadow's configured rate is not its rate) |
 
 - **Viewer.** The one the computation resolved, read through `auth.WithResolveObserver` (no extra
   store read). A request handed back before anything resolved a viewer is resolved by the tap (T1 on
@@ -3898,8 +3932,8 @@ endpoints are captured (`evalcapture.Supported`); every other endpoint is skippe
   reason: an API credential, never looked up by a tap), `session-cache-miss`, `session-cache-cleared`,
   `session-id-mismatch`, `other` (anything else). Seeded at 0 for the endpoints each source captures
   (shadow and serve: the four first-wave endpoints; serve-parity: the three tRPC ones; corpus-only:
-  `v1-models-id`, `refused` included; the unresolved reasons for every source but corpus-only, which
-  resolves no viewer). It counts rows queued; a row the
+  `v1-models-id` and `infinite`, `refused` included; every unresolved reason for every source but corpus-only, which
+  resolves no viewer and is seeded `bearer-token` only, below). It counts rows queued; a row the
   writers drop afterwards (a batch ClickHouse refused after its retries, shutdown) is counted in
   `feed_go_eval_capture_rows_dropped_total{table,reason}` (chwrite's reasons, seeded) and the failure
   logged (`eval capture insert failed`). A case is queued before its sample, and the sample names it
@@ -3921,6 +3955,22 @@ under the same in-flight cap and per-second bucket, counted `corpus_only` on a 2
 the only first-wave REST endpoint, so the only one sent. A header credential that
 `FEED_GO_SHADOW_V1_MODELS_CREDENTIALS` already mirrors as a described sample stays one.
 
+The tRPC `image.getInfinite` (the same switch, no other): T1 does hold its credentialed requests (a
+tRPC sample forwards the credential as `authorization: present`), but feed-go hands every one back
+(`bearer-*`), so its viewer is never resolved and T1 captures none of them (`unresolved`). With the
+switch above 0, that fraction of the sampled `image.getInfinite` requests carrying exactly one API
+credential is posted to the `infinite` compare path as a corpus-only sample IN PLACE OF its shadow
+sample (one POST per sampled request, as before; the comparison it replaces was a hand-back),
+before the handler runs and whatever Node answers, under the same bounds, counted `corpus_only` on a
+2xx. Sent: `{corpusOnly: true, credential, sampleRate, input, headers}`, `input` the raw tRPC
+`input` (no path); never the key in any form, Authorization, `x-feed-go-credential`, any cookie,
+`node`, `responseHeaders`. A request whose `input` or headers would still hold the key (as written,
+URI-encoded, JSON-escaped, or in the input once parsed as JSON) is not sent corpus-only and stays an ordinary shadow sample. Both
+credential kinds at once, or an empty `?token=`, stay ordinary shadow samples too. Feed-go checks and
+records it as below; a tRPC shape carries the class for an API credential (`header` / `query`,
+the shape table above), so it signs exactly as the same request with a real credential of that
+class and apart from the same request signed out.
+
 - **Sent:** `{corpusOnly: true, credential: "header" | "query", sampleRate, input, path, headers}`;
   `input` is the raw query string less every pair named like a credential (`token` in any case or
   escape) or holding the key's text, `headers` only `host`, `cf-ipcountry`, `cf-region-code`,
@@ -3933,8 +3983,16 @@ the only first-wave REST endpoint, so the only one sent. A header credential tha
   pair, by the same rules the strip uses), a `credential` that is not exactly `header` or `query`, or
   any of Node's answer (`node`, `responseHeaders`, `upstream`). With the capture off, or on another
   endpoint: 202, discarded.
+- **Not recorded, counted `unresolved`** (202, `feed_go_eval_capture_unresolved_total{reason="bearer-token"}`):
+  a sample whose input holds a key Capture tests against the viewer's own identity
+  (`evalcorpus.MayNameViewer`: a top-level `userId`, `username`, `user`, `collectionId` or `*UserIds`
+  key, or a REST `username`/`userId` pair, whatever its value). The request was signed in with an API
+  key whose holder is not known here, so `$self` / `$self-collection` could not replace the holder's
+  own id, username or collection (§19.3) and the value would be stored as sent. Not a sampler fault,
+  so not `refused`; the Tempo import refuses the same requests by the same rule (§19.10).
 - **Recorded** with source `corpus-only`, result `corpus-only`, no Node answer, the viewer signed out
-  (or a verified crawler; nothing is resolved: no cookie, no credential), and the class on the request
+  (or a verified crawler; nothing is resolved: no cookie, no credential, and no input key that could
+  name the key holder, above), and the class on the request
   (`evalcorpus.Request.CredentialClass`): the case's `credential` is `header` / `query`, and its
   signature is exactly that of the same request carrying a real credential of that class (a `query`
   class also records `$credential-param`), so the corpus groups the two and the replay uses the API-key
@@ -3944,7 +4002,8 @@ the only first-wave REST endpoint, so the only one sent. A header credential tha
   reads a pair as URLSearchParams does (escape by escape) when it looks for the key.
 - **Deploy order:** feed-go first, then the Node switch. A feed-go without T4 reads a corpus-only
   sample as one with no `node` (`bad_request`, 400: Node counts it `rejected`), so nothing is stored,
-  but every one is a counted bad request.
+  but every one is a counted bad request. A feed-go with T4 for `[id]` only accepts and discards an
+  `image.getInfinite` one (202, nothing stored, counted `corpus_only` by Node).
 
 **Insert once (the `cases` pin contract).** `cases` is a ReplacingMergeTree versioned by
 `last_seen`: of the rows of one `(endpoint, case_id)`, the newest `last_seen` wins. The harness pins

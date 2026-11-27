@@ -108,7 +108,9 @@ export async function disableOauthForBannedUser(
     }
   }
 
-  // Before the consents: a run authorization outlives its consent row otherwise.
+  // Before the consents, so a crash between the two leaves no unrevoked authorization behind a
+  // deleted consent. Not the control: a re-consent starts a new offline grant, and the mint refuses
+  // an authorization made before it.
   try {
     await deps.revokeRunnerAuthorizations(userId);
   } catch (error) {

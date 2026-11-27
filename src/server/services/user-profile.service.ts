@@ -14,6 +14,7 @@ import type {
   GetUserProfileSchema,
   PrivacySettingsSchema,
   ProfileSectionSchema,
+  SetPinnedItemSchema,
   SetShowcaseSectionsSchema,
   ShowcaseItemSchema,
   ShowcaseSectionSchema,
@@ -22,6 +23,7 @@ import type {
 import {
   customShowcaseKey,
   customShowcaseKeyPrefix,
+  profilePinnedItemsLimit,
   showcaseSectionLimits,
   showcaseSectionTypes,
 } from '~/server/schema/user-profile.schema';
@@ -70,6 +72,11 @@ import type { ColorDomain } from '~/shared/constants/domain.constants';
 import { isShowcaseHiddenOn } from '~/shared/constants/profile-showcase.constants';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { queueScamScan } from '~/server/services/text-scan/scam-scan-queue';
+import {
+  assertPageCustomizationAllowed,
+  imagesHiddenFromModerator,
+  parsePinnedItems,
+} from '~/server/services/profile-customization.service';
 
 export type UserContentOverviewVariant = 'public' | 'sfw' | 'all';
 
@@ -552,6 +559,8 @@ export const addToShowcaseSection = async ({
   return { added: true, sections: updated };
 };
 
+type ProfileImageField = 'coverImage' | 'sfwCoverImage' | 'backgroundImage' | 'sfwBackgroundImage';
+
 export const updateUserProfile = async ({
   // profileImage,
   isModerator,
@@ -562,11 +571,15 @@ export const updateUserProfile = async ({
   userId,
   coverImage,
   sfwCoverImage,
+  backgroundImage,
+  sfwBackgroundImage,
+  pageTheme,
   // leaderboardShowcase,
   // profilePicture,
   creatorCardStatsPreferences,
   domain,
   sessionUserId,
+  profileRedesign = false,
   asModerator = false,
   ...profile
 }: UserProfileUpdateSchema & {
@@ -575,6 +588,8 @@ export const updateUserProfile = async ({
   /** The moderator view the editor's profile read had (`actsAsModerator`). */
   asModerator?: boolean;
   domain?: ColorDomain;
+  /** Without it a save touching the redesign's page fields is refused, and hidden tabs stay as stored. */
+  profileRedesign?: boolean;
   /** Who saved it: a moderator may save another user's profile, and is answered as a viewer. */
   sessionUserId: number;
 }) => {
@@ -594,6 +609,7 @@ export const updateUserProfile = async ({
       profile.message,
       profile.sfwMessage,
       profile.location,
+      profile.about,
       ...(socialLinks?.map((link) => link.url) ?? []),
       ...(sponsorshipLinks?.map((link) => link.url) ?? []),
     ],
@@ -605,9 +621,37 @@ export const updateUserProfile = async ({
   // save looks like a changed announcement and re-stamps `messageAddedAt`.
   const current = await getUserWithProfile({ id: userId, sessionUserId: userId }); // Ensures user exists && has a profile record.
 
+  await assertPageCustomizationAllowed({
+    userId,
+    profileRedesign,
+    backgroundImage,
+    sfwBackgroundImage,
+    pageTheme,
+    about: profile.about,
+  });
+
+  if (profile.privacySettings && !profileRedesign) {
+    const stored = current.profile?.privacySettings as PrivacySettingsSchema | undefined;
+    profile.privacySettings = { ...profile.privacySettings, hiddenTabs: stored?.hiddenTabs };
+  }
+
   // A `custom:<id>` row only places a section that exists. A user who never had the flag has
   // none, so none of their rows survive.
   if (profile.profileSectionsSettings) {
+    // Section widths are the redesign's: without the flag each section keeps the width it has.
+    if (!profileRedesign) {
+      const storedWidths = new Map(
+        ((current.profile?.profileSectionsSettings ?? []) as ProfileSectionSchema[]).map(
+          (section) => [section.key, section.width]
+        )
+      );
+      profile.profileSectionsSettings = profile.profileSectionsSettings.map(
+        ({ width: _width, ...section }) => {
+          const width = storedWidths.get(section.key);
+          return width ? { ...section, width } : section;
+        }
+      );
+    }
     const sectionKeys = new Set(
       ((current.profile?.showcaseSections ?? []) as ShowcaseSectionSchema[]).map((s) =>
         customShowcaseKey(s.id)
@@ -629,8 +673,8 @@ export const updateUserProfile = async ({
 
   // A cover with no `id` is created from its client url below. Checked before any write, so a
   // refused cover leaves the whole save unapplied.
-  const newCoverUrls = [coverImage, sfwCoverImage].map((image) =>
-    image && !image.id ? image.url : null
+  const newCoverUrls = [coverImage, sfwCoverImage, backgroundImage, sfwBackgroundImage].map(
+    (image) => (image && !image.id ? image.url : null)
   );
   await assertClientImageUrlsUsable({ urls: newCoverUrls, userId });
   await assertClientKeysIssuedToCaller({
@@ -659,21 +703,44 @@ export const updateUserProfile = async ({
     userUpdateCounter?.inc({ location: 'user-profile.service:updateProfile' });
   }
 
-  // A stored cover the editor's read withheld (`ownerMediaAllowed`) never reached the form, so the
-  // null it sends back keeps it.
-  const withheld = { coverImage: false, sfwCoverImage: false };
-  if (!asModerator && (coverImage === null || sfwCoverImage === null)) {
-    const coverBlock = { select: { ingestion: true, blockedFor: true } };
+  // A stored image the editor's read withheld never reached the form, so the null it sends back
+  // keeps it: for the owner, a cover or background `ownerMediaAllowed` refuses; for a moderator
+  // editing someone else's profile, a restricted image.
+  const withheld: Partial<Record<ProfileImageField, boolean>> = {};
+  const sentNull = (
+    [
+      ['coverImage', coverImage],
+      ['sfwCoverImage', sfwCoverImage],
+      ['backgroundImage', backgroundImage],
+      ['sfwBackgroundImage', sfwBackgroundImage],
+    ] as const
+  ).filter(([, image]) => image === null);
+  if (!asModerator && sentNull.length) {
+    const block = { select: { ingestion: true, blockedFor: true } };
     // primary: it decides what this save keeps.
     const stored = await dbWrite.userProfile.findUnique({
       where: { userId },
-      select: { coverImage: coverBlock, sfwCoverImage: coverBlock },
+      select: {
+        coverImage: block,
+        sfwCoverImage: block,
+        backgroundImage: block,
+        sfwBackgroundImage: block,
+      },
     });
-    withheld.coverImage = !!stored?.coverImage && !ownerMediaAllowed(stored.coverImage);
-    withheld.sfwCoverImage = !!stored?.sfwCoverImage && !ownerMediaAllowed(stored.sfwCoverImage);
+    for (const [field] of sentNull) {
+      const image = stored?.[field];
+      withheld[field] = !!image && !ownerMediaAllowed(image);
+    }
   }
+  const hiddenFromEditor =
+    isModerator && sessionUserId !== userId ? await imagesHiddenFromModerator(userId) : null;
+  const asEdited = (image: UserProfileUpdateSchema['coverImage'], field: ProfileImageField) =>
+    image === null && (withheld[field] || hiddenFromEditor?.[field]) ? undefined : image;
 
-  const buildCoverImageUpdate = (image: UserProfileUpdateSchema['coverImage']) =>
+  const buildCoverImageUpdate = (
+    image: UserProfileUpdateSchema['coverImage'],
+    purpose: 'coverImage' | 'profileBackground' = 'coverImage'
+  ) =>
     image !== undefined && !image?.id
       ? image === null
         ? { disconnect: true }
@@ -686,7 +753,7 @@ export const updateUserProfile = async ({
                   (sanitizeProvenance(image?.meta as Record<string, unknown> | null | undefined) as
                     | Prisma.JsonObject
                     | undefined) ?? Prisma.JsonNull,
-                metadata: { coverImage: true, userId },
+                metadata: { [purpose]: true, userId },
                 userId,
                 resources: undefined,
               },
@@ -787,10 +854,14 @@ export const updateUserProfile = async ({
           userId: true,
           coverImage: { select: { id: true, url: true, ingestion: true, type: true } },
           sfwCoverImage: { select: { id: true, url: true, ingestion: true, type: true } },
+          backgroundImage: { select: { id: true, url: true, ingestion: true, type: true } },
+          sfwBackgroundImage: { select: { id: true, url: true, ingestion: true, type: true } },
         },
         where: { userId },
         data: {
           ...profile,
+          // A Json column is cleared with DbNull; a plain null is not a JSON value to Prisma.
+          pageTheme: pageTheme === null ? Prisma.DbNull : pageTheme,
           messageAddedAt:
             profile.message === undefined || profile.message === current?.profile?.defaultMessage
               ? undefined
@@ -803,14 +874,16 @@ export const updateUserProfile = async ({
               : profile.sfwMessage
               ? new Date()
               : null,
-          coverImage:
-            coverImage === null && withheld.coverImage
-              ? undefined
-              : buildCoverImageUpdate(coverImage),
-          sfwCoverImage:
-            sfwCoverImage === null && withheld.sfwCoverImage
-              ? undefined
-              : buildCoverImageUpdate(sfwCoverImage),
+          coverImage: buildCoverImageUpdate(asEdited(coverImage, 'coverImage')),
+          sfwCoverImage: buildCoverImageUpdate(asEdited(sfwCoverImage, 'sfwCoverImage')),
+          backgroundImage: buildCoverImageUpdate(
+            asEdited(backgroundImage, 'backgroundImage'),
+            'profileBackground'
+          ),
+          sfwBackgroundImage: buildCoverImageUpdate(
+            asEdited(sfwBackgroundImage, 'sfwBackgroundImage'),
+            'profileBackground'
+          ),
         },
       });
 
@@ -834,7 +907,12 @@ export const updateUserProfile = async ({
   // trigger enqueues an ImageScan JobQueue row on the Pending insert, which the
   // `ingest-images` sweeper drains, so the cover image still gets scanned even
   // if this inline enqueue fails.
-  const pendingCoverImages = [updatedCoverImages.coverImage, updatedCoverImages.sfwCoverImage]
+  const pendingCoverImages = [
+    updatedCoverImages.coverImage,
+    updatedCoverImages.sfwCoverImage,
+    updatedCoverImages.backgroundImage,
+    updatedCoverImages.sfwBackgroundImage,
+  ]
     .filter(isDefined)
     .filter((image) => image.ingestion === ImageIngestionStatus.Pending);
   if (pendingCoverImages.length) {
@@ -847,7 +925,9 @@ export const updateUserProfile = async ({
 
   await usersSearchIndex.queueUpdate([{ id: userId, action: SearchIndexUpdateQueueAction.Update }]);
   if (
-    [profile.bio, profile.message, profile.sfwBio, profile.sfwMessage].some((v) => v !== undefined)
+    [profile.bio, profile.message, profile.sfwBio, profile.sfwMessage, profile.about].some(
+      (v) => v !== undefined
+    )
   )
     queueScamScan({ entityType: 'UserProfile', entityId: userId });
 
@@ -874,4 +954,70 @@ async function withoutRestrictedPictureFor<T extends { id: number; nsfwLevel: nu
 ) {
   if (sameUser || !(await isPictureModelRestricted(picture))) return picture;
   return null;
+}
+
+/**
+ * Pins one of the owner's own images or models to their About tab, or unpins it. At most
+ * `profilePinnedItemsLimit`; a pin past that is refused rather than dropping an older one.
+ */
+export async function setPinnedItem({
+  userId,
+  entityType,
+  entityId,
+  pinned,
+}: SetPinnedItemSchema & { userId: number }) {
+  // A profile row is created on first visit; pinning from a menu may come first.
+  const profile = await dbWrite.userProfile.upsert({
+    where: { userId },
+    create: { userId },
+    update: {},
+    select: { pinnedItems: true },
+  });
+  // Pins whose item was deleted no longer show and could not be unpinned, so they free their slot.
+  const current = await withoutGonePins(userId, parsePinnedItems(profile.pinnedItems));
+  const item = { entityType, entityId } as ShowcaseItemSchema;
+  const isPinned = current.some((pin) => isSameShowcaseItem(pin, item));
+  if (pinned === isPinned) return current;
+
+  if (pinned) {
+    if (current.length >= profilePinnedItemsLimit)
+      throw throwBadRequestError(
+        `You can pin up to ${profilePinnedItemsLimit} items. Unpin one first.`
+      );
+    await assertShowcaseItemsOwned({
+      userId,
+      showcaseItems: [item],
+      currentShowcaseItems: [],
+      allowedTypes: ['Model', 'Image'],
+    });
+  }
+  const next = pinned
+    ? [...current, item]
+    : current.filter((pin) => !isSameShowcaseItem(pin, item));
+
+  // Only over the list just read, so two pins at once cannot push it past the limit.
+  const { count } = await dbWrite.userProfile.updateMany({
+    where: { userId, pinnedItems: { equals: profile.pinnedItems ?? [] } },
+    data: { pinnedItems: next },
+  });
+  if (!count) throw throwConflictError('Your pinned items changed while saving. Try again.');
+  return next;
+}
+
+/** The pins whose image or model still exists and is still the owner's. */
+async function withoutGonePins(userId: number, pins: ShowcaseItemSchema[]) {
+  if (!pins.length) return pins;
+  const idsOf = (type: ShowcaseItemSchema['entityType']) =>
+    pins.filter((pin) => pin.entityType === type).map((pin) => pin.entityId);
+  const [images, models] = await Promise.all([
+    // primary: decides what the write that follows keeps.
+    dbWrite.image.findMany({ where: { id: { in: idsOf('Image') }, userId }, select: { id: true } }),
+    // primary: as above.
+    dbWrite.model.findMany({
+      where: { id: { in: idsOf('Model') }, userId, status: { not: ModelStatus.Deleted } },
+      select: { id: true },
+    }),
+  ]);
+  const live = { Image: new Set(images.map((i) => i.id)), Model: new Set(models.map((m) => m.id)) };
+  return pins.filter((pin) => live[pin.entityType as 'Image' | 'Model']?.has(pin.entityId));
 }

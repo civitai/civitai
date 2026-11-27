@@ -124,15 +124,9 @@ import handler from '~/pages/api/webhooks/stripe';
 import { trackWebhookEvent } from '~/server/clickhouse/client';
 import { getServerStripe } from '~/server/utils/get-server-stripe';
 
-// The ban leg revokes recipe-runner authorizations through kyselyDb; this suite never reads them.
-vi.mock('~/server/db/kyselyDb', async () => {
-  const { pgliteKysely } = await import('~/__tests__/pglite-kysely');
-  return {
-    kyselyWrite: pgliteKysely(() => {
-      throw new Error('no ledger database in this suite');
-    }),
-  };
-});
+vi.mock('~/server/db/kyselyDb', async () =>
+  (await import('~/__tests__/mocks/no-ledger-kysely')).noLedgerKyselyDb()
+);
 
 type Reward = {
   id: number;

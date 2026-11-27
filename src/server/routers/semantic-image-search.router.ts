@@ -76,6 +76,20 @@ const holdOwnImages = async (started: number) => {
   if (wait > 0) await sleep(wait);
 };
 
+// Refused, not dropped: results that ignore the image or resource asked for would read as answering it.
+const refuseUnflaggedFilters = (
+  ctx: Parameters<typeof guardFlagEnabled>[0],
+  { imageId, modelVersionIds }: SemanticImageSearchInput
+) => {
+  if (imageId && !guardFlagEnabled(ctx, 'moreLikeThis'))
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'More like this is not available yet' });
+  if (modelVersionIds?.length && !guardFlagEnabled(ctx, 'imageSearchResources'))
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'Searching by resource is not available yet',
+    });
+};
+
 // Timed first, so flag and rate-limit refusals land on the dashboard too.
 const semanticSearchProcedure = publicProcedure.use(timeSemanticSearch('images'));
 const semanticVideoSearchProcedure = publicProcedure.use(timeSemanticSearch('videos'));
@@ -101,12 +115,7 @@ export const semanticImageSearchRouter = router({
       const steer =
         guardFlagEnabled(ctx, 'moreLikeThis') && guardFlagEnabled(ctx, 'moreLikeThisSteer');
       const searched = steer ? asked : { ...asked, preferTagIds: undefined };
-      // Refused, not dropped: results unfiltered by the resource asked for would read as filtered.
-      if (searched.modelVersionIds?.length && !guardFlagEnabled(ctx, 'imageSearchResources'))
-        throw new TRPCError({
-          code: 'FORBIDDEN',
-          message: 'Searching by resource is not available yet',
-        });
+      refuseUnflaggedFilters(ctx, searched);
       const result = await searchSemanticImages({
         input: searched,
         user: ctx.user,
@@ -169,11 +178,7 @@ export const semanticImageSearchRouter = router({
     .use(refuseProfaneSearch)
     .query(async ({ input, ctx }) => {
       const started = Date.now();
-      if (input.modelVersionIds?.length && !guardFlagEnabled(ctx, 'imageSearchResources'))
-        throw new TRPCError({
-          code: 'FORBIDDEN',
-          message: 'Searching by resource is not available yet',
-        });
+      refuseUnflaggedFilters(ctx, input);
       const result = await searchSemanticImages({
         input,
         user: ctx.user,

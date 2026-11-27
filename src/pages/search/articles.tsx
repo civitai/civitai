@@ -19,7 +19,7 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { articleFeedUrlFromLegacySearch } from '~/components/Article/Infinite/article-feed-search';
 import { ArticlesSearchIndexSortBy } from '~/components/Search/parsers/article.parser';
 import { InViewLoader } from '~/components/InView/InViewLoader';
-import { useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
+import { useInfiniteHitsTransformed, useSearchFeedHits } from '~/components/Search/search.utils2';
 import { MasonryGridVirtual } from '~/components/MasonryColumns/MasonryGridVirtual';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
@@ -70,6 +70,7 @@ const RenderFilters = () => {
 
 export function ArticlesHitList() {
   const { hits, showMore, isLastPage } = useInfiniteHitsTransformed<'articles'>();
+  useSearchFeedHits(ARTICLES_SEARCH_INDEX, 'Article', hits);
   const { status } = useInstantSearch();
 
   const { loadingPreferences, items, hiddenCount } = useApplyHiddenPreferences({

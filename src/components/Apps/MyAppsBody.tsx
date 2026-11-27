@@ -58,7 +58,7 @@ import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { ReviewerByline, type DecisionReviewerView } from '~/components/Apps/ReviewerByline';
-import { isDecidedReviewStatus, reviewThreadDeveloperUrl } from '~/shared/utils/app-review-thread';
+import { reviewThreadDeveloperUrl } from '~/shared/utils/app-review-thread';
 
 /**
  * `/apps/mine` — THE author's single view of every app they can act on.
@@ -99,6 +99,8 @@ export type OrphanedSubmissionRow = {
   /** Who decided it; `null` while undecided. */
   reviewer?: DecisionReviewerView | null;
   canWithdraw?: boolean;
+  /** The server's verdict on whether the review conversation is open to the caller. */
+  canConverse?: boolean;
 };
 
 function formatWhen(value: string | Date | null | undefined): string {
@@ -925,7 +927,7 @@ function OrphanedSubmissionsSection({
                     />
                   </div>
                 ) : null}
-                {conversationEnabled && isDecidedReviewStatus(r.status) ? (
+                {conversationEnabled && r.canConverse ? (
                   <Anchor
                     component={Link}
                     href={reviewThreadDeveloperUrl(r.id)}

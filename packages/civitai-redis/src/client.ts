@@ -2733,12 +2733,10 @@ export const REDIS_SYS_KEYS = {
   },
   LIMITS: {
     EMAIL_VERIFICATIONS: 'limits:email-verifications',
-    HISTORY_DOWNLOADS: 'limits:history-downloads',
     CHAT_MESSAGES: 'limits:chat-messages',
   },
   COUNTERS: {
     EMAIL_VERIFICATIONS: 'counters:email-verifications',
-    HISTORY_DOWNLOADS: 'counters:history-downloads',
     CHAT_MESSAGES: 'counters:chat-messages',
   },
   INDEXES: {
@@ -3105,6 +3103,13 @@ const REDIS_KEYS_UNPREFIXED = {
     // with a TTL just past the token's expiry (verifier clock tolerance). The attempt ledger bounds a
     // replay if it is evicted.
     RUNNER_SUBMIT_JTI: 'blocks:runner-submit-jti',
+    // A user disconnected a runner client: `${RUNNER_REVOKED}:${userId}:${clientId}`, TTL past the
+    // runner token's life. Value is the revoke time (epoch s); submits with a token minted at or
+    // before it are refused.
+    RUNNER_REVOKED: 'blocks:runner-revoked',
+    // The reconciler cancelled a runner workflow past its reserved ceiling:
+    // `${RUNNER_OVER_CEILING_CANCEL}:${attemptId}`, SET NX, 1h TTL, so it cancels once.
+    RUNNER_OVER_CEILING_CANCEL: 'blocks:runner-over-ceiling-cancel',
     // The viewer chose to continue on their own Buzz past their plan's daily app Buzz cap, for
     // one UTC day: `system:blocks:buzz-opt-in:${userId}:${UTC-day}` = '1', 25h TTL. Per user
     // only (no appBlockId): it widens the BUZZ_CAP ceiling, which is per user. Deliberately NOT
@@ -3534,6 +3539,7 @@ const REDIS_KEYS_UNPREFIXED = {
     // change via `invalidateSubscriptionCaches`; TTL backstops the non-webhook paths.
     // See `getValidCreatorMembershipMap` in creator-membership.service.
     CREATOR_MEMBERSHIP_VALID: 'packed:caches:creator-membership-valid',
+    PROFILE_MEMBER_TIER: 'packed:caches:profile-member-tier',
     // Per-user `id -> { hideModelBuzz, hideModelDownloads, hideModelGenerations }` — the
     // three model-metric-privacy DEFAULT flags read off `User.settings` at read time
     // (#3266). A tiny derived slice so the hot model-read paths (feed / v1 list /
@@ -3586,7 +3592,6 @@ const REDIS_KEYS_UNPREFIXED = {
   COUNTERS: {
     REDEMPTION_ATTEMPTS: 'counters:redemption-attempts',
     EMAIL_VERIFICATIONS: 'counters:email-verifications',
-    HISTORY_DOWNLOADS: 'counters:history-downloads',
     BUG_REPORTS: 'counters:bug-reports',
     FEATURE_PAGES_LIFTS: 'counters:feature-pages-lifts',
   },

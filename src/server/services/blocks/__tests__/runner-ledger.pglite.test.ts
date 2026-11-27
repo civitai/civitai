@@ -13,13 +13,18 @@ import {
 /**
  * The attempt ledger over the real migration: the reserve re-runs every mint check against what
  * is committed, refuses a second live attempt per run, and moves attempts only from the state a
- * caller names (civitai/civitai#10573). PGlite has one connection, so the `FOR UPDATE` lock itself is not exercised
- * here; the race below is caught by the partial unique index. Ids are invented.
+ * caller names (civitai/civitai#10573). PGlite has one connection, so the `FOR UPDATE` lock itself
+ * is not exercised here: the concurrent test is refused by the live-attempt read, and the partial
+ * unique index has its own tests. Ids are invented.
  */
 
 const MIGRATION = join(
   process.cwd(),
   'packages/civitai-db-schema/prisma/migrations/20271204120000_recipe_runner_ledger/migration.sql'
+);
+const RESERVATION_MIGRATION = join(
+  process.cwd(),
+  'packages/civitai-db-schema/prisma/migrations/20271205120000_recipe_runner_reservation/migration.sql'
 );
 const USER = 990000301;
 const CLIENT = 'rcl_ledger';
@@ -65,6 +70,7 @@ beforeEach(async () => {
     INSERT INTO app_blocks VALUES ('${APP_BLOCK}', 'app_x', 'blk_x', 'approved');
   `);
   await pg.exec(readFileSync(MIGRATION, 'utf8'));
+  await pg.exec(readFileSync(RESERVATION_MIGRATION, 'utf8'));
   await pg.exec(`
     INSERT INTO runner_client_bindings (runner_client_id, app_block_id, created_by_user_id)
       VALUES ('${CLIENT}', '${APP_BLOCK}', 1);
@@ -129,6 +135,33 @@ describe('reserveRunnerAttempt', () => {
     if (!first.ok) throw new Error('first reserve refused');
     expect(await transitionRunnerAttempt(db, first.attemptId, 'reserved', 'refunded')).toBe(true);
     expect(await reserve()).toMatchObject({ ok: true, attemptNo: 2 });
+  });
+
+  it('refuses a new attempt of a run whose attempt failed after being charged', async () => {
+    const first = await reserve();
+    if (!first.ok) throw new Error('first reserve refused');
+    await transitionRunnerAttempt(db, first.attemptId, 'reserved', 'submitting');
+    await transitionRunnerAttempt(db, first.attemptId, 'submitting', 'submitted', {
+      workflowId: 'wf_1',
+    });
+    await transitionRunnerAttempt(db, first.attemptId, 'submitted', 'failed', {
+      chargedAmount: 12,
+    });
+    expect(await reserve()).toEqual({ ok: false, refusal: 'run_spent' });
+    expect(await attempts()).toHaveLength(1);
+  });
+
+  it('refuses a new attempt of a run whose workflow ran and was refunded', async () => {
+    const first = await reserve();
+    if (!first.ok) throw new Error('first reserve refused');
+    await transitionRunnerAttempt(db, first.attemptId, 'reserved', 'submitting');
+    await transitionRunnerAttempt(db, first.attemptId, 'submitting', 'submitted', {
+      workflowId: 'wf_1',
+    });
+    await transitionRunnerAttempt(db, first.attemptId, 'submitted', 'refunded', {
+      chargedAmount: 0,
+    });
+    expect(await reserve()).toEqual({ ok: false, refusal: 'run_spent' });
   });
 
   it('counts the offline cap from the ledger: a reserve past it is refused', async () => {

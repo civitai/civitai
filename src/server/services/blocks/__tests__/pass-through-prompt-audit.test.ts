@@ -116,6 +116,7 @@ describe('collectPassThroughAuditText', () => {
         'liveTextToSpeech',
         'miniMaxMusic3',
         'polyGen',
+        'seedAudioGen',
         'soniloAudioGen',
         'textToImage',
         'textToSpeech',

@@ -6,15 +6,9 @@ import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import type * as HatSync from '~/server/events/points/sync';
 
-// The ban leg revokes recipe-runner authorizations through kyselyDb; this suite never reads them.
-vi.mock('~/server/db/kyselyDb', async () => {
-  const { pgliteKysely } = await import('~/__tests__/pglite-kysely');
-  return {
-    kyselyWrite: pgliteKysely(() => {
-      throw new Error('no ledger database in this suite');
-    }),
-  };
-});
+vi.mock('~/server/db/kyselyDb', async () =>
+  (await import('~/__tests__/mocks/no-ledger-kysely')).noLedgerKyselyDb()
+);
 
 /**
  * BANNING REMOVES AN ACCOUNT FROM USER SEARCH — SO LIFTING A BAN HAS TO PUT IT BACK.

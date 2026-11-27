@@ -8,13 +8,14 @@ describe('articleIngestionErrorReason', () => {
   it.each([
     [{ errorImages: 0, missingImages: 0, textError: false }, null],
     [{ errorImages: 2, missingImages: 0, textError: false }, '2 image(s) could not be scanned'],
+    [{ errorImages: 0, missingImages: 1, textError: false }, null],
     [
       { errorImages: 0, missingImages: 1, textError: true },
-      '1 image(s) could not be found and the text check could not finish',
+      'the text check could not finish. 1 image(s) could not be found and are left out of the article',
     ],
     [
       { errorImages: 1, missingImages: 1, textError: true },
-      '1 image(s) could not be scanned, 1 image(s) could not be found and the text check could not finish',
+      '1 image(s) could not be scanned and the text check could not finish. 1 image(s) could not be found and are left out of the article',
     ],
   ])('%o: %s', (input, reason) => {
     expect(articleIngestionErrorReason(input)).toBe(reason);

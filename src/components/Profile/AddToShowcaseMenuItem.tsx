@@ -40,7 +40,8 @@ export function useAddToTopShowcase(entityType: Props['entityType']) {
 /** The top-of-profile showcase holds models and images only; articles go in sections. */
 export const addsToTopShowcase = (entityType: ShowcaseEntityType) => entityType !== 'Article';
 
-export function AddToShowcaseMenuItem({ entityType, entityId, offerSections = true }: Props) {
+/** Asks which showcase section when the owner has sections of this type; else adds to the top showcase. */
+export function useAddToShowcaseAction({ entityType, entityId, offerSections = true }: Props) {
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
   const { add } = useAddToTopShowcase(entityType);
@@ -53,9 +54,7 @@ export function AddToShowcaseMenuItem({ entityType, entityId, offerSections = tr
   const hasSections =
     offersSections && !!user?.profile?.showcaseSections?.some((s) => s.type === entityType);
 
-  if (!hasSections && !addsToTopShowcase(entityType)) return null;
-
-  const onClick = () => {
+  const addToShowcase = () => {
     if (hasSections && currentUser?.username)
       openDialog(() => import('~/components/Profile/AddToShowcaseModal'), {
         entityType,
@@ -65,17 +64,28 @@ export function AddToShowcaseMenuItem({ entityType, entityId, offerSections = tr
     else add(entityId);
   };
 
+  return {
+    addToShowcase,
+    available: hasSections || addsToTopShowcase(entityType),
+    // Until the sections load, a click can't tell which add it means.
+    disabled: offersSections && isLoading,
+  };
+}
+
+export function AddToShowcaseMenuItem(props: Props) {
+  const { addToShowcase, available, disabled } = useAddToShowcaseAction(props);
+  if (!available) return null;
+
   return (
     <Menu.Item
       leftSection={<IconHeart size={14} stroke={1.5} />}
       onClick={(e: React.MouseEvent) => {
         e.preventDefault();
         e.stopPropagation();
-        onClick();
+        addToShowcase();
       }}
       key="add-to-showcase"
-      // Until the sections load, a click can't tell which add it means.
-      disabled={offersSections && isLoading}
+      disabled={disabled}
     >
       Add to Showcase
     </Menu.Item>

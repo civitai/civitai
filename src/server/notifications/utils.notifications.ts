@@ -13,6 +13,7 @@ import { appFeedbackNotifications } from '~/server/notifications/app-feedback.no
 import { appListingNotifications } from '~/server/notifications/app-listing.notifications';
 import { appModeratorMessageNotifications } from '~/server/notifications/app-moderator-message.notifications';
 import { appPlatformUpdateNotifications } from '~/server/notifications/app-platform-update.notifications';
+import { appPlatformUpdateSubmitNotifications } from '~/server/notifications/app-platform-update-submit.notifications';
 import { appReviewThreadNotifications } from '~/server/notifications/app-review-thread.notifications';
 import { auctionNotifications } from '~/server/notifications/auction.notifications';
 import type { BareNotification } from '~/server/notifications/base.notifications';
@@ -82,6 +83,7 @@ export const notificationProcessors = {
   ...appFeedbackNotifications,
   ...appModeratorMessageNotifications,
   ...appPlatformUpdateNotifications,
+  ...appPlatformUpdateSubmitNotifications,
   ...appReviewThreadNotifications,
   ...articleRatingReviewNotifications,
   ...ratingReviewNotifications,

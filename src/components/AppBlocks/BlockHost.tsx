@@ -47,6 +47,12 @@ export function BlockHost({ blockInstall, slotContext }: BlockHostProps) {
     needsConsent,
     domain,
     maxBrowsingLevel,
+    // The mint's per-viewer narrowing of `maxBrowsingLevel` — the same value the
+    // page host forwards. Without it BLOCK_INIT omits `effectiveBrowsingLevel` and
+    // the SDK falls back to the DOMAIN ceiling, so on a mature-capable domain a
+    // viewer with mature content off is described to the block as permitting it.
+    effectiveBrowsingLevel,
+    viewerImage,
     refresh,
   } = useBlockToken(blockInstall, slotContext);
 
@@ -114,6 +120,8 @@ export function BlockHost({ blockInstall, slotContext }: BlockHostProps) {
       needsConsent={needsConsent}
       domain={domain}
       maxBrowsingLevel={maxBrowsingLevel}
+      effectiveBrowsingLevel={effectiveBrowsingLevel}
+      viewerImage={viewerImage}
       onConsentGranted={() => {
         void refresh();
       }}

@@ -31,6 +31,7 @@
   import { answerForKey, answerForKeyPress, isYesNoApprentice, optionsOnScreen, spaceSkips } from './keys';
   import { votesSent } from '$lib/votes-sent.svelte';
   import { whatsNewView } from '$lib/whats-new-dismiss.svelte';
+  import { updatesView } from '$lib/updates.svelte';
   import { dismissible } from '$lib/optimistic-dismiss.svelte';
   import { noticeKey } from './level-notice';
   import { withSubmitter } from './submitter';
@@ -139,6 +140,7 @@
   const careerReset = dismissible(() => (data.resetNotice ? 'reset' : null), { resetNoticeFailed: true });
   // A dialog is up: it owns the keyboard, so the answer keys and Space do nothing behind it.
   const whatsNew = whatsNewView();
+  const updates = updatesView();
   // Votes posted in the background that the page's data does not hold yet; the Watch and the header count them at once.
   // A vote that answers after the page is gone must not take from the next visit's count.
   const inFlight = votesSent();
@@ -153,7 +155,7 @@
   // The level card and the rank-up dialog; `showing` decides whether one is drawn, while the `noticeShown` fields keep
   // following `levelNotice`, the server's notice, so an answer given right after "Onward" still records the card it appeared with.
   const progress = dismissible(() => (data.progress ? noticeKey(data.progress) : null), { progressFailed: true });
-  let dialogOpen = $derived(whatsNew.showing || guideOpen || (data.progress?.kind === 'rank' && progress.showing));
+  let dialogOpen = $derived(whatsNew.showing || !!updates?.open || guideOpen || (data.progress?.kind === 'rank' && progress.showing));
   let levelNotice = $derived(!guideOpen && data.progress?.kind === 'level' ? data.progress : null);
 
   // Header-menu dialogs (feedback, restart career) don't set `dialogOpen`; the reason picker is this page's own.
@@ -175,7 +177,8 @@
       return;
     }
     if (questionTimeShowing) {
-      if ((event.target as HTMLElement | null)?.closest('header')) return;
+      // The header and Question time's Settings link keep their own keys.
+      if ((event.target as HTMLElement | null)?.closest('header, a')) return;
       if (event.key === ' ' || event.key === 'Enter') {
         event.preventDefault();
         startQuestions();

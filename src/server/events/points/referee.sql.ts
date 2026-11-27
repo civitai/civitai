@@ -16,8 +16,8 @@
 //   count only while its latest row is an add: removing the last reaction nets it out, reacting
 //   again brings it back.
 // - People in restrictedUsers (banned, deleted, excluded from event points) neither give nor earn,
-//   from their restrictedFrom on: rows before it stand. Banned and deleted people are restricted from
-//   0, the whole season.
+//   from their restrictedFrom on: rows before it stand. Banned people are restricted from 0, the
+//   whole season; deleted people from the UTC day of their delete.
 //   Actors with an id from newAccountMinId (registered inside the new-account window) give nothing.
 //   Both are read from Postgres "User" by the caller.
 // - Nobody earns from acting on their own hat.
@@ -30,7 +30,8 @@
 //
 // Params: event, seasonStart, recomputeFrom, cut, removeCut, cap, types (Array(String)), weights (Array(UInt32),
 // aligned with types), dailyTypes (Array(String)), restrictedUsers (Array(Int32)), restrictedFrom
-// (Array(Int64), epoch ms, aligned with restrictedUsers), newAccountMinId.
+// (Array(Int64), epoch ms, aligned with restrictedUsers), newAccountMinId, actorShards and
+// actorShard (only actors with cityHash64(actorId) % actorShards = actorShard; see referee-shards.ts).
 export const eventPointsRefereeSql = /* sql */ `
 WITH
   -- Two scans, each with its own time range: the primary key (event, toDate(time), ...) can prune
@@ -41,12 +42,14 @@ WITH
       AND time >= {seasonStart:DateTime64(3)} AND time < {removeCut:DateTime64(3)}
       AND has({types:Array(String)}, type)
       AND NOT has({dailyTypes:Array(String)}, type)
+      AND cityHash64(actorId) % {actorShards:UInt32} = {actorShard:UInt32}
     UNION ALL
     SELECT * FROM event_point_events
     WHERE event = {event:String}
       AND time >= {recomputeFrom:DateTime64(3)} AND time < {removeCut:DateTime64(3)}
       AND has({types:Array(String)}, type)
       AND has({dailyTypes:Array(String)}, type)
+      AND cityHash64(actorId) % {actorShards:UInt32} = {actorShard:UInt32}
   ),
   firsts AS (
     SELECT

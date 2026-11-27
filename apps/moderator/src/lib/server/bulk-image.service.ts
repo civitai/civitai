@@ -5,7 +5,7 @@ import { dbRead } from './db';
 import { listWithheldIds, withheldRow } from './retracted-media';
 import { issueStrike, removeImages, setImageFlag } from './user-actions.service';
 import type { MediaType } from '$lib/media/edge-url';
-import { isReviewImageSql } from './review-image';
+import { reviewCopyImageSql } from '@civitai/db-queries/content-deletion';
 import { approvedAppealOf, type ApprovedAppealBadge, type HeldSummary } from './removal-hold';
 import { getLatestApprovedImageAppeals } from '@civitai/db-queries/image-removal-confirmation';
 
@@ -77,7 +77,7 @@ const extraColumns = [
   sql<boolean>`EXISTS (SELECT 1 FROM "ImageConnection" ic WHERE ic."imageId" = i."id")`.as(
     'hasConnection'
   ),
-  isReviewImageSql(sql.ref('i.id')).as('isReviewImage'),
+  reviewCopyImageSql(sql.ref('i.id')).as('isReviewImage'),
 ];
 
 /**
@@ -379,7 +379,7 @@ export async function reviewImageIdsAmong(imageIds: number[]): Promise<Set<numbe
     .selectFrom('Image as i')
     .select('i.id')
     .where('i.id', 'in', imageIds)
-    .where(isReviewImageSql(sql.ref('i.id')))
+    .where(reviewCopyImageSql(sql.ref('i.id')))
     .execute();
   return new Set(rows.map((r) => r.id));
 }

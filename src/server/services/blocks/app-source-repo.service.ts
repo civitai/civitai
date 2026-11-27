@@ -44,6 +44,10 @@ import {
 } from '~/server/services/blocks/app-source-repo.plan';
 import { isMissingTableError } from '~/server/services/blocks/app-access.service';
 import { FORGEJO_SOURCE_ORG } from '~/server/services/blocks/forgejo-orgs';
+import {
+  latestApprovedBuild,
+  latestApprovedCommitSha,
+} from '~/server/services/blocks/latest-approved-build';
 
 export type SourceRepoOrigin = 'fork' | 'assistant' | 'backfill';
 
@@ -740,17 +744,13 @@ export async function listBackfillCandidates(): Promise<BackfillCandidate[]> {
     parentSlug: string | null;
   }>;
   for (const fork of forks) {
-    const approved = await dbRead.appBlockPublishRequest.findFirst({
-      where: { appBlockId: fork.id, status: 'approved', forgejoCommitSha: { not: null } },
-      orderBy: [{ reviewedAt: 'desc' }, { submittedAt: 'desc' }],
-      select: { forgejoCommitSha: true, version: true },
-    });
-    if (!approved?.forgejoCommitSha) continue;
+    const approved = await latestApprovedBuild(fork.id);
+    if (!approved) continue;
     out.push({
       slug: fork.slug,
       ownerUserId: fork.ownerUserId,
       kind: 'approved-fork',
-      seedCommitSha: approved.forgejoCommitSha,
+      seedCommitSha: approved.commitSha,
       seedRepoSlug: fork.slug,
       lineage:
         fork.parentSlug && fork.parentAppBlockId
@@ -815,6 +815,10 @@ export type SeedFromBuildRepoResult = EnsureSourceRepoResult | { kind: 'no-appro
  * never written). An update branch cut from it therefore shares history with an owner's existing
  * checkout of the build repo, and merges into it like any branch would.
  *
+ * The caller cuts every update to such a repo from the app's latest approved commit
+ * ({@link latestApprovedCommitSha}), never its `main`: the build repo's `main` may hold a newer
+ * push nobody approved.
+ *
  * Only for an app with an approved version (a live app); the fork lineage is recorded from
  * `app_blocks.fork_of_*` when the block has one. Idempotent like {@link ensureSourceRepoLocked};
  * call it holding the slug's lock.
@@ -824,12 +828,7 @@ export async function seedSourceRepoFromBuildRepoLocked(args: {
   appBlockId: string;
   ownerUserId: number;
 }): Promise<SeedFromBuildRepoResult> {
-  const approved = await dbRead.appBlockPublishRequest.findFirst({
-    where: { appBlockId: args.appBlockId, status: 'approved', forgejoCommitSha: { not: null } },
-    orderBy: [{ reviewedAt: 'desc' }, { submittedAt: 'desc' }],
-    select: { forgejoCommitSha: true },
-  });
-  if (!approved?.forgejoCommitSha) return { kind: 'no-approved-version' };
+  if (!(await latestApprovedCommitSha(args.appBlockId))) return { kind: 'no-approved-version' };
   const lineageRows = (await dbRead.$queryRaw`SELECT
         ab."fork_of_app_block_id" AS "parentAppBlockId",
         ab."fork_of_commit_sha" AS "parentCommitSha",

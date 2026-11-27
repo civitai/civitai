@@ -22,7 +22,9 @@ import {
   readObject,
   recordFinalScanResult,
   markCopyDeletes,
+  releaseEntryCopies,
   settleCopyDeletes,
+  findScanCopyImageId,
 } from '~/server/services/creator-service-deal-file.service';
 import { probeVideoDimensions } from '~/server/services/video-dimensions';
 import { readVideoLengths } from '~/server/utils/video-lengths';
@@ -203,13 +205,8 @@ async function submitEntryImage(
   // An image already submitted, or already judged and its copy deleted, is never ingested again.
   if (!row || row.imageId || row.scanStatus !== 'Pending') return;
 
-  let imageId: number | undefined;
-  if (row.scanKey) {
-    // A crash left the object, and maybe the Image row: find it so it is never ingested twice.
-    const [existing] = await dbWrite.$queryRaw<{ id: number }[]>`
-      SELECT "id" FROM "Image" WHERE "url" = ${row.scanKey}::text LIMIT 1`;
-    imageId = existing?.id;
-  }
+  // A crash left the object, and maybe the Image row.
+  let imageId = row.scanKey ? await findScanCopyImageId(row.scanKey) : undefined;
   if (!imageId) {
     const copy = await buildEntryScanCopy(original);
     let scanKey = row.scanKey;
@@ -563,13 +560,9 @@ async function unpackVideo(file: ClaimedFinal, probeVideo: typeof probeVideoDime
     UPDATE "ServiceDealFile"
     SET "scannedEtag" = ${object.ETag}::text, "scannedVersionId" = ${object.VersionId ?? null}::text
     WHERE "id" = ${file.id}::int`;
-  // A crash after the Image was made leaves it to be found, so it is never ingested twice.
-  const [existing] = entry.scanKey
-    ? await dbWrite.$queryRaw<{ id: number }[]>`
-        SELECT "id" FROM "Image" WHERE "url" = ${scanKey}::text LIMIT 1`
-    : [];
+  // A crash after the Image was made leaves it to be found.
   const imageId =
-    existing?.id ??
+    (entry.scanKey ? await findScanCopyImageId(scanKey) : undefined) ??
     (
       await createScanImage(
         scanKey,
@@ -877,20 +870,24 @@ let danglingCountedAt = 0;
 
 /**
  * Counts and logs entries pointing at a gone image, at most hourly. Each refuses and keeps its file
- * (`imageGone`), so a growing count is a backlog; `marked` ones are our own delete, which the next
- * copy run settles. Null when it did not count this run.
+ * (`imageGone`). `settling` ones are our own delete within the settle window, which the next copy
+ * run settles; `dangling` ones (unmarked, or marked past that window) are a backlog. Null when it did
+ * not count this run.
  */
 export async function countDanglingScanCopies({ now = Date.now() } = {}) {
   if (now - danglingCountedAt < 60 * 60_000) return null;
   danglingCountedAt = now;
-  const [counts] = await dbWrite.$queryRaw<{ marked: number; unmarked: number }[]>`
-    SELECT count(*) FILTER (WHERE e."copyDeleteStartedAt" IS NOT NULL)::int AS marked,
-      count(*) FILTER (WHERE e."copyDeleteStartedAt" IS NULL)::int AS unmarked
+  const [counts] = await dbWrite.$queryRaw<{ settling: number; dangling: number }[]>`
+    SELECT count(*) FILTER (WHERE NOT ${entryImageGone(Prisma.sql`e`, {
+      exceptSettling: true,
+    })})::int AS settling,
+      count(*) FILTER (WHERE ${entryImageGone(Prisma.sql`e`, { exceptSettling: true })})::int
+        AS dangling
     FROM "ServiceDealFileEntry" e WHERE ${entryImageGone(Prisma.sql`e`)}`;
   logUnpack(
     'entries pointing at a gone image',
-    { count: counts.unmarked, total: counts.marked + counts.unmarked },
-    counts.unmarked ? 'warning' : 'info'
+    { count: counts.dangling, total: counts.settling + counts.dangling },
+    counts.dangling ? 'warning' : 'info'
   );
   return counts;
 }
@@ -923,13 +920,11 @@ export async function deleteEntryScanCopies({ limit = 50 } = {}) {
       const gone = await deleteImages([row.imageId], {
         updatePosts: false,
         actor: { system: 'creator-service-deal-unpack' },
+        onDeleted: releaseEntryCopies([row.id]),
       });
       // A copy kept for its case stays pointed at, and so does one gone without our delete.
-      const settled = await settleCopyDeletes(
-        [row.id],
-        (gone ?? []).map(({ id }) => id)
-      );
-      if (settled.length) deleted++;
+      await settleCopyDeletes([row.id]);
+      if (gone.some(({ id }) => id === row.imageId)) deleted++;
     } catch (error) {
       logUnpack(
         'scan copy delete failed; it will be retried',

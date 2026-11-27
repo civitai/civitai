@@ -1,4 +1,8 @@
+import { reviewCopyImageSql } from '@civitai/db-queries/content-deletion';
 import { Prisma } from '@prisma/client';
+import { sql } from 'kysely';
+import { toPrismaSql } from '~/server/db/prisma-sql-kysely';
+import { finalCsamHeldSql } from '~/server/services/creator-service-deal-file-held-sql';
 import { shownReviewSql } from '~/server/services/creator-service-deal-review-publish';
 import { viewableServiceOfferingSql } from '~/server/services/creator-service-offering-viewable-sql';
 
@@ -10,7 +14,8 @@ export const reviewImageLevelSql = Prisma.sql`GREATEST(i."nsfwLevel", d."maxNsfw
 
 /**
  * True in SQL when a review image may be shown at `levels` (the viewer's levels, already limited to
- * what the domain serves), with `i` the image, `r` its review and `d` the deal.
+ * what the domain serves), with `i` the image, `ri` its review link, `r` the review and `d` the deal.
+ * A Final held since the copy was made hides the copy too.
  */
 export const reviewImageVisibleSql = (
   levels: number,
@@ -21,6 +26,7 @@ export const reviewImageVisibleSql = (
   AND i."nsfwLevel" BETWEEN 1 AND d."maxNsfwLevel"
   AND (${reviewImageLevelSql} & ${levels}::int) <> 0
   AND EXISTS (SELECT 1 FROM "ServiceOffering" o WHERE o."id" = d."offeringId" AND o."allowReviewWork")
+  AND NOT ${finalCsamHeldSql(Prisma.sql`ri."sourceFileId"`)}
 )`;
 
 /**
@@ -36,12 +42,21 @@ export const reviewOfImageSql = Prisma.sql`(
 )`;
 
 /**
+ * True in SQL unless image `i` is a review copy whose source Final is held. Moderators bypass it
+ * (imageVisibilityConditions).
+ */
+export const notHeldReviewCopySql = Prisma.sql`NOT EXISTS (
+  SELECT 1 FROM "ServiceDealReviewImage" hri
+  WHERE hri."imageId" = i."id" AND ${finalCsamHeldSql(Prisma.sql`hri."sourceFileId"`)}
+)`;
+
+/**
  * True in SQL when image `i` is attached to no service review. A review image is the seller's work:
  * it is viewed and reported, never collected, reacted to, commented on, remixed or made a cover.
  */
-export const notReviewImageSql = Prisma.sql`NOT EXISTS (
-  SELECT 1 FROM "ServiceDealReviewImage" ri WHERE ri."imageId" = i."id"
-)`;
+export const notReviewImageSql = Prisma.sql`NOT ${toPrismaSql(
+  reviewCopyImageSql(sql.ref('i.id'))
+)}`;
 
 /**
  * True in SQL when image `i` is shown on its review at `levels`: the offering is one a visitor may open

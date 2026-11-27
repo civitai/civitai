@@ -596,6 +596,62 @@ describe('🔴 listMyOrphanedSubmissions — rejected/withdrawn v1 whose listing
 });
 
 /* ------------------------------------------------------------------------ *
+ * 🔴 canConverse — the review conversation is the OWNER's (and moderators', elsewhere)
+ * ------------------------------------------------------------------------ */
+
+describe('🔴 canConverse offers the review conversation to the current owner only', () => {
+  const both = () => {
+    mockDb.appListing.findUnique.mockImplementation(async () => onsiteListing());
+    mockDb.appBlockPublishRequest.findMany.mockImplementation(async () => [
+      blockReq({ id: 'pubreq_rej', status: 'rejected', submittedAt: new Date('2026-06-02') }),
+      blockReq({ id: 'pubreq_pend', status: 'pending', submittedAt: new Date('2026-06-01') }),
+    ]);
+    mockDb.appListingPublishRequest.findMany.mockImplementation(async () => [
+      listingReq({ id: 'alpr_ok', status: 'approved', submittedAt: new Date('2026-06-03') }),
+    ]);
+  };
+  const verdicts = (out: { id: string; canConverse: boolean }[]) =>
+    Object.fromEntries(out.map((e) => [e.id, e.canConverse]));
+
+  it('the owner: on every decided request of both streams, never on a pending one', async () => {
+    both();
+    const out = await listListingHistory({ appListingId: 'apl_main', userId: OWNER });
+    expect(verdicts(out)).toEqual({ alpr_ok: true, pubreq_rej: true, pubreq_pend: false });
+  });
+
+  it('an accepted editor sees the same history but is offered no conversation', async () => {
+    both();
+    mockDb.appCollaborator.findFirst.mockImplementation(async () => ({ userId: SEAT }));
+    const out = await listListingHistory({ appListingId: 'apl_main', userId: SEAT });
+    expect(verdicts(out)).toEqual({ alpr_ok: false, pubreq_rej: false, pubreq_pend: false });
+  });
+
+  it('a moderator reading the history is not offered it here either (their queue has it)', async () => {
+    both();
+    const out = await listListingHistory({
+      appListingId: 'apl_main',
+      userId: STRANGER,
+      isModerator: true,
+    });
+    expect(verdicts(out)).toEqual({ alpr_ok: false, pubreq_rej: false, pubreq_pend: false });
+  });
+
+  it('an orphan: decided and its slug unheld; not once someone else holds the slug', async () => {
+    mockDb.appBlockPublishRequest.findMany.mockImplementation(async () => [
+      { id: 'pubreq_free', slug: 'free-slug', version: '0.1.0', status: 'rejected' },
+      { id: 'pubreq_taken', slug: 'taken-slug', version: '0.1.0', status: 'rejected' },
+      { id: 'pubreq_open', slug: 'open-slug', version: '0.1.0', status: 'pending' },
+    ]);
+    // First read: the caller's own listings (none). Second: any listing with the slug.
+    mockDb.appListing.findMany.mockImplementation(async (args: unknown) =>
+      (args as { where: { OR?: unknown } }).where.OR ? [] : [{ slug: 'taken-slug' }]
+    );
+    const out = await listMyOrphanedSubmissions({ userId: OWNER });
+    expect(verdicts(out)).toEqual({ pubreq_free: true, pubreq_taken: false, pubreq_open: false });
+  });
+});
+
+/* ------------------------------------------------------------------------ *
  * 🔴 canWithdraw on BOTH streams — the two mappers are separate code
  * ------------------------------------------------------------------------ */
 
@@ -908,5 +964,56 @@ describe('the latest build attempt’s step + class ride along with the failure 
       buildSignals: null,
     });
     warn.mockRestore();
+  });
+});
+
+/**
+ * A STAFF SUBMIT ON THE OWNER'S BEHALF carries the app's block id, so the app-keyed read
+ * already lists it for the owner; the entry says it was staff's, from `fileSummary.onBehalf`.
+ */
+describe('a staff submission on the owner’s behalf is labelled', () => {
+  const ON_BEHALF = {
+    files: [],
+    added: [],
+    removed: [],
+    changed: [],
+    onBehalf: {
+      platformUpdateId: 'apu_01JABCDEFGHJKMNPQRSTVWXYZ0',
+      staffUserId: 8001,
+      staffUsername: 'mod-ana',
+      ownerUserId: OWNER,
+      ownerUsername: 'owner',
+    },
+  };
+
+  it('labels the staff entry, and nothing else, and offers the owner no withdraw', async () => {
+    mockDb.appListing.findUnique.mockImplementation(async () => onsiteListing());
+    mockDb.appBlockPublishRequest.findMany.mockImplementation(async () => [
+      blockReq({
+        id: 'pubreq_staff',
+        version: '1.0.1',
+        status: 'pending',
+        submittedByUserId: 8001,
+        submittedAt: new Date('2026-06-10T00:00:00Z'),
+        fileSummary: ON_BEHALF,
+      }),
+      blockReq({
+        id: 'pubreq_own',
+        fileSummary: { files: [], added: [], removed: [], changed: [] },
+      }),
+    ]);
+
+    const entries = await listListingHistory({ appListingId: 'apl_main', userId: OWNER });
+
+    expect(entries.map((e) => [e.id, e.staffSubmission, e.canWithdraw])).toEqual([
+      [
+        'pubreq_staff',
+        { staffUsername: 'mod-ana', platformUpdateId: 'apu_01JABCDEFGHJKMNPQRSTVWXYZ0' },
+        false,
+      ],
+      ['pubreq_own', null, false],
+    ]);
+    // The raw summary is read for the label only, never projected.
+    expect(entries[0]).not.toHaveProperty('fileSummary');
   });
 });

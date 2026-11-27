@@ -21,11 +21,25 @@ export type RunnerAttemptState =
   | 'refunded'
   | 'failed';
 
-/** Submit-path moves only; `transitionRunnerAttempt` throws on any other pair. */
 const TRANSITIONS: Readonly<Record<string, readonly RunnerAttemptState[]>> = {
   reserved: ['submitting', 'refunded'],
   submitting: ['submitted', 'refunded', 'unknown'],
+  // Adopted: the sweeper moved a sent attempt to `unknown` before its submit returned a workflow.
+  unknown: ['submitted'],
+  // The reconciler, on a terminal workflow.
+  submitted: ['settled', 'failed', 'refunded'],
 };
+
+/**
+ * The Redis legs an attempt holds, each reserved for `amount`: key names and amounts only. Written
+ * by the `reserved -> submitting` move, so a `reserved` attempt has none.
+ */
+export interface RunnerReservation {
+  buzzCapKey: string;
+  consentBudgetKey: string | null;
+  appSpendKey: string | null;
+  amount: number;
+}
 
 export type RunnerReserveRefusal = RunnerMintRefusal | 'run_mismatch';
 
@@ -108,24 +122,43 @@ export async function reserveRunnerAttempt(
 
 /**
  * Move an attempt from `from` to `to`, only if it is still in `from`. False: another writer moved
- * it first, and the caller must not act as if it had.
+ * it first, and the caller must not act as if it had. Leaving `submitted` stamps `settled_at`.
  */
 export async function transitionRunnerAttempt(
   db: Kysely<DB>,
   attemptId: string,
   from: RunnerAttemptState,
   to: RunnerAttemptState,
-  patch: { workflowId?: string } = {}
+  patch: { workflowId?: string; reservation?: RunnerReservation; chargedAmount?: number } = {}
 ): Promise<boolean> {
   if (!TRANSITIONS[from]?.includes(to)) {
     throw new Error(`runner attempt: no transition ${from} -> ${to}`);
   }
+  const reservation = patch.reservation ? JSON.stringify(patch.reservation) : null;
   const result = await sql`
     UPDATE runner_run_attempts
     SET state = ${to}, updated_at = now(),
-        workflow_id = COALESCE(${patch.workflowId ?? null}::text, workflow_id)
+        workflow_id = COALESCE(${patch.workflowId ?? null}::text, workflow_id),
+        reservation = COALESCE(${reservation}::jsonb, reservation),
+        charged_amount = COALESCE(${patch.chargedAmount ?? null}::int, charged_amount),
+        settled_at = CASE WHEN ${from} = 'submitted' THEN now() ELSE settled_at END
     WHERE attempt_id = ${attemptId} AND state = ${from}`.execute(db);
   return Number(result.numAffectedRows ?? 0) > 0;
+}
+
+/**
+ * Set `updated_at` of an attempt still in `state` to `delaySeconds` from now: `listRunnerAttempts`
+ * skips it until then, and lists it last after.
+ */
+export async function touchRunnerAttempt(
+  db: Kysely<DB>,
+  attemptId: string,
+  state: RunnerAttemptState,
+  delaySeconds: number
+): Promise<void> {
+  await sql`
+    UPDATE runner_run_attempts SET updated_at = now() + ${delaySeconds}::int * interval '1 second'
+    WHERE attempt_id = ${attemptId} AND state = ${state}`.execute(db);
 }
 
 /** An attempt's state, or null when there is no such attempt. */
@@ -136,4 +169,36 @@ export async function readRunnerAttemptState(
   const { rows } = await sql<{ state: RunnerAttemptState }>`
     SELECT state FROM runner_run_attempts WHERE attempt_id = ${attemptId}`.execute(db);
   return rows[0]?.state ?? null;
+}
+
+export interface RunnerAttemptRow {
+  attemptId: string;
+  runId: string;
+  userId: number;
+  appBlockId: string;
+  /** The app the block belongs to, for the workflow's app tag; null if the block is gone. */
+  appId: string | null;
+  state: RunnerAttemptState;
+  reservedAmount: number;
+  workflowId: string | null;
+  reservation: RunnerReservation | null;
+  updatedAt: Date;
+}
+
+/** Attempts in `state` last moved before `updatedBefore`, oldest first. */
+export async function listRunnerAttempts(
+  db: Kysely<DB>,
+  input: { state: RunnerAttemptState; updatedBefore: Date; limit: number }
+): Promise<RunnerAttemptRow[]> {
+  const { rows } = await sql<RunnerAttemptRow>`
+    SELECT a.attempt_id AS "attemptId", a.run_id AS "runId", a.user_id AS "userId",
+           a.app_block_id AS "appBlockId", b.app_id AS "appId", a.state,
+           a.reserved_amount AS "reservedAmount", a.workflow_id AS "workflowId",
+           a.reservation, a.updated_at AS "updatedAt"
+    FROM runner_run_attempts a
+    LEFT JOIN app_blocks b ON b.id = a.app_block_id
+    WHERE a.state = ${input.state} AND a.updated_at < ${input.updatedBefore}
+    ORDER BY a.updated_at
+    LIMIT ${input.limit}`.execute(db);
+  return rows;
 }

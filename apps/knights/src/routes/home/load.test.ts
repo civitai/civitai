@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { LATEST_UPDATE_ID } from '$lib/server/whats-new/entries';
 
 const getPlayerStatus = vi.hoisted(() => vi.fn());
 const getDailyStatus = vi.hoisted(() => vi.fn());
@@ -203,6 +204,7 @@ describe("home: what's new", () => {
       level: 12,
       guide: false,
       whatsNew: true,
+      updatesSeen: LATEST_UPDATE_ID,
     });
   });
 

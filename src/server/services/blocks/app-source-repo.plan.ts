@@ -6,6 +6,7 @@
  */
 
 import { createHash } from 'crypto';
+import { platformUpdatePathShapeRefusal } from '@civitai/shared/platform-update-path';
 import { MAX_FILES_IN_BUNDLE } from '~/server/schema/blocks/publish-request.schema';
 import { forkSeedExclusionReason } from '~/server/services/blocks/fork-seed-exclusions';
 import type { FileOperation } from '~/server/services/blocks/forgejo.service';
@@ -19,6 +20,9 @@ export type BlobTree = Record<string, string>;
 
 /** The branch every source repo is created with, and the one the developer pulls. */
 export const SOURCE_MAIN_BRANCH = 'main';
+
+/** The app's manifest, at the root of its source repo. */
+export const MANIFEST_PATH = 'block.manifest.json';
 
 /**
  * Where an App Assistant save goes when it cannot land on `main` without overwriting a change the
@@ -264,10 +268,6 @@ export function approvedSeedCommitMessage(args: {
   ])}`;
 }
 
-// ---------------------------------------------------------------------------
-// Staff platform updates (`app-platform-update.service.ts`)
-// ---------------------------------------------------------------------------
-
 /** Every platform update is committed to its own branch, named for the update's id. */
 export const PLATFORM_UPDATE_BRANCH_PREFIX = 'platform-update/';
 
@@ -281,22 +281,56 @@ export type PlatformUpdateChange =
   | { operation: 'delete'; path: string };
 
 /**
+ * Directory names the CLI's packager (`civitai/cli` `internal/pkgzip`, `excludedDirs`) drops at
+ * EVERY depth: VCS metadata, dependency installs, build output and tooling caches. A platform
+ * update under one of them could never reach a submitted bundle, so the submit check would refuse
+ * every bundle of the app until staff withdrew it. Platform updates only: the shared source-repo
+ * lists ({@link sourceRepoNeverHolds}) match build output at the top level alone.
+ */
+const CLI_PACKAGE_DROPPED_DIRS = new Set([
+  '.git',
+  '.hg',
+  '.svn',
+  'node_modules',
+  '.venv',
+  'venv',
+  '.pnpm-store',
+  'dist',
+  'build',
+  'out',
+  '.next',
+  '.vite',
+  '.cache',
+  'coverage',
+  '.pytest_cache',
+  '.mypy_cache',
+  '.ruff_cache',
+  '.turbo',
+]);
+
+/**
  * Why `path` may not be written by a platform update, or `null` when it may: a path git would
- * refuse or that escapes the tree, and anything a source repo never holds
+ * refuse or that escapes the tree ({@link platformUpdatePathShapeRefusal}, shared with the
+ * assistant runner), and anything a source repo never holds
  * ({@link sourceRepoNeverHolds}: env files, keys, credentials, dependencies, build output),
  * in ANY letter case (`.ENV`, `.Env.local`, `Node_Modules/…`): a checkout on a case-insensitive
- * file system reads those as the lowercase name. The shared lists themselves (fork seed, App
- * Assistant export) are unchanged.
+ * file system reads those as the lowercase name. Also anything under a folder the CLI's package
+ * drops at every depth ({@link CLI_PACKAGE_DROPPED_DIRS}: `src/build/…`, `packages/x/coverage/…`).
+ * The shared lists themselves (fork seed, App Assistant export) are unchanged.
  */
 export function platformUpdatePathRefusal(path: string): string | null {
-  if (!path || path.length > 400) return 'is empty or too long';
-  // eslint-disable-next-line no-control-regex
-  if (path.startsWith('/') || path.includes('\\') || /[\x00-\x1f\x7f]/.test(path))
-    return 'is not a relative repo path';
-  if (path.split('/').some((s) => s === '' || s === '.' || s === '..'))
-    return 'is not a relative repo path';
+  const shape = platformUpdatePathShapeRefusal(path);
+  if (shape) return shape;
   if (sourceRepoNeverHolds(path) || sourceRepoNeverHolds(path.toLowerCase()))
     return 'is a file a source repo never holds';
+  // Every directory on the path (not the file's own name), in any letter case.
+  if (
+    path
+      .split('/')
+      .slice(0, -1)
+      .some((dir) => CLI_PACKAGE_DROPPED_DIRS.has(dir.toLowerCase()))
+  )
+    return "is in a folder the app's package always leaves out";
   return null;
 }
 

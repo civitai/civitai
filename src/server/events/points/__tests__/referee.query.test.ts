@@ -16,6 +16,7 @@ vi.mock('~/server/clickhouse/client', () => ({
 const { queryReferee, REFEREE_CLICKHOUSE_BUDGET_S, refereeWindow, runEventPointsReferee } =
   await import('~/server/events/points/referee');
 const { eventSeasonKeys, LIVE_BUCKET_MS } = await import('~/server/events/points/keys');
+const { REFEREE_ACTOR_SHARDS } = await import('~/server/events/points/referee-shards');
 const { eventPointsRefereeSql, eventPointsRefereeUsersSql } = await import(
   '~/server/events/points/referee.sql'
 );
@@ -53,7 +54,7 @@ describe('referee ClickHouse queries', () => {
         return { json: async () => [] };
       });
       await queryReferee(EVENT, refereeWindow(EVENT, 'live', new Date()));
-      expect(query).toHaveBeenCalledTimes(2);
+      expect(query).toHaveBeenCalledTimes(1 + REFEREE_ACTOR_SHARDS);
       expect(settingsFor(eventPointsRefereeUsersSql)?.max_execution_time).toBe(
         REFEREE_CLICKHOUSE_BUDGET_S
       );
@@ -264,8 +265,132 @@ describe('referee reads only the scored types', () => {
       },
     };
     await queryReferee(scored, refereeWindow(scored, 'live', new Date('2026-11-05T12:07:00.000Z')));
-    expect(query).toHaveBeenCalledTimes(2);
+    expect(query).toHaveBeenCalledTimes(1 + REFEREE_ACTOR_SHARDS);
     for (const [arg] of query.mock.calls)
       expect(arg.query_params?.types).toEqual(['view', 'reaction']);
+  });
+});
+
+// The settle query runs once per actor shard (see referee-shards.ts). A shard skipped or run twice
+// loses or double counts points; shards run together hold the memory the split exists to save.
+describe('referee actor shards', () => {
+  const SHARD =
+    /^\s*AND cityHash64\(actorId\) % \{actorShards:UInt32\} = \{actorShard:UInt32\}\s*$/m;
+  type Arg = { query: string; query_id?: string; query_params?: Record<string, unknown> };
+  const settleCalls = () =>
+    query.mock.calls
+      .map(([arg]) => arg as Arg)
+      .filter((arg) => arg.query === eventPointsRefereeSql);
+
+  it('every ledger scan of the settle query is split by actor', () => {
+    const scans = ledgerScans(eventPointsRefereeSql);
+    expect(scans).toHaveLength(2);
+    for (const scan of scans) expect(scan).toMatch(SHARD);
+  });
+
+  it.each([
+    ['the nightly whole-season run', '2026-11-05T03:07:00.000Z'],
+    ['a run after the season has ended', '2026-12-01T12:07:00.000Z'],
+    ['an hourly run', '2026-11-05T12:07:00.000Z'],
+  ])('%s runs each shard once, one at a time', async (_, at) => {
+    const shards = REFEREE_ACTOR_SHARDS;
+    redisMock.sysRedis.hGetAll.mockResolvedValue({});
+    query.mockClear();
+    let running = 0;
+    let most = 0;
+    query.mockImplementation(async () => {
+      most = Math.max(most, ++running);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      running--;
+      return { json: async () => [] };
+    });
+    try {
+      await queryReferee(EVENT, refereeWindow(EVENT, 'live', new Date(at)));
+    } finally {
+      query.mockImplementation(async () => ({ json: async () => [] }));
+    }
+    const calls = settleCalls();
+    expect(calls.map((c) => c.query_params?.actorShards)).toEqual(Array(shards).fill(shards));
+    expect(calls.map((c) => c.query_params?.actorShard)).toEqual([...Array(shards).keys()]);
+    expect(new Set(calls.map((c) => c.query_id)).size).toBe(shards);
+    for (const c of calls) expect(c.query_id).toMatch(/^event-points-referee:e:settle:/);
+    expect(most).toBe(1);
+  });
+
+  it('sums the shards into one row per hat and day', async () => {
+    redisMock.sysRedis.hGetAll.mockResolvedValue({});
+    query.mockClear();
+    const row = (userId: number, day: string, points: number, hours: Record<string, string>) => ({
+      day,
+      userId: String(userId),
+      cosmeticId: '7',
+      claimKey: 'claimed',
+      team: 'Yellow',
+      points: String(points),
+      views: '1',
+      reactions: String(points > 1 ? 1 : 0),
+      comments: '0',
+      stickers: '0',
+      remixes: '0',
+      modelLikes: '0',
+      hours,
+    });
+    const byShard: Record<number, unknown[]> = {
+      0: [row(10, '2026-11-05', 6, { '4': '6' }), row(12, '2026-11-05', 1, { '9': '1' })],
+      2: [
+        row(10, '2026-11-04', 1, { '23': '1' }),
+        // The query's team is any(): the first shard's is kept.
+        { ...row(10, '2026-11-05', 3, { '4': '1', '6': '2' }), team: 'Blue' },
+      ],
+    };
+    query.mockImplementation(async (arg) => ({
+      json: async () =>
+        arg.query === eventPointsRefereeSql
+          ? byShard[arg.query_params?.actorShard as number] ?? []
+          : [],
+    }));
+    let rows;
+    try {
+      rows = await queryReferee(
+        EVENT,
+        refereeWindow(EVENT, 'live', new Date('2026-11-05T12:07:00.000Z'))
+      );
+    } finally {
+      query.mockImplementation(async () => ({ json: async () => [] }));
+    }
+    const hat = { cosmeticId: 7, claimKey: 'claimed', team: 'Yellow', comments: 0, stickers: 0 };
+    const rest = { remixes: 0, modelLikes: 0 };
+    expect(rows).toEqual([
+      {
+        day: '2026-11-04',
+        userId: 10,
+        ...hat,
+        points: 1,
+        views: 1,
+        reactions: 0,
+        ...rest,
+        hours: { 23: 1 },
+      },
+      {
+        day: '2026-11-05',
+        userId: 10,
+        ...hat,
+        points: 9,
+        views: 2,
+        reactions: 2,
+        ...rest,
+        hours: { 4: 7, 6: 2 },
+      },
+      {
+        day: '2026-11-05',
+        userId: 12,
+        ...hat,
+        points: 1,
+        views: 1,
+        reactions: 0,
+        ...rest,
+        hours: { 9: 1 },
+      },
+    ]);
   });
 });

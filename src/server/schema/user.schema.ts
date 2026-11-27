@@ -131,6 +131,7 @@ export const userUpdateSchema = z.object({
   profileDecorationId: z.number().nullish(),
   profileBackgroundId: z.number().nullish(),
   cardDecorationId: z.number().nullish(),
+  sidebarBackgroundId: z.number().nullish(),
   autoplayGifs: z.boolean().optional(),
   filePreferences: z
     .object({

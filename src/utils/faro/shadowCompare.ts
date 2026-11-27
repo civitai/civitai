@@ -1,5 +1,9 @@
 import { faro } from '@grafana/faro-web-sdk';
-import { firstDiffPath, type ShadowDiff } from '~/utils/faro/shadowCompareDiff';
+import {
+  firstDiffPath,
+  withoutReferentialEqualities,
+  type ShadowDiff,
+} from '~/utils/faro/shadowCompareDiff';
 import { GO_TRANSPORT_PROCEDURES, GO_TRANSPORT_URL } from '~/utils/trpc-go-transport';
 import { claimShadowCompareSlot } from '~/utils/trpc-shadow-compare';
 
@@ -7,7 +11,9 @@ import { claimShadowCompareSlot } from '~/utils/trpc-shadow-compare';
  * Client shadow compare: for a query the `clientShadowCompare` cohort sends, the CONTROL leg is the
  * request the app would have sent anyway, and a CANDIDATE leg asks another route the same question
  * at the same moment. The app gets the control leg's response, untouched. Once both settle, one Faro
- * `shadow_compare` measurement says whether the two raw response texts were byte-identical.
+ * `shadow_compare` measurement says whether the two raw response texts were byte-identical, apart
+ * from superjson's `meta.referentialEqualities`, which the Go service never writes
+ * (`withoutReferentialEqualities`).
  *
  * Raw text, before any parsing: a transformer round trip can hide a difference a client would see
  * (key order, number formatting, an extra field the parser drops). Both legs start together, so
@@ -291,8 +297,15 @@ async function settle(
   else if (candidate.response.fallback === true) verdict = 'candidate_fallback';
   else if (await sameBytes(controlBytes, candidateBytes)) verdict = 'match';
   else {
-    verdict = 'mismatch';
-    diff = firstDiffPath(control.response.text, candidate.response.text);
+    const controlText =
+      withoutReferentialEqualities(control.response.text) ?? control.response.text;
+    const candidateText =
+      withoutReferentialEqualities(candidate.response.text) ?? candidate.response.text;
+    if (controlText === candidateText) verdict = 'match';
+    else {
+      verdict = 'mismatch';
+      diff = firstDiffPath(controlText, candidateText);
+    }
   }
 
   const push = options.pushMeasurement ?? defaultPushMeasurement();

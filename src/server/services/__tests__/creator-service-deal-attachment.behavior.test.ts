@@ -1,3 +1,4 @@
+import { deleteImagesIn } from '~/server/services/__tests__/deal-file-copy.fake';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { PGlite } from '@electric-sql/pglite';
@@ -354,9 +355,7 @@ beforeEach(async () => {
     ]);
     return { id: row.id };
   });
-  images.deleteImages.mockImplementation(async (ids: number[]) =>
-    q(`DELETE FROM "Image" WHERE id = ANY($1::int[]) RETURNING id`, [ids])
-  );
+  images.deleteImages.mockImplementation(deleteImagesIn(holder.db));
   await holder.db.exec(`
     TRUNCATE "Report", "ImageReport", "ServiceDealReviewImage", "ServiceDealReview", "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering", "UserEngagement", "Image", "CsamReport", "ServiceDisputeReview" RESTART IDENTITY;
     DELETE FROM "User";
@@ -1529,6 +1528,91 @@ describe('review images', () => {
     expect(images.createImage).not.toHaveBeenCalledWith(expect.objectContaining({ userId: BUYER }));
   });
 
+  /** Points an entry of the Final at a scanned image, as its unpack did. */
+  async function withScanImage(dealId: number, finalId: number) {
+    const [{ id }] = await q<{ id: number }>(
+      `INSERT INTO "Image" (url, ingestion) VALUES ('scan', 'Scanned') RETURNING id`
+    );
+    await q(
+      `INSERT INTO "ServiceDealFileEntry" ("fileId", "dealId", "entryIndex", "path", "size", "imageId", "scanStatus")
+         VALUES ($1, $2, 0, 'a.png', 1, $3, 'Passed')`,
+      [finalId, dealId, id]
+    );
+    return id;
+  }
+
+  // A Final flagged after it passed is served nowhere outside the CSAM path; no copy of it is made.
+  it.each([
+    ['a minor', (imageId: number) => q(`UPDATE "Image" SET minor = true WHERE id = $1`, [imageId])],
+    [
+      'held for CSAM review',
+      (imageId: number) => q(`UPDATE "Image" SET "needsReview" = 'csam' WHERE id = $1`, [imageId]),
+    ],
+    [
+      'listed in a CSAM report',
+      (imageId: number) =>
+        q(`INSERT INTO "CsamReport" ("userId", images) VALUES ($1, $2::jsonb)`, [
+          SELLER,
+          JSON.stringify([{ id: imageId }]),
+        ]),
+    ],
+    [
+      'in an open child-safety case',
+      async (imageId: number) => {
+        await q(`INSERT INTO "Report" (status, reason) VALUES ('Pending', 'CSAM')`);
+        await q(
+          `INSERT INTO "ImageReport" ("imageId", "reportId") VALUES ($1, (SELECT max(id) FROM "Report"))`,
+          [imageId]
+        );
+      },
+    ],
+    ['gone', (imageId: number) => q(`DELETE FROM "Image" WHERE id = $1`, [imageId])],
+  ])('neither offers nor copies a Final whose scan image is %s', async (_n, flag) => {
+    const { dealId, finalId } = await reviewed();
+    const imageId = await withScanImage(dealId, finalId);
+    expect(await picker(dealId)).toEqual([finalId]);
+    await flag(imageId);
+    expect(await picker(dealId)).toEqual([]);
+    await expect(attachFinal(dealId, finalId)).rejects.toEqual(refused);
+    expect(images.createImage).not.toHaveBeenCalledWith(expect.objectContaining({ userId: BUYER }));
+    expect(await linked()).toEqual([]);
+  });
+
+  it('hides an attached copy once its source Final is held, and only then', async () => {
+    const { dealId, finalId } = await reviewed();
+    const scanImage = await withScanImage(dealId, finalId);
+    const { imageId } = await attachFinal(dealId, finalId);
+    await q(`UPDATE "Image" SET ingestion = 'Scanned', "nsfwLevel" = 1 WHERE id = $1`, [imageId]);
+    const [{ id: reviewId }] = await q<{ id: number }>(
+      `SELECT id FROM "ServiceDealReview" WHERE "dealId" = $1`,
+      [dealId]
+    );
+    const shown = async () =>
+      (await reviewImages.getReviewImages({ reviewId, levels: 31 })).map((i) => i.id);
+    expect(await shown()).toEqual([imageId]);
+    // A hold on an image of another deal's Final leaves this copy shown.
+    const other = await reviewed();
+    await q(`UPDATE "Image" SET minor = true WHERE id = $1`, [
+      await withScanImage(other.dealId, other.finalId),
+    ]);
+    expect(await shown()).toEqual([imageId]);
+    await q(`UPDATE "Image" SET minor = true WHERE id = $1`, [scanImage]);
+    expect(await shown()).toEqual([]);
+  });
+
+  it('deletes a copy whose source Final was held while it was made', async () => {
+    const { dealId, finalId } = await reviewed();
+    const scanImage = await withScanImage(dealId, finalId);
+    preview.entryCopy.mockImplementationOnce(async () => {
+      await q(`UPDATE "Image" SET minor = true WHERE id = $1`, [scanImage]);
+      return { data: SCAN_COPY(3), mimeType: 'image/webp', width: 10, height: 10, frames: 1 };
+    });
+    await expect(attachFinal(dealId, finalId)).rejects.toEqual(refused);
+    const made = (await images.createImage.mock.results.at(-1)!.value) as { id: number };
+    expect(images.deleteImages).toHaveBeenCalledWith([made.id], expect.anything());
+    expect(await linked()).toEqual([]);
+  });
+
   it('deletes a copy that lost its slot to another attach while it was made', async () => {
     const { dealId, finalId } = await reviewed();
     preview.entryCopy.mockImplementationOnce(async () => {
@@ -1788,6 +1872,39 @@ describe('reviews on the offering page', () => {
       reviewId,
     ]);
     expect((await list(RED)).items[0]).toMatchObject({ sellerReply: 'Thanks!' });
+  });
+
+  it("drops a copy from the offering's work once its source Final is held", async () => {
+    const { dealId, reviewId } = await shownReview();
+    const imageId = await shownImage(reviewId);
+    const [{ id: fileId }] = await q<{ id: number }>(
+      `INSERT INTO "ServiceDealFile" ("dealId", round, kind, "s3Key", "mimeType", size, status, "scanStatus", "malwareScanStatus")
+       VALUES ($1, 0, 'Final', 'source-key', 'image/png', 1, 'Ready', 'Passed', 'Passed') RETURNING id`,
+      [dealId]
+    );
+    const [{ id: scan }] = await q<{ id: number }>(
+      `INSERT INTO "Image" (url, ingestion) VALUES ('source-scan', 'Scanned') RETURNING id`
+    );
+    await q(
+      `INSERT INTO "ServiceDealFileEntry" ("fileId", "dealId", "entryIndex", "path", "size", "imageId", "scanStatus")
+         VALUES ($1, $2, 0, 'a.png', 1, $3, 'Passed')`,
+      [fileId, dealId, scan]
+    );
+    await q(`UPDATE "ServiceDealReviewImage" SET "sourceFileId" = $1 WHERE "imageId" = $2`, [
+      fileId,
+      imageId,
+    ]);
+    const work = async () =>
+      (
+        await reviewDisplay.getServiceOfferingReviewWork({
+          offeringId: 1,
+          levels: RED,
+          excludedUserIds: [],
+        })
+      ).items.map((i) => i.id);
+    expect(await work()).toEqual([imageId]);
+    await q(`UPDATE "Image" SET minor = true WHERE id = $1`, [scan]);
+    expect(await work()).toEqual([]);
   });
 
   it('pages the received work across reviews', async () => {

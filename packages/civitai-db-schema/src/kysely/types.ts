@@ -6901,6 +6901,18 @@ export type UserProfile = {
   profileSectionsSettings: Generated<unknown>;
   showcaseItems: Generated<unknown>;
   showcaseSections: Generated<unknown>;
+  backgroundImageId: number | null;
+  sfwBackgroundImageId: number | null;
+  /**
+   * Members-only card colours: { dark?: { color, opacity? }, light?: { color, opacity? } }.
+   * Light mode falls back to dark when unset. Shape: profilePageThemeSchema.
+   */
+  pageTheme: unknown | null;
+  /**
+   * Up to three of the owner's own images or models, shown on the About tab. Shape: showcaseItemSchema[].
+   */
+  pinnedItems: Generated<unknown>;
+  about: string | null;
 };
 export type UserPurchasedRewards = {
   buzzTransactionId: string;

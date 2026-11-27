@@ -23,6 +23,7 @@ async function defaultDeps(): Promise<RunnerPlatformUpdateDeps> {
     forgejo,
     { FORGEJO_SOURCE_ORG },
     sourceRepo,
+    { commitIdCachedBlob, commitIdCachedTree },
   ] = await Promise.all([
     import('~/server/services/app-assistant/app-assistant.service'),
     import('~/server/services/feature-flags.service'),
@@ -30,6 +31,7 @@ async function defaultDeps(): Promise<RunnerPlatformUpdateDeps> {
     import('~/server/services/blocks/forgejo.service'),
     import('~/server/services/blocks/forgejo-orgs'),
     import('~/server/services/blocks/app-source-repo.service'),
+    import('~/server/services/blocks/commit-id-reads'),
   ]);
   return {
     flagOn: () => updates.isPlatformUpdatesEnabled(),
@@ -39,8 +41,13 @@ async function defaultDeps(): Promise<RunnerPlatformUpdateDeps> {
     verifyCommit: ({ userId, slug, commitSha }) =>
       updates.verifyPlatformUpdateCommit({ userId, app: { slug }, commitSha }),
     resolve: (args) => updates.resolvePlatformUpdate(args),
-    treeAt: (slug, commitSha) => forgejo.listRepoTreeAtRef(slug, commitSha, FORGEJO_SOURCE_ORG),
-    blob: (slug, blobSha) => forgejo.getBlobContent(slug, blobSha, FORGEJO_SOURCE_ORG),
+    // Every read is by object id (the update's two commits, a save's commit, their blobs): cached.
+    treeAt: commitIdCachedTree(FORGEJO_SOURCE_ORG, (slug, commitSha) =>
+      forgejo.listRepoTreeAtRef(slug, commitSha, FORGEJO_SOURCE_ORG)
+    ),
+    blob: commitIdCachedBlob(FORGEJO_SOURCE_ORG, (slug, blobSha) =>
+      forgejo.getBlobContent(slug, blobSha, FORGEJO_SOURCE_ORG)
+    ),
     save: ({ userId, app }) =>
       sourceRepo.saveAssistantSourceFromSandbox({ userId, app, impersonatedBy: null }),
     lastSave: async (slug) => {

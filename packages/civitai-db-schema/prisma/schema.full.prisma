@@ -2272,6 +2272,8 @@ model Image {
   connections         ImageConnection[]
   UserProfile         UserProfile[]
   userProfileSfwCover UserProfile[]         @relation("UserProfileSfwCoverImage")
+  userProfileBackground    UserProfile[] @relation("UserProfileBackgroundImage")
+  userProfileSfwBackground UserProfile[] @relation("UserProfileSfwBackgroundImage")
   announcementCovers  Announcement[]        @relation("AnnouncementCover")
   clubCover           Club[]                @relation("coverImage")
   clubHeader          Club[]                @relation("headerImage")
@@ -5390,6 +5392,10 @@ model AppPlatformUpdate {
   resolvedAt       DateTime? @map("resolved_at") @db.Timestamptz(6)
   createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt        DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  // Set at approve: the approved request whose bundle first contained the update (migration
+  // `20271206120000_app_platform_updates_shipped`, applied by hand).
+  shippedInPublishRequestId String?   @map("shipped_in_publish_request_id")
+  shippedAt                 DateTime? @map("shipped_at") @db.Timestamptz(6)
 
   @@index([appBlockId, status, createdAt(sort: Desc)], map: "app_platform_updates_app_status_idx")
   @@unique([slug, commitSha], map: "app_platform_updates_slug_commit_idx")
@@ -5528,6 +5534,8 @@ model RunnerRunAttempt {
   createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt       DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
   settledAt       DateTime? @map("settled_at") @db.Timestamptz(6)
+  /// The Redis legs the attempt holds: key names and amounts only.
+  reservation     Json?
 
   @@unique([runId, attemptNo])
   @@index([userId, runnerClientId, createdAt], map: "runner_run_attempts_user_client_created_idx")
@@ -6167,6 +6175,8 @@ enum CosmeticType {
   ChatTheme
   // A glow around the creator card; its own slot, so it stacks with a badge.
   CardDecoration
+  // Art behind the profile sidebar header (redesign); not the creator card background.
+  SidebarBackground
 }
 
 enum CosmeticSource {
@@ -10126,12 +10136,25 @@ model UserProfile {
   profileSectionsSettings Json      @default("[{\"key\":\"showcase\",\"enabled\":true},{\"key\":\"popularModels\",\"enabled\":true},{\"key\":\"popularArticles\",\"enabled\":true},{\"key\":\"modelsOverview\",\"enabled\":true},{\"key\":\"imagesOverview\",\"enabled\":true},{\"key\":\"recentReviews\",\"enabled\":true}]")
   showcaseItems           Json      @default("[]")
   showcaseSections        Json      @default("[]")
+  // Members-only page customisation (profile redesign). The sfw* image overrides on civitai.com.
+  backgroundImageId       Int?
+  backgroundImage         Image?    @relation("UserProfileBackgroundImage", fields: [backgroundImageId], references: [id], onDelete: SetNull)
+  sfwBackgroundImageId    Int?
+  sfwBackgroundImage      Image?    @relation("UserProfileSfwBackgroundImage", fields: [sfwBackgroundImageId], references: [id], onDelete: SetNull)
+  /// Members-only card colours: { dark?: { color, opacity? }, light?: { color, opacity? } }.
+  /// Light mode falls back to dark when unset. Shape: profilePageThemeSchema.
+  pageTheme               Json?
+  /// Up to three of the owner's own images or models, shown on the About tab. Shape: showcaseItemSchema[].
+  pinnedItems             Json      @default("[]")
+  about                   String?
 
   @@id([userId])
   // Serves the ON DELETE SET NULL referential-integrity trigger for the
   // sfwCoverImage relation. Without it every Image delete sequentially scans this
   // whole table. Prisma does not index relation scalars on its own.
   @@index([sfwCoverImageId])
+  @@index([backgroundImageId])
+  @@index([sfwBackgroundImageId])
 }
 
 /// @view
@@ -12256,6 +12279,9 @@ model ServiceDealFile {
   reviewImages   ServiceDealReviewImage[]
 
   @@index([dealId, round, kind])
+  @@index([imageId])
+  // NOTE: the partial index "ServiceDealFile_scanKey_idx" (scanKey WHERE scanKey IS NOT NULL)
+  // lives only in migration 20271206120000_deal_file_copy_indexes: Prisma has no partial indexes.
 }
 
 /// One image inside a Final, scanned on its own. Rows exist only for images; other files in a zip
@@ -12282,6 +12308,8 @@ model ServiceDealFileEntry {
 
   @@unique([fileId, entryIndex])
   @@index([imageId])
+  // NOTE: the partial index "ServiceDealFileEntry_scanKey_idx" (scanKey WHERE scanKey IS NOT NULL)
+  // lives only in migration 20271206120000_deal_file_copy_indexes: Prisma has no partial indexes.
 }
 
 /// One row per movement of Buzz for a deal, modelled on `PlacementTransaction`. A composite FK

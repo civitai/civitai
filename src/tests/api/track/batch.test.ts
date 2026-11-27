@@ -17,15 +17,23 @@ import type { NextApiRequest, NextApiResponse } from 'next';
  *  - dev short-circuits to 200 with no insert.
  */
 
-const { mockSearch, mockAction, mockImpressions, mockGetSession, mockInsert, devStore } =
-  vi.hoisted(() => ({
-    mockSearch: vi.fn(),
-    mockAction: vi.fn(),
-    mockImpressions: vi.fn(),
-    mockGetSession: vi.fn(),
-    mockInsert: vi.fn(async () => undefined),
-    devStore: { isDev: false, sessionResolved: true, sessionCookie: false },
-  }));
+const {
+  mockSearch,
+  mockAction,
+  mockImpressions,
+  mockGetSession,
+  mockInsert,
+  mockIsFlipt,
+  devStore,
+} = vi.hoisted(() => ({
+  mockIsFlipt: vi.fn(async (_flag: string, _entityId?: string) => false),
+  mockSearch: vi.fn(),
+  mockAction: vi.fn(),
+  mockImpressions: vi.fn(),
+  mockGetSession: vi.fn(),
+  mockInsert: vi.fn(async () => undefined),
+  devStore: { isDev: false, sessionResolved: true, sessionCookie: false },
+}));
 
 // PublicEndpoint wraps the handler with CORS/metrics we don't exercise here —
 // pass it through so the route's own logic (origin guard, parse, dispatch) is what's
@@ -69,6 +77,7 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   ensureFliptInitialized: async () => undefined,
   getFliptVariantDetailSync: () => ({ match: true, variantKey: '1', segmentKeys: [] }),
+  isFlipt: mockIsFlipt,
 }));
 
 function makeRes() {
@@ -134,6 +143,7 @@ async function importHandler() {
 describe('POST /api/track/batch', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockIsFlipt.mockReset().mockResolvedValue(false);
     devStore.isDev = false;
     devStore.sessionResolved = true;
     devStore.sessionCookie = false;
@@ -361,6 +371,10 @@ describe('POST /api/track/batch', () => {
       { table: string; values: Record<string, unknown>[] }
     ];
     expect(table).toBe('feedEvents');
+    // Rows must land, untagged, on a table the cohort DDL has not reached yet.
+    expect((mockInsert.mock.calls[0] as unknown as [object])[0]).toMatchObject({
+      clickhouse_settings: { input_format_skip_unknown_fields: 1 },
+    });
     expect(values).toHaveLength(1);
     expect(values[0]).toMatchObject({
       userId: 5,
@@ -417,6 +431,32 @@ describe('POST /api/track/batch', () => {
     expect(mockInsert).not.toHaveBeenCalled();
   });
 
+  it("tags a signed-in viewer's feed rows with the personal-hot-lead flag, evaluated once a batch", async () => {
+    mockGetSession.mockResolvedValue({ user: { id: 5, tier: 'gold' } });
+    mockIsFlipt.mockResolvedValue(true);
+    const load = { event: 'load', sessionKey: 's1', feed: 'models', page: '/models' };
+    const handler = await importHandler();
+    const req = makeReq({
+      origin: 'https://civitai.com',
+      body: [
+        { kind: 'feed', data: load },
+        { kind: 'feed', data: { ...load, event: 'seen', seenIds: [3] } },
+      ],
+    });
+
+    await handler(req as any, makeRes());
+    const { feedEventsRecorder } = await import('~/server/services/feed-events.service');
+    await vi.waitFor(async () => {
+      await feedEventsRecorder().flush();
+      expect(mockInsert).toHaveBeenCalled();
+    });
+    const values = mockInsert.mock.calls.flatMap(
+      (call) => (call as unknown as [{ values: { personalHotLead: unknown }[] }])[0].values
+    );
+    expect(values.map((row) => row.personalHotLead)).toEqual([true, true]);
+    expect(mockIsFlipt.mock.calls).toEqual([['personal-hot-lead', '5', expect.any(Object)]]);
+  });
+
   it('records a signed-out viewer (no session cookie) as userId 0', async () => {
     mockGetSession.mockResolvedValue(null);
     const handler = await importHandler();
@@ -436,8 +476,12 @@ describe('POST /api/track/batch', () => {
       await feedEventsRecorder().flush();
       expect(mockInsert).toHaveBeenCalledTimes(1);
     });
-    const [{ values }] = mockInsert.mock.calls[0] as unknown as [{ values: { userId: number }[] }];
+    const [{ values }] = mockInsert.mock.calls[0] as unknown as [
+      { values: { userId: number; personalHotLead: unknown }[] }
+    ];
     expect(values[0].userId).toBe(0);
+    expect(values[0].personalHotLead).toBeNull();
+    expect(mockIsFlipt).not.toHaveBeenCalled();
   });
 
   it('short-circuits to 200 in dev without dispatching', async () => {

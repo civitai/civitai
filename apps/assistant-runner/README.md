@@ -134,10 +134,12 @@ makes, which `WORKFLOW_VERSION` protects.
     (a command, a result's first 200 characters, a page tool's result), never a file's contents.
   - **The prompt is App Assistant's**, the runner's variant from the same builders
     (`assistantSystemPrompt('remote', …)`, `buildAssistantInstructions({ runner: 'remote' })`): it names
-    only tools the runner has (the setup guide read with `sandbox__run_command`, no raw tunnel tools, no guide tool
-    for subagents, and none of the chat's own rules' sentences naming `ask_choice`, which waits for a
-    viewer who may not be there), built from the sandbox it found, in place of the page's
-    `hostInstructions`. A test checks every tool the whole system prompt names is offered.
+    only tools the runner has (the setup guide read with `read_docs`, no raw tunnel tools, no guide tool
+    for subagents), built from the sandbox it found, in place of the page's `hostInstructions`. It
+    keeps the chat's own rules whole, `ask_choice` included: the runner offers the chat's
+    `askChoiceTool()`, whose result ends the reply; the page shows the options as buttons, and the
+    pick (or a typed answer) is the next message, which starts the next run. A test checks every
+    tool the whole system prompt names is offered.
   - **The live preview** (`src/app-assistant/preview.ts`, `dev-tunnel.ts`): `start_preview` and
     `stop_preview`, the page's names (so one prompt fits both), through the App Blocks dev tunnel, so
     the user's page and the assistant see the same running dev server (port 5173):

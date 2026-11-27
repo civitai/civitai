@@ -44,6 +44,9 @@ type Deps = {
   send: (data: TrackFeedInput) => void;
 };
 
+// The items map's query hash for search hits, which come from the search client, not the query cache.
+const SEARCH_HITS = 'search';
+
 type InfiniteData = { pages?: unknown[] };
 
 const pageItemIds = (page: unknown): unknown[] => {
@@ -82,6 +85,28 @@ export function createFeedEventsTracker({ cache, getPage, getSessionKey, send }:
   const items = new Map<string, FeedItem>();
   let visit = 0;
   let started = false;
+  // The latest facet-only search load, and the hits the search page last showed. Either can arrive
+  // first: the hit list's effect runs before the layout's that sends the load.
+  let searchLoad: { index: string; context: FeedEventContext } | undefined;
+  let searchHits: { index: string; entityType: ImpressionEntityType; ids: number[] } | undefined;
+
+  function setItem(key: string, item: FeedItem) {
+    items.delete(key);
+    items.set(key, item);
+    if (items.size > FEED_ITEMS_MAX) items.delete(items.keys().next().value as string);
+  }
+
+  // Points the shown hits at the search load they belong to. Hits of another index, or of a text
+  // search (no load), belong to none.
+  function mapSearch() {
+    for (const [key, item] of items) if (item.queryHash === SEARCH_HITS) items.delete(key);
+    if (!searchLoad || !searchHits || searchLoad.index !== searchHits.index) return;
+    const { context } = searchLoad;
+    const { entityType } = searchHits;
+    searchHits.ids.forEach((id, position) =>
+      setItem(`${entityType}:${id}`, { context, position, queryHash: SEARCH_HITS })
+    );
+  }
 
   // Points each item at its page's load. An item another query holds is taken only by a page loaded
   // now, in [from, to): a refetch must not move credit back and forth between two queries.
@@ -102,9 +127,7 @@ export function createFeedEventsTracker({ cache, getPage, getSessionKey, send }:
           typeof id === 'number' &&
           (loadedNow || !held || held.queryHash === query.queryHash)
         ) {
-          items.delete(key);
-          items.set(key, { context, position, queryHash: query.queryHash });
-          if (items.size > FEED_ITEMS_MAX) items.delete(items.keys().next().value as string);
+          setItem(key, { context, position, queryHash: query.queryHash });
         }
         position++;
       }
@@ -187,6 +210,7 @@ export function createFeedEventsTracker({ cache, getPage, getSessionKey, send }:
         started = false;
         unsubscribe();
         items.clear();
+        searchLoad = undefined;
       };
     },
     findItem,
@@ -212,9 +236,7 @@ export function createFeedEventsTracker({ cache, getPage, getSessionKey, send }:
       const named = Object.fromEntries(
         Object.entries(facets).map(([key, value]) => [SEARCH_PARAM_FILTERS[key] ?? key, value])
       );
-      send({
-        event: 'load',
-        sessionKey: getSessionKey(),
+      const context: FeedEventContext = {
         feed: 'search',
         page: getPage(),
         // sortBy is an index name, `<index>:<field>:<direction>`.
@@ -229,7 +251,20 @@ export function createFeedEventsTracker({ cache, getPage, getSessionKey, send }:
             : '',
         pageIndex: 0,
         filters: feedFilters('search', { ...named, index }),
-      });
+      };
+      send({ event: 'load', sessionKey: getSessionKey(), ...context });
+      searchLoad = { index, context };
+      mapSearch();
+    },
+    /** A text search is no feed load: hits shown from here on belong to no load. */
+    searchEnd() {
+      searchLoad = undefined;
+      mapSearch();
+    },
+    /** The hits a search page shows, in order, for its search load's seen and click rows. */
+    searchHits(index: string, entityType: ImpressionEntityType, ids: number[]) {
+      searchHits = { index, entityType, ids };
+      if (started) mapSearch();
     },
   };
 }
@@ -238,6 +273,10 @@ let tracker: ReturnType<typeof createFeedEventsTracker> | undefined;
 let stop: (() => void) | undefined;
 let cache: QueryCache | undefined;
 let wanted = false;
+// The latest hits a search page reported, kept for a tracker that starts after its effect ran.
+let shownSearchHits:
+  | Parameters<ReturnType<typeof createFeedEventsTracker>['searchHits']>
+  | undefined;
 
 const onRouteChange = () => tracker?.newVisit();
 
@@ -250,6 +289,7 @@ function apply() {
       send: (data) => enqueueTrackEvent({ kind: 'feed', data }),
     });
     stop = tracker.start();
+    if (shownSearchHits) tracker.searchHits(...shownSearchHits);
     Router.events.on('routeChangeComplete', onRouteChange);
   } else if (!wanted && stop) {
     stop();
@@ -284,9 +324,20 @@ export function trackSearchPage(
   }: { query?: string; sortBy?: string } & Record<string, unknown>,
   trackSearch: (input: TrackSearchInput) => void
 ) {
+  if (query) tracker?.searchEnd();
   if (query && index) trackSearch({ query, index, filters });
   else if (!query) sendSearchFeedLoad(indexName, { sortBy: index, ...filters });
 }
+
+/** The hits a search page shows, in order; see `searchHits`. */
+export const recordSearchFeedHits = (
+  index: string,
+  entityType: ImpressionEntityType,
+  ids: number[]
+) => {
+  shownSearchHits = [index, entityType, ids];
+  tracker?.searchHits(index, entityType, ids);
+};
 
 /** A card was seen: adds it to its load's seen set, if a feed on this page loaded it. */
 export function recordFeedItemSeen(targets: FeedTarget[]) {

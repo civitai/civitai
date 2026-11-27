@@ -1,0 +1,1 @@
+export const SEED_AUDIO_MAX_PROMPT_LENGTH = 2000;
