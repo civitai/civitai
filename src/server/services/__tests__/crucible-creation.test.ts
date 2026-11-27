@@ -83,20 +83,21 @@ const { activateScheduledCrucibles, createCrucible, getCrucibles } = await impor
 // 24 hours is free and the split below is custom, so the customization fee is the whole setup cost.
 const SETUP_FEE = CRUCIBLE_PRIZE_CUSTOMIZATION_COST;
 
-const input = (overrides: Record<string, unknown> = {}) => ({
-  userId: 4,
-  name: 'Test Crucible',
-  description: 'A description',
-  coverImage: { url: '6a1c3f3d-29e5-49c1-816f-bfc0f7c5c900', width: 512, height: 704 },
-  nsfwLevel: 1,
-  entryFee: 100,
-  entryLimit: 1,
-  maxTotalEntries: undefined,
-  prizePositions: { '1': 70, '2': 30 },
-  duration: 24,
-  seededPrizePool: 0,
-  ...overrides,
-});
+const input = (overrides: Record<string, unknown> = {}) =>
+  ({
+    userId: 4,
+    name: 'Test Crucible',
+    description: 'A description',
+    coverImage: { url: '6a1c3f3d-29e5-49c1-816f-bfc0f7c5c900', width: 512, height: 704 },
+    nsfwLevel: 1,
+    entryFee: 100,
+    entryLimit: 1,
+    maxTotalEntries: undefined,
+    prizePositions: { '1': 70, '2': 30 },
+    duration: 24,
+    seededPrizePool: 0,
+    ...overrides,
+  } as Parameters<typeof createCrucible>[0]);
 
 const balance = (amount: number) =>
   getUserBuzzAccount.mockResolvedValue([{ balance: amount, type: 'yellow' }]);

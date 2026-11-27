@@ -47,14 +47,14 @@ beforeEach(() => {
 describe('ModelVersionMultiSelect with a media type', () => {
   test('flags a picked model that makes the other media type', async () => {
     mocks.versions = [version(1, 'SDXL 1.0'), version(2, 'MiniMax H3')];
-    renderWithProviders(<ModelVersionMultiSelect value={[1, 2]} mediaType={MediaType.image} />);
+    renderWithProviders(<ModelVersionMultiSelect value={[1, 2]} mediaTypes={[MediaType.image]} />);
 
     await expect.element(page.getByText('Model 2')).toBeVisible();
     expect(document.body.textContent?.match(/Doesn't make images/g)).toHaveLength(1);
   });
 
   test('searches only base models that make it', async () => {
-    renderWithProviders(<ModelVersionMultiSelect value={[]} mediaType={MediaType.video} />);
+    renderWithProviders(<ModelVersionMultiSelect value={[]} mediaTypes={[MediaType.video]} />);
 
     const { options } = await openPicker();
     for (const { baseModels } of options.resources) {
@@ -66,7 +66,7 @@ describe('ModelVersionMultiSelect with a media type', () => {
   test('refuses a pick that makes the other media type and keeps the rest', async () => {
     const onChange = vi.fn();
     renderWithProviders(
-      <ModelVersionMultiSelect value={[]} onChange={onChange} mediaType={MediaType.image} />
+      <ModelVersionMultiSelect value={[]} onChange={onChange} mediaTypes={[MediaType.image]} />
     );
 
     const { onSelectMultiple } = await openPicker();
