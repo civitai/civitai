@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { BlockedReason } from '~/server/common/enums';
+import { blockedForNamesCsam } from '@civitai/shared/csam-blocked-for';
 import { PRIOR_INGESTION_KEY, PRIOR_NEEDS_REVIEW_KEY } from '~/server/utils/image-removal-mode';
 
 vi.mock('~/server/db/kyselyDb', async () =>
@@ -281,15 +282,17 @@ function stripKeys(metadata: Record<string, unknown> | null, keys: string[]) {
 
 /** `writeModeratorBlock`, returning the rows it blocked. */
 function moderatorBlock(values: unknown[]) {
-  const [nsfwLevel, kept, reason, ids] = values as [number, string, string, number[]];
+  // The second value is the CSAM test, `csamBlockedSql()`.
+  const [nsfwLevel, , reason, ids] = values as [number, unknown, string, number[]];
   const blocked: { id: number; held: boolean }[] = [];
   for (const row of store.images) {
     if (!ids.includes(row.id)) continue;
     row.ingestion = 'Blocked';
     row.nsfwLevel = nsfwLevel;
-    row.blockedFor = row.blockedFor === kept ? kept : reason;
+    const held = blockedForNamesCsam(row.blockedFor);
+    if (!held) row.blockedFor = reason;
     fireQueueTrigger(row);
-    blocked.push({ id: row.id, held: row.blockedFor === kept });
+    blocked.push({ id: row.id, held });
   }
   return blocked;
 }
@@ -386,13 +389,13 @@ function writeExec(strings: TemplateStringsArray, ...values: unknown[]): number 
   }
 
   // `blockImageFromRating`, the orchestrator content-rating block.
-  if (sql.includes('"blockedFor" = CASE WHEN "blockedFor" = ? OR ?')) {
+  if (sql.includes('"blockedFor" = CASE WHEN ? OR ?')) {
     // `strip` is the `withoutGraceMarkersSql()` fragment, bound as one value carrying its two keys.
-    const [, ingestion, nsfwLevel, kept, keepAny, reason, strip, id] = values as [
+    const [, ingestion, nsfwLevel, , keepAny, reason, strip, id] = values as [
       unknown,
       string,
       number,
-      string,
+      unknown,
       boolean,
       string | null,
       { values: string[] },
@@ -402,7 +405,7 @@ function writeExec(strings: TemplateStringsArray, ...values: unknown[]): number 
     if (!row) return 0;
     row.ingestion = ingestion;
     row.nsfwLevel = nsfwLevel;
-    if (!keepAny && row.blockedFor !== kept) row.blockedFor = reason;
+    if (!keepAny && !blockedForNamesCsam(row.blockedFor)) row.blockedFor = reason;
     row.metadata = stripKeys(row.metadata, strip.values);
     fireQueueTrigger(row);
     return 1;
@@ -411,9 +414,9 @@ function writeExec(strings: TemplateStringsArray, ...values: unknown[]): number 
   // `blockBannedUserImages`, the ban's whole-library block: blocks what is not Blocked, and strips
   // the grace breadcrumbs off every row it matches, including one already Blocked.
   if (sql.includes('UPDATE "Image"') && sql.includes('AND (ingestion <>')) {
-    const [nsfwLevel, kept, reason, strip, userId, presenceKey] = values as [
+    const [nsfwLevel, , reason, strip, userId, presenceKey] = values as [
       number,
-      string,
+      unknown,
       string,
       { values: string[] },
       number,
@@ -428,7 +431,7 @@ function writeExec(strings: TemplateStringsArray, ...values: unknown[]): number 
       if (!wasBlocked) {
         row.ingestion = 'Blocked';
         row.nsfwLevel = nsfwLevel;
-        if (row.blockedFor !== kept) row.blockedFor = reason;
+        if (!blockedForNamesCsam(row.blockedFor)) row.blockedFor = reason;
         fireQueueTrigger(row);
       }
       row.metadata = stripKeys(row.metadata, strip.values);
@@ -437,8 +440,8 @@ function writeExec(strings: TemplateStringsArray, ...values: unknown[]): number 
     return count;
   }
 
-  // Not the scan verdict's `"blockedFor" = CASE WHEN <raw CSAM test>`, which this fixture does not model.
-  if (sql.includes('"blockedFor" = CASE WHEN "blockedFor" = ? THEN'))
+  // The moderator block, not the scan verdict's CSAM CASE, which this fixture does not model.
+  if (sql.includes(`"blockedFor" = CASE WHEN ? THEN "blockedFor" ELSE ? END`))
     return moderatorBlock(values).length;
 
   if (sql.includes('INSERT INTO "ModActivity"')) {

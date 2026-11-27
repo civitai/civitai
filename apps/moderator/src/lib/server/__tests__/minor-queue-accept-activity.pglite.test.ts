@@ -130,7 +130,7 @@ const minorOf = async (imageId: number) =>
 
 describe('acceptImage: minor-queue activity', () => {
   it('logs clearMinor when "Accept + clear minor" lifts the flag', async () => {
-    await acceptImage({ imageId: MINOR_PG, userId: MOD, removeMinorFlag: true });
+    await acceptImage({ csamReview: true, imageId: MINOR_PG, userId: MOD, removeMinorFlag: true });
 
     expect(await minorOf(MINOR_PG)).toBe(false);
     expect(await activitiesFor(MINOR_PG)).toEqual([
@@ -140,14 +140,14 @@ describe('acceptImage: minor-queue activity', () => {
   });
 
   it('logs clearMinor when a plain accept on an R-rated image lifts the flag', async () => {
-    await acceptImage({ imageId: MINOR_R, userId: MOD });
+    await acceptImage({ csamReview: true, imageId: MINOR_R, userId: MOD });
 
     expect(await minorOf(MINOR_R)).toBe(false);
     expect((await activitiesFor(MINOR_R)).map((r) => r.activity)).toEqual(['review', 'clearMinor']);
   });
 
   it('logs minorQueueAccept when a plain accept leaves the flag on', async () => {
-    await acceptImage({ imageId: MINOR_PG, userId: MOD });
+    await acceptImage({ csamReview: true, imageId: MINOR_PG, userId: MOD });
 
     expect(await minorOf(MINOR_PG)).toBe(true);
     expect((await activitiesFor(MINOR_PG)).map((r) => r.activity)).toEqual([
@@ -157,7 +157,12 @@ describe('acceptImage: minor-queue activity', () => {
   });
 
   it('logs minorQueueAccept, not clearMinor, when there was no flag to lift', async () => {
-    await acceptImage({ imageId: MINOR_UNFLAGGED, userId: MOD, removeMinorFlag: true });
+    await acceptImage({
+      csamReview: true,
+      imageId: MINOR_UNFLAGGED,
+      userId: MOD,
+      removeMinorFlag: true,
+    });
 
     expect((await activitiesFor(MINOR_UNFLAGGED)).map((r) => r.activity)).toEqual([
       'review',
@@ -166,7 +171,7 @@ describe('acceptImage: minor-queue activity', () => {
   });
 
   it('logs only review for an accept from another queue', async () => {
-    await acceptImage({ imageId: TAG_QUEUE, userId: MOD, removeMinorFlag: true });
+    await acceptImage({ csamReview: true, imageId: TAG_QUEUE, userId: MOD, removeMinorFlag: true });
 
     expect(await minorOf(TAG_QUEUE)).toBe(true);
     expect((await activitiesFor(TAG_QUEUE)).map((r) => r.activity)).toEqual(['review']);
@@ -175,9 +180,9 @@ describe('acceptImage: minor-queue activity', () => {
 
 describe('getYouToday', () => {
   it('counts the accept and not the companion row written beside it', async () => {
-    await acceptImage({ imageId: MINOR_PG, userId: MOD, removeMinorFlag: true });
-    await acceptImage({ imageId: MINOR_UNFLAGGED, userId: MOD });
-    await acceptImage({ imageId: TAG_QUEUE, userId: MOD });
+    await acceptImage({ csamReview: true, imageId: MINOR_PG, userId: MOD, removeMinorFlag: true });
+    await acceptImage({ csamReview: true, imageId: MINOR_UNFLAGGED, userId: MOD });
+    await acceptImage({ csamReview: true, imageId: TAG_QUEUE, userId: MOD });
 
     expect((await getYouToday(MOD)).actions).toBe(3);
   });

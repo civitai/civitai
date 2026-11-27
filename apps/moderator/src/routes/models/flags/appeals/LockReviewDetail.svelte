@@ -121,7 +121,7 @@
   };
 </script>
 
-{#snippet buttons()}
+{#snippet buttons(reasonId: string)}
   {#each RULINGS as ruling, i (ruling.verdict)}
     {@const unavailable = unavailableFor(ruling.verdict)}
     <TriageKeyButton
@@ -133,7 +133,7 @@
       value={ruling.verdict}
       formaction={actionHref(ruling.action)}
       disabled={!!unavailable}
-      title={unavailable ?? undefined}
+      aria-describedby={unavailable ? reasonId : undefined}
     >
       {ruling.label}
     </TriageKeyButton>
@@ -266,6 +266,7 @@
       <TriageDecisionBar
         compact
         {buttons}
+        unavailable={RULINGS.map((r) => unavailableFor(r.verdict))}
         picker={reasonPicker.open !== null ? picker : undefined}
         {fields}
         {problem}

@@ -326,6 +326,7 @@
     {#if also.length}<input type="hidden" name="also" value={JSON.stringify(also)} />{/if}
     <TriageDecisionBar
       compact
+      unavailable={keys.map((b, i) => (enabled[i] ? undefined : whyDisabled(b.decision)))}
       hint={row.source === 'training'
         ? `A training run matched ${subjects || 'the rule'}${row.mode === 'active' ? ' and was refused' : ' and went ahead'}. Confirm records it as a violation; a dismissal lets the same text through next time. J/K to move.`
         : row.clearsRules
@@ -334,14 +335,14 @@
         ? `The model was taken down when ${subjects || 'the rule'} matched. Confirm keeps it down; a dismissal republishes it.`
         : 'The model is still live. Confirm unpublishes it; a dismissal changes nothing on the model. J/K to move.'}
     >
-      {#snippet buttons()}
+      {#snippet buttons(reasonId)}
         {#each keys as b, i (b.decision)}
           <TriageKeyButton
             type="button"
             key={i + 1}
             tone={b.tone}
             disabled={!enabled[i]}
-            title={enabled[i] ? undefined : whyDisabled(b.decision)}
+            aria-describedby={!enabled[i] && whyDisabled(b.decision) ? reasonId : undefined}
             onclick={() => press(b.decision)}
           >
             {b.label}

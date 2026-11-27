@@ -2142,3 +2142,64 @@ describe('submitEntry — entries close before the end', () => {
     expect(createPost).not.toHaveBeenCalled();
   });
 });
+
+// Music crucibles are video crucibles; the entrant declares the music model on the post when the
+// video's metadata lost it. The first case pins that a hand-added (detected: false) resource counts.
+describe('submitEntry — a music model declared on the post', () => {
+  const ACE_STEP = 2727094;
+  const aceStepAddedByHand = {
+    modelVersionId: ACE_STEP,
+    detected: false,
+    modelType: 'Checkpoint',
+    baseModel: 'ACE Audio',
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    createNotification.mockResolvedValue(undefined);
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      ...crucibleRow(MediaType.video),
+      allowedResources: [ACE_STEP],
+      allowedBaseModels: ['ACE Audio'],
+    });
+    dbMock.dbWrite.crucibleEntry.count.mockResolvedValue(0);
+    dbMock.dbRead.crucibleEntry.findFirst.mockResolvedValue(null);
+    dbMock.dbRead.image.findUnique.mockResolvedValue({ ...imageRow(MediaType.video), meta: null });
+    dbMock.dbRead.image.count.mockResolvedValue(1);
+    dbMock.dbWrite.crucibleEntry.create.mockResolvedValue({ id: 5, user: { username: 'tester' } });
+  });
+
+  it('accepts a video whose music model was added by hand', async () => {
+    fetchImageResources.mockResolvedValue({ 7: { resources: [aceStepAddedByHand] } });
+
+    await expect(submit()).resolves.toMatchObject({ id: 5 });
+  });
+
+  it('refuses the same video without it, and says to add the model on the post', async () => {
+    fetchImageResources.mockResolvedValue({});
+
+    await expect(submit()).rejects.toThrow(/no detected resources.*add it to your post/);
+    expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
+  });
+
+  it('gives no add-it hint for an on-site generation, which cannot take a resource by hand', async () => {
+    fetchImageResources.mockResolvedValue({});
+    dbMock.dbRead.image.findUnique.mockResolvedValue({
+      ...imageRow(MediaType.image),
+      meta: { civitaiResources: [{ modelVersionId: 1 }] },
+    });
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      ...crucibleRow(MediaType.image),
+      allowedResources: [12],
+    });
+
+    const error = await submit().catch((e: Error) => e);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toMatch(/no detected resources/);
+    expect((error as Error).message).not.toMatch(/\+ Resource/);
+    // The hint reads `meta` from this query; the mock ignores `select`, so pin it here.
+    expect(dbMock.dbRead.image.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ select: expect.objectContaining({ meta: true }) })
+    );
+  });
+});

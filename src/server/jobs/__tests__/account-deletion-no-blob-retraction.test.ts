@@ -3,6 +3,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { BlockedReason } from '~/server/common/enums';
+import { blockedForNamesCsam } from '@civitai/shared/csam-blocked-for';
 import { PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
 
 /**
@@ -119,8 +120,13 @@ const { removeBlockedImages } = await import('~/server/jobs/image-ingestion');
 
 /** The ids carried by a `Prisma.join(...)` fragment, which arrives as one interpolated value. */
 function joinedIds(values: unknown[]): number[] {
+  // The first fragment that binds anything: `csamBlockedSql()` is a fragment that binds nothing.
   const frag = values.find(
-    (v) => !!v && typeof v === 'object' && Array.isArray((v as { values?: unknown }).values)
+    (v) =>
+      !!v &&
+      typeof v === 'object' &&
+      Array.isArray((v as { values?: unknown }).values) &&
+      (v as { values: unknown[] }).values.length > 0
   ) as { values: number[] } | undefined;
   return frag?.values ?? [];
 }
@@ -208,7 +214,7 @@ async function runQuery(strings: TemplateStringsArray, ...values: unknown[]) {
   }
 
   // remove-deleted-user-images: the hide branch. Bindings, in order: the blocked nsfwLevel, the
-  // kept CSAM reason, the blockedFor reason, the two metadata keys, the id list, userId, userId.
+  // CSAM test (`csamBlockedSql()`), the blockedFor reason, the two metadata keys, the id list, userId, userId.
   //
   // The metadata key is taken from the BINDING, never from the constant imported at the top of
   // this file, so what the grace pass writes is what the restore path is later asserted against.
@@ -218,9 +224,9 @@ async function runQuery(strings: TemplateStringsArray, ...values: unknown[]) {
   // job splits on is the positive `ModActivity` lookup routed below. Left in place because the key
   // is still the restore path's own breadcrumb; do not re-read it as the retraction discriminator.
   if (sql.includes('UPDATE "Image"') && sql.includes("SET ingestion = 'Blocked'")) {
-    const [, kept, blockedFor, priorIngestionKey, priorBlockedForKey] = values as [
+    const [, , blockedFor, priorIngestionKey, priorBlockedForKey] = values as [
       number,
-      string,
+      unknown,
       string,
       string,
       string
@@ -235,7 +241,7 @@ async function runQuery(strings: TemplateStringsArray, ...values: unknown[]) {
         [priorBlockedForKey]: img.blockedFor,
       };
       img.ingestion = 'Blocked';
-      if (img.blockedFor !== kept) img.blockedFor = blockedFor;
+      if (!blockedForNamesCsam(img.blockedFor)) img.blockedFor = blockedFor;
       touched.push({ id: img.id, postId: img.postId });
     }
     return touched;

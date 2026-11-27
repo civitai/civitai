@@ -242,7 +242,7 @@ export type ComicGenre = "Action" | "Adventure" | "Comedy" | "Drama" | "Fantasy"
 
 export type UserRestrictionStatus = "Pending" | "Upheld" | "Overturned" | "AccountDeleted";
 
-export type StrikeReason = "BlockedContent" | "RealisticMinorContent" | "CSAMContent" | "TOSViolation" | "HarassmentContent" | "ProhibitedContent" | "ManualModAction" | "Scam";
+export type StrikeReason = "BlockedContent" | "RealisticMinorContent" | "CSAMContent" | "TOSViolation" | "HarassmentContent" | "ProhibitedContent" | "ManualModAction" | "Scam" | "Copyright";
 
 export type StrikeStatus = "Active" | "Expired" | "Voided";
 
@@ -5073,6 +5073,7 @@ export interface ScanLabelClaim {
   userId: number;
   expiresAt: Date;
   token: string | null;
+  releasedAt: Date | null;
 }
 
 export interface ScanLabelCopyObject {

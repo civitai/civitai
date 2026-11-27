@@ -2,7 +2,9 @@ import { sql, type ExpressionBuilder, type Kysely, type Transaction } from 'kyse
 import type { DB } from '@civitai/db-schema/kysely';
 import { moderatorWithheldSql } from '@civitai/shared/retracted-media-tier';
 import { dbRead, dbWrite } from './db';
-import { listWithheldIds } from './retracted-media';
+import { listWithheldIds, restrictedImageIds } from './retracted-media';
+import { logToAxiom } from './axiom';
+import { createCache } from './cache';
 import {
   BLOCK_MAJORITY,
   CSAM_HOLD_REASON,
@@ -40,14 +42,17 @@ export type VoteResult =
       reachedBlockMajority: boolean;
       decided: boolean;
     }
-  | { ok: false; reason: 'not-open' | 'already-voted' | 'full' };
+  | { ok: false; reason: 'not-open' | 'already-voted' | 'full' | 'released' };
 
 type Db = Kysely<DB> | Transaction<DB>;
 
 /** Control items are a blind calibration sample: their flag version must never be a way to pick them. */
 const CONTROL_SOURCE = 'control-sample';
 
-function openItems(db: Db, filters: ScanLabelFilters) {
+type ItemQuery = ReturnType<typeof queueItems>;
+
+/** Open items in these filters, whatever their image. */
+function queueItems(db: Db, filters: ScanLabelFilters) {
   let q = db.selectFrom('ScanLabelItem as i').where('i.status', '=', 'open');
   if (filters.day) {
     const { start, end } = dayBounds(filters.day);
@@ -67,6 +72,25 @@ function openItems(db: Db, filters: ScanLabelFilters) {
   }
   return q;
 }
+
+/**
+ * The one rule for an item that cannot be claimed because its image is blocked. An image the queue's
+ * own majority blocked never meets it: the sweep decides its item (`decideBlockedMajorities`).
+ */
+const blockedImage = (q: ItemQuery, blocked: boolean) =>
+  q.where(({ exists, not, selectFrom }) => {
+    const rule = exists(
+      selectFrom('Image as ci')
+        .select(sql`1`.as('one'))
+        .whereRef('ci.id', '=', 'i.imageId')
+        .where('ci.ingestion', '=', 'Blocked')
+    );
+    return blocked ? rule : not(rule);
+  });
+
+/** Open items that can be claimed: the claim's candidates. */
+const openItems = (db: Db, filters: ScanLabelFilters) =>
+  blockedImage(queueItems(db, filters), false);
 
 const otherLiveLeases = (db: Db, itemId: number, userId: number, now: Date) =>
   db
@@ -159,10 +183,12 @@ async function voteRefusal(
 
   const mine = await db
     .selectFrom('ScanLabelClaim')
-    .select('expiresAt')
+    .select(['expiresAt', 'releasedAt'])
     .where('itemId', '=', itemId)
     .where('userId', '=', userId)
     .executeTakeFirst();
+  // Skipped or dropped: another tab still showing the card can neither vote nor load it.
+  if (mine?.releasedAt) return 'released';
   const holdsLiveLease = !!mine && mine.expiresAt > now;
   if (!holdsLiveLease) {
     const leases = await otherLiveLeases(db, itemId, userId, now);
@@ -196,30 +222,104 @@ export async function itemWithheld(itemId: number, csamReview: boolean): Promise
   return (await listWithheldIds([row.imageId], { csamReview }, 'scan-label-vote')).has(row.imageId);
 }
 
-/** The media of a card, served exactly while the moderator's vote on it would still land, and
- *  never when its image is withheld from them. */
-export async function mediaForToken(
+/**
+ * Releases this moderator's claim on an item they have not voted on: the slot frees at once, and
+ * `releasedAt` keeps the item out of their own queue for good. Other moderators are unaffected, and
+ * nothing is recorded against the item. True when a claim was released.
+ */
+async function releaseClaim(itemId: number, userId: number, now: Date): Promise<boolean> {
+  const released = await dbWrite
+    .updateTable('ScanLabelClaim')
+    .set({ expiresAt: now, releasedAt: now })
+    .where('itemId', '=', itemId)
+    .where('userId', '=', userId)
+    .executeTakeFirst();
+  return released.numUpdatedRows > 0n;
+}
+
+/** Skip: release the claim the card's token holds, so the next load serves another card. A token
+ *  with no claim of this moderator's (another's, or voted with) releases nothing. */
+export async function skipCard(token: string, userId: number, now = new Date()): Promise<boolean> {
+  const claim = await dbWrite
+    .selectFrom('ScanLabelClaim')
+    .select('itemId')
+    .where('token', '=', token)
+    .where('userId', '=', userId)
+    .executeTakeFirst();
+  return !!claim && releaseClaim(claim.itemId, userId, now);
+}
+
+type MediaRefusal =
+  | VoteRefusal
+  | 'not-yours'
+  | 'image-missing'
+  | 'withheld'
+  | 'withheld-read-failed';
+
+/** Refusals that drop the card from this moderator's queue for good rather than serve it again on
+ *  the next load. A failed read is likely transient, so it only refuses. */
+const DROPPED: ReadonlySet<MediaRefusal> = new Set(['image-missing', 'withheld']);
+
+async function cardMedia(
   token: string,
   { userId, csamReview }: Claimer,
-  now = new Date()
-): Promise<CardMedia | null> {
+  now: Date
+): Promise<
+  { itemId: number | null; media: CardMedia } | { itemId: number | null; refused: MediaRefusal }
+> {
   const itemId = await itemForToken(token, userId);
-  if (itemId === null) return null;
+  if (itemId === null) return { itemId, refused: 'not-yours' };
   const item = await dbWrite
     .selectFrom('ScanLabelItem')
     .select(['votes', 'status'])
     .where('id', '=', itemId)
     .executeTakeFirst();
-  if (await voteRefusal(dbWrite, item, itemId, userId, now)) return null;
+  const refusal = await voteRefusal(dbWrite, item, itemId, userId, now);
+  if (refusal) return { itemId, refused: refusal };
   const row = await dbWrite
     .selectFrom('ScanLabelItem as i')
     .innerJoin('Image as img', 'img.id', 'i.imageId')
     .select(['img.id', 'img.url', 'img.type', 'img.name'])
     .where('i.id', '=', itemId)
     .executeTakeFirst();
-  if (!row) return null;
-  const withheld = await listWithheldIds([row.id], { csamReview }, 'scan-label-media');
-  return withheld.has(row.id) ? null : { url: row.url, type: String(row.type), name: row.name };
+  if (!row) return { itemId, refused: 'image-missing' };
+  const withheld = await restrictedImageIds([row.id], { csamReview }).catch((e) => {
+    void logToAxiom({
+      name: 'image-queue-withheld-read-failed',
+      type: 'error',
+      payload: {
+        list: 'scan-label-media',
+        count: 1,
+        error: e instanceof Error ? e.name : typeof e,
+      },
+    });
+    return null;
+  });
+  if (!withheld) return { itemId, refused: 'withheld-read-failed' };
+  if (withheld.has(row.id)) return { itemId, refused: 'withheld' };
+  return { itemId, media: { url: row.url, type: String(row.type), name: row.name } };
+}
+
+/** The media of a card, served exactly while the moderator's vote on it would still land, and
+ *  never when its image is withheld from them. A card whose image is gone or withheld is dropped
+ *  from their queue. Each refusal is logged by reason, with ids only. */
+export async function mediaForToken(
+  token: string,
+  claimer: Claimer,
+  now = new Date()
+): Promise<CardMedia | null> {
+  const result = await cardMedia(token, claimer, now);
+  if ('media' in result) return result.media;
+  const { itemId, refused } = result;
+  // A token that is not theirs names no item: nothing to drop or log.
+  if (itemId === null) return null;
+  const dropped = DROPPED.has(refused) && (await releaseClaim(itemId, claimer.userId, now));
+  void logToAxiom({
+    name: 'scan-label-media-refused',
+    type: 'info',
+    payload: { reason: refused, itemId, userId: claimer.userId, dropped },
+  });
+  return null;
 }
 
 const MAX_CLAIM_ATTEMPTS = 20;
@@ -241,6 +341,21 @@ function inSource(source: QueueSource) {
       source === 'upload' ? uploadScanned : eb.not(uploadScanned),
     ]);
   };
+}
+
+/** Not an item this moderator skipped or had dropped: `releasedAt` on their claim. */
+function notReleasedBy(userId: number) {
+  return (eb: ExpressionBuilder<DB & { i: DB['ScanLabelItem'] }, 'i'>) =>
+    eb.not(
+      eb.exists(
+        eb
+          .selectFrom('ScanLabelClaim as rc')
+          .select(sql`1`.as('one'))
+          .whereRef('rc.itemId', '=', 'i.id')
+          .where('rc.userId', '=', userId)
+          .where('rc.releasedAt', 'is not', null)
+      )
+    );
 }
 
 function notVotedBy(userId: number) {
@@ -284,6 +399,7 @@ export async function claimNext(
       .select(['c.itemId', 'c.expiresAt'])
       .where('c.userId', '=', userId)
       .where('c.expiresAt', '>', now)
+      .where('c.releasedAt', 'is', null)
       .orderBy('c.expiresAt', 'desc')
       .execute();
     // 🔴 Unlocked: it only hands back a lease the moderator already holds. Renewing or rewriting
@@ -307,6 +423,7 @@ export async function claimNext(
         let q = openItems(trx, filters)
           .select(['i.id', 'i.votes'])
           .where(notVotedBy(userId))
+          .where(notReleasedBy(userId))
           .where(notWithheld(csamReview))
           .where(
             (eb) =>
@@ -491,18 +608,75 @@ export type ScanLabelCounters = {
   decidedToday: number;
 };
 
-// Reads the primary: it runs straight after a vote, and a lagging replica shows the count one behind.
+const countOf = async (q: ItemQuery) =>
+  Number((await q.select((eb) => eb.fn.countAll<string>().as('n')).executeTakeFirstOrThrow()).n);
+
+type CountArgs = { day: string; flaggerVersion: string };
+const filtersOf = ({ day, flaggerVersion }: CountArgs): ScanLabelFilters => ({
+  day: day || undefined,
+  flaggerVersion: flaggerVersion || undefined,
+});
+
+/** Open items in these filters whose image is blocked: what the open count subtracts. Exported for
+ *  its test; pages read it through `getCounters`. */
+export const countBlockedOpen = (filters: ScanLabelFilters, db: Db = dbRead) =>
+  countOf(blockedImage(queueItems(db, filters), true));
+
+// Display only. The plain count is an index scan; the blocked one probes "Image" for every open item,
+// far too slow for a page load, and that set changes slowly, so it is cached long and read without
+// waiting (`withoutWaiting`). The shown count can lag by up to each TTL.
+const queueCount = createCache({
+  name: 'scan-label-open-count:v2',
+  fetch: async (args: CountArgs) => ({ n: await countOf(queueItems(dbRead, filtersOf(args))) }),
+  ttlSeconds: 60,
+});
+const BLOCKED_COUNT_TTL_S = 15 * 60;
+/** When this instance last started the slow count, per filter: a rate limit, not a cached value. */
+const blockedFillStartedAt = new Map<string, number>();
+const blockedCount = createCache({
+  name: 'scan-label-blocked-open-count:v1',
+  fetch: async (args: CountArgs) => {
+    // With redis down nothing is stored, so every load would start another scan: at most one per
+    // instance per TTL, failed fills included. The null is stored but reads as a miss.
+    const key = `${args.day}|${args.flaggerVersion}`;
+    const last = blockedFillStartedAt.get(key) ?? 0;
+    if (Date.now() - last < BLOCKED_COUNT_TTL_S * 1000) return null;
+    blockedFillStartedAt.set(key, Date.now());
+    return { n: await countBlockedOpen(filtersOf(args)) };
+  },
+  ttlSeconds: BLOCKED_COUNT_TTL_S,
+});
+
+/** How long a page load waits for a cached value. A miss starts the fill and returns null; the fill
+ *  runs on, so the next load reads it. */
+const CACHE_READ_WAIT_MS = 50;
+
+function withoutWaiting<T>(value: Promise<T>, waitMs: number): Promise<T | null> {
+  const settled = value.catch((e) => {
+    console.error('scan label count fill failed', e);
+    return null;
+  });
+  return Promise.race([
+    settled,
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), waitMs)),
+  ]);
+}
+
+// Per-moderator and decided counts read the primary: this runs straight after a vote, and a lagging
+// replica shows it one behind. The open count is cached from the replica; before the blocked
+// count's first fill, it includes blocked items.
 export async function getCounters(
   userId: number,
   filters: ScanLabelFilters,
   now: Date = new Date(),
-  db: Kysely<DB> = dbWrite
+  db: Kysely<DB> = dbWrite,
+  countWaitMs = CACHE_READ_WAIT_MS
 ): Promise<ScanLabelCounters> {
   const today = utcDayStart(now);
-  const [open, mine, quota, decided] = await Promise.all([
-    openItems(db, filters)
-      .select((eb) => eb.fn.countAll<string>().as('n'))
-      .executeTakeFirstOrThrow(),
+  const countArgs = { day: filters.day ?? '', flaggerVersion: filters.flaggerVersion ?? '' };
+  const [open, blocked, mine, quota, decided] = await Promise.all([
+    queueCount.get(countArgs),
+    withoutWaiting(blockedCount.get(countArgs), countWaitMs),
     db
       .selectFrom('ScanLabelVote')
       .select((eb) => eb.fn.countAll<string>().as('n'))
@@ -521,7 +695,7 @@ export async function getCounters(
       .executeTakeFirstOrThrow(),
   ]);
   return {
-    openInFilter: Number(open.n),
+    openInFilter: Math.max(0, open.n - (blocked?.n ?? 0)),
     myVotesToday: Number(mine.n),
     myQuota: effectiveQuota(quota),
     decidedToday: Number(decided.n),
@@ -581,6 +755,32 @@ const claimableAt = (now: Date) => (eb: ExpressionBuilder<DB, 'ScanLabelItem'>) 
     eb('actionStartedAt', 'is', null),
     eb('actionStartedAt', '<', new Date(now.getTime() - ACTION_CLAIM_MS)),
   ]);
+
+/**
+ * Decides, as a block, every open item whose image the sweep itself blocked. That image is blocked
+ * now, so a further vote could not change the outcome, and it can no longer be shown to cast one.
+ * Also picks up items blocked before this rule, on the next sweep. An 'already-blocked' item, its
+ * image blocked outside the queue, stays open: closing those is separate work.
+ */
+async function decideBlockedMajorities() {
+  await dbWrite
+    .updateTable('ScanLabelItem')
+    .set({
+      status: 'decided',
+      outcome: 'block',
+      // Unanimous means all VOTES_PER_ITEM agreed; a decision on fewer votes is not.
+      unanimous: false,
+      // When the block landed, so an item acted on before this rule keeps its own day.
+      decidedAt: sql<Date>`"actionedAt"`,
+    })
+    .where('status', '=', 'open')
+    // `votes` first, so the queue index serves it: a block majority needs that many votes.
+    .where('votes', '>=', BLOCK_MAJORITY)
+    .where('blockVotes', '>=', BLOCK_MAJORITY)
+    .where('actionedAt', 'is not', null)
+    .where('actionResult', '=', 'blocked')
+    .execute();
+}
 
 /** Reads stored state, not the triggering vote, so a failed or interrupted block is retried by the
  *  next sweep. */
@@ -692,6 +892,7 @@ export async function applyMajorityBlocks(
         .catch(() => undefined);
     }
   }
+  await decideBlockedMajorities();
   return result;
 }
 

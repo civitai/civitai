@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import type { PoolClient } from 'pg';
 import { OWNER_HIDDEN_REVIEWS } from '@civitai/shared/owner-hidden-reviews';
+import { csamBlockedForSql } from '@civitai/shared/retracted-media-tier';
 import {
   STAFF_NAME_RE,
   STAFF_PLACEHOLDER,
@@ -105,7 +106,7 @@ const OWNER_HIDDEN_SQL_LIST = OWNER_HIDDEN_REVIEWS.map((review) => {
  * as `excludedImageRow`. Over "Image" unaliased.
  */
 export const IMAGE_SAFETY_CONDITION = `(
-  COALESCE("Image"."blockedFor", '') = 'CSAM'
+  ${csamBlockedForSql('"Image"')}
   OR COALESCE("Image"."needsReview", '') IN (${OWNER_HIDDEN_SQL_LIST})
   OR ("Image"."minor" AND ("Image"."ingestion" = 'Blocked' OR "Image"."blockedFor" IS NOT NULL))
   OR "Image"."userId" IN (SELECT c."userId" FROM "CsamReport" c WHERE c."userId" IS NOT NULL)

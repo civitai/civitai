@@ -1,5 +1,6 @@
 import { poiWords } from '@civitai/mod-utils/prompt-audit/lists';
 import { isMinorRestrictedLevel } from '@civitai/shared/minor-content-gate';
+import { blockedForNamesCsam } from '@civitai/shared/csam-blocked-for';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { ownerIngestionSignalData } from '~/server/common/image-block-marker';
 import type { TagType } from '~/shared/utils/prisma/enums';
@@ -698,7 +699,7 @@ export async function resolveScanOutcome({
     );
     return {
       ingestion: ImageIngestionStatus.Blocked,
-      blockedFor: stored === BlockedReason.CSAM ? BlockedReason.CSAM : blocked.reason,
+      blockedFor: stored && blockedForNamesCsam(stored) ? stored : blocked.reason,
       reviewKey: null,
     };
   }
@@ -815,9 +816,9 @@ export async function resolveScanOutcome({
   // Decided on the row, so a stored CSAM block holds whatever this scan loaded or decided.
   const csamBlocked = csamBlockedSql();
   // The CSAM block the row holds once this write lands: the stored one, or one this verdict writes.
-  const csamAfterWrite = Prisma.sql`(${csamBlocked} OR ${
-    (toUpdate.blockedFor as string) ?? null
-  }::text = ${BlockedReason.CSAM})`;
+  const csamAfterWrite = Prisma.sql`(${csamBlocked} OR ${blockedForNamesCsam(
+    toUpdate.blockedFor as string | undefined
+  )})`;
   // A block outlives an account restore (every write that lands drops the breadcrumbs); anything
   // else leaves a grace-blocked row as it is.
   const metadataSet = Prisma.sql`CASE WHEN ${metadataJson}::jsonb IS NULL OR ${csamBlocked} THEN "metadata"
@@ -825,7 +826,7 @@ export async function resolveScanOutcome({
   const lifting = toUpdate.ingestion !== ImageIngestionStatus.Blocked;
   // Blocked/Error/NotFound rows a block marker keeps: the verdict skips them (CSAM is left to csamBlocked below).
   const keptFromScan = Prisma.sql`(COALESCE("ingestion" IN ('Blocked'::"ImageIngestionStatus", 'Error'::"ImageIngestionStatus", 'NotFound'::"ImageIngestionStatus"), false)
-    AND ${scanKeepsRowSql('Image')} AND "blockedFor" IS DISTINCT FROM ${BlockedReason.CSAM})`;
+    AND ${scanKeepsRowSql('Image')} AND NOT ${csamBlocked})`;
   let rowsWritten: number | undefined;
   await writeWithNsfwAxes(
     async (axesTerm) =>
@@ -945,13 +946,13 @@ export async function resolveScanOutcome({
   });
   // Not awaited: a slow replica must not hold up the outcome.
   void logScanAfterReview(image, toUpdate).catch(() => undefined);
-  if (written?.blockedFor === BlockedReason.CSAM) {
+  if (written?.blockedFor && blockedForNamesCsam(written.blockedFor)) {
     toUpdate.ingestion = ImageIngestionStatus.Blocked;
-    toUpdate.blockedFor = BlockedReason.CSAM;
+    toUpdate.blockedFor = written.blockedFor;
     toUpdate.nsfwLevel = scanLevel = NsfwLevel.Blocked;
   }
   // A CSAM block is decided only in a moderator's CSAM review, so its owner gets no rule notice.
-  if (ruleBlocked && toUpdate.blockedFor !== BlockedReason.CSAM)
+  if (ruleBlocked && !blockedForNamesCsam(toUpdate.blockedFor as string | undefined))
     await notifyImageAutoBlocked({
       imageId: image.id,
       userId: image.userId,

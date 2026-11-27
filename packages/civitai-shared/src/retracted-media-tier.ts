@@ -6,6 +6,7 @@ import {
   heldItemImageSql,
   unreadableImageSql,
 } from './held-media';
+import { csamInBlockedForSql } from './csam-blocked-for';
 import { heldUrlSql, reportListedUrlSql } from './held-url';
 import { blockedForSignal, type BlockedForPatterns, type ScannerVerdict } from './media-signals';
 
@@ -175,6 +176,50 @@ function buildCsamRestrictedSql(image: string): string {
 }
 
 /**
+ * Whether the "Image" row aliased `image` carries a CSAM mark that keeps a moderated or tos block's
+ * media from its owner: csam on the row (`csamRowSql` or its block reasons) or on another row on its
+ * url, a CSAM-review moderator delete on the url that no verified report covers (`heldUrlSql`,
+ * `owners: false`), reported bytes (`reportListedUrlSql`, less this row's own listing), or
+ * `URL_SIBLING_CAP` or more other rows on the url (the rows past the cap go unread). NULL reads as
+ * marked.
+ *
+ * Unlike `moderatorWithheldSql`, the row's own listing on a CSAM report does not count, on purpose:
+ * an owner keeps seeing their own report-listed media. Nor does an owner-level hold.
+ */
+export function ownerCsamMarkedSql(image: string): string {
+  // Lower case only: it is spliced unquoted, so a mixed-case alias would name another relation.
+  if (!/^[a-z_][a-z0-9_]*$/.test(image) || OWNER_CSAM_MARKED_ALIASES.has(image))
+    throw new Error(`Bad table alias: ${image}`);
+  return buildOwnerCsamMarkedSql(image);
+}
+
+function buildOwnerCsamMarkedSql(image: string): string {
+  const marked = (row: string) => `(
+    ${csamRowSql(row)}
+    OR EXISTS (
+      SELECT 1 FROM unnest(string_to_array(${row}."blockedFor", ',')) AS om_reason(value)
+      WHERE lower(btrim(om_reason.value)) = 'csam'
+    )
+  )`;
+  const siblings = (alias: string) =>
+    `SELECT * FROM "Image" ${alias} WHERE ${alias}.url = ${image}."url" AND ${alias}.id <> ${image}.id LIMIT ${URL_SIBLING_CAP}`;
+  return `COALESCE((
+    ${marked(image)}
+    OR EXISTS (SELECT 1 FROM (${siblings('os')}) os WHERE COALESCE(${marked('os')}, true))
+    OR (SELECT count(*) FROM (${siblings('oc')}) oc) >= ${URL_SIBLING_CAP}
+    OR ${heldUrlSql(`${image}."url"`, { owners: false })}
+    OR ${reportListedUrlSql(`${image}."url"`, { exceptImageId: `${image}."id"` })}
+  ), true)`;
+}
+
+const OWNER_CSAM_MARKED_ALIASES = new Set(
+  [...buildOwnerCsamMarkedSql('i').matchAll(/(?:FROM|JOIN) "\w+" (\w+)/g)]
+    .map((m) => m[1].toLowerCase())
+    // Derived-table and function aliases the pattern above does not see.
+    .concat(['om_reason', 'rl_e', 'le', 'listed', 'rl_ids'])
+);
+
+/**
  * Whether the "Image" row aliased `image` is withheld from a moderator without the CSAM grant, in
  * every moderator view (lists, actions, the retracted-media routes). Withheld when it or any other
  * row on its url is in the CSAM queue, blocked as CSAM (anywhere in its comma list of block
@@ -192,12 +237,18 @@ export function moderatorWithheldSql(
   return csamReview ? 'false' : buildModeratorWithheldSql(image);
 }
 
+/**
+ * `NOT moderatorWithheldSql` for the row an UPDATE of an unaliased "Image" writes, read in the write
+ * itself so an image withheld after the caller's check is left as it is. The row is read through
+ * `(SELECT "Image".*) i`: a self-join would read the statement's snapshot instead.
+ */
+export function notWithheldTargetSql({ csamReview }: { csamReview: boolean }): string {
+  return `NOT (SELECT ${moderatorWithheldSql('i', { csamReview })} FROM (SELECT "Image".*) i)`;
+}
+
 /** Whether `row."blockedFor"`, a comma list of block reasons, names CSAM anywhere in it. NULL reads false. */
 export function csamBlockedForSql(row: string): string {
-  return `EXISTS (
-      SELECT 1 FROM unnest(string_to_array(${row}."blockedFor", ',')) AS mw_reason(value)
-      WHERE lower(btrim(mw_reason.value)) = 'csam'
-    )`;
+  return csamInBlockedForSql(`${row}."blockedFor"`);
 }
 
 function buildModeratorWithheldSql(image: string): string {

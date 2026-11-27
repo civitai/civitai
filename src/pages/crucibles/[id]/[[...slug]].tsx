@@ -701,6 +701,12 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                     visible: crucible.allowedBaseModels.length > 0,
                   },
                   {
+                    label: 'Model Not Detected?',
+                    value:
+                      'Made it off-site? Add the model you used to your post with + Resource, then enter',
+                    visible: allowedResources.length > 0 || crucible.allowedBaseModels.length > 0,
+                  },
+                  {
                     label: 'Total Entry Cap',
                     value: `${numberWithCommas(crucible.maxTotalEntries ?? 0)} entries`,
                     visible: !!crucible.maxTotalEntries,

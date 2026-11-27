@@ -13,6 +13,7 @@ import {
   ruleOnInquisitorItem,
 } from '$lib/server/knights/inquisitor.service';
 import { withheldRefusal } from '$lib/server/retracted-media';
+import { WithheldImageError } from '$lib/server/withheld-write';
 
 const rulingForm = z.object({
   itemId: int4Id,
@@ -47,9 +48,13 @@ export const actions: Actions = {
       const imageId = await inquisitorItemImageId(itemId);
       const withheld = imageId === null ? null : await withheldRefusal(locals.user, [imageId]);
       if (withheld) return fail(403, { error: withheld, key: itemId });
-      const result = await ruleOnInquisitorItem(itemId, { level, blockReason }, locals.user.id);
+      const result = await ruleOnInquisitorItem(itemId, { level, blockReason }, locals.user.id, {
+        csamReview: holdsCsamReview(locals.user),
+      });
       return result.ok ? { success: true } : fail(409, { error: result.error, key: itemId });
     } catch (error) {
+      if (error instanceof WithheldImageError)
+        return fail(403, { error: error.message, key: input.itemId });
       console.error('knights inquisitor: could not set the rating', {
         itemId: input.itemId,
         error,

@@ -8612,6 +8612,8 @@ model ScanLabelClaim {
   userId    Int
   expiresAt DateTime @db.Timestamptz(3)
   token     String?  @unique @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Set when the moderator skipped the card or it was dropped from their queue; it never comes back to them.
+  releasedAt DateTime? @db.Timestamptz(3)
 
   @@id([itemId, userId])
   @@index([userId])
@@ -10724,6 +10726,7 @@ enum StrikeReason {
   ProhibitedContent
   ManualModAction
   Scam
+  Copyright
 }
 
 enum StrikeStatus {

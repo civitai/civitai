@@ -291,7 +291,7 @@ describe('blockImage and the block reason', () => {
       );
 
       await expect(
-        acceptImage({ imageId: 57, userId: 2, restoreRemoved: true })
+        acceptImage({ csamReview: true, imageId: 57, userId: 2, restoreRemoved: true })
       ).rejects.toBeInstanceOf(ImageNotRestoredError);
 
       expect(await blockedFor(57)).toBe(reason);
@@ -302,11 +302,11 @@ describe('blockImage and the block reason', () => {
 // Removed with only the flag left: the flag's own queue lists it, and must not undo the removal.
 describe('an image removed with only the review flag left', () => {
   it('is not put back live by accepting it, and the refusal reaches the caller', async () => {
-    await expect(acceptImage({ imageId: FLAGGED_REMOVED, userId: 2 })).rejects.toBeInstanceOf(
-      CsamReviewImageError
-    );
     await expect(
-      acceptCsamReviewedImage({ imageId: FLAGGED_REMOVED, userId: 2 })
+      acceptImage({ csamReview: true, imageId: FLAGGED_REMOVED, userId: 2 })
+    ).rejects.toBeInstanceOf(CsamReviewImageError);
+    await expect(
+      acceptCsamReviewedImage({ csamReview: true, imageId: FLAGGED_REMOVED, userId: 2 })
     ).rejects.toBeInstanceOf(RemovedImageNotRestorableError);
 
     expect(await imageRow(FLAGGED_REMOVED)).toEqual({ needsReview: 'csam', ingestion: 'Blocked' });
@@ -316,7 +316,7 @@ describe('an image removed with only the review flag left', () => {
   // Only the CSAM review clears the flag: the main app's Unblock leaves it, and the image, as they are.
   it('is not restored by an explicit unblock', async () => {
     await expect(
-      acceptImage({ imageId: FLAGGED_REMOVED, userId: 2, restoreRemoved: true })
+      acceptImage({ csamReview: true, imageId: FLAGGED_REMOVED, userId: 2, restoreRemoved: true })
     ).rejects.toBeInstanceOf(ImageNotRestoredError);
 
     expect(await imageRow(FLAGGED_REMOVED)).toEqual({ needsReview: 'csam', ingestion: 'Blocked' });
@@ -324,12 +324,12 @@ describe('an image removed with only the review flag left', () => {
   });
 
   it('is accepted while it is still live only by the CSAM review', async () => {
-    await expect(acceptImage({ imageId: FLAGGED, userId: 2 })).rejects.toBeInstanceOf(
-      CsamReviewImageError
-    );
+    await expect(
+      acceptImage({ csamReview: true, imageId: FLAGGED, userId: 2 })
+    ).rejects.toBeInstanceOf(CsamReviewImageError);
     expect(await imageRow(FLAGGED)).toEqual({ needsReview: 'csam', ingestion: 'Scanned' });
 
-    await acceptCsamReviewedImage({ imageId: FLAGGED, userId: 2 });
+    await acceptCsamReviewedImage({ csamReview: true, imageId: FLAGGED, userId: 2 });
 
     expect(await imageRow(FLAGGED)).toEqual({ needsReview: null, ingestion: 'Scanned' });
     expect(trackImageRestore).not.toHaveBeenCalled();
@@ -340,7 +340,7 @@ describe('an image removed with only the review flag left', () => {
       `INSERT INTO "Image" ("id", "userId", "needsReview", "blockedFor", "ingestion", "nsfwLevel")
        VALUES (54, 7, 'tag', 'AiNotVerified', 'Blocked', 32)`
     );
-    await acceptImage({ imageId: 54, userId: 2 });
+    await acceptImage({ csamReview: true, imageId: 54, userId: 2 });
 
     expect(await imageRow(54)).toEqual({ needsReview: null, ingestion: 'Scanned' });
     expect(trackImageRestore).not.toHaveBeenCalled();
@@ -607,6 +607,7 @@ describe('resolveImageAppeal', () => {
 
     await expect(
       resolveImageAppeal({
+        csamReview: true,
         imageId: FLAGGED_REMOVED,
         status: 'Approved',
         resolvedReason: 'misclassified',
@@ -631,6 +632,7 @@ describe('resolveImageAppeal', () => {
 
     await expect(
       resolveImageAppeal({
+        csamReview: true,
         imageId: FLAGGED_REMOVED,
         status: 'Approved',
         resolvedReason: 'misclassified',
@@ -652,6 +654,7 @@ describe('resolveImageAppeal', () => {
     await seedPendingAppeal(FLAGGED_REMOVED);
 
     await resolveImageAppeal({
+      csamReview: true,
       imageId: FLAGGED_REMOVED,
       status: 'Rejected',
       resolvedReason: 'violation-confirmed',
@@ -666,7 +669,13 @@ describe('approving the appeal of an image blocked for CSAM', () => {
   const CSAM_BLOCKED = 57;
   const OTHER_BLOCKED = 58;
   const approve = (imageId: number) =>
-    resolveImageAppeal({ imageId, status: 'Approved', resolvedReason: 'mistake', userId: 2 });
+    resolveImageAppeal({
+      csamReview: true,
+      imageId,
+      status: 'Approved',
+      resolvedReason: 'mistake',
+      userId: 2,
+    });
   const appealStatus = async (imageId: number) =>
     (
       await db.query<{ status: string }>(`SELECT status FROM "Appeal" WHERE "entityId" = $1`, [
@@ -700,6 +709,7 @@ describe('approving the appeal of an image blocked for CSAM', () => {
 
   it('can still be rejected', async () => {
     await resolveImageAppeal({
+      csamReview: true,
       imageId: CSAM_BLOCKED,
       status: 'Rejected',
       resolvedReason: 'violation-confirmed',
@@ -714,7 +724,13 @@ describe('approving the appeal of an image blocked for CSAM', () => {
 describe('approving an appeal whose image turns held after the close', () => {
   const TURNS_HELD = 59;
   const approve = () =>
-    resolveImageAppeal({ imageId: TURNS_HELD, status: 'Approved', resolvedReason: 'x', userId: 2 });
+    resolveImageAppeal({
+      csamReview: true,
+      imageId: TURNS_HELD,
+      status: 'Approved',
+      resolvedReason: 'x',
+      userId: 2,
+    });
   const appealStatus = async () =>
     (
       await db.query<{ status: string }>(`SELECT status FROM "Appeal" WHERE "entityId" = $1`, [
@@ -798,7 +814,12 @@ describe('an explicit unblock of an image an account deletion blocked', () => {
       [OTHER_FLAG_REMOVED, review]
     );
 
-    await acceptImage({ imageId: OTHER_FLAG_REMOVED, userId: 2, restoreRemoved: true });
+    await acceptImage({
+      csamReview: true,
+      imageId: OTHER_FLAG_REMOVED,
+      userId: 2,
+      restoreRemoved: true,
+    });
 
     const { rows } = await db.query<{
       needsReview: string | null;
@@ -850,26 +871,26 @@ describe('the CSAM review flag and every accept but the CSAM review', () => {
   it('an explicit unblock (the main app Unblock) leaves each one flagged and as it was', async () => {
     for (const { id } of ROWS)
       await expect(
-        acceptImage({ imageId: id, userId: 2, restoreRemoved: true })
+        acceptImage({ csamReview: true, imageId: id, userId: 2, restoreRemoved: true })
       ).rejects.toBeInstanceOf(ImageNotRestoredError);
     expect(await rows()).toEqual(untouched);
   });
 
   it('a review queue or report accept leaves each one flagged and as it was', async () => {
     for (const { id } of ROWS) {
-      await expect(acceptImage({ imageId: id, userId: 2 })).rejects.toBeInstanceOf(
-        CsamReviewImageError
-      );
       await expect(
-        acceptImage({ imageId: id, userId: 2, keepModeratorRemoved: true })
+        acceptImage({ csamReview: true, imageId: id, userId: 2 })
+      ).rejects.toBeInstanceOf(CsamReviewImageError);
+      await expect(
+        acceptImage({ csamReview: true, imageId: id, userId: 2, keepModeratorRemoved: true })
       ).rejects.toBeInstanceOf(CsamReviewImageError);
     }
     expect(await rows()).toEqual(untouched);
   });
 
   it('the CSAM review clears the flag on a live one, kept blocked while its owner is deleted', async () => {
-    await acceptCsamReviewedImage({ imageId: 62, userId: 2 });
-    await acceptCsamReviewedImage({ imageId: 64, userId: 2 });
+    await acceptCsamReviewedImage({ csamReview: true, imageId: 62, userId: 2 });
+    await acceptCsamReviewedImage({ csamReview: true, imageId: 64, userId: 2 });
 
     expect((await rows()).filter((r) => r.id === 62 || r.id === 64)).toEqual([
       { id: 62, needsReview: null, ingestion: 'Scanned' },

@@ -40,12 +40,33 @@ type V1Input struct {
 	// IDs is the `ids` batch as sent (duplicates kept; 1 to imageIDsBatchMax positive ids). A batch
 	// takes the legacy Postgres path (runImageSearch's useLegacyMethod).
 	IDs []int
+	// ImageID is `imageId` (0 = absent; read only with V1Ports.ImageID). It takes the legacy Postgres
+	// path too, as does a ModelID without a ModelVersionID (V1Ports.ModelOnly): Legacy.
+	ImageID int
 	// WithMeta adds each image's cached `meta`; FlatMeta is `flatMeta` (nil = undefined: flat on the
 	// feed path, wrapped as `{id, meta}` on the legacy path).
 	WithMeta bool
 	FlatMeta *bool
 	// Query is req.query in Object.keys order, for nextPage.
 	Query []QueryParam
+}
+
+// V1Ports are the switches of the `/api/v1/images` shapes ported behind one (DESIGN.md §13.2.1). Off,
+// the shape falls back with the reason it had before its port.
+type V1Ports struct {
+	// ImageID is FEED_GO_V1_IMAGES_SERVE_IMAGE_ID: answer an `imageId` on the legacy path instead of the
+	// `v1-image-id` fallback.
+	ImageID bool
+	// ModelOnly is FEED_GO_V1_IMAGES_SERVE_MODEL_ONLY: answer a `modelId` without a `modelVersionId` on
+	// the legacy path instead of the `v1-model-only` fallback.
+	ModelOnly bool
+}
+
+// Legacy is runImageSearch's useLegacyMethod on this route (`postOrder` is the posts route's only):
+// an `ids` batch, a truthy `imageId`, or a truthy `modelId` without a truthy `modelVersionId` read
+// getAllImages itself instead of the feed.
+func (in *V1Input) Legacy() bool {
+	return len(in.IDs) > 0 || in.ImageID != 0 || (in.ModelID != 0 && in.ModelVersionID == 0)
 }
 
 // imageIDsBatchMax is IMAGE_IDS_BATCH_MAX (src/server/common/constants.ts): the most ids one `ids`
@@ -167,9 +188,13 @@ func objectKeyOrder(params []QueryParam) []QueryParam {
 	return jskeys.Order(params, func(p QueryParam) string { return p.Key })
 }
 
-// ParseV1 is imagesEndpointSchema.safeParse(req.query) plus the routing runImageSearch does, for the
-// supported subset. Shapes not ported, and every input Node answers with a 400, fall back.
-func ParseV1(raw string) (*V1Input, error) {
+// ParseV1 is ParseV1With every port off.
+func ParseV1(raw string) (*V1Input, error) { return ParseV1With(raw, V1Ports{}) }
+
+// ParseV1With is imagesEndpointSchema.safeParse(req.query) plus the routing runImageSearch does, for
+// the supported subset and the shapes ports turns on. Shapes not ported, and every input Node answers
+// with a 400, fall back.
+func ParseV1With(raw string, ports V1Ports) (*V1Input, error) {
 	params, err := ParseSearch(raw)
 	if err != nil {
 		return nil, err
@@ -187,9 +212,9 @@ func ParseV1(raw string) (*V1Input, error) {
 	}
 	has := func(k string) bool { _, ok := vals[k]; return ok }
 
-	// Shapes taking a path this service does not port.
+	// Shapes taking a path this service does not port (or ports behind a switch that is off).
 	switch {
-	case has("imageId"):
+	case has("imageId") && !ports.ImageID:
 		return nil, fallback.New("v1-image-id")
 	case has("tags"):
 		return nil, fallback.New("v1-tags")
@@ -222,7 +247,7 @@ func ParseV1(raw string) (*V1Input, error) {
 	}
 	for k, dst := range map[string]*int{
 		"limit": &in.Limit, "page": &in.Page, "postId": &in.PostID, "modelId": &in.ModelID,
-		"modelVersionId": &in.ModelVersionID, "userId": &in.UserID,
+		"modelVersionId": &in.ModelVersionID, "userId": &in.UserID, "imageId": &in.ImageID,
 	} {
 		if err := num(k, dst); err != nil {
 			return nil, err
@@ -236,8 +261,14 @@ func ParseV1(raw string) (*V1Input, error) {
 		// still resolves the username for the hydrate: not ported.
 		return nil, fallback.New("v1-user-zero")
 	}
-	if in.ModelID != 0 && in.ModelVersionID == 0 {
-		// A modelId without a version takes the legacy Postgres path.
+	if has("imageId") && in.ImageID == 0 {
+		// `imageId=0` is falsy to runImageSearch (no legacy path) yet a present key to the feed query
+		// mapper, which refuses it (an empty page, a 400 beside a feed cursor): not ported, so it stays
+		// the shape's fallback with the switch on.
+		return nil, fallback.New("v1-image-id")
+	}
+	if in.ModelID != 0 && in.ModelVersionID == 0 && !ports.ModelOnly {
+		// A modelId without a version takes the legacy Postgres path (served with ports.ModelOnly).
 		return nil, fallback.New("v1-model-only")
 	}
 	if v, ok := vals["username"]; ok {

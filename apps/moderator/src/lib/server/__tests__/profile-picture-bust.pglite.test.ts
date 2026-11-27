@@ -203,7 +203,7 @@ describe('moderator writes to an image that is a profile picture', () => {
   it('🔴 acceptImage after a block leaves User.image empty: the picture serves the avatar', async () => {
     await blockImage({ imageId: AVATAR_ID, userId: 1 });
     del.mockClear();
-    await acceptImage({ imageId: AVATAR_ID, userId: 1 });
+    await acceptImage({ csamReview: true, imageId: AVATAR_ID, userId: 1 });
 
     expect(await ownerRow()).toEqual({ image: null, meta: {} });
     // The accept itself evicts the picture's cache entry, so the accepted picture is read afresh.
@@ -211,20 +211,20 @@ describe('moderator writes to an image that is a profile picture', () => {
   });
 
   it('updateImageNsfwLevel evicts it', async () => {
-    await updateImageNsfwLevel({ id: AVATAR_ID, nsfwLevel: 16, userId: 1 });
+    await updateImageNsfwLevel({ csamReview: true, id: AVATAR_ID, nsfwLevel: 16, userId: 1 });
 
     expect(bustedKeys()).toContain(avatarKey);
   });
 
   it("a re-rate that leaves User.image alone still evicts the owner's session", async () => {
-    await updateImageNsfwLevel({ id: AVATAR_ID, nsfwLevel: 16, userId: 1 });
+    await updateImageNsfwLevel({ csamReview: true, id: AVATAR_ID, nsfwLevel: 16, userId: 1 });
 
     expect((await ownerRow()).image).toBe('https://cdn.example/avatar-key/width=96');
     expect(bustedKeys()).toContain(`${REDIS_KEYS.USER.SESSION}:${AVATAR_OWNER}`);
   });
 
   it('a re-rate of an image that is nobody’s picture evicts no session', async () => {
-    await updateImageNsfwLevel({ id: OTHER_IMAGE_ID, nsfwLevel: 16, userId: 1 });
+    await updateImageNsfwLevel({ csamReview: true, id: OTHER_IMAGE_ID, nsfwLevel: 16, userId: 1 });
 
     expect(bustedKeys().filter((key) => key.startsWith(`${REDIS_KEYS.USER.SESSION}:`))).toEqual([]);
   });
@@ -236,7 +236,7 @@ describe('moderator writes to an image that is a profile picture', () => {
   });
 
   it('acceptImage evicts it: the accept recomputes the rating from tags', async () => {
-    await acceptImage({ imageId: AVATAR_ID, userId: 1 });
+    await acceptImage({ csamReview: true, imageId: AVATAR_ID, userId: 1 });
 
     expect(bustedKeys()).toContain(avatarKey);
   });
@@ -247,8 +247,8 @@ describe('moderator writes to an image that is a profile picture', () => {
       [OTHER_IMAGE_ID]
     );
 
-    await updateImageNsfwLevel({ id: OTHER_IMAGE_ID, nsfwLevel: 32, userId: 1 });
-    await updateImageNsfwLevel({ id: AVATAR_ID, nsfwLevel: 16, userId: 1 });
+    await updateImageNsfwLevel({ csamReview: true, id: OTHER_IMAGE_ID, nsfwLevel: 32, userId: 1 });
+    await updateImageNsfwLevel({ csamReview: true, id: AVATAR_ID, nsfwLevel: 16, userId: 1 });
 
     const { rows } = await db.query<{ id: number; metadata: Record<string, unknown> | null }>(
       `SELECT "id", "metadata" FROM "Image" WHERE "id" IN ($1, $2)`,
@@ -264,7 +264,7 @@ describe('moderator writes to an image that is a profile picture', () => {
   });
 
   it("evicts nothing for an image that is nobody's avatar", async () => {
-    await updateImageNsfwLevel({ id: OTHER_IMAGE_ID, nsfwLevel: 16, userId: 1 });
+    await updateImageNsfwLevel({ csamReview: true, id: OTHER_IMAGE_ID, nsfwLevel: 16, userId: 1 });
 
     expect(bustedKeys()).not.toContain(avatarKey);
   });
@@ -274,7 +274,7 @@ describe('moderator writes to an image that is a profile picture', () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     await expect(
-      updateImageNsfwLevel({ id: AVATAR_ID, nsfwLevel: 16, userId: 1 })
+      updateImageNsfwLevel({ csamReview: true, id: AVATAR_ID, nsfwLevel: 16, userId: 1 })
     ).resolves.toBeUndefined();
     const { rows } = await db.query<{ nsfwLevel: number }>(
       `SELECT "nsfwLevel" FROM "Image" WHERE "id" = $1`,
@@ -318,7 +318,13 @@ describe('updateImageNsfwLevel rating requests', () => {
 
   // An Inquisitor ruling passes a status: left Pending, the requests return to the rating queue on unlock.
   it("settles only the image's Pending requests with the status given", async () => {
-    await updateImageNsfwLevel({ id: AVATAR_ID, nsfwLevel: 4, status: 'Actioned', userId: 1 });
+    await updateImageNsfwLevel({
+      csamReview: true,
+      id: AVATAR_ID,
+      nsfwLevel: 4,
+      status: 'Actioned',
+      userId: 1,
+    });
 
     expect(await requests()).toEqual([
       { imageId: AVATAR_ID, userId: 7, status: 'Actioned' },
@@ -328,7 +334,7 @@ describe('updateImageNsfwLevel rating requests', () => {
   });
 
   it('leaves every request alone without a status', async () => {
-    await updateImageNsfwLevel({ id: AVATAR_ID, nsfwLevel: 4, userId: 1 });
+    await updateImageNsfwLevel({ csamReview: true, id: AVATAR_ID, nsfwLevel: 4, userId: 1 });
 
     expect((await requests()).map((r) => r.status)).toEqual(['Pending', 'Unactioned', 'Pending']);
   });

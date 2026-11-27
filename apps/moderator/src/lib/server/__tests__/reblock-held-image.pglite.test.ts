@@ -369,15 +369,15 @@ describe('a bulk block over held and other images', () => {
 
 describe('accepting from a review queue', () => {
   it('does not put an image removed with its block reason kept back live', async () => {
-    await expect(acceptImage({ imageId: HELD, userId: 2 })).rejects.toBeInstanceOf(
-      RemovedImageNotRestorableError
-    );
+    await expect(
+      acceptImage({ csamReview: true, imageId: HELD, userId: 2 })
+    ).rejects.toBeInstanceOf(RemovedImageNotRestorableError);
 
     expect(await row(HELD)).toMatchObject({ ingestion: 'Blocked', blockedFor: 'CSAM' });
   });
 
   it('still puts an image removed for another reason back live', async () => {
-    await acceptImage({ imageId: OTHER_REASON, userId: 2 });
+    await acceptImage({ csamReview: true, imageId: OTHER_REASON, userId: 2 });
 
     expect(await row(OTHER_REASON)).toMatchObject({ ingestion: 'Scanned', blockedFor: null });
   });
@@ -386,14 +386,14 @@ describe('accepting from a review queue', () => {
   // restore the old expectation.
   it('is not overridden by an explicit unblock when the reason is CSAM', async () => {
     await expect(
-      acceptImage({ imageId: HELD, userId: 2, restoreRemoved: true })
+      acceptImage({ csamReview: true, imageId: HELD, userId: 2, restoreRemoved: true })
     ).rejects.toBeInstanceOf(ImageNotRestoredError);
 
     expect(await row(HELD)).toMatchObject({ ingestion: 'Blocked', blockedFor: 'CSAM' });
   });
 
   it('is overridden by an explicit unblock for another reason', async () => {
-    await acceptImage({ imageId: OTHER_REASON, userId: 2, restoreRemoved: true });
+    await acceptImage({ csamReview: true, imageId: OTHER_REASON, userId: 2, restoreRemoved: true });
 
     expect(await row(OTHER_REASON)).toMatchObject({ ingestion: 'Scanned', blockedFor: null });
   });
@@ -954,10 +954,15 @@ describe('a block under the review flag alone, later cleared', () => {
     try {
       // Only the CSAM review clears the flag; an unblock before that is refused.
       await expect(
-        acceptImage({ imageId: FLAGGED_LIVE, userId: 2, restoreRemoved: true })
+        acceptImage({ csamReview: true, imageId: FLAGGED_LIVE, userId: 2, restoreRemoved: true })
       ).rejects.toBeInstanceOf(ImageNotRestoredError);
       await db.exec(`UPDATE "Image" SET "needsReview" = NULL WHERE id = ${FLAGGED_LIVE}`);
-      await acceptImage({ imageId: FLAGGED_LIVE, userId: 2, restoreRemoved: true });
+      await acceptImage({
+        csamReview: true,
+        imageId: FLAGGED_LIVE,
+        userId: 2,
+        restoreRemoved: true,
+      });
     } finally {
       csamCheck.live = [];
     }

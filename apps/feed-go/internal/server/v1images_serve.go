@@ -109,7 +109,7 @@ func (s *Server) v1ImagesCompute(serving bool) func(context.Context, *http.Reque
 		}
 		// The query already parsed in the port (so this cannot fail after an answer, but a serve never
 		// writes headers it could not compute); its maturity inputs decide the handler's Cache-Control.
-		in, err := feed.ParseV1(r.URL.RawQuery)
+		in, err := feed.ParseV1With(r.URL.RawQuery, s.v1Ports())
 		if err != nil {
 			if serving {
 				c.release()
@@ -126,6 +126,14 @@ func (s *Server) v1ImagesCompute(serving bool) func(context.Context, *http.Reque
 		}, body)
 		return c, nil
 	}
+}
+
+// v1Ports are the images route's port switches (none without the port's dependencies).
+func (s *Server) v1Ports() feed.V1Ports {
+	if s.V1 == nil {
+		return feed.V1Ports{}
+	}
+	return s.V1.Ports
 }
 
 // v1ImagesServeOnly falls back, on the public route only, on a request whose answer or headers depend

@@ -984,6 +984,7 @@ export const StrikeReason = {
   ProhibitedContent: 'ProhibitedContent',
   ManualModAction: 'ManualModAction',
   Scam: 'Scam',
+  Copyright: 'Copyright',
 } as const;
 export type StrikeReason = (typeof StrikeReason)[keyof typeof StrikeReason];
 export const StrikeStatus = {

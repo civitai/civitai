@@ -63,6 +63,7 @@
     "./retracted-media": "./src/retracted-media.ts",
     "./account-action-texts": "./src/account-action-texts.ts",
     "./media-signals": "./src/media-signals.ts",
+    "./csam-blocked-for": "./src/csam-blocked-for.ts",
     "./retracted-media-tier": "./src/retracted-media-tier.ts",
     "./review-batch": "./src/review-batch.ts",
     "./report-reward": "./src/report-reward.ts",
