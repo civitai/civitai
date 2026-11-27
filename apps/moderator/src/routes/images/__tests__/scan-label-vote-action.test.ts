@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { CSAM_HOLD_REASON } from '$lib/scan-labels';
 
 /** A vote runs the hold and majority-block sweeps with the real paths, and a refused vote does not. */
 
@@ -281,6 +282,22 @@ describe('vote action', () => {
     expect(applyMajorityBlocks).not.toHaveBeenCalled();
     expect(getVotedItemOwner).not.toHaveBeenCalled();
   });
+
+  it.each(['not-open', 'released', 'full'] as const)(
+    'tells a moderator their CSAM hold did not land when the vote is refused (%s)',
+    async (reason) => {
+      castVote.mockResolvedValue({ ok: false, reason });
+      const hold = event({ token: TOKEN, block: '1', reason: CSAM_HOLD_REASON });
+      const result = (await actions.vote(hold)) as { status: number; data: { error: string } };
+      expect(result.status).toBe(409);
+      expect(result.data.error).toMatch(/CSAM hold was not recorded/);
+      // Control: any other refused vote keeps its own message.
+      const keep = (await actions.vote(event({ token: TOKEN, block: '0' }))) as {
+        data: { error: string };
+      };
+      expect(keep.data.error).not.toMatch(/CSAM hold/);
+    }
+  );
 });
 
 describe('load', () => {

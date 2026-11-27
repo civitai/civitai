@@ -17,15 +17,22 @@
   let ready = $state(false);
   const noun = $derived(type === 'video' ? 'Video' : 'Image');
 
+  const SOURCE_SELECTION_WAIT_MS = 250;
   const fail = () => (failed = true);
   const markReady = () => (ready = true);
 
-  // Svelte does not replay <video> events from before hydration, so read whether it already has a
-  // frame. Not `networkState`: a new <video> reads NETWORK_NO_SOURCE until its source selection
-  // starts a task later, so it would mark every client-rendered card failed.
+  // Svelte does not replay <video> events from before hydration, so read where it already got to.
+  // NETWORK_NO_SOURCE only well after mount: a new <video> reads it until its source selection starts
+  // a task later, so read at once it would mark every client-rendered card failed.
   let video = $state<HTMLVideoElement | null>(null);
   $effect(() => {
-    if (video && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) ready = true;
+    if (!video) return;
+    const el = video;
+    if (el.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) ready = true;
+    const timer = setTimeout(() => {
+      if (el.networkState === HTMLMediaElement.NETWORK_NO_SOURCE) failed = true;
+    }, SOURCE_SELECTION_WAIT_MS);
+    return () => clearTimeout(timer);
   });
 </script>
 

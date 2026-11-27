@@ -87,6 +87,10 @@ const REFUSAL: Record<'not-open' | 'already-voted' | 'full' | 'released' | 'not-
   released: 'This card left your queue. Here is the next.',
 };
 
+// A refused hold says so, never the generic refusal: a moderator must not take it as having landed.
+const HOLD_REFUSED =
+  'Your CSAM hold was not recorded: this card was already decided or left your queue. Tell a lead if the image still needs CSAM review. Here is the next.';
+
 const HOLD_FAILED =
   'Your vote is recorded and the image has left the queue, but holding it for CSAM review failed. It is retried on the next vote; tell a lead if this keeps happening.';
 
@@ -120,7 +124,10 @@ export const actions: Actions = {
       msOnItem: input.ms,
       claimToken: input.token,
     });
-    if (!result.ok) return fail(409, { error: REFUSAL[result.reason] });
+    if (!result.ok) {
+      const holdRefused = input.choice.block && input.choice.reason === CSAM_HOLD_REASON;
+      return fail(409, { error: holdRefused ? HOLD_REFUSED : REFUSAL[result.reason] });
+    }
     // Holds first, and retried here like the blocks below. Must not fail the vote, which has landed.
     const holds = await applyCsamHolds(
       {},

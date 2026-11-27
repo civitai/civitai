@@ -97,22 +97,46 @@ describe('Scan Labels card media', () => {
     expect(img?.getAttribute('onerror')).toBe('this.__e=event');
   });
 
-  // A browser reports a new <video> as NETWORK_NO_SOURCE until source selection starts, a task later.
-  // Every card after the first mounts client-side, so reading that as failure would fail them all.
-  it('does not take a new video’s NETWORK_NO_SOURCE for a failure', () => {
+  /** Mounts a video whose `networkState` reads `before` until the next task, then `after`: a
+   *  browser's NETWORK_NO_SOURCE on a new <video> lasts until source selection starts. `later` is
+   *  read past the component's wait. */
+  async function videoStatusAfterATask(before: number, after: number) {
     const proto = HTMLMediaElement.prototype;
     const own = Object.getOwnPropertyDescriptor(proto, 'networkState');
-    Object.defineProperty(proto, 'networkState', {
-      configurable: true,
-      get: () => HTMLMediaElement.NETWORK_NO_SOURCE,
-    });
+    let state = before;
+    Object.defineProperty(proto, 'networkState', { configurable: true, get: () => state });
     try {
       const { target, app } = mount('video');
-      expect(status(target)).toBe('Loading video...');
+      const atMount = status(target);
+      setTimeout(() => (state = after));
+      await new Promise((r) => setTimeout(r, 400));
+      svelte.flushSync();
+      const later = status(target);
       svelte.unmount(app);
+      return { atMount, later };
     } finally {
       if (own) Object.defineProperty(proto, 'networkState', own);
     }
+  }
+
+  // Every card after the first mounts client-side; reading the new video's state as failure would
+  // fail them all.
+  it('does not take a new video’s NETWORK_NO_SOURCE for a failure', async () => {
+    const { NETWORK_NO_SOURCE, NETWORK_LOADING } = HTMLMediaElement;
+    expect(await videoStatusAfterATask(NETWORK_NO_SOURCE, NETWORK_LOADING)).toEqual({
+      atMount: 'Loading video...',
+      later: 'Loading video...',
+    });
+  });
+
+  // The first card is server-rendered: a video whose sources were refused before hydration fired
+  // errors no one heard, and stays NETWORK_NO_SOURCE.
+  it('says a video failed to load when it still has no source a task after mounting', async () => {
+    const { NETWORK_NO_SOURCE } = HTMLMediaElement;
+    expect(await videoStatusAfterATask(NETWORK_NO_SOURCE, NETWORK_NO_SOURCE)).toEqual({
+      atMount: 'Loading video...',
+      later: 'Video failed to load',
+    });
   });
 
   it('shows a video that already has a frame when it mounts as ready', () => {

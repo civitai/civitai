@@ -637,7 +637,7 @@ const blockedCount = createCache({
   name: 'scan-label-blocked-open-count:v1',
   fetch: async (args: CountArgs) => {
     // With redis down nothing is stored, so every load would start another scan: at most one per
-    // instance per TTL. A null is not cached, so the next instance or window fills it.
+    // instance per TTL, failed fills included. The null is stored but reads as a miss.
     const key = `${args.day}|${args.flaggerVersion}`;
     const last = blockedFillStartedAt.get(key) ?? 0;
     if (Date.now() - last < BLOCKED_COUNT_TTL_S * 1000) return null;
