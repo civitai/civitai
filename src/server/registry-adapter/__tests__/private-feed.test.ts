@@ -328,13 +328,18 @@ const principalOf = (bearer: string | undefined): Promise<Principal> =>
 
 type Run = { events: StreamEvent[]; done: Promise<unknown>; stop: () => void };
 
-/** One subscription through the whole core; `stop` aborts it. */
-function subscribe(adapter: Adapter, principal: Principal, cursor?: string): Run {
+/** One subscription through the whole core, naming `meta` when given; `stop` aborts it. */
+function subscribe(
+  adapter: Adapter,
+  principal: Principal,
+  cursor?: string,
+  meta?: Record<string, unknown>
+): Run {
   const abort = new AbortController();
   const events: StreamEvent[] = [];
   const sub = createSubscriber(adapter);
   const done = sub(
-    { schema: SCHEMA, urns: [], cursor },
+    { schema: SCHEMA, urns: [], cursor, ...(meta ? { meta } : {}) },
     {
       signal: abort.signal,
       send: async (e) => {
@@ -712,6 +717,112 @@ describe('🔴 revocation and deletion leave the stream as Deletes', () => {
     expect(deletes(resumed.events)).toEqual([OWNER_URN]);
     resumed.stop();
     wake();
+  });
+});
+
+describe("🔴 the first poll's sync: a resume that asks is told when it holds everything", () => {
+  /** A live stream's cursor, the stream stopped. */
+  async function savedCursor(bearer: string) {
+    const run = subscribe(
+      composeAdapter(entities, publicFeed(), privateFeed()),
+      await principalOf(bearer)
+    );
+    await settle(run);
+    expect(upserts(run.events)).toEqual([OWNER_URN]);
+    const cursor = (run.events.find((e) => e.type === 'live') as { cursor: string }).cursor;
+    run.stop();
+    wake();
+    await run.done;
+    return cursor;
+  }
+  async function resume(bearer: string, cursor: string, meta?: Record<string, unknown>) {
+    const run = subscribe(
+      composeAdapter(entities, publicFeed(), privateFeed()),
+      await principalOf(bearer),
+      cursor,
+      meta
+    );
+    await settle(run);
+    return run;
+  }
+  const metas = (events: StreamEvent[]) =>
+    events.flatMap((e) =>
+      e.type === 'live' || e.type === 'progress' ? [{ type: e.type, meta: e.meta }] : []
+    );
+
+  it('🔴 a grant revoked since the cursor: live (pending), the missed Delete, then progress (done)', async () => {
+    const cursor = await savedCursor('owner-grantee');
+    grantRow = null;
+    const run = await resume('owner-grantee', cursor, { sync: 1 });
+    expect(run.events.map((e) => e.type)).toEqual(['live', 'delete', 'progress']);
+    expect(run.events[1]).toMatchObject({ type: 'delete', urn: OWNER_URN });
+    expect(metas(run.events)).toEqual([
+      // The saved state's head; the refused first poll resolves no major.
+      { type: 'live', meta: { head: { seq: 97 }, sync: 'pending' } },
+      // Refused: no head, no major; the sync alone.
+      { type: 'progress', meta: { sync: 'done' } },
+    ]);
+    run.stop();
+    wake();
+  });
+
+  it('nothing changed since the cursor: still a progress naming the sync, the head and the major', async () => {
+    const cursor = await savedCursor('owner-own');
+    const run = await resume('owner-own', cursor, { sync: 1 });
+    expect(metas(run.events)).toEqual([
+      { type: 'live', meta: { head: { seq: 97 }, currentMajor: 1, sync: 'pending' } },
+      { type: 'progress', meta: { head: { seq: 97 }, currentMajor: 1, sync: 'done' } },
+    ]);
+    // Once: a later poll with nothing changed sends nothing more.
+    const before = run.events.length;
+    wake();
+    await settle(run);
+    expect(run.events.length).toBe(before);
+    run.stop();
+    wake();
+  });
+
+  it('a write since the cursor: its Upsert, then ONE progress with the new head and the sync', async () => {
+    const cursor = await savedCursor('owner-own');
+    docs.set(docsKey(SOURCE_ID, 'journal', OWNER), [
+      ...(docs.get(docsKey(SOURCE_ID, 'journal', OWNER)) ?? []),
+      {
+        key: 'entry-2',
+        recordId: OWNER_RECORD_2,
+        version: 1,
+        seq: 120,
+        data: { t: OWNER_CANARY_2 },
+      },
+    ]);
+    head = 120;
+    const run = await resume('owner-own', cursor, { sync: 1 });
+    expect(run.events.map((e) => e.type)).toEqual(['live', 'upsert', 'progress']);
+    expect(upserts(run.events)).toEqual([OWNER_URN_2]);
+    expect(metas(run.events)[1]).toEqual({
+      type: 'progress',
+      meta: { head: { seq: 120 }, currentMajor: 1, sync: 'done' },
+    });
+    run.stop();
+    wake();
+  });
+
+  it('control: the same resume without `sync` is unchanged (live, then the Delete, no progress)', async () => {
+    const cursor = await savedCursor('owner-grantee');
+    grantRow = null;
+    const run = await resume('owner-grantee', cursor);
+    expect(run.events.map((e) => e.type)).toEqual(['live', 'delete']);
+    expect(metas(run.events)).toEqual([{ type: 'live', meta: { head: { seq: 97 } } }]);
+    run.stop();
+    wake();
+  });
+
+  it('asking for the sync never expires the cursor: the binding leaves `meta` out', async () => {
+    const cursor = await savedCursor('owner-own');
+    const run = await resume('owner-own', cursor, { sync: 1 });
+    expect(run.events[0]).toMatchObject({ type: 'live', cursor });
+    run.stop();
+    wake();
+    expect(await run.done).toBeUndefined();
   });
 });
 

@@ -99,6 +99,22 @@ var WriteOps = []string{"create", "put", "delete", "info"}
 // redirect).
 var WriteOutcomes = []string{"2xx", "4xx", "501", "refused_here", "unknown", "unavailable", "signature"}
 
+// CacheOps are the `op` values of app_data_cache_ops_total, each with the `outcome` values it can
+// have (cache.Op*, cache.Outcome*): a get's hit, miss, invalid (a value that did not open: another key
+// or format, or garbage, read as a miss) or error; a set's or del's ok or error; and for each,
+// skipped_breaker (not asked: the breaker was open). `kind` is one of CacheKinds.
+var CacheOps = map[string][]string{
+	"get": {"hit", "miss", "invalid", "error", "skipped_breaker"},
+	"set": {"ok", "error", "skipped_breaker"},
+	"del": {"ok", "error", "skipped_breaker"},
+}
+
+// CacheKinds are the `kind` values of app_data_cache_ops_total (cache.Kind*).
+var CacheKinds = []string{"block", "user", "snapshot"}
+
+// ResumeOutcomes are the `outcome` values of app_data_stream_resumes_total (session.Resume*).
+var ResumeOutcomes = []string{"synced", "cursor_refused", "unsupported", "discarded"}
+
 // Metrics holds the series.
 type Metrics struct {
 	Reads         *prometheus.CounterVec
@@ -132,6 +148,55 @@ type Metrics struct {
 	// ServiceTokenFetches counts each call to the hub's token endpoint for the level streams' service
 	// token, by outcome (token.Outcomes: ok, refused, unavailable); zero without a service client.
 	ServiceTokenFetches *prometheus.CounterVec
+	// CacheOps counts the shared cache's operations by kind, op and outcome (CacheOps), and Resumes the
+	// private streams resumed from a snapshot, by outcome (ResumeOutcomes). Both nil, and not
+	// registered, unless EnableCache was called (APP_DATA_CACHE_URL set).
+	CacheOps *prometheus.CounterVec
+	Resumes  *prometheus.CounterVec
+}
+
+// EnableCache registers the shared cache's series on reg: app_data_cache_ops_total,
+// app_data_stream_resumes_total, and app_data_cache_breaker_open (1 while breakerOpen reports the
+// breaker open). Without it none of them exists, so a service with no cache exposes what it did
+// before.
+func (m *Metrics) EnableCache(reg prometheus.Registerer, breakerOpen func() bool) {
+	m.CacheOps = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "app_data_cache_ops_total",
+		Help: "Shared cache (valkey) operations, by what they hold (kind), op and outcome (skipped_breaker: not asked, the breaker open). Every error is a miss or a no-op: the service never fails on the cache.",
+	}, []string{"kind", "op", "outcome"})
+	m.Resumes = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "app_data_stream_resumes_total",
+		Help: "Private streams resumed from a cached snapshot, by outcome (synced: served after the adapter's first poll; cursor_refused, unsupported: started over from a fresh snapshot; discarded: the snapshot was not usable).",
+	}, []string{"outcome"})
+	reg.MustRegister(m.CacheOps, m.Resumes, prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+		Name: "app_data_cache_breaker_open",
+		Help: "1 while the shared cache's circuit breaker is open (valkey not asked), else 0.",
+	}, func() float64 {
+		if breakerOpen() {
+			return 1
+		}
+		return 0
+	}))
+	for _, kind := range CacheKinds {
+		for op, outcomes := range CacheOps {
+			for _, o := range outcomes {
+				m.CacheOps.WithLabelValues(kind, op, o)
+			}
+		}
+	}
+	for _, o := range ResumeOutcomes {
+		m.Resumes.WithLabelValues(o)
+	}
+}
+
+// ObserveCache counts one cache operation (cache.Options.Observe).
+func (m *Metrics) ObserveCache(kind, op, outcome string) {
+	m.CacheOps.WithLabelValues(kind, op, outcome).Inc()
+}
+
+// ObserveResume counts one resume by its outcome (session.Options.Resumed).
+func (m *Metrics) ObserveResume(outcome string) {
+	m.Resumes.WithLabelValues(outcome).Inc()
 }
 
 // ObserveServiceTokenFetch is token.Source.OnFetch: it counts each fetch by its outcome.

@@ -164,6 +164,10 @@ type BlockCache struct {
 	// Observe is told each exchange's outcome and, for a refusal, the hub's code (RefusalCode;
 	// `none` otherwise). Nil is none. Never a token.
 	Observe func(outcome, code string)
+	// Shared, when set, is a store of block exchanges shared with other processes and restarts
+	// (package cache, APP_DATA_CACHE_URL): a token this cache does not hold is looked for there before
+	// the hub is asked, and a token the hub issues is saved there. Nil is this process alone.
+	Shared SharedBlocks
 
 	mu      sync.Mutex
 	entries map[[sha256.Size]byte]*blockEntry // issued, or being exchanged
@@ -224,11 +228,17 @@ func (c *BlockCache) Exchange(ctx context.Context, subject string) (Token, error
 func (c *BlockCache) first(ctx context.Context, k [sha256.Size]byte, e *blockEntry, subject string, start time.Time) (Token, error) {
 	var tok Token
 	var err error
+	shared := false
 	if c.Verify != nil {
 		err = c.Verify(ctx, subject)
 	}
 	if err == nil {
-		tok, err = c.Hub(ctx, subject)
+		tok, shared, err = c.exchange(ctx, k, subject, start)
+	}
+	if err == nil && shared && !c.now().Before(tok.Expires.Add(-c.Margin)) {
+		// Another process's exchange, too close to its expiry to open a stream with: spent, as a
+		// token of this cache's own would be.
+		tok, err = Token{}, ErrSpent
 	}
 	c.mu.Lock()
 	switch {
@@ -253,10 +263,14 @@ func (c *BlockCache) first(ctx context.Context, k [sha256.Size]byte, e *blockEnt
 	close(e.done)
 	c.mu.Unlock()
 	switch {
+	case err == nil && shared:
+		c.observe(BlockReused, nil)
 	case err == nil:
 		c.observe(BlockIssued, nil)
 	case errors.Is(err, ErrRefused):
 		c.observe(BlockRefused, err)
+	case errors.Is(err, ErrSpent):
+		c.observe(BlockSpent, nil)
 	case errors.Is(err, ErrBlockUnverifiable):
 		c.observe(BlockUnverifiable, nil)
 	case errors.As(err, new(*RateLimitedError)):
@@ -265,6 +279,37 @@ func (c *BlockCache) first(ctx context.Context, k [sha256.Size]byte, e *blockEnt
 		c.observe(BlockFailed, nil)
 	}
 	return tok, err
+}
+
+// exchange asks the hub for subject's exchange, after Shared when it is set: shared is true when the
+// answer is a token another process (or this one before a restart) was issued, the hub not asked.
+// Only an issued token is saved there, never a refusal: a refusal is this process's to remember.
+//
+// Two processes that both miss ask the hub both (there is no claim): the hub issues to one and
+// refuses the other's replay, which this cache remembers as any refusal, as without the store.
+func (c *BlockCache) exchange(ctx context.Context, k [sha256.Size]byte, subject string, start time.Time) (tok Token, shared bool, err error) {
+	if c.Shared != nil {
+		if tok, ok := c.Shared.Load(ctx, k); ok {
+			return tok, true, nil
+		}
+	}
+	tok, err = c.Hub(ctx, subject)
+	if err == nil && c.Shared != nil {
+		// Held to MaxTokenLife from before the call, as first holds it: never saved past its expiry.
+		if limit := start.Add(MaxTokenLife); tok.Expires.After(limit) {
+			tok.Expires = limit
+		}
+		c.Shared.Save(ctx, k, tok)
+	}
+	return tok, false, err
+}
+
+// SharedBlocks is a store of block-token exchanges shared by every process that uses it, keyed by
+// the token's SHA-256 (never a claim read from it). It fails open: a Load that cannot answer is a
+// miss, and a Save that fails does nothing.
+type SharedBlocks interface {
+	Load(ctx context.Context, id [sha256.Size]byte) (Token, bool)
+	Save(ctx context.Context, id [sha256.Size]byte, tok Token)
 }
 
 // again answers from an exchange already made.

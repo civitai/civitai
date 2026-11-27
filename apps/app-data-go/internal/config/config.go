@@ -138,6 +138,11 @@ type Config struct {
 	// they are read as a service, which no region holds. Needs the registry path.
 	ForwardRegion bool
 
+	// Cache is the shared cache in front of the exchanges, the overlays and the private streams'
+	// snapshots (APP_DATA_CACHE_URL; CACHE-DESIGN.md). Nil when unset: nothing is cached anywhere but
+	// in this process, as before. Needs the registry path.
+	Cache *Cache
+
 	// ignoredWrites names the APP_DATA_WRITES_* settings set while APP_DATA_WRITES is off
 	// (comma-separated, so Config stays comparable); Warnings reports them.
 	ignoredWrites string
@@ -179,6 +184,24 @@ func (c *Config) Warnings() []string {
 // NoServiceClientWarning is the start warning for shared reads with no service client.
 const NoServiceClientWarning = "shared reads are on without a service client (APP_DATA_SERVICE_CLIENT_ID): " +
 	"every shared and signed-out read is refused service_client_unconfigured"
+
+// Cache is the shared cache's settings.
+type Cache struct {
+	// URL is the valkey instance (APP_DATA_CACHE_URL): redis:// or valkey:// only to a cluster-local
+	// *.svc host, else rediss:// or valkeys://; a host, an optional port and an optional /db, no
+	// credentials.
+	URL string
+	// Key seals every value and names every key (APP_DATA_CACHE_KEY_FILE, preferred, or
+	// APP_DATA_CACHE_KEY, never both; at least 32 bytes). Changing it turns every cached value into a
+	// miss.
+	Key []byte
+	// Password, when set, authenticates every connection (APP_DATA_CACHE_PASSWORD_FILE or
+	// APP_DATA_CACHE_PASSWORD, never both; optional).
+	Password string
+	// Timeout bounds each cache operation (APP_DATA_CACHE_OP_TIMEOUT_MS, default 100, from 5 to 2000).
+	// A slower one is a miss or a no-op.
+	Timeout time.Duration
+}
 
 // ServiceClient is the hub client the level streams' service token is minted as (token.Config).
 type ServiceClient struct {
@@ -268,6 +291,9 @@ func FromEnv(getenv func(string) string, readFile func(string) ([]byte, error)) 
 		return nil, errors.New("APP_DATA_BLOCK_EXCHANGE must be true, 1, false or 0")
 	}
 	if err := writesFromEnv(getenv, c); err != nil {
+		return nil, err
+	}
+	if c.Cache, err = cacheFromEnv(getenv, readFile, c.RegistryURL != ""); err != nil {
 		return nil, err
 	}
 	c.SharedReads = c.Writes && c.RegistryURL != ""
@@ -415,6 +441,85 @@ func writesFromEnv(getenv func(string) string, c *Config) error {
 	c.Writes, c.WritesSigningKey, c.WritesSiteURL = true, key, site
 	c.WritesTimeout = time.Duration(ms) * time.Millisecond
 	return nil
+}
+
+// minCacheKeyBytes is the shortest APP_DATA_CACHE_KEY accepted (cache.MinSecretBytes).
+const minCacheKeyBytes = 32
+
+// cacheFromEnv reads the shared cache: nil when APP_DATA_CACHE_URL is unset (and every other cache
+// setting with it); an error for any setting that is wrong, so a bad value fails the start rather
+// than silently turning the cache off.
+func cacheFromEnv(getenv func(string) string, readFile func(string) ([]byte, error), registry bool) (*Cache, error) {
+	raw := getenv("APP_DATA_CACHE_URL")
+	key, keyFile := getenv("APP_DATA_CACHE_KEY"), getenv("APP_DATA_CACHE_KEY_FILE")
+	pass, passFile := getenv("APP_DATA_CACHE_PASSWORD"), getenv("APP_DATA_CACHE_PASSWORD_FILE")
+	timeout := getenv("APP_DATA_CACHE_OP_TIMEOUT_MS")
+	if raw == "" {
+		if key != "" || keyFile != "" || pass != "" || passFile != "" || timeout != "" {
+			return nil, errors.New("the APP_DATA_CACHE_* settings need APP_DATA_CACHE_URL; set it, or none of them")
+		}
+		return nil, nil
+	}
+	if !registry {
+		return nil, errors.New("APP_DATA_CACHE_URL needs the registry path (APP_DATA_REGISTRY_URL and the relay client): everything it caches is the registry path's")
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return nil, errors.New("APP_DATA_CACHE_URL must be a URL naming a host only (no credentials, query or fragment)")
+	}
+	switch u.Scheme {
+	case "rediss", "valkeys":
+	case "redis", "valkey":
+		// Values are sealed, but the connection still carries the password and the access pattern.
+		if !clusterLocal(u.Hostname()) {
+			return nil, errors.New("APP_DATA_CACHE_URL must be rediss:// or valkeys:// (redis:// or valkey:// only to a cluster-local *.svc host)")
+		}
+	default:
+		return nil, errors.New("APP_DATA_CACHE_URL must be a redis://, rediss://, valkey:// or valkeys:// URL")
+	}
+	if p := strings.Trim(u.Path, "/"); p != "" {
+		if db, err := strconv.Atoi(p); err != nil || db < 0 || db > 15 {
+			return nil, errors.New("APP_DATA_CACHE_URL's path must be a database number from 0 to 15")
+		}
+	}
+	c := &Cache{URL: raw}
+	k, err := secretFromEnv("APP_DATA_CACHE_KEY", key, keyFile, readFile)
+	switch {
+	case err != nil:
+		return nil, err
+	case k == "":
+		return nil, errors.New("APP_DATA_CACHE_URL needs APP_DATA_CACHE_KEY_FILE or APP_DATA_CACHE_KEY: every cached value is sealed with it")
+	case len(k) < minCacheKeyBytes:
+		// The length only; the key never appears.
+		return nil, fmt.Errorf("APP_DATA_CACHE_KEY must be at least %d bytes", minCacheKeyBytes)
+	}
+	c.Key = []byte(k)
+	if c.Password, err = secretFromEnv("APP_DATA_CACHE_PASSWORD", pass, passFile, readFile); err != nil {
+		return nil, err
+	}
+	ms, err := intEnv(getenv, "APP_DATA_CACHE_OP_TIMEOUT_MS", 100, 5, 2_000)
+	if err != nil {
+		return nil, err
+	}
+	c.Timeout = time.Duration(ms) * time.Millisecond
+	return c, nil
+}
+
+// secretFromEnv is a secret set as name (value) or name_FILE (file, read through readFile, its trailing
+// line break dropped), never both; "" when neither is set. No error carries the secret.
+func secretFromEnv(name, value, file string, readFile func(string) ([]byte, error)) (string, error) {
+	switch {
+	case value != "" && file != "":
+		return "", fmt.Errorf("set %s or %s_FILE, not both", name, name)
+	case file != "":
+		raw, err := readFile(file)
+		if err != nil {
+			// The path is configuration, not a secret; the file's content never appears.
+			return "", fmt.Errorf("%s_FILE could not be read", name)
+		}
+		return strings.TrimRight(string(raw), "\r\n"), nil
+	}
+	return value, nil
 }
 
 // relayFromEnv reads the relay client: nil when every setting is unset; an error when only some are,
