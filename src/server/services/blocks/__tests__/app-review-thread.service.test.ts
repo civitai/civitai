@@ -29,6 +29,12 @@ const EDITOR = 7505;
 const OWNED = 'pubreq_Owned01';
 const FIRST = 'pubreq_First01';
 const LISTING_REQ = 'alpr_Listing01';
+const REVISION_REQ = 'alpr_Revision01';
+
+/** Every request here was submitted at this instant. */
+const SUBMITTED_AT = new Date('2026-06-10T12:00:00Z');
+const BEFORE = new Date('2026-05-01T00:00:00Z');
+const AFTER = new Date('2026-07-01T00:00:00Z');
 
 const state = {
   /** The app's canonical owner (`OauthClient.userId`), moved by a transfer. */
@@ -37,6 +43,8 @@ const state = {
   offsiteOwner: SUBMITTER,
   /** A listing already holding the first version's slug, and who owns it. */
   firstSlugOwner: null as number | null,
+  /** When that listing was created: after the request = the slug was released and taken again. */
+  firstSlugCreatedAt: AFTER,
   messageId: 991,
 };
 
@@ -52,6 +60,7 @@ function versionRow(id: string) {
       rejectionReason: 'Add a spend confirmation.',
       approvalNotes: null,
       submittedByUserId: SUBMITTER,
+      submittedAt: SUBMITTED_AT,
       reviewedByUserId: REVIEWER,
       appBlockId: 'ab_owned',
       reviewedBy: reviewerChip,
@@ -66,6 +75,7 @@ function versionRow(id: string) {
       rejectionReason: 'Crashes on load.',
       approvalNotes: null,
       submittedByUserId: SUBMITTER,
+      submittedAt: SUBMITTED_AT,
       reviewedByUserId: REVIEWER,
       appBlockId: null,
       reviewedBy: reviewerChip,
@@ -122,33 +132,57 @@ beforeEach(() => {
   state.blockOwner = SUBMITTER;
   state.offsiteOwner = SUBMITTER;
   state.firstSlugOwner = null;
+  state.firstSlugCreatedAt = AFTER;
 
   dbMock.dbRead.appBlockPublishRequest.findUnique.mockImplementation((async (args: {
     where: { id: string };
   }) => versionRow(args.where.id)) as never);
   dbMock.dbRead.appListingPublishRequest.findUnique.mockImplementation((async (args: {
     where: { id: string };
-  }) =>
-    args.where.id === LISTING_REQ
-      ? {
-          slug: 'link-out',
-          status: 'approved',
-          rejectionReason: null,
-          approvalNotes: 'Looks good.',
-          submittedByUserId: SUBMITTER,
-          reviewedByUserId: REVIEWER,
-          appListingId: 'apl_offsite',
-          appListing: { name: 'Link Out' },
-          reviewedBy: reviewerChip,
-        }
-      : null) as never);
+  }) => {
+    if (args.where.id === LISTING_REQ) {
+      return {
+        slug: 'link-out',
+        status: 'approved',
+        rejectionReason: null,
+        approvalNotes: 'Looks good.',
+        submittedByUserId: SUBMITTER,
+        submittedAt: SUBMITTED_AT,
+        reviewedByUserId: REVIEWER,
+        appListingId: 'apl_offsite',
+        appListing: { name: 'Link Out' },
+        reviewedBy: reviewerChip,
+      };
+    }
+    // A rejected listing revision an editor submitted: rejecting it deleted its shadow, and the
+    // FK's SetNull left the request with no listing — only the live parent's slug.
+    if (args.where.id === REVISION_REQ) {
+      return {
+        slug: 'pixel-pal',
+        status: 'rejected',
+        rejectionReason: 'The new screenshots show another app.',
+        approvalNotes: null,
+        submittedByUserId: EDITOR,
+        submittedAt: SUBMITTED_AT,
+        reviewedByUserId: REVIEWER,
+        appListingId: null,
+        appListing: null,
+        reviewedBy: reviewerChip,
+      };
+    }
+    return null;
+  }) as never);
   dbMock.dbRead.appListing.findUnique.mockImplementation((async (args: {
     where: { id?: string; appBlockId?: string; slug?: string };
   }) => {
     const { where } = args;
     if (where.appBlockId === 'ab_owned') return { id: 'apl_owned' };
+    if (where.slug === 'pixel-pal')
+      return { id: 'apl_owned', revisionOfId: null, createdAt: BEFORE };
     if (where.slug === 'first-app') {
-      return state.firstSlugOwner != null ? { id: 'apl_first', revisionOfId: null } : null;
+      return state.firstSlugOwner != null
+        ? { id: 'apl_first', revisionOfId: null, createdAt: state.firstSlugCreatedAt }
+        : null;
     }
     return where.id ? listingRow(where.id) : null;
   }) as never);
@@ -269,6 +303,38 @@ describe('participants follow the current owner', () => {
     // A moderator still reads it.
     await listReviewMessages({ subjectId: FIRST, viewer: moderator });
     expect(dbMock.dbRead.appReviewMessage.findMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('a first version whose slug listing predates it (its draft, since transferred): the new owner', async () => {
+    state.firstSlugOwner = NEW_OWNER;
+    state.firstSlugCreatedAt = BEFORE;
+    expect(
+      await codeOf(listReviewMessages({ subjectId: FIRST, viewer: developer(SUBMITTER) }))
+    ).toBe('NOT_FOUND');
+    await listReviewMessages({ subjectId: FIRST, viewer: developer(NEW_OWNER) });
+    expect(dbMock.dbRead.appReviewMessage.findMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("🔴 a rejected revision (shadow deleted) belongs to the live listing's current owner", async () => {
+    transfer();
+    for (const userId of [EDITOR, SUBMITTER]) {
+      expect(
+        await codeOf(listReviewMessages({ subjectId: REVISION_REQ, viewer: developer(userId) })),
+        String(userId)
+      ).toBe('NOT_FOUND');
+    }
+    await listReviewMessages({ subjectId: REVISION_REQ, viewer: developer(NEW_OWNER) });
+    expect(dbMock.dbRead.appReviewMessage.findMany).toHaveBeenCalledTimes(1);
+
+    await postReviewMessage({
+      input: { subjectId: REVISION_REQ, body: 'Please resubmit with your own screenshots.' },
+      viewer: moderator,
+    });
+    expect(createNotification).toHaveBeenCalledTimes(1);
+    expect(createNotification.mock.calls[0]![0]).toMatchObject({
+      type: 'app-review-reply-to-developer',
+      userIds: [NEW_OWNER],
+    });
   });
 });
 

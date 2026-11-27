@@ -88,11 +88,14 @@ export function routeReply({
  * developer side of every thread on the app with it.
  */
 export type ReviewThreadOwnership =
-  /** The request's app or listing exists: its canonical owner (`null`: it resolves to none). */
+  /**
+   * The request's app or listing exists (or the listing its slug names already held the slug when
+   * the request was submitted): its canonical owner (`null`: it resolves to none).
+   */
   | { via: 'app'; ownerUserId: number | null }
   /**
-   * A first version (no app yet): the listing its slug names, and that listing's canonical owner.
-   * The slug can name a listing the submitter no longer owns (a transferred draft) or one a
+   * No app or listing on the request, and the listing its slug names was created after the
+   * request: it may be the submitter's own (a draft made with it, since transferred) or one a
    * stranger took after the slug was released, and the two cannot be told apart from the rows.
    */
   | { via: 'slug'; ownerUserId: number }
@@ -104,10 +107,10 @@ export type ReviewThreadOwnership =
  *
  * - The app or listing exists: its canonical owner. The submitter takes part only while they are
  *   that owner, so a former owner loses the thread with the app.
- * - A first version: the submitter while they own the listing its slug names, or while no such
- *   listing exists. A slug listing someone else owns gives nobody: handing it to that owner could
- *   show a stranger another developer's review, and keeping the submitter would keep a former
- *   owner in after a transfer.
+ * - No app or listing on the request, and the listing its slug names came later: the submitter
+ *   while they own it, or while no such listing exists. One someone else owns gives nobody:
+ *   handing it to that owner could show a stranger another developer's review, and keeping the
+ *   submitter would keep a former owner in after a transfer.
  *
  * Accepted editors are not on it: only the owner (and moderators) read, post and are notified.
  */

@@ -85,12 +85,14 @@ type ReviewThreadSubjectRow = {
 
 /**
  * Who owns what a request is for. A request carries its app (version) or listing (listing request)
- * once there is one; before that (a first submission) only its slug names the draft listing.
+ * once there is one. Without one (a first submission, or a rejected listing revision whose shadow
+ * was deleted, which nulls the request's `appListingId`) only its slug names the listing.
  */
 async function resolveOwnership(target: {
   appListingId?: string | null;
   appBlockId?: string | null;
   slug: string;
+  submittedAt: Date;
 }): Promise<ReviewThreadOwnership> {
   if (target.appListingId) {
     const access = await resolveListingAccess(target.appListingId, null);
@@ -104,18 +106,24 @@ async function resolveOwnership(target: {
       where: { appBlockId: target.appBlockId },
       select: { id: true },
     });
-    if (listing) return resolveOwnership({ appListingId: listing.id, slug: target.slug });
+    if (listing) return resolveOwnership({ ...target, appListingId: listing.id, appBlockId: null });
     // A block with no listing: its owner is the block's (`OauthClient.userId`).
     const access = await resolveAppAccess(target.appBlockId, null);
     return { via: 'app', ownerUserId: access?.ownerUserId ?? null };
   }
-  const draft = await dbRead.appListing.findUnique({
+  const byslug = await dbRead.appListing.findUnique({
     where: { slug: target.slug },
-    select: { id: true, revisionOfId: true },
+    select: { id: true, revisionOfId: true, createdAt: true },
   });
-  if (!draft || draft.revisionOfId) return { via: 'none' };
-  const access = await resolveListingAccess(draft.id, null);
-  return access ? { via: 'slug', ownerUserId: access.ownerUserId } : { via: 'none' };
+  if (!byslug || byslug.revisionOfId) return { via: 'none' };
+  const access = await resolveListingAccess(byslug.id, null);
+  if (!access) return { via: 'none' };
+  // Slugs are unique, so a listing that already held this slug when the request was submitted
+  // is the one the request is for (a revision's live parent, say): its owner is the owner. One
+  // created later took the slug after it was released, and may be a stranger's.
+  return byslug.createdAt.getTime() <= target.submittedAt.getTime()
+    ? { via: 'app', ownerUserId: access.ownerUserId }
+    : { via: 'slug', ownerUserId: access.ownerUserId };
 }
 
 async function loadSubject(ref: ReviewThreadSubjectRef): Promise<ReviewThreadSubjectRow | null> {
@@ -130,13 +138,18 @@ async function loadSubject(ref: ReviewThreadSubjectRef): Promise<ReviewThreadSub
         rejectionReason: true,
         approvalNotes: true,
         submittedByUserId: true,
+        submittedAt: true,
         reviewedByUserId: true,
         appBlockId: true,
         reviewedBy: { select: reviewUserChipSelect },
       },
     });
     if (!row) return null;
-    const ownership = await resolveOwnership({ appBlockId: row.appBlockId, slug: row.slug });
+    const ownership = await resolveOwnership({
+      appBlockId: row.appBlockId,
+      slug: row.slug,
+      submittedAt: row.submittedAt,
+    });
     return {
       ref,
       slug: row.slug,
@@ -159,6 +172,7 @@ async function loadSubject(ref: ReviewThreadSubjectRef): Promise<ReviewThreadSub
       rejectionReason: true,
       approvalNotes: true,
       submittedByUserId: true,
+      submittedAt: true,
       reviewedByUserId: true,
       appListingId: true,
       appListing: { select: { name: true } },
@@ -168,7 +182,11 @@ async function loadSubject(ref: ReviewThreadSubjectRef): Promise<ReviewThreadSub
   if (!row) return null;
   // The canonical owner, not the `appListing.userId` copy: for an on-site listing that column
   // is denormalized and can name a former owner (see `resolveListingAccess`).
-  const ownership = await resolveOwnership({ appListingId: row.appListingId, slug: row.slug });
+  const ownership = await resolveOwnership({
+    appListingId: row.appListingId,
+    slug: row.slug,
+    submittedAt: row.submittedAt,
+  });
   return {
     ref,
     slug: row.slug,
