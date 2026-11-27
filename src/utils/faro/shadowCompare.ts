@@ -1,5 +1,6 @@
 import { faro } from '@grafana/faro-web-sdk';
 import {
+  devalueAnswerDiff,
   firstDiffPath,
   withoutReferentialEqualities,
   type ShadowDiff,
@@ -13,7 +14,8 @@ import { claimShadowCompareSlot } from '~/utils/trpc-shadow-compare';
  * at the same moment. The app gets the control leg's response, untouched. Once both settle, one Faro
  * `shadow_compare` measurement says whether the two raw response texts were byte-identical, apart
  * from superjson's `meta.referentialEqualities`, which the Go service never writes
- * (`withoutReferentialEqualities`).
+ * (`withoutReferentialEqualities`). Two devalue answers (`result.data` a devalue string: an answer
+ * that is not edge-cacheable) are compared by their decoded values instead (`devalueAnswerDiff`).
  *
  * Raw text, before any parsing: a transformer round trip can hide a difference a client would see
  * (key order, number formatting, an extra field the parser drops). Both legs start together, so
@@ -297,14 +299,22 @@ async function settle(
   else if (candidate.response.fallback === true) verdict = 'candidate_fallback';
   else if (await sameBytes(controlBytes, candidateBytes)) verdict = 'match';
   else {
-    const controlText =
-      withoutReferentialEqualities(control.response.text) ?? control.response.text;
-    const candidateText =
-      withoutReferentialEqualities(candidate.response.text) ?? candidate.response.text;
-    if (controlText === candidateText) verdict = 'match';
-    else {
+    // Two devalue answers (not edge-cacheable: both writers send devalue) are compared by value.
+    const devalueDiff = devalueAnswerDiff(control.response.text, candidate.response.text);
+    if (devalueDiff === null) verdict = 'match';
+    else if (devalueDiff) {
       verdict = 'mismatch';
-      diff = firstDiffPath(controlText, candidateText);
+      diff = devalueDiff;
+    } else {
+      const controlText =
+        withoutReferentialEqualities(control.response.text) ?? control.response.text;
+      const candidateText =
+        withoutReferentialEqualities(candidate.response.text) ?? candidate.response.text;
+      if (controlText === candidateText) verdict = 'match';
+      else {
+        verdict = 'mismatch';
+        diff = firstDiffPath(controlText, candidateText);
+      }
     }
   }
 

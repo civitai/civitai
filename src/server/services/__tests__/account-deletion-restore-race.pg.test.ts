@@ -4,6 +4,10 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { restoreAccountDeletionImageBatch } from '~/server/services/account-deletion-images';
 import {
+  CSAM_LINK_TABLES_SQL,
+  WITHHELD_TABLES_SQL,
+} from '../../../../packages/civitai-shared/src/__tests__/csam-restriction-cases';
+import {
   TEST_DATABASE_URL,
   runnerOn,
 } from '~/server/services/commentv3/__tests__/two-connection-pg';
@@ -19,10 +23,17 @@ const DDL = `
   CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
   CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
   CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected');
-  CREATE TABLE "User" (id int PRIMARY KEY, "bannedAt" timestamp(3), "deletedAt" timestamp(3));
-  CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int NOT NULL, "postId" int,
+  ${CSAM_LINK_TABLES_SQL}
+  ${WITHHELD_TABLES_SQL}
+  ALTER TABLE "User" ADD "bannedAt" timestamp(3), ADD "deletedAt" timestamp(3);
+  CREATE TABLE "Image" (id int PRIMARY KEY, url text, "pHash" bigint, "userId" int NOT NULL, "postId" int,
     ingestion "ImageIngestionStatus", "blockedFor" text, "nsfwLevel" int NOT NULL DEFAULT 0,
     "nsfwLevelLocked" boolean NOT NULL DEFAULT false, "needsReview" text, metadata jsonb);
+  -- One url per image, so no row is another's url sibling.
+  CREATE FUNCTION image_default_url() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN NEW.url := COALESCE(NEW.url, 'img-' || NEW.id); RETURN NEW; END $$;
+  CREATE TRIGGER image_default_url BEFORE INSERT ON "Image"
+    FOR EACH ROW EXECUTE FUNCTION image_default_url();
   CREATE TABLE "Appeal" (id serial PRIMARY KEY, "entityType" "EntityType" NOT NULL,
     "entityId" int NOT NULL, status "AppealStatus" NOT NULL DEFAULT 'Pending');`;
 

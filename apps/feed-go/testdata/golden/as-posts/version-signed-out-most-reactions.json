@@ -1013,6 +1013,7 @@
                 "minor": false,
                 "poi": false,
                 "restricted": false,
+                "thumbnailUrl": null,
                 "modelVersionIds": [],
                 "modelVersionIdsManual": [],
                 "user": {
@@ -1042,8 +1043,7 @@
                   522
                 ],
                 "cosmetic": null,
-                "eventDecoration": null,
-                "thumbnailUrl": null
+                "eventDecoration": null
               }
             ],
             "review": null
@@ -1099,6 +1099,7 @@
                 "minor": false,
                 "poi": false,
                 "restricted": false,
+                "thumbnailUrl": "00000000-0000-4000-8000-000000008905",
                 "modelVersionIds": [],
                 "modelVersionIdsManual": [],
                 "user": {
@@ -1128,8 +1129,7 @@
                   524
                 ],
                 "cosmetic": null,
-                "eventDecoration": null,
-                "thumbnailUrl": "00000000-0000-4000-8000-000000008905"
+                "eventDecoration": null
               }
             ],
             "review": null
@@ -1214,6 +1214,7 @@
                 "minor": false,
                 "poi": false,
                 "restricted": false,
+                "thumbnailUrl": null,
                 "modelVersionIds": [],
                 "modelVersionIdsManual": [],
                 "user": {
@@ -1282,8 +1283,7 @@
                     "crop": "0%"
                   }
                 },
-                "eventDecoration": null,
-                "thumbnailUrl": null
+                "eventDecoration": null
               }
             ],
             "review": {
@@ -1343,6 +1343,7 @@
                 "minor": true,
                 "poi": false,
                 "restricted": false,
+                "thumbnailUrl": null,
                 "modelVersionIds": [],
                 "modelVersionIdsManual": [],
                 "user": {
@@ -1372,8 +1373,7 @@
                   520
                 ],
                 "cosmetic": null,
-                "eventDecoration": null,
-                "thumbnailUrl": null
+                "eventDecoration": null
               }
             ],
             "review": null
@@ -1400,10 +1400,10 @@
           "items.0.images.0.publishedAt": [
             "Date"
           ],
-          "items.0.images.0.tags": [
+          "items.0.images.0.thumbnailUrl": [
             "undefined"
           ],
-          "items.0.images.0.thumbnailUrl": [
+          "items.0.images.0.tags": [
             "undefined"
           ],
           "items.0.review": [
@@ -1451,10 +1451,10 @@
           "items.2.images.0.publishedAt": [
             "Date"
           ],
-          "items.2.images.0.tags": [
+          "items.2.images.0.thumbnailUrl": [
             "undefined"
           ],
-          "items.2.images.0.thumbnailUrl": [
+          "items.2.images.0.tags": [
             "undefined"
           ],
           "items.3.publishedAt": [
@@ -1475,10 +1475,10 @@
           "items.3.images.0.publishedAt": [
             "Date"
           ],
-          "items.3.images.0.tags": [
+          "items.3.images.0.thumbnailUrl": [
             "undefined"
           ],
-          "items.3.images.0.thumbnailUrl": [
+          "items.3.images.0.tags": [
             "undefined"
           ],
           "items.3.review": [

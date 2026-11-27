@@ -1,5 +1,8 @@
+import { PGlite } from '@electric-sql/pglite';
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { pgliteKysely } from '~/__tests__/pglite-kysely';
+import { NOTHING_WITHHELD_SQL } from '../../../../../packages/civitai-shared/src/__tests__/csam-restriction-cases';
 
 // The mod endpoint that used to select from the feeds index (`metrics_images_v1`). Retired, the
 // index is gone with its Meilisearch instance, so the endpoint must work from Postgres alone. The
@@ -27,6 +30,17 @@ vi.mock('~/server/services/moderator.service', () => ({ trackModActivity: m.trac
 vi.mock('~/server/services/feature-flags.service', () => ({ getFeatureFlags: () => ({}) }));
 vi.mock('~/server/db/pgDb', () => ({ pgDbRead: {}, pgDbReadLong: {}, pgDbWrite: {} }));
 vi.mock('~/server/db/db-helpers', () => ({ dataProcessor: m.dataProcessor }));
+
+const withheld = vi.hoisted(() => ({ db: null as unknown as PGlite }));
+vi.mock('~/server/db/kyselyDb', () => {
+  const db = pgliteKysely(() => withheld.db);
+  return { kyselyRead: db, kyselyWrite: db };
+});
+
+beforeAll(async () => {
+  withheld.db = new PGlite();
+  await withheld.db.exec(NOTHING_WITHHELD_SQL);
+});
 vi.mock('~/server/meilisearch/client', () => ({
   searchClient: { index: () => ({ search: m.imagesSearch }) },
   updateDocs: m.updateDocs,
@@ -36,8 +50,8 @@ import unblockImages from '~/server/api-routes/mod/unblock-images';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // `~/server/db/client` and `~/server/logging/client` are the global canonical mocks (setup.ts).
-const updateManyAndReturn = dbMock.dbWrite.image.updateManyAndReturn;
 const updateMany = dbMock.dbWrite.image.updateMany;
+const primaryRaw = dbMock.dbWrite.$queryRaw;
 
 type Handler = (req: NextApiRequest, res: NextApiResponse, user?: unknown) => unknown;
 
@@ -61,7 +75,7 @@ const call = async (handler: unknown, query: Record<string, string> = {}) => {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  updateManyAndReturn.mockResolvedValue([]);
+  primaryRaw.mockResolvedValue([]);
   updateMany.mockResolvedValue({ count: 0 });
 });
 
@@ -71,23 +85,18 @@ describe('/api/mod/unblock-images', () => {
     dbMock.dbRead.$queryRaw
       .mockResolvedValueOnce([{ maxId: 12 }])
       .mockResolvedValueOnce([{ id: 11 }, { id: 12 }]);
-    updateManyAndReturn.mockResolvedValue([{ id: 11 }]);
+    primaryRaw.mockResolvedValue([{ id: 11 }]);
 
     const { status, body } = await call(unblockImages);
 
     expect(status).toBe(200);
     expect(updateMany).not.toHaveBeenCalled();
-    expect(updateManyAndReturn).toHaveBeenCalledWith({
-      where: {
-        id: { in: [11, 12] },
-        blockedFor: { in: ['moderated', 'Moderated'] },
-        needsReview: null,
-        nsfwLevel: { notIn: [0, 32] },
-        ingestion: { not: 'Blocked' },
-      },
-      data: { blockedFor: null },
-      select: { id: true },
-    });
+    const [strings, ...values] = primaryRaw.mock.calls[0] as [TemplateStringsArray, ...unknown[]];
+    const update = strings.join('?');
+    expect(update).toContain('UPDATE "Image"');
+    expect(update).toContain(`AND i."blockedFor" IN ('moderated', 'Moderated')`);
+    expect(update).toContain('AND i."needsReview" IS NULL');
+    expect(values.slice(0, 3)).toEqual([[11, 12], 32, 'Blocked']);
     expect(m.dropBlockedImageDeleteQueue).toHaveBeenCalledWith([11]);
     expect(m.queueImageSearchIndexUpdate).toHaveBeenCalledWith(
       expect.objectContaining({ ids: [11] })

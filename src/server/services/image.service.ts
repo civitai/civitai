@@ -1401,7 +1401,13 @@ export async function handleUnblockImages({
   ids: imageIds,
   moderatorId,
   removeMinorFlag,
+  csamReview,
 }: ImageModerationUnblockSchema) {
+  // Re-checked by the UPDATE itself, so a mark that lands after the caller's own check still holds.
+  const notWithheld = Prisma.sql`NOT EXISTS (
+    SELECT 1 FROM "Image" i WHERE i.id = "Image".id
+      AND ${Prisma.raw(moderatorWithheldSql('i', { csamReview }))}
+  )`;
   const found = await dbRead.image.findMany({
     where: { id: { in: imageIds } },
     select: {
@@ -1461,6 +1467,7 @@ export async function handleUnblockImages({
             "ingestion" = ${liftedIngestionSql}
           WHERE id IN (${Prisma.join(groupedIds)})
             AND ${liftableByUnblockSql}
+            AND ${notWithheld}
           RETURNING id, ${liftKeptBlockedSql} AS "keptBlocked";
         `
       )

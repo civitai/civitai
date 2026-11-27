@@ -306,6 +306,8 @@ export type ImageModerationUnblockSchema = {
   ids: number[];
   moderatorId?: number;
   removeMinorFlag?: boolean;
+  /** The acting moderator's CSAM grant: an image withheld from them is not lifted. */
+  csamReview: boolean;
 };
 export type ImageModerationBlockSchema = {
   ids?: number[];

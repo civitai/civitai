@@ -113,6 +113,7 @@ export const actions: Actions = {
       ...splitImageFlagValue(input.flagValue),
       imageIds: [input.imageId],
       moderatorId: locals.user.id,
+      csamReview: holdsCsamReview(locals.user),
     });
     if (!result.ok) return fail(400, { error: result.error });
     return { success: true };

@@ -3,6 +3,7 @@ import { MESSAGE_AS_CIVITAI_MAX_LENGTH } from '$lib/message-as-civitai';
 import { fail, type Actions } from '@sveltejs/kit';
 import { z } from 'zod';
 import { canAccess, denied } from './access';
+import { holdsCsamReview } from './held-media';
 import { withheldRefusal } from './retracted-media';
 import { parseForm, parseIdList, userIdSchema, checkboxField } from './query';
 import { issueStrike, restoreImages, setImageFlag } from './user-actions.service';
@@ -181,7 +182,11 @@ export function reportModerationActions(pagePath: string) {
 
       const wasBlocked = await countBlockedImages(input.imageIds);
 
-      const result = await restoreImages({ imageIds: input.imageIds, moderatorId: locals.user.id });
+      const result = await restoreImages({
+        imageIds: input.imageIds,
+        moderatorId: locals.user.id,
+        csamReview: holdsCsamReview(locals.user),
+      });
       if (!result.ok) return scopedFail('images', result.error);
       return {
         success: true,
@@ -205,6 +210,7 @@ export function reportModerationActions(pagePath: string) {
         ...splitImageFlagValue(input.flagValue),
         imageIds: input.imageIds,
         moderatorId: locals.user.id,
+        csamReview: holdsCsamReview(locals.user),
       });
       if (!result.ok) return scopedFail('images', result.error);
       return { success: true, imageResult: `Updated ${input.imageIds.length} images.` };

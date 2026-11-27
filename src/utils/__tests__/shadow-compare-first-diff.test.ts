@@ -97,6 +97,13 @@ describe('firstDiffPath', () => {
     });
   });
 
+  it('-0 against 0 is a value difference at its path, not encoding (JSON.parse keeps -0)', () => {
+    expect(firstDiffPath('{"score":-0}', '{"score":0}')).toEqual({
+      path: '$.score',
+      kind: 'value',
+    });
+  });
+
   it('a text that is not JSON: kind unparseable', () => {
     expect(firstDiffPath('{"locked":true}', '<html>Bad gateway</html>')).toEqual({
       path: '$',
