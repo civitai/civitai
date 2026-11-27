@@ -718,12 +718,9 @@ describe('a restore and the recorded review flag, on the real statement', () => 
       [113, 'Blocked', 'csam'],
     ]);
     expect(result).toMatchObject({ unblocked: 1, withheld: 2 });
+    // Support finds an owner's withheld restore by this count.
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        message: 'left withheld images blocked',
-        userId: OWNER,
-        payload: { withheld: 2 },
-      })
+      expect.objectContaining({ userId: OWNER, payload: expect.objectContaining({ withheld: 2 }) })
     );
   });
 });

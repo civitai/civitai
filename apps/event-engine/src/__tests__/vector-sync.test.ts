@@ -1445,7 +1445,16 @@ describe('collection layout', () => {
       alias: 'images_semantic',
     });
     expect(created.map((c) => c.field_name).sort()).toEqual(
-      ['baseModels', 'nsfwLevel', 'postId', 'sortAt', 'tagIds', 'type', 'userId'].sort()
+      [
+        'baseModels',
+        'modelVersionIds',
+        'nsfwLevel',
+        'postId',
+        'sortAt',
+        'tagIds',
+        'type',
+        'userId',
+      ].sort()
     );
     expect(created.every((c) => c.field_schema.on_disk === true)).toBe(true);
     // userId is only an exclusion and postId is not a search filter: no HNSW links for them.

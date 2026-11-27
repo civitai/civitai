@@ -297,7 +297,9 @@ image(8009, 7010, {
   type: 'video',
   metadata: { width: 1280, height: 720, duration: 45, thumbnailId: 8909 },
 });
-// Two videos whose cached thumbnails are not servable: one marked, one cached before the field existed.
+// Three videos whose cached thumbnails are not servable: one marked under a block that refuses its
+// owner the media, one cached before either field existed, one marked under a hold that leaves its
+// owner the media (ownerMediaAllowed, src/server/common/image-block-marker.ts).
 image(8031, 7020, {
   type: 'video',
   metadata: { width: 1280, height: 720, duration: 12, thumbnailId: 8931 },
@@ -306,6 +308,11 @@ image(8032, 7020, {
   index: 1,
   type: 'video',
   metadata: { width: 1280, height: 720, duration: 12, thumbnailId: 8932 },
+});
+image(8033, 7020, {
+  index: 2,
+  type: 'video',
+  metadata: { width: 1280, height: 720, duration: 12, thumbnailId: 8933 },
 });
 // A post of eight, its images created on different weekdays (the createdAt string sort) and out of
 // index order (the Newest index sort).
@@ -489,8 +496,9 @@ const metaOf = (id) => (IMAGES[id].hideMeta ? null : prismaJson(META[id] ?? null
 const THUMBNAILS = {
   8005: { id: 8905, url: uuid(8905), width: 640, height: 360, nsfwLevel: 1, blockMarked: false, parentId: 8005 },
   8009: { id: 8909, url: uuid(8909), width: 640, height: 360, nsfwLevel: 2, blockMarked: false, parentId: 8009 },
-  8031: { id: 8931, url: uuid(8931), width: 640, height: 360, nsfwLevel: 1, blockMarked: true, parentId: 8031 },
+  8031: { id: 8931, url: uuid(8931), width: 640, height: 360, nsfwLevel: 1, blockMarked: true, ownerMediaAllowed: false, parentId: 8031 },
   8032: { id: 8932, url: uuid(8932), width: 640, height: 360, nsfwLevel: 1, parentId: 8032 },
+  8033: { id: 8933, url: uuid(8933), width: 640, height: 360, nsfwLevel: 1, blockMarked: true, ownerMediaAllowed: true, parentId: 8033 },
 };
 // Tag ids per image (tagIdsForImagesCache). None are tags the addons exclude.
 const tagIdsOf = (id) => [501 + (id % 3), 520 + (id % 7)];
@@ -1542,10 +1550,13 @@ function getAllImagesUncaptured(input) {
       ...i,
       model3dId: null,
       meta: null,
-      // ...feedThumbnailFields(...): `nsfwLevel` overrides in place, `thumbnailUrl` is added here.
+      // ...feedThumbnailFields(...): `nsfwLevel` overrides in place, `thumbnailUrl` is added here. The
+      // creator gets a block-marked thumbnail only where `ownerMediaAllowed` is true (an entry cached
+      // without the field counts as false).
       nsfwLevel: Math.max(thumbnail?.nsfwLevel ?? 0, i.nsfwLevel),
       thumbnailUrl:
-        thumbnail && (thumbnail.blockMarked === false || creatorId === userId || isModerator)
+        thumbnail &&
+        (thumbnail.blockMarked === false || (creatorId === userId && thumbnail.ownerMediaAllowed === true) || isModerator)
           ? thumbnail.url
           : undefined,
       modelVersionIds: resources?.filter((r) => r.detected).map((r) => r.modelVersionId) ?? [],
@@ -2991,8 +3002,8 @@ const V1 = [
   },
   {
     name: 'video-thumbnails-unservable',
-    description: '`ids` of two videos whose cached thumbnails are not servable (one marked, one with no marker field): each falls back to a still cut from the video.',
-    query: 'ids=8031,8032&type=video',
+    description: '`ids` of three videos whose cached thumbnails are not servable (one marked under a block that refuses the owner, one with no marker field, one marked under a hold that leaves the owner the media): each falls back to a still cut from the video.',
+    query: 'ids=8031,8032,8033&type=video',
   },
   {
     name: 'signed-in-moderator',
@@ -4187,17 +4198,24 @@ const INFINITE = [
   },
   {
     name: 'ids-video-thumbnails-unservable',
-    description: 'Two videos whose cached thumbnails are not servable (one marked, one with no marker field), signed out: no thumbnailUrl; the thumbnail still counts toward the level.',
+    description: 'Three videos whose cached thumbnails are not servable (one marked under a block that refuses the owner, one with no marker field, one marked under a hold that leaves the owner the media), signed out: no thumbnailUrl; the thumbnail still counts toward the level.',
     viewer: null,
     host: HOST.green,
-    input: { ids: [8031, 8032], types: ['video'], browsingLevel: 1, limit: 10 },
+    input: { ids: [8031, 8032, 8033], types: ['video'], browsingLevel: 1, limit: 10 },
   },
   {
     name: 'ids-video-thumbnails-unservable-creator',
-    description: 'The same videos for their creator: the thumbnailUrl is served.',
+    description: 'The same videos for their creator: only the thumbnail whose block leaves the owner the media (ownerMediaAllowed) has a thumbnailUrl; the refused one and the one cached without the field have none.',
     viewer: 1002,
     host: HOST.green,
-    input: { ids: [8031, 8032], types: ['video'], browsingLevel: 1, limit: 10 },
+    input: { ids: [8031, 8032, 8033], types: ['video'], browsingLevel: 1, limit: 10 },
+  },
+  {
+    name: 'ids-video-thumbnails-unservable-other-user',
+    description: 'The same videos for a signed-in viewer who is not their creator: no thumbnailUrl, not even where the block leaves the owner the media.',
+    viewer: 1001,
+    host: HOST.green,
+    input: { ids: [8031, 8032, 8033], types: ['video'], browsingLevel: 1, limit: 10 },
   },
   {
     name: 'ids-and-reactions-empty',

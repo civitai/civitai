@@ -15,6 +15,7 @@ export type PayloadIndexes<P> = Array<[keyof P & string, Schemas['PayloadSchemaP
 const PAYLOAD_INDEXES: PayloadIndexes<ImagePayload> = [
   ['nsfwLevel', { type: 'integer', lookup: true, range: true, on_disk: true }],
   ['tagIds', { type: 'integer', lookup: true, range: false, on_disk: true }],
+  ['modelVersionIds', { type: 'integer', lookup: true, range: false, on_disk: true }],
   ['baseModels', { type: 'keyword', on_disk: true }],
   ['type', { type: 'keyword', on_disk: true }],
   ['userId', { type: 'integer', lookup: true, range: false, on_disk: true, enable_hnsw: false }],

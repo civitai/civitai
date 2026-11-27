@@ -7,6 +7,7 @@ import {
   sharedFileHeldImageSql,
 } from '@civitai/shared/held-media';
 import { withheldCosmeticIds } from '@civitai/shared/knights-shop';
+import { moderatorWithheldSql } from '@civitai/shared/retracted-media-tier';
 import { KNIGHTS_NSFW_LEVEL_QUESTION, KNIGHTS_STAGE_RANKS } from '@civitai/shared/new-order';
 
 // tsx loads CommonJS-scoped workspace packages as one `default` object when an ES module imports them.
@@ -187,13 +188,23 @@ export const MOD_TAG_REVIEW_SOURCE = 'mod-tag-review';
 export const MOD_TAG_REVIEW_AXIS = 'tag_review';
 
 /**
- * Images players may judge for a moderator review queue: `servableImageContent` and no open report on the image.
+ * The image half of `modReviewEligibleImage`: `servableImageContent`, and not withheld from a moderator without the
+ * CSAM grant (`moderatorWithheldSql`), since a player holds no grant. Expects `Image as img` joined to `Post as p`.
+ */
+export const modReviewContent = (eb: ExpressionBuilder<Joined, 'img' | 'p'>) =>
+  eb.and([
+    servableImageContent(eb),
+    sql<SqlBool>`NOT ${sql.raw(moderatorWithheldSql('img', { csamReview: false }))}`,
+  ]);
+
+/**
+ * Images players may judge for a moderator review queue: `modReviewContent` and no open report on the image.
  * Everything else stays staff-only. Used where the tag review item is created, served, voted on and swept, and by the
  * moderator app's write-back guard. Expects `Image as img` joined to `Post as p`; the post half is the caller's
  * (`servableImage` for serving).
  */
 export const modReviewEligibleImage = (eb: ExpressionBuilder<Joined, 'img' | 'p'>) =>
-  eb.and([servableImageContent(eb), noOpenImageReport]);
+  eb.and([modReviewContent(eb), noOpenImageReport]);
 
 /** No report waiting on a moderator names the image `img`. */
 export const noOpenImageReport = sql<SqlBool>`NOT EXISTS (

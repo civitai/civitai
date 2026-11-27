@@ -13,7 +13,7 @@ import {
 import { trackModActivity } from '~/server/services/moderator.service';
 import { withheldImageIds } from '~/server/services/moderator-withheld.service';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
-import { ModEndpoint } from '~/server/utils/endpoint-helpers';
+import { handleEndpointError, ModEndpoint } from '~/server/utils/endpoint-helpers';
 
 /**
  * GET endpoint to batch update Image.blockedFor to null for images with blockedFor = 'moderated',
@@ -63,8 +63,7 @@ export async function unblockModeratedImages(
   const unblockIds = candidateIds.filter((id) => !withheld.has(id));
 
   console.log(`[unblock-images] Updating ${unblockIds.length} images in the database...`);
-  // The scan read the replica; only rows still blocked for moderation on the primary, still
-  // matching the filter above and still not withheld from the caller, are cleared.
+  // The scan read the replica: the primary re-checks every condition.
   const unblocked = unblockIds.length
     ? await dbWrite.$queryRaw<{ id: number }[]>`
         UPDATE "Image" i SET "blockedFor" = NULL, "updatedAt" = now()
@@ -122,20 +121,7 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
 
     return res.status(200).json({ updated, ms: elapsed });
   } catch (error) {
-    const e = error as Error;
-    console.error('[unblock-images] Error:', e);
-    logToAxiom({
-      type: 'error',
-      name: 'mod-unblock-images-error',
-      message: e.message,
-      stack: e.stack,
-    });
-
-    return res.status(500).json({
-      error: 'Internal Server Error',
-      message: e.message,
-      ...(process.env.NODE_ENV === 'development' && { stack: e.stack }),
-    });
+    return handleEndpointError(res, error);
   }
 }
 
