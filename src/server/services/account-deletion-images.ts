@@ -214,14 +214,14 @@ async function raiseToRecordedFloor(rows: { id: number; floorLevel: number | nul
   if (raised.length) await refreshImageLevelCaches(raised.map((x) => x.id));
 }
 
+/** An account restore is no moderator's ruling on the media, so it lifts no withheld image. */
+const WITHHELD_FROM_RESTORE = Prisma.raw(moderatorWithheldSql('i', { csamReview: false }));
+
 /**
  * One restore pass: claims up to RESTORE_BATCH_SIZE of the account's grace-blocked rows, puts back
  * what the grace block recorded, and strips the breadcrumbs. `recordedLevel` is set on a row whose
  * recorded rating was put back; the caller re-rates the others, then raises each to its `floorLevel`.
  */
-/** An account restore is no moderator's ruling on the media, so it lifts no withheld image. */
-const WITHHELD_FROM_RESTORE = Prisma.raw(moderatorWithheldSql('i', { csamReview: false }));
-
 export function restoreAccountDeletionImageBatch(userId: number) {
   return dbWrite.$queryRaw<
     {

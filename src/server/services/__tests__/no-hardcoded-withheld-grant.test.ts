@@ -22,6 +22,7 @@ const ALLOWED_VALUES = [
   '!!getFeatureFlags({ user: ctx.actor, req: ctx.req }).csamReports',
   'input.csamReview',
   // A token route's request schema: the moderator app forwards its moderator's grant, fail-closed.
+  // WebhookEndpoint routes only: in a session or tRPC input a client would assert its own grant.
   'forwardedCsamGrantInBody',
   'forwardedCsamGrantInQuery',
 ];

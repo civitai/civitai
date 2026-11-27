@@ -1,3 +1,5 @@
+import { moderatorWithheldSql } from '@civitai/shared/retracted-media-tier';
+import { Prisma } from '@prisma/client';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { SessionUser } from '~/types/session';
 import { NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
@@ -61,19 +63,20 @@ export async function unblockModeratedImages(
   const unblockIds = candidateIds.filter((id) => !withheld.has(id));
 
   console.log(`[unblock-images] Updating ${unblockIds.length} images in the database...`);
-  // The scan read the replica; only rows still blocked for moderation on the primary, and still
-  // matching the filter above, are cleared.
-  const unblocked = await dbWrite.image.updateManyAndReturn({
-    where: {
-      id: { in: unblockIds },
-      blockedFor: { in: ['moderated', 'Moderated'] },
-      needsReview: null,
-      nsfwLevel: { notIn: [0, NsfwLevel.Blocked] },
-      ingestion: { not: ImageIngestionStatus.Blocked },
-    },
-    data: { blockedFor: null },
-    select: { id: true },
-  });
+  // The scan read the replica; only rows still blocked for moderation on the primary, still
+  // matching the filter above and still not withheld from the caller, are cleared.
+  const unblocked = unblockIds.length
+    ? await dbWrite.$queryRaw<{ id: number }[]>`
+        UPDATE "Image" i SET "blockedFor" = NULL, "updatedAt" = now()
+        WHERE i.id = ANY(${unblockIds}::int[])
+          AND i."blockedFor" IN ('moderated', 'Moderated')
+          AND i."needsReview" IS NULL
+          AND i."nsfwLevel" NOT IN (0, ${NsfwLevel.Blocked})
+          AND i.ingestion <> ${ImageIngestionStatus.Blocked}::"ImageIngestionStatus"
+          AND NOT ${Prisma.raw(moderatorWithheldSql('i', { csamReview }))}
+        RETURNING i.id
+      `
+    : [];
   const unblockedIds = unblocked.map((image) => image.id);
   console.log(
     `[unblock-images] DB update complete: cleared ${unblockedIds.length} of ${candidateIds.length} candidates.`

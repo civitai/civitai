@@ -703,22 +703,26 @@ describe('a restore and the recorded review flag, on the real statement', () => 
         (110, ${OWNER}, 'plain', 'Blocked', 'moderated', 32, ${crumbs(null)}),
         (111, ${OWNER}, 'shared', 'Blocked', 'moderated', 32, ${crumbs(null)}),
         (112, ${OTHER_OWNER}, 'shared', 'Blocked', 'CSAM', 32, NULL);
+      -- In the CSAM queue, so withheld: its recorded review is never weighed against the csam one.
+      INSERT INTO "Image" (id, "userId", url, ingestion, "blockedFor", "nsfwLevel", "needsReview", metadata)
+        VALUES (113, ${OWNER}, 'queued', 'Blocked', 'moderated', 32, 'csam', ${crumbs('minor')});
     `);
 
     const result = await unblockAccountDeletionImages(OWNER);
 
-    const rows = await reviewsOf([110, 111]);
-    expect(rows.map((row) => [row.id, row.ingestion])).toEqual([
-      [110, 'Scanned'],
+    const rows = await reviewsOf([110, 111, 113]);
+    expect(rows.map((row) => [row.id, row.ingestion, row.needsReview])).toEqual([
+      [110, 'Scanned', null],
       // A url sibling of a CSAM block: withheld, so the restore leaves it as the block left it.
-      [111, 'Blocked'],
+      [111, 'Blocked', null],
+      [113, 'Blocked', 'csam'],
     ]);
-    expect(result).toMatchObject({ unblocked: 1, withheld: 1 });
+    expect(result).toMatchObject({ unblocked: 1, withheld: 2 });
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({
         message: 'left withheld images blocked',
         userId: OWNER,
-        payload: { withheld: 1 },
+        payload: { withheld: 2 },
       })
     );
   });
