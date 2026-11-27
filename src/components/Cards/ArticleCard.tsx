@@ -25,11 +25,11 @@ const articleStatusBadge: Partial<Record<ArticleStatus, { label: string; color: 
   [ArticleStatus.UnpublishedViolation]: { label: 'Violation', color: 'red' },
 };
 
-export const ArticleCard = memo(function ArticleCard({ data, aspectRatio }: Props) {
-  return <ArticleCardContent data={data} aspectRatio={aspectRatio} />;
+export const ArticleCard = memo(function ArticleCard({ data, aspectRatio, label }: Props) {
+  return <ArticleCardContent data={data} aspectRatio={aspectRatio} label={label} />;
 });
 
-function ArticleCardContent({ data, aspectRatio }: Props) {
+function ArticleCardContent({ data, aspectRatio, label }: Props) {
   const { id, title, coverImage, publishedAt, user, tags, status, nsfwLevel, isOfficial } = data;
   // Show the article's aggregate nsfwLevel on the card (badge + blur), not just
   // the cover image's own level. Content images or a moderator/user override can
@@ -58,6 +58,11 @@ function ArticleCardContent({ data, aspectRatio }: Props) {
       header={
         <div className="flex w-full justify-between">
           <div className="flex items-center gap-1">
+            {label && (
+              <Badge size="sm" variant="filled" color="dark" className={cardClasses.chip}>
+                {label}
+              </Badge>
+            )}
             {/* Provenance leads: an official article is official before it is a guide. */}
             {isOfficial && <OfficialArticleBadge className={cardClasses.chip} />}
             {category && (
@@ -171,5 +176,8 @@ function ArticleStats({ data }: { data: ArticleGetAllRecord }) {
 
 type Props = {
   data: ArticleGetAllRecord;
-  aspectRatio?: 'landscape' | 'portrait' | 'square';
+  /** Named shape, or a width/height number, as AspectRatioImageCard takes. */
+  aspectRatio?: 'landscape' | 'portrait' | 'square' | number;
+  /** A chip ahead of the card's own, naming where it sits (e.g. "Latest article"). */
+  label?: string;
 };

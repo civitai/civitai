@@ -7,6 +7,7 @@ import { FeedCard } from '~/components/Cards/FeedCard';
 import { cardGlowOf } from '~/components/CreatorCard/card-glow';
 import creatorCardClasses from '~/components/CreatorCard/CreatorCard.module.css';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { SidebarBackgroundArt } from '~/components/Profile/SidebarBackgroundArt';
 import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrapper';
 import { NamePlateText } from '~/components/User/NamePlateText';
 import type {
@@ -15,6 +16,7 @@ import type {
   StickerCosmetic,
   NamePlateCosmetic,
   ProfileBackgroundCosmetic,
+  SidebarBackgroundCosmetic,
 } from '~/server/selectors/cosmetic.selector';
 import type { EventDecorationData } from '~/shared/constants/event-decoration.constants';
 import { isEventDecorationData } from '~/shared/constants/event-decoration.constants';
@@ -157,6 +159,24 @@ export const CosmeticSample = ({
         >
           <div className="h-1.5 w-3/4 rounded-full bg-gray-3 dark:bg-dark-3" />
           <div className="h-1.5 w-1/2 rounded-full bg-gray-3 dark:bg-dark-3" />
+        </div>
+      );
+    }
+    case CosmeticType.SidebarBackground: {
+      const sidebarData = cosmetic.data as SidebarBackgroundCosmetic['data'];
+      if (!sidebarData.url) return null;
+
+      // On the sidebar's own card colour, so the fade reads as it does on the profile.
+      return (
+        <div
+          className="relative aspect-[4/3] w-full overflow-hidden rounded-md bg-gray-0 dark:bg-dark-6"
+          style={{ minWidth: values.badgeSize }}
+        >
+          <SidebarBackgroundArt
+            data={sidebarData}
+            loading={loading}
+            className="absolute inset-x-0 top-0 h-3/4"
+          />
         </div>
       );
     }

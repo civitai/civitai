@@ -404,6 +404,8 @@ export const constants = {
     mobileCoverImageAspectRatio: 1 / 4,
     coverImageHeight: 400,
     coverImageWidth: 1600,
+    // The desktop profile sidebar (ProfileLayout2's w-[320px]).
+    sidebarWidth: 320,
     showcaseItemsLimit: 32,
     bioMaxLength: 400,
     messageMaxLength: 1200,

@@ -340,6 +340,42 @@ describe('updateUserProfile — a stored cover whose block refuses its owner the
   });
 });
 
+describe('updateUserProfile — a stored page background whose block refuses its owner the media', () => {
+  const save = () =>
+    updateUserProfile({
+      userId: USER_ID,
+      sessionUserId: USER_ID,
+      profileRedesign: true,
+      bio: 'new bio',
+      // What the redesign's form sends back for a background its read withheld.
+      backgroundImage: null,
+      sfwBackgroundImage: null,
+    } as never);
+  const written = () => (tx.userProfile.update.mock.calls[0] as any[])[0].data;
+
+  it('is kept by a bio-only save', async () => {
+    mockDb.userProfile.findUnique.mockResolvedValue({
+      backgroundImage: { ingestion: 'Blocked', blockedFor: 'tos' },
+      sfwBackgroundImage: { ingestion: 'Blocked', blockedFor: 'moderated' },
+    } as never);
+    await save();
+
+    expect(written().backgroundImage).toBeUndefined();
+    expect(written().sfwBackgroundImage).toBeUndefined();
+    expect(written().bio).toBe('new bio');
+  });
+
+  it('is cleared when it was one the owner could see (control)', async () => {
+    mockDb.userProfile.findUnique.mockResolvedValue({
+      backgroundImage: { ingestion: 'Scanned', blockedFor: null },
+      sfwBackgroundImage: null,
+    } as never);
+    await save();
+
+    expect(written().backgroundImage).toEqual({ disconnect: true });
+  });
+});
+
 describe('updateUserProfile — links', () => {
   it('updates an existing link only on the profile being saved', async () => {
     await updateUserProfile({

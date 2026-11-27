@@ -1,12 +1,4 @@
-import {
-  AspectRatio,
-  Group,
-  Skeleton,
-  Stack,
-  Text,
-  ThemeIcon,
-  useComputedColorScheme,
-} from '@mantine/core';
+import { AspectRatio, Group, Skeleton, Stack, Text, ThemeIcon } from '@mantine/core';
 import { IconCloudOff } from '@tabler/icons-react';
 import React from 'react';
 import type { UserWithProfile } from '~/types/router';
@@ -54,7 +46,6 @@ export const ProfileSectionPreview = ({
   );
 };
 export const ProfileSection = ({ children, title, icon, action }: Props) => {
-  const colorScheme = useComputedColorScheme('dark');
   return (
     <Stack gap="md">
       <Group justify="space-between" align="center">
@@ -65,7 +56,8 @@ export const ProfileSection = ({ children, title, icon, action }: Props) => {
           <Text
             className={classes.title}
             fw={590}
-            color={colorScheme === 'dark' ? 'white' : 'black'}
+            // White or black by theme, and dark or light on a member's card colour.
+            c="var(--mantine-color-bright)"
           >
             {title}
           </Text>

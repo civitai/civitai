@@ -680,6 +680,8 @@ const featureFlags = createFeatureFlags({
   creatorJourney: { availability: ['mod'], fliptKey: 'creator-journey' },
   // Creator-built showcase sections on the profile page.
   profileShowcases: { availability: ['mod'], fliptKey: 'profile-showcases' },
+  // The redesigned profile page.
+  profileRedesign: { availability: ['mod'], fliptKey: 'profile-redesign' },
   // Creators curate a model version's showcase per site and feature community images in it.
   modelVersionShowcase: { availability: ['mod'], fliptKey: 'model-version-showcase' },
   // Kill switch for serving curated version showcases (the flag above gates curating). Read with no
