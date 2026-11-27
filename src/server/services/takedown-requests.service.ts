@@ -20,6 +20,17 @@ const casesClient = createModeratorClient({
 
 export const takedownRequestsConfigured = () => !!env.MOD_CASES_TOKEN;
 
+const caseTickResult = z.object({
+  evaluated: z.number(),
+  alerted: z.number(),
+  overdue: z.number(),
+});
+
+/** One clock evaluation in the moderator app, which records and alerts on its own. */
+export async function runCaseTick() {
+  return caseTickResult.parse(await casesClient.caseTick());
+}
+
 const fieldSchema = z.object({
   id: z.string(),
   label: z.string(),
