@@ -73,6 +73,7 @@ export async function pickItem(
         src: imageUrl(offer.imageKey),
         width: offer.width,
         height: offer.height,
+        ...(offer.reportable ? { reportable: true } : {}),
       },
     };
   }

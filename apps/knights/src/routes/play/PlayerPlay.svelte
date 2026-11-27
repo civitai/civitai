@@ -49,6 +49,7 @@
     type PickedItem,
   } from './optimistic';
   import { BLOCKED_ANSWER, BLOCK_REASONS, asksBlockReason, type BlockReason } from '$lib/block-reasons';
+  import { REPORT_REASONS } from '$lib/report-reasons';
   import type { ActionData, PageData } from './$types';
   import type { PlayerStatsSignal } from '$lib/server/live/announce';
   import { connectSignals, joinTopic, onSignal, signalsAt } from '$lib/signals';
@@ -103,6 +104,10 @@
   let imageFailed = $derived(!!view && failedItem === view.item.key);
   let reasonItem = $state<string | null>(null);
   let choosingReason = $derived(!!view && reasonItem === view.item.key);
+  // The report picker, for the yes/no question on screen; a picked reason posts the skip with it.
+  let reportItem = $state<string | null>(null);
+  let choosingReport = $derived(!!view && reportItem === view.item.key);
+  let reportable = $derived(yesNo && !!view?.item.reportable);
   // The item on screen that other players settled: it stays up under a card, locked, until the player moves on.
   let settledItem = $state<string | null>(null);
   let settledOnScreen = $derived(!!view && settledItem === view.item.key);
@@ -187,7 +192,12 @@
     }
     if (choosingReason) {
       const reason = answerForKey([...BLOCK_REASONS], event.key);
-      if (reason && !event.ctrlKey && !event.metaKey && !event.altKey) pickReason(reason as BlockReason);
+      if (reason && !event.ctrlKey && !event.metaKey && !event.altKey) pickReason(reason);
+      return;
+    }
+    if (choosingReport) {
+      const reason = answerForKey([...REPORT_REASONS], event.key);
+      if (reason && !event.ctrlKey && !event.metaKey && !event.altKey) pickReport(reason);
       return;
     }
     const screen = {
@@ -199,6 +209,11 @@
     if (event.ctrlKey || event.metaKey || event.altKey) return;
     const target = event.target as HTMLElement | null;
     if (target?.closest('input, textarea, select, [contenteditable], header')) return;
+    if (event.key.toLowerCase() === 'r' && reportable && !imageFailed) {
+      event.preventDefault();
+      openReport();
+      return;
+    }
     if (event.key === ' ') {
       if (!spaceSkips(screen)) return;
       event.preventDefault();
@@ -210,8 +225,20 @@
     if (value) answers?.querySelector<HTMLButtonElement>(`button[value="${value}"]`)?.click();
   }
 
-  function pickReason(reason: BlockReason) {
-    blockReason = reason;
+  function openReport() {
+    if (submitting || settledOnScreen || questionTimeShowing) return;
+    reportItem = view?.item.key ?? null;
+  }
+
+  // Posts the skip with the reason, through its hidden button for that reason, so it moves on the way Not sure does.
+  function pickReport(reason: string) {
+    reportItem = null;
+    const button = skipForm?.querySelector<HTMLButtonElement>(`button[name="report"][value="${reason}"]`);
+    if (button) skipForm?.requestSubmit(button);
+  }
+
+  function pickReason(reason: string) {
+    blockReason = reason as BlockReason;
     reasonItem = null;
     const blocked = answers?.querySelector<HTMLButtonElement>(`button[value="${BLOCKED_ANSWER}"]`);
     if (blocked) answers?.requestSubmit(blocked);
@@ -1032,9 +1059,14 @@
             {@render pill(option, index, imageFailed || settledOnScreen || questionTimeShowing, asksBlockReason(shown.question.key))}
           {/each}
         </form>
-        <form class="skip" method="POST" action="?/skip" use:enhance={submitJudgment} bind:this={skipForm}>
+        <form class="skip" class:reportable method="POST" action="?/skip" use:enhance={submitJudgment} bind:this={skipForm}>
           <input type="hidden" name="item" value={shown.item.id} />
           <button type="submit" name="settled" value="1" hidden tabindex="-1" aria-label="Continue" bind:this={settledSubmit}></button>
+          {#if reportable}
+            {#each REPORT_REASONS as reason (reason.value)}
+              <button type="submit" name="report" value={reason.value} hidden tabindex="-1" aria-label={reason.label}></button>
+            {/each}
+          {/if}
           {#if yesNo}
             <!-- Posts the skip action: on a question that is the Not sure answer. -->
             <AnswerPill
@@ -1046,6 +1078,22 @@
               hint="Not sure (Space)"
               disabled={submitting || settledOnScreen || questionTimeShowing}
             />
+            {#if reportable}
+              <!-- Opens the report picker; the reason picked posts the skip with it. -->
+              <AnswerPill
+                option={{ value: 'report', label: 'Report' }}
+                index={0}
+                yesNo
+                icon="flag"
+                keyHint="R"
+                hint="Report a problem with the image or the question (R)"
+                disabled={submitting || settledOnScreen || questionTimeShowing}
+                onclick={(event) => {
+                  event.preventDefault();
+                  openReport();
+                }}
+              />
+            {/if}
           {:else}
             <button type="submit" class="quiet" disabled={submitting || settledOnScreen} aria-label="Skip" title="Skip (Space)">
               <Icon name="skip-forward" size={14} /><span class="skiplabel">Skip</span><span class="space">&nbsp;·&nbsp;Space</span>
@@ -1060,6 +1108,13 @@
         <span class="rowtool">{@render soundToggle()}</span>
         {#if choosingReason}
           <BlockReasons onpick={pickReason} oncancel={() => (reasonItem = null)} />
+        {:else if choosingReport}
+          <BlockReasons
+            title="What is the problem?"
+            reasons={REPORT_REASONS}
+            onpick={pickReport}
+            oncancel={() => (reportItem = null)}
+          />
         {/if}
       </div>
       {#if formMessage}
@@ -1338,6 +1393,11 @@
     flex: none;
     width: 180px;
   }
+  /* Report sits beside Not sure as a second pill of the same width. */
+  .controls.yesno .skip.reportable {
+    gap: 12px;
+    width: 372px;
+  }
   .questions-done {
     position: absolute;
     top: 14px;
@@ -1487,9 +1547,14 @@
       gap: 8px;
     }
     .controls.yesno .answers,
-    .controls.yesno .skip {
+    .controls.yesno .skip,
+    .controls.yesno .skip.reportable {
       flex: 1 1 100%;
       width: auto;
+    }
+    .controls.yesno .skip {
+      display: flex;
+      gap: 8px;
     }
     .controls.yesno :global(.pill) {
       height: 44px;
