@@ -115,3 +115,20 @@ export async function engage(
     [userId, targetUserId, type]
   );
 }
+
+/** The player hides `keys` (preset tag groups) in Knights settings. */
+export async function hideTagGroups(pg: PGlite, playerId: number, keys: string[]) {
+  await pg.query(
+    `INSERT INTO "KnightsPlayer" ("playerId","shieldWeek","hiddenTagGroups") VALUES ($1, '2026-01-05', $2)
+     ON CONFLICT ("playerId") DO UPDATE SET "hiddenTagGroups" = EXCLUDED."hiddenTagGroups"`,
+    [playerId, keys]
+  );
+}
+
+/** A tag on the image (enabled unless `disabled`), in the base harness's "TagsOnImageDetails" table; a suite that boots tag review has the real view instead. */
+export async function tagImage(pg: PGlite, imageId: number, tagId: number, disabled = false) {
+  await pg.query(
+    `INSERT INTO "TagsOnImageDetails" ("imageId","tagId","disabled") VALUES ($1,$2,$3)`,
+    [imageId, tagId, disabled]
+  );
+}

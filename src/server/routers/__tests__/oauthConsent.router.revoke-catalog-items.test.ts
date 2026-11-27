@@ -2,7 +2,9 @@ import { PGlite } from '@electric-sql/pglite';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as ApiKeySpend from '~/server/http/orchestrator/api-key-spend';
+import { BLOCK_TOKEN_LIFETIMES_SECONDS } from '~/server/services/block-token-lifetimes';
 import type * as SubListingService from '~/server/services/blocks/app-sub-listing.service';
 import type * as OrchestratorCivitai from '~/server/services/orchestrator/civitai';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -116,6 +118,26 @@ describe('oauthConsent.revokeApp', () => {
       'other-client': { revoked: false, reason: null },
       'other-user': { revoked: false, reason: null },
     });
+  });
+
+  it('marks the runner client revoked at the disconnect time, for longer than a runner token lives', async () => {
+    redisMock.redis.set.mockClear();
+    const before = Math.floor(Date.now() / 1000);
+    await caller.revokeApp({ clientId: CLIENT_ID });
+    const call = redisMock.redis.set.mock.calls.find(
+      ([key]) => key === `blocks:runner-revoked:${USER_ID}:${CLIENT_ID}`
+    );
+    expect(call).toBeDefined();
+    expect(Number(call![1])).toBeGreaterThanOrEqual(before);
+    expect(call![2]).toEqual({ EX: BLOCK_TOKEN_LIFETIMES_SECONDS.runner + 60 });
+  });
+
+  it('still revokes when the revocation marker cannot be written', async () => {
+    redisMock.redis.set.mockRejectedValueOnce(new Error('redis down'));
+    await expect(caller.revokeApp({ clientId: CLIENT_ID })).resolves.toMatchObject({
+      success: true,
+    });
+    expect(dbMock.dbWrite.oauthConsent.delete).toHaveBeenCalledTimes(1);
   });
 
   it('changes nothing when the revoke fails, so the user can retry', async () => {

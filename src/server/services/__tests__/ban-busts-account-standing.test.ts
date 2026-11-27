@@ -4,6 +4,10 @@ import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
 import type * as Revocation from '~/server/services/user-token-revocation.service';
 import type * as ApiKeyService from '~/server/services/api-key.service';
 
+vi.mock('~/server/db/kyselyDb', async () =>
+  (await import('~/__tests__/mocks/no-ledger-kysely')).noLedgerKyselyDb()
+);
+
 // A ban and an unban must reach the account-standing cache, or block submits and comic generation
 // keep answering from the standing cached before it.
 

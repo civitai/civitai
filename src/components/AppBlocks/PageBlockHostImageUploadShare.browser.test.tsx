@@ -22,8 +22,6 @@ const h = vi.hoisted(() => ({
   gate: vi.fn(() => new Promise(() => undefined)),
 }));
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
   setTrpcBatchingEnabled: vi.fn(),

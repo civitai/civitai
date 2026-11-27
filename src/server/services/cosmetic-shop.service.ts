@@ -1490,7 +1490,8 @@ export const purchaseCosmeticShopItem = async ({
     singleCosmetic.type == CosmeticType.Badge ||
     singleCosmetic.type == CosmeticType.NamePlate ||
     singleCosmetic.type == CosmeticType.ProfileBackground ||
-    singleCosmetic.type == CosmeticType.ProfileDecoration;
+    singleCosmetic.type == CosmeticType.ProfileDecoration ||
+    singleCosmetic.type == CosmeticType.SidebarBackground;
 
   await runPurchaseChecks(pendingClaim, async () => {
     if (onlySupportsSinglePurchase) {

@@ -825,7 +825,12 @@ export const imageQueueActions = {
     const withheldFlag = await withheldRefusal(locals.user, imageIds);
     if (withheldFlag) return fail(403, { error: withheldFlag });
 
-    const result = await setImageFlag({ ...flagValue, imageIds, moderatorId: locals.user.id });
+    const result = await setImageFlag({
+      ...flagValue,
+      imageIds,
+      moderatorId: locals.user.id,
+      csamReview: holdsCsamReview(locals.user),
+    });
     if (!result.ok) return fail(400, { error: result.error });
     return { success: true };
   },

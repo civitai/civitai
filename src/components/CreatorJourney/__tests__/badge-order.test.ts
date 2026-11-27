@@ -25,7 +25,7 @@ describe('a badge’s rung on its own ladder', () => {
   });
 });
 
-// Justin's call (2026-10-10). Launch grants carry no observed date; before this they sorted by
+// Decided in #5700. Launch grants carry no observed date; before this they sorted by
 // the backfill run's timestamp and crowded out what creators actually just earned.
 describe('the order earned badges show in', () => {
   it('puts dated badges first, newest first', () => {

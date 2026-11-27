@@ -619,14 +619,18 @@ type Client struct {
 	Timeout time.Duration // 0 = Timeout
 }
 
+// AttemptTimeout is the timeout Fetch gives one call: Timeout unless the client sets its own.
+func (c *Client) AttemptTimeout() time.Duration {
+	if c.Timeout == 0 {
+		return Timeout
+	}
+	return c.Timeout
+}
+
 // Fetch is `GET <base>/v1/feed?<query>`. A transport error or timeout is an error; a non-2xx status
 // is an Answer with that status and no ids. The request-source headers follow ctx's mode (WithShadow).
 func (c *Client) Fetch(ctx context.Context, query string) (Answer, error) {
-	timeout := c.Timeout
-	if timeout == 0 {
-		timeout = Timeout
-	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+	ctx, cancel := context.WithTimeout(ctx, c.AttemptTimeout())
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSuffix(c.BaseURL, "/")+"/v1/feed?"+query, nil)
 	if err != nil {

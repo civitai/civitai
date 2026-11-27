@@ -158,6 +158,31 @@ export const submitVersionSchema = z.object({
     .max(16_384)
     .nullish()
     .transform((v) => v ?? undefined),
+  // `civitai app submit --allow-outdated-sdk`: the packages the CLI found below the platform
+  // minimum (`GET /api/v1/blocks/sdk-floor`) and submitted anyway. OPTIONAL, same wire contract
+  // as the fields above (omit or `null` = none sent). An UNTRUSTED CLIENT CLAIM, stored as one
+  // beside the server's own reading of the bundle's lockfile and shown to the moderator labelled
+  // as the client's. A malformed value rejects, for the reason `sourceCommit`'s does.
+  sdkFloorOverride: z
+    .array(
+      z.object({
+        package: z.string().min(1).max(214),
+        installed: z.string().min(1).max(64),
+        minimum: z.string().min(1).max(64),
+      })
+    )
+    .max(8)
+    .nullish()
+    .transform((v) => v ?? undefined),
+  // `civitai app submit --allow-unmerged-platform-update`: queue the bundle even though it lacks a
+  // staff platform update no approved version has shipped. Without it such a bundle is refused
+  // (`platform_update_missing`); with it, what the bundle left out is recorded for the moderator.
+  // OPTIONAL, same wire contract as the fields above (omit or `null` = not sent). A malformed value
+  // rejects, for the reason `sourceCommit`'s does.
+  allowUnmergedPlatformUpdate: z
+    .boolean()
+    .nullish()
+    .transform((v) => v ?? undefined),
 });
 
 export type SubmitVersionInput = z.infer<typeof submitVersionSchema>;
@@ -171,6 +196,9 @@ const SUBMIT_VERSION_FIELD_HINTS: Record<string, string> = {
   sourceCommit: 'sourceCommit must be a 40-character lowercase hex git commit sha',
   sourceDirty: 'sourceDirty must be a boolean',
   githubOidcToken: 'githubOidcToken must be a non-empty string of at most 16384 characters',
+  sdkFloorOverride:
+    'sdkFloorOverride must be a list of at most 8 { package, installed, minimum } strings',
+  allowUnmergedPlatformUpdate: 'allowUnmergedPlatformUpdate must be a boolean',
 };
 
 /** The message both submit routes have always returned for a parse failure. */
@@ -411,28 +439,6 @@ export const agentReviewRequestSchema = z.object({
 });
 
 export type GetAgentReviewInput = z.infer<typeof getAgentReviewSchema>;
-
-/** One turn of the MOD-ONLY in-modal agent chat (P3). The CLIENT sends the
- *  running conversation; the server prepends its own grounding system context. */
-export const agentReviewChatMessageSchema = z.object({
-  role: z.enum(['user', 'assistant']),
-  content: z.string().min(1).max(4000),
-});
-
-export type AgentReviewChatMessage = z.infer<typeof agentReviewChatMessageSchema>;
-
-/** Input for the MOD-ONLY in-modal agent chat proxy `blocks.agentReviewChat`
- *  (P3). The client sends the pending request id + the running conversation
- *  (bounded); the server prepends a grounding system message and proxies to the
- *  review agent pod's in-cluster gateway. */
-export const agentReviewChatSchema = z.object({
-  publishRequestId: z.string().min(1).max(64),
-  messages: z.array(agentReviewChatMessageSchema).min(1).max(20),
-  /** The run the moderator is viewing; the chat grounds on it. Omitted ⇒ the latest run. */
-  reportId: z.string().min(1).max(64).optional(),
-});
-
-export type AgentReviewChatInput = z.infer<typeof agentReviewChatSchema>;
 
 export const teardownPreviewSchema = z.object({
   publishRequestId: z.string().min(1).max(64),

@@ -9,12 +9,15 @@ const { enqueue, openCount } = vi.hoisted(() => ({
 vi.mock('~/server/db/kyselyDb', async () => ({
   kyselyWrite: { tag: 'write' },
   // `readWithoutJit` turns JIT and parallel workers off before the count; only the count reaches `openCount`.
-  kyselyRead: (await import('~/test-utils/kysely-raw-fake')).fakeKysely(
-    (strings: readonly string[], ...values: unknown[]) =>
-      strings.join('').includes('SET LOCAL ')
-        ? Promise.resolve([])
-        : openCount(strings, ...values)
-  ),
+  kyselyRead: await (async () => {
+    const { JIT_OFF_STATEMENT } = await import('@civitai/db/knights');
+    return (await import('~/test-utils/kysely-raw-fake')).fakeKysely(
+      (strings: readonly string[], ...values: unknown[]) =>
+        strings.join('') === JIT_OFF_STATEMENT
+          ? Promise.resolve([])
+          : openCount(strings, ...values)
+    );
+  })(),
 }));
 vi.mock('~/server/services/knights/enqueue.service', () => ({ enqueueKnightsItems: enqueue }));
 

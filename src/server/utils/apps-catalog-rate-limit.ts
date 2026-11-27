@@ -84,16 +84,12 @@ export async function enforceAppsCatalogRateLimit({
     const retryAfter = await sysRedis.ttl(rateKey).catch(() => RATE_LIMIT.windowSeconds);
     // Conforms to the shared REST error envelope (civitai#3845) — `code` +
     // string `message` + the retained `error` key + `rateLimit` — with the
-    // pre-existing informational fields kept alongside it.
+    // pre-existing top-level `retryAfterSeconds` kept alongside it.
     sendAppRateLimited(
       res,
       appRateLimitMeta('apps.directory', retryAfterSecondsOf(retryAfter, RATE_LIMIT.windowSeconds)),
       'Rate limit exceeded',
-      {
-        retryAfterSeconds: retryAfter,
-        limit: RATE_LIMIT.max,
-        windowSeconds: RATE_LIMIT.windowSeconds,
-      }
+      { retryAfterSeconds: retryAfter }
     );
     return true;
   }

@@ -60,6 +60,7 @@ const SURFACES: Record<string, number> = {
   'src/server/services/article.service.ts': 3,
   'src/server/services/blocks/app-listing-assets.service.ts': 2,
   'src/server/services/blocks/app-listing-review.service.ts': 1,
+  'src/server/services/blocks/app-review-thread.service.ts': 1,
   'src/server/services/blocks/block-post.service.ts': 1,
   'src/server/services/blocks/offsite-listing.service.ts': 4,
   'src/server/services/blurb.service.ts': 2,
@@ -152,6 +153,7 @@ const EXPECTED_WRITERS: Record<string, Record<string, number>> = {
     updateListingScreenshotCaption: 1,
   },
   'src/server/services/blocks/app-listing-review.service.ts': { upsertAppListingReview: 1 },
+  'src/server/services/blocks/app-review-thread.service.ts': { postReviewMessage: 1 },
   'src/server/services/blocks/block-post.service.ts': { previewBlockPost: 1 },
   'src/server/services/blocks/offsite-listing.service.ts': {
     submitExternalListing: 1,

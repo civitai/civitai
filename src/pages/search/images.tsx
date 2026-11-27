@@ -34,7 +34,7 @@ import { InViewLoader } from '~/components/InView/InViewLoader';
 import { ImagesCardMemoized } from '~/components/Image/Infinite/ImagesCard';
 import { adjustImagesCardHeight } from '~/components/Image/Infinite/images-card-footer';
 import { useSearchEventDecorations } from '~/components/Decorations/useSearchEventDecorations';
-import { useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
+import { useInfiniteHitsTransformed, useSearchFeedHits } from '~/components/Search/search.utils2';
 import { useSimilarImage } from '~/components/Search/useSimilarImage';
 import { useScrollToTopOnChange } from '~/hooks/useScrollToTopOnChange';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -91,6 +91,7 @@ function ImagesHitList() {
     ?.correctedQuery;
 
   const { hits, showMore, isLastPage } = useInfiniteHitsTransformed<'images'>();
+  useSearchFeedHits(IMAGES_SEARCH_INDEX, 'Image', hits);
 
   const { loadingPreferences, items, hiddenCount } = useApplyHiddenPreferences({
     type: 'images',

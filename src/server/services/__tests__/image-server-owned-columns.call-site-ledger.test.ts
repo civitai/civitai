@@ -11,6 +11,10 @@ import {
   updateCrucibleSchema,
 } from '~/server/schema/crucible.schema';
 import { updateStorylineSchema } from '~/server/schema/storyline.schema';
+import {
+  IMAGE_USES,
+  IMAGE_USES_WITHOUT_RELATION,
+} from '../../../../packages/civitai-db-queries/src/content-deletion.db';
 
 /**
  * Seam guard for the server-owned `Image` columns `id`, `postId` and `index`.
@@ -82,7 +86,7 @@ const SCHEMA_REFERENCE_LEDGER: Record<string, Partial<Record<SchemaName, number>
   'src/server/schema/announcement.schema.ts': { imageReferenceInputSchema: 2 },
   'src/server/schema/challenge.schema.ts': { imageReferenceInputSchema: 3 },
   'src/server/schema/creator-service.schema.ts': { imageReferenceInputSchema: 2 },
-  'src/server/schema/user-profile.schema.ts': { imageReferenceInputSchema: 3 },
+  'src/server/schema/user-profile.schema.ts': { imageReferenceInputSchema: 5 },
   // storyline.update's cover and banner uploads: no `id`, so always a new image of the caller's.
   'src/server/schema/storyline.schema.ts': { imageInputSchema: 2 },
   // collection.upsert cover (a reference any collection manager may set; see
@@ -385,6 +389,8 @@ const CONNECT_EXISTING_LEDGER: Record<
     guard: string;
     guardFollows?: boolean;
     decides: 'image' | 'collection-manager';
+    /** For a client id that only the collection-manager rule decides: as in IMAGE_FK_WRITE_LEDGER. */
+    dealCopy?: DealCopy;
   }
 > = {
   // Covers `imageId` and `image.id` alike.
@@ -392,11 +398,13 @@ const CONNECT_EXISTING_LEDGER: Record<
     sites: 1,
     guard: COLLECTION_MANAGE_GUARD,
     decides: 'collection-manager',
+    dealCopy: 'assertCollectionCoverAllowed(existingCover.id,',
   },
   'src/server/services/collection.service.ts#updateCollectionCoverImage': {
     sites: 1,
     guard: COLLECTION_MANAGE_GUARD,
     decides: 'collection-manager',
+    dealCopy: 'assertCollectionCoverAllowed(imageId,',
   },
   // Both ids are what `resolveCoverImageId` returned, not client values.
   'src/server/services/crucible.service.ts#updateCrucible': {
@@ -455,9 +463,43 @@ type FkDecision =
  * Not covered: a column set through a computed key, through an object built away from the call
  * and passed or spread into it, or in raw SQL.
  */
+/**
+ * How a write whose id comes from the client keeps out a deal file's scan or preview copy, an image
+ * its uploader owns (`dealFileImageSql`):
+ *  - a call in the site's body to `assertNotDealFileImages`, or to a helper in `DEAL_COPY_HELPERS`
+ *    that calls it;
+ *  - `structural`: the site takes only an image in a published or chapter post, or from an allowed
+ *    set, and a copy is in no post; the text is the call in its body that requires it;
+ *  - `subject`: the row records an action on the image, which attaches it nowhere.
+ */
+type DealCopy = string | string[] | { structural: string };
+
+/**
+ * Helpers a `dealCopy` may name. Each must run the use check on the image its first parameter names:
+ * `check` in its body, and `lookup` too when the check names the row the parameter found.
+ */
+const DEAL_COPY_HELPERS: Record<string, { file: string; check: string; lookup?: string }> = {
+  'assertCollectionCoverAllowed(': {
+    file: 'src/server/services/collection.service.ts',
+    check: "assertNotDealFileImages([imageId], 'used here')",
+  },
+  'getOwnedImageOrThrow(': {
+    file: 'src/server/routers/comics.router.ts',
+    check: "assertNotDealFileImages([imageId], 'used here')",
+  },
+  'loadValidatedImage(': {
+    file: 'src/server/services/blocks/app-listing-assets.service.ts',
+    check: "assertNotDealFileImages([image.id], 'used here')",
+    lookup: 'where: { id: imageId }',
+  },
+};
+
+/** Decisions whose id comes from the client, so the row names its `dealCopy`. */
+const CLIENT_ID_DECISIONS: FkDecision[] = ['owner-checked', 'route-guard', 'collection-manager'];
+
 const IMAGE_FK_WRITE_LEDGER: Record<
   string,
-  { writes: string[]; decision: FkDecision; guards?: Record<string, string> }
+  { writes: string[]; decision: FkDecision; guards?: Record<string, string>; dealCopy?: DealCopy }
 > = {
   // A team hat sticker on someone's image: any visible image in a published post is a target by
   // design, and placeTurfSticker checks that before the write.
@@ -493,6 +535,7 @@ const IMAGE_FK_WRITE_LEDGER: Record<
   'src/server/routers/comics.router.ts#bulkCreatePanels': {
     writes: ['imageId: image.id', 'imageId: image.id'],
     decision: 'owner-checked',
+    dealCopy: 'getOwnedImageOrThrow(panelDef.imageId,',
     guards: {
       'imageId: image.id':
         'const image = await getOwnedImageOrThrow(panelDef.imageId, ctx.user!.id);',
@@ -501,6 +544,7 @@ const IMAGE_FK_WRITE_LEDGER: Record<
   'src/server/routers/comics.router.ts#createPanelFromImage': {
     writes: ['imageId: input.imageId'],
     decision: 'owner-checked',
+    dealCopy: 'getOwnedImageOrThrow(input.imageId,',
     guards: {
       'imageId: input.imageId':
         'const image = await getOwnedImageOrThrow(input.imageId, ctx.user!.id);',
@@ -549,6 +593,10 @@ const IMAGE_FK_WRITE_LEDGER: Record<
       'data.heroImageId = null',
     ],
     decision: 'owner-checked',
+    dealCopy: [
+      'getOwnedImageOrThrow(input.coverImageId,',
+      'getOwnedImageOrThrow(input.heroImageId,',
+    ],
     guards: {
       'data.coverImageId = input.coverImageId':
         'if (input.coverImageId !== null && input.coverImageId !== project.coverImageId) { await getOwnedImageOrThrow(input.coverImageId, ctx.user.id); }',
@@ -577,6 +625,7 @@ const IMAGE_FK_WRITE_LEDGER: Record<
   'src/server/services/blocks/app-listing-assets.service.ts#addListingScreenshot': {
     writes: ['imageId'],
     decision: 'owner-checked',
+    dealCopy: 'loadValidatedImage(args.imageId,',
     guards: {
       imageId:
         "const validated = await loadValidatedImage(args.imageId, 'screenshot', user, { allowPending: true, });",
@@ -589,6 +638,7 @@ const IMAGE_FK_WRITE_LEDGER: Record<
   'src/server/services/blocks/app-listing-assets.service.ts#setListingCover': {
     writes: ['coverId: validated.imageId'],
     decision: 'owner-checked',
+    dealCopy: 'loadValidatedImage(args.imageId,',
     guards: {
       'coverId: validated.imageId':
         "const validated = await loadValidatedImage(args.imageId, 'cover', user, { allowPending: true });",
@@ -597,6 +647,7 @@ const IMAGE_FK_WRITE_LEDGER: Record<
   'src/server/services/blocks/app-listing-assets.service.ts#setListingIcon': {
     writes: ['iconId: validated.imageId'],
     decision: 'owner-checked',
+    dealCopy: 'loadValidatedImage(args.imageId,',
     guards: {
       'iconId: validated.imageId':
         "const validated = await loadValidatedImage(args.imageId, 'icon', user, { allowPending: true });",
@@ -637,6 +688,7 @@ const IMAGE_FK_WRITE_LEDGER: Record<
   'src/server/services/collection.service.ts#upsertCollection': {
     writes: ['imageId'],
     decision: 'collection-manager',
+    dealCopy: 'assertCollectionCoverAllowed(existingCover.id,',
   },
   'src/server/services/collection.service.ts#validateContestCollectionEntry': {
     writes: ['whereClause.imageId = { in: imageIds }'],
@@ -660,6 +712,7 @@ const IMAGE_FK_WRITE_LEDGER: Record<
   'src/server/services/crucible.service.ts#submitEntry': {
     writes: ['imageId'],
     decision: 'owner-checked',
+    dealCopy: { structural: '...publishedImageWhere()' },
     guards: {
       imageId:
         "if (image.userId !== userId) { return throwBadRequestError('You can only submit your own images'); }",
@@ -677,6 +730,7 @@ const IMAGE_FK_WRITE_LEDGER: Record<
   'src/server/services/image.service.ts#updateEntityImages': {
     writes: ['imageId: id'],
     decision: 'owner-checked',
+    dealCopy: "assertNotDealFileImages(linkIds, 'used here')",
     guards: {
       'imageId: id':
         'const owned = await dbClient.image.count({ where: { id: { in: linkIds }, userId } }); if (owned !== new Set(linkIds).size) throw throwAuthorizationError();',
@@ -695,6 +749,7 @@ const IMAGE_FK_WRITE_LEDGER: Record<
   'src/server/services/post.service.ts#creditResourcesToImages': {
     writes: ['imageId'],
     decision: 'route-guard',
+    dealCopy: 'subject',
   },
   'src/server/services/purchasable-reward.service.ts#purchasableRewardPurchase': {
     writes: ['coverImageId: reward.coverImageId'],
@@ -715,6 +770,7 @@ const IMAGE_FK_WRITE_LEDGER: Record<
   'src/server/services/storyline-caption.service.ts#setStorylineImageCaption': {
     writes: ['imageId'],
     decision: 'owner-checked',
+    dealCopy: { structural: 'await assertChapterPostAuthor({' },
     // The author check is assertChapterPostAuthor's first line.
     guards: { imageId: 'await assertChapterPostAuthor({' },
   },
@@ -723,6 +779,7 @@ const IMAGE_FK_WRITE_LEDGER: Record<
   'src/server/services/storyline.service.ts#createStoryline': {
     writes: ['sparkImageId'],
     decision: 'owner-checked',
+    dealCopy: { structural: 'if (sparkImageId) await assertStorylineSpark({' },
     guards: { sparkImageId: 'if (sparkImageId) await assertStorylineSpark({' },
   },
   // The cover and banner picks: from this storyline's own chapters by the owner or an endorsed
@@ -731,6 +788,7 @@ const IMAGE_FK_WRITE_LEDGER: Record<
   'src/server/services/storyline.service.ts#updateStoryline': {
     writes: ['imageId', 'coverImageId', 'heroImageId'],
     decision: 'owner-checked',
+    dealCopy: { structural: 'await assertStorylinePicks(dbWrite, {' },
     guards: {
       imageId: 'await assertStorylinePicks(dbWrite, {',
       coverImageId: 'await assertStorylinePicks(dbWrite, {',
@@ -750,6 +808,7 @@ const IMAGE_FK_WRITE_LEDGER: Record<
   'src/server/services/version-showcase-curation.service.ts#setVersionShowcase': {
     writes: ['imageId: item.imageId'],
     decision: 'owner-checked',
+    dealCopy: { structural: 'const eligible = await getEligibleCommunityImages(' },
     guards: {
       'imageId: item.imageId':
         'const refused = communityItems.find((item) => !allowed.has(item.imageId));',
@@ -763,6 +822,48 @@ const IMAGE_FK_WRITE_LEDGER: Record<
 };
 
 /** The middleware each `route-guard` site sits behind, as it appears in its router. */
+/**
+ * Every raw SQL `INSERT` or `UPDATE` under `src/server` that writes an image-use column
+ * (`IMAGE_USES`, `IMAGE_USES_WITHOUT_RELATION`), which `IMAGE_FK_WRITE_LEDGER`'s detector cannot
+ * see. A row whose id could come from a client names its `dealCopy`, as there.
+ */
+const RAW_IMAGE_USE_WRITE_LEDGER: Record<
+  string,
+  { writes: string[]; decision: FkDecision; dealCopy?: DealCopy }
+> = {
+  // The day's flag images, which the event job picked; no client names them.
+  'src/server/events/turf/flag-day.ts#swapFlagDay': {
+    writes: ['CollectionItem.imageId', 'CollectionItem.imageId'],
+    decision: 'server-derived',
+  },
+  'src/server/services/creator-service-deal-file.service.ts#deleteScanCopies': {
+    writes: ['ServiceDealFile.imageId'],
+    decision: 'clears',
+  },
+  'src/server/services/creator-service-deal-file.service.ts#releaseEntryCopies': {
+    writes: ['ServiceDealFileEntry.imageId'],
+    decision: 'clears',
+  },
+  // The copy createScanImage just made, here and below.
+  'src/server/services/creator-service-deal-file.service.ts#startPreviewScans': {
+    writes: ['ServiceDealFile.imageId'],
+    decision: 'server-derived',
+  },
+  'src/server/services/creator-service-deal-review-images.ts#attachFinalToReview': {
+    writes: ['ServiceDealReviewImage.imageId'],
+    decision: 'server-derived',
+  },
+  // Keyed by `dropCopy`, the nearest declaration before the write in the video entry's submit.
+  'src/server/services/creator-service-deal-unpack.service.ts#dropCopy': {
+    writes: ['ServiceDealFileEntry.imageId'],
+    decision: 'server-derived',
+  },
+  'src/server/services/creator-service-deal-unpack.service.ts#submitEntryImage': {
+    writes: ['ServiceDealFileEntry.imageId', 'ServiceDealFileEntry.imageId'],
+    decision: 'server-derived',
+  },
+};
+
 const ROUTE_GUARDS: Record<string, { router: string; procedure: string }> = {
   'src/server/services/post.service.ts#creditResourcesToImages': {
     router: 'src/server/routers/post.router.ts',
@@ -985,6 +1086,39 @@ function fkSitesIn(file: string, text: string): FkSite[] {
   return [...calls, ...assigns].filter((s) => s.writes.length > 0);
 }
 
+/** Each table of `IMAGE_USES` (and the uses without a relation), with its image columns. */
+const IMAGE_USE_COLUMNS = new Map<string, string[]>();
+for (const [table, column] of [
+  ...Object.values(IMAGE_USES),
+  ...Object.values(IMAGE_USES_WITHOUT_RELATION),
+] as [string, string][])
+  IMAGE_USE_COLUMNS.set(table, [...(IMAGE_USE_COLUMNS.get(table) ?? []), column]);
+
+const RAW_WRITE = /\b(?:INSERT\s+INTO|UPDATE)\s+(?:"?public"?\.)?"?(\w+)"?/gi;
+
+/** Raw SQL `INSERT`/`UPDATE` statements that name an image-use column, keyed like `fkSitesIn`. */
+function rawImageUseWritesIn(file: string, text: string): FkSite[] {
+  return [...text.matchAll(RAW_WRITE)].flatMap((m) => {
+    const columns = IMAGE_USE_COLUMNS.get(m[1]);
+    if (!columns) return [];
+    const offset = m.index ?? 0;
+    const statement = rawStatement(text, offset + m[0].length);
+    // An INSERT's column list, or an UPDATE's assignments: a column only read is no write.
+    const written = /^\s*INSERT/i.test(m[0])
+      ? balanced(statement, statement.indexOf('('), '(', ')')
+      : (statement.match(/\bSET\b([\s\S]*?)(?:\bWHERE\b|\bFROM\b|\bRETURNING\b|$)/i)?.[1] ?? '')
+          .split(',')
+          .map((assignment) => assignment.split('=')[0])
+          .join(',');
+    const writes = columns
+      .filter((c) => new RegExp(String.raw`(?:"${c}"|\b${c}\b)`).test(written))
+      .map((c) => `${m[1]}.${c}`);
+    if (!writes.length) return [];
+    const fn = enclosingFunction(text, offset, DECLARATION_OR_PROCEDURE);
+    return [{ key: `${file}#${fn.name}`, writes, body: text.slice(fn.start, offset) }];
+  });
+}
+
 // #endregion
 
 const scan = scanSource(ROOT);
@@ -1164,6 +1298,23 @@ describe('existing-image references', () => {
     expect(missing).toEqual([]);
   });
 
+  it("keeps a deal file's copy out of each cover a collection manager points by id", () => {
+    const sites = collect(CONNECT_EXISTING);
+    const managed = Object.entries(CONNECT_EXISTING_LEDGER).filter(
+      ([, v]) => v.decides === 'collection-manager'
+    );
+    expect(managed.length).toBeGreaterThan(0);
+    const missing: string[] = [];
+    for (const [key, { dealCopy }] of managed) {
+      if (typeof dealCopy !== 'string') missing.push(`${key}: no dealCopy`);
+      else
+        for (const s of sites.filter((s) => s.key === key))
+          if (!normalized(s.body).includes(normalized(dealCopy)))
+            missing.push(`${key}: ${dealCopy}`);
+    }
+    expect(missing).toEqual([]);
+  });
+
   it('only the two collection cover writes decide on the collection manager alone', () => {
     expect(
       Object.entries(CONNECT_EXISTING_LEDGER)
@@ -1262,12 +1413,158 @@ describe('image foreign-key writes', () => {
     }
   });
 
+  describe("a deal file's copy", () => {
+    const clientIds = Object.entries(IMAGE_FK_WRITE_LEDGER).filter(([, v]) =>
+      CLIENT_ID_DECISIONS.includes(v.decision)
+    );
+    const bodyOf = (file: string, name: string) => {
+      const text = commentless.get(file)!;
+      const at = text.search(new RegExp(String.raw`\bfunction\s+${name}\s*\(`));
+      expect(at, `${file}#${name}`).toBeGreaterThanOrEqual(0);
+      return balanced(text, text.indexOf('{', text.indexOf(')', at)), '{', '}');
+    };
+
+    it('is kept out by every write whose image id comes from the client', () => {
+      expect(clientIds.length).toBeGreaterThan(0);
+      expect(clientIds.filter(([, v]) => v.dealCopy === undefined).map(([k]) => k)).toEqual([]);
+    });
+
+    it("by a check in the site's own body", () => {
+      const missing: string[] = [];
+      for (const [key, { dealCopy }] of clientIds) {
+        if (dealCopy === 'subject') continue;
+        const texts =
+          typeof dealCopy === 'string'
+            ? [dealCopy]
+            : Array.isArray(dealCopy)
+            ? dealCopy
+            : [dealCopy!.structural];
+        const at = sites.filter((s) => s.key === key);
+        if (!at.length) missing.push(`${key}: no write`);
+        // Every check before the site's last write: the body of the last one holds them all.
+        const last = at.at(-1);
+        for (const text of texts)
+          if (last && !normalized(last.body).includes(normalized(text)))
+            missing.push(`${key}: ${text}`);
+      }
+      expect(missing).toEqual([]);
+    });
+
+    // A client id written through a spread `data` object or handed to another module's write,
+    // which the literal-write detector does not see. Each names the exact check in its own body.
+    const UNSEEN_CLIENT_ID_SITES: Record<string, string> = {
+      'src/server/services/model3d.service.ts#upsertModel3D':
+        "assertNotDealFileImages([data.thumbnailImageId], 'used here')",
+      // Handed on to upsertModel3DFromWorkflow's sourceImageId, dropped when refused.
+      'src/server/services/model3d.service.ts#ensureModel3DFromWorkflow':
+        'usableHere(claimedSourceImageId!)',
+    };
+
+    it('is kept out where a client id reaches a write the detector cannot see', () => {
+      const missing: string[] = [];
+      for (const [key, check] of Object.entries(UNSEEN_CLIENT_ID_SITES)) {
+        const [file, name] = key.split('#');
+        const text = commentless.get(file)!;
+        const at = text.search(new RegExp(String.raw`\bconst\s+${name}\s*=\s*async\s*\(`));
+        expect(at, key).toBeGreaterThanOrEqual(0);
+        const body = balanced(text, text.indexOf('=> {', at) + 3, '{', '}');
+        if (!normalized(body).includes(normalized(check))) missing.push(`${key}: ${check}`);
+      }
+      expect(missing).toEqual([]);
+      expect(normalized(bodyOf('src/server/services/model3d.service.ts', 'usableHere'))).toContain(
+        normalized("assertNotDealFileImages([imageId], 'used here')")
+      );
+    });
+
+    // Ingestion is no deal-file deleter: it removes blocked rows as a moderator would, copies included.
+    // A call that dropped the flag would quietly start leaving copies its batch was meant to remove.
+    it('is deleted by image ingestion only through its moderator delete', () => {
+      const text = commentless.get('src/server/jobs/image-ingestion.ts')!;
+      const calls = [...text.matchAll(/(?<![.\w])deleteImages\s*\(/g)].map((m) =>
+        normalized(balanced(text, (m.index ?? 0) + m[0].length - 1, '(', ')'))
+      );
+      expect(calls.length).toBeGreaterThan(0);
+      expect(calls.filter((call) => !call.includes('moderatorDelete: true'))).toEqual([]);
+    });
+
+    it("by the use check on the written image's own id, directly or through a helper", () => {
+      const named = clientIds
+        .flatMap(([, v]) => (Array.isArray(v.dealCopy) ? v.dealCopy : [v.dealCopy]))
+        .filter((d): d is string => typeof d === 'string' && d !== 'subject');
+      for (const text of named)
+        expect(
+          /^assertNotDealFileImages\(.*, 'used here'\)$/.test(text) ||
+            Object.keys(DEAL_COPY_HELPERS).some((helper) => text.startsWith(helper)),
+          text
+        ).toBe(true);
+      for (const [helper, { file, check, lookup }] of Object.entries(DEAL_COPY_HELPERS)) {
+        const body = normalized(bodyOf(file, helper.slice(0, -1)));
+        expect(body, helper).toContain(normalized(check));
+        if (lookup) expect(body, helper).toContain(normalized(lookup));
+      }
+      // 'used here' reads the deal file and review copy legs alike.
+      expect(bodyOf('src/server/services/deal-file-image.ts', 'assertNotDealFileImages')).toContain(
+        "act === 'used here' ? serverCopyImageSql : dealFileImageSql"
+      );
+    });
+  });
+
   it('only the collection cover upsert decides on the collection manager alone', () => {
     expect(
       Object.entries(IMAGE_FK_WRITE_LEDGER)
         .filter(([, v]) => v.decision === 'collection-manager')
         .map(([k]) => k)
     ).toEqual(['src/server/services/collection.service.ts#upsertCollection']);
+  });
+});
+
+describe('raw SQL image-use writes', () => {
+  const sites = files
+    .filter((f) => f.startsWith('src/server/'))
+    .flatMap((f) => rawImageUseWritesIn(f, commentless.get(f)!));
+
+  it('are each classified, and none has gone', () => {
+    const actual: Record<string, string[]> = {};
+    for (const s of sites) (actual[s.key] ??= []).push(...s.writes);
+    expect(actual).toEqual(
+      Object.fromEntries(Object.entries(RAW_IMAGE_USE_WRITE_LEDGER).map(([k, v]) => [k, v.writes]))
+    );
+  });
+
+  it('keep a deal file copy out wherever the id comes from the client', () => {
+    const missing: string[] = [];
+    for (const [key, { decision, dealCopy }] of Object.entries(RAW_IMAGE_USE_WRITE_LEDGER)) {
+      if (!CLIENT_ID_DECISIONS.includes(decision)) continue;
+      if (dealCopy === undefined) missing.push(`${key}: no dealCopy`);
+      else if (dealCopy !== 'subject') {
+        const texts =
+          typeof dealCopy === 'string'
+            ? [dealCopy]
+            : Array.isArray(dealCopy)
+            ? dealCopy
+            : [dealCopy.structural];
+        for (const s of sites.filter((s) => s.key === key))
+          for (const text of texts)
+            if (!normalized(s.body).includes(normalized(text))) missing.push(`${key}: ${text}`);
+      }
+    }
+    expect(missing).toEqual([]);
+  });
+
+  it('finds an INSERT column list and an UPDATE assignment, not a column only read (control)', () => {
+    const src = [
+      'async function a(ids) { await db.$executeRaw`INSERT INTO "CollectionItem" ("collectionId", "imageId") VALUES (1, 2)`; }',
+      'async function b(id) { await db.$executeRaw`UPDATE "ServiceDealFile" SET "imageId" = NULL WHERE id = ${id}`; }',
+      'async function c(id) { await db.$executeRaw`UPDATE "CollectionItem" SET note = "imageId" || 1 WHERE "imageId" = ${id}`; }',
+    ].join('\n');
+    expect(rawImageUseWritesIn('x.ts', src).map((s) => [s.key, s.writes])).toEqual([
+      ['x.ts#a', ['CollectionItem.imageId']],
+      ['x.ts#b', ['ServiceDealFile.imageId']],
+    ]);
+    // The writer the first scanner missed.
+    expect(
+      sites.filter((s) => s.key === 'src/server/events/turf/flag-day.ts#swapFlagDay')
+    ).toHaveLength(2);
   });
 });
 

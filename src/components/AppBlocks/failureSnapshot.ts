@@ -1,3 +1,4 @@
+import { rateLimitReplyFields } from '~/components/AppBlocks/bridgeRateLimit';
 import type { BlockWorkflowSnapshot } from '~/server/schema/blocks/workflow.schema';
 
 // Failure-shape snapshot returned to the block when a host-side workflow tRPC
@@ -17,11 +18,15 @@ import type { BlockWorkflowSnapshot } from '~/server/schema/blocks/workflow.sche
 // dropped by the validator, and the block sat on its budget fallback until the
 // 120s timeout. A failed workflow has no real id, so we stamp a 'failed'
 // sentinel; the block reads `status`/`error`, never this id.
+//
+// A refusal under a rate limit carries its retry meta as `rateLimit`, read by the same rule as
+// every other bridge error reply (`rateLimitReplyFields`); any other failure carries none.
 export function failureSnapshot(err: unknown): BlockWorkflowSnapshot {
   return {
     workflowId: 'failed',
     status: 'failed',
     error: err instanceof Error ? err.message : 'workflow request failed',
+    ...rateLimitReplyFields(err),
   };
 }
 
@@ -48,10 +53,13 @@ export function isPollUnanswered(err: unknown): boolean {
 /**
  * The WORKFLOW_STATUS snapshot for a poll that threw. `failed` is terminal for the block's watch
  * loop, so a poll the server never answered gets the same "not read this time" placeholder the
- * server's own poll rate limit returns, and the block polls again.
+ * server's own poll rate limit returns, and the block polls again. A rate-limited throw keeps its
+ * retry meta on either arm.
  */
 export function pollFailureSnapshot(err: unknown, workflowId: string): BlockWorkflowSnapshot {
   // `throttled`: not an observation, so the block keeps its previous snapshot's values.
-  if (isPollUnanswered(err)) return { workflowId, status: 'processing', throttled: true };
+  if (isPollUnanswered(err)) {
+    return { workflowId, status: 'processing', throttled: true, ...rateLimitReplyFields(err) };
+  }
   return failureSnapshot(err);
 }

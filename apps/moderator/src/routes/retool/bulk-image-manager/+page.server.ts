@@ -287,6 +287,7 @@ export const actions: Actions = {
     const result = await restoreImages({
       imageIds: input.imageIds,
       moderatorId: locals.user.id,
+      csamReview: holdsCsamReview(locals.user),
     });
     if (!result.ok) return actionFail(result.error);
     return { success: true, restored: result.count, wasBlocked: blocked };
@@ -311,6 +312,7 @@ export const actions: Actions = {
       ...splitImageFlagValue(input.flagValue),
       imageIds: input.imageIds,
       moderatorId: locals.user.id,
+      csamReview: holdsCsamReview(locals.user),
     });
     if (!result.ok) return actionFail(result.error);
     return { success: true, flagged: input.imageIds.length };

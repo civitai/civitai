@@ -26,6 +26,7 @@ const spies = vi.hoisted(() => ({
   logAxiomError: vi.fn(async (_error: unknown, _extra?: Record<string, unknown>) => undefined),
   applyBlockSideEffects: vi.fn(async (..._args: unknown[]) => undefined),
   recordModActivity: vi.fn(async () => undefined),
+  recordLikenessRequest: vi.fn(async () => true),
   insertModActivity: vi.fn(async () => 1),
   syncSearchIndex: vi.fn(),
   invalidateThumbnails: vi.fn(async () => undefined),
@@ -70,6 +71,7 @@ vi.mock('../removal-hold', () => ({
 vi.mock('../tags-on-image.service', () => ({ upsertTagsOnImageNew: vi.fn() }));
 vi.mock('../mod-activity', () => ({
   recordModActivity: spies.recordModActivity,
+  recordLikenessRequest: spies.recordLikenessRequest,
   insertModActivity: spies.insertModActivity,
   insertModActivityBatch: vi.fn(),
 }));
@@ -375,5 +377,65 @@ describe('a re-block of a removed, held image', () => {
     expect(spies.syncSearchIndex).toHaveBeenCalledTimes(1);
     expect(spies.invalidateThumbnails).toHaveBeenCalledTimes(1);
     expect(spies.bustProfilePictures).toHaveBeenCalledTimes(1);
+  });
+});
+
+// The main app's appeal-decision-records sweep deletes an image's appeal training copies by this mark.
+describe('blockImage for a likeness request', () => {
+  const FRESH = 5;
+
+  it('marks an image already removed, whose re-block updates nothing', async () => {
+    await blockImage({
+      imageId: REMOVED_TOS,
+      userId: 2,
+      skipAppealCheck: true,
+      violationType: 'likenessRequest',
+    });
+
+    expect(spies.applyBlockSideEffects).not.toHaveBeenCalled();
+    expect(spies.recordLikenessRequest.mock.calls).toEqual([[2, REMOVED_TOS]]);
+  });
+
+  it('marks an already-removed image actioned from the reports queue', async () => {
+    const REMOVED_PLAIN = 6;
+    // The reports-queue read checks the owner's ban and rule blocks.
+    await pg.exec(`
+      CREATE TABLE IF NOT EXISTS "User" ("id" INTEGER PRIMARY KEY, "bannedAt" TIMESTAMP(3));
+      CREATE TABLE IF NOT EXISTS "ModerationRule" ("id" INTEGER PRIMARY KEY, "action" TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS "ModerationRuleVersion" ("ruleId" INTEGER NOT NULL, "action" TEXT NOT NULL);
+    `);
+    await pg.query(
+      `INSERT INTO "Image" ("id", "userId", "blockedFor", "ingestion", "nsfwLevel") VALUES ($1, 7, 'moderated', 'Blocked', 4)`,
+      [REMOVED_PLAIN]
+    );
+
+    const result = await blockImage({
+      imageId: REMOVED_PLAIN,
+      userId: 2,
+      skipAppealCheck: true,
+      skipModeratorRemoved: true,
+      violationType: 'likenessRequest',
+    });
+
+    expect(result).toMatchObject({ alreadyRemoved: true });
+    expect(spies.applyBlockSideEffects).not.toHaveBeenCalled();
+    expect(spies.recordLikenessRequest.mock.calls).toEqual([[2, REMOVED_PLAIN]]);
+  });
+
+  it('marks a fresh block exactly once (control)', async () => {
+    await pg.query(
+      `INSERT INTO "Image" ("id", "userId", "ingestion", "nsfwLevel") VALUES ($1, 7, 'Scanned', 4)`,
+      [FRESH]
+    );
+
+    await blockImage({
+      imageId: FRESH,
+      userId: 2,
+      skipAppealCheck: true,
+      violationType: 'likenessRequest',
+    });
+
+    expect(spies.applyBlockSideEffects).toHaveBeenCalledTimes(1);
+    expect(spies.recordLikenessRequest.mock.calls).toEqual([[2, FRESH]]);
   });
 });

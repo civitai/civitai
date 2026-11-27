@@ -14,6 +14,8 @@ import {
   type AppBlockEndpoint,
 } from '~/server/metrics/app-block-runtime.metrics';
 import { isAppBlocksRuntimeEnabled } from '~/server/services/app-blocks-flag';
+import { sessionHostDomains, sessionHostKind } from '~/server/services/blocks/dev-tunnel-session';
+import { previewHostHash } from '~/server/services/blocks/preview-session-host';
 import { resolveRestApprovalVerdict } from '~/server/services/blocks/block-approval.service';
 import { BlockRevocation } from '~/server/services/block-revocation.service';
 import {
@@ -226,6 +228,10 @@ export interface BlockTokenClaims {
   mintOrigin?: 'runner';
   /** The recipe run a runner token was minted for; present exactly when `mintOrigin` is. */
   runId?: string;
+  /** The run authorization a runner token spends under; present exactly when `mintOrigin` is. */
+  authorizationId?: string;
+  /** The single run id or standing trigger id the mint derived `runId` from; likewise. */
+  runKey?: string;
 }
 
 /**
@@ -841,12 +847,54 @@ export const _internalsForTests = {
   },
 };
 
+// Preview origins. An app running in a dev tunnel (`dev-<hex>.<APPS_DOMAIN>`) or an App Assistant
+// direct preview (a session host under APP_ASSISTANT_PREVIEW_DOMAIN) has its own origin, minted
+// per session, which is never in the allowlist above. Such an origin is allowed while the session
+// it names is live, by an exact lookup of the platform's own session record
+// (`isActiveSessionHost`), never by a domain suffix. As for every other allowed origin, CORS only
+// lets the frame READ the answer: the request still needs a bearer token the middleware verifies,
+// and no credentials header is sent.
+
+async function sessionOriginAllowed(norm: string): Promise<boolean> {
+  let host: string;
+  try {
+    const u = new URL(norm);
+    // A session is only ever served over https on its bare host (no port).
+    if (u.protocol !== 'https:' || u.port) return false;
+    host = u.hostname;
+  } catch {
+    return false;
+  }
+  // `isActiveSessionHost` checks the host's shape before any read, so an arbitrary origin (these
+  // routes also serve browser integrations) costs no Redis call.
+  try {
+    const { isActiveSessionHost } = await import('~/server/services/blocks/dev-tunnel.service');
+    return await isActiveSessionHost(host);
+  } catch {
+    return false;
+  }
+}
+
 async function originAllowed(origin: string | undefined): Promise<boolean> {
   if (!origin) return false;
   const norm = normalizeOrigin(origin);
   if (!norm) return false;
   const set = await getAllowedOriginsAsync();
-  return set.has(norm);
+  if (set.has(norm)) return true;
+  return sessionOriginAllowed(norm);
+}
+
+/**
+ * An origin as a log line may carry it: a direct-preview session host is that session's
+ * credential, so it is logged only as `previewHostHash`; any other origin as it is.
+ */
+function loggableOrigin(origin: string): string {
+  const norm = normalizeOrigin(origin);
+  if (!norm) return origin;
+  const host = new URL(norm).hostname;
+  return sessionHostKind(host, sessionHostDomains()) === 'direct'
+    ? `<preview session ${previewHostHash(host)}>`
+    : origin;
 }
 
 // Bounded LRU of origins we've already warned about, so a flood of unique
@@ -865,14 +913,14 @@ function rememberWarnedOrigin(origin: string) {
 
 // `Retry-After` is not a CORS-safelisted response header; a cross-origin block can't read a
 // 429's wait unless it is exposed. `Deprecation` and `Link` likewise, so a block route that
-// deprecates itself (RFC 9745) can be read by an SDK; none sends them today (the document
-// store's deprecated tally and publish routes were removed).
+// deprecates itself (RFC 9745) can be read by an SDK.
 const BLOCK_CORS_EXPOSE_HEADERS = 'Retry-After, Deprecation, Link';
 
 /**
  * Sets block-CORS headers when the origin is in the allowlist (union of
  * `BLOCK_ALLOWED_ORIGINS` env CSV + every approved OauthClient's
- * `allowedOrigins[]` — W11 dynamic-lookup landed 2026-05-30).
+ * `allowedOrigins[]` — W11 dynamic-lookup landed 2026-05-30), or when it is the
+ * host of a live dev-tunnel / direct-preview session (`sessionOriginAllowed`).
  *
  * Returns `'handled'` ONLY when we've fully handled the request (block-origin preflight).
  * In every other case — including OPTIONS from origins we don't recognize —
@@ -937,7 +985,9 @@ async function setBlockCors(
     if (rememberWarnedOrigin(origin)) {
       // eslint-disable-next-line no-console
       console.warn(
-        `[block-scope] rejected CORS preflight from origin "${origin}" — not in OauthClient.allowedOrigins (cache may be stale up to 60s)`
+        `[block-scope] rejected CORS preflight from origin "${loggableOrigin(
+          origin
+        )}" — not in OauthClient.allowedOrigins and not a live preview session (cache may be stale up to 60s)`
       );
     }
   }
@@ -1137,13 +1187,23 @@ export async function verifyBlockToken(
         // (b) Must be a member of the closed set.
         if (!isPrivateRunAudience(claims.privateRunAudience)) return null;
       }
-      if (claims.runId !== undefined && claims.mintOrigin === undefined) return null;
+      if (
+        claims.mintOrigin === undefined &&
+        (claims.runId !== undefined ||
+          claims.authorizationId !== undefined ||
+          claims.runKey !== undefined)
+      ) {
+        return null;
+      }
       if (claims.mintOrigin !== undefined) {
         // Runner tokens carry none of the dev/review/private-run/anonymous markers.
         if (claims.mintOrigin !== 'runner') return null;
         if (options.admitRunner !== true) return null;
         if (claims.sub === ANON_SUBJECT) return null;
         if (typeof claims.runId !== 'string' || claims.runId === '') return null;
+        if (typeof claims.authorizationId !== 'string' || claims.authorizationId === '')
+          return null;
+        if (typeof claims.runKey !== 'string' || claims.runKey === '') return null;
         if (
           claims.dev !== undefined ||
           claims.reviewRunForReal !== undefined ||

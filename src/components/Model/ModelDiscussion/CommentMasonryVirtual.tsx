@@ -1,5 +1,6 @@
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { assignLanes } from '~/components/Model/ModelDiscussion/comment-lanes';
 import type { Lanes } from '~/components/Model/ModelDiscussion/comment-lanes';
 import { CommentDiscussionItem } from '~/components/Model/ModelDiscussion/CommentDiscussionItem';
@@ -17,10 +18,12 @@ export function CommentMasonryVirtual({
   comments,
   modelUserId,
   overscan = 4,
+  renderItem = (comment) => <CommentDiscussionItem data={comment} modelUserId={modelUserId} />,
 }: {
   comments: CommentV3Comment[];
   modelUserId?: number;
   overscan?: number;
+  renderItem?: (comment: CommentV3Comment) => ReactNode;
 }) {
   const [width, setWidth] = useState(0);
   const ref = useResizeObserver<HTMLDivElement>((entry) => setWidth(entry.contentRect.width));
@@ -59,7 +62,7 @@ export function CommentMasonryVirtual({
         <VirtualColumn
           key={lane}
           items={items}
-          modelUserId={modelUserId}
+          renderItem={renderItem}
           columnWidth={columnWidth}
           scrollMargin={scrollMargin}
           overscan={overscan}
@@ -72,14 +75,14 @@ export function CommentMasonryVirtual({
 
 function VirtualColumn({
   items,
-  modelUserId,
+  renderItem,
   columnWidth,
   scrollMargin,
   overscan,
   onMeasure,
 }: {
   items: CommentV3Comment[];
-  modelUserId?: number;
+  renderItem: (comment: CommentV3Comment) => ReactNode;
   columnWidth: number;
   scrollMargin: number;
   overscan: number;
@@ -104,13 +107,28 @@ function VirtualColumn({
     useScrollendEvent: true,
   });
 
-  // Cached heights belong to the previous column width.
-  useEffect(() => {
+  const columnRef = useRef<HTMLDivElement>(null);
+
+  // measure() empties the size cache, and a card whose height did not change at the new width
+  // fires no resize, so it would stay at the estimate. measureElement only records a size that
+  // differs from the measurements, so getTotalSize() rebuilds those at the estimate first. The
+  // estimate was never painted, so the sizes recorded against it must not move the scroll.
+  useIsomorphicLayoutEffect(() => {
+    const adjust = virtualizer.shouldAdjustScrollPositionOnItemSizeChange;
+    virtualizer.shouldAdjustScrollPositionOnItemSizeChange = () => false;
     virtualizer.measure();
+    virtualizer.getTotalSize();
+    columnRef.current
+      ?.querySelectorAll<HTMLElement>('[data-index]')
+      .forEach((el) => virtualizer.measureElement(el));
+    virtualizer.shouldAdjustScrollPositionOnItemSizeChange = adjust;
   }, [virtualizer, columnWidth]);
 
   return (
-    <div style={{ position: 'relative', width: columnWidth, height: virtualizer.getTotalSize() }}>
+    <div
+      ref={columnRef}
+      style={{ position: 'relative', width: columnWidth, height: virtualizer.getTotalSize() }}
+    >
       {virtualizer.getVirtualItems().map((virtualItem) => {
         const comment = items[virtualItem.index];
         return (
@@ -126,7 +144,7 @@ function VirtualColumn({
               width: '100%',
             }}
           >
-            <CommentDiscussionItem data={comment} modelUserId={modelUserId} />
+            {renderItem(comment)}
           </div>
         );
       })}

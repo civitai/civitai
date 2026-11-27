@@ -400,7 +400,7 @@ describe('TeamRoster cards', () => {
     expect(all(card, 'roster-more')).toHaveLength(0);
   });
 
-  // Justin: the score in one place on every card, whatever its hats. On a shelf card it sits under
+  // The score in one place on every card, whatever its hats. On a shelf card it sits under
   // the name, above the shelf (one row, two rows, or none); on a podium card, above the mini row.
   it('puts the score directly under the name, above the hats, on every card', () => {
     // Podium members with hats of their own; the grid holds a two-row shelf, one hat, and none.

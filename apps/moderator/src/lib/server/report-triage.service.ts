@@ -1,7 +1,7 @@
 import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
 import type { MediaType } from '$lib/media/edge-url';
-import { isReviewImageSql } from './review-image';
+import { reviewCopyImageSql } from '@civitai/db-queries/content-deletion';
 import { moderatorWithheldSql } from '@civitai/shared/retracted-media-tier';
 import { holdsCsamReview } from './held-media';
 import { withheldRow, withheldRows } from './retracted-media';
@@ -172,7 +172,7 @@ export async function getSuspectImages(
         sql<boolean>`EXISTS (SELECT 1 FROM "ImageConnection" ic WHERE ic."imageId" = "Image"."id")`.as(
           'hasConnection'
         ),
-        isReviewImageSql(sql.ref('Image.id')).as('isReviewImage'),
+        reviewCopyImageSql(sql.ref('Image.id')).as('isReviewImage'),
       ])
       .orderBy('id', 'desc')
       .limit(limit)

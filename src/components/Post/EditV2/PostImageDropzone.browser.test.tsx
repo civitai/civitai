@@ -41,8 +41,6 @@ vi.mock('~/components/Post/showCreatePostError', async (orig) => ({
   useShowCreatePostError: () => vi.fn(),
 }));
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 1, muted: false }) }));
-
 vi.mock('~/hooks/useS3Upload', () => ({
   useS3Upload: () => ({
     files: [],
@@ -112,7 +110,8 @@ function renderDropzone() {
   renderWithProviders(
     <div data-testid="post-dropzone">
       <PostImageDropzone />
-    </div>
+    </div>,
+    { user: { id: 1, muted: false } }
   );
 }
 

@@ -10,6 +10,11 @@ import {
   type BlockScopedNextApiRequest,
 } from '~/server/middleware/block-scope.middleware';
 import { assertAppBlocksEnabledForTokenUser } from '~/server/services/blocks/block-token-access.service';
+import { blockOutputCeilingFromClaims } from '~/server/services/blocks/block-output-restriction';
+import {
+  blockViewerImageUserSelect,
+  projectBlockViewerImage,
+} from '~/server/services/blocks/block-viewer-image';
 import { checkBlockCatalogRateLimit } from '~/server/utils/block-catalog-rate-limit';
 import { appRateLimitMeta, sendAppRateLimited } from '~/server/utils/app-rate-limit';
 
@@ -223,6 +228,7 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
       bannedAt: true,
       muted: true,
       deletedAt: true,
+      ...blockViewerImageUserSelect,
     },
   });
   if (!user || user.deletedAt) {
@@ -243,6 +249,9 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
     id: user.id,
     username: user.username,
     status: user.muted ? 'muted' : 'active',
+    // The viewer's avatar, judged against this token's output ceiling — see
+    // `projectBlockViewerImage`. Shared with `blocks.getMyViewer`.
+    image: projectBlockViewerImage(user, blockOutputCeilingFromClaims(claims)),
     // buzzBudget is the per-call spend cap the block was issued with —
     // surfaces here so the block can clamp UI without a second API call.
     buzzBudget: claims.buzzBudget ?? null,

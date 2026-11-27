@@ -6,6 +6,7 @@ import { rerateSongOfRatedCover } from '~/server/services/audio-scan/song-rating
 import { fallbackUserImageColumn } from '~/server/services/profile-picture-fallback.sql';
 import {
   assertMayLoosenImages,
+  assertMayLoosenImagesAs,
   loosensImageLevel,
   loosensImageLevelSql,
 } from '~/server/services/moderator-withheld.service';
@@ -1070,6 +1071,9 @@ type ImageDeleteOptions = {
   keepStoredFiles?: boolean;
   /** False: a row its child-safety case keeps is not queued, for a caller with its own retry queue. */
   queueKept?: boolean;
+  /** Runs in the delete's own transaction with the rows it deleted, so a write that records the
+   *  delete commits with it or not at all. Not called when nothing was deleted. */
+  onDeleted?: (db: ReturnType<typeof kyselyOver>, deleted: { id: number }[]) => Promise<void>;
 };
 
 /**
@@ -1185,6 +1189,7 @@ async function deleteListedImages(
     updatePosts = true,
     keepStoredFiles = false,
     queueKept,
+    onDeleted,
     retractPublicBlobs = false,
     retractionGate = newRetractionGate(),
   }: ImageDeleteWithOutcomeOptions,
@@ -1229,12 +1234,13 @@ async function deleteListedImages(
       hidden,
       gone,
     } = await withDeleteTransaction(
-      !moderatorDecides({
-        replay: moderatorDelete ? { moderatorDelete: true } : undefined,
-        queueKept,
-      }),
-      (db) =>
-        deleteImageRows(db, {
+      !!onDeleted ||
+        !moderatorDecides({
+          replay: moderatorDelete ? { moderatorDelete: true } : undefined,
+          queueKept,
+        }),
+      async (db) => {
+        const outcome = await deleteImageRows(db, {
           ids,
           actor,
           where: callerWhere,
@@ -1254,7 +1260,10 @@ async function deleteListedImages(
               },
           recountPosts: updatePosts,
           cdnTakedown: moderatorDelete,
-        })
+        });
+        if (onDeleted && outcome.deleted.length) await onDeleted(db, outcome.deleted);
+        return outcome;
+      }
     );
 
     keptForCase.push(...caseKept);
@@ -1429,7 +1438,13 @@ export async function handleUnblockImages({
   ids: imageIds,
   moderatorId,
   removeMinorFlag,
+  csamReview,
 }: ImageModerationUnblockSchema) {
+  // Re-checked by the UPDATE itself, so a mark that lands after the caller's own check still holds.
+  const notWithheld = Prisma.sql`NOT EXISTS (
+    SELECT 1 FROM "Image" i WHERE i.id = "Image".id
+      AND ${Prisma.raw(moderatorWithheldSql('i', { csamReview }))}
+  )`;
   const found = await dbRead.image.findMany({
     where: { id: { in: imageIds } },
     select: {
@@ -1486,14 +1501,10 @@ export async function handleUnblockImages({
                   : Prisma.sql`"minor" = CASE WHEN "nsfwLevel" >= 4 THEN FALSE ELSE TRUE END,`
                 : Prisma.sql``
             }
-            ${
-              ['minor', 'poi', 'newUser', 'bestiality'].includes(needsReview)
-                ? Prisma.sql`"scannedAt" = NOW(),`
-                : Prisma.sql``
-            }
             "ingestion" = ${liftedIngestionSql}
           WHERE id IN (${Prisma.join(groupedIds)})
             AND ${liftableByUnblockSql}
+            AND ${notWithheld}
           RETURNING id, ${liftKeptBlockedSql} AS "keptBlocked";
         `
       )
@@ -7031,9 +7042,24 @@ export async function updateImageNsfwLevel({
       ...ratingRecordedUnderGrace(metadata, nsfwLevel),
     };
 
+    if (activity === 'setNsfwLevelKono') {
+      // The write itself refuses a consensus that loosens a withheld image, as the webhook's does.
+      const written = await dbWrite.$executeRaw`
+        UPDATE "Image" i SET "nsfwLevel" = ${nsfwLevel}, "nsfwLevelLocked" = TRUE
+        WHERE i.id = ${id}
+          AND NOT (
+            ${Prisma.raw(loosensImageLevelSql(nsfwLevel, 'i."nsfwLevel"'))}
+            AND ${Prisma.raw(moderatorWithheldSql('i', { csamReview: false }))}
+          )
+      `;
+      if (!written) return image.nsfwLevel;
+    }
     await dbWrite.image.update({
       where: { id },
-      data: { nsfwLevel, nsfwLevelLocked: true, metadata: updatedMetadata },
+      data:
+        activity === 'setNsfwLevelKono'
+          ? { metadata: updatedMetadata }
+          : { nsfwLevel, nsfwLevelLocked: true, metadata: updatedMetadata },
     });
     await afterImageNsfwLevelSet({
       id,
@@ -7341,6 +7367,8 @@ export async function resolveIngestionError({
       url: true,
       blockedFor: true,
       needsReview: true,
+      scannedAt: true,
+      createdAt: true,
       user: { select: { bannedAt: true, deletedAt: true } },
     },
   });
@@ -7430,7 +7458,8 @@ export async function resolveIngestionError({
       nsfwLevelLocked: true,
       ingestion: ImageIngestionStatus.Scanned,
       blockedFor: null,
-      scannedAt: new Date(),
+      // Not now(): resolving must not move the image in feeds. firstVisibleAt does that, once.
+      scannedAt: image.scannedAt ?? image.createdAt,
     },
   });
   if (count === 0) throw throwBadRequestError('This image changed; reload and try again.');
@@ -8297,8 +8326,9 @@ export async function updateImageAcceptableMinor({
   id,
   acceptableMinor,
   csamReview,
-}: UpdateImageAcceptableMinorInput & { csamReview: boolean }) {
-  if (acceptableMinor) await assertMayLoosenImages([id], { csamReview });
+  isModerator,
+}: UpdateImageAcceptableMinorInput & { csamReview: boolean; isModerator: boolean }) {
+  if (acceptableMinor) await assertMayLoosenImagesAs([id], { isModerator, csamReview });
   // primary: whether this write changes the flag decides whether shared caches are purged.
   const before = await dbWrite.image.findUnique({
     where: { id },

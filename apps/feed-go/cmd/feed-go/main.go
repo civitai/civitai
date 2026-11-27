@@ -641,6 +641,8 @@ func run(log *slog.Logger) error {
 		log.Error("flag not read; only moderators see other users' songs", "flag", server.MusicFlag, "err", err)
 	}
 	srv := &server.Server{
+		// The release, as X-Feed-Go-Version on every public answer (server.PublicMux).
+		Version:          version,
 		Resolver:         resolver,
 		Deps:             deps,
 		Models:           models,

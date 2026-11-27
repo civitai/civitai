@@ -2,6 +2,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { FEEDBACK_CAPTURE_OWNER_ID } from '@civitai/shared/feedback-capture';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
+vi.mock('~/server/db/kyselyDb', async () =>
+  (await import('~/__tests__/mocks/no-ledger-kysely')).noLedgerKyselyDb()
+);
+
 /** The feedback capture account is never banned or muted: acting on it acts on nobody. */
 
 vi.mock('~/server/services/orchestrator/cancel-pending-workflows', () => ({

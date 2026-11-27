@@ -20,6 +20,7 @@ import type * as ChatService from '~/server/services/chat.service';
 import type * as Blocklist from '~/server/services/blocklist.service';
 import type * as CreatorShop from '~/server/services/creator-shop.service';
 import type * as NotificationService from '~/server/services/notification.service';
+import { childSafetyCaseTablesSql } from '~/server/services/__tests__/child-safety-case-tables';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -342,14 +343,17 @@ beforeAll(async () => {
     CREATE TABLE "User" (id int PRIMARY KEY, username text, "bannedAt" timestamp, "deletedAt" timestamp, muted boolean NOT NULL DEFAULT false, "createdAt" timestamp(3) NOT NULL DEFAULT now() - interval '1 year');
     CREATE TYPE "UserEngagementType" AS ENUM ('Hide', 'Follow', 'Block');
     CREATE TABLE "UserEngagement" ("userId" int, "targetUserId" int, type "UserEngagementType");
-    CREATE TABLE "Report" (id serial PRIMARY KEY, reason text, details jsonb NOT NULL DEFAULT '{}');
+    CREATE TABLE "Report" (id serial PRIMARY KEY, reason text, details jsonb NOT NULL DEFAULT '{}', status text NOT NULL DEFAULT 'Pending');
     CREATE TABLE "ModActivity" ("userId" int, "entityType" text, "entityId" int, activity text, UNIQUE ("userId", "entityType", "entityId", activity));
     CREATE TABLE "KeyValue" (key text PRIMARY KEY, value jsonb NOT NULL);
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
     CREATE TABLE "Image" (id serial PRIMARY KEY, url text, poi boolean NOT NULL DEFAULT false, minor boolean NOT NULL DEFAULT false, ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Pending',
-      "needsReview" text, "nsfwLevel" int NOT NULL DEFAULT 0,
+      "needsReview" text, "blockedFor" text, "nsfwLevel" int NOT NULL DEFAULT 0,
       "tosViolation" boolean NOT NULL DEFAULT false, metadata jsonb, type text, "userId" int, "postId" int);
     CREATE TABLE "Track" ("imageId" int PRIMARY KEY, "coverImageId" int UNIQUE, genre text);
+    -- The held-Final check reads reports and child-safety cases.
+    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, images jsonb NOT NULL DEFAULT '[]',
+      details jsonb NOT NULL DEFAULT '{}', "reportSentAt" timestamp, "archivedAt" timestamp);
   `);
   // The review text check reads the csam queue's rows.
   await holder.db.exec(`
@@ -365,6 +369,7 @@ beforeAll(async () => {
   await holder.db.exec(readFileSync(NSFW_MIGRATION, 'utf8'));
   await holder.db.exec(readFileSync(TAKEDOWN_MIGRATION, 'utf8'));
   for (const migration of LATER_MIGRATIONS) await holder.db.exec(readFileSync(migration, 'utf8'));
+  await holder.db.exec(childSafetyCaseTablesSql);
 });
 
 beforeEach(async () => {

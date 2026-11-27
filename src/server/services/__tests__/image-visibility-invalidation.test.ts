@@ -96,6 +96,7 @@ describe('a moderator changing an image acceptable-minor flag', () => {
     dbMock.dbWrite.image.update.mockResolvedValue({ id: IMAGE, acceptableMinor: to } as never);
     return updateImageAcceptableMinor({
       csamReview: true,
+      isModerator: true,
       id: IMAGE,
       collectionId: 1,
       acceptableMinor: to,

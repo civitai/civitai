@@ -4063,7 +4063,14 @@ export async function approveExternalRequest(opts: {
     type: 'app-listing-approved',
     userId: listing.userId,
     key: `app-listing-approved:${publishRequestId}`,
-    details: { slug: listing.slug, name: listing.name, listingId: appListingId, reason: null },
+    attribution: { kind: 'moderator', requestId: publishRequestId },
+    details: {
+      slug: listing.slug,
+      name: listing.name,
+      listingId: appListingId,
+      reason: null,
+      approvalNote: approvalNotes?.trim() || null,
+    },
   });
 
   // Catalog bust: approve puts the listing INTO the store catalog.
@@ -4654,6 +4661,7 @@ export async function rejectExternalRequest(opts: {
       type: 'app-listing-rejected',
       userId: rejectedListing.userId,
       key: `app-listing-rejected:${publishRequestId}`,
+      attribution: { kind: 'moderator', requestId: publishRequestId },
       details: {
         slug: rejectedListing.slug,
         name: rejectedListing.name,

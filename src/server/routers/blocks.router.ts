@@ -163,7 +163,6 @@ import {
   placePublishRequestHoldSchema,
   backfillPublishRequestSchema,
   getMyPendingForSlugSchema,
-  agentReviewChatSchema,
   agentReviewRequestSchema,
   getAgentReviewSchema,
   getPublishRequestDiffSchema,
@@ -302,6 +301,10 @@ import {
   pendingOutputMessage,
   restrictedOutputMessage,
 } from '~/server/services/blocks/block-output-restriction';
+import {
+  blockViewerImageUserSelect,
+  projectBlockViewerImage,
+} from '~/server/services/blocks/block-viewer-image';
 import {
   resolveBlockOutputRules,
   resolveBlockOutputView,
@@ -496,6 +499,25 @@ import {
 } from '~/server/trpc';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
 import type { SessionUser } from '~/types/session';
+import { readOnBehalf, staffSubmissionOf } from '~/shared/utils/publish-request-on-behalf';
+import {
+  checkRunnerBinding,
+  runnerSlotsSchema,
+  type RunnerBindingBody,
+} from '~/server/services/blocks/runner-binding';
+import {
+  readRunnerAttemptState,
+  reserveRunnerAttempt,
+  transitionRunnerAttempt,
+  type RunnerAttemptState,
+  type RunnerReservation,
+} from '~/server/services/blocks/runner-ledger.service';
+import {
+  claimRunnerSubmitJti,
+  prepareRunnerSubmit,
+  refuseRunnerSubmit,
+  type RunnerSubmit,
+} from '~/server/services/blocks/runner-submit.service';
 import {
   MEDIA_UPLOAD_BATCH_DISABLED_ERROR,
   MEDIA_UPLOAD_BATCH_MAX_BYTES,
@@ -1721,6 +1743,12 @@ type BlockBuzzReservation = {
   key: string;
   cap: number;
   consent: { total: number; key: string; cap: number; userId: number; appBlockId: string } | null;
+  /** A recipe runner's attempt in the ledger; `state` is where this submit last moved it. */
+  runner?: RunnerLeg;
+};
+type RunnerLeg = {
+  attemptId: string;
+  state: Extract<RunnerAttemptState, 'reserved' | 'submitting'>;
 };
 
 /**
@@ -1772,6 +1800,121 @@ type BlockBuzzReservation = {
  * REVOKED grant refuses — with the same refund.
  */
 async function reserveBlockBuzzSpendForClaims(
+  claims: BlockTokenClaims,
+  userId: number,
+  cost: number,
+  runner?: RunnerSubmit
+): Promise<BlockBuzzReservation> {
+  if (claims.mintOrigin !== 'runner') return reservePlatformAndConsentLegs(claims, userId, cost);
+  if (!runner) refuseRunnerSubmit(claims.runId, 'kind');
+  const leg = await reserveRunnerLeg(claims, userId, cost, runner);
+  try {
+    return { ...(await reservePlatformAndConsentLegs(claims, userId, cost)), runner: leg };
+  } catch (e) {
+    await refundRunnerLeg(leg);
+    throw e;
+  }
+}
+
+/**
+ * A runner submit answers with its attempt's ledger state: `runner.state` is authoritative, the
+ * snapshot only informational. A throw before any attempt exists is rethrown. A retry after
+ * `refunded` needs a freshly minted token.
+ */
+async function withRunnerAttempt<T extends object>(runner: RunnerSubmit, submit: () => Promise<T>) {
+  const attempt = async () => {
+    if (!runner.attemptId) return null;
+    const state = await ledgerDb()
+      .then((db) => readRunnerAttemptState(db, runner.attemptId!))
+      .catch(() => null);
+    return { attemptId: runner.attemptId, state };
+  };
+  try {
+    const result = await submit();
+    return { ...result, runner: await attempt() };
+  } catch (e) {
+    if (!runner.attemptId) throw e;
+    // A reason code only: the detail goes to the log, never to the caller.
+    logToAxiom({
+      name: 'runner-submit',
+      type: 'error',
+      payload: { outcome: 'failed', runId: runner.runId, attemptId: runner.attemptId },
+      error: safeError(e),
+    });
+    return {
+      snapshot: { workflowId: 'failed', status: 'failed' as const, error: runnerFailureCode(e) },
+      runner: await attempt(),
+    };
+  }
+}
+
+function runnerFailureCode(e: unknown): string {
+  return e instanceof TRPCError && e.code === 'BAD_REQUEST'
+    ? 'validation failed: the orchestrator refused the workflow'
+    : 'runner submit temporarily unavailable';
+}
+
+/** The primary: the ledger is read and written there only. */
+async function ledgerDb() {
+  return (await import('~/server/db/kyselyDb')).kyselyWrite;
+}
+
+function logRunnerLedgerError(step: string, attemptId: string, error: unknown) {
+  logToAxiom({
+    name: 'runner-ledger',
+    type: 'error',
+    payload: { step, attemptId },
+    error: safeError(error),
+  });
+}
+
+/**
+ * Move the attempt from where this submit left it to `refunded`. True only when this call moved
+ * it; never throws (a failed move leaves the attempt counting against the cap, the safe side).
+ */
+async function refundRunnerLeg(leg: RunnerLeg): Promise<boolean> {
+  try {
+    return await transitionRunnerAttempt(await ledgerDb(), leg.attemptId, leg.state, 'refunded');
+  } catch (error) {
+    logRunnerLedgerError('refund', leg.attemptId, error);
+    return false;
+  }
+}
+
+/**
+ * Reserve the run's attempt in the ledger, the budget authority for runner spend: the offline cap,
+ * the authorization's per-run and per-period limits and one live attempt per run, all under the
+ * consent row lock. Refuses FORBIDDEN; a database error throws SERVICE_UNAVAILABLE.
+ */
+async function reserveRunnerLeg(
+  claims: BlockTokenClaims,
+  userId: number,
+  cost: number,
+  runner: RunnerSubmit
+): Promise<RunnerLeg> {
+  let result: Awaited<ReturnType<typeof reserveRunnerAttempt>>;
+  try {
+    result = await reserveRunnerAttempt(await ledgerDb(), {
+      userId,
+      clientId: runner.clientId,
+      authorizationId: runner.authorizationId,
+      runKey: runner.runKey,
+      runId: runner.runId,
+      appBlockId: claims.appBlockId,
+      amount: Math.ceil(cost),
+      externalId: composeBlockExternalId(claims.appBlockId, runner.runId),
+      now: new Date(),
+    });
+  } catch (error) {
+    logRunnerLedgerError('reserve', runner.runId, error);
+    throw new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: 'runner ledger unavailable' });
+  }
+  if (!result.ok) refuseRunnerSubmit(runner.runId, result.refusal);
+  runner.attemptId = result.attemptId;
+  return { attemptId: result.attemptId, state: 'reserved' };
+}
+
+async function reservePlatformAndConsentLegs(
   claims: BlockTokenClaims,
   userId: number,
   cost: number
@@ -1901,13 +2044,22 @@ async function reserveBlockBuzzSpendForClaims(
  *
  * Best-effort per key, like `refundBlockBuzzSpend`: a lost refund OVER-counts, which
  * makes a cap stricter — the safe direction. Never throws into the caller.
+ *
+ * False when this call did not move the runner attempt to `refunded` (another writer moved it, or
+ * the ledger failed): no Redis leg is refunded then, and the caller refunds no other leg either.
  */
 async function refundBlockBuzzReservation(
   reservation: BlockBuzzReservation,
   cost: number
-): Promise<void> {
+): Promise<boolean> {
+  if (reservation.runner) {
+    // Only the writer that moves the attempt to refunded refunds the Redis legs; a failed move
+    // leaves both counting (the safe side).
+    if (!(await refundRunnerLeg(reservation.runner))) return false;
+  }
   await refundBlockBuzzSpend(reservation.key, cost);
   if (reservation.consent) await refundBlockBuzzSpend(reservation.consent.key, cost);
+  return true;
 }
 
 /** True when the reservation's CONSENT leg exists and its running total is over the
@@ -3212,8 +3364,10 @@ export const blocksRouter = router({
    * isAppBlocksAgenticReviewEnabled fail-closes to false and this rejects.
    *
    * CONNECT LANE: an `alpr_` id is an OAuth-connect listing request, gated instead on its own
-   * `app-listings-agentic-review` flag (`isAgentReviewLaneEnabled`), here and on the read and
-   * chat procedures below. Advisory only: no agent-review procedure approves or rejects.
+   * `app-listings-agentic-review` flag (`isAgentReviewLaneEnabled`), here and on the read
+   * procedures below and the review agent chat endpoint
+   * (`/api/mod/apps/review-agent/v1/chat/completions`). Advisory only: none of them approves or
+   * rejects.
    */
   startAgentReview: moderatorProcedure
     .use(enforceAppBlocksFlag)
@@ -3326,52 +3480,6 @@ export const blocksRouter = router({
           error: safeError(err),
         });
         return { available: false, models: [] };
-      }
-    }),
-
-  /**
-   * AGENTIC MOD CODE-REVIEW (App Blocks P3) — in-modal CHAT. A moderator viewing a
-   * report can ask follow-up questions ("why did you flag scope X", "show the call
-   * site"). Non-streaming request/response (v1); streaming SSE is a follow-up.
-   *
-   * Gated IDENTICALLY to startAgentReview / getAgentReview (moderatorProcedure +
-   * the isModerator belt + enforceAppBlocksFlag + the dedicated mod-only
-   * `app-blocks-agentic-review` flag) so it ships DARK — the flag does not exist
-   * in Flipt yet, so isAppBlocksAgenticReviewEnabled fail-closes to false and this
-   * rejects. The service loads the PERSISTED report and answers as a STATELESS
-   * civitai→LLM completion grounded on that report (no live agent — a `failed`
-   * report is still chattable; only a missing/torn-down review → PRECONDITION_FAILED),
-   * returning `{ reply }`.
-   */
-  agentReviewChat: moderatorProcedure
-    .use(enforceAppBlocksFlag)
-    .input(agentReviewChatSchema)
-    .mutation(async ({ ctx, input }) => {
-      // Moderator, then the request's lane flag (on-site or connect): one gate for every
-      // agent-review procedure.
-      const { assertAgentReviewAccess } = await import(
-        '~/server/services/blocks/agent-review-lane'
-      );
-      await assertAgentReviewAccess(ctx.user, input.publishRequestId);
-      const { agentReviewChat } = await import('~/server/services/blocks/agent-review.service');
-      try {
-        return await agentReviewChat({
-          publishRequestId: input.publishRequestId,
-          messages: input.messages,
-          // The run on screen (report picker). Looked up within this request in the service.
-          reportId: input.reportId,
-        });
-      } catch (err) {
-        // Preserve the service's typed codes (PRECONDITION_FAILED = pod not up;
-        // BAD_GATEWAY = agent unreachable/timeout/non-200) so the client can
-        // render the right inline message; only opaque errors collapse to
-        // BAD_REQUEST. NEVER a 500 leak.
-        if (err instanceof TRPCError) throw err;
-        throw new TRPCError({
-          code: 'BAD_REQUEST',
-          message: (err as Error).message,
-          cause: err,
-        });
       }
     }),
 
@@ -3740,44 +3848,91 @@ export const blocksRouter = router({
 
   /**
    * Developer-facing list: every publish request submitted by the current
-   * viewer, newest first. The /apps/my-submissions page renders this.
+   * viewer, plus every staff submit made on their behalf for an app they own
+   * (labelled by `staffSubmission`), newest first. The /apps/my-submissions page renders this.
    * Returns the rejection reason inline so the dev sees mod feedback
    * without a second round-trip.
    */
   listMyPublishRequests: appDeveloperProcedure.use(enforceAppBlocksFlag).query(async ({ ctx }) => {
     if (!ctx.user) return [];
-    const rows = await dbRead.appBlockPublishRequest.findMany({
-      where: { submittedByUserId: ctx.user.id },
-      orderBy: { submittedAt: 'desc' },
-      take: 100,
-      select: {
-        id: true,
-        appBlockId: true,
-        slug: true,
-        version: true,
-        status: true,
-        submittedAt: true,
-        reviewedAt: true,
-        rejectionReason: true,
-        approvalNotes: true,
-        // Phase 2 build/deploy lifecycle, surfaced on /apps/my-submissions.
-        deployState: true,
-        deployDetail: true,
-        deployUpdatedAt: true,
-        fileSummary: true,
-        manifestDiffSummary: true,
-        appBlock: {
-          select: {
-            id: true,
-            // W13 P4: `hasPage` for the Open-live run-page link (does the manifest
-            // declare a launchable page). PUBLIC subset only — never the raw manifest.
-            manifest: true,
-            contentRating: true,
-            _count: { select: { userSubscriptions: true } },
-          },
+    const viewerId = ctx.user.id;
+    const select = {
+      id: true,
+      appBlockId: true,
+      slug: true,
+      version: true,
+      status: true,
+      submittedAt: true,
+      reviewedAt: true,
+      rejectionReason: true,
+      approvalNotes: true,
+      // Phase 2 build/deploy lifecycle, surfaced on /apps/my-submissions.
+      deployState: true,
+      deployDetail: true,
+      deployUpdatedAt: true,
+      fileSummary: true,
+      manifestDiffSummary: true,
+      appBlock: {
+        select: {
+          id: true,
+          // W13 P4: `hasPage` for the Open-live run-page link (does the manifest
+          // declare a launchable page). PUBLIC subset only — never the raw manifest.
+          manifest: true,
+          contentRating: true,
+          _count: { select: { userSubscriptions: true } },
         },
       },
-    });
+    } as const;
+    // A STAFF SUBMIT ON THE VIEWER'S BEHALF (`fileSummary.onBehalf`): its submitter is the
+    // moderator, but the version is the viewer's app's, so it is listed for them too.
+    // 🔴 Gated on BOTH the app's current owner (the block's OAuth client) and the owner the
+    // request recorded, in the query and again on the rows, so no other app's request can reach
+    // this list.
+    const onBehalfForViewer = async () => {
+      const ownApps = await dbRead.appBlock.findMany({
+        where: { app: { userId: viewerId } },
+        select: { id: true },
+      });
+      const ownAppIds = ownApps.map((b: { id: string }) => b.id);
+      if (ownAppIds.length === 0) return { ownAppIds, rows: [] };
+      const rows = await dbRead.appBlockPublishRequest.findMany({
+        where: {
+          appBlockId: { in: ownAppIds },
+          submittedByUserId: { not: viewerId },
+          fileSummary: { path: ['onBehalf', 'ownerUserId'], equals: viewerId },
+        },
+        orderBy: { submittedAt: 'desc' },
+        take: 100,
+        select,
+      });
+      return { ownAppIds, rows };
+    };
+    const [submitted, onBehalfOfViewer] = await Promise.all([
+      dbRead.appBlockPublishRequest.findMany({
+        where: { submittedByUserId: viewerId },
+        orderBy: { submittedAt: 'desc' },
+        take: 100,
+        select,
+      }),
+      onBehalfForViewer(),
+    ]);
+    const seen = new Set(submitted.map((r: { id: string }) => r.id));
+    const ownAppIds = new Set(onBehalfOfViewer.ownAppIds);
+    const rows = [
+      ...submitted,
+      ...onBehalfOfViewer.rows.filter(
+        (r: { id: string; appBlockId: string | null; fileSummary: unknown }) =>
+          !seen.has(r.id) &&
+          r.appBlockId !== null &&
+          ownAppIds.has(r.appBlockId) &&
+          readOnBehalf(r.fileSummary)?.ownerUserId === viewerId
+      ),
+    ]
+      .sort(
+        (a: { submittedAt: Date }, b: { submittedAt: Date }) =>
+          new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime()
+      )
+      .slice(0, 100);
     // Flatten _count onto each row so the UI doesn't have to dig through
     // the relation. Pending-first-version + withdrawn-first-version rows
     // have no appBlock (FK is set on approve) — surface null so the UI
@@ -3992,6 +4147,8 @@ export const blocksRouter = router({
         // /apps/run/<slug> vs standalone-origin vs model-slot branching). PUBLIC
         // subset only.
         hasPage: !!toPublicBlockManifest(manifest).hasPage,
+        // A staff submit on the owner's behalf: who filed it, for the "Staff submission" label.
+        staffSubmission: staffSubmissionOf(rest.fileSummary),
       };
     });
   }),
@@ -5747,6 +5904,8 @@ export const blocksRouter = router({
             status: 'processing' as const,
             // Not an observation: a block keeps its previous snapshot's values.
             throttled: true as const,
+            // The meta a thrown refusal by this limit would carry, so the block can wait it out.
+            rateLimit: appRateLimitMeta('apps.poll', pollRate.retryAfterSeconds),
           },
         };
       }
@@ -6083,6 +6242,8 @@ export const blocksRouter = router({
             status: 'processing' as const,
             // Not an observation: a block keeps its previous snapshot's values.
             throttled: true as const,
+            // The meta a thrown refusal by this limit would carry, so the block can wait it out.
+            rateLimit: appRateLimitMeta('apps.catalog', rate.retryAfterSeconds),
           },
         };
       }
@@ -8088,13 +8249,22 @@ export const blocksRouter = router({
         // Charset-restricted (audit 🟢): a UUID-ish alphabet so no control chars /
         // newlines / colons flow into the orchestrator `externalId`.
         idempotencyKey: z.string().regex(BLOCK_IDEMPOTENCY_KEY_REGEX).optional(),
+        /** A recipe runner's per-run values (binding v1); only with a runner token. */
+        runnerSlots: runnerSlotsSchema.optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
       const claims = await authorizeBlockBridgeToken(input.blockToken, { admitRunner: true });
-      // shortcut: runner submits are refused until the runner attempt ledger reserves them.
+      let runner: RunnerSubmit | undefined;
       if (claims.mintOrigin === 'runner') {
-        throw new TRPCError({ code: 'FORBIDDEN', message: 'runner submit is not available' });
+        runner = await prepareRunnerSubmit({
+          claims,
+          bodyKind: input.body.kind,
+          idempotencyKey: input.idempotencyKey,
+          runnerSlots: input.runnerSlots,
+        });
+      } else if (input.runnerSlots !== undefined) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'runnerSlots needs a runner token' });
       }
       ctx.blockSubmitTelemetry.appBlockIdLabel = submitFailureAppBlockLabel(claims);
       // Above every `kind` branch: each returns early, and nothing is resolved or reserved yet.
@@ -8137,12 +8307,15 @@ export const blocksRouter = router({
       // below stays byte-identical (we only ADD a branch); after this early
       // return `input.body` narrows to the textToImage member for the rest.
       if (input.body.kind === 'customComfy') {
-        return await submitCustomComfyWorkflow({
-          ctx,
-          claims,
-          body: input.body,
-          idempotencyKey: input.idempotencyKey,
-        });
+        const submit = () =>
+          submitCustomComfyWorkflow({
+            ctx,
+            claims,
+            body: input.body as CustomComfyBody,
+            idempotencyKey: input.idempotencyKey,
+            runner,
+          });
+        return runner ? await withRunnerAttempt(runner, submit) : await submit();
       }
       // App Blocks TRAINING kind — charged against the viewer-CONFIRMED quote the
       // body names, not the token's per-call budget. Its idempotency key is that
@@ -9545,7 +9718,14 @@ export const blocksRouter = router({
       // viewer surface to the block as active.
       const user = await dbWrite.user.findUnique({
         where: { id: userId },
-        select: { id: true, username: true, bannedAt: true, muted: true, deletedAt: true },
+        select: {
+          id: true,
+          username: true,
+          bannedAt: true,
+          muted: true,
+          deletedAt: true,
+          ...blockViewerImageUserSelect,
+        },
       });
       if (!user || user.deletedAt) {
         throw new TRPCError({ code: 'NOT_FOUND', message: 'User not found' });
@@ -9559,6 +9739,8 @@ export const blocksRouter = router({
         username: user.username,
         // Muted viewers pass through so the block can suppress write UI.
         status: (user.muted ? 'muted' : 'active') as 'active' | 'muted',
+        // The viewer's avatar against this token's output ceiling (mirrors /blocks/me).
+        image: projectBlockViewerImage(user, blockOutputCeilingFromClaims(claims)),
         // Per-call spend cap the block was issued with — surfaced so the block
         // can clamp UI without a second call (mirrors /blocks/me).
         buzzBudget: claims.buzzBudget ?? null,
@@ -10475,7 +10657,7 @@ export const blocksRouter = router({
       const { recordPendingFromPush } = await import(
         '~/server/services/blocks/publish-request.service'
       );
-      const { publishRequestId } = await recordPendingFromPush({
+      const { publishRequestId, advisories } = await recordPendingFromPush({
         slug,
         sha,
         appBlockId: block.id,
@@ -10489,6 +10671,8 @@ export const blocksRouter = router({
         version: newVersion,
         sha,
         status: 'pending' as const,
+        // Never refuses: e.g. the commit lacks a staff platform update (recorded for the moderator).
+        advisories: advisories ?? [],
       };
     }),
 
@@ -11473,8 +11657,10 @@ async function submitCustomComfyWorkflow(opts: {
   body: CustomComfyBody;
   /** OPTIONAL client idempotency key (item 2, gen half) → orchestrator externalId. */
   idempotencyKey?: string;
+  /** A recipe runner's submit, from `prepareRunnerSubmit`. */
+  runner?: RunnerSubmit;
 }) {
-  const { ctx, claims, body, idempotencyKey } = opts;
+  const { ctx, claims, body, idempotencyKey, runner } = opts;
   // Namespaced idempotency externalId — same shape as the txt2img branch, and like
   // it ALWAYS SET (audit 🔴-1): a server-minted `bls<uuid>` when the block sends no
   // key, so `submitWorkflow`'s own 3× retry of the real submit can never create (and
@@ -11708,6 +11894,39 @@ async function submitCustomComfyWorkflow(opts: {
     };
   }
 
+  if (runner) {
+    // Derived from the request as sent, slot values filled in, so a value that changes the
+    // ceiling or the resources is refused here.
+    const binding = checkRunnerBinding(
+      body as RunnerBindingBody,
+      runner.slots,
+      { ceiling, resources: stepInput.resources },
+      runner.authorized
+    );
+    if (!binding.ok) {
+      logToAxiom({
+        name: 'runner-submit',
+        type: 'info',
+        // The audit record: both derived hashes, never which one differed.
+        payload: {
+          outcome: 'refused',
+          reason: 'runner_binding_mismatch',
+          detail: binding.refusal,
+          runId: runner.runId,
+          authorizationId: runner.authorizationId,
+          recipeVersionHash: binding.derived?.recipeVersionHash ?? null,
+          paramsHash: binding.derived?.paramsHash ?? null,
+        },
+      });
+      refuseRunnerSubmit(runner.runId, 'binding');
+    }
+    // After the binding check, so a mismatched request does not spend the token.
+    const fresh = await claimRunnerSubmitJti(claims.jti).catch(() => {
+      throw new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: 'runner submit unavailable' });
+    });
+    if (!fresh) refuseRunnerSubmit(runner.runId, 'replay');
+  }
+
   // ── GEN IDEMPOTENCY CLAIM (audit 🔴-1) — same guard as the txt2img path. Taken
   //    BEFORE the cap reservation + orchestrator submit so two CONCURRENT same-key
   //    submits can't BOTH reserve + BOTH charge, and a replay can't double-INCR the
@@ -11715,7 +11934,9 @@ async function submitCustomComfyWorkflow(opts: {
   //    CLOSED on a redis error; a resolved submit FINALIZEs, every non-committed
   //    exit RELEASEs. The orchestrator externalId dedupe stays as a 2nd layer.
   let genClaimKey: string | null = null;
-  if (idempotencyKey) {
+  // Not for a runner: the ledger's one live attempt per run is its idempotency, and a replay
+  // must be refused there rather than answered from cache with no attempt.
+  if (idempotencyKey && !runner) {
     let claim: BlockGenIdempotencyClaim<{ snapshot: ReturnType<typeof snapshotFromWorkflow> }>;
     try {
       claim = await claimGenIdempotency<{ snapshot: ReturnType<typeof snapshotFromWorkflow> }>(
@@ -11746,7 +11967,7 @@ async function submitCustomComfyWorkflow(opts: {
   // The reservation THROWS fail-closed on a redis error; release the claim first.
   let reservation: Awaited<ReturnType<typeof reserveBlockBuzzSpendForClaims>>;
   try {
-    reservation = await reserveBlockBuzzSpendForClaims(claims, userId, ceiling);
+    reservation = await reserveBlockBuzzSpendForClaims(claims, userId, ceiling, runner);
   } catch (e) {
     if (genClaimKey) await releaseGenIdempotency(genClaimKey);
     throw e;
@@ -11840,7 +12061,21 @@ async function submitCustomComfyWorkflow(opts: {
   // persisted in the settle record below. This is what makes adding the third
   // reservation safe (it can't over-count the session for the 25h TTL).
   let devSessionReserve: { sessionId: string; cost: number } | null = null;
-  {
+  // The app and dev-session legs are refunded only when the reservation's were (a runner attempt
+  // another writer moved keeps every leg counting).
+  const refundAllLegs = async () => {
+    if (!(await refundBlockBuzzReservation(reservation, ceiling))) return;
+    if (appSpendReserve) {
+      const { refundAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
+      await refundAppSpend(appSpendReserve.key, appSpendReserve.cost);
+    }
+    if (devSessionReserve) {
+      const { refundDevSessionBuzz } = await import('~/server/services/blocks/dev-tunnel.service');
+      await refundDevSessionBuzz(devSessionReserve.sessionId, devSessionReserve.cost);
+    }
+  };
+  // Not for a runner: a runner run is no dev session, and its attempt row names no such leg.
+  if (!runner) {
     const { getActiveDevTunnel, reserveDevSessionBuzz } = await import(
       '~/server/services/blocks/dev-tunnel.service'
     );
@@ -11856,11 +12091,7 @@ async function submitCustomComfyWorkflow(opts: {
         // above (the session reserve rolled ITSELF back on deny) and the G8
         // per-app reservation (present only for non-dev tokens; a token with
         // `dev !== true` can still have an active dev tunnel). Then fail-snapshot.
-        await refundBlockBuzzReservation(reservation, ceiling);
-        if (appSpendReserve) {
-          const { refundAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
-          await refundAppSpend(appSpendReserve.key, appSpendReserve.cost);
-        }
+        await refundAllLegs();
         // No money moved → release the idempotency claim so a genuine retry runs.
         if (genClaimKey) await releaseGenIdempotency(genClaimKey);
         return {
@@ -11875,6 +12106,8 @@ async function submitCustomComfyWorkflow(opts: {
           },
         };
       }
+      // Below the deny: refundAllLegs reads this when called, and the deny's reserve already rolled
+      // its session leg back, so an assignment above it would refund that leg twice.
       devSessionReserve = { sessionId: devTunnel.sessionId, cost: Math.ceil(ceiling) };
     }
   }
@@ -11896,6 +12129,33 @@ async function submitCustomComfyWorkflow(opts: {
   // `WorkflowCost.variable` — TRUE when the price is a CAP that may settle lower;
   // the author fee is skipped on one. Same hoist, same reason.
   let realizedPriceIsCap: boolean | null = null;
+  // A runner attempt is sent only by the submit that moves it to `submitting`. Not moved (another
+  // writer moved it, or the ledger failed): never sent.
+  if (reservation.runner) {
+    const { attemptId } = reservation.runner;
+    // The move records the legs just reserved, so the sweeper and reconciler settle from the row.
+    const legs: RunnerReservation = {
+      buzzCapKey,
+      consentBudgetKey: reservation.consent?.key ?? null,
+      appSpendKey: appSpendReserve?.key ?? null,
+      amount: Math.ceil(ceiling),
+    };
+    const moved = await ledgerDb()
+      .then((db) =>
+        transitionRunnerAttempt(db, attemptId, 'reserved', 'submitting', { reservation: legs })
+      )
+      .catch((error: unknown) => {
+        logRunnerLedgerError('submitting', attemptId, error);
+        return false;
+      });
+    if (!moved) {
+      await refundAllLegs();
+      if (genClaimKey) await releaseGenIdempotency(genClaimKey);
+      throw new TRPCError({ code: 'CONFLICT', message: 'runner attempt is no longer reserved' });
+    }
+    reservation.runner.state = 'submitting';
+  }
+
   // Captured just before the orchestrator submit → the server-side proxy for the
   // job's submit instant, so the settle-time wall-clock metric measures
   // submit→terminal-observation (incl. GPU queue-wait). Observability-only.
@@ -11920,6 +12180,8 @@ async function submitCustomComfyWorkflow(opts: {
         // internal 3× retry of THIS call — collapses to the existing workflow on the
         // orchestrator → no second Buzz charge. Always present.
         externalId: blockExternalId,
+        // Tips are billed on top of the step's runtime and are not in a runner's reservation.
+        ...(runner ? { tips: { civitai: 0, creators: 0 } } : {}),
       },
     });
     snapshot = snapshotFromWorkflow(submitted, await resolveBlockOutputView(claims));
@@ -11927,23 +12189,75 @@ async function submitCustomComfyWorkflow(opts: {
     realizedBaseCost = typeof submitted.cost?.base === 'number' ? submitted.cost.base : null;
     realizedPriceIsCap = submitted.cost?.variable === true;
   } catch (e) {
-    await refundBlockBuzzReservation(reservation, ceiling);
-    if (appSpendReserve) {
-      const { refundAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
-      await refundAppSpend(appSpendReserve.key, appSpendReserve.cost);
+    if (reservation.runner && !isDefiniteOrchestratorSubmitRefusal(e)) {
+      // Ambiguous: the orchestrator may have created and charged the workflow. Held, never
+      // refunded: every leg keeps counting until the attempt is resolved by hand.
+      const { attemptId } = reservation.runner;
+      await ledgerDb()
+        .then((db) => transitionRunnerAttempt(db, attemptId, 'submitting', 'unknown'))
+        .catch((error: unknown) => logRunnerLedgerError('unknown', attemptId, error));
+      logToAxiom({
+        name: 'runner-attempt-unknown',
+        type: 'error',
+        payload: { attemptId, runId: runner?.runId },
+        error: safeError(e),
+      });
+      throw e;
     }
-    // F4 — mirror the daily/app refund for the dev-session reservation so a failed
-    // submit doesn't permanently burn the session ceiling. Best-effort; present
-    // only when an active dev tunnel was reserved above.
-    if (devSessionReserve) {
-      const { refundDevSessionBuzz } = await import('~/server/services/blocks/dev-tunnel.service');
-      await refundDevSessionBuzz(devSessionReserve.sessionId, devSessionReserve.cost);
-    }
+    await refundAllLegs();
     // No resolved submit → no money moved; release the idempotency claim so a
     // genuine retry can re-run (orchestrator externalId dedupe still covers a retry
     // that DID create a workflow server-side despite a lost response).
     if (genClaimKey) await releaseGenIdempotency(genClaimKey);
     throw e;
+  }
+
+  if (reservation.runner) {
+    const { attemptId } = reservation.runner;
+    const moved = await ledgerDb()
+      .then((db) =>
+        transitionRunnerAttempt(db, attemptId, 'submitting', 'submitted', {
+          workflowId: snapshot.workflowId,
+        })
+      )
+      .catch((error: unknown) => {
+        logRunnerLedgerError('submitted', attemptId, error);
+        return false;
+      });
+    // Lost to the sweeper, which moved it to `unknown` while the submit was in flight: adopt it.
+    const adopted =
+      !moved &&
+      (await ledgerDb()
+        .then((db) =>
+          transitionRunnerAttempt(db, attemptId, 'unknown', 'submitted', {
+            workflowId: snapshot.workflowId,
+          })
+        )
+        .catch((error: unknown) => {
+          logRunnerLedgerError('adopt', attemptId, error);
+          return false;
+        }));
+    if (moved || adopted) {
+      logToAxiom({
+        name: 'runner-submit',
+        type: 'info',
+        payload: {
+          outcome: 'submitted',
+          runId: runner?.runId,
+          attemptId,
+          workflowId: snapshot.workflowId,
+        },
+      });
+    }
+    // Adopted: alarmed as the sweeper race. Unrecorded (neither move landed): the attempt stays in
+    // its current state and keeps counting.
+    if (!moved) {
+      logToAxiom({
+        name: adopted ? 'runner-attempt-adopted' : 'runner-attempt-unrecorded',
+        type: 'error',
+        payload: { attemptId, workflowId: snapshot.workflowId },
+      });
+    }
   }
 
   // A resolved submit is money-COMMITTED. Cache the terminal result under the
@@ -11959,20 +12273,24 @@ async function submitCustomComfyWorkflow(opts: {
   // included ONLY when a dev tunnel was reserved above (spread) — so a non-dev
   // submit persists the SAME record shape it did before (settle no-ops that leg).
   if (snapshot.workflowId && snapshot.workflowId !== 'failed' && snapshot.workflowId !== 'whatif') {
-    await persistCustomComfySettle({
-      workflowId: snapshot.workflowId,
-      buzzCapKey,
-      // The consent-budget leg, when the viewer set a per-app budget. Absent
-      // otherwise, so the record shape is unchanged for everyone else.
-      consentBudgetKey: reservation.consent?.key ?? null,
-      appSpendKey: appSpendReserve?.key ?? null,
-      ...(devSessionReserve ? { devSessionId: devSessionReserve.sessionId } : {}),
-      ceiling,
-      // Observability-only (per-engine runtime/cost at settle) — never affects the refund.
-      engine,
-      recipe: recipeId,
-      submittedAt,
-    });
+    // No settle record for a runner: the reconciler settles it from the attempt row, so a poll or
+    // cancel of the same workflow (by another of the user's tokens) has nothing to settle.
+    if (!runner) {
+      await persistCustomComfySettle({
+        workflowId: snapshot.workflowId,
+        buzzCapKey,
+        // The consent-budget leg, when the viewer set a per-app budget. Absent
+        // otherwise, so the record shape is unchanged for everyone else.
+        consentBudgetKey: reservation.consent?.key ?? null,
+        appSpendKey: appSpendReserve?.key ?? null,
+        ...(devSessionReserve ? { devSessionId: devSessionReserve.sessionId } : {}),
+        ceiling,
+        // Observability-only (per-engine runtime/cost at settle) — never affects the refund.
+        engine,
+        recipe: recipeId,
+        submittedAt,
+      });
+    }
     // G6 — persistent output queue (best-effort, non-dev). Same posture as
     // txt2img so a customComfy gen rebuilds in listMyWorkflows on reload.
     if (claims.dev !== true) {

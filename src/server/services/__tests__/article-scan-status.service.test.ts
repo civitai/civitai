@@ -179,6 +179,20 @@ describe('getArticleScanStatus image urls', () => {
     });
   });
 
+  it('names only a failed scan as the reason, and an absent image as left out', async () => {
+    mockDbRead.imageConnection.findMany.mockResolvedValue([
+      { image: image(1, ImageIngestionStatus.Error, null) },
+      { image: image(2, ImageIngestionStatus.NotFound, null) },
+      {
+        image: { ...image(3, ImageIngestionStatus.Error, null), url: 'blob:https://civitai.com/x' },
+      },
+    ] as never);
+
+    expect((await getArticleScanStatus({ id: ARTICLE_ID })).errorReason).toBe(
+      '1 image(s) could not be scanned. 2 image(s) could not be found and are left out of the article'
+    );
+  });
+
   it('gives a moderator every url', async () => {
     expect(urls(await getArticleScanStatus({ id: ARTICLE_ID, viewerIsModerator: true }))).toEqual({
       blocked: [

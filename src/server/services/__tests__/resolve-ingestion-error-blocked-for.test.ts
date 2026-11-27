@@ -16,6 +16,7 @@ function armImage(columns: {
   needsReview?: string | null;
   user?: { bannedAt: Date | null; deletedAt: Date | null };
   type?: string;
+  scannedAt?: Date | null;
 }) {
   dbMock.dbRead.image.findUnique.mockResolvedValue({
     ingestion: 'Error',
@@ -26,10 +27,14 @@ function armImage(columns: {
     url: UNPROBEABLE_URL,
     blockedFor: null,
     needsReview: null,
+    createdAt: UPLOADED,
+    scannedAt: null,
     user: { bannedAt: null, deletedAt: null },
     ...columns,
   } as never);
 }
+
+const UPLOADED = new Date('2026-01-01T00:00:00Z');
 
 /** The DELETE of this image's pending blocked-image purge row, if one ran. */
 const purgeRowDrops = () =>
@@ -143,5 +148,22 @@ describe('resolveIngestionError and blockedFor', () => {
 
     expect(rerate).toHaveBeenCalledTimes(1);
     expect(rerate).toHaveBeenCalledWith(4243);
+  });
+
+  // sortAt reads scannedAt uncapped, so stamping now() would list the image as new.
+  it.each([
+    ['a scan that never finished takes the upload time', null, UPLOADED],
+    [
+      'an earlier scan time stays',
+      new Date('2026-01-02T00:00:00Z'),
+      new Date('2026-01-02T00:00:00Z'),
+    ],
+  ])('%s', async (_label, scannedAt, expected) => {
+    armImage({ scannedAt });
+
+    await resolve();
+
+    const arg = dbMock.dbWrite.image.updateMany.mock.calls[0][0] as { data: { scannedAt: Date } };
+    expect(arg.data.scannedAt).toEqual(expected);
   });
 });

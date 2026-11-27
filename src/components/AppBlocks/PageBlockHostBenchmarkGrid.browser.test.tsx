@@ -24,8 +24,6 @@ const { publishMutate, getImagesMutate, previewPostMutate, createPostMutate } = 
   createPostMutate: vi.fn(),
 }));
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-
 vi.mock('~/utils/trpc', () => ({
   setTrpcBatchingEnabled: vi.fn(),
   trpc: {

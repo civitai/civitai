@@ -6,6 +6,7 @@ import { useDidUpdate } from '@mantine/hooks';
 import { MAX_ENTITIES_COVER_IMAGE } from '~/server/schema/image.schema';
 import type { ShowcaseItemSchema } from '~/server/schema/user-profile.schema';
 import { QuickSearchDropdown } from '~/components/Search/QuickSearchDropdown';
+import { ShowcaseOwnItemsPicker } from '~/components/Profile/ShowcaseOwnItemsPicker';
 import { quoteMeiliValue } from '~/components/Search/meili-filter';
 import { trpc } from '~/utils/trpc';
 import { GenericImageCard } from '~/components/Cards/GenericImageCard';
@@ -25,6 +26,8 @@ type ShowcaseItemsInputProps = Omit<InputWrapperProps, 'children' | 'onChange'> 
   value?: ShowcaseItemSchema[];
   onChange?: (value: ShowcaseItemSchema[]) => void;
   username?: string;
+  /** With it, a picker of the owner's own images and models replaces the search (profile redesign). */
+  ownerId?: number;
   limit?: number;
   supportedIndexes?: SearchIndexKey[];
 };
@@ -33,6 +36,7 @@ export const ShowcaseItemsInput = ({
   value,
   onChange,
   username,
+  ownerId,
   limit = 15,
   supportedIndexes = defaultShowcaseIndexes,
   ...props
@@ -103,6 +107,14 @@ export const ShowcaseItemsInput = ({
     }
   };
 
+  const onToggleItem = (item: ShowcaseItemSchema) => {
+    const isShown = showcaseItems.some(
+      (i) => i.entityId === item.entityId && i.entityType === item.entityType
+    );
+    if (isShown) onRemoveSelectedItem(item);
+    else if (showcaseItems.length < limit) setShowcaseItems((current) => [...current, item]);
+  };
+
   const onRemoveSelectedItem = (item: ShowcaseItemSchema) => {
     setShowcaseItems((current) =>
       current.filter((i) => !(i.entityId === item.entityId && i.entityType === item.entityType))
@@ -129,7 +141,12 @@ export const ShowcaseItemsInput = ({
   return (
     <Input.Wrapper {...props} error={props.error ?? error}>
       <Stack gap="xs" mt="sm">
-        {username && (
+        {showcaseItems.length > 0 && ownerId && (
+          <Text size="xs" c="dimmed">
+            {showcaseItems.length} of {limit} · drag to reorder
+          </Text>
+        )}
+        {username && !ownerId && (
           <QuickSearchDropdown
             supportedIndexes={supportedIndexes}
             onItemSelected={onItemSelected}
@@ -216,6 +233,20 @@ export const ShowcaseItemsInput = ({
             </SortableContext>
           </DndContext>
         </Paper>
+        {username && ownerId && (
+          <Stack gap={6} mt="md">
+            <Text size="sm" fw={600}>
+              Add from your work
+            </Text>
+            <ShowcaseOwnItemsPicker
+              userId={ownerId}
+              username={username}
+              selected={showcaseItems}
+              limit={limit}
+              onToggle={onToggleItem}
+            />
+          </Stack>
+        )}
       </Stack>
     </Input.Wrapper>
   );

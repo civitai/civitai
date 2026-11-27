@@ -12,7 +12,7 @@ import type * as TrpcModule from '~/utils/trpc';
 
 /**
  * The "Add a hat" item in a content menu shows while the server says this viewer may wear the
- * event's hats. Justin and Ellie, 2026-10-09: hats are kept after the event, so the item stays once
+ * event's hats. Decided in #5626: hats are kept after the event, so the item stays once
  * the event has ended; if you are about to hide it again at the end, that reverses a product
  * decision.
  */

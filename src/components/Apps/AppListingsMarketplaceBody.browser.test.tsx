@@ -47,12 +47,6 @@ const mocks = vi.hoisted(() => ({
   lastArgs: null as null | Record<string, unknown>,
 }));
 
-// The grid renders AppListingCard, which calls useCurrentUser() (owner "Edit"
-// deep-link gate, added in #3392). Without a mock it hits the real
-// CivitaiSessionContext — absent in the provider stack — and throws "missing
-// CivitaiSessionContext", crashing every card render. Mock a signed-out viewer.
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-
 /**
  * This suite mounts ANONYMOUSLY (the mock above), and recents are ACCOUNT-scoped
  * (#4048) with `null` — signed out — as its own bucket, not a wildcard. Seeds
@@ -115,7 +109,6 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
 // below fails by burning its timeout. `isClient: true` = post-hydration (so the count
 // badge renders); `mobile: false` = the desktop popover path. The mobile drawer path
 // and the pre-hydration path get their own files.
-vi.mock('~/providers/IsClientProvider', () => ({ useIsClient: () => true }));
 // Spread the real module so newly added exports (e.g. useIsMobileDevice) keep resolving —
 // a hand-listed mock breaks COLLECTION the moment the app chrome imports a new name from it.
 vi.mock('~/hooks/useIsMobile', async (importOriginal) => ({

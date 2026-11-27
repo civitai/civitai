@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { ComponentProps } from 'svelte';
   import type { HTMLButtonAttributes } from 'svelte/elements';
   import Icon from '$lib/Icon.svelte';
 
@@ -13,6 +14,8 @@
     disabled = false,
     hint,
     yesNo = false,
+    icon,
+    keyHint,
     onclick,
   }: {
     option: { value: string; label: string };
@@ -22,11 +25,15 @@
     hint?: string;
     /** A yes/no question: wider pills, a check or cross, and the key after the label. */
     yesNo?: boolean;
+    /** Replaces the yes/no check or cross. */
+    icon?: ComponentProps<typeof Icon>['name'];
+    /** The key shown after the label, when it is not the option's number. */
+    keyHint?: string;
     onclick?: HTMLButtonAttributes['onclick'];
   } = $props();
 
   const blocked = $derived(option.label.toLowerCase() === 'blocked');
-  const yesNoIcon = $derived(yesNo ? (option.value === 'yes' ? 'check' : 'x') : null);
+  const yesNoIcon = $derived(icon ?? (yesNo ? (option.value === 'yes' ? 'check' : 'x') : null));
 </script>
 
 <button
@@ -45,7 +52,7 @@
   {#if yesNoIcon}<Icon name={yesNoIcon} />{/if}
   {#if blocked}<span class="ban"><Icon name="ban" size={20} /></span>{/if}
   <span class="level">{option.label}</span>
-  <kbd class="key" aria-hidden="true">{index + 1}</kbd>
+  <kbd class="key" aria-hidden="true">{keyHint ?? index + 1}</kbd>
 </button>
 
 <style>

@@ -1,6 +1,7 @@
 import { describe, expect, it, beforeEach, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as UserPreferences from '~/server/services/user-preferences.service';
+import { dealCopyCheckFor } from '~/server/services/__tests__/deal-file-copy.fake';
 
 // The image's visibility read (assertImageVisibleToViewer) runs through Kysely, not Prisma's
 // `$queryRaw`: answered by `kysely.read` (see arrangeCollection).
@@ -95,10 +96,7 @@ describe('updateCollectionCoverImage authorization', () => {
   it("refuses the manager's own image when it is a deal file's scan copy", async () => {
     arrangeCollection();
     const prior = mockDbWrite.$queryRaw.getMockImplementation();
-    mockDbWrite.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...v: unknown[]) =>
-      [...strings].join('').includes('ServiceDealFile')
-        ? Promise.resolve([{ dealFileImage: true }])
-        : prior?.(strings, ...v) ?? Promise.resolve([])) as never);
+    mockDbWrite.$queryRaw.mockImplementation(dealCopyCheckFor(IMAGE_ID, prior));
     try {
       await expect(
         updateCollectionCoverImage({

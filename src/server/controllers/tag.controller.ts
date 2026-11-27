@@ -149,6 +149,7 @@ export const addTagVotesHandler = async ({
       ...input,
       userId: ctx.user.id,
       isModerator: ctx.user.isModerator,
+      csamReview: !!ctx.features?.csamReports,
     });
   } catch (error) {
     throw throwDbError(error);

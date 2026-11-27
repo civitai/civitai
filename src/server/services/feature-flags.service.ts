@@ -681,6 +681,8 @@ const featureFlags = createFeatureFlags({
   creatorJourney: { availability: ['mod'], fliptKey: 'creator-journey' },
   // Creator-built showcase sections on the profile page.
   profileShowcases: { availability: ['mod'], fliptKey: 'profile-showcases' },
+  // The redesigned profile page.
+  profileRedesign: { availability: ['mod'], fliptKey: 'profile-redesign' },
   // Creators curate a model version's showcase per site and feature community images in it.
   modelVersionShowcase: { availability: ['mod'], fliptKey: 'model-version-showcase' },
   // Kill switch for serving curated version showcases (the flag above gates curating). Read with no
@@ -879,6 +881,9 @@ const featureFlags = createFeatureFlags({
   // launch. Off ⇒ Ultra is not offered and a submitted 'ultra' falls back to the
   // default (see `image/krea3.graph.ts`).
   krea3Ultra: { availability: ['mod'], fliptKey: 'krea3-ultra' },
+  // Gates the Seed Audio ecosystem in the generator: off ⇒ it is hidden from the audio picker and a
+  // submitted `SeedAudio` is refused (see `getEcosystemStates`).
+  seedAudioGenerator: { availability: ['mod'], fliptKey: 'seed-audio-generator' },
   // Retool privileged endpoints — `granted` means the moderator must carry the
   // matching permission key in user.permissions. Endpoints lookup the key
   // directly from `RetoolAction.privileged`, so the permission name MUST stay
@@ -986,6 +991,10 @@ const featureFlags = createFeatureFlags({
   // OAuth-connect listing request. `[]` for the `appBlocksAgenticReview` reason; the server half
   // is `isAppListingsAgenticReviewEnabled`, on the same key.
   appListingsAgenticReview: { availability: [], fliptKey: APP_LISTINGS_AGENTIC_REVIEW_FLAG },
+  // The reply thread on an app review decision (`app_review_messages`, applied by hand). `[]`:
+  // dark for everyone, mods included, until the Flipt flag turns it on, so nothing reads or writes
+  // the table before it exists. Gates the thread procs server-side and every thread UI.
+  appReviewReplies: { availability: [], fliptKey: 'app-review-replies' },
   appDeveloperRateCard: { availability: [], fliptKey: 'app-developer-rate-card' },
   // App Assistant (on `/apps/build`); read only through `canAccessAppAssistant`. `[]` rather than
   // `['mod']` for the `appBlocksAgenticReview` reason: client and server agree while the flag is absent.

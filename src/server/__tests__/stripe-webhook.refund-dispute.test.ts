@@ -124,6 +124,10 @@ import handler from '~/pages/api/webhooks/stripe';
 import { trackWebhookEvent } from '~/server/clickhouse/client';
 import { getServerStripe } from '~/server/utils/get-server-stripe';
 
+vi.mock('~/server/db/kyselyDb', async () =>
+  (await import('~/__tests__/mocks/no-ledger-kysely')).noLedgerKyselyDb()
+);
+
 type Reward = {
   id: number;
   userId: number;

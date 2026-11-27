@@ -274,8 +274,8 @@ function main() {
   const deps = liveCatalogReadDeps({ listings, onSubListingsCapped });
   // Every subscription polls; they share one catalog read per half poll interval.
   const readApps = sharedRead(() => readCatalog(deps, { listings, onError }), pollMs / 2);
-  // The private, per-viewer and level streams resolve from every approved app, not the public
-  // catalog: those streams decide access themselves. Shared the same way, read only when asked.
+  // The private, per-viewer and level streams read every approved app, not the public catalog
+  // (see readDocStreamApps).
   const docStreamDeps = liveDocStreamReadDeps();
   const readDocApps = sharedRead(() => readDocStreamApps(docStreamDeps), pollMs / 2);
   const resolvers = docStreamResolvers({

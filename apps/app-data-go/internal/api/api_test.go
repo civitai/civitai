@@ -338,7 +338,7 @@ func newStackWith(t *testing.T, registryOn, blockOn bool, opts session.Options) 
 	if blockOn {
 		router.Blocks = &exchange.BlockCache{Hub: ex.ExchangeBlock, Margin: opts.ExpiryMargin,
 			Observe: func(outcome, code string) {
-				s.m.ObserveBlockExchange(slog.New(slog.DiscardHandler))(outcome, code)
+				s.m.ObserveBlockExchange(slog.New(slog.DiscardHandler), s.srv.Writes != nil)(outcome, code)
 			}}
 	}
 	opts.Exchange = router.Exchange
@@ -1182,9 +1182,6 @@ var writePaths = []struct{ method, path, body string }{
 
 // 7. With APP_DATA_WRITES off every write route and `info` is the mux's 404, and the read route
 // answers as before, its preflight unchanged.
-// On origin/main the POST to the collection path is the mux's 405 (only GET and OPTIONS are
-// registered there), so `rec.Code != 404` fails for it; the key and info paths are 404 there too, so
-// for those this is an invariant guard.
 func TestWithWritesOffEveryWriteRouteIs404AndReadsAreUnchanged(t *testing.T) {
 	s := newStack(t, false, session.Options{})
 	s.store.by["civitai_writes_off"] = restAnswer{200, `{"items":[],"nextCursor":null}`}
@@ -1206,7 +1203,6 @@ func TestWithWritesOffEveryWriteRouteIs404AndReadsAreUnchanged(t *testing.T) {
 
 // With writes on, each route reaches the forwarder (a fake site counts it), the read route is
 // unchanged, and the collection path's preflight allows the create.
-// Fails on origin/main: Server has no Writes field there (the test does not compile).
 func TestWithWritesOnTheWriteRoutesAreServed(t *testing.T) {
 	s := newStack(t, false, session.Options{})
 	s.store.by["civitai_writes_on"] = restAnswer{200, `{"items":[],"nextCursor":null}`}

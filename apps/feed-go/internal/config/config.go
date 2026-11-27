@@ -150,7 +150,8 @@ type Config struct {
 	// InfiniteAnswerFeedUnavailable is FEED_GO_INFINITE_ANSWER_FEED_UNAVAILABLE (default off): on the
 	// public image.getInfinite route, answer a failed feed-service call with the app's own 503 here
 	// (server.Server.AnswerInfiniteFeedUnavailable), for the requests the app answers it to whatever
-	// feed-service-degrade says (feed.UnavailableError). Off, it is the `feed-unavailable` /
+	// feed-service-degrade says (feed.UnavailableError), after one retry of the call here
+	// (feed.WithFeedRetry). Off, it is the `feed-unavailable` /
 	// `feed-status` fallback, proxied to the Node app, which calls the feed again. It changes nothing
 	// while ServeInfinite is off.
 	InfiniteAnswerFeedUnavailable bool

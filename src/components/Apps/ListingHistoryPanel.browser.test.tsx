@@ -130,6 +130,36 @@ beforeEach(() => {
   mocks.appBlocksFlag = true;
 });
 
+describe('the review conversation link', () => {
+  // The thread admits the app's current owner only: an editor who can see this history
+  // would get "not found". The server sends that verdict as `canConverse`.
+  test('shown only where the server says the caller may converse', async () => {
+    renderWithProviders(
+      <ListingHistoryPanelView
+        conversationEnabled
+        entries={[
+          entry({ id: 'own_rej', status: 'rejected', canConverse: true }),
+          entry({ id: 'ed_rej', status: 'rejected', canConverse: false }),
+        ]}
+      />
+    );
+    await expect
+      .element(page.getByTestId('apps-history-conversation-own_rej'))
+      .toHaveAttribute('href', '/apps/submissions/own_rej');
+    expect(page.getByTestId('apps-history-conversation-ed_rej').elements()).toHaveLength(0);
+  });
+
+  test('never while the flag is off, whatever the verdict', async () => {
+    renderWithProviders(
+      <ListingHistoryPanelView
+        entries={[entry({ id: 'own_rej2', status: 'rejected', canConverse: true })]}
+      />
+    );
+    await expect.element(page.getByTestId('apps-history-entry-own_rej2')).toBeInTheDocument();
+    expect(page.getByTestId('apps-history-conversation-own_rej2').elements()).toHaveLength(0);
+  });
+});
+
 describe('the stream', () => {
   test('BOTH publish-request streams appear, tagged by source, without duplication', async () => {
     // The two tables are disjoint event streams over one app — see
@@ -185,6 +215,48 @@ describe('the stream', () => {
     await expect
       .element(page.getByTestId('apps-history-notes-rej_1'))
       .toHaveTextContent('Icon is 32px, needs 256px');
+  });
+
+  test('a decided entry whose reviewer account is gone reads as the team', async () => {
+    // The named case renders the site's UserAvatar, which needs providers this harness does not
+    // mount; which case renders is `decisionReviewerByline`, pinned in the unit suite.
+    renderWithProviders(
+      <ListingHistoryPanelView
+        entries={[
+          entry({ id: 'rev_gone', status: 'approved', reviewer: { account: null } }),
+          entry({ id: 'rev_none', status: 'pending', version: '3.0.0', reviewer: null }),
+        ]}
+      />
+    );
+    const gone = page.getByTestId('apps-history-reviewer-rev_gone');
+    await expect.element(gone).toHaveTextContent('Reviewed by Civitai App Review');
+    expect(gone.element().querySelector('a')).toBeNull();
+    // Nobody has decided a pending request yet.
+    expect(page.getByTestId('apps-history-reviewer-rev_none').query()).toBeNull();
+  });
+
+  test('a staff submission on the owner’s behalf is labelled, and only that entry', async () => {
+    renderWithProviders(
+      <ListingHistoryPanelView
+        entries={[
+          entry({
+            id: 'staff_1',
+            status: 'pending',
+            version: '1.0.1',
+            canWithdraw: false,
+            staffSubmission: {
+              staffUsername: 'mod-ana',
+              platformUpdateId: 'apu_01JABCDEFGHJKMNPQRSTVWXYZ0',
+            },
+          }),
+          entry({ id: 'own_1', status: 'approved', version: '1.0.0' }),
+        ]}
+      />
+    );
+    await expect
+      .element(page.getByTestId('apps-history-staff-submission-staff_1'))
+      .toHaveTextContent('Staff submission by mod-ana (platform update)');
+    expect(page.getByTestId('apps-history-staff-submission-own_1').query()).toBeNull();
   });
 
   test('an app with no history says so rather than rendering an empty box', async () => {

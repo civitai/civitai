@@ -401,7 +401,8 @@ export async function resolveIngestionError({
       nsfwLevelLocked: true,
       ingestion: 'Scanned',
       blockedFor: null,
-      scannedAt: new Date(),
+      // Not now(): resolving must not move the image in feeds. firstVisibleAt does that, once.
+      scannedAt: sql`COALESCE("scannedAt", "createdAt")`,
       metadata: sql`${JSON.stringify(metadata)}::jsonb`,
     })
     .where('id', '=', id)

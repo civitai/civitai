@@ -80,7 +80,6 @@ vi.mock('~/providers/FeatureFlagsProvider', async (orig) => ({
   ...(await orig<typeof FeatureFlagsMod>()),
   useFeatureFlags: () => ({ storylines: true, canWrite: true }),
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 1 }) }));
 vi.mock('~/hooks/useCatchNavigation', () => ({ useCatchNavigation: () => undefined }));
 vi.mock('~/components/Tours/ToursProvider', () => ({
   useTourContext: () => ({ runTour: vi.fn(), running: false }),
@@ -148,7 +147,7 @@ beforeEach(() => {
 
 describe('a contributor publishing a continuation', () => {
   test('the price on the button is the price sent', async () => {
-    renderWithProviders(<PostEditSidebar post={post} />);
+    renderWithProviders(<PostEditSidebar post={post} />, { user: { id: 1 } });
 
     await page.getByRole('button', { name: 'Publish and submit · 50 Buzz' }).click();
     expect(lastInput()).toMatchObject({ id: 41, expectedPrice: 50 });
@@ -156,14 +155,14 @@ describe('a contributor publishing a continuation', () => {
 
   test('a free storyline says Free and sends 0', async () => {
     mocks.terms = open(0);
-    renderWithProviders(<PostEditSidebar post={post} />);
+    renderWithProviders(<PostEditSidebar post={post} />, { user: { id: 1 } });
 
     await page.getByRole('button', { name: 'Publish and submit · Free' }).click();
     expect(lastInput().expectedPrice).toBe(0);
   });
 
   test('tells them what happens to the Buzz', async () => {
-    renderWithProviders(<PostEditSidebar post={post} />);
+    renderWithProviders(<PostEditSidebar post={post} />, { user: { id: 1 } });
 
     await expect
       .element(page.getByTestId('storyline-publish-caption'))
@@ -173,7 +172,7 @@ describe('a contributor publishing a continuation', () => {
   test('cannot publish while the price is being read', async () => {
     mocks.terms = undefined;
     mocks.termsLoading = true;
-    renderWithProviders(<PostEditSidebar post={post} />);
+    renderWithProviders(<PostEditSidebar post={post} />, { user: { id: 1 } });
 
     await expect.element(page.getByRole('button', { name: 'Publish', exact: true })).toBeDisabled();
     expect(mocks.mutate).not.toHaveBeenCalled();
@@ -181,7 +180,7 @@ describe('a contributor publishing a continuation', () => {
 
   test('cannot publish when the price cannot be read, and says so', async () => {
     mocks.terms = undefined;
-    renderWithProviders(<PostEditSidebar post={post} />);
+    renderWithProviders(<PostEditSidebar post={post} />, { user: { id: 1 } });
 
     await expect.element(page.getByRole('button', { name: 'Publish', exact: true })).toBeDisabled();
     await expect
@@ -191,14 +190,14 @@ describe('a contributor publishing a continuation', () => {
 
   test('publishes as an ordinary post, with no price, once the storyline is closed', async () => {
     mocks.terms = { open: false, price: 0, closedReason: 'closed' };
-    renderWithProviders(<PostEditSidebar post={post} />);
+    renderWithProviders(<PostEditSidebar post={post} />, { user: { id: 1 } });
 
     await page.getByRole('button', { name: 'Publish', exact: true }).click();
     expect(lastInput().expectedPrice).toBeUndefined();
   });
 
   test('a changed price re-reads it, shows the new one, and the retry sends that', async () => {
-    renderWithProviders(<PostEditSidebar post={post} />);
+    renderWithProviders(<PostEditSidebar post={post} />, { user: { id: 1 } });
     await page.getByRole('button', { name: 'Publish and submit · 50 Buzz' }).click();
     expect(lastInput().expectedPrice).toBe(50);
 
@@ -219,7 +218,7 @@ describe('a contributor publishing a continuation', () => {
   });
 
   test('any other refusal is the ordinary publish error', async () => {
-    renderWithProviders(<PostEditSidebar post={post} />);
+    renderWithProviders(<PostEditSidebar post={post} />, { user: { id: 1 } });
     await page.getByRole('button', { name: 'Publish and submit · 50 Buzz' }).click();
     const [, options] = mocks.mutate.mock.calls[0]!;
     await options.onError(new Error('nope'));
@@ -234,7 +233,7 @@ describe('a contributor publishing a continuation', () => {
 describe('no price is sent for anything but a contributor’s draft', () => {
   test('the owner continuing their own story publishes the chapter by number', async () => {
     mocks.pending = continuation(1);
-    renderWithProviders(<PostEditSidebar post={post} />);
+    renderWithProviders(<PostEditSidebar post={post} />, { user: { id: 1 } });
 
     await page.getByRole('button', { name: 'Publish chapter 5' }).click();
     expect(lastInput().expectedPrice).toBeUndefined();
@@ -242,7 +241,7 @@ describe('no price is sent for anything but a contributor’s draft', () => {
 
   test('an ordinary post', async () => {
     mocks.pending = null;
-    renderWithProviders(<PostEditSidebar post={post} />);
+    renderWithProviders(<PostEditSidebar post={post} />, { user: { id: 1 } });
 
     await page.getByRole('button', { name: 'Publish', exact: true }).click();
     expect(lastInput().expectedPrice).toBeUndefined();
@@ -254,7 +253,7 @@ describe('no price is sent for anything but a contributor’s draft', () => {
       storyline: { id: 2, title: 'The Patch', userId: 1 },
       parentChapter: null,
     };
-    renderWithProviders(<PostEditSidebar post={post} />);
+    renderWithProviders(<PostEditSidebar post={post} />, { user: { id: 1 } });
 
     await page.getByRole('button', { name: 'Publish chapter 1' }).click();
     expect(lastInput().expectedPrice).toBeUndefined();
@@ -263,7 +262,7 @@ describe('no price is sent for anything but a contributor’s draft', () => {
 
 describe('after publishing a continuation', () => {
   async function publishWith(storyline: unknown, buttonName = 'Publish and submit · 50 Buzz') {
-    renderWithProviders(<PostEditSidebar post={post} />);
+    renderWithProviders(<PostEditSidebar post={post} />, { user: { id: 1 } });
     await page.getByRole('button', { name: buttonName }).click();
     const [, options] = mocks.mutate.mock.calls[0]!;
     await options.onSuccess({ storyline }, { id: 41, publishedAt: new Date() });
@@ -278,7 +277,7 @@ describe('after publishing a continuation', () => {
       color: 'teal',
       autoClose: false,
     });
-    renderWithProviders(<div data-testid="said">{said().message}</div>);
+    renderWithProviders(<div data-testid="said">{said().message}</div>, { user: { id: 1 } });
     await expect
       .element(page.getByTestId('said'))
       .toHaveTextContent("Chapter 5 is waiting for the storyline owner's approval.");

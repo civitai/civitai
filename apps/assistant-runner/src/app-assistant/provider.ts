@@ -35,8 +35,10 @@ import {
   type ToolResult,
 } from '@civitai/app-assistant';
 import {
+  ASK_CHOICE,
   DISPATCH_AGENT,
   SubagentTracker,
+  askChoiceTool,
   dispatchAgentTool,
   gateToolSet,
   hostToolSet,
@@ -65,6 +67,13 @@ import { RunnerPreview, type AutoPreview } from './preview';
 import { AppSandbox } from './sandbox';
 import { unjustifiedManifestScopes } from './scope-justifications';
 import { openAppThemeEvidence } from './theme-evidence';
+import {
+  NO_PLATFORM_UPDATES,
+  PLATFORM_UPDATE_MERGED,
+  PlatformUpdates,
+  mergeUpdatesBeforeSubmit,
+  type PlatformUpdateSource,
+} from './platform-updates';
 import { SdkUpgrades, upgradeBeforeSubmit } from './sdk-pin';
 import type { RunSleepingApps } from './sleeping-apps';
 
@@ -185,6 +194,13 @@ export interface AppAssistantToolsOptions {
    */
   sourceSaves?(runId: string): (app: string) => Promise<void>;
   /**
+   * civitai's staff platform updates with one run's grant (`CivitaiPlatformUpdates.forRun`): the
+   * open app's open updates, brought into its sandbox as a reply opens and before a submit, and
+   * `platform_update_merged`. Unset: neither. civitai answering none (the flag off, an older
+   * civitai): nothing happens.
+   */
+  platformUpdates?(runId: string): PlatformUpdateSource;
+  /**
    * App hibernate: civitai's sleeping-app reads with one run's grant (`CivitaiSleepingApps.forRun`).
    * Unset, or listing `null` (the `app-hibernate` flag off for the user), the reply has no
    * `list_apps` or `wake_app` and `create_app` is as before.
@@ -232,6 +248,8 @@ export class AppAssistantTools implements ToolProvider {
   readonly #options: AppAssistantToolsOptions;
   /** Which conversations' apps had their `@civitai/sdk` upgrade tried: shared by every run. */
   readonly #sdkUpgrades: SdkUpgrades;
+  /** Staff platform updates: the notices each conversation was given, shared by every run. */
+  readonly #platformUpdates = new PlatformUpdates();
 
   constructor(options: AppAssistantToolsOptions) {
     this.#options = options;
@@ -403,6 +421,27 @@ export class AppAssistantTools implements ToolProvider {
       // An app on an older @civitai/sdk than the host's is upgraded by the runner itself, before the
       // assistant's first step, so none of its calls runs meanwhile (never throws; rolls back on failure).
       const livePreview = preview;
+      // Staff platform updates to the open app, before the SDK check: an update may change
+      // `package.json`. Not again when the reply's tools are built again mid-reply.
+      const updateSource = this.#options.platformUpdates?.(runId);
+      const applyUpdates = () =>
+        updateSource
+          ? this.#platformUpdates.apply({
+              sandbox,
+              source: updateSource,
+              hasTool: (name) => `sandbox__${name}` in sandboxTools,
+              // Each write changed the app: both gates hear of it, so checks run again.
+              report: (result) => {
+                core.onToolResult(result);
+                context.report?.(reportOf(result));
+              },
+              conversationId,
+              runId,
+              log,
+              signal,
+            })
+          : Promise.resolve(NO_PLATFORM_UPDATES);
+      const platformUpdate = context.rebuild ? NO_PLATFORM_UPDATES : await applyUpdates();
       const upgradeSdk = () =>
         this.#sdkUpgrades.upgrade({
           sandbox,
@@ -439,7 +478,10 @@ export class AppAssistantTools implements ToolProvider {
         ...appTools.tools,
         ...feedback.tools,
         ...core.tools,
-        [SUBMIT_FOR_REVIEW]: upgradeBeforeSubmit(core.tools[SUBMIT_FOR_REVIEW], upgradeSdk),
+        [SUBMIT_FOR_REVIEW]: upgradeBeforeSubmit(
+          mergeUpdatesBeforeSubmit(core.tools[SUBMIT_FOR_REVIEW], applyUpdates),
+          upgradeSdk
+        ),
         ...preview.tools(),
         ...coverTools,
         ...runnerActivityTools({
@@ -469,7 +511,31 @@ export class AppAssistantTools implements ToolProvider {
         sandboxTools,
         { conversationId, findAttachment: () => undefined, resolveArgs: async (args) => args }
       );
-      const tools: ToolSet = { ...sandboxTools, ...page, ...docs };
+      // A conflicted platform update the assistant was told to merge by hand: its report back.
+      // Offered whenever civitai's platform updates are configured, not only when this reply's
+      // start handed one over: a submit's late apply can hand one over too, and the tool checks
+      // the id against civitai's open list at the call.
+      const merged = updateSource
+        ? hostToolSet(
+            {
+              [PLATFORM_UPDATE_MERGED]: this.#platformUpdates.mergedTool({
+                currentApp: () => sandbox.active?.app ?? null,
+                source: updateSource,
+              }),
+            },
+            sandboxTools,
+            { conversationId, findAttachment: () => undefined, resolveArgs: async (args) => args }
+          )
+        : {};
+      // The chat's own ask_choice, as the page offers it: its result ends the reply, the page shows
+      // the options as buttons, and the pick (or what the user types instead) starts the next run.
+      const tools: ToolSet = {
+        ...sandboxTools,
+        ...page,
+        ...docs,
+        ...merged,
+        [ASK_CHOICE]: askChoiceTool(),
+      };
       // Aborts when the gate ends the reply on one of its own calls: its subagents stop with it.
       const replyEnded = new AbortController();
       const gate: GateDeps = {
@@ -532,6 +598,7 @@ export class AppAssistantTools implements ToolProvider {
                 }
               : {}),
           }),
+          ...(platformUpdate.instructions ? [platformUpdate.instructions] : []),
           ...(sdkUpgrade.kind === 'upgraded' ? [sdkUpgrade.instructions] : []),
         ].join('\n\n'),
         hostTools: Object.keys(page),

@@ -3,6 +3,10 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as Revocation from '~/server/services/user-token-revocation.service';
 import type * as ApiKeyService from '~/server/services/api-key.service';
 
+vi.mock('~/server/db/kyselyDb', async () =>
+  (await import('~/__tests__/mocks/no-ledger-kysely')).noLedgerKyselyDb()
+);
+
 // A banned or deleted account's API keys and OAuth tokens must stop working everywhere, including
 // in the orchestrator's auth cache. `revokeUserTokens` does that and is covered on its own; this
 // pins that every ban and deletion reaches it.

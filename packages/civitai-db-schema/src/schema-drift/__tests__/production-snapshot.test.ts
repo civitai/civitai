@@ -300,8 +300,15 @@ describe('production catalog snapshot (2026-10-20)', () => {
     //     `20271128130000_service_request_form` — drop these at the next catalog recapture.
     //   `ModActivity.details`: `20271128140000_mod_activity_details`
     //   `OauthConsent.offlineBuzzLimit` / `.offlineBuzzPeriod`: `20271204120000_recipe_runner_ledger`
+    //   the five redesign `UserProfile` columns (`about`, `backgroundImageId`, `sfwBackgroundImageId`,
+    //     `pageTheme`, `pinnedItems`): `20271125120000_profile_redesign_customization`
     const inFlightColumns = new Set([
       'ModActivity.details',
+      'UserProfile.about',
+      'UserProfile.backgroundImageId',
+      'UserProfile.sfwBackgroundImageId',
+      'UserProfile.pageTheme',
+      'UserProfile.pinnedItems',
       'OauthConsent.offlineBuzzLimit',
       'OauthConsent.offlineBuzzPeriod',
       'ServiceDealFileEntry.copyDeleteStartedAt',

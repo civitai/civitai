@@ -191,6 +191,34 @@ const sweepAndPurge = async () => {
 };
 
 describe('the retention windows', () => {
+  it.each([
+    ['still pointed at a passed copy not yet deleted', 'Passed', null],
+    ['rejected with its copy kept as evidence', 'Failed', 'An image in this file was rejected when it was checked.'],
+  ])("keeps a removed file whose image entry is %s, and the entry's pointer", async (_n, scanStatus, failReason) => {
+    const { finalId } = await closedDeal('Cancelled', 31);
+    await q(`INSERT INTO "Image" (id, url, "userId") VALUES (1, 'copy-key', ${SELLER})`);
+    await q(
+      `INSERT INTO "ServiceDealFileEntry" ("fileId", "dealId", "entryIndex", path, size, "imageId", "scanStatus", "failReason")
+       SELECT id, "dealId", 0, 'a.png', 1, 1, $2::"ServiceDealFileScanStatus", $3 FROM "ServiceDealFile" WHERE id = $1`,
+      [finalId, scanStatus, failReason]
+    );
+    await sweepAndPurge();
+    expect(await removed(finalId)).toBe(true);
+    expect(await kept(finalId)).toBe(true);
+    expect(await q(`SELECT "imageId" FROM "ServiceDealFileEntry"`)).toEqual([{ imageId: 1 }]);
+  });
+
+  it('purges a removed file whose image entry let go of its copy (control)', async () => {
+    const { finalId } = await closedDeal('Cancelled', 31);
+    await q(
+      `INSERT INTO "ServiceDealFileEntry" ("fileId", "dealId", "entryIndex", path, size, "scanStatus")
+       SELECT id, "dealId", 0, 'a.png', 1, 'Passed' FROM "ServiceDealFile" WHERE id = $1`,
+      [finalId]
+    );
+    await sweepAndPurge();
+    expect(await kept(finalId)).toBe(false);
+  });
+
   it.each(['Cancelled', 'Declined', 'Expired'] as const)(
     "removes a %s deal's files 30 days after it closed, and not a day before",
     async (status) => {
@@ -297,24 +325,13 @@ describe('a report on the offering', () => {
   });
 });
 
-/** An open report against `party`, which keeps the deal's removed files. */
-const openReportOn = (party: number) =>
-  `INSERT INTO "Report" (status) VALUES ('Pending');
-   INSERT INTO "UserReport" ("userId", "reportId") VALUES (${party}, (SELECT max(id) FROM "Report"));`;
+/** A pending appeal by `party`, which keeps the deal's removed files. */
+const pendingAppealBy = (party: number) =>
+  `INSERT INTO "Appeal" ("userId", status) VALUES (${party}, 'Pending');`;
 
 describe('holds', () => {
   const holds: [string, (party: number) => string][] = [
     ['a pending appeal', (p) => `INSERT INTO "Appeal" ("userId", status) VALUES (${p}, 'Pending')`],
-    [
-      'a minor-safety ban',
-      (p) =>
-        `UPDATE "User" SET "bannedAt" = now(), meta = '{"banDetails": {"reasonCode": "SexualMinor"}}' WHERE id = ${p}`,
-    ],
-    [
-      'an open report against them',
-      (p) =>
-        `INSERT INTO "Report" (status) VALUES ('Pending'); INSERT INTO "UserReport" ("userId", "reportId") VALUES (${p}, (SELECT max(id) FROM "Report"))`,
-    ],
     [
       'a lost payment dispute',
       (p) =>
@@ -377,40 +394,30 @@ describe('holds', () => {
     expect(await kept(finalId)).toBe(false);
   });
 
-  // A ban note alone is not a hold.
+  // Account-level holds were retired: a ban or an open report runs the purge as normal.
   it.each([
     [
-      'an internal ban note naming a child-safety report on the buyer',
-      BUYER,
-      'detailsInternal',
-      'NCMEC report filed',
+      'a minor-safety ban on the buyer',
+      `UPDATE "User" SET "bannedAt" = now(), meta = '{"banDetails": {"reasonCode": "SexualMinor"}}' WHERE id = ${BUYER}`,
     ],
     [
-      'an external ban note naming a child-safety report on the seller',
-      SELLER,
-      'detailsExternal',
-      'csam',
+      'a minor-safety ban on the seller',
+      `UPDATE "User" SET "bannedAt" = now(), meta = '{"banDetails": {"reasonCode": "SexualMinorGenerator"}}' WHERE id = ${SELLER}`,
     ],
-  ] as const)('%s keeps nothing', async (_name, party, field, note) => {
-    const { finalId } = await closedDeal('Cancelled', 40);
-    await q(`UPDATE "User" SET "bannedAt" = now(), meta = $2 WHERE id = $1`, [
-      party,
-      JSON.stringify({ banDetails: { reasonCode: 'Harassment', [field]: note } }),
-    ]);
+    [
+      'an open report against the buyer',
+      `INSERT INTO "Report" (status) VALUES ('Pending'); INSERT INTO "UserReport" ("userId", "reportId") VALUES (${BUYER}, (SELECT max(id) FROM "Report"))`,
+    ],
+    [
+      'a report being processed against the seller',
+      `INSERT INTO "Report" (status) VALUES ('Processing'); INSERT INTO "UserReport" ("userId", "reportId") VALUES (${SELLER}, (SELECT max(id) FROM "Report"))`,
+    ],
+  ])('%s keeps nothing', async (_name, sql) => {
+    const { finalId, attachmentId } = await closedDeal('Cancelled', 40);
+    await holder.db.exec(sql);
     await sweepAndPurge();
     expect(await kept(finalId)).toBe(false);
-  });
-
-  it('a ban for another reason, or a handled report against them, keeps nothing', async () => {
-    const { finalId } = await closedDeal('Cancelled', 40);
-    await holder.db.exec(`
-      UPDATE "User" SET "bannedAt" = now(), meta = '{"banDetails": {"reasonCode": "Harassment", "detailsInternal": "spam"}}' WHERE id = ${SELLER};
-      INSERT INTO "Report" (status, "createdAt", "statusSetAt") VALUES ('Actioned', ${daysAgo(
-        50
-      )}, ${daysAgo(45)});
-      INSERT INTO "UserReport" ("userId", "reportId") VALUES (${BUYER}, 1);`);
-    await sweepAndPurge();
-    expect(await kept(finalId)).toBe(false);
+    expect(await kept(attachmentId)).toBe(false);
   });
 
   it('a resolved appeal keeps nothing', async () => {
@@ -433,7 +440,7 @@ describe('holds', () => {
     const unheldViews = await partyViews(unheld.dealId);
 
     const held = await closedDeal('Cancelled', 40);
-    await holder.db.exec(openReportOn(BUYER));
+    await holder.db.exec(pendingAppealBy(BUYER));
     await sweepAndPurge();
     expect(await kept(held.finalId)).toBe(true);
     expect(await partyViews(held.dealId)).toEqual(unheldViews);
@@ -451,7 +458,7 @@ describe('holds', () => {
 
   it('a held, hidden file stays listed and downloadable for a moderator outside the deal', async () => {
     const { dealId, finalId, attachmentId } = await closedDeal('Cancelled', 40);
-    await holder.db.exec(openReportOn(SELLER));
+    await holder.db.exec(pendingAppealBy(SELLER));
     await sweepAndPurge();
     const listed = await files.listServiceDealFiles({
       dealId,
@@ -563,7 +570,7 @@ describe('the purge after the sweep', () => {
   it('re-reads the holds under the row lock: one landing after the candidates were read stops the delete', async () => {
     const { finalId } = await closedDeal('Cancelled', 40);
     await sweep();
-    await holder.db.exec(openReportOn(BUYER));
+    await holder.db.exec(pendingAppealBy(BUYER));
     // The candidate read ran before the hold landed.
     dbMock.dbWrite.$queryRaw.mockImplementationOnce((async () => [{ id: finalId }]) as never);
     expect(await purge()).toBe(0);
@@ -591,7 +598,7 @@ describe('the purge after the sweep', () => {
     await sweep();
     // The storage HEAD runs after the claim and before the first delete.
     s3.send.mockImplementationOnce(async () => {
-      await holder.db.exec(openReportOn(SELLER));
+      await holder.db.exec(pendingAppealBy(SELLER));
       return { ETag: '"abc123"' };
     });
     expect(await purge()).toBe(0);
@@ -611,7 +618,7 @@ describe('the purge after the sweep', () => {
     await q(`UPDATE "ServiceDealFile" SET "scanStatus" = 'Failed' WHERE id = $1`, [attachmentId]);
     await sweep();
     s3.purgeObjectVersions.mockImplementationOnce(async () => {
-      await holder.db.exec(openReportOn(BUYER));
+      await holder.db.exec(pendingAppealBy(BUYER));
       return { versionsDeleted: 1, remaining: 0 };
     });
     expect(await purge()).toBe(0);
@@ -770,7 +777,7 @@ describe('a party deleting a file', () => {
     s3.purgeObjectVersions.mockClear();
 
     const held = await openDeal();
-    await holder.db.exec(openReportOn(BUYER));
+    await holder.db.exec(pendingAppealBy(BUYER));
     expect(await deleteBoth(held)).toEqual([{ id: held.finalId }, { id: held.attachmentId }]);
     expect(await removed(held.finalId)).toBe(true);
     expect(await removed(held.attachmentId)).toBe(true);
@@ -798,7 +805,7 @@ describe('a party deleting a file', () => {
   it('drops only the public copy of a held preview: the upload and its scan image stay', async () => {
     const { dealId } = await openDeal();
     const previewId = await publishedPreview(dealId);
-    await holder.db.exec(openReportOn(SELLER));
+    await holder.db.exec(pendingAppealBy(SELLER));
     expect(await files.deleteServiceDealFile({ fileId: previewId, userId: SELLER })).toEqual({
       id: previewId,
     });
@@ -822,7 +829,7 @@ describe('a party deleting a file', () => {
   it('drops the public copy of a preview the sweep hides on a held deal, and nothing else', async () => {
     const { dealId } = await closedDeal('Cancelled', 40);
     const previewId = await publishedPreview(dealId);
-    await holder.db.exec(openReportOn(BUYER));
+    await holder.db.exec(pendingAppealBy(BUYER));
     await sweep();
     expect(await files.dropRemovedPreviewCopies()).toBe(1);
     expect(await purge()).toBe(0);
@@ -857,13 +864,13 @@ describe('account deletion', () => {
 
   it('hides them under a hold but the purge keeps them; an open deal keeps them unhidden', async () => {
     const held = await closedDeal('Completed', 1);
-    await holder.db.exec(openReportOn(BUYER));
+    await holder.db.exec(pendingAppealBy(BUYER));
     await dbMock.dbWrite.$executeRaw(retention.markUserDealUploadsRemovedSql(SELLER));
     expect(await removed(held.finalId)).toBe(true);
     expect(await purge()).toBe(0);
     expect(await kept(held.finalId)).toBe(true);
     await q(`UPDATE "ServiceDealFile" SET "removedAt" = NULL`);
-    await q(`DELETE FROM "UserReport"`);
+    await q(`DELETE FROM "Appeal"`);
     await q(
       `UPDATE "ServiceDeal" SET status = 'Delivered', "releaseAt" = NULL, "settledAt" = NULL`
     );
@@ -900,7 +907,7 @@ describe('the purge record', () => {
     expect(await record(finalId)).toBeDefined();
     // After the retry's claim and before its first delete.
     s3.send.mockImplementationOnce(async () => {
-      await holder.db.exec(openReportOn(SELLER));
+      await holder.db.exec(pendingAppealBy(SELLER));
       return { ETag: '"abc123"' };
     });
     await purge();

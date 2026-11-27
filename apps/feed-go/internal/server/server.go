@@ -112,6 +112,9 @@ func verifiedCrawler(r *http.Request) bool {
 
 // Server wires a request to the port.
 type Server struct {
+	// Version is this binary's release (main.version), sent as VersionHeader on every public answer
+	// (PublicMux). Empty, the header is not sent.
+	Version string
 	// Readiness answers the internal /readyz (the zero value is ready); Drain fails it at shutdown.
 	Readiness Readiness
 	Resolver  *auth.Resolver
@@ -133,8 +136,9 @@ type Server struct {
 	// public image.getInfinite route, write the app's 503 here (writeFeedUnavailable, outcome
 	// `feed_unavailable`) for a feed-service failure the app answers with it whatever
 	// feed-service-degrade says (feed.UnavailableError), instead of handing the request back as the
-	// `feed-unavailable` / `feed-status` fallback, where the app calls the feed again. Off, the request
-	// is handed back as before.
+	// `feed-unavailable` / `feed-status` fallback, where the app calls the feed again. That second call
+	// is made here instead, once, before the 503 (feed.WithFeedRetry, feed_go_feed_retry_total). Off,
+	// the request is handed back as before, with no retry here.
 	AnswerInfiniteFeedUnavailable bool
 	// Fallback serves what this service does not (a reverse proxy to the Node app). Required to serve
 	// public traffic; nil only in shadow-only deployments, where the public route is not exposed.
@@ -943,6 +947,11 @@ func (s *Server) ServeInfiniteHTTP(w http.ResponseWriter, r *http.Request) {
 	fn := s.computeInfinite
 	if s.computeInfiniteFn != nil {
 		fn = s.computeInfiniteFn
+	}
+	if s.AnswerInfiniteFeedUnavailable {
+		// The 503 answered here takes away the app's own feed call after a hand-back, so the second call
+		// is made here instead (feed.WithFeedRetry). Off, the hand-back makes it: no retry here.
+		r = r.WithContext(feed.WithFeedRetry(r.Context(), s.countFeedRetry))
 	}
 	s.serve(w, r, EndpointInfinite, ProcedureInfinite, off, fn)
 }

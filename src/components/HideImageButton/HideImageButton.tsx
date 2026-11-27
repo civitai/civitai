@@ -6,7 +6,8 @@ import type { MouseEventHandler } from 'react';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useHiddenPreferencesData, useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
 
-import { showSuccessNotification } from '~/utils/notifications';
+import { showImageHiddenNotification } from '~/components/HideImageButton/showImageHiddenNotification';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 
 export function HideImageButton({
   imageId,
@@ -24,10 +25,27 @@ export function HideImageButton({
   const handleHideClick: MouseEventHandler<HTMLElement> = async (e) => {
     e.preventDefault();
     e.stopPropagation();
-    toggleHiddenMutation.mutateAsync({ kind: 'image', data: [{ id: imageId }] }).then(() => {
-      showSuccessNotification({
-        title: `${noun[0].toUpperCase()}${noun.slice(1)} ${alreadyHiding ? 'unhidden' : 'hidden'}`,
-        message: `This ${noun} will${alreadyHiding ? ' ' : ' not '}show up in your feed`,
+    const data = [{ id: imageId }];
+    const Noun = `${noun[0].toUpperCase()}${noun.slice(1)}`;
+    toggleHiddenMutation.mutateAsync({ kind: 'image', data }).then(() => {
+      if (alreadyHiding) {
+        showSuccessNotification({
+          title: `${Noun} unhidden`,
+          message: `This ${noun} will show up in your feed`,
+        });
+        return;
+      }
+      showImageHiddenNotification({
+        imageId,
+        noun,
+        onUndo: () =>
+          toggleHiddenMutation
+            .mutateAsync({ kind: 'image', data, hidden: false })
+            .catch((error) => {
+              // The hook already shows its own toast for a rate limit.
+              if (error?.data?.code !== 'TOO_MANY_REQUESTS')
+                showErrorNotification({ error, title: 'Could not undo' });
+            }),
       });
     });
 

@@ -1,9 +1,14 @@
+import type * as ClientS3 from '@aws-sdk/client-s3';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { showcaseQueries } from '~/__tests__/mocks/showcase-queries';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import type * as HatSync from '~/server/events/points/sync';
+
+vi.mock('~/server/db/kyselyDb', async () =>
+  (await import('~/__tests__/mocks/no-ledger-kysely')).noLedgerKyselyDb()
+);
 
 /**
  * BANNING REMOVES AN ACCOUNT FROM USER SEARCH — SO LIFTING A BAN HAS TO PUT IT BACK.
@@ -103,7 +108,7 @@ vi.mock('~/server/services/post.service', async (importOriginal) => ({
 const upload = vi.hoisted(() => ({ fail: undefined as Error | undefined, done: [] as string[] }));
 // Both carry `default`: the package is pre-bundled for CJS interop, so consumers resolve through it.
 vi.mock('@aws-sdk/client-s3', async (importOriginal) => {
-  const real = await importOriginal<typeof import('@aws-sdk/client-s3')>();
+  const real = await importOriginal<typeof ClientS3>();
   const objects = new Map<string, { body: Uint8Array; Metadata?: Record<string, string> }>();
   const S3Client = class {
     async send(command: unknown) {

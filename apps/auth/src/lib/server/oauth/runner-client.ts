@@ -1,7 +1,11 @@
 import type { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { TokenScope } from '@civitai/auth/token-scope';
-import { isRunnerClient, readRunnerBindingStatus } from '@civitai/db-queries/recipe-runner';
+import {
+  isRunnerClient,
+  readRunnerBindingStatus,
+  readRunnerClient,
+} from '@civitai/db-queries/recipe-runner';
 import { db } from '$lib/server/db/db';
 import { SYSTEM_USER_ID } from './constants';
 import { carriesRunnerOnlyScope } from './scope';
@@ -17,13 +21,9 @@ export const RUNNER_TOKEN_SCOPE = TokenScope.RunnerMint | TokenScope.UserRead;
 export async function readRunnerAdmission(
   clientId: string
 ): Promise<'active' | 'suspended' | null> {
-  const client = await db
-    .selectFrom('OauthClient')
-    .select(['userId', 'isConfidential', 'skipConsent', 'grants', 'accessMode'])
-    .where('id', '=', clientId)
-    .executeTakeFirst();
-  if (!isRunnerClient(client, SYSTEM_USER_ID)) return null;
-  const status = await readRunnerBindingStatus(db as unknown as Kysely<DB>, clientId);
+  const primary = db as unknown as Kysely<DB>;
+  if (!isRunnerClient(await readRunnerClient(primary, clientId), SYSTEM_USER_ID)) return null;
+  const status = await readRunnerBindingStatus(primary, clientId);
   if (status === null) return null;
   return status === 'active' ? 'active' : 'suspended';
 }

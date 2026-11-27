@@ -15,7 +15,6 @@ import type { EmbedImage } from '~/components/CivitaiEmbed/CivitaiEmbedProvider'
 // The real ImageGuard2 decides; only the media it chooses between are stand-ins.
 const settings = vi.hoisted(() => ({ browsingLevel: 1, blurNsfw: false }));
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 9 }) }));
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsModule>()),
   useFeatureFlags: () => ({ canViewNsfw: true }),
@@ -82,7 +81,8 @@ function renderFull(type: 'image' | 'video') {
   return renderWithProviders(
     <BrowsingLevelProvider>
       <FullWidthMedia item={{ type: 'image', id: media(type).id }} data={media(type)} />
-    </BrowsingLevelProvider>
+    </BrowsingLevelProvider>,
+    { user: { id: 9 } }
   );
 }
 

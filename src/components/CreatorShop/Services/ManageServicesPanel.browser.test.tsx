@@ -2,6 +2,7 @@
 import '@mantine/core/styles.css';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
+import type * as AppProviderModule from '~/providers/AppProvider';
 import type * as TrpcModule from '~/utils/trpc';
 import { renderWithProviders } from '../../../../test/component-setup';
 import { makeTrpcProxy } from '../../../../test/trpcProxyStub';
@@ -29,7 +30,8 @@ vi.mock('~/components/CreatorShop/Services/deals/ServiceDealsList', () => ({
 vi.mock('~/components/CreatorShop/Services/ServiceOfferingFormModal', () => ({
   ServiceOfferingFormModal: () => null,
 }));
-vi.mock('~/providers/AppProvider', () => ({
+vi.mock('~/providers/AppProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppProviderModule>()),
   useServerDomains: () => ({ green: 'green.test', blue: 'blue.test', red: 'civitai.red' }),
 }));
 vi.mock('~/hooks/useSyncAccount', () => ({ useSyncAccount: () => (url: string) => url }));

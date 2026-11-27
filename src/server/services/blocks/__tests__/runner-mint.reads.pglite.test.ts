@@ -36,12 +36,14 @@ async function attempt(a: {
   userId?: number;
   clientId?: string;
   authorizationId?: string;
+  workflowId?: string;
 }) {
   attemptNo += 1;
   await pg.query(
     `INSERT INTO runner_run_attempts (attempt_id, run_id, attempt_no, user_id, runner_client_id,
-       app_block_id, authorization_id, state, reserved_amount, charged_amount, external_id, created_at)
-     VALUES ($1, $2, $3, $4, $5, 'apb_reads', $6, $7, $8, $9, $1, $10)`,
+       app_block_id, authorization_id, state, reserved_amount, charged_amount, external_id, created_at,
+       workflow_id)
+     VALUES ($1, $2, $3, $4, $5, 'apb_reads', $6, $7, $8, $9, $1, $10, $11)`,
     [
       `att_${attemptNo}`,
       a.runId,
@@ -53,6 +55,7 @@ async function attempt(a: {
       a.reserved,
       a.charged ?? null,
       new Date(NOW - (a.ageHours ?? 1) * HOUR),
+      a.workflowId ?? null,
     ]
   );
 }
@@ -96,6 +99,8 @@ beforeAll(async () => {
   // Negative controls: none of these may count.
   await attempt({ runId: 'run_failed_free', state: 'failed', reserved: 50 });
   await attempt({ runId: 'run_refunded', state: 'refunded', reserved: 50, charged: 0 });
+  // Refunded after its workflow ran: not on the cap, but the run is spent.
+  await attempt({ runId: 'run_refunded_ran', state: 'refunded', reserved: 50, charged: 0, workflowId: 'wf_r' }); // prettier-ignore
   await attempt({ runId: 'run_old', state: 'settled', reserved: 50, charged: 50, ageHours: 30 });
   await attempt({ runId: 'run_other_user', state: 'reserved', reserved: 50, userId: OTHER_USER, clientId: OTHER_CLIENT, authorizationId: 'rra_other' }); // prettier-ignore
   await attempt({ runId: 'run_b', state: 'reserved', reserved: 7, authorizationId: 'rra_b' });
@@ -111,9 +116,10 @@ describe('runnerMintReads over the migration', () => {
     expect(await reads.capUsed(OTHER_USER, CLIENT, SINCE)).toBe(0);
   });
 
-  it('runsSince counts distinct runs holding a live or settled attempt in the window', async () => {
-    // run_live_reserved, run_live_unknown, run_settled, run_live_submitted; not failed, refunded or old.
-    expect(await reads.runsSince('rra_a', SINCE)).toBe(4);
+  it('runsSince counts distinct runs holding a live, settled or charged-failed attempt in the window', async () => {
+    // run_live_reserved, run_live_unknown, run_settled, run_live_submitted, run_failed_charged,
+    // run_refunded_ran; not a free failure, a never-sent refund or old.
+    expect(await reads.runsSince('rra_a', SINCE)).toBe(6);
     expect(await reads.runsSince('rra_b', SINCE)).toBe(1);
   });
 
@@ -123,6 +129,14 @@ describe('runnerMintReads over the migration', () => {
     expect(await reads.hasLiveAttempt('run_failed_charged')).toBe(false);
     expect(await reads.hasLiveAttempt('run_refunded')).toBe(false);
     expect(await reads.hasLiveAttempt('run_never')).toBe(false);
+  });
+
+  it('hasSpentAttempt is true for a charged failure or a refund of a workflow that ran', async () => {
+    expect(await reads.hasSpentAttempt('run_failed_charged')).toBe(true);
+    expect(await reads.hasSpentAttempt('run_refunded_ran')).toBe(true);
+    expect(await reads.hasSpentAttempt('run_failed_free')).toBe(false);
+    expect(await reads.hasSpentAttempt('run_refunded')).toBe(false);
+    expect(await reads.hasSpentAttempt('run_settled')).toBe(false);
   });
 
   // The `AT TIME ZONE 'UTC'` in this read is not observable here: PGlite returns a zoneless

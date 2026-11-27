@@ -130,6 +130,7 @@ import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constan
 import { DELETE_AFTER_REVIEW_MESSAGE } from '~/shared/constants/delete-after-review.constants';
 import { Availability, CollectionType, EntityType } from '~/shared/utils/prisma/enums';
 import { RemixMenu, isRemixMenuVisible } from '~/components/Image/Remix/RemixMenu';
+import { useRemixTrayClearanceRef } from '~/store/remix-tray-clearance.store';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { AdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
 import { ClientOnlySection } from '~/components/ClientOnlySection/ClientOnlySection';
@@ -294,6 +295,7 @@ function ImageDetail2Content({ deferredSsr }: { deferredSsr?: boolean }) {
     { enabled: !!image?.id }
   );
   const deferredShell = useSsrDeferredShell(deferredSsr);
+  const trayClearanceRef = useRemixTrayClearanceRef();
 
   if (!image) return <NotFound />;
   // Avoid showing POI images to non-mods non owners.
@@ -624,24 +626,27 @@ function ImageDetail2Content({ deferredSsr }: { deferredSsr?: boolean }) {
                               <DownloadImage src={image.url} type={image.type} name={image.name}>
                                 {({ onClick: download, isLoading: downloading, progress }) => (
                                   <>
-                                    <LegacyActionIcon
-                                      {...sharedActionIconProps}
-                                      className={clsx(
-                                        sharedActionIconProps.className,
-                                        '@max-md:hidden'
-                                      )}
-                                      onClick={download}
-                                      loading={downloading && progress === 0}
-                                    >
-                                      {downloading && progress > 0 && (
-                                        <RingProgress
-                                          size={36}
-                                          sections={[{ value: progress, color: 'blue' }]}
-                                          thickness={4}
-                                        />
-                                      )}
-                                      {!downloading && <IconDownload {...sharedIconProps} />}
-                                    </LegacyActionIcon>
+                                    {/* `url` is null when the media is withheld from this viewer. */}
+                                    {!!image.url && (
+                                      <LegacyActionIcon
+                                        {...sharedActionIconProps}
+                                        className={clsx(
+                                          sharedActionIconProps.className,
+                                          '@max-md:hidden'
+                                        )}
+                                        onClick={download}
+                                        loading={downloading && progress === 0}
+                                      >
+                                        {downloading && progress > 0 && (
+                                          <RingProgress
+                                            size={36}
+                                            sections={[{ value: progress, color: 'blue' }]}
+                                            thickness={4}
+                                          />
+                                        )}
+                                        {!downloading && <IconDownload {...sharedIconProps} />}
+                                      </LegacyActionIcon>
+                                    )}
                                     <ShareButton
                                       url={imageShareUrl}
                                       title={title}
@@ -671,7 +676,7 @@ function ImageDetail2Content({ deferredSsr }: { deferredSsr?: boolean }) {
                                         image={image}
                                         additionalMenuItems={
                                           <>
-                                            {narrowStage && (
+                                            {narrowStage && !!image.url && (
                                               <Menu.Item
                                                 leftSection={
                                                   <IconDownload size={14} stroke={1.5} />
@@ -703,7 +708,7 @@ function ImageDetail2Content({ deferredSsr }: { deferredSsr?: boolean }) {
                                         image={image}
                                         additionalMenuItems={
                                           <>
-                                            {narrowStage && (
+                                            {narrowStage && !!image.url && (
                                               <Menu.Item
                                                 leftSection={
                                                   <IconDownload size={14} stroke={1.5} />
@@ -853,6 +858,8 @@ function ImageDetail2Content({ deferredSsr }: { deferredSsr?: boolean }) {
                     spurious 34px gap — over-payment, which is a defect here in
                     exactly the way under-payment is. */}
                 <div
+                  // Collapsed, this row is the bottom bar the Remix tray must not cover.
+                  ref={!active ? trayClearanceRef : undefined}
                   className={`@max-md:shadow-topper flex items-center justify-between rounded-md p-3 @md:hidden ${
                     !active ? '@max-md:pb-[calc(0.75rem+var(--safe-area-inset-bottom-unpaid))]' : ''
                   }`}

@@ -1,7 +1,10 @@
 import { PGlite } from '@electric-sql/pglite';
 import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
 import { pgliteKysely } from '~/__tests__/pglite-kysely';
-import { CSAM_LINK_TABLES_SQL } from '../../../../../packages/civitai-shared/src/__tests__/csam-restriction-cases';
+import {
+  CSAM_LINK_TABLES_SQL,
+  WITHHELD_TABLES_SQL,
+} from '../../../../../packages/civitai-shared/src/__tests__/csam-restriction-cases';
 
 // A Knight vote is graded when it is cast only if that vote decided the image. Until then it stays
 // Pending and the decision grades it (the settle rewrites only Pending votes); a round that ends
@@ -126,20 +129,7 @@ beforeAll(async () => {
       id int PRIMARY KEY, url text NOT NULL, ingestion text NOT NULL DEFAULT 'Scanned',
       "needsReview" text, "blockedFor" text, "userId" int NOT NULL, "pHash" bigint, "postId" int
     );
-    CREATE TABLE "Post" (id int PRIMARY KEY, metadata jsonb, "modelVersionId" int, "userId" int, "publishedAt" timestamp);
-    CREATE TABLE "ModelVersion" (id int PRIMARY KEY, meta jsonb, "modelId" int);
-    CREATE TABLE "Model" (id int PRIMARY KEY, meta jsonb);
-    CREATE TABLE "User" (id int PRIMARY KEY, meta jsonb);
-    CREATE TABLE "ImageCdnModeratorDelete" ("imageId" int PRIMARY KEY, url text, "userId" int, "csamReview" boolean);
-    CREATE TABLE "BlockedImage" (hash bigint, reason text);
-    CREATE TABLE "ScanLabelItem" (id int PRIMARY KEY, "imageId" int, "voidReason" text);
-    CREATE TABLE "ScanLabelFlag" ("itemId" int, snapshot jsonb);
-    CREATE TABLE "ScanLabelVote" ("itemId" int, reason text);
-    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb, images jsonb, "reportSentAt" timestamp);
-    CREATE TABLE "TextScanHold" (id SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL, label TEXT NOT NULL, status TEXT NOT NULL, "textHash" TEXT, meta JSONB);
-    CREATE TABLE "TagsOnImageDetails" ("imageId" int, "tagId" int, disabled boolean NOT NULL DEFAULT false);
-    CREATE TABLE "ImageCdnAccess" (url text PRIMARY KEY, state text NOT NULL, "deniedAt" timestamptz NOT NULL DEFAULT now(), "retractedAt" timestamptz DEFAULT now());
-    CREATE TABLE "ImageCdnShopTakedown" (url text, "shopItemId" int, "userId" int);
+    ${WITHHELD_TABLES_SQL}
     INSERT INTO "Image" (id, url, "userId") VALUES (${CLEAN}, 'key-1', 7);
     INSERT INTO "Image" (id, url, "userId") VALUES (${WITHHELD}, 'key-2', 7);
     INSERT INTO "Image" (id, url, ingestion, "blockedFor", "userId") VALUES (3, 'key-2', 'Blocked', 'CSAM', 8);
@@ -264,6 +254,19 @@ describe('grading a Knight vote when it is cast', () => {
     expect(mockUpdateLevel).not.toHaveBeenCalled();
     expect(inquisitorPool.getCount).toHaveBeenCalledWith(WITHHELD);
     expect(voidedIds()).toEqual([]);
+  });
+
+  it('judges the loosening against the primary level when the replica still has the old one', async () => {
+    dbMock.dbRead.image.findUnique.mockImplementation(async (args: any) => ({
+      ...row(args.where.id, args.select),
+      ...('nsfwLevel' in args.select && { nsfwLevel: NsfwLevel.X }),
+    }));
+    dbMock.dbWrite.image.findUnique.mockResolvedValue({ nsfwLevel: NsfwLevel.XXX } as never);
+    mockUpdateLevel.mockResolvedValue(NsfwLevel.X);
+    expect(
+      await castVote({ voteNumber: 5, rating: NsfwLevel.X, tally: CONSENSUS_X, imageId: WITHHELD })
+    ).toBe(NewOrderImageRatingStatus.Pending);
+    expect(mockUpdateLevel).not.toHaveBeenCalled();
   });
 
   // A moderator's own rating writes at once, under the moderator's own grant.

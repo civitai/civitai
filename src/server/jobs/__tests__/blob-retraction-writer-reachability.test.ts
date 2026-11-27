@@ -5,6 +5,10 @@ import { setEnv } from '~/__tests__/mocks/env.mock';
 import { BlockedReason } from '~/server/common/enums';
 import { PRIOR_INGESTION_KEY, PRIOR_NEEDS_REVIEW_KEY } from '~/server/utils/image-removal-mode';
 
+vi.mock('~/server/db/kyselyDb', async () =>
+  (await import('~/__tests__/mocks/no-ledger-kysely')).noLedgerKyselyDb()
+);
+
 /**
  * 🔴 REACHABILITY GUARD for blob retraction.
  *

@@ -6544,7 +6544,19 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
     ),
     'rate limited': X(
       200,
-      { snapshot: { workflowId: 'wf_1', status: 'processing', throttled: true } },
+      {
+        snapshot: {
+          workflowId: 'wf_1',
+          status: 'processing',
+          throttled: true,
+          rateLimit: {
+            retryAfterSeconds: 7,
+            retryAt: '2026-01-01T00:00:07.000Z',
+            id: 'apps.catalog',
+            kind: 'abuse',
+          },
+        },
+      },
       true,
       ['checkBlockCatalogRateLimit("bki_char")'],
       [
@@ -6865,7 +6877,19 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
     ),
     'rate limited': X(
       200,
-      { snapshot: { workflowId: 'wf_1', status: 'processing', throttled: true } },
+      {
+        snapshot: {
+          workflowId: 'wf_1',
+          status: 'processing',
+          throttled: true,
+          rateLimit: {
+            retryAfterSeconds: 7,
+            retryAt: '2026-01-01T00:00:07.000Z',
+            id: 'apps.poll',
+            kind: 'abuse',
+          },
+        },
+      },
       true,
       ['checkBlockPollRateLimit("bki_char", 42)'],
       [

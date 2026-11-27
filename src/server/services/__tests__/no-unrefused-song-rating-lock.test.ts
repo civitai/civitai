@@ -34,9 +34,9 @@ type Decision =
   | { kind: 'reads'; why: string };
 
 const LEDGER: Record<string, { locks: number; decision: Decision }> = {
-  // A moderator rating, the Knights consensus rating (in its WHERE), the ingestion-error resolve,
-  // and one select.
-  'src/server/services/image.service.ts': { locks: 4, decision: { kind: 'refuses' } },
+  // A moderator rating, the Knights consensus rating (its raw UPDATE and its WHERE), the
+  // ingestion-error resolve, and one select; the rating paths refuse a song before writing.
+  'src/server/services/image.service.ts': { locks: 5, decision: { kind: 'refuses' } },
   'apps/moderator/src/lib/server/image-nsfw-level.ts': { locks: 1, decision: { kind: 'refuses' } },
   'apps/moderator/src/lib/server/ingestion.service.ts': { locks: 1, decision: { kind: 'refuses' } },
   'src/server/services/image-scan-pipeline.ts': {

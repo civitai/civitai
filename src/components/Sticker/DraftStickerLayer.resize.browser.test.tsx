@@ -21,7 +21,6 @@ const COSMETIC_ID = 85;
 const CAP = 0.22;
 const art = { id: COSMETIC_ID, name: 'Star', slug: 'star', url: 'star.png' };
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 7 }) }));
 vi.mock('~/components/Sticker/treatments/useStickerTreatment', () => ({
   useStickerTreatment: () => 'none',
 }));
@@ -73,7 +72,8 @@ const dragHandle = async (width: number, toward: 'far' | 'anchor') => {
       style={{ position: 'relative', width, height }}
     >
       <DraftStickerLayer />
-    </div>
+    </div>,
+    { user: { id: 7 } }
   );
 
   const { begin } = useStickerPlacementDraftStore.getState();
@@ -138,7 +138,8 @@ describe('the movement path and ghosts', () => {
     renderWithProviders(
       <div style={{ position: 'relative', width: 400, height: 300 }}>
         <DraftStickerLayer />
-      </div>
+      </div>,
+      { user: { id: 7 } }
     );
     const store = useStickerPlacementDraftStore.getState();
     useStickerPlacementDraftStore.setState({ targetImageId: IMAGE_ID });

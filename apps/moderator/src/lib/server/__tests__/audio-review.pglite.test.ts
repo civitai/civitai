@@ -338,20 +338,33 @@ describe('Minor and POI on a song', () => {
       flag: 'minor',
       value: true,
       moderatorId: 3,
+      csamReview: false,
     });
     expect(result).toEqual({
       ok: false,
       error: `${SONG_FLAG_REFUSED} Nothing was changed: ${SONG}.`,
     });
     expect(
-      await setImageFlag({ imageIds: [SONG], flag: 'poi', value: true, moderatorId: 3 })
+      await setImageFlag({
+        imageIds: [SONG],
+        flag: 'poi',
+        value: true,
+        moderatorId: 3,
+        csamReview: false,
+      })
     ).toMatchObject({ ok: false });
   });
 
   it('can still be cleared, which goes on to the main app', async () => {
     // No WEBHOOK_TOKEN in this test: reaching the call is the refusal it answers with.
     expect(
-      await setImageFlag({ imageIds: [SONG], flag: 'minor', value: false, moderatorId: 3 })
+      await setImageFlag({
+        imageIds: [SONG],
+        flag: 'minor',
+        value: false,
+        moderatorId: 3,
+        csamReview: false,
+      })
     ).toEqual({ ok: false, error: 'WEBHOOK_TOKEN is not configured.' });
   });
 });

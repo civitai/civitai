@@ -26,10 +26,6 @@ vi.mock('~/components/Image/Detail/ImageDetailModal', async () => {
   }
   return { default: Detail };
 });
-vi.mock('~/hooks/useCurrentUser', async (o) => ({
-  ...(await o<object>()),
-  useCurrentUser: () => null,
-}));
 
 const FIRST_ID = 146911523;
 const TILE_ID = 147008115;

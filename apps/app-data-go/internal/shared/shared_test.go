@@ -15,7 +15,7 @@ import (
 )
 
 // Every fixture's keys, seqs, heads and canary bodies are pairwise distinct, so a read that answers
-// the wrong one of them names which. Fails on origin/main: package shared does not exist.
+// the wrong one of them names which.
 
 const (
 	schema  = "urn:schema:apps.civitai.com:bench-app/records@v1"

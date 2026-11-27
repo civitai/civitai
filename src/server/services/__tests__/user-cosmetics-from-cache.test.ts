@@ -11,7 +11,9 @@ vi.mock('~/server/events/showcase-hat', () => ({
   getShowcaseHatForUser: vi.fn(),
 }));
 
-const { getCosmeticsAndProfilePicturesForUsers } = await import('~/server/services/user.service');
+const { getCosmeticsAndProfilePicturesForUsers, getCosmeticsForUsers } = await import(
+  '~/server/services/user.service'
+);
 
 /**
  * Hot reads fill a user's `profilePicture` and `cosmetics` from the user caches instead of nesting
@@ -56,12 +58,15 @@ beforeEach(() => {
       // Held, not equipped.
       { userId: WEARER, cosmeticId: 3, data: null, equippedAt: null, equippedToId: null },
       { userId: OTHER, cosmeticId: 4, data: null, equippedAt: new Date(), equippedToId: null },
+      // Worn, but drawn only on the profile page.
+      { userId: WEARER, cosmeticId: 5, data: null, equippedAt: new Date(), equippedToId: null },
     ],
     cosmetics: [
       { id: 1, name: 'Badge', type: 'Badge', source: 'Event', data: { url: 'b.png' }, flags: 2 },
       { id: 2, name: 'Hat', type: 'ContentDecoration', source: 'Event', data: {}, flags: 0 },
       { id: 3, name: 'Frame', type: 'ProfileDecoration', source: 'Purchase', data: {}, flags: 0 },
       { id: 4, name: 'Plate', type: 'NamePlate', source: 'Trophy', data: { c: 'red' }, flags: 0 },
+      { id: 5, name: 'Art', type: 'SidebarBackground', source: 'Purchase', data: {}, flags: 0 },
     ],
     profilePictures: [picture],
   });
@@ -124,5 +129,15 @@ describe('getCosmeticsAndProfilePicturesForUsers', () => {
 
     expect(showcase.getShowcaseHatsForUsers).not.toHaveBeenCalled();
     expect(forUser(WEARER)).not.toHaveProperty('showcaseHat');
+  });
+});
+
+describe('getCosmeticsForUsers', () => {
+  // Feeds, cards and search carry what it returns; a sidebar background belongs to the profile alone.
+  it('leaves out a worn sidebar background and keeps everything else the user wears', async () => {
+    const worn = await getCosmeticsForUsers([WEARER, OTHER]);
+
+    expect(worn[WEARER].map((c) => c.cosmetic?.type)).toEqual(['Badge']);
+    expect(worn[OTHER].map((c) => c.cosmetic?.type)).toEqual(['NamePlate']);
   });
 });

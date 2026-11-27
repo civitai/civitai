@@ -54,12 +54,28 @@ export interface RunnerAuthorizationRow {
   runnerClientId: string;
   kind: string;
   runId: string | null;
+  /** The binding hashes a runner submit must reproduce (binding v1). */
+  recipeVersionHash: string;
+  paramsHash: string;
   maxAmountPerRun: number;
   maxRunsPerPeriod: number | null;
   period: string | null;
   createdAt: Date;
   expiresAt: Date;
   revokedAt: Date | null;
+}
+
+/** The columns `isRunnerClient` decides on. Pass a primary client. */
+export async function readRunnerClient(
+  db: Kysely<DB>,
+  clientId: string
+): Promise<RunnerClientRow | null> {
+  const row = await db
+    .selectFrom('OauthClient')
+    .select(['userId', 'isConfidential', 'skipConsent', 'grants', 'accessMode'])
+    .where('id', '=', clientId)
+    .executeTakeFirst();
+  return row ?? null;
 }
 
 /** Reads the runner mint needs; see `decideRunnerMint` in the main app. */
@@ -70,14 +86,23 @@ export interface RunnerMintReads {
   consent(userId: number, clientId: string): Promise<RunnerConsentRow | null>;
   authorization(id: string): Promise<RunnerAuthorizationRow | null>;
   hasLiveAttempt(runId: string): Promise<boolean>;
+  /**
+   * Whether an attempt of the run reached a workflow that ended without success: charged, or
+   * refunded after running. The run is over, since a retry reuses its externalId and so the workflow.
+   */
+  hasSpentAttempt(runId: string): Promise<boolean>;
   /** Spend counted against the offline cap since `since`, for (user, client). */
   capUsed(userId: number, clientId: string, since: Date): Promise<number>;
-  /** Runs of `authorizationId` that hold or held a live attempt since `since`. */
+  /** Runs of `authorizationId` that hold or held a live or spent attempt since `since`. */
   runsSince(authorizationId: string, since: Date): Promise<number>;
 }
 
 /** Attempt states that hold or spent budget; also a run's live states. `failed` is counted separately in `capUsed`. */
 export const RUNNER_CAP_STATES = ['reserved', 'submitting', 'unknown', 'submitted', 'settled'];
+
+/** An attempt whose workflow ended without success: a failure that was charged, or a refund of one that ran. */
+const spentAttempt = sql`((state = 'failed' AND charged_amount > 0)
+  OR (state = 'refunded' AND workflow_id IS NOT NULL))`;
 
 /**
  * The runner mint reads. Pass a primary client: a consent change, revocation or attempt written
@@ -89,10 +114,7 @@ export function runnerMintReads(db: Kysely<DB>): RunnerMintReads {
     return (rows[0] as T | undefined) ?? null;
   };
   return {
-    client: (clientId) =>
-      one<RunnerClientRow>(sql`
-        SELECT "userId", "isConfidential", "skipConsent", grants, "accessMode"
-        FROM "OauthClient" WHERE id = ${clientId}`),
+    client: (clientId) => readRunnerClient(db, clientId),
     binding: (clientId) =>
       one<RunnerBindingRow>(sql`
         SELECT app_block_id AS "appBlockId", status
@@ -109,7 +131,8 @@ export function runnerMintReads(db: Kysely<DB>): RunnerMintReads {
     authorization: (id) =>
       one<RunnerAuthorizationRow>(sql`
         SELECT id, user_id AS "userId", runner_client_id AS "runnerClientId", kind,
-               run_id AS "runId", max_amount_per_run AS "maxAmountPerRun",
+               run_id AS "runId", recipe_version_hash AS "recipeVersionHash",
+               params_hash AS "paramsHash", max_amount_per_run AS "maxAmountPerRun",
                max_runs_per_period AS "maxRunsPerPeriod", period,
                created_at AS "createdAt", expires_at AS "expiresAt", revoked_at AS "revokedAt"
         FROM runner_run_authorizations WHERE id = ${id}`),
@@ -121,6 +144,14 @@ export function runnerMintReads(db: Kysely<DB>): RunnerMintReads {
           WHERE run_id = ${runId} AND state = ANY(${RUNNER_CAP_STATES})
         ) AS live`)
       )?.live !== false,
+    hasSpentAttempt: async (runId) =>
+      (
+        await one<{ spent: boolean }>(sql`
+        SELECT EXISTS (
+          SELECT 1 FROM runner_run_attempts
+          WHERE run_id = ${runId} AND ${spentAttempt}
+        ) AS spent`)
+      )?.spent !== false,
     capUsed: async (userId, clientId, since) => {
       const row = await one<{ used: string | number | null }>(sql`
         SELECT COALESCE(SUM(
@@ -139,7 +170,7 @@ export function runnerMintReads(db: Kysely<DB>): RunnerMintReads {
         SELECT COUNT(DISTINCT run_id) AS runs
         FROM runner_run_attempts
         WHERE authorization_id = ${authorizationId} AND created_at > ${since}
-          AND state = ANY(${RUNNER_CAP_STATES})`);
+          AND (state = ANY(${RUNNER_CAP_STATES}) OR ${spentAttempt})`);
       return row ? Number(row.runs) : Number.POSITIVE_INFINITY;
     },
   };
@@ -170,20 +201,28 @@ export async function readRunnerBindingStatus(
   return row?.status ?? null;
 }
 
-export type RunnerAuthorizationRevokeReason = 'offline_declined' | 'disconnected';
+export type RunnerAuthorizationRevokeReason = 'offline_declined' | 'disconnected' | 'banned';
 
-/** Revoke every live run authorization the user gave the runner client; returns how many. */
+/**
+ * Revoke every live run authorization the user gave the runner client, or every runner client
+ * when `clientId` is null; returns how many.
+ */
 export async function revokeRunnerAuthorizations(
   db: Kysely<DB>,
-  opts: { userId: number; clientId: string; reason: RunnerAuthorizationRevokeReason; now?: Date }
+  opts: {
+    userId: number;
+    clientId: string | null;
+    reason: RunnerAuthorizationRevokeReason;
+    now?: Date;
+  }
 ): Promise<number> {
-  const result = await db
+  let query = db
     .withTables<RunnerTables>()
     .updateTable('runner_run_authorizations')
     .set({ revoked_at: opts.now ?? new Date(), revoked_reason: opts.reason })
     .where('user_id', '=', opts.userId)
-    .where('runner_client_id', '=', opts.clientId)
-    .where('revoked_at', 'is', null)
-    .executeTakeFirst();
+    .where('revoked_at', 'is', null);
+  if (opts.clientId !== null) query = query.where('runner_client_id', '=', opts.clientId);
+  const result = await query.executeTakeFirst();
   return Number(result.numUpdatedRows);
 }

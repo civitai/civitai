@@ -19,6 +19,7 @@ import { PostStickerOverlay } from '~/components/Post/Detail/PostStickerOverlay'
 import { postSongList, PostSongTile, SongMenuItems } from '~/components/MusicPlayer/PostSong';
 import { StickerPlacementBatchProvider } from '~/components/Sticker/StickerPlacementBatchProvider';
 import { StickerPlacementCardBadge } from '~/components/Sticker/StickerPlacementCardBadge';
+import { ImpressionSentinel } from '~/components/TrackView/ImpressionSentinel';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { useCurrentUserSettings } from '~/components/UserSettings/hooks';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -180,6 +181,9 @@ export function PostImages({
                                   : undefined,
                             }}
                           >
+                            <ImpressionSentinel
+                              impressions={[{ entityType: 'Image', entityId: image.id }]}
+                            />
                             <ImageMediaHat imageId={image.id} decoration={image.eventDecoration} />
                             <Group
                               gap={4}

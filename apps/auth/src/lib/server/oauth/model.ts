@@ -496,11 +496,8 @@ function isClientCredentialsUser(user: User): user is User & ClientCredentialsUs
 }
 
 /**
- * The scope an authorization-code or refresh grant issues. A recipe runner (`readRunnerAdmission`,
- * re-read on every grant) never holds more than `RUNNER_TOKEN_SCOPE`: it gets exactly that while its
- * binding is active (on a refresh, only of a token that already carried it), else UserRead alone. Any
- * other client gets the stored scope through `stringToScope`, which reads a scope carrying a runner bit
- * as 0.
+ * A runner client never gets more than RUNNER_TOKEN_SCOPE, and its admission is re-read on every
+ * grant. Other clients' stored scope goes through stringToScope, which reads a runner bit as 0.
  */
 async function userGrantScope(token: Token, client: Client, user: GrantUser): Promise<bigint> {
   const requested = stringToScope(token.scope as unknown as string);

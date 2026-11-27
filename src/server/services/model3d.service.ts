@@ -30,6 +30,7 @@ import {
   publicBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { canViewModel3d } from '~/server/services/model3d.visibility';
+import { assertNotDealFileImages } from '~/server/services/deal-file-image';
 import {
   getAvailableCollectionItemsFilterForUser,
   getUserCollectionPermissionsById,
@@ -297,6 +298,17 @@ export const getModel3DByWorkflowId = async ({
   }
 };
 
+/** False for an image `assertNotDealFileImages` refuses as a use: a source image is dropped, not refused. */
+async function usableHere(imageId: number) {
+  try {
+    await assertNotDealFileImages([imageId], 'used here');
+    return true;
+  } catch (error) {
+    if (error instanceof TRPCError && error.code === 'FORBIDDEN') return false;
+    throw error;
+  }
+}
+
 /**
  * Lazily materialize the Model3D draft for a completed PolyGen workflow.
  *
@@ -393,7 +405,10 @@ export const ensureModel3DFromWorkflow = async ({
           select: { userId: true },
         })
       : null;
-    const sourceImageId = sourceImage?.userId === user.id ? claimedSourceImageId : undefined;
+    const sourceImageId =
+      sourceImage?.userId === user.id && (await usableHere(claimedSourceImageId!))
+        ? claimedSourceImageId
+        : undefined;
 
     await handlePolyGenWorkflowResult({
       workflowId: input.workflowId,
@@ -841,6 +856,7 @@ export const upsertModel3D = async ({
     // apps/moderator image-nsfw-level) skip posted images.
     if (!image || image.userId !== ownerId || image.postId != null)
       throw throwBadRequestError('Invalid thumbnail image.');
+    await assertNotDealFileImages([data.thumbnailImageId], 'used here');
     thumbnailNsfwLevel = image.nsfwLevel;
   } else if (data.thumbnailImageId === null) {
     thumbnailNsfwLevel = 0;

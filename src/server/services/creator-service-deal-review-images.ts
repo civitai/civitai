@@ -3,6 +3,7 @@ import { TRPCError } from '@trpc/server';
 import { dbWrite } from '~/server/db/client';
 import { withDistributedLock } from '~/server/utils/distributed-lock';
 import { createScanImage, readObject } from '~/server/services/creator-service-deal-file.service';
+import { finalCsamHeldSql } from '~/server/services/creator-service-deal-file-held-sql';
 import { liveFile } from '~/server/services/creator-service-deal-file-sql';
 import { dealFinalsClear } from '~/server/services/creator-service-escrow.service';
 import { buildEntryScanCopy } from '~/server/utils/service-deal-preview';
@@ -25,8 +26,9 @@ const SOURCE_MAX_BYTES = 50 * 1024 * 1024;
 
 /**
  * The finals a buyer may attach to their review, with `r` the review, `d` its deal and `f` the
- * file: a still image of the current round that passed its scans and is still kept, on a deal that
- * was never disputed and whose finals all cleared, of a service whose seller allows review work.
+ * file: a still image of the current round that passed its scans, is still kept and is not held
+ * (`finalCsamHeldSql`), on a deal that was never disputed and whose finals all cleared, of a service
+ * whose seller allows review work.
  */
 const attachable = (userId: number) => Prisma.sql`(
   r."buyerId" = ${userId}::int AND r."hiddenAt" IS NULL
@@ -37,6 +39,7 @@ const attachable = (userId: number) => Prisma.sql`(
   AND f."round" = d."revisionsUsed" AND ${liveFile(Prisma.sql`f`)}
   AND f."status" = 'Ready'::"ServiceDealFileStatus" AND f."scanStatus" = 'Passed'::"ServiceDealFileScanStatus"
   AND f."mimeType" IN (${IMAGE_MIMES}) AND f."size" <= ${SOURCE_MAX_BYTES}
+  AND NOT ${finalCsamHeldSql(Prisma.sql`f."id"`)}
   AND NOT EXISTS (SELECT 1 FROM "ServiceDealReviewImage" ri
     WHERE ri."reviewId" = r."id" AND ri."sourceFileId" = f."id")
 )`;

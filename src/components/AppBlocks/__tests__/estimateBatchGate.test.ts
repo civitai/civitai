@@ -188,6 +188,33 @@ describe('handleEstimateBatch — decide, call, reply once', () => {
     expectReplyKeys('ESTIMATE_WORKFLOW_BATCH', 'error', ['error'], sent[0].payload);
   });
 
+  it('a WHOLE-CALL rate-limited refusal replies with `error` AND its `rateLimit` meta', async () => {
+    const rateLimit = {
+      retryAfterSeconds: 19,
+      retryAt: '2026-02-03T04:05:25.000Z',
+      id: 'apps.estimate-cells',
+      kind: 'abuse',
+    };
+    const { sent } = await run({
+      raw: { requestId: 'r1', bodies: [body('a')] },
+      estimateBatch: async () => {
+        throw Object.assign(new Error('Rate limit exceeded, please retry shortly.'), {
+          data: { code: 'TOO_MANY_REQUESTS', rateLimit },
+        });
+      },
+    });
+    expect(sent).toEqual([
+      {
+        type: 'ESTIMATE_BATCH_RESULT',
+        payload: {
+          requestId: 'r1',
+          error: 'Rate limit exceeded, please retry shortly.',
+          rateLimit,
+        },
+      },
+    ]);
+  });
+
   it('refuses a malformed list WITHOUT calling the server', async () => {
     const { sent, estimateBatch } = await run({ raw: { requestId: 'r1', bodies: [] } });
     expect(estimateBatch).not.toHaveBeenCalled();

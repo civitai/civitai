@@ -10,7 +10,7 @@ export function SongMedia({
   coverOverlay,
   className,
 }: {
-  image: PostEditImageDetail;
+  image: PostEditImageDetail & { url: string };
   coverOverlay?: React.ReactNode;
   className?: string;
 }) {

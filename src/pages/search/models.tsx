@@ -25,7 +25,7 @@ import { matureRestrictedBaseModels } from '~/shared/constants/basemodel.constan
 import { ModelSearchIndexSortBy } from '~/components/Search/parsers/model.parser';
 import { useRouter } from 'next/router';
 import { InViewLoader } from '~/components/InView/InViewLoader';
-import { useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
+import { useInfiniteHitsTransformed, useSearchFeedHits } from '~/components/Search/search.utils2';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';
 import { NoContent } from '~/components/NoContent/NoContent';
@@ -145,6 +145,7 @@ const RenderFilters = () => {
 
 export function ModelsHitList() {
   const { hits, showMore, isLastPage } = useInfiniteHitsTransformed<'models'>();
+  useSearchFeedHits(MODELS_SEARCH_INDEX, 'Model', hits);
   const { status, uiState } = useInstantSearch();
   const activeBaseModels =
     uiState[MODELS_SEARCH_INDEX]?.refinementList?.['versions.baseModel'] ?? [];

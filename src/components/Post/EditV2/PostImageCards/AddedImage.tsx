@@ -1473,7 +1473,7 @@ function PostImage() {
   if (isAudio && url !== null)
     return (
       <SongMedia
-        image={image}
+        image={{ ...image, url }}
         className={showPreview ? 'p-3' : undefined}
         coverOverlay={
           <>

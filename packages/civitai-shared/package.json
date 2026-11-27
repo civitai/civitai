@@ -70,6 +70,7 @@
     "./new-order": "./src/new-order.ts",
     "./knights-shop": "./src/knights-shop.ts",
     "./sensitive-block-scopes": "./src/sensitive-block-scopes.ts",
+    "./platform-update-path": "./src/platform-update-path.ts",
     "./usage-limit-view": "./src/usage-limit-view.ts",
     "./html-escape": "./src/html-escape.ts",
     "./song-csam-hold": "./src/song-csam-hold.ts",

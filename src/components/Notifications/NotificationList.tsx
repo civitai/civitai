@@ -185,6 +185,11 @@ export function NotificationList({
                   <Text size={textSize} fw="bold" lineClamp={truncate ? 3 : undefined}>
                     {details.message}
                   </Text>
+                  {'byline' in details && details.byline ? (
+                    <Text size="xs" c="dimmed" data-testid="notification-byline">
+                      {details.byline}
+                    </Text>
+                  ) : null}
                   <Group gap={2} wrap="nowrap">
                     {notificationDetails?.content && (
                       <>

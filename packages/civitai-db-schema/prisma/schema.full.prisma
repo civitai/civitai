@@ -639,6 +639,7 @@ model User {
   appListingReportsReported          AppListingReport[]         @relation("AppListingReportReporter")
   appListingReportsResolved          AppListingReport[]         @relation("AppListingReportResolver")
   appListingModerationEvents         AppListingModerationEvent[] @relation("AppListingModEventActor")
+  appReviewMessagesAuthored          AppReviewMessage[]          @relation("AppReviewMessageAuthor")
   appSubListingsAuthored             AppSubListing[]             @relation("AppSubListingAuthor")
   appSubListingsModerated            AppSubListing[]             @relation("AppSubListingModerator")
   // App Listing Collaborators — editor seats held / issued, the ownership audit
@@ -2274,6 +2275,8 @@ model Image {
   connections         ImageConnection[]
   UserProfile         UserProfile[]
   userProfileSfwCover UserProfile[]         @relation("UserProfileSfwCoverImage")
+  userProfileBackground    UserProfile[] @relation("UserProfileBackgroundImage")
+  userProfileSfwBackground UserProfile[] @relation("UserProfileSfwBackgroundImage")
   announcementCovers  Announcement[]        @relation("AnnouncementCover")
   clubCover           Club[]                @relation("coverImage")
   clubHeader          Club[]                @relation("headerImage")
@@ -3535,6 +3538,7 @@ model AppBlockPublishRequest {
   createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt             DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   assistantTrace        AppPublishRequestTrace?
+  reviewMessages        AppReviewMessage[]
 
   @@index([status, submittedAt(sort: Desc)], map: "app_block_publish_requests_queue_idx")  // mod queue
   @@index([appBlockId, submittedAt(sort: Desc)], map: "app_block_publish_requests_app_history_idx")
@@ -3636,6 +3640,44 @@ model AppPublishRequestTrace {
   @@index([createdAt], map: "app_publish_request_traces_created_idx")
   @@index([userId], map: "app_publish_request_traces_user_idx")
   @@map("app_publish_request_traces")
+}
+
+/// The conversation on one app review decision: messages between the app's developer side and
+/// Civitai App Review, both directions, on one publish request.
+///
+/// ONE table over BOTH request tables, with a nullable FK to each and a CHECK that exactly one
+/// is set (`num_nonnulls(...) = 1`, in the migration only; Prisma cannot express it). That keeps
+/// one thread shape for an on-site version request (`pubreq_…`) and a store-listing request
+/// (`alpr_…`) while each message keeps real referential integrity and cascades with its request;
+/// a single polymorphic text id could carry no FK at all.
+///
+/// `recipientUserId` is the individual notified when the message was posted, or NULL when it went
+/// to the moderator queue (a developer reply whose reviewer is gone, no longer a moderator, or
+/// was an automated review) or to the developer side (a moderator reply). It records who was
+/// told at the time, so it has no FK: a cascade or SET NULL would rewrite that history, and a
+/// NULL written by a deletion would read as "routed to the queue".
+///
+/// 🔴 APPLIED MANUALLY. The thread reads and writes this table only behind the
+/// `app-review-replies` flag. The one reader outside it is the personal-data export (it reads
+/// every registered table), which reports this file as unavailable until the table exists.
+/// Migration `20271205120000_app_review_messages`.
+model AppReviewMessage {
+  id                      Int                       @id @default(autoincrement())
+  publishRequestId        String?                   @map("publish_request_id")
+  publishRequest          AppBlockPublishRequest?   @relation(fields: [publishRequestId], references: [id], onDelete: Cascade)
+  listingPublishRequestId String?                   @map("listing_publish_request_id")
+  listingPublishRequest   AppListingPublishRequest? @relation(fields: [listingPublishRequestId], references: [id], onDelete: Cascade)
+  authorUserId            Int?                      @map("author_user_id")
+  author                  User?                     @relation("AppReviewMessageAuthor", fields: [authorUserId], references: [id], onDelete: SetNull)
+  authorRole              String                    @map("author_role") // 'developer' | 'moderator' (DB CHECK)
+  body                    String // 1..2000 characters (DB CHECK)
+  recipientUserId         Int?                      @map("recipient_user_id") // who was notified; NULL = the queue or the developer side
+  createdAt               DateTime                  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([publishRequestId, createdAt], map: "app_review_messages_publish_request_idx")
+  @@index([listingPublishRequestId, createdAt], map: "app_review_messages_listing_request_idx")
+  @@index([authorUserId], map: "app_review_messages_author_idx")
+  @@map("app_review_messages")
 }
 
 /// App Store Listings (W13) — the store-facing record, decoupled from runtime.
@@ -3987,6 +4029,7 @@ model AppListingPublishRequest {
   changelog         String?
   createdAt         DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt         DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  reviewMessages    AppReviewMessage[]
 
   @@index([status, submittedAt(sort: Desc)], map: "app_listing_publish_requests_queue_idx")
   @@index([appListingId, submittedAt(sort: Desc)], map: "app_listing_publish_requests_listing_history_idx")
@@ -5331,6 +5374,40 @@ model AppSourceRepo {
   @@map("app_source_repos")
 }
 
+// App Blocks platform updates: a change Civitai staff pushed to someone else's app, as a branch of
+// its source repo. The row is the proof the update is from staff (commit text is forgeable).
+// RAW SQL ONLY (`app-platform-update.service.ts`), so the model is stripped from the generated
+// client; the migration `20271205140000_app_platform_updates` is applied by hand (with its CHECKs
+// and indexes, which live only there) and the service tolerates the table's absence.
+// @no-type
+model AppPlatformUpdate {
+  id               String    @id // apu_<ULID>
+  appBlockId       String    @map("app_block_id")
+  slug             String
+  staffUserId      Int       @map("staff_user_id")
+  reason           String
+  branch           String
+  baseCommitSha    String    @map("base_commit_sha")
+  commitSha        String    @map("commit_sha")
+  paths            Json
+  touchesManifest  Boolean   @default(false) @map("touches_manifest")
+  seededSourceRepo Boolean   @default(false) @map("seeded_source_repo")
+  status           String    @default("pending")
+  mergeCommitSha   String?   @map("merge_commit_sha")
+  resolvedByUserId Int?      @map("resolved_by_user_id")
+  resolvedAt       DateTime? @map("resolved_at") @db.Timestamptz(6)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  // Set at approve: the approved request whose bundle first contained the update (migration
+  // `20271206120000_app_platform_updates_shipped`, applied by hand).
+  shippedInPublishRequestId String?   @map("shipped_in_publish_request_id")
+  shippedAt                 DateTime? @map("shipped_at") @db.Timestamptz(6)
+
+  @@index([appBlockId, status, createdAt(sort: Desc)], map: "app_platform_updates_app_status_idx")
+  @@unique([slug, commitSha], map: "app_platform_updates_slug_commit_idx")
+  @@map("app_platform_updates")
+}
+
 // App hibernate ("Sleeping" apps): one row per sleeping app, per user — the archive of the app's
 // workspace in the archive store, and optionally its `.env*` files, encrypted under a data key
 // that is stored here only wrapped by a civitai-held master key. RAW SQL ONLY
@@ -5463,6 +5540,8 @@ model RunnerRunAttempt {
   createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt       DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
   settledAt       DateTime? @map("settled_at") @db.Timestamptz(6)
+  /// The Redis legs the attempt holds: key names and amounts only.
+  reservation     Json?
 
   @@unique([runId, attemptNo])
   @@index([userId, runnerClientId, createdAt], map: "runner_run_attempts_user_client_created_idx")
@@ -6104,6 +6183,8 @@ enum CosmeticType {
   ChatTheme
   // A glow around the creator card; its own slot, so it stacks with a badge.
   CardDecoration
+  // Art behind the profile sidebar header (redesign); not the creator card background.
+  SidebarBackground
 }
 
 enum CosmeticSource {
@@ -8925,6 +9006,28 @@ model KnightsPlayer {
   startAtSeen DateTime?
   /// The player ticked "Don't show this again": the daily recap popup stays closed; the header button still opens it.
   recapPopupOptOut Boolean @default(false)
+  /// The yes/no questions switch in Knights settings. Null follows the default saved on the moderator Config page.
+  yesNoQuestions   Boolean?
+  /// Keys of the preset tag groups the player hides in Knights settings.
+  hiddenTagGroups  String[] @default([])
+}
+
+/// One "Not sure" on a yes/no queue item (`itemId`); the run cadence reads it back. Never a vote. `questionKey` and `imageId`
+/// are a snapshot, so counts outlive items. `yesNoReferenceId` is unused: Acolyte practice pairs are graded and offer no
+/// "Not sure".
+model KnightsUnsure {
+  id               BigInt   @id @default(autoincrement())
+  playerId         Int
+  itemId           Int?
+  yesNoReferenceId Int?
+  questionKey      String
+  imageId          Int
+  createdAt        DateTime @default(now())
+
+  @@unique([playerId, itemId])
+  @@unique([playerId, yesNoReferenceId])
+  @@index([itemId])
+  @@index([yesNoReferenceId])
 }
 
 /// A UTC day on which the player voted in the original Knights game, filled once from its vote history. Counted with
@@ -10074,12 +10177,25 @@ model UserProfile {
   profileSectionsSettings Json      @default("[{\"key\":\"showcase\",\"enabled\":true},{\"key\":\"popularModels\",\"enabled\":true},{\"key\":\"popularArticles\",\"enabled\":true},{\"key\":\"modelsOverview\",\"enabled\":true},{\"key\":\"imagesOverview\",\"enabled\":true},{\"key\":\"recentReviews\",\"enabled\":true}]")
   showcaseItems           Json      @default("[]")
   showcaseSections        Json      @default("[]")
+  // Members-only page customisation (profile redesign). The sfw* image overrides on civitai.com.
+  backgroundImageId       Int?
+  backgroundImage         Image?    @relation("UserProfileBackgroundImage", fields: [backgroundImageId], references: [id], onDelete: SetNull)
+  sfwBackgroundImageId    Int?
+  sfwBackgroundImage      Image?    @relation("UserProfileSfwBackgroundImage", fields: [sfwBackgroundImageId], references: [id], onDelete: SetNull)
+  /// Members-only card colours: { dark?: { color, opacity? }, light?: { color, opacity? } }.
+  /// Light mode falls back to dark when unset. Shape: profilePageThemeSchema.
+  pageTheme               Json?
+  /// Up to three of the owner's own images or models, shown on the About tab. Shape: showcaseItemSchema[].
+  pinnedItems             Json      @default("[]")
+  about                   String?
 
   @@id([userId])
   // Serves the ON DELETE SET NULL referential-integrity trigger for the
   // sfwCoverImage relation. Without it every Image delete sequentially scans this
   // whole table. Prisma does not index relation scalars on its own.
   @@index([sfwCoverImageId])
+  @@index([backgroundImageId])
+  @@index([sfwBackgroundImageId])
 }
 
 /// @view
@@ -12205,6 +12321,9 @@ model ServiceDealFile {
   reviewImages   ServiceDealReviewImage[]
 
   @@index([dealId, round, kind])
+  @@index([imageId])
+  // NOTE: the partial index "ServiceDealFile_scanKey_idx" (scanKey WHERE scanKey IS NOT NULL)
+  // lives only in migration 20271206120000_deal_file_copy_indexes: Prisma has no partial indexes.
 }
 
 /// One image inside a Final, scanned on its own. Rows exist only for images; other files in a zip
@@ -12231,6 +12350,8 @@ model ServiceDealFileEntry {
 
   @@unique([fileId, entryIndex])
   @@index([imageId])
+  // NOTE: the partial index "ServiceDealFileEntry_scanKey_idx" (scanKey WHERE scanKey IS NOT NULL)
+  // lives only in migration 20271206120000_deal_file_copy_indexes: Prisma has no partial indexes.
 }
 
 /// One row per movement of Buzz for a deal, modelled on `PlacementTransaction`. A composite FK

@@ -2842,6 +2842,13 @@ export function normalizeStepOutput(step: StepWithOutput): NormalizedBlobItem[] 
     case 'yuE2':
     case 'soniloAudioGen':
       return output.blob ? [{ ...(output.blob as AudioBlob), type: 'audio' as const }] : [];
+    case 'seedAudioGen':
+      return (
+        (output.blobs as AudioBlob[] | undefined)?.map((blob) => ({
+          ...blob,
+          type: 'audio' as const,
+        })) ?? []
+      );
     case 'polyGen': {
       // Bundle every PolyGen sibling onto a single item — the format step
       // turns this into one NormalizedModel3DOutput per generated mesh

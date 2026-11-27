@@ -16,6 +16,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { isPgInt4, queryPrismaSql } from '~/server/db/prisma-sql-kysely';
 import {
+  notHeldReviewCopySql,
   notReviewImageSql,
   shownReviewImageSql,
 } from '~/server/services/creator-service-review-image-sql';
@@ -241,8 +242,9 @@ export function imageVisibilityConditions({
     minorMatureImageVisibleSql({ userId }),
     ...imageBlockedForConditions({ userId, ownerKeepsBlockedRow }),
     imageNotRestrictedSql({ viewerId: userId }),
-    // Without the opt-in, a review image is closed to its uploader too (moderators aside).
-    ...(shownReviewImageLevels === undefined ? [notReviewImageSql] : []),
+    // Without the opt-in, a review image is closed to its uploader too (moderators aside); with it,
+    // one whose source Final is held still is.
+    shownReviewImageLevels === undefined ? notReviewImageSql : notHeldReviewCopySql,
     ...(music === false ? [songsHiddenSql({ music, ownerId: userId })!] : []),
   ];
 }

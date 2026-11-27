@@ -49,6 +49,8 @@ type Reply = {
   servedBy?: string | null;
   /** The edge cache's verdict header (`cf-cache-status`) on this leg; none unless set. */
   cache?: string;
+  /** feed-go's release header (`x-feed-go-version`) on this leg; none unless set. */
+  version?: string;
 };
 type Sent = {
   leg: Leg;
@@ -148,6 +150,7 @@ beforeEach(() => {
     if (leg === 'go' && reply.servedBy !== null)
       headers['x-feed-go-served'] = reply.servedBy ?? 'go';
     if (reply.cache) headers['cf-cache-status'] = reply.cache;
+    if (reply.version !== undefined) headers['x-feed-go-version'] = reply.version;
     return new Response(reply.body, { status: reply.status, headers });
   });
   vi.stubGlobal('fetch', fetchMock);
@@ -212,7 +215,7 @@ const nodeRequests = () => sent.filter((s) => s.leg === 'node');
 
 type Push = [
   { type: string; values: Record<string, number> },
-  { skipDedupe: boolean; context: Record<string, string> }
+  { skipDedupe: boolean; context: Record<string, string> },
 ];
 const shadowPushes = () =>
   (h.pushMeasurement.mock.calls as unknown as Push[]).filter(
@@ -471,6 +474,186 @@ describe('verdicts', () => {
       verdict: 'mismatch',
       diff_path: '$.result.data.json',
       diff_kind: 'key_order',
+    });
+  });
+
+  // The Go service never writes superjson's meta.referentialEqualities
+  // (apps/feed-go/internal/superjson), which the Node writer adds when one object instance sits at
+  // several paths. Only that member is exempt from the byte compare.
+  describe('meta.referentialEqualities', () => {
+    const NODE_WITH_REFEQ =
+      '{"result":{"data":{"json":{"items":[{"id":4101,"createdAt":"2026-11-20T08:00:00.000Z","user":{"id":9,"cosmetics":[{"id":7}]}},{"id":4102,"createdAt":"2026-11-21T08:00:00.000Z","user":{"id":9,"cosmetics":[{"id":7}]}}],"nextCursor":"n-88"},"meta":{"values":{"items.0.createdAt":["Date"],"items.1.createdAt":["Date"]},"referentialEqualities":{"items.0.user":["items.1.user"]},"v":1}}}}';
+    const GO_SAME_VALUE =
+      '{"result":{"data":{"json":{"items":[{"id":4101,"createdAt":"2026-11-20T08:00:00.000Z","user":{"id":9,"cosmetics":[{"id":7}]}},{"id":4102,"createdAt":"2026-11-21T08:00:00.000Z","user":{"id":9,"cosmetics":[{"id":7}]}}],"nextCursor":"n-88"},"meta":{"values":{"items.0.createdAt":["Date"],"items.1.createdAt":["Date"]},"v":1}}}}';
+
+    it('a body differing only in referentialEqualities is a match, each side its own byte length', async () => {
+      browser(false);
+      signedOutShadow(true);
+      replies.node.body = NODE_WITH_REFEQ;
+      replies.go.body = GO_SAME_VALUE;
+      await callQuery(INFINITE, INFINITE_INPUT);
+      await vi.waitFor(() => expect(shadowPushes()).toHaveLength(1));
+      const [payload, options] = shadowPushes()[0];
+      expect(payload.values).toEqual({
+        control_ms: 0,
+        candidate_ms: 0,
+        control_bytes: 382,
+        candidate_bytes: 324,
+      });
+      expect(options.context).toEqual({
+        procedure: 'image.getInfinite',
+        candidate: 'go-transport',
+        verdict: 'match',
+        control_status: '200',
+        candidate_status: '200',
+        candidate_served_by: 'go',
+        viewer: 'signed_out',
+      });
+    });
+
+    it('a meta holding only referentialEqualities matches an answer with no meta', async () => {
+      shadowOn();
+      replies.node.body =
+        '{"result":{"data":{"json":{"items":[{"id":4101,"user":{"id":9,"cosmetics":[{"id":7}]}},{"id":4102,"user":{"id":9,"cosmetics":[{"id":7}]}}],"nextCursor":"n-88"},"meta":{"referentialEqualities":{"items.0.user":["items.1.user"]},"v":1}}}}';
+      replies.go.body =
+        '{"result":{"data":{"json":{"items":[{"id":4101,"user":{"id":9,"cosmetics":[{"id":7}]}},{"id":4102,"user":{"id":9,"cosmetics":[{"id":7}]}}],"nextCursor":"n-88"}}}}';
+      await callQuery(INFINITE, INFINITE_INPUT);
+      await vi.waitFor(() => expect(shadowPushes()).toHaveLength(1));
+      expect(shadowPushes()[0][1].context.verdict).toBe('match');
+    });
+
+    it('a text that is not exact JSON.stringify output is not rewritten, so its encoding still mismatches', async () => {
+      shadowOn();
+      // NODE_WITH_REFEQ with nextCursor's "88" written as 88: the same value, other bytes.
+      replies.node.body = NODE_WITH_REFEQ.replace('"n-88"', '"n-\\u0038\\u0038"');
+      replies.go.body = GO_SAME_VALUE;
+      await callQuery(INFINITE, INFINITE_INPUT);
+      await vi.waitFor(() => expect(shadowPushes()).toHaveLength(1));
+      expect(shadowPushes()[0][1].context).toMatchObject({
+        verdict: 'mismatch',
+        diff_path: '$.result.data.meta.referentialEqualities',
+        diff_kind: 'missing_in_candidate',
+      });
+    });
+
+    it('a real value difference beside it is still a mismatch, at that value', async () => {
+      shadowOn();
+      replies.node.body = NODE_WITH_REFEQ;
+      replies.go.body =
+        '{"result":{"data":{"json":{"items":[{"id":4101,"createdAt":"2026-11-20T08:00:00.000Z","user":{"id":9,"cosmetics":[{"id":7}]}},{"id":41020,"createdAt":"2026-11-21T08:00:00.000Z","user":{"id":9,"cosmetics":[{"id":7}]}}],"nextCursor":"n-88"},"meta":{"values":{"items.0.createdAt":["Date"],"items.1.createdAt":["Date"]},"v":1}}}}';
+      await callQuery(INFINITE, INFINITE_INPUT);
+      await vi.waitFor(() => expect(shadowPushes()).toHaveLength(1));
+      expect(shadowPushes()[0][1].context).toMatchObject({
+        verdict: 'mismatch',
+        diff_path: '$.result.data.json.items[1].id',
+        diff_kind: 'value',
+      });
+    });
+
+    it('meta.values is still compared: an answer missing its Date annotations is a mismatch', async () => {
+      shadowOn();
+      replies.node.body = NODE_WITH_REFEQ;
+      replies.go.body =
+        '{"result":{"data":{"json":{"items":[{"id":4101,"createdAt":"2026-11-20T08:00:00.000Z","user":{"id":9,"cosmetics":[{"id":7}]}},{"id":4102,"createdAt":"2026-11-21T08:00:00.000Z","user":{"id":9,"cosmetics":[{"id":7}]}}],"nextCursor":"n-88"}}}}';
+      await callQuery(INFINITE, INFINITE_INPUT);
+      await vi.waitFor(() => expect(shadowPushes()).toHaveLength(1));
+      expect(shadowPushes()[0][1].context).toMatchObject({
+        verdict: 'mismatch',
+        diff_path: '$.result.data.meta',
+        diff_kind: 'missing_in_candidate',
+      });
+    });
+  });
+
+  // An answer that is not edge-cacheable is devalue on both legs: `result.data` is one string, so a
+  // text walk could only say "differs at $.result.data". The decoded values are compared instead.
+  describe('devalue answers', () => {
+    const answer = (devalue: string) => JSON.stringify({ result: { data: devalue } });
+    // Node shares the creator's `user` object between the two images (index 5 twice).
+    const NODE_DEVALUE = answer(
+      '[{"items":1,"nextCursor":14},[2,11],{"id":3,"createdAt":4,"user":5},4101,["Date","2026-11-20T08:00:00.000Z"],{"id":6,"username":7,"cosmetics":8},9,"artist_nine",[9],{"id":10},7,{"id":12,"createdAt":13,"user":5},4102,["Date","2026-11-21T08:00:00.000Z"],"n-88"]'
+    );
+    // The same value with the user written twice (indexes 5 and 14): other bytes.
+    const GO_SAME_VALUE_DEVALUE = answer(
+      '[{"items":1,"nextCursor":17},[2,11],{"id":3,"createdAt":4,"user":5},4101,["Date","2026-11-20T08:00:00.000Z"],{"id":6,"username":7,"cosmetics":8},9,"artist_nine",[9],{"id":10},7,{"id":12,"createdAt":13,"user":14},4102,["Date","2026-11-21T08:00:00.000Z"],{"id":6,"username":7,"cosmetics":15},[16],{"id":10},"n-88"]'
+    );
+    // GO_SAME_VALUE_DEVALUE with items[1].id 41020.
+    const GO_OTHER_ID_DEVALUE = answer(
+      '[{"items":1,"nextCursor":17},[2,11],{"id":3,"createdAt":4,"user":5},4101,["Date","2026-11-20T08:00:00.000Z"],{"id":6,"username":7,"cosmetics":8},9,"artist_nine",[9],{"id":10},7,{"id":12,"createdAt":13,"user":14},41020,["Date","2026-11-21T08:00:00.000Z"],{"id":6,"username":7,"cosmetics":15},[16],{"id":10},"n-88"]'
+    );
+
+    it('two bodies of the same value in different bytes are a match, each side its own byte length', async () => {
+      shadowOn();
+      replies.node.body = NODE_DEVALUE;
+      replies.go.body = GO_SAME_VALUE_DEVALUE;
+      await callQuery(INFINITE, INFINITE_INPUT);
+      await vi.waitFor(() => expect(shadowPushes()).toHaveLength(1));
+      const [payload, options] = shadowPushes()[0];
+      expect(payload.values).toEqual({
+        control_ms: 0,
+        candidate_ms: 0,
+        control_bytes: 317,
+        candidate_bytes: 378,
+      });
+      expect(options.context).toEqual({
+        procedure: 'image.getInfinite',
+        candidate: 'go-transport',
+        verdict: 'match',
+        control_status: '200',
+        candidate_status: '200',
+        candidate_served_by: 'go',
+      });
+    });
+
+    it('a value difference is a mismatch at the decoded path, not at $.result.data', async () => {
+      shadowOn();
+      replies.node.body = NODE_DEVALUE;
+      replies.go.body = GO_OTHER_ID_DEVALUE;
+      await callQuery(INFINITE, INFINITE_INPUT);
+      await vi.waitFor(() => expect(shadowPushes()).toHaveLength(1));
+      expect(shadowPushes()[0][1].context).toEqual({
+        procedure: 'image.getInfinite',
+        candidate: 'go-transport',
+        verdict: 'mismatch',
+        control_status: '200',
+        candidate_status: '200',
+        candidate_served_by: 'go',
+        diff_path: '$.result.data.items[1].id',
+        diff_kind: 'value',
+      });
+    });
+
+    // Invariant guard, not regression coverage: this was already the answer before devalue answers were
+    // decoded. It pins that a format split between the legs is still compared as text.
+    it('a devalue control against a superjson candidate is a mismatch at $.result.data, kind type', async () => {
+      shadowOn();
+      replies.node.body = NODE_DEVALUE;
+      replies.go.body = CONTROL_BODY;
+      await callQuery(INFINITE, INFINITE_INPUT);
+      await vi.waitFor(() => expect(shadowPushes()).toHaveLength(1));
+      expect(shadowPushes()[0][1].context).toMatchObject({
+        verdict: 'mismatch',
+        diff_path: '$.result.data',
+        diff_kind: 'type',
+      });
+    });
+
+    it('no decoded value reaches the beacon', async () => {
+      const SENTINEL = 'zq-devalue-sentinel-5521';
+      shadowOn();
+      replies.node.body = answer(`[{"items":1},[2],{"id":3,"username":4},4101,"${SENTINEL}-a"]`);
+      replies.go.body = answer(`[{"items":1},[2],{"id":3,"username":4},4101,"${SENTINEL}-b"]`);
+      await callQuery(INFINITE, INFINITE_INPUT);
+      await vi.waitFor(() => expect(shadowPushes()).toHaveLength(1));
+      // Positive control: the walk reached the differing value.
+      expect(shadowPushes()[0][1].context).toMatchObject({
+        verdict: 'mismatch',
+        diff_path: '$.result.data.items[0].username',
+        diff_kind: 'value',
+      });
+      for (const call of h.pushMeasurement.mock.calls) {
+        expect(JSON.stringify(call)).not.toContain(SENTINEL);
+      }
     });
   });
 
@@ -978,5 +1161,67 @@ describe('signed out', () => {
     await settleAll();
     expect(shadowPushes()).toHaveLength(0);
     expect(sent.map((s) => s.leg)).toEqual(['go']);
+  });
+});
+
+/**
+ * feed-go sends `x-feed-go-version` on every answer, and any cache stores it with the body, so a
+ * stored answer still names the release that produced it. Each leg's is beaconed as a short value.
+ */
+describe('feed-go version', () => {
+  it('beacons the version of the candidate leg, and no control field when the control sent none', async () => {
+    shadowOn();
+    replies.go = { status: 200, body: CONTROL_BODY, version: '0.0.51' };
+    await callQuery(INFINITE, INFINITE_INPUT);
+    await vi.waitFor(() => expect(shadowPushes()).toHaveLength(1));
+    expect(shadowPushes()[0][1].context).toEqual({
+      procedure: 'image.getInfinite',
+      candidate: 'go-transport',
+      verdict: 'match',
+      control_status: '200',
+      candidate_status: '200',
+      candidate_served_by: 'go',
+      candidate_go_version: '0.0.51',
+    });
+  });
+
+  it('beacons the version of each leg, on a mismatch too', async () => {
+    browser(false);
+    signedOutShadow(true);
+    replies.node = { status: 200, body: CONTROL_BODY, cache: 'HIT', version: '0.0.50' };
+    replies.go = { status: 200, body: CANDIDATE_BODY, cache: 'MISS', version: '0.0.52-dev' };
+    await callQuery(MODELS, MODELS_INPUT);
+    await vi.waitFor(() => expect(shadowPushes()).toHaveLength(1));
+    const { context } = shadowPushes()[0][1];
+    expect(context.verdict).toBe('mismatch');
+    expect(context.control_go_version).toBe('0.0.50');
+    expect(context.candidate_go_version).toBe('0.0.52-dev');
+    expect(context.control_cache).toBe('hit');
+    expect(context.candidate_cache).toBe('miss');
+  });
+
+  it('beacons the version of a handed-back candidate too', async () => {
+    shadowOn();
+    replies.go = { status: 200, body: CONTROL_BODY, servedBy: 'node', version: '0.0.49' };
+    await callQuery(INFINITE, INFINITE_INPUT);
+    await vi.waitFor(() => expect(shadowPushes()).toHaveLength(1));
+    const { context } = shadowPushes()[0][1];
+    expect(context.verdict).toBe('candidate_fallback');
+    expect(context.candidate_served_by).toBe('node');
+    expect(context.candidate_go_version).toBe('0.0.49');
+  });
+
+  it.each([
+    ['dev', 'dev'],
+    ['1.2.3', '1.2.3'],
+    ['someone@example.com', 'other'],
+    ['1.2.3-' + 'x'.repeat(40), 'other'],
+    ['v1.2.3', 'other'],
+  ])('beacons %j as %j', async (sentVersion, beaconed) => {
+    shadowOn();
+    replies.go = { status: 200, body: CONTROL_BODY, version: sentVersion };
+    await callQuery(INFINITE, INFINITE_INPUT);
+    await vi.waitFor(() => expect(shadowPushes()).toHaveLength(1));
+    expect(shadowPushes()[0][1].context.candidate_go_version).toBe(beaconed);
   });
 });

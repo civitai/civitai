@@ -301,7 +301,15 @@ describe('blocks.getMyViewer on the middleware', () => {
       [
         {
           where: { id: SUBJECT_ID },
-          select: { id: true, username: true, bannedAt: true, muted: true, deletedAt: true },
+          select: {
+            id: true,
+            username: true,
+            bannedAt: true,
+            muted: true,
+            deletedAt: true,
+            image: true,
+            profilePicture: { select: { url: true, nsfwLevel: true, ingestion: true } },
+          },
         },
       ],
     ]);
@@ -309,6 +317,7 @@ describe('blocks.getMyViewer on the middleware', () => {
       id: SUBJECT_ID,
       username: usernameOf(SUBJECT_ID),
       status: 'active',
+      image: null,
       buzzBudget: 100,
     });
     expect(h.events).toEqual(['authorize', `kill-switch(${SUBJECT_ID})`]);

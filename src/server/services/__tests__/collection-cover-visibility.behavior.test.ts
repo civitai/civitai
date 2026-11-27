@@ -127,11 +127,11 @@ beforeAll(async () => {
   const schema = `
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
     CREATE TABLE "ServiceDealReviewImage" ("reviewId" int NOT NULL, "imageId" int NOT NULL);
-    CREATE TABLE "ServiceDealFileEntry" (id serial PRIMARY KEY, "imageId" int);
+    CREATE TABLE "ServiceDealFileEntry" (id serial PRIMARY KEY, "imageId" int, "scanKey" text);
     CREATE TYPE "UserEngagementType" AS ENUM ('Hide', 'Follow', 'Block');
     CREATE TABLE "User" (id int PRIMARY KEY, username text);
     CREATE TABLE "UserEngagement" ("userId" int, "targetUserId" int, type "UserEngagementType");
-    CREATE TABLE "ServiceDealFile" (id serial PRIMARY KEY, "imageId" int);
+    CREATE TABLE "ServiceDealFile" (id serial PRIMARY KEY, "imageId" int, "scanKey" text);
     CREATE TABLE "Image" (
       type text NOT NULL DEFAULT 'image',
       minor boolean DEFAULT false,
@@ -660,5 +660,28 @@ describe('upsertCollection with no cover sent', () => {
 
   it('lets staff remove a hidden cover', async () => {
     expect(await edit(REMOVED, true)).toEqual({ disconnect: true });
+  });
+  describe("a new cover a deal file points at, the owner's own upload", () => {
+    beforeEach(() => holder.db.exec(`UPDATE "Image" SET url = 'deal-copy' WHERE id = ${OWNER_UPLOAD}`));
+    afterEach(() =>
+      holder.db.exec(`
+        TRUNCATE "ServiceDealFile", "ServiceDealFileEntry";
+        UPDATE "Image" SET url = 'u' WHERE id = ${OWNER_UPLOAD};
+      `)
+    );
+
+    it.each([
+      ['as its copy', `INSERT INTO "ServiceDealFile" ("imageId") VALUES (${OWNER_UPLOAD})`],
+      [
+        'by key, before it points at the copy',
+        `INSERT INTO "ServiceDealFileEntry" ("scanKey") VALUES ('deal-copy')`,
+      ],
+    ])('is refused %s', async (_, point) => {
+      await holder.db.exec(point);
+      await expect(edit(PUBLISHED, false, undefined, OWNER_UPLOAD)).rejects.toMatchObject({
+        code: 'FORBIDDEN',
+      });
+      expect(dbMock.dbWrite.collection.update).not.toHaveBeenCalled();
+    });
   });
 });

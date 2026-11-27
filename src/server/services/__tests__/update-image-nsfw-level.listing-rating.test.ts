@@ -119,6 +119,7 @@ describe('updateImageNsfwLevel → listing rating re-derive', () => {
   });
 
   it('a Knights consensus locks through the moderator branch but does not reach the hook', async () => {
+    dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
     await updateImageNsfwLevel({
       csamReview: true,
       id: IMAGE_ID,
@@ -128,7 +129,11 @@ describe('updateImageNsfwLevel → listing rating re-derive', () => {
       activity: 'setNsfwLevelKono',
     } as never);
 
-    expect(dbMock.dbWrite.image.update).toHaveBeenCalledTimes(1);
+    expect(
+      dbMock.dbWrite.$executeRaw.mock.calls.filter((call) =>
+        (call[0] as unknown as string[]).join('?').includes('UPDATE "Image" i')
+      )
+    ).toHaveLength(1);
     expect(reDerive).not.toHaveBeenCalled();
   });
 

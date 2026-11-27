@@ -624,8 +624,20 @@ superjson unless `TRPC_WRITE_DEVALUE` is on (§5.2):
 {"result":{"data":{"json":{…},"meta":{"values":{"items.0.createdAt":["Date"],…},"v":1}}}}
 ```
 
-- Dates are ISO strings annotated `["Date"]`; `undefined` members are dropped from `json` and
-  annotated `["undefined"]` (array elements become `null`), exactly as superjson's walker does.
+- Dates are ISO strings annotated `["Date"]`; an `undefined` (object member, array element or the
+  root) is written as `null` and annotated `["undefined"]`, byte for byte as Node writes it:
+  superjson's walker maps undefined to null (its `undefined` transformation) before `JSON.stringify`
+  runs, so a member is `"nextCursor":null` plus `"nextCursor":["undefined"]`, never an omitted key.
+  Until feed-go 0.0.51 this writer omitted the member (and wrote a root undefined with no `json`);
+  that decoded to the same value but failed every byte compare (a last page was exactly the 18
+  bytes of `"nextCursor":null,` short). Only the superjson envelope changed: the plain-JSON REST
+  bodies (`superjson.Plain`, `JSON.stringify`'s rules, §13) still omit an undefined member, as Node's
+  `res.json` does, so their bytes and ETags are unchanged; the devalue writer has its own encoding
+  of undefined (§5.2) and is untouched.
+- The annotation ORDER follows this writer's traversal. Node's can differ in one case: at a level
+  whose child is itself annotated under an integer-like key (an undefined or Date array element, a
+  numeric object key), the JS object holding that level's annotations enumerates the integer key
+  first. The decoded value is the same; a byte compare of `meta.values` sees the reorder.
 - `meta.referentialEqualities` is **not** written. Node emits it when one object instance appears at
   several paths (a creator's `cosmetics` array on each of their images, the post `user` that is also
   `images[0].user`). It restores object identity after decode, never a value; nothing in the client
@@ -890,9 +902,10 @@ path as serving, and compares decoded values:
   numerically), `meta.values` as a set (a `Date` or `undefined` on one side only is a difference the
   client would see), `meta.referentialEqualities` ignored;
 - `["undefined"]` annotations applied first, as `superjson.deserialize` applies them: superjson
-  writes an undefined object member as `null` plus the annotation, this service's writer omits the
-  member and writes the same annotation, and `setDeep` assigns the annotated path either way, so
-  both decode to the same object. (Before this, every such member — `images.*.tags` on every image,
+  writes an undefined object member as `null` plus the annotation, and so does this service's writer
+  since 0.0.51 (§5 "Wire format"); before that it omitted the member. `setDeep` assigns the
+  annotated path either way, so both decode to the same object, and the comparator keeps accepting
+  an omitted member against an annotated null (an older release, a replayed capture). (Before this, every such member — `images.*.tags` on every image,
   `images.*.thumbnailUrl` on every image without a video thumbnail, `review` on every post without
   one — was counted `missing-in-go`, and at 64 differences per comparison those artifacts also
   truncated the report before any real difference was reached.) A real `null` against an
@@ -2395,9 +2408,10 @@ unheld model), each with the key absent; the `GallerySettingsMiss` rows of
 When the feed-service call fails, Node's `serveFromFeed` returns `timeout`, `error` or `status:5xx`
 and `answerWithoutFeed` throws `SERVICE_UNAVAILABLE` ("Image search is temporarily overloaded — please
 retry.", `isTransientFeedReason`). Handed back as the `feed-unavailable` / `feed-status` fallback, the
-request makes the app call the feed again, which in an outage usually fails again: the slow call runs
-twice and the 503 comes about twice as late. With the switch on, the public route writes that 503
-here instead (`writeFeedUnavailable`), counted as request outcome `feed_unavailable`, neither `served`
+request makes the app call the feed again, and the app answers the 503 only when that second call
+fails too. With the switch on, the public route writes that 503 here instead (`writeFeedUnavailable`),
+after making the second call itself when the request budget has room for it, and otherwise still
+hands the request back (the retry, below). It is counted as request outcome `feed_unavailable`, neither `served`
 nor a fallback.
 
 - **Which failures.** A failed call (a transport error, the 5 s `FEED_PRIMARY_TIMEOUT_MS`, a body that
@@ -2433,9 +2447,42 @@ nor a fallback.
   The bytes are derived from the app's code and its own superjson and devalue, not captured from a
   running server; `internal/trpc/apperror_test.go` and `internal/server/feed_unavailable_test.go`
   pin them as literals.
-- **Shadow and Go-first probe.** Unchanged: they write to no client, and count the fallback
-  (`unsupported` with its reason) as before.
-- **Rollback.** Switch off: every such request is the fallback again.
+- **The retry.** Node's `serveFromFeed` makes one feed call and has no retry of its own (`fetchFeedAnswer`:
+  one `fetch`, `AbortSignal.timeout(FEED_PRIMARY_TIMEOUT_MS)`, no second attempt; `answerWithoutFeed`
+  then throws the 503). But a request this service hands back makes the app call the feed itself, so at
+  the request level a failed call has always had a second one: this service's, then the app's (the same
+  query, at once, with its own whole 5 s). Answering the 503 here removes that second call, so with the
+  switch on the route makes it here instead (`feed.WithFeedRetry`, set only by `ServeInfiniteHTTP` when
+  the switch is on; `fetchInfiniteFeed`): once, at once (no delay), the same GET query, and only when
+  the first call failed as the app's 503 (`UnavailableError`: a failed call or a 5xx, on a page no
+  last-good copy can answer). A page, a 4xx, an unmarked anonymous first page's failure and the
+  request's own context ending are never retried. The second call gets a whole call's time, as the
+  app's does: if the request budget (`FEED_GO_REQUEST_BUDGET_MS`, 6 s) leaves less than the feed
+  client's per-call timeout (`feedsvc.Client.AttemptTimeout`, 5 s), there is no second call here and
+  the failure is handed back unmarked, the app's call being the retry. So a 503 is answered here only
+  after two whole calls failed, as the app answers it after a hand-back. That keeps the 503 rate
+  the app's, and gives up part of what answering it here was for: a first call that timed out
+  (5 s of the 6 s budget) is always handed back, so a hung feed's 503 still arrives after the app's
+  own call (about 10 s), as with the switch off. Only a fast failure (a refused connection, a 5xx)
+  is retried here and, failing again, answered here at once. With the switch off there is
+  no retry here: the hand-back already gives the second call, and a retry would make a third.
+- **The app's breaker.** With `feed-service-degrade` on and its breaker open, the app answers a
+  handed-back request's 503 without calling the feed (`breaker`, also `isTransientFeedReason`). This
+  service cannot see that breaker, so its retry is made anyway: while the breaker is open a retried
+  request costs the feed two calls where the hand-back cost one. Accepted, not mirrored: only fast
+  failures are retried (a timed-out call, the load the breaker is for, is handed back and meets the
+  breaker), and a fast failure costs the failing service little. `feed_go_feed_retry_total{outcome="failed"}`
+  is the rate of those extra calls. A retry that answers 200 can still end the request past its
+  budget (the hydrate after the call), which is the `deadline` fallback and a hand-back; it is
+  counted `recovered` all the same.
+  Outcomes on `feed_go_feed_retry_total{feed_endpoint, outcome}` (seeded on `infinite`): `recovered`
+  (the second call answered 200), `failed` (it failed as the 503 again: the 503),
+  `other` (any other answer, or the request ending: handled as that answer always is), `handed_back`
+  (too little budget for a whole call). A `failed` retry is also on `feed_go_feed_unavailable_total`,
+  with the second call's cause.
+- **Shadow and Go-first probe.** Unchanged: they write to no client, count the fallback
+  (`unsupported` with its reason) as before, and never retry (Node's shadow call is one call too).
+- **Rollback.** Switch off: every such request is the fallback again, with no retry here.
 
 ## 15. `model.getAll` (tRPC, shadow; served only behind `FEED_GO_SERVE_MODEL_GETALL`, default off)
 
@@ -3727,9 +3774,10 @@ Node endpoint is deleted, the frozen corpus with Node's recorded answers is what
 to the Go endpoint whether it broke a caller.
 
 This section is what a case is, how cases are grouped, and what is never stored (§19.1–19.4), the
-capture that writes them (§19.6), the eval mode Go is replayed in (§19.7) and the harness that
-replays and reports them (§19.8). Code: `internal/evalcorpus` (pure, no I/O), `cmd/feed-eval`
-(`signatures`, offline; `run` and `publish`, the harness), the capture `internal/evalcapture` with
+capture that writes them (§19.6), the eval mode Go is replayed in (§19.7), the harness that
+replays and reports them (§19.8), the reconcile that holds the eval against production (§19.9) and
+the Tempo import that seeds the corpus (§19.10). Code: `internal/evalcorpus` (pure, no I/O), `cmd/feed-eval`
+(`signatures`, offline; `run`, `publish`, `reconcile` and `import-tempo`, the harness), the capture `internal/evalcapture` with
 its taps in `internal/server` (behind `FEED_GO_EVAL_CAPTURE`, default off), and the harness
 `internal/evalharness` (nothing runs unless invoked). The corpus itself lives in private storage,
 never in this repository: this repository holds the code and synthetic tests only.
@@ -3750,7 +3798,7 @@ trailing newline) of:
 | `viewer` | the viewer descriptor: `class` (anon / crawler / banned / user / moderator), `browsingLevel`, `showNsfw`, `hiddenPrefs` (any hidden preference non-empty), `self` (the input named the viewer's own user or collection) |
 | `host` | the domain color of the `Host` (green / blue / red), `other`, or `unmapped` (no host colors configured) |
 | `region` | `none` (no country header), `open`, `restricted` (REGION_RESTRICTION_CONFIG), `blocked` (REGION_BLOCK_CONFIG); the country read as the server reads it (`x-isuk`, then `cf-ipcountry`, `cf-region-code` for a US state) |
-| `credential` | REST only: `none`, or `header` / `query` / `session` joined with `+` (`Authorization` or the sampler's credential header; a non-empty `token` query value; a session cookie name) |
+| `credential` | REST: `none`, or `header` / `query` / `session` joined with `+` (`Authorization` or the sampler's credential header; a non-empty `token` query value; a session cookie name). tRPC: only when the class holds `header` or `query` (an API credential), so a signed-out or session-cookie request's tRPC shape has no `credential` key |
 | `response`, `outcome` | optional, supplied by the caller, and always classes of the **Node** (reference) answer, never of Go's: a signature must not move when a Go handback is closed |
 
 The **signature** is xxhash64 of the shape's bytes as 16 lowercase hex digits (`github.com/cespare/xxhash/v2`,
@@ -3842,13 +3890,13 @@ endpoints are captured (`evalcapture.Supported`); every other endpoint is skippe
 | T1 | `shadow` | `compare`: the hand-back branch (result `unsupported` / `deadline`, its reason), the compute-error branch (`go_error`), and after the comparison (its result, header result, diff categories) | the sample's `node` and `responseHeaders` | 1 / the sample's `sampleRate` (the Node sampler's effective rate, below); when absent (an older sampler) or outside (0, 1], 1 / `FEED_GO_EVAL_CAPTURE_SHADOW_RATE` (its configured rate; 0 when unset: unknown) |
 | T2 | `serve-parity` | `replay`, after a compared replay | the replay's `result.data` and picked headers | 1 / `FEED_GO_SERVE_PARITY_SAMPLE_RATE` |
 | T3 | `serve` | the public routes (`serve`, `serveV1Models`), after the answer is written or the request handed back, at `FEED_GO_EVAL_CAPTURE_SERVE_RATE` (default 0: off) | none; the result is `served`, `handback` (with the fallback reason) or `error` | 1 / that rate |
-| T4 | `corpus-only` | the `v1-models-id` shadow handler, for a sample marked `corpusOnly` (below); never computed or compared | none; the result is `corpus-only` | 1 / the sample's `sampleRate`; 0 when absent or outside (0, 1] (the shadow's configured rate is not its rate) |
+| T4 | `corpus-only` | the `v1-models-id` and `infinite` shadow handlers, for a sample marked `corpusOnly` (below); never computed or compared | none; the result is `corpus-only` | 1 / the sample's `sampleRate`; 0 when absent or outside (0, 1] (the shadow's configured rate is not its rate) |
 
 - **Viewer.** The one the computation resolved, read through `auth.WithResolveObserver` (no extra
   store read). A request handed back before anything resolved a viewer is resolved by the tap (T1 on
   the sample's goroutine; T3 on one of `DefaultEvalCaptureWorkers` = 2 capture workers, after the
   answer, a full pool or shutdown dropping it), with credentials redacted, so an API key is never
-  looked up here: such a request is dropped (T4 is how credentialed requests reach the corpus). The hidden
+  looked up here: such a request is unresolved (T4 is how credentialed requests reach the corpus). The hidden
   preferences and the viewer's collections cost a read and are not known here: `hiddenPrefs` is
   always false and a `collectionId` input is stored as sent.
 - **Node's answer** (`node_body`, `node_headers`) is stored only for a request with no session user
@@ -3873,11 +3921,19 @@ endpoints are captured (`evalcapture.Supported`); every other endpoint is skippe
   per endpoint; an identical case (same id) once. Every capture writes its sample row (case_id 0 when
   not admitted), so the samples weigh the traffic and the cases stay a few per shape.
 - **Outcomes.** `feed_go_eval_capture_total{feed_endpoint,source,outcome}`: `written` (admitted:
-  both rows queued), `deduped` (sample row queued, not admitted), `dropped` (a row refused by a full or
-  closed writer queue, a T3 capture with every worker busy, a viewer that could not be resolved, or a
-  request that built no case), and for corpus-only only `refused` (below). Seeded at 0 for the
-  endpoints each source captures (shadow and serve: the four first-wave endpoints; serve-parity: the
-  three tRPC ones; corpus-only: `v1-models-id`, `refused` included). It counts rows queued; a row the
+  both rows queued), `deduped` (sample row queued, not admitted), `unresolved` (nothing captured: the
+  viewer could not be resolved), `invalid` (nothing captured: the request built no case, e.g. an
+  unknown credential class), `dropped` (lost to load or shutdown only: a row refused by a full or
+  closed writer queue, a T3 capture with every worker busy or the server shutting down), and for
+  corpus-only only `refused` (below). So a `dropped` is always capacity, never a request the corpus
+  could not hold. An `unresolved` capture is counted again in
+  `feed_go_eval_capture_unresolved_total{feed_endpoint,source,reason}`, by the viewer resolve's
+  fallback reason, a closed set (`evalcapture.UnresolvedReasons`): `bearer-token` (every `bearer-*`
+  reason: an API credential, never looked up by a tap), `session-cache-miss`, `session-cache-cleared`,
+  `session-id-mismatch`, `other` (anything else). Seeded at 0 for the endpoints each source captures
+  (shadow and serve: the four first-wave endpoints; serve-parity: the three tRPC ones; corpus-only:
+  `v1-models-id` and `infinite`, `refused` included; every unresolved reason for every source but corpus-only, which
+  resolves no viewer and is seeded `bearer-token` only, below). It counts rows queued; a row the
   writers drop afterwards (a batch ClickHouse refused after its retries, shutdown) is counted in
   `feed_go_eval_capture_rows_dropped_total{table,reason}` (chwrite's reasons, seeded) and the failure
   logged (`eval capture insert failed`). A case is queued before its sample, and the sample names it
@@ -3899,6 +3955,22 @@ under the same in-flight cap and per-second bucket, counted `corpus_only` on a 2
 the only first-wave REST endpoint, so the only one sent. A header credential that
 `FEED_GO_SHADOW_V1_MODELS_CREDENTIALS` already mirrors as a described sample stays one.
 
+The tRPC `image.getInfinite` (the same switch, no other): T1 does hold its credentialed requests (a
+tRPC sample forwards the credential as `authorization: present`), but feed-go hands every one back
+(`bearer-*`), so its viewer is never resolved and T1 captures none of them (`unresolved`). With the
+switch above 0, that fraction of the sampled `image.getInfinite` requests carrying exactly one API
+credential is posted to the `infinite` compare path as a corpus-only sample IN PLACE OF its shadow
+sample (one POST per sampled request, as before; the comparison it replaces was a hand-back),
+before the handler runs and whatever Node answers, under the same bounds, counted `corpus_only` on a
+2xx. Sent: `{corpusOnly: true, credential, sampleRate, input, headers}`, `input` the raw tRPC
+`input` (no path); never the key in any form, Authorization, `x-feed-go-credential`, any cookie,
+`node`, `responseHeaders`. A request whose `input` or headers would still hold the key (as written,
+URI-encoded, JSON-escaped, or in the input once parsed as JSON) is not sent corpus-only and stays an ordinary shadow sample. Both
+credential kinds at once, or an empty `?token=`, stay ordinary shadow samples too. Feed-go checks and
+records it as below; a tRPC shape carries the class for an API credential (`header` / `query`,
+the shape table above), so it signs exactly as the same request with a real credential of that
+class and apart from the same request signed out.
+
 - **Sent:** `{corpusOnly: true, credential: "header" | "query", sampleRate, input, path, headers}`;
   `input` is the raw query string less every pair named like a credential (`token` in any case or
   escape) or holding the key's text, `headers` only `host`, `cf-ipcountry`, `cf-region-code`,
@@ -3911,8 +3983,16 @@ the only first-wave REST endpoint, so the only one sent. A header credential tha
   pair, by the same rules the strip uses), a `credential` that is not exactly `header` or `query`, or
   any of Node's answer (`node`, `responseHeaders`, `upstream`). With the capture off, or on another
   endpoint: 202, discarded.
+- **Not recorded, counted `unresolved`** (202, `feed_go_eval_capture_unresolved_total{reason="bearer-token"}`):
+  a sample whose input holds a key Capture tests against the viewer's own identity
+  (`evalcorpus.MayNameViewer`: a top-level `userId`, `username`, `user`, `collectionId` or `*UserIds`
+  key, or a REST `username`/`userId` pair, whatever its value). The request was signed in with an API
+  key whose holder is not known here, so `$self` / `$self-collection` could not replace the holder's
+  own id, username or collection (§19.3) and the value would be stored as sent. Not a sampler fault,
+  so not `refused`; the Tempo import refuses the same requests by the same rule (§19.10).
 - **Recorded** with source `corpus-only`, result `corpus-only`, no Node answer, the viewer signed out
-  (or a verified crawler; nothing is resolved: no cookie, no credential), and the class on the request
+  (or a verified crawler; nothing is resolved: no cookie, no credential, and no input key that could
+  name the key holder, above), and the class on the request
   (`evalcorpus.Request.CredentialClass`): the case's `credential` is `header` / `query`, and its
   signature is exactly that of the same request carrying a real credential of that class (a `query`
   class also records `$credential-param`), so the corpus groups the two and the replay uses the API-key
@@ -3922,7 +4002,8 @@ the only first-wave REST endpoint, so the only one sent. A header credential tha
   reads a pair as URLSearchParams does (escape by escape) when it looks for the key.
 - **Deploy order:** feed-go first, then the Node switch. A feed-go without T4 reads a corpus-only
   sample as one with no `node` (`bad_request`, 400: Node counts it `rejected`), so nothing is stored,
-  but every one is a counted bad request.
+  but every one is a counted bad request. A feed-go with T4 for `[id]` only accepts and discards an
+  `image.getInfinite` one (202, nothing stored, counted `corpus_only` by Node).
 
 **Insert once (the `cases` pin contract).** `cases` is a ReplacingMergeTree versioned by
 `last_seen`: of the rows of one `(endpoint, case_id)`, the newest `last_seen` wins. The harness pins
@@ -4026,15 +4107,17 @@ scores by the selection's gallery default.
 **Run** (`FEED_EVAL_CLICKHOUSE_URL`, its path the database, `_USER`, `_PASSWORD`, all three required;
 `NODE_URL`, `GO_URL`; `FEED_EVAL_ACCOUNTS_FILE`). It reads `cases` and `samples` and writes only
 `results` (one row per case taken) and `runs` (one row when it ends). It never writes `cases`:
-pinning a case (the §19.6 harness rule) is a later subcommand. A row ClickHouse did not acknowledge
+pinning a case (the §19.6 harness rule) is `reconcile`'s (§19.9). A row ClickHouse did not acknowledge
 (refused, failed after retries, never queued) fails the run (non-zero exit, the rows lost per table).
 The live phase leaves `FEED_GO_EVAL_NOW` unset: the eval feed-go answers at the wall clock, as the
 live Node app does.
 
 - **Selection.** Per endpoint, one case per signature: signatures by traffic weight (the sum of
   `samples.weight` over `--lookback`, default 30 days; `corpus_from`/`corpus_to` on the run row),
-  at most `--cap` (default 1500); a signature's exemplar is the case with the least
-  `cityHash64(case_id, <run day>)`, so it rotates nightly and is fixed within a day. Every value is
+  at most `--cap` (default 1500); a signature's exemplar is a promoted case (origin `prod-mismatch`,
+  pinned: §19.9) when it has one, and among those (or all) the case with the least
+  `cityHash64(case_id, <run day>)`, so it rotates nightly and is fixed within a day, and a blind
+  spot's next run replays a case production mismatched on. Every value is
   a ClickHouse query parameter. Endpoints are interleaved, so a run cut short still covers each
   one's heaviest signatures.
 - **Viewer** (`MapViewer`, first rule wins): moderator or banned, `not_replayable`; a credential
@@ -4102,3 +4185,92 @@ one is shown by design (a fallback reason or the harness's own; an answer's key 
 every value-bearing column, sent with every row selected or not, and asserts no page holds one,
 beside a positive control of what each page must show (token-shaped reason, category and path
 included); `TestReportTypesHoldNoValueField` pins the report types' fields.
+
+### 19.9 Reconcile (`feed-eval reconcile`)
+
+Production is the reference: "if it doesn't work in production, then that means there's an issue
+with our eval". `reconcile` runs nightly after `run`, with the same ClickHouse login, and holds the
+newest live run's results against the last `--window` (24 h) of production samples, sources
+`shadow` and `serve-parity` only (the two with a production comparison), match and mismatch results
+only (`evalcapture.MatchResults` / `MismatchResults`, the lists `OutcomeClass` reads). Code:
+`internal/evalharness/reconcile.go`. Per (endpoint, signature):
+
+- **Blind spot**: production's compared samples hold at least `--min-mismatches` (2) mismatches
+  **and** at least `--min-mismatch-share` (0.01) of them mismatch (both must hold: a lone mismatch
+  on a rare shape is 100 % of it), and the run has results for the signature, all `pass`. Its
+  mismatching samples' admitted cases (`case_id` ≠ 0, at most 64 read) are **promoted**: up to
+  `--promote-per-signature` (3; every promoted case of the signature counts, any night's: a case id
+  carries its capture day, so a lasting blind spot's candidates are new ids each night), at most `--max-promotions` (500) per
+  reconcile. A promotion is one server-side `INSERT … SELECT … FROM cases FINAL` per endpoint and
+  500 ids: the case's own columns byte for byte (request and Node answer never leave ClickHouse),
+  `origin = 'prod-mismatch'`, `pinned = 1` (never expires), its `first_seen`, and `last_seen` the
+  later of the reconcile's clock and its own + 1 ms: the §19.6 harness rule, so no feed-go copy can
+  outrank it. The statement skips a case already promoted (pinned and `prod-mismatch`; feed-go's
+  own `prod-mismatch` rows are pinned 0, so they are candidates), so a second reconcile writes
+  nothing again. The run then prefers the promoted case as the signature's exemplar (§19.8).
+  A signature over the thresholds that the run has no result for is counted (`mismatch_not_run`),
+  not flagged: there is no eval verdict to disagree with.
+- **Cannot reproduce**: a promoted case whose `last_seen` is before the run started (promoted
+  before it) and that passed in it. The eval cannot reproduce what production saw: the signature
+  is too coarse, the viewer was substituted (§19.8, Viewer), or time moved (§19.7, the database's
+  clock). Listed for a human to resolve; the case stays pinned until someone unpins it.
+- **Reverse**: the run found a `bug` on a signature production compared at least once in the
+  window with no mismatch: likely a replay artifact (the viewer substituted), listed for a human.
+
+**The summary, without a schema change.** The tables are fixed in infra; reconcile adds no column
+and no table. Its summary is one `runs` row with `phase = 'reconcile'` (run id
+`reconcile-<UTC>-<6 hex>`; `corpus_from`/`corpus_to` the sample window; images and snapshot empty),
+whose `settings` is `evalharness.ReconcileSummary`: the thresholds, the reconciled run id, the
+counts (one per class, `promoted`, `rows_written`, `already_promoted`, `candidate_missing`,
+`promotion_capped`, `mismatch_not_run`; a zero `--min-mismatch-share` or `--max-promotions` means
+the default, so `--dry-run` is how to promote nothing) and up to 200 findings per class, each an endpoint, a
+16-hex signature, production's compared and mismatching sample counts, the run's result count and
+16-hex case ids: no input value, no answer. `run` and `publish` select `phase = 'live'` only, so the
+row is invisible to them as a run. Every write is a POST acknowledged before the next
+(`evalharness.CHExec`): a refusal fails the reconcile, naming the status and ClickHouse's exception
+code, never its message (it can quote a row). `--dry-run` prints the summary and writes nothing.
+
+**Publish's "Prod/eval disagreement" section** reads the newest reconcile row (the runs query with
+the phase as its parameter): the index shows its counts and the run it read (flagged when not the
+run published), each endpoint page its findings on that endpoint. The summary is read back from a
+table and trusted for nothing: a finding is shown only under the endpoint it names exactly, a
+signature or case id that is not 16 hex digits is shown `(redacted)`, at most 5 case ids a row, from
+report types with no field for a value (`DisagreementRow`, `ReconcileHeader`, pinned by
+`TestReportTypesHoldNoValueField`; the canary test seeds the summary too).
+
+Tests: `TestReconcileClassifiesEachDisagreement` (an httptest ClickHouse that keeps `cases` and
+applies the promotion, one signature per rule and per near miss), `TestReconcileIsIdempotent`,
+`TestReconcileThresholdsAreBoth`, `TestReconcileCapsPromotions`. The fake mimics the statements; the
+SQL itself is pinned by its text and parameters and runs only against the real ClickHouse.
+
+### 19.10 Tempo import (`feed-eval import-tempo`)
+
+`go run ./cmd/feed-eval import-tempo --in <rows.jsonl> [--endpoint E] [--per-signature K] [--hosts …]
+[--dry-run]` writes the rows of a feed-bench Tempo capture (`scripts/feed-bench/README.md`:
+`{t, host, input, authed, durMs}`, plus §19.5's optional `endpoint`, `path`, `query`) as `cases` of
+`origin = 'tempo'`, so the corpus can start before the capture has run for days. Code:
+`cmd/feed-eval/importtempo.go`.
+
+- **Only the record's fields are read**: any other field on a line (a cookie, an authorization, an
+  address, a user agent) is never decoded. What is read goes through the capture's own strip and
+  signature (`evalcorpus.Capture`: credential-named input keys and query pairs dropped, the host
+  the only header, a query credential kept as its class) and `evalcapture.Stored` (search text
+  replaced by `$search`), the one way a stored request is built.
+- **The viewer**: a row says only whether the web client was signed in (`authed`: `user`, else
+  `anon`), never who. A signed-in row whose input holds a key Capture would test against the
+  viewer's own identity (`evalcorpus.MayNameViewer`: a top-level `userId`, `username`, `user`,
+  `collectionId` or `*UserIds` key, or a REST `username`/`userId` pair, whatever its value) is
+  refused and counted: nothing could keep the viewer's id out of it (§19.3). `MayNameViewer`
+  reads Capture's own key sets, and its test pins that it is true wherever Capture finds the viewer.
+- **Ids and versions**: `case_id` is `CaseID` over the record's UTC day prefixed `tempo:`
+  (`evalcapture.TempoCaseDay`), so an imported case never shares an id with a captured one;
+  `first_seen = last_seen =` the import's clock (TTL from the import), `pinned = 0`, no Node answer,
+  no `prod_result`. At most K (3) cases per (endpoint, signature), an identical case once.
+- No `samples` row is written (the harness login cannot), so an imported signature weighs 0 in the
+  run's selection until production samples it: it runs after the weighted signatures, within
+  `--cap`.
+
+Tests (`importtempo_test.go`): realistic synthetic rows with canaries in a `token`, `apiKey` and
+`sessionId` input key, a `token` query pair, a search text, a signed-in username and line-level
+cookie, authorization, address and agent fields, none of which reaches a case or the insert body,
+beside a positive control of what must; signatures are their shapes' hashes; K at three values.

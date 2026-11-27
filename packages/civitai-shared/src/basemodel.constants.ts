@@ -257,6 +257,7 @@ export const ECO = {
   MiniMaxMusic3: 85,
   YuE2: 87,
   Sonilo: 91,
+  SeedAudio: 103,
 
   // Root ecosystems - 3D Model providers
   // PolyGen has been displaced twice on main merges:
@@ -1015,6 +1016,13 @@ export const ecosystems: EcosystemRecord[] = [
     familyId: 28,
     sortOrder: 308,
   },
+  {
+    id: ECO.SeedAudio,
+    key: 'SeedAudio',
+    displayName: 'Seed Audio',
+    familyId: 12,
+    sortOrder: 309,
+  },
 
   // 3D Model ecosystems
   {
@@ -1426,6 +1434,8 @@ export const ecosystemSupport: EcosystemSupport[] = [
   { ecosystemId: ECO.YuE2, supportType: 'generation', modelTypes: checkpointOnly },
   { ecosystemId: ECO.YuE2, supportType: 'training', modelTypes: loraOnly },
   { ecosystemId: ECO.Sonilo, supportType: 'generation', modelTypes: checkpointOnly },
+  // Seed Audio - remote (BytePlus API). No Civitai checkpoint, like the 3D providers.
+  { ecosystemId: ECO.SeedAudio, supportType: 'generation', modelTypes: [] },
 
   // PolyGen - remote 3D generator (Meshy via Fal). No Civitai checkpoint/LoRA;
   // entry exists so the unified generator picker can route 3D-Models workflows
@@ -2502,6 +2512,7 @@ export const BM = {
   Ming: 108,
   MingLayer: 109,
   Sonilo: 110,
+  SeedAudio: 123,
   Ideogram45: 111,
   Flux3: 112,
   Krea2Turbo: 113,
@@ -4238,6 +4249,17 @@ export const baseModelRecords: BaseModelRecord[] = [
     ecosystemId: ECO.Sonilo,
     licenseId: 46,
     matureRestricted: ['generation'],
+  },
+
+  // Seed Audio (BytePlus) — resource-less, so hidden from the base-model picker like the 3D providers.
+  {
+    id: BM.SeedAudio,
+    name: 'Seed Audio',
+    description: "ByteDance's speech, music and ambience generation model",
+    type: 'audio',
+    ecosystemId: ECO.SeedAudio,
+    licenseId: 23,
+    hidden: true,
   },
 
   // PolyGen (Meshy via Fal) — remote 3D model generator. Type='image' matches

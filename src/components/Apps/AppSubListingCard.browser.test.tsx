@@ -10,7 +10,6 @@ vi.mock('~/components/UserAvatar/UserAvatar', () => ({
     <a href={`/user/${props.user?.username}`}>{props.user?.username}</a>
   ),
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 // The store funnel: its gate (the `feedImpressions` dial) and the shared beacon, spied.
 const funnel = vi.hoisted(() => ({ on: true, enqueue: vi.fn() }));
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({

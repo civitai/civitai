@@ -91,7 +91,7 @@ describe('EventContentThumb wears its hat as a feed card does', () => {
   const wrapperOf = (el: HTMLElement) =>
     [...el.children].find((c) => c.tagName === 'DIV') as HTMLElement;
 
-  // Justin chose the feed card's hat over one shrunk to this smaller card: full size, at any width.
+  // The feed card's hat was chosen over one shrunk to this smaller card: full size, at any width.
   it("draws the feed's own hat on the corner, outside the clipped card", () => {
     const wrapper = wrapperOf(thumb());
     // The feed's own wrapper: it carries the hover-grow hook and holds the hat beside the card.

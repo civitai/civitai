@@ -6,8 +6,8 @@ import { afterAll, describe, expect, it } from 'vitest';
 
 /**
  * Every route under `src/server/api-routes/mod` and `src/pages/api/mod` must default-export a call to one of the wrappers below,
- * imported from the module that defines it. `ModEndpoint` and `defineModeratorEndpoint` apply the
- * moderator credential rule (pinned in
+ * imported from the module that defines it. `ModEndpoint`, `defineModeratorEndpoint` and
+ * `defineModeratorStreamEndpoint` apply the moderator credential rule (pinned in
  * `src/server/__tests__/moderator-rest-wrappers.credential-requirements.test.ts`);
  * `WebhookEndpoint` takes the service token instead of a user credential, so its routes are
  * listed by name.
@@ -16,6 +16,7 @@ const WRAPPERS: Record<string, string> = {
   ModEndpoint: '~/server/utils/endpoint-helpers',
   WebhookEndpoint: '~/server/utils/endpoint-helpers',
   defineModeratorEndpoint: '~/server/utils/moderator-endpoint',
+  defineModeratorStreamEndpoint: '~/server/utils/moderator-endpoint',
 };
 
 const WEBHOOK_ROUTES = [

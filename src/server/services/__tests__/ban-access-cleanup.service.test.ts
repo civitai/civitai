@@ -1,8 +1,18 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { PGlite } from '@electric-sql/pglite';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type { BanCleanupDeps } from '../ban-access-cleanup.service';
 
-const { disableOauthForBannedUser } = await import('../ban-access-cleanup.service');
+// Run authorizations are revoked over real SQL.
+const { pgRef } = vi.hoisted(() => ({ pgRef: { current: null as PGlite | null } }));
+vi.mock('~/server/db/kyselyDb', async () => {
+  const { pgliteKysely } = await import('~/__tests__/pglite-kysely');
+  return { kyselyWrite: pgliteKysely(() => pgRef.current!) };
+});
+
+const { disableOauthForBannedUser, revokeRunnerAuthorizationsForBannedUser } = await import(
+  '../ban-access-cleanup.service'
+);
 
 const USER = 4242;
 const ASSISTANT = `appassist-${USER}`;
@@ -26,7 +36,14 @@ const owned = (rows: { id: string; accessMode?: string; name?: string }[]) =>
     rows.map((r) => ({ name: 'An app', accessMode: 'open', ...r })) as never
   );
 
-beforeEach(() => {
+beforeEach(async () => {
+  pgRef.current = await PGlite.create();
+  await pgRef.current.exec(`
+    CREATE TABLE runner_run_authorizations (
+      id TEXT PRIMARY KEY, user_id INTEGER NOT NULL, runner_client_id TEXT NOT NULL,
+      revoked_at TIMESTAMPTZ, revoked_reason TEXT
+    );
+  `);
   order = [];
   deps = {
     expireClientTokens: vi.fn(async (id: string) => void order.push(`expire:${id}`)),
@@ -36,6 +53,7 @@ beforeEach(() => {
       async (cs: { id: string; priorMode: string }[]) =>
         void order.push(`mark:${cs.map((c) => `${c.id}=${c.priorMode}`)}`)
     ),
+    revokeRunnerAuthorizations: revokeRunnerAuthorizationsForBannedUser,
   };
   owned([{ id: ASSISTANT }, { id: DEV }, { id: THIRD_PARTY, name: 'Prompt Pal' }]);
   dbMock.dbWrite.apiKey.findMany.mockResolvedValue([{ userId: USER }, { userId: 99 }] as never);
@@ -48,7 +66,35 @@ beforeEach(() => {
   dbMock.dbWrite.oauthConsent.deleteMany.mockResolvedValue({ count: 3 } as never);
 });
 
+afterEach(async () => {
+  await pgRef.current?.close();
+  pgRef.current = null;
+});
+
 describe('disableOauthForBannedUser', () => {
+  // The two run-authorization pins below are civitai/civitai#10573's ban leg: keep both.
+  it("🔴 revokes every run authorization the user gave any runner, and no one else's", async () => {
+    await pgRef.current!.exec(`
+      INSERT INTO runner_run_authorizations (id, user_id, runner_client_id) VALUES
+        ('a', ${USER}, 'rcl_1'), ('b', ${USER}, 'rcl_2'), ('other', 99, 'rcl_1');
+    `);
+    await disableOauthForBannedUser(USER, deps);
+    const { rows } = await pgRef.current!.query<{ id: string; reason: string | null }>(
+      `SELECT id, revoked_reason AS reason FROM runner_run_authorizations ORDER BY id`
+    );
+    expect(rows).toEqual([
+      { id: 'a', reason: 'banned' },
+      { id: 'b', reason: 'banned' },
+      { id: 'other', reason: null },
+    ]);
+  });
+
+  it('🔴 still deletes the consents when the authorization revoke fails', async () => {
+    await pgRef.current!.exec(`DROP TABLE runner_run_authorizations`);
+    const result = await disableOauthForBannedUser(USER, deps);
+    expect(result.consents).toBe(3);
+  });
+
   it('🔴 disables ONLY the self-only clients (App Assistant, dev tunnel), marking them once disabled', async () => {
     const result = await disableOauthForBannedUser(USER, deps);
 

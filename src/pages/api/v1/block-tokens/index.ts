@@ -2,7 +2,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { env } from '~/env/server';
 import { withAxiom } from '@civitai/next-axiom';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { emitMintAuditToStdout } from '~/server/logging/mint-audit-stdout';
 
 // H2 (audit-10): cap the request body BEFORE Next's default 1MB parse runs.
@@ -81,7 +81,51 @@ import {
   withholdUncoveredImportScope,
 } from '~/server/services/apps/storage-import-grant.service';
 import type { Logger } from '@civitai/next-axiom';
+import { blockOutputCeilingFromClaims } from '~/server/services/blocks/block-output-restriction';
+import {
+  blockViewerImageUserSelect,
+  projectBlockViewerImage,
+  type BlockViewerImage,
+} from '~/server/services/blocks/block-viewer-image';
 import { appRateLimitMeta, sendAppRateLimited } from '~/server/utils/app-rate-limit';
+
+/**
+ * `BLOCK_INIT.viewer.image` for this mint, as `{ viewerImage }` — or `{}` (the key ABSENT)
+ * for an anonymous viewer, a token without `user:read:self`, or a failed read.
+ *
+ * The rule is `projectBlockViewerImage`, the one `/api/v1/blocks/me` and
+ * `blocks.getMyViewer` apply, against the ceiling `blockOutputCeilingFromClaims` derives
+ * from the `maxBrowsingLevel` / viewer level this response reports — so a block reading
+ * its avatar from BLOCK_INIT and from `/blocks/me` gets the same answer. `scopes` is the
+ * set the token was SIGNED with: the avatar rides the same consent as the REST read.
+ * A failed read never fails the mint; the block can still ask `/blocks/me`.
+ */
+async function mintViewerImage(args: {
+  userId: number | null;
+  scopes: readonly string[];
+  maxBrowsingLevel: number | undefined;
+  viewerBrowsingLevel: number | undefined;
+  log?: Logger;
+}): Promise<{ viewerImage?: BlockViewerImage }> {
+  if (args.userId == null || !args.scopes.includes('user:read:self')) return {};
+  try {
+    const user = await dbRead.user.findUnique({
+      where: { id: args.userId },
+      select: blockViewerImageUserSelect,
+    });
+    const ceiling = blockOutputCeilingFromClaims({
+      sub: `user:${args.userId}`,
+      maxBrowsingLevel: args.maxBrowsingLevel,
+      viewerBrowsingLevel: args.viewerBrowsingLevel,
+    });
+    return { viewerImage: projectBlockViewerImage(user, ceiling) };
+  } catch (err) {
+    args.log?.warn?.('app-blocks.mint.viewer-image-failed', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return {};
+  }
+}
 
 /** Call only after the host gate: the site rule takes precedence over the level. */
 function hiddenByViewerBrowsingLevel(
@@ -605,6 +649,22 @@ async function tryDevTunnelScopedMint(args: {
   req.log?.info('app-blocks.dev-tunnel.mint', mintAudit);
   emitMintAuditToStdout('app-blocks.dev-tunnel.mint', mintAudit);
 
+  // Still narrowed by the author's OWN browsing level: forced-SFW caps the
+  // domain half, it says nothing about the viewer half. An author with NSFW
+  // off dogfoods at PG here, exactly as they would on the public run page.
+  const effectiveBrowsingLevel = viewerEffectiveBrowsingLevel({
+    req,
+    sessionUser,
+    maxBrowsingLevel: FORCED_SFW_CEILING,
+  });
+  const viewerImage = await mintViewerImage({
+    userId,
+    scopes: granted,
+    maxBrowsingLevel: FORCED_SFW_CEILING,
+    viewerBrowsingLevel: effectiveBrowsingLevel,
+    log: req.log,
+  });
+
   res.setHeader('Cache-Control', 'no-store');
   res.status(200).json({
     token: result.token,
@@ -618,14 +678,8 @@ async function tryDevTunnelScopedMint(args: {
     // Forced-SFW: the dev mint never reads the request host.
     domain: null,
     maxBrowsingLevel: FORCED_SFW_CEILING,
-    // Still narrowed by the author's OWN browsing level: forced-SFW caps the
-    // domain half, it says nothing about the viewer half. An author with NSFW
-    // off dogfoods at PG here, exactly as they would on the public run page.
-    effectiveBrowsingLevel: viewerEffectiveBrowsingLevel({
-      req,
-      sessionUser,
-      maxBrowsingLevel: FORCED_SFW_CEILING,
-    }),
+    effectiveBrowsingLevel,
+    ...viewerImage,
   });
   return 'handled';
 }
@@ -814,6 +868,20 @@ async function tryDevTunnelOwnedNonApprovedMint(args: {
   req.log?.info('app-blocks.dev-tunnel.owned-nonapproved-mint', mintAudit);
   emitMintAuditToStdout('app-blocks.dev-tunnel.owned-nonapproved-mint', mintAudit);
 
+  // See the ephemeral branch above: forced-SFW is the DOMAIN half only.
+  const effectiveBrowsingLevel = viewerEffectiveBrowsingLevel({
+    req,
+    sessionUser,
+    maxBrowsingLevel: FORCED_SFW_CEILING,
+  });
+  const viewerImage = await mintViewerImage({
+    userId,
+    scopes: granted,
+    maxBrowsingLevel: FORCED_SFW_CEILING,
+    viewerBrowsingLevel: effectiveBrowsingLevel,
+    log: req.log,
+  });
+
   res.setHeader('Cache-Control', 'no-store');
   res.status(200).json({
     token: result.token,
@@ -825,12 +893,8 @@ async function tryDevTunnelOwnedNonApprovedMint(args: {
     missingScopes: [],
     domain: null,
     maxBrowsingLevel: FORCED_SFW_CEILING,
-    // See the ephemeral branch above: forced-SFW is the DOMAIN half only.
-    effectiveBrowsingLevel: viewerEffectiveBrowsingLevel({
-      req,
-      sessionUser,
-      maxBrowsingLevel: FORCED_SFW_CEILING,
-    }),
+    effectiveBrowsingLevel,
+    ...viewerImage,
   });
   return 'handled';
 }
@@ -1092,6 +1156,20 @@ async function tryPrivateRunMint(args: {
   req.log?.info('app-blocks.private-run.mint', mintAudit);
   emitMintAuditToStdout('app-blocks.private-run.mint', mintAudit);
 
+  // Forced-SFW is the DOMAIN half only; see PHASE 2's identical note.
+  const effectiveBrowsingLevel = viewerEffectiveBrowsingLevel({
+    req,
+    sessionUser,
+    maxBrowsingLevel: FORCED_SFW_CEILING,
+  });
+  const viewerImage = await mintViewerImage({
+    userId,
+    scopes: granted,
+    maxBrowsingLevel: FORCED_SFW_CEILING,
+    viewerBrowsingLevel: effectiveBrowsingLevel,
+    log: req.log,
+  });
+
   res.setHeader('Cache-Control', 'no-store');
   res.status(200).json({
     token: result.token,
@@ -1106,12 +1184,8 @@ async function tryPrivateRunMint(args: {
     missingScopes: [],
     domain: null,
     maxBrowsingLevel: FORCED_SFW_CEILING,
-    // Forced-SFW is the DOMAIN half only; see PHASE 2's identical note.
-    effectiveBrowsingLevel: viewerEffectiveBrowsingLevel({
-      req,
-      sessionUser,
-      maxBrowsingLevel: FORCED_SFW_CEILING,
-    }),
+    effectiveBrowsingLevel,
+    ...viewerImage,
   });
   return 'handled';
 }
@@ -1786,6 +1860,13 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       : buzzBudget;
 
   const tokenKind = oauth?.outcome === 'minted' ? 'oauth' : 'block';
+  const viewerImage = await mintViewerImage({
+    userId,
+    scopes: manifestScopes,
+    maxBrowsingLevel,
+    viewerBrowsingLevel: effectiveBrowsingLevel,
+    log: (req as { log?: Logger }).log,
+  });
   // The App Storage writes cutover: `{ appData: { url, slug } }` only for a production page run
   // of an app the `app-data-writes-via-service` flag is on for, with a block token; `{}` (the key
   // ABSENT) otherwise. Decided here, never by the host. See app-data-writes-routing.ts.
@@ -1826,6 +1907,9 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     // it is what a block should render mature affordances against. Always a
     // subset of `maxBrowsingLevel` — see `viewerEffectiveBrowsingLevel`.
     effectiveBrowsingLevel,
+    // The viewer's avatar (`BLOCK_INIT.viewer.image`) when the token carries
+    // `user:read:self`; the key is ABSENT otherwise. See `mintViewerImage`.
+    ...viewerImage,
     ...appDataInit,
   });
 });

@@ -142,9 +142,10 @@ type parityReplay struct {
 	ttl     *trpc.CacheTTL
 	trivial bool
 	// viewer is the served request's viewer, for the eval capture (viewerKnown false: none observed,
-	// or the capture is off).
+	// or the capture is off; viewerErr then the resolve's error, if one was observed).
 	viewer      evalcorpus.Viewer
 	viewerKnown bool
+	viewerErr   error
 }
 
 // sampleParity decides, for an answer serve has just written, whether it is replayed, and takes the
@@ -189,7 +190,7 @@ func (s *Server) sampleParity(r *http.Request, endpoint string, c *computed, vie
 		rep.url.User = &u
 	}
 	if u, seen, err := viewer.get(); seen {
-		rep.viewer, rep.viewerKnown = evalViewer(u, false), err == nil
+		rep.viewer, rep.viewerKnown, rep.viewerErr = evalViewer(u, false), err == nil, err
 	}
 	if c.devalue {
 		rep.value = c.value

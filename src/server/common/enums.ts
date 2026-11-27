@@ -154,7 +154,6 @@ export enum SignalMessages {
   WorkflowUpdate = 'orchestrator:workflow-update',
   /** Also sent for a remix-app workflow's steps, so the remix tray need not watch every generation. */
   RemixAppUpdate = 'orchestrator:remix-app-update',
-  SchedulerDownload = 'scheduler:download',
   NotificationNew = 'notification:new',
   ResourceLoadUpdate = 'resource-load:update',
   Pong = 'pong',
@@ -247,6 +246,8 @@ export enum ViolationType {
   Hate = 'hate',
   NonAi = 'non-ai',
   Spam = 'spam',
+  /** Removed at the request of the person depicted or a rights holder (likeness, TAKE IT DOWN, DMCA). */
+  LikenessRequest = 'likenessRequest',
   Other = 'other',
 }
 

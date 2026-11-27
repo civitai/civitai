@@ -12,8 +12,6 @@ import { expectReplyKeys } from '../../../test/expectReplyKeys';
 
 const { workflowMediaMutate } = vi.hoisted(() => ({ workflowMediaMutate: vi.fn() }));
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-
 // eslint-disable-next-line local-rules/no-wholesale-module-mock -- the same mock every PageBlockHost suite uses; the Proxy stub's inert defaults leave this host unrendered
 vi.mock('~/utils/trpc', () => ({
   setTrpcBatchingEnabled: vi.fn(),

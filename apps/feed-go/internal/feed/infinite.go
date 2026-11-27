@@ -1179,21 +1179,12 @@ func infiniteFromFeed(ctx context.Context, d *InfiniteDeps, in *InfiniteInput, q
 		}
 		return page([]any{}, "", true), nil // a shape the feed cannot express: an empty page
 	}
-	ans, err := d.Feed.Fetch(ctx, query)
+	// Node's `timeout` / `error` / `status:5xx`: its 503, or a last-good page (UnavailableError); any
+	// other status is Node's empty page. Retried once when the route answers that 503 here
+	// (WithFeedRetry).
+	ans, err := fetchInfiniteFeed(ctx, d.Feed, query, viewer)
 	if err != nil {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		// Node's `timeout` / `error`: its 503, or a last-good page (UnavailableError).
-		return nil, nodeUnavailable(fallback.Wrap("feed-unavailable", err), viewer, query)
-	}
-	if ans.Status != 200 {
-		status := fallback.Safef("feed-status", "%d", ans.Status)
-		if ans.Status >= 500 && ans.Status <= 599 {
-			// Node's `status:5xx`: as a failed call. Any other status is Node's empty page.
-			return nil, nodeUnavailable(status, viewer, query)
-		}
-		return nil, status
+		return nil, err
 	}
 	if hub != nil && !feedsvc.HubRoutes[ans.Route] {
 		// serveFromFeed's `hub:route`: a feed build without the any-of sources answered the open feed.
@@ -1465,14 +1456,15 @@ func BuildInfiniteImages(rows []RawImage, hy *Hydrated, viewer Viewer, now time.
 			availability, item = r.Availability, r.Collection
 		}
 		// In the Node object's key order: `availability` is the SELECT's column before `minor`, `meta`
-		// follows `restricted` (and a collection row's two columns), `baseModel` is set after
-		// `modelVersionIdsManual`, and `judgeScore` is last.
+		// follows `restricted` (and a collection row's two columns) and precedes `thumbnailUrl` (the
+		// key feedThumbnailFields adds after it), `baseModel` is set after `modelVersionIdsManual`, and
+		// `judgeScore` is last.
 		wire := make(superjson.Object, 0, len(img.Wire)+6)
 		for _, f := range img.Wire {
 			switch f.Key {
 			case "minor":
 				wire = append(wire, superjson.Field{Key: "availability", Val: availability})
-			case "modelVersionIds":
+			case "thumbnailUrl":
 				wire = append(wire, superjson.Field{Key: "meta", Val: nil})
 			case "user":
 				wire = append(wire, superjson.Field{Key: "baseModel", Val: superjson.Undefined{}})

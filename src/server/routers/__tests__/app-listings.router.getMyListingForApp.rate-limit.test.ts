@@ -38,6 +38,8 @@ import type * as EnvOther from '~/env/other';
  */
 
 const AUTHOR_IDS = new Set([2]); // non-mod app-dev-tester cohort
+// The `appReviewReplies` flag for the review-thread cases at the end (off by default).
+const reviewReplies = vi.hoisted(() => ({ on: false }));
 
 const { mockGetMyListingForApp, mockHSetWithTTL, mockIsAppBlocksAuthorEnabled } = vi.hoisted(
   () => ({
@@ -66,6 +68,7 @@ vi.mock('~/server/services/feature-flags.service', async () => {
     ...actual,
     getFeatureFlags: (ctx: { user?: { id?: number; isModerator?: boolean } }) => ({
       appBlocksAuthor: !!ctx.user && (!!ctx.user.isModerator || AUTHOR_IDS.has(ctx.user.id ?? -1)),
+      appReviewReplies: reviewReplies.on,
     }),
   };
 });
@@ -88,6 +91,7 @@ import { TRPCError } from '@trpc/server';
 import { appListingsRouter } from '../app-listings.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const mockHGet = redisMock.redis.packed.hGet;
 
@@ -121,6 +125,7 @@ function call() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  reviewReplies.on = false;
   mockGetMyListingForApp.mockResolvedValue({ appListingId: 'apl_1', status: 'draft' });
   mockIsAppBlocksAuthorEnabled.mockResolvedValue(true);
   mockHGet.mockResolvedValue([]);
@@ -176,5 +181,75 @@ describe('getMyListingForApp — the rate limit is ENFORCED (civitai#4003)', () 
     // A refusal may write only the active-limit marker, never the attempt bucket.
     const writtenKeys = mockHSetWithTTL.mock.calls.map((c: unknown[]) => String(c[1]));
     expect(writtenKeys.filter((key) => !key.includes('trpc:limit:active:'))).toEqual([]);
+  });
+});
+
+/**
+ * `appListings.postReviewMessage` through the same REAL middleware chain: the
+ * `appReviewReplies` flag first, then the `apps.review-replies` limit (20 an hour), then the
+ * service. No request row exists in the fake db, so a call that reaches the service answers
+ * NOT_FOUND after reading the request, and the read is what says the service ran.
+ */
+describe('postReviewMessage — the flag and the apps.review-replies limit', () => {
+  const moderatorUser = {
+    id: 9,
+    isModerator: true,
+    tier: 'free',
+    username: 'mod',
+    onboarding: 0x1f,
+  };
+  const postAs = (user: typeof author | typeof moderatorUser) =>
+    appListingsRouter
+      .createCaller({ ...authorCtx(), user: user as never } as never)
+      .postReviewMessage({ subjectId: 'pubreq_Thread01', body: 'Fixed, please re-review.' });
+  const requestRead = dbMock.dbRead.appBlockPublishRequest.findUnique;
+  const codeOf = (p: Promise<unknown>) =>
+    p.then(
+      () => null,
+      (e: unknown) => (e instanceof TRPCError ? e.code : String(e))
+    );
+
+  it('with the flag off the router refuses, before the limit or the service', async () => {
+    expect(await codeOf(postAs(author))).toBe('FORBIDDEN');
+    expect(await codeOf(postAs(moderatorUser))).toBe('FORBIDDEN');
+    expect(requestRead).not.toHaveBeenCalled();
+    expect(mockHGet).not.toHaveBeenCalled();
+  });
+
+  it('a developer at 20 replies in the hour is refused before the service', async () => {
+    reviewReplies.on = true;
+    mockHGet.mockResolvedValue(attemptsSpanning(20, 50 * 60_000));
+
+    const err = await postAs(author).then(
+      () => null,
+      (e: unknown) => e as TRPCError
+    );
+    expect(err?.code).toBe('TOO_MANY_REQUESTS');
+    expect(err?.message).toBe('Too many replies — slow down.');
+    expect(requestRead).not.toHaveBeenCalled();
+  });
+
+  it('the 20th reply in the hour still reaches the service (the limit is 20)', async () => {
+    reviewReplies.on = true;
+    mockHGet.mockResolvedValue(attemptsSpanning(19, 50 * 60_000));
+
+    expect(await codeOf(postAs(author))).toBe('NOT_FOUND');
+    expect(requestRead).toHaveBeenCalledTimes(1);
+  });
+
+  it('replies older than an hour do not count (the period is an hour)', async () => {
+    reviewReplies.on = true;
+    mockHGet.mockResolvedValue(attemptsSpanning(100, 30 * 60_000, 65 * 60_000));
+
+    expect(await codeOf(postAs(author))).toBe('NOT_FOUND');
+    expect(requestRead).toHaveBeenCalledTimes(1);
+  });
+
+  it('a moderator is not metered by it', async () => {
+    reviewReplies.on = true;
+    mockHGet.mockResolvedValue(attemptsSpanning(200, 50 * 60_000));
+
+    expect(await codeOf(postAs(moderatorUser))).toBe('NOT_FOUND');
+    expect(requestRead).toHaveBeenCalledTimes(1);
   });
 });

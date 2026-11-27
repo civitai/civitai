@@ -132,7 +132,7 @@ const BASE_SCHEMA = `
     data jsonb, "createdAt" timestamp NOT NULL DEFAULT now(),
     UNIQUE ("entityType", "entityId", type)
   );
-  CREATE TABLE "ServiceDealFileEntry" (id serial PRIMARY KEY, "imageId" int);
+  CREATE TABLE "ServiceDealFileEntry" (id serial PRIMARY KEY, "imageId" int, "scanKey" text);
 `;
 
 beforeAll(async () => {
@@ -361,6 +361,56 @@ describe('deleteImages whose statement fails', () => {
   });
 });
 
+// The deal pipeline lets go of a copy in the delete's own transaction, so a crash cannot strand it.
+describe("deleteImages' onDeleted", () => {
+  const inTransaction = async (run: () => Promise<unknown>) => {
+    const prior = vi.mocked(dbMock.dbWrite.$transaction).getMockImplementation();
+    vi.mocked(dbMock.dbWrite.$transaction).mockImplementation((async (fn: unknown) => {
+      await holder.db.exec('BEGIN');
+      try {
+        const result = await (fn as (tx: unknown) => unknown)(dbMock.dbWrite);
+        await holder.db.exec('COMMIT');
+        return result;
+      } catch (error) {
+        await holder.db.exec('ROLLBACK');
+        throw error;
+      }
+    }) as never);
+    try {
+      return await run();
+    } finally {
+      vi.mocked(dbMock.dbWrite.$transaction).mockImplementation(prior as never);
+    }
+  };
+
+  it('takes the delete back, its file queue with it, when onDeleted fails', async () => {
+    await inTransaction(() =>
+      expect(
+        deleteImages([imageOf(PLAIN)], {
+          actor: { system: 'test' },
+          onDeleted: async () => {
+            throw new Error('record failed');
+          },
+        })
+      ).rejects.toThrow('record failed')
+    );
+    expect(await imageRow(imageOf(PLAIN))).toBeDefined();
+    expect((await holder.db.query(`SELECT type FROM "JobQueue"`)).rows).toEqual([]);
+  });
+
+  it('control: hands onDeleted the rows it deleted, and both stand', async () => {
+    const seen: number[] = [];
+    await inTransaction(() =>
+      deleteImages([imageOf(PLAIN)], {
+        actor: { system: 'test' },
+        onDeleted: async (_, rows) => void seen.push(...rows.map(({ id }) => id)),
+      })
+    );
+    expect(seen).toEqual([imageOf(PLAIN)]);
+    expect(await imageRow(imageOf(PLAIN))).toBeUndefined();
+  });
+});
+
 // An owner deleting their own scanned, unblocked, unflagged, unreported image may leave an object
 // that shop artwork still uses; any other state purges it. Every state is covered through
 // `deleteImages` in moderation-blob-retraction.test.ts; these pin that `deletePost` hands over the
@@ -435,6 +485,18 @@ describe('an image a deal file entry points at', () => {
     await deleteImages([imageOf(PLAIN), other], { actor: { system: 'some-other-job' } });
     expect(await imageRow(imageOf(PLAIN))).toBeDefined();
     expect(await imageRow(other)).toBeUndefined();
+  });
+
+  it('is refused to its owner by key, before the entry points at it', async () => {
+    await holder.db.query(`DELETE FROM "ServiceDealFileEntry"`);
+    await holder.db.query(
+      `INSERT INTO "ServiceDealFileEntry" ("scanKey") SELECT url FROM "Image" WHERE id = $1`,
+      [imageOf(PLAIN)]
+    );
+    await expect(
+      deleteImages([imageOf(PLAIN)], { actor: { id: PLAIN, isModerator: false } })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(await imageRow(imageOf(PLAIN))).toBeDefined();
   });
 
   it("is refused to its owner as a preview's copy, and the cleanup keeps it", async () => {

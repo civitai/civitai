@@ -71,8 +71,8 @@ const cover = (
   nsfwLevel,
   minor,
   modelRestricted,
-  ingestion: 'Scanned',
-  needsReview: null,
+  ingestion: 'Scanned' as string,
+  needsReview: null as string | null,
   meta: null,
   metadata: null,
   tags: [],
@@ -122,7 +122,7 @@ const detailCover = (image: ReturnType<typeof cover>, viewer: Viewer) =>
 const detailBanner = (image: ReturnType<typeof cover>, viewer: Viewer) =>
   detailImage(image, viewer, 'bannerImage');
 
-async function listCover(image: ReturnType<typeof cover>, viewer: Viewer) {
+async function listArticle(image: ReturnType<typeof cover>, viewer: Viewer) {
   (dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([
     {
       id: 1,
@@ -134,6 +134,7 @@ async function listCover(image: ReturnType<typeof cover>, viewer: Viewer) {
       user: { id: OWNER, profilePictureId: null },
       userCosmetics: [],
       cursorV: 1,
+      cover: 'cover-key',
     },
   ]);
   dbMock.dbRead.image.findMany.mockImplementation((async (args: { select?: { minor?: boolean } }) =>
@@ -145,8 +146,10 @@ async function listCover(image: ReturnType<typeof cover>, viewer: Viewer) {
     sort: ArticleSort.Newest,
     sessionUser: viewer,
   } as Parameters<typeof getArticles>[0]);
-  return items[0]?.coverImage;
+  return items[0];
 }
+const listCover = async (image: ReturnType<typeof cover>, viewer: Viewer) =>
+  (await listArticle(image, viewer))?.coverImage;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -430,6 +433,35 @@ describe('the article page under the report-listed rule', () => {
       expect((await detail(field, true))[field]).toMatchObject({ id: COVER });
     }
   );
+});
+
+describe('the legacy cover key of a cover a reader cannot see', () => {
+  const unseen: [string, ReturnType<typeof cover>][] = [
+    ['NotFound', { ...cover(1, false), ingestion: 'NotFound' }],
+    ['Pending', { ...cover(1, false), ingestion: 'Pending' }],
+    ['awaiting review', { ...cover(1, false), needsReview: 'tag' }],
+  ];
+
+  it.each(unseen)('🔴 is dropped for a stranger when the cover is %s', async (_, image) => {
+    expect((await detailArticle(image, viewers['a stranger'], 'coverImage')).cover).toBeNull();
+    expect(await listArticle(image, viewers['a stranger'])).toHaveProperty('cover', null);
+  });
+
+  it.each(unseen)('is kept for the owner when the cover is %s', async (_, image) => {
+    expect((await detailArticle(image, viewers['the owner'], 'coverImage')).cover).toBe(
+      'cover-key'
+    );
+  });
+
+  it('is kept for a stranger when the cover is shown (control)', async () => {
+    expect((await detailArticle(cover(1, false), viewers['a stranger'], 'coverImage')).cover).toBe(
+      'cover-key'
+    );
+    expect(await listArticle(cover(1, false), viewers['a stranger'])).toHaveProperty(
+      'cover',
+      'cover-key'
+    );
+  });
 });
 
 // civitai/civitai#10514: article images follow the report-listed rule.

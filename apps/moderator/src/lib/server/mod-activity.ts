@@ -1,6 +1,11 @@
 import type { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import type { ReviewTier } from '@civitai/shared/review-batch';
+import {
+  LIKENESS_REQUEST_ACTIVITY,
+  writeLikenessMark,
+} from '@civitai/db-queries/image-removal-confirmation';
+import { logToAxiom } from './axiom';
 import { dbRead, dbWrite } from './db';
 import { usersByIds } from './users.service';
 
@@ -18,6 +23,33 @@ export async function recordModActivity(input: ModActivityInsert): Promise<void>
     console.error('[mod-activity] failed to record', { ...input, error: e });
   }
 }
+
+/**
+ * Marks an image removed for a likeness/DMCA request. The main app's appeal-decision-records sweep
+ * deletes the image's appeal training copies by this row. Retried like the main app's
+ * `trackLikenessRequests`; a mark that never lands is logged as `likeness-request-mark-failed`.
+ */
+export const recordLikenessRequest = (
+  userId: number,
+  imageId: number,
+  retry?: { tries?: number; backoffMs?: number }
+) =>
+  writeLikenessMark(
+    () =>
+      insertModActivityBatch(dbWrite, {
+        userId,
+        entityType: 'image',
+        entityIds: [imageId],
+        activity: LIKENESS_REQUEST_ACTIVITY,
+      }),
+    (e, tries) =>
+      logToAxiom({
+        type: 'error',
+        name: 'likeness-request-mark-failed',
+        message: `1 image after ${tries} tries: ${e instanceof Error ? e.message : String(e)}`,
+      }),
+    retry
+  );
 
 type ModActivityInsert = {
   userId: number;

@@ -31,10 +31,6 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   useFeatureFlags: () => ({}),
 }));
 
-vi.mock('~/hooks/useCurrentUser', () => ({
-  useCurrentUser: () => ({ id: 1, muted: false }),
-}));
-
 vi.mock('~/components/Buzz/InteractiveTipBuzzButton', async (importOriginal) => ({
   ...(await importOriginal<typeof TipBuzzButton>()),
   InteractiveTipBuzzButton: ({ children }: { children: ReactNode }) => <>{children}</>,
@@ -56,7 +52,8 @@ async function pressAndPop(entityId: number, name: string, { flushLeft = false }
   renderWithProviders(
     <div data-testid="row" style={{ padding: '0 16px' }}>
       <Reactions entityType="image" entityId={entityId} reactions={[]} metrics={metrics} />
-    </div>
+    </div>,
+    { user: { id: 1, muted: false } }
   );
   const button = page.getByRole('button', { name });
   await expect.element(button).toBeInTheDocument();
