@@ -948,12 +948,14 @@ describe('asking the user on the runner', () => {
   it('refuses options the page could not show, without ending the reply', async () => {
     fake.add('my-app');
     const { tools } = await open();
-    expect(
-      await call(tools.tools, 'ask_choice', { question: 'Which?', options: [{ label: 'Only' }] })
-    ).toEqual({
-      error: 'options must be an array of 2 to 4 objects, each with a "label" string.',
-      note: 'Nothing was shown. Call ask_choice again with options as an array.',
+    const refused = await call(tools.tools, 'ask_choice', {
+      question: 'Which?',
+      options: [{ label: 'Only' }],
     });
+    // The wording is the chat's own; what the runner relies on is an error and no awaitsUser.
+    expect(refused).toMatchObject({ error: expect.any(String) });
+    expect(refused).not.toHaveProperty('awaitsUser');
+    expect(refused).not.toHaveProperty('shown');
   });
 
   it('keeps the chat’s ask_choice rule in the system prompt, as the page does', async () => {
