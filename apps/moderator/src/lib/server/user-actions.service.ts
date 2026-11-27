@@ -1807,30 +1807,37 @@ export async function setImageFlag(input: {
   // Chunked like remove/restore, and for a harder reason: this endpoint reads `req.query`, so the ids
   // ride in the URL. 5,000 of them is a ~40 KB request line, which the server rejects outright — the
   // Select-all path was the one most likely to fail and the least likely to say so.
+  let applied = 0;
   for (let i = 0; i < input.imageIds.length; i += CHUNK) {
+    const chunk = input.imageIds.slice(i, i + CHUNK);
     const result = await callMainApp(
       '/api/mod/update-image-flag',
       {
         flag: input.flag,
         value: String(input.value),
         csamReview: String(input.csamReview),
-        ids: input.imageIds.slice(i, i + CHUNK).join(','),
+        ids: chunk.join(','),
       },
       'Image flag update'
     );
-    if (!result.ok) return result;
+    if (!result.ok)
+      return applied > 0
+        ? { ok: false, error: `${result.error} ${applied} images were already updated — reload.` }
+        : result;
+    // Recorded per chunk, as `inChunks` does: a later chunk's refusal must not leave the images
+    // already updated with no record of who updated them.
+    await Promise.all(
+      chunk.map((id) =>
+        recordModActivity({
+          userId: input.moderatorId,
+          entityType: 'image',
+          entityId: id,
+          activity: `${input.flag}:${input.value}`,
+        })
+      )
+    );
+    applied += chunk.length;
   }
-
-  await Promise.all(
-    input.imageIds.map((id) =>
-      recordModActivity({
-        userId: input.moderatorId,
-        entityType: 'image',
-        entityId: id,
-        activity: `${input.flag}:${input.value}`,
-      })
-    )
-  );
   return { ok: true };
 }
 
