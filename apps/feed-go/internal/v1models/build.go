@@ -5,8 +5,10 @@
 // Both endpoints build their bodies from getModelsWithVersions (src/server/services/model.service.ts)
 // over getModelsRaw: one model statement on the replica, then the per-id caches the Node path reads
 // (model data, model tags, version files, showcase images, paid access, creators, metric privacy) and
-// a few small replica reads. The caches are read, never written; a miss Node would fill from the
-// database falls back, except where the miss path is a plain read ported here.
+// a few small replica reads. A miss Node would fill from the database falls back, except where its
+// miss path is ported here (DESIGN.md §16.7, Deps.misses); of those, the model data and model tags
+// are written back on a public request, as model.getAll writes them, where FEED_GO_CACHE_WRITEBACK
+// lists them. Nothing else is written.
 package v1models
 
 import (
@@ -44,7 +46,8 @@ type Config struct {
 	// request.
 	BaseModelFeedMetrics bool
 	// ComputeMisses is FEED_GO_COMPUTE_MISSES: a tag-name cache miss is answered with tagCache's own
-	// lookup on the replica instead of falling back (the other caches' misses still fall back).
+	// lookup on the replica instead of falling back; the other v1 misses are computed only under it,
+	// a public request's each behind its own switch (Deps.misses).
 	ComputeMisses bool
 	// ResponseCacheTTL is the `[id]` origin cache's logical TTL (CacheTTL.sm where the Node app runs
 	// with IS_DATAPACKET); 0 = Node does not read it.
@@ -59,16 +62,55 @@ type Config struct {
 	// ServeQuery is FEED_GO_V1_MODELS_SERVE_QUERY (default off): a public list request with a text
 	// `query` is answered here (with Deps.Search) instead of falling back (`v1-models-query`).
 	ServeQuery bool
-	// ServeDataMiss is FEED_GO_V1_MODELS_SERVE_DATA_MISS (default off): on the public list, a
-	// model-data cache miss is computed with the cache's own lookup (it needs FEED_GO_COMPUTE_MISSES:
-	// Sources' Compute) instead of falling back (`v1-models-data-miss`). A shadow sample computes it
-	// whenever ComputeMisses is on, this switch or not (ListRequest.Serving).
+	// ServeDataMiss is FEED_GO_V1_MODELS_SERVE_DATA_MISS (default off): on a public request (either
+	// route), a model-data cache miss is computed with the cache's own lookup (it needs
+	// FEED_GO_COMPUTE_MISSES: Sources' Compute) instead of falling back (`v1-models-data-miss`), and
+	// written back where FEED_GO_CACHE_WRITEBACK lists model-data. A shadow sample computes it
+	// whenever ComputeMisses is on, this switch or not (missServe).
 	ServeDataMiss bool
+	// ServeTagsMiss is FEED_GO_V1_MODELS_SERVE_TAGS_MISS (default off): on a public request, a
+	// model-tags miss is computed with modelTagCache's lookup (written back where
+	// FEED_GO_CACHE_WRITEBACK lists model-tags) instead of falling back (`v1-models-tags-miss`).
+	ServeTagsMiss bool
+	// ServeTagNameStale is FEED_GO_V1_MODELS_SERVE_TAG_NAME_STALE (default off): on a public request,
+	// a stale tag-name entry is named by tagCache's lookup on the replica instead of falling back
+	// (`v1-models-tag-name-stale`); nothing is written.
+	ServeTagNameStale bool
+	// ServeShowcaseMiss is FEED_GO_V1_MODELS_SERVE_SHOWCASE_MISS (default off): on a public request, a
+	// version-showcase miss Node's fetch would look up (a debounce marker; a lag-flagged version, on
+	// the primary) is decided here instead of falling back (`v1-models-showcase-miss`).
+	ServeShowcaseMiss bool
 	// AnswerNotFound is FEED_GO_V1_MODELS_ANSWER_NOT_FOUND (default off): a public `[id]` request whose
 	// model statement returns no row, with the model's lag flag read clean, is answered with Node's
 	// 404 (Answer.Absent) instead of falling back (`v1-models-not-found`). Any other not-found answer
 	// still falls back.
 	AnswerNotFound bool
+}
+
+// missServe is which cache misses one computation answers instead of falling back (Deps.misses).
+type missServe struct {
+	// data: a model-data miss (computeDataMisses); tags: a model-tags miss; tagNameStale: a stale
+	// tag-name entry; showcase: a version-showcase miss Node's fetch would look up
+	// (hydrate.Sources.ShowcaseStateReadThrough).
+	data, tags, tagNameStale, showcase bool
+	// write: a computed entry Node would write back is written, for each cache FEED_GO_CACHE_WRITEBACK
+	// lists. A shadow sample writes nothing: Node answered it, and wrote its own entries.
+	write bool
+}
+
+// misses is the request's missServe: on a public request each miss its switch turns on (each needs
+// the miss computation, Config.ComputeMisses); in a shadow sample every one, whenever the miss
+// computation is on, so the shadow compares a computed answer before it is served.
+func (d *Deps) misses(serving bool) missServe {
+	c := d.Config.ComputeMisses
+	if serving {
+		return missServe{
+			data: c && d.Config.ServeDataMiss, tags: c && d.Config.ServeTagsMiss,
+			tagNameStale: c && d.Config.ServeTagNameStale, showcase: c && d.Config.ServeShowcaseMiss,
+			write: true,
+		}
+	}
+	return missServe{data: c, tags: c, tagNameStale: c, showcase: c}
 }
 
 // Deps are what the port reads.
@@ -274,7 +316,7 @@ func (d *Deps) getModelsRaw(ctx context.Context, in *RawInput, hidePrivate bool)
 	g := d.group(ctx)
 	g.Go(func(ctx context.Context) (err error) { users, pictures, err = d.Sources.Users(ctx, userIDs); return })
 	g.Go(func(ctx context.Context) (err error) {
-		data, err = d.modelData(ctx, modelIDs, in.ComputeDataMiss)
+		data, err = d.modelData(ctx, modelIDs, in.misses)
 		return
 	})
 	g.Go(func(ctx context.Context) (err error) { gated, err = d.paidAccessGates(ctx, modelIDs); return })

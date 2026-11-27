@@ -84,22 +84,54 @@ func (s *Sources) fillModelData(ctx context.Context, models []int, got map[int]E
 
 // ComputeModelData is fillModelData for a reader that keeps the records' key order (the REST model
 // routes): each of ids (none of which an entry answered) looked up with dataForModelsCache's lookup,
-// its computed record (Ordered) or NotFound for a model the lookup finds no version for. Nothing is
-// written: no id is writable. ok is false when misses are not computed (no Compute): the caller then
-// falls back. A failed lookup is the `model-data-miss-failed` fallback.
-func (s *Sources) ComputeModelData(ctx context.Context, ids []int) (entries map[int]OrderedEntry, ok bool, err error) {
+// its computed record (Ordered) or NotFound for a model the lookup finds no version for. writable
+// (OrderedRead.Writable) is the misses Node would write back: with model-data written back
+// (FEED_GO_CACHE_WRITEBACK) each of those is written as model.getAll writes it (same key, bytes and
+// expiry, SET NX), and the lookup reads the primary for a model a recent write flagged (lagAwareDB);
+// nil writes nothing. ok is false when misses are not computed (no Compute): the caller then falls
+// back. A failed lookup is the `model-data-miss-failed` fallback.
+func (s *Sources) ComputeModelData(ctx context.Context, ids []int, writable map[int]bool) (entries map[int]OrderedEntry, ok bool, err error) {
 	if s == nil || s.Compute == nil {
 		return nil, false, nil
 	}
 	got := make(map[int]Entry, len(ids))
-	if err := s.fillModelData(ctx, ids, got, nil); err != nil {
+	if err := s.fillModelData(ctx, ids, got, writable); err != nil {
 		return nil, true, err
 	}
-	entries = make(map[int]OrderedEntry, len(got))
-	for id, e := range got {
-		entries[id] = OrderedEntry{Value: e.Ordered(), NotFound: e.NotFound}
+	return orderedEntries(got), true, nil
+}
+
+// ComputeModelTags is fillModelTags for the REST model routes: each of ids (none of which an entry
+// answered) looked up with modelTagCache's lookup on the replica (Node's fetch reads dbRead), its
+// `{modelId, tagIds}` record or NotFound for a model with no tag (the marker modelTagCache writes).
+// writable is the misses Node would write back: with model-tags written back
+// (FEED_GO_CACHE_WRITEBACK) each is written as model.getAll writes it; nil writes nothing. ok is
+// false without Compute. A failed lookup is the `model-tags-miss-failed` fallback.
+func (s *Sources) ComputeModelTags(ctx context.Context, ids []int, writable map[int]bool) (entries map[int]OrderedEntry, ok bool, err error) {
+	if s == nil || s.Compute == nil {
+		return nil, false, nil
 	}
-	return entries, true, nil
+	got := make(map[int]Entry, len(ids))
+	if err := s.fillModelTags(ctx, ids, got, writable); err != nil {
+		return nil, true, err
+	}
+	return orderedEntries(got), true, nil
+}
+
+// orderedEntries is got as OrderedEntry values (Entry.Ordered: an ordered cache's own key order, any
+// other's keys sorted).
+func orderedEntries(got map[int]Entry) map[int]OrderedEntry {
+	out := make(map[int]OrderedEntry, len(got))
+	for id, e := range got {
+		out[id] = OrderedEntry{Value: e.Ordered(), NotFound: e.NotFound}
+	}
+	return out
+}
+
+// WritesBack reports whether this service writes the named cache's computed entries back
+// (FEED_GO_CACHE_WRITEBACK lists it and misses are computed).
+func (s *Sources) WritesBack(cache string) bool {
+	return s != nil && s.Compute != nil && s.Compute.writes(cache)
 }
 
 // ModelLagFlagged reports whether a recent write flagged any of the models (their
