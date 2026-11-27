@@ -773,8 +773,11 @@ func TestEvalCaptureCorpusOnlyMayNameViewerNotRecorded(t *testing.T) {
 		{"infinite userId", EndpointInfinite, `{"json":{"limit":20,"userId":48213}}`, "", postCorpusOnlyInfinite, true},
 		{"infinite username", EndpointInfinite, `{"json":{"limit":20,"username":"keyholder-synthetic"}}`, "", postCorpusOnlyInfinite, true},
 		{"infinite collectionId", EndpointInfinite, `{"json":{"limit":20,"collectionId":90617}}`, "", postCorpusOnlyInfinite, true},
+		{"infinite user", EndpointInfinite, `{"json":{"limit":20,"user":"keyholder-synthetic-2"}}`, "", postCorpusOnlyInfinite, true},
+		{"infinite excludedUserIds", EndpointInfinite, `{"json":{"limit":20,"excludedUserIds":[73501]}}`, "", postCorpusOnlyInfinite, true},
 		{"infinite, no viewer-naming key", EndpointInfinite, corpusOnlyInfiniteInput, "", postCorpusOnlyInfinite, false},
 		{"v1-models-id username pair", EndpointV1ModelsID, "limit=1&username=keyholder-synthetic", "/api/v1/models/5001", postCorpusOnly, true},
+		{"v1-models-id userId pair", EndpointV1ModelsID, "limit=1&userId=61842", "/api/v1/models/5001", postCorpusOnly, true},
 		{"v1-models-id, no viewer-naming pair", EndpointV1ModelsID, "limit=1", "/api/v1/models/5001", postCorpusOnly, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
