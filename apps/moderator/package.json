@@ -1,6 +1,6 @@
 {
   "name": "@civitai/moderator-app",
-  "version": "0.0.243",
+  "version": "0.0.244",
   "private": true,
   "type": "module",
   "scripts": {
