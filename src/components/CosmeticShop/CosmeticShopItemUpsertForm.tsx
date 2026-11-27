@@ -96,6 +96,7 @@ const cosmeticTypeOptions: { value: CosmeticType; label: string }[] = [
   { value: CosmeticType.NamePlate, label: 'Name Plate' },
   { value: CosmeticType.Sticker, label: 'Sticker' },
   { value: CosmeticType.CardDecoration, label: 'Creator Card Glow' },
+  { value: CosmeticType.SidebarBackground, label: 'Profile Sidebar Background' },
 ];
 
 const cosmeticSourceOptions: { value: CosmeticSource; label: string }[] = [
@@ -111,6 +112,7 @@ const isImageBasedCosmeticType = (type: CosmeticType) =>
   type === CosmeticType.ProfileDecoration ||
   type === CosmeticType.ContentDecoration ||
   type === CosmeticType.ProfileBackground ||
+  type === CosmeticType.SidebarBackground ||
   type === CosmeticType.Sticker;
 
 /**
@@ -213,7 +215,7 @@ const NewCosmeticInlineCreator = ({ onCreated }: { onCreated: (cosmeticId: numbe
       data = { url: imageId, animated };
     } else if (type === CosmeticType.ContentDecoration) {
       data = { url: imageId };
-    } else if (type === CosmeticType.ProfileBackground) {
+    } else if (type === CosmeticType.ProfileBackground || type === CosmeticType.SidebarBackground) {
       data = { url: imageId, type: MediaType.image };
     } else if (type === CosmeticType.Sticker) {
       data = { url: imageId, slug, animated };

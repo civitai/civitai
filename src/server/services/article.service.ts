@@ -18,7 +18,7 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import type { ManipulateType } from 'dayjs';
 import { truncate } from 'lodash-es';
-import { NsfwLevel } from '~/server/common/enums';
+import type { NsfwLevel } from '~/server/common/enums';
 import { TEXT_MODERATION_RETRY_STATUSES } from '~/server/jobs/text-moderation-retry.constants';
 import {
   hasBlockMarker,
@@ -174,6 +174,7 @@ import {
   keyIssuers,
   MAX_KEYS,
   recordedKeys,
+  urlScheme,
 } from '~/server/services/image-url-ownership';
 import { createNotification } from '~/server/services/notification.service';
 import { updateArticleNsfwLevels } from '~/server/services/nsfwLevels.service';
@@ -728,9 +729,7 @@ export const getArticles = async ({
           ...(((storedCoverId != null && storedCoverId !== article.coverId) ||
             (article.coverId != null && minorHiddenCoverIds.has(article.coverId)) ||
             (!!viewable && !coverImage) ||
-            (!!cover &&
-              !coverImage &&
-              (isRestrictedImage(cover) || cover.nsfwLevel === NsfwLevel.Blocked))) && {
+            (!!cover && !coverImage)) && {
             cover: null,
           }),
           tags: tags.map(({ tag }) => ({
@@ -1052,11 +1051,7 @@ export const getArticleById = async ({
     return {
       ...article,
       // The legacy `cover` is the same image's key.
-      ...((coverWithheld ||
-        (!!article.coverImage &&
-          !coverImage &&
-          (isRestrictedImage(article.coverImage) ||
-            article.coverImage.nsfwLevel === NsfwLevel.Blocked))) && {
+      ...((coverWithheld || (!!article.coverImage && !coverImage)) && {
         cover: null,
       }),
       nsfwLevel: article.nsfwLevel as NsfwLevel,
@@ -2944,6 +2939,7 @@ export async function getArticleScanStatus({
     (i) =>
       i.ingestion === ImageIngestionStatus.Error || i.ingestion === ImageIngestionStatus.NotFound
   );
+  const absentImages = errorImages.filter(isAbsentImage);
   // Rescan is a re-queued (in-flight) image — treat it as non-terminal alongside
   // Pending so `allComplete` is false and the client keeps polling until it settles.
   const pendingImages = images.filter(
@@ -3005,9 +3001,8 @@ export async function getArticleScanStatus({
       updatedAt: moderation?.updatedAt ?? null,
     },
     errorReason: articleIngestionErrorReason({
-      errorImages: errorImages.filter((i) => i.ingestion === ImageIngestionStatus.Error).length,
-      missingImages: errorImages.filter((i) => i.ingestion === ImageIngestionStatus.NotFound)
-        .length,
+      errorImages: errorImages.length - absentImages.length,
+      missingImages: absentImages.length,
       // The same rule as the owner's notification: a check still being retried has not failed yet.
       textError: required && textCheckSpentRetries(moderation),
     }),
@@ -3225,11 +3220,36 @@ export type RecomputeIngestionResult = {
 };
 
 const recomputeImageSelect = {
+  id: true,
+  url: true,
   ingestion: true,
   nsfwLevel: true,
   blockedFor: true,
   needsReview: true,
+  tosViolation: true,
+  minor: true,
+  poi: true,
 } as const;
+
+/** Its upload is absent: the scan found no file, or its `blob:` url was never uploaded. */
+const isAbsentImage = (image: { ingestion: ImageIngestionStatus; url: string }) =>
+  image.ingestion === ImageIngestionStatus.NotFound ||
+  (image.ingestion === ImageIngestionStatus.Error && urlScheme(image.url) === 'blob');
+
+const carriesImageHold = (image: {
+  ingestion: ImageIngestionStatus;
+  nsfwLevel: number;
+  blockedFor: string | null;
+  needsReview: string | null;
+  tosViolation: boolean;
+  minor: boolean;
+  poi: boolean;
+}) =>
+  image.needsReview != null ||
+  hasBlockMarker(image) ||
+  image.tosViolation ||
+  image.minor ||
+  image.poi;
 
 /**
  * In-transaction half of the ingestion state machine. Takes the advisory lock,
@@ -3311,18 +3331,28 @@ export async function recomputeArticleIngestionInTx(
   const images = [...connections.map((c) => c.image), ...ownImages];
   const imageStates: ImageIngestionStatus[] = images.map((image) => image.ingestion);
 
+  // A missing image is left out for readers (only Scanned images are served), so it hides the
+  // article only while it carries a hold a moderator has to clear.
+  const isMissing = (image: (typeof images)[number]) =>
+    isAbsentImage(image) && !carriesImageHold(image);
+
   const totalImages = imageStates.length;
   const scannedImages = imageStates.filter((s) => s === ImageIngestionStatus.Scanned).length;
   const blockedImages = imageStates.filter((s) => s === ImageIngestionStatus.Blocked).length;
-  const missingImages = imageStates.filter((s) => s === ImageIngestionStatus.NotFound).length;
-  const errorImages =
-    imageStates.filter((s) => s === ImageIngestionStatus.Error).length + missingImages;
+  const missingImages = images.filter(isMissing).length;
+  const errorImages = images.filter(
+    (image) =>
+      !isMissing(image) &&
+      (image.ingestion === ImageIngestionStatus.Error ||
+        image.ingestion === ImageIngestionStatus.NotFound)
+  ).length;
 
   // A refused content url counts as a blocked image; a deferred one is applied below.
   const imageBlocked = blockedImages > 0 || !!hold?.refused.length;
   const imageError = errorImages > 0;
   const imageDone =
-    totalImages === 0 || scannedImages + blockedImages + errorImages === totalImages;
+    totalImages === 0 ||
+    scannedImages + blockedImages + errorImages + missingImages === totalImages;
 
   // --- Text moderation side ---
   const textModeration = await tx.entityModeration.findUnique({
@@ -3378,7 +3408,12 @@ export async function recomputeArticleIngestionInTx(
   });
   const errorEpisode = readIngestionErrorState(current.metadata);
   const inErrorEpisode = current.ingestion === ArticleIngestionStatus.Error || !!errorEpisode;
-  const inputHeld = images.some((image) => image.needsReview != null || hasBlockMarker(image));
+  const inputHeld = images.some(
+    (image) =>
+      image.needsReview != null ||
+      hasBlockMarker(image) ||
+      (isAbsentImage(image) && !isMissing(image))
+  );
   // A deferred url keeps the article off public, a moderator's rating included: it covers the
   // images it was given, not a url still waiting to be proved. An Error episode ends only past
   // unheld images: the retry job republishes unwatched, so it must not publish past one a
@@ -3423,7 +3458,7 @@ export async function recomputeArticleIngestionInTx(
   // A text check the retry job is still retrying is not yet a failure worth telling the owner of.
   const textSpent = hasText && textCheckSpentRetries(textModeration);
   const reason = articleIngestionErrorReason({
-    errorImages: errorImages - missingImages,
+    errorImages,
     missingImages,
     textError: textSpent,
   });

@@ -20,6 +20,9 @@ export type BlobTree = Record<string, string>;
 /** The branch every source repo is created with, and the one the developer pulls. */
 export const SOURCE_MAIN_BRANCH = 'main';
 
+/** The app's manifest, at the root of its source repo. */
+export const MANIFEST_PATH = 'block.manifest.json';
+
 /**
  * Where an App Assistant save goes when it cannot land on `main` without overwriting a change the
  * developer pushed (see `planAssistantCommit`). One fixed branch, so the assistant's side of a

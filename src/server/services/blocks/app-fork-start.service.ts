@@ -53,6 +53,7 @@ import { resolveUserAppLimit } from '~/server/services/blocks/user-app-caps.serv
 import { getUsageLimitDef } from '~/shared/constants/usage-limits';
 import { boundedClusterCall, takeClusterWindowCount } from '~/server/utils/cluster-window-count';
 import { forkSeedExclusionReason } from '~/server/services/blocks/fork-seed-exclusions';
+import { MANIFEST_PATH } from '~/server/services/blocks/app-source-repo.plan';
 import { logToAxiom } from '~/server/logging/client';
 import type { StoreVisibilityScope } from '~/shared/utils/store-visibility-scope';
 import {
@@ -111,8 +112,6 @@ export const FORK_SLUG_RE = /^[a-z][a-z0-9-]{1,38}[a-z0-9]$/;
 const FORK_SUFFIX_LENGTH = '-fork-'.length + 4;
 const SLUG_MAX = 40;
 const SLUG_ATTEMPTS = 6;
-
-const MANIFEST_PATH = 'block.manifest.json';
 
 // ---------------------------------------------------------------------------
 // The seed's contents

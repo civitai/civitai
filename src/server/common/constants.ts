@@ -404,6 +404,8 @@ export const constants = {
     mobileCoverImageAspectRatio: 1 / 4,
     coverImageHeight: 400,
     coverImageWidth: 1600,
+    // The desktop profile sidebar (ProfileLayout2's w-[320px]).
+    sidebarWidth: 320,
     showcaseItemsLimit: 32,
     bioMaxLength: 400,
     messageMaxLength: 1200,
@@ -1120,6 +1122,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Wan Video 3.0': baseLicenses['wan tos'],
   YuE2: baseLicenses['cc by-nc 4.0'],
   Sonilo: baseLicenses['sonilo tos'],
+  'Seed Audio': baseLicenses['seedream'],
   PolyGen: baseLicenses['meshy tos'],
   Tripo: baseLicenses['tripo terms'],
   Hunyuan3D: baseLicenses['hunyuan3d 2.1'],

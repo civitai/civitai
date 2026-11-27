@@ -81,7 +81,7 @@ const SCHEMA_REFERENCE_LEDGER: Record<string, Partial<Record<SchemaName, number>
   'src/server/schema/announcement.schema.ts': { imageReferenceInputSchema: 2 },
   'src/server/schema/challenge.schema.ts': { imageReferenceInputSchema: 3 },
   'src/server/schema/creator-service.schema.ts': { imageReferenceInputSchema: 2 },
-  'src/server/schema/user-profile.schema.ts': { imageReferenceInputSchema: 3 },
+  'src/server/schema/user-profile.schema.ts': { imageReferenceInputSchema: 5 },
   // storyline.update's cover and banner uploads: no `id`, so always a new image of the caller's.
   'src/server/schema/storyline.schema.ts': { imageInputSchema: 2 },
   // collection.upsert cover (a reference any collection manager may set; see

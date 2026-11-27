@@ -1,9 +1,11 @@
+import { constants } from '~/server/common/constants';
 import { Box, Center, Group, Loader, Paper, Stack, Text, UnstyledButton } from '@mantine/core';
 import { useState } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { CreatorCardV2 } from '~/components/CreatorCard/CreatorCard';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { PreviewCard } from '~/components/Modals/CardDecorationModal';
+import { CosmeticSample } from '~/components/Shop/CosmeticSample';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type {
   ContentDecorationCosmetic,
@@ -100,6 +102,20 @@ export const CosmeticPreview = ({
             cosmeticOverwrites={[cosmetic]}
             style={{ width: '100%', maxWidth: 450 }}
           />
+          {descriptionBox}
+        </Stack>
+      );
+    case CosmeticType.SidebarBackground:
+      return (
+        <Stack gap="xl" align="center">
+          {!hideHeader && (
+            <Text fw="bold" align="center">
+              Preview
+            </Text>
+          )}
+          <Box w="100%" maw={constants.profile.sidebarWidth}>
+            <CosmeticSample cosmetic={cosmetic} size="lg" />
+          </Box>
           {descriptionBox}
         </Stack>
       );

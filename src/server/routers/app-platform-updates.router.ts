@@ -4,6 +4,7 @@ import {
   platformUpdateAppSchema,
   pushPlatformUpdateSchema,
   resolvePlatformUpdateSchema,
+  submitPlatformUpdateOnBehalfSchema,
   supersedePlatformUpdateSchema,
   verifyPlatformUpdateCommitSchema,
   type PushPlatformUpdateInput,
@@ -22,7 +23,7 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
  * that procedure there is no developer-terms check: these read and report on the caller's own app
  * and mint no credential.
  *
- * Staff half — `push`, `supersede`, `modList` — is `moderatorProcedure` (session or Full personal
+ * Staff half — `push`, `supersede`, `modList`, `submitOnBehalf` — is `moderatorProcedure` (session or Full personal
  * key only), and carries no scope annotation: a scoped token must never carry moderator reach.
  *
  * DARK: with the `app-blocks-platform-updates` flag off (or Apps off for the caller), the owner
@@ -134,6 +135,22 @@ export const appPlatformUpdatesRouter = router({
       const { isPlatformUpdatesEnabled, supersedePlatformUpdate } = await svc();
       if (!(await isPlatformUpdatesEnabled())) throw NOT_ENABLED();
       return supersedePlatformUpdate({ staffUserId: ctx.user.id, id: input.id });
+    }),
+
+  /**
+   * Staff: submit the app's approved version with this update applied, for the normal review, on
+   * the owner's behalf (`app-platform-update-submit.service.ts`). Refused while the app has a
+   * pending publish request; never withdraws one.
+   */
+  submitOnBehalf: moderatorProcedure
+    .input(submitPlatformUpdateOnBehalfSchema)
+    .mutation(async ({ ctx, input }) => {
+      const { isPlatformUpdatesEnabled } = await svc();
+      if (!(await isPlatformUpdatesEnabled())) throw NOT_ENABLED();
+      const { submitPlatformUpdateOnBehalf } = await import(
+        '~/server/services/blocks/app-platform-update-submit.service'
+      );
+      return submitPlatformUpdateOnBehalf({ staffUserId: ctx.user.id, id: input.id });
     }),
 
   /** Staff: every update to an app, newest first. */

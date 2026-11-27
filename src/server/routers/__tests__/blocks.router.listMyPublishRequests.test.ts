@@ -101,6 +101,8 @@ beforeEach(() => {
   mockDbRead.blockUserSubscription.groupBy.mockResolvedValue([]);
   mockDbRead.appListing.findMany.mockResolvedValue([]);
   mockDbRead.appListingModerationEvent.findMany.mockResolvedValue([]);
+  // The caller owns no app unless a case says so (the staff on-behalf read is then skipped).
+  mockDbRead.appBlock.findMany.mockResolvedValue([]);
 });
 
 describe('listMyPublishRequests — P4 owner-control augmentation', () => {
@@ -895,5 +897,93 @@ describe('listMyPublishRequests — review holds never reach the developer', () 
     // Under any key: no row carries the open-hold count.
     for (const row of JSON.parse(body) as Record<string, unknown>[])
       expect(Object.values(row)).not.toContain(2);
+  });
+});
+
+/**
+ * A STAFF SUBMIT ON THE OWNER'S BEHALF (`fileSummary.onBehalf`) is submitted by the moderator,
+ * so the submitter-keyed read alone never lists it for the owner. A second read lists it for the
+ * app's owner, gated on the app's current owner AND the recorded owner (in the query, and again
+ * on the rows), and labels it `staffSubmission`.
+ */
+describe('listMyPublishRequests — staff submissions on the owner’s behalf', () => {
+  const UPDATE = 'apu_01JABCDEFGHJKMNPQRSTVWXYZ0';
+  const onBehalf = (ownerUserId: number) => ({
+    files: [],
+    added: [],
+    removed: [],
+    changed: [],
+    onBehalf: {
+      platformUpdateId: UPDATE,
+      staffUserId: 8001,
+      staffUsername: 'mod-ana',
+      ownerUserId,
+      ownerUsername: 'owner',
+    },
+  });
+  const row = (id: string, submittedAt: string, fileSummary: unknown) => ({
+    id,
+    appBlockId: 'block-a',
+    slug: 'garden',
+    version: '1.0.0',
+    status: 'pending',
+    submittedAt: new Date(submittedAt),
+    reviewedAt: null,
+    rejectionReason: null,
+    approvalNotes: null,
+    deployState: null,
+    deployDetail: null,
+    deployUpdatedAt: null,
+    fileSummary,
+    manifestDiffSummary: null,
+    appBlock: { id: 'block-a', manifest: PAGE_MANIFEST, _count: { userSubscriptions: 0 } },
+  });
+
+  beforeEach(() => {
+    // The caller owns block-a.
+    mockDbRead.appBlock.findMany.mockResolvedValue([{ id: 'block-a' }]);
+  });
+
+  it('a caller who owns no app is listed only their own submissions, with no on-behalf read', async () => {
+    mockDbRead.appBlock.findMany.mockResolvedValue([]);
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
+      row('req-own', '2026-01-01', null),
+    ]);
+    const caller = blocksRouter.createCaller(fakeCtx(owner) as never);
+    const rows = await caller.listMyPublishRequests();
+
+    expect(rows.map((r) => r.id)).toEqual(['req-own']);
+    expect(mockDbRead.appBlockPublishRequest.findMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('lists the owner’s own and the staff submission, newest first, labelling only the staff one', async () => {
+    mockDbRead.appBlockPublishRequest.findMany
+      .mockResolvedValueOnce([row('req-own', '2026-01-01', null)])
+      .mockResolvedValueOnce([row('req-staff', '2026-02-01', onBehalf(7))]);
+    const caller = blocksRouter.createCaller(fakeCtx(owner) as never);
+    const rows = await caller.listMyPublishRequests();
+
+    expect(rows.map((r) => [r.id, r.staffSubmission])).toEqual([
+      ['req-staff', { staffUsername: 'mod-ana', platformUpdateId: UPDATE }],
+      ['req-own', null],
+    ]);
+  });
+
+  it('🔴 drops a returned row that is not an on-behalf submit for THIS caller, and never double-lists', async () => {
+    mockDbRead.appBlockPublishRequest.findMany
+      .mockResolvedValueOnce([row('req-own', '2026-01-01', null)])
+      .mockResolvedValueOnce([
+        // Someone else's on-behalf request, an ordinary collaborator submit, and a repeat.
+        row('req-other-owner', '2026-03-01', onBehalf(999)),
+        row('req-collab', '2026-03-02', { files: [], added: [], removed: [], changed: [] }),
+        row('req-own', '2026-01-01', onBehalf(7)),
+        // Records this caller as owner, but on an app they do not own (now).
+        { ...row('req-other-app', '2026-03-03', onBehalf(7)), appBlockId: 'block-z' },
+      ]);
+    const caller = blocksRouter.createCaller(fakeCtx(owner) as never);
+    const rows = await caller.listMyPublishRequests();
+
+    expect(rows.map((r) => r.id)).toEqual(['req-own']);
+    expect(rows[0]!.staffSubmission).toBeNull();
   });
 });

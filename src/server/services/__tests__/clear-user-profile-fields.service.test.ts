@@ -55,8 +55,9 @@ const stored = {
   location: 'l',
   showcaseSections: [{ key: 'k' }],
   showcaseItems: [{ entityType: 'Model', entityId: 1 }],
+  about: 'a',
 };
-const ALL_FIELDS: ProfileClearField[] = ['location', 'bio', 'message', 'showcaseSections'];
+const ALL_FIELDS: ProfileClearField[] = ['location', 'bio', 'message', 'showcaseSections', 'about'];
 let archive: ReturnType<typeof vi.fn<(s: ProfileClearSnapshot) => Promise<unknown>>>;
 
 beforeEach(() => {
@@ -95,6 +96,18 @@ describe('clearUserProfileFields', () => {
     await clear({ fields: ['bio'] });
     const { data } = db.userProfile.updateMany.mock.calls[0][0] as { data: object };
     expect(data).not.toHaveProperty('showcaseSections');
+  });
+
+  it('clears the About text only when it is named', async () => {
+    await clear({ fields: ['about'] });
+    expect(db.userProfile.updateMany).toHaveBeenCalledWith({
+      where: { userId: USER },
+      data: { about: null },
+    });
+    db.userProfile.updateMany.mockClear();
+    await clear({ fields: ['bio'] });
+    const { data } = db.userProfile.updateMany.mock.calls[0][0] as { data: object };
+    expect(data).not.toHaveProperty('about');
   });
 
   it('archives again when the text changes during the upload', async () => {

@@ -2,6 +2,7 @@ import * as z from 'zod';
 import { showcaseHiddenOnMask } from '~/shared/constants/profile-showcase.constants';
 import { constants } from '~/server/common/constants';
 import { imageReferenceInputSchema } from '~/server/schema/image.schema';
+import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { SearchIndexEntityTypes } from '~/components/Search/parsers/base';
 import { LinkType } from '~/shared/utils/prisma/enums';
 import { creatorCardStatsPreferences, profilePictureSchema } from './user.schema';
@@ -31,6 +32,7 @@ export const ProfileSectionTypeDef = {
   Shop: 'shop',
   OnSale: 'onSale',
   CreatorJourney: 'creatorJourney',
+  Recent: 'recent',
 } as const;
 
 export type ProfileSectionType = (typeof ProfileSectionTypeDef)[keyof typeof ProfileSectionTypeDef];
@@ -42,6 +44,9 @@ export type CustomShowcaseKey = `custom:${string}`;
 export const customShowcaseKey = (id: string) =>
   `${customShowcaseKeyPrefix}${id}` as CustomShowcaseKey;
 
+export const profileSectionWidths = ['full', 'half'] as const;
+export type ProfileSectionWidth = (typeof profileSectionWidths)[number];
+
 export const profileSectionSchema = z.object({
   // A custom showcase section is placed by `custom:<ShowcaseSection.id>`.
   key: z.union([
@@ -51,6 +56,7 @@ export const profileSectionSchema = z.object({
     ),
   ]),
   enabled: z.boolean(),
+  width: z.enum(profileSectionWidths).optional(),
 });
 
 export const showcaseSectionTypes = ['Model', 'Article', 'Image'] as const;
@@ -137,6 +143,69 @@ export const showcaseItemSchema = z.object({
   entityId: z.number(),
 });
 
+export const profileAboutMaxLength = 5000;
+
+// No colour means the theme's own panel colour, at the opacity given.
+const profileThemeColorSchema = z
+  .object({
+    color: z
+      .string()
+      .regex(/^#[0-9a-f]{6}$/i)
+      .optional(),
+    opacity: z.number().int().min(60).max(100).optional(),
+  })
+  .refine((theme) => theme.color != null || theme.opacity != null, 'Pick a colour or an opacity');
+/**
+ * A member's card colours, per theme (light mode falls back to dark when it has none), and the
+ * sidebar's own colour, which the cards' colour never touches.
+ */
+export const profilePageThemeSchema = z.object({
+  dark: profileThemeColorSchema.optional(),
+  light: profileThemeColorSchema.optional(),
+  sidebar: z
+    .object({
+      color: z.string().regex(/^#[0-9a-f]{6}$/i),
+    })
+    .optional(),
+});
+export type ProfilePageTheme = z.infer<typeof profilePageThemeSchema>;
+export type ProfileThemeMode = 'dark' | 'light';
+const profileAboutAllowedTags = [
+  'p',
+  'br',
+  'h1',
+  'h2',
+  'h3',
+  'strong',
+  'em',
+  'u',
+  's',
+  'ul',
+  'ol',
+  'li',
+  'a',
+  'blockquote',
+  'code',
+];
+export const profileCardOpacityDefault = 80;
+
+/** Profile tabs an owner may hide; Overview, About and Shop always show. */
+export const profileHideableTabs = [
+  'models',
+  'posts',
+  'images',
+  'videos',
+  '3d-models',
+  'articles',
+  'comics',
+  'storylines',
+  'apps',
+  'achievements',
+  'collections',
+  'sticker-book',
+] as const;
+export type ProfileHideableTab = (typeof profileHideableTabs)[number];
+
 export type PrivacySettingsSchema = z.infer<typeof privacySettingsSchema>;
 
 export const privacySettingsSchema = z.object({
@@ -151,6 +220,8 @@ export const privacySettingsSchema = z.object({
   highlightedBadgeIds: z.array(z.number()).optional(),
   // Cosmetic ids of badges the user chose not to display on their profile.
   hiddenBadgeIds: z.array(z.number()).optional(),
+  // Profile tabs hidden from visitors' nav. The pages themselves still resolve.
+  hiddenTabs: z.array(z.enum(profileHideableTabs)).max(profileHideableTabs.length).optional(),
 });
 
 export type UserProfileUpdateSchema = z.infer<typeof userProfileUpdateSchema>;
@@ -170,6 +241,14 @@ export const userProfileUpdateSchema = z.object({
   sfwMessage: z.string().nullish(),
   sfwBio: z.string().nullish(),
   sfwCoverImage: imageReferenceInputSchema.nullish(),
+  // Profile redesign. Background, card colour and opacity are members only; `null` clears.
+  backgroundImage: imageReferenceInputSchema.nullish(),
+  sfwBackgroundImage: imageReferenceInputSchema.nullish(),
+  pageTheme: profilePageThemeSchema.nullish(),
+  // Text only: media here would never be scanned or rated, and shows on every domain.
+  about: getSanitizedStringSchema({ allowedTags: profileAboutAllowedTags })
+    .refine((html) => html.length <= profileAboutMaxLength, 'Your About text is too long')
+    .nullish(),
   socialLinks: z
     .array(
       z.object({
@@ -189,4 +268,24 @@ export const userProfileUpdateSchema = z.object({
     )
     .optional(),
   creatorCardStatsPreferences: creatorCardStatsPreferences.optional(),
+});
+
+export type SetProfileBackgroundSchema = z.infer<typeof setProfileBackgroundSchema>;
+export const setProfileBackgroundSchema = z.object({ imageId: z.number().int().positive() });
+
+export type GetProfilePartSchema = z.infer<typeof getProfilePartSchema>;
+export const getProfilePartSchema = z.object({ userId: z.number().int().positive() });
+
+export type GetProfileCustomizationSchema = z.infer<typeof getProfileCustomizationSchema>;
+export const getProfileCustomizationSchema = getProfilePartSchema.extend({
+  // The viewer's browsing level: a background outside it is not sent.
+  browsingLevel: z.number().int().min(0).optional(),
+});
+
+export const profilePinnedItemsLimit = 3;
+export type SetPinnedItemSchema = z.infer<typeof setPinnedItemSchema>;
+export const setPinnedItemSchema = z.object({
+  entityType: z.enum(['Image', 'Model']),
+  entityId: z.number().int().positive(),
+  pinned: z.boolean(),
 });

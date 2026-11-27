@@ -52,6 +52,8 @@ export type AspectRatioImageCardProps<T extends DialogKey> = {
   href?: string;
   /** Named ratio, or a raw width/height number to follow the media's own shape. */
   aspectRatio?: 'portrait' | 'landscape' | 'square' | number;
+  /** The width the media is requested at, for a card much wider than a feed card. */
+  mediaWidth?: number;
   onClick?: React.MouseEventHandler;
   cosmetic?: ContentDecorationCosmetic['data'];
   /** Worn beside the frame; see TwCosmeticWrapper. */
@@ -118,6 +120,7 @@ export function AspectRatioImageCard<T extends DialogKey>({
   alwaysVisibleBadge,
   alt,
   impression,
+  mediaWidth = IMAGE_CARD_WIDTH,
 }: AspectRatioImageCardProps<T>) {
   const features = useFeatureFlags();
   const originalAspectRatio = image && image.width && image.height ? image.width / image.height : 1;
@@ -219,7 +222,7 @@ export function AspectRatioImageCard<T extends DialogKey>({
                           [styles.top]: originalAspectRatio < 1,
                         })}
                         wrapperProps={{ className: 'flex-1 h-full' }}
-                        width={IMAGE_CARD_WIDTH}
+                        width={mediaWidth}
                         hiDpi={features.hiDpiPreviews}
                         sourceWidth={image.width}
                         contain
@@ -240,9 +243,7 @@ export function AspectRatioImageCard<T extends DialogKey>({
                       })}
                       wrapperProps={{ className: 'flex-1 h-full' }}
                       width={
-                        originalAspectRatio > 1
-                          ? IMAGE_CARD_WIDTH * originalAspectRatio
-                          : IMAGE_CARD_WIDTH
+                        originalAspectRatio > 1 ? mediaWidth * originalAspectRatio : mediaWidth
                       }
                       hiDpi={features.hiDpiPreviews}
                       sourceWidth={image.width}
