@@ -242,7 +242,12 @@ describe('ClickHouse', () => {
         return {
           json: async <T>() => [] as T,
           stream: async function* () {
-            yield [{ json: <T>() => ({ id: 'r', createdAt: '2024-01-01 00:00:00' } as T) }];
+            yield [
+              {
+                json: <T>() =>
+                  ({ id: 'r', jobType: 'ComfyImageGen', createdAt: '2024-01-01 00:00:00' } as T),
+              },
+            ];
           },
         };
       },
@@ -306,6 +311,7 @@ describe('ClickHouse', () => {
     const base = {
       jobId: 'j1',
       userId: '7',
+      jobType: 'ComfyImageGen',
       createdAt: '2023-04-05 10:00:00',
       provider: '',
       cost: 4,
@@ -352,8 +358,65 @@ describe('ClickHouse', () => {
       .map((l) => JSON.parse(l) as Record<string, unknown>);
     // Only the valid 2023 row, with only approved columns; an empty provider reads as unknown.
     expect(written).toEqual([
-      { jobId: 'j1', userId: '7', createdAt: '2023-04-05 10:00:00', provider: 'unknown', cost: 4 },
+      {
+        jobId: 'j1',
+        userId: '7',
+        jobType: 'ComfyImageGen',
+        createdAt: '2023-04-05 10:00:00',
+        provider: 'unknown',
+        cost: 4,
+      },
     ]);
+  });
+
+  /**
+   * Ruled by the Moderation Lead: a job the site ran on the user's content (a scan, a hash, a
+   * tagging pass) is not written, so the archive does not reveal an automated check. Fail closed:
+   * only listed user job types are written, so an unknown type stays out.
+   */
+  it("writes only jobs the user started, and leaves out the site's own and unknown job types", async () => {
+    const row = (jobId: string, jobType?: unknown) => ({
+      jobId,
+      userId: '7',
+      ...(jobType === undefined ? {} : { jobType }),
+      createdAt: '2026-11-05 10:00:00',
+      provider: 'p',
+    });
+    const stored = [
+      row('gen', 'ComfyImageGen'),
+      row('gen-case', 'comfyimagegen'),
+      row('chat', 'chatCompletion'),
+      row('train', 'AIToolkitTrainingEpoch'),
+      row('scan', 'CivitaiImageScanning'),
+      row('hash', 'MediaHash'),
+      row('future', 'SomeNewSystemJob'),
+      row('empty', ''),
+      row('missing'),
+      row('not-text', 7),
+    ];
+    const ch: ClickhouseReader = {
+      async query({ query }) {
+        return {
+          json: async <T>() => [] as T,
+          stream: async function* () {
+            if (query.includes('FROM orchestration.jobs'))
+              yield stored.map((r) => ({ json: <T>() => r as T }));
+          },
+        };
+      },
+    };
+    const { files, w } = writer();
+    const result = await exportClickhouse({ userId: 7, writer: w, ch, onError: () => undefined });
+    const jobs = result.files.find((f) => f.file.endsWith('generation-jobs.jsonl'))!;
+    const ids = files
+      .get(jobs.file)!
+      .trim()
+      .split('\n')
+      .map((l) => (JSON.parse(l) as { jobId: string }).jobId);
+    expect(ids).toEqual(['gen', 'gen-case', 'chat', 'train']);
+    expect(jobs.rows).toBe(4);
+    expect(jobs.leftOut).toBeUndefined();
+    expect(jobs.description).toMatch(/runs itself .* not included/);
   });
 
   it("reads only the user's own Buzz accounts, never a club keyed by the same id", async () => {
