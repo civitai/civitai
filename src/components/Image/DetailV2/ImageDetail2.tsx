@@ -591,7 +591,7 @@ function ImageDetail2Content({ deferredSsr }: { deferredSsr?: boolean }) {
                                 {({ onClick: download, isLoading: downloading, progress }) => (
                                   <>
                                     {/* `url` is null when the media is withheld from this viewer. */}
-                                    {image.url && (
+                                    {!!image.url && (
                                       <LegacyActionIcon
                                         {...sharedActionIconProps}
                                         className={clsx(
@@ -636,7 +636,7 @@ function ImageDetail2Content({ deferredSsr }: { deferredSsr?: boolean }) {
                                       image={image}
                                       additionalMenuItems={
                                         <>
-                                          {narrowStage && (
+                                          {narrowStage && !!image.url && (
                                             <Menu.Item
                                               leftSection={<IconDownload size={14} stroke={1.5} />}
                                               onClick={download}
