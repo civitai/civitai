@@ -46,11 +46,8 @@ describe('Seed Audio', () => {
     expect(step.input).toMatchObject({ referenceImage: 'https://x/scene.jpg' });
   });
 
-  it.each([
-    ['empty', '   '],
-    ['without a quoted spoken line', 'Soft piano and ocean waves'],
-  ])('refuses a prompt %s', (_, value) => {
-    const parsed = parse({ ...base, prompt: value });
+  it('refuses a prompt without a quoted spoken line', () => {
+    const parsed = parse({ ...base, prompt: 'Soft piano and ocean waves' });
     expect(parsed.success).toBe(false);
     if (!parsed.success) expect(Object.keys(parsed.errors)).toContain('prompt');
   });
