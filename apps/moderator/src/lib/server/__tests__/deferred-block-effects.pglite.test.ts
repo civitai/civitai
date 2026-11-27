@@ -576,12 +576,12 @@ describe('an unblock of it', () => {
   it('is refused while the flag is on, and once the flag is cleared drops its deferred effects unfired', async () => {
     await block(FLAGGED);
     await expect(
-      acceptImage({ imageId: FLAGGED, userId: 2, restoreRemoved: true })
+      acceptImage({ csamReview: true, imageId: FLAGGED, userId: 2, restoreRemoved: true })
     ).rejects.toBeInstanceOf(ImageNotRestoredError);
     expect(await deferredRows()).toEqual([{ imageId: FLAGGED }]);
 
     await db.exec(`UPDATE "Image" SET "needsReview" = NULL WHERE id = ${FLAGGED}`);
-    await acceptImage({ imageId: FLAGGED, userId: 2, restoreRemoved: true });
+    await acceptImage({ csamReview: true, imageId: FLAGGED, userId: 2, restoreRemoved: true });
 
     expect(await deferredRows()).toEqual([]);
     expect(notices()).toEqual([]);

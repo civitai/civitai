@@ -12,7 +12,7 @@ import { ilikeContains } from '~/server/utils/ilike';
 import { isSessionOrFullUserKey, withModeratorRightsFor } from '~/server/auth/full-user-credential';
 import { credentialLogFields, type RequestCredential } from '~/server/auth/request-credential';
 import { Prisma } from '@prisma/client';
-import { moderatorWithheldSql } from '@civitai/shared/retracted-media-tier';
+import { moderatorWithheldSql, notWithheldTargetSql } from '@civitai/shared/retracted-media-tier';
 import { heldGalleryImageSql } from '~/server/utils/held-gallery-level.sql';
 import { decreaseDate } from '~/utils/date-helpers';
 import {
@@ -1405,11 +1405,8 @@ export async function handleUnblockImages({
   csamReview,
 }: ImageModerationUnblockSchema) {
   // Re-checked by the UPDATE itself, so a mark that lands after the caller's own check still holds.
-  // `i` is the target row itself; a self-join would re-read it from the statement's snapshot. The
-  // target takes no alias because the shared SET fragments name "Image".
-  const notWithheld = Prisma.sql`NOT (
-    SELECT ${Prisma.raw(moderatorWithheldSql('i', { csamReview }))} FROM (SELECT "Image".*) i
-  )`;
+  // The target takes no alias because the shared SET fragments name "Image".
+  const notWithheld = Prisma.raw(notWithheldTargetSql({ csamReview }));
   const found = await dbRead.image.findMany({
     where: { id: { in: imageIds } },
     select: {

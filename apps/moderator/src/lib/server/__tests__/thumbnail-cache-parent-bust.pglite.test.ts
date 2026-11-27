@@ -220,14 +220,14 @@ describe('moderator writes that change a custom thumbnail', () => {
   });
 
   it('updateImageNsfwLevel evicts the parent video entry', async () => {
-    await updateImageNsfwLevel({ id: THUMBNAIL_ID, nsfwLevel: 16, userId: 1 });
+    await updateImageNsfwLevel({ csamReview: true, id: THUMBNAIL_ID, nsfwLevel: 16, userId: 1 });
 
     expect(bustedKeys()).toContain(key(VIDEO_ID));
     expect(reindexed()).toEqual([VIDEO_ID]);
   });
 
   it('acceptImage evicts the parent video entry', async () => {
-    await acceptImage({ imageId: THUMBNAIL_ID, userId: 1 });
+    await acceptImage({ csamReview: true, imageId: THUMBNAIL_ID, userId: 1 });
 
     expect(bustedKeys()).toContain(key(VIDEO_ID));
     expect(reindexed()).toEqual([VIDEO_ID]);
@@ -248,7 +248,7 @@ describe('updateImageNsfwLevel and the post gallery caches', () => {
     await db.query(`UPDATE "Image" SET "postId" = 42 WHERE "id" = $1`, [PLAIN_IMAGE_ID]);
     vi.mocked(bustPostGalleryCaches).mockClear();
 
-    await updateImageNsfwLevel({ id: PLAIN_IMAGE_ID, nsfwLevel: 16, userId: 1 });
+    await updateImageNsfwLevel({ csamReview: true, id: PLAIN_IMAGE_ID, nsfwLevel: 16, userId: 1 });
 
     expect(bustPostGalleryCaches).toHaveBeenCalledWith([42]);
   });

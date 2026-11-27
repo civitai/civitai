@@ -34,6 +34,8 @@ const ALLOWED_VALUES = [
 const MODERATOR_APP_ALLOWED_VALUES = [
   'false',
   'holdsCsamReview(locals.user)',
+  'holdsCsamReview(event.locals.user)',
+  'holdsCsamReview(moderator)',
   'holdsCsamReview(user)',
   'holdsCsamReview(viewer)',
   'input.csamReview',

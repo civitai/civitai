@@ -193,6 +193,15 @@ export function moderatorWithheldSql(
   return csamReview ? 'false' : buildModeratorWithheldSql(image);
 }
 
+/**
+ * `NOT moderatorWithheldSql` for the row an UPDATE of an unaliased "Image" writes, read in the write
+ * itself so an image withheld after the caller's check is left as it is. The row is read through
+ * `(SELECT "Image".*) i`: a self-join would read the statement's snapshot instead.
+ */
+export function notWithheldTargetSql({ csamReview }: { csamReview: boolean }): string {
+  return `NOT (SELECT ${moderatorWithheldSql('i', { csamReview })} FROM (SELECT "Image".*) i)`;
+}
+
 /** Whether `row."blockedFor"`, a comma list of block reasons, names CSAM anywhere in it. NULL reads false. */
 export function csamBlockedForSql(row: string): string {
   return csamInBlockedForSql(`${row}."blockedFor"`);

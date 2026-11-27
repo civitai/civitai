@@ -4,6 +4,8 @@ import type { Actions, PageServerLoad } from './$types';
 import { parseQuery } from '$lib/server/query';
 import { getImageRatingRequests } from '$lib/server/image-rating-review.service';
 import { updateImageNsfwLevel } from '$lib/server/image-nsfw-level';
+import { holdsCsamReview } from '$lib/server/held-media';
+import { WithheldImageError } from '$lib/server/withheld-write';
 import { isRatingLevel } from '$lib/nsfw-levels';
 import { withheldRefusal, withheldRow, withheldRows } from '$lib/server/retracted-media';
 
@@ -35,13 +37,19 @@ export const actions: Actions = {
     const withheld = await withheldRefusal(locals.user, [id]);
     if (withheld) return fail(403, { error: withheld, id });
 
-    await updateImageNsfwLevel({
-      id,
-      nsfwLevel,
-      status: 'Actioned',
-      reason: 'Moderator rating review',
-      userId: locals.user.id,
-    });
+    try {
+      await updateImageNsfwLevel({
+        id,
+        nsfwLevel,
+        status: 'Actioned',
+        reason: 'Moderator rating review',
+        userId: locals.user.id,
+        csamReview: holdsCsamReview(locals.user),
+      });
+    } catch (e) {
+      if (e instanceof WithheldImageError) return fail(403, { error: e.message, id });
+      throw e;
+    }
     return { success: true, id, nsfwLevel };
   },
 };

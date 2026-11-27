@@ -155,6 +155,7 @@ const unblocklisted = () =>
 
 const approve = () =>
   resolveImageAppeal({
+    csamReview: true,
     imageId: IMAGE_ID,
     status: 'Approved',
     resolvedReason: 'misclassified',
@@ -194,7 +195,7 @@ describe('approving an appeal on a rating-locked Blocked image', () => {
   });
 
   it('restores the same row acceptImage does', async () => {
-    await acceptImage({ imageId: IMAGE_ID, userId: 2 });
+    await acceptImage({ csamReview: true, imageId: IMAGE_ID, userId: 2 });
     const accepted = await imageRow();
     await db.query(
       `UPDATE "Image" SET "needsReview" = 'appeal', "blockedFor" = 'moderated', "ingestion" = 'Blocked',
@@ -292,7 +293,7 @@ describe('approving an appeal while the image owner is deleted', () => {
       [IMAGE_ID]
     );
 
-    await acceptImage({ imageId: IMAGE_ID, userId: 2 });
+    await acceptImage({ csamReview: true, imageId: IMAGE_ID, userId: 2 });
 
     const { metadata } = (await row()) as { metadata: Record<string, unknown> };
     expect(metadata).not.toHaveProperty('accountDeletionPriorNsfwLevel');
@@ -335,7 +336,7 @@ describe('approving an appeal while the image owner is deleted', () => {
   it('an accept also keeps it Blocked, restarts its purge clock and closes the appeal', async () => {
     await seed('2026-11-20 00:00:00');
 
-    await acceptImage({ imageId: IMAGE_ID, userId: 2 });
+    await acceptImage({ csamReview: true, imageId: IMAGE_ID, userId: 2 });
 
     expect(await row()).toEqual({
       ingestion: 'Blocked',
@@ -366,7 +367,7 @@ describe('approving an appeal while the image owner is deleted', () => {
   it('an accept restores it when the owner is not deleted', async () => {
     await seed(null);
 
-    await acceptImage({ imageId: IMAGE_ID, userId: 2 });
+    await acceptImage({ csamReview: true, imageId: IMAGE_ID, userId: 2 });
 
     expect(await row()).toMatchObject({ ingestion: 'Scanned', blockedFor: null });
     expect(await activities()).toEqual(['review']);
@@ -404,6 +405,7 @@ describe('approving an appeal on an image whose metadata is not an object', () =
 describe('rejecting an appeal on a rating-locked Blocked image', () => {
   it('leaves the level, the lock and the blocklist alone', async () => {
     await resolveImageAppeal({
+      csamReview: true,
       imageId: IMAGE_ID,
       status: 'Rejected',
       resolvedReason: 'violation-confirmed',
@@ -441,7 +443,7 @@ describe('approving when the moderator-only review flag holds the image', () => 
 describe('a restore that recomputes the level: models index', () => {
   it.each([
     ['an approved appeal', approve],
-    ['an accept', () => acceptImage({ imageId: IMAGE_ID, userId: 2 })],
+    ['an accept', () => acceptImage({ csamReview: true, imageId: IMAGE_ID, userId: 2 })],
   ])('%s hands the re-rated image over', async (_, restore) => {
     vi.mocked(queueDocumentsForImageMinorChanges).mockClear();
 
@@ -468,7 +470,7 @@ describe('a restore that leaves the image with no rating', () => {
 
   it.each([
     ['an approved appeal', approve],
-    ['an accept', () => acceptImage({ imageId: IMAGE_ID, userId: 2 })],
+    ['an accept', () => acceptImage({ csamReview: true, imageId: IMAGE_ID, userId: 2 })],
   ])('%s sends it back to the scanner instead of leaving it Scanned', async (_, restore) => {
     await restore();
 
@@ -485,7 +487,7 @@ describe('a restore that leaves the image with no rating', () => {
     ).rows.length;
 
   it('an accept still rescans: its own review row is written after the rescan', async () => {
-    await acceptImage({ imageId: IMAGE_ID, userId: 2 });
+    await acceptImage({ csamReview: true, imageId: IMAGE_ID, userId: 2 });
 
     expect(await reviews()).toBe(1);
     expect(await imageRow()).toMatchObject({ ingestion: 'Rescan', nsfwLevel: 0 });
@@ -494,7 +496,7 @@ describe('a restore that leaves the image with no rating', () => {
 
   it.each([
     ['an approved appeal', approve],
-    ['an accept', () => acceptImage({ imageId: IMAGE_ID, userId: 2 })],
+    ['an accept', () => acceptImage({ csamReview: true, imageId: IMAGE_ID, userId: 2 })],
   ])('%s does not re-audit an image a moderator reviewed before', async (_, restore) => {
     await db.query(`INSERT INTO "ModActivity" VALUES ('image', $1, 'review')`, [IMAGE_ID]);
 
@@ -511,7 +513,7 @@ describe('a restore that leaves the image with no rating', () => {
     ]);
     await db.query(`INSERT INTO "TagsOnImageDetails" VALUES ($1, 5, TRUE)`, [IMAGE_ID]);
 
-    await acceptImage({ imageId: IMAGE_ID, userId: 2 });
+    await acceptImage({ csamReview: true, imageId: IMAGE_ID, userId: 2 });
 
     expect(await imageRow()).toMatchObject({ ingestion: 'Scanned', nsfwLevel: 0 });
     expect(await queued()).toBe(0);

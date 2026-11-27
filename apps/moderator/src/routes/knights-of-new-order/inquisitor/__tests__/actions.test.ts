@@ -10,7 +10,7 @@ vi.mock('$lib/server/knights/inquisitor.service', () => ({
 }));
 // The withheld-image gate is pinned in image-action-access.pglite.test.ts.
 vi.mock('$lib/server/retracted-media', () => ({ withheldRefusal: async () => null }));
-vi.mock('$lib/server/access', () => ({ requireAccess: vi.fn() }));
+vi.mock('$lib/server/access', () => ({ requireAccess: vi.fn(), canAccess: () => false }));
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 
 import { actions } from '../+page.server';
@@ -41,7 +41,9 @@ describe('Knights of New Order Inquisitor queue actions', () => {
     expect(
       await actions.rule(formEvent({ itemId: '5', level: '32', blockReason: 'Bestiality' }))
     ).toEqual({ success: true });
-    expect(rule).toHaveBeenCalledWith(5, { level: 32, blockReason: 'Bestiality' }, 77);
+    expect(rule).toHaveBeenCalledWith(5, { level: 32, blockReason: 'Bestiality' }, 77, {
+      csamReview: false,
+    });
 
     rule.mockResolvedValueOnce({ ok: false, error: 'decided' });
     expect(await actions.rule(formEvent({ itemId: '5', level: '4' }))).toMatchObject({
