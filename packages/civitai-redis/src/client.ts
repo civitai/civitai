@@ -2733,12 +2733,10 @@ export const REDIS_SYS_KEYS = {
   },
   LIMITS: {
     EMAIL_VERIFICATIONS: 'limits:email-verifications',
-    HISTORY_DOWNLOADS: 'limits:history-downloads',
     CHAT_MESSAGES: 'limits:chat-messages',
   },
   COUNTERS: {
     EMAIL_VERIFICATIONS: 'counters:email-verifications',
-    HISTORY_DOWNLOADS: 'counters:history-downloads',
     CHAT_MESSAGES: 'counters:chat-messages',
   },
   INDEXES: {
@@ -3586,7 +3584,6 @@ const REDIS_KEYS_UNPREFIXED = {
   COUNTERS: {
     REDEMPTION_ATTEMPTS: 'counters:redemption-attempts',
     EMAIL_VERIFICATIONS: 'counters:email-verifications',
-    HISTORY_DOWNLOADS: 'counters:history-downloads',
     BUG_REPORTS: 'counters:bug-reports',
     FEATURE_PAGES_LIFTS: 'counters:feature-pages-lifts',
   },
