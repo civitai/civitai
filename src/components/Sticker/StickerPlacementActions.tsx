@@ -123,7 +123,14 @@ export function StickerPlacementActions({
       className={clsx(stacked && 'flex-col items-stretch max-sm:basis-full max-sm:flex-row')}
     >
       {asksAboutNote ? (
-        <Popover opened={approving} onChange={setApproving} withArrow position="top" width={280}>
+        <Popover
+          opened={approving}
+          onChange={setApproving}
+          withArrow
+          withinPortal
+          position="top"
+          width={280}
+        >
           <Popover.Target>{approveButton}</Popover.Target>
           {/* Unpadded so the header's divider can run the full width of the
               panel. Same reason, and the same shape, as the sticker hover
@@ -141,7 +148,14 @@ export function StickerPlacementActions({
         approveButton
       )}
 
-      <Popover opened={confirming} onChange={setConfirming} withArrow position="top" width={260}>
+      <Popover
+        opened={confirming}
+        onChange={setConfirming}
+        withArrow
+        withinPortal
+        position="top"
+        width={260}
+      >
         <Popover.Target>
           <Button
             size={size}
