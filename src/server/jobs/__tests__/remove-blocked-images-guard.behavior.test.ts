@@ -129,6 +129,9 @@ const BASE_SCHEMA = `
       "aiNsfwLevel" int,
       "trainingCopyState" text
     );
+    -- Read by the copy rule's scanner-rating check; empty here, as no fixture record is rated.
+    CREATE TABLE "Tag" (id int PRIMARY KEY, name text NOT NULL);
+    CREATE TABLE "TagsOnImageNew" ("imageId" int NOT NULL, "tagId" int NOT NULL, attributes smallint NOT NULL);
     CREATE TYPE "JobQueueType" AS ENUM ('PendingDelete', 'BlockedImageDelete', 'ImageScan', 'ImageStorageDelete', 'CdnAccessSync', 'UpdateNsfwLevel');
     CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
     CREATE TABLE "JobQueue" (

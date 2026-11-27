@@ -1,6 +1,8 @@
+import { Prisma } from '@prisma/client';
 import { uniqBy } from 'lodash-es';
 import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
+import { isScannerRatingRow } from './appeal-decision-records';
 import { createJob, getJobDate } from './job';
 import {
   deleteTagsOnImageNew,
@@ -101,34 +103,7 @@ async function applyDownvotes() {
 
   // Delete tags under the threshold (not moderation)
   // --------------------------------------------
-  const toDelete = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
-    -- Delete downvoted tags (not moderation)
-    WITH affected AS (
-      SELECT DISTINCT vote."imageId", vote."tagId"
-      FROM "TagsOnImageVote" vote
-      JOIN "TagsOnImageDetails" applied ON applied."imageId" = vote."imageId" AND applied."tagId" = vote."tagId"
-      WHERE
-          vote.vote < 0
-        AND vote."createdAt" > (${lastApplied} - INTERVAL '1 minute')
-        AND applied."disabled" = FALSE
-        AND applied."needsReview" = FALSE
-        AND applied."automated" = TRUE
-    ), under_threshold AS (
-      SELECT
-        a."imageId",
-        a."tagId"
-      FROM affected a
-      JOIN "TagsOnImageVote" votes ON votes."tagId" = a."tagId" AND votes."imageId" = a."imageId"
-      GROUP BY a."imageId", a."tagId"
-      HAVING SUM(votes.vote) <= ${DOWNVOTE_TAG_THRESHOLD}
-    )
-    SELECT
-        "tagId",
-        "imageId"
-      FROM under_threshold ut
-      JOIN "Tag" t ON t.id = ut."tagId"
-      WHERE t.type != 'Moderation';
-  `;
+  const toDelete = await downvotedTagsToDelete(lastApplied);
   await deleteTagsOnImageNew(toDelete);
 
   // Disable tags under the threshold (moderation) where voted by moderator
@@ -219,4 +194,41 @@ async function applyDownvotes() {
   // Update the last sent time
   // --------------------------------------------
   await setLastApplied();
+}
+
+/** The automated tags whose downvotes since `lastApplied` put them under the threshold. */
+export function downvotedTagsToDelete(lastApplied: Date) {
+  return dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
+    -- Delete downvoted tags (not moderation, never a scan rating: the appeal training copy reads it)
+    WITH affected AS (
+      SELECT DISTINCT vote."imageId", vote."tagId"
+      FROM "TagsOnImageVote" vote
+      JOIN "TagsOnImageDetails" applied ON applied."imageId" = vote."imageId" AND applied."tagId" = vote."tagId"
+      WHERE
+          vote.vote < 0
+        AND vote."createdAt" > (${lastApplied} - INTERVAL '1 minute')
+        AND applied."disabled" = FALSE
+        AND applied."needsReview" = FALSE
+        AND applied."automated" = TRUE
+    ), under_threshold AS (
+      SELECT
+        a."imageId",
+        a."tagId"
+      FROM affected a
+      JOIN "TagsOnImageVote" votes ON votes."tagId" = a."tagId" AND votes."imageId" = a."imageId"
+      GROUP BY a."imageId", a."tagId"
+      HAVING SUM(votes.vote) <= ${DOWNVOTE_TAG_THRESHOLD}
+    )
+    SELECT
+        "tagId",
+        "imageId"
+      FROM under_threshold ut
+      JOIN "Tag" t ON t.id = ut."tagId"
+      WHERE t.type != 'Moderation'
+        AND NOT EXISTS (
+          SELECT 1 FROM "TagsOnImageNew" st
+          WHERE st."imageId" = ut."imageId" AND st."tagId" = ut."tagId"
+            AND ${isScannerRatingRow(Prisma.sql`st`)}
+        );
+  `;
 }
