@@ -15,6 +15,7 @@ import type * as BuzzService from '~/server/services/buzz.service';
 import type * as ChatService from '~/server/services/chat.service';
 import type * as Blocklist from '~/server/services/blocklist.service';
 import type * as CreatorShop from '~/server/services/creator-shop.service';
+import type * as ImageService from '~/server/services/image.service';
 import type * as VideoPreview from '~/server/services/creator-service-deal-video-preview';
 import { childSafetyCaseTablesSql } from '~/server/services/__tests__/child-safety-case-tables';
 
@@ -282,6 +283,47 @@ beforeAll(async () => {
   await holder.db.exec(`
     ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS "userId" int, ADD COLUMN IF NOT EXISTS "blockedFor" text;
     ALTER TABLE "CsamReport" ADD COLUMN IF NOT EXISTS images jsonb NOT NULL DEFAULT '[]';`);
+  // What the image page's by-id read (getImage) touches beyond the deal tables.
+  await holder.db.exec(`
+    ALTER TABLE "User" ADD COLUMN IF NOT EXISTS image text, ADD COLUMN IF NOT EXISTS "profilePictureId" int,
+      ADD COLUMN IF NOT EXISTS settings jsonb DEFAULT '{}';
+    ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS "postId" int, ADD COLUMN IF NOT EXISTS name text,
+      ADD COLUMN IF NOT EXISTS height int, ADD COLUMN IF NOT EXISTS width int, ADD COLUMN IF NOT EXISTS index int,
+      ADD COLUMN IF NOT EXISTS hash text, ADD COLUMN IF NOT EXISTS "hideMeta" boolean DEFAULT false,
+      ADD COLUMN IF NOT EXISTS "createdAt" timestamp DEFAULT now(), ADD COLUMN IF NOT EXISTS "mimeType" text,
+      ADD COLUMN IF NOT EXISTS "scannedAt" timestamp, ADD COLUMN IF NOT EXISTS type text,
+      ADD COLUMN IF NOT EXISTS metadata jsonb NOT NULL DEFAULT '{}', ADD COLUMN IF NOT EXISTS meta jsonb,
+      ADD COLUMN IF NOT EXISTS "acceptableMinor" boolean NOT NULL DEFAULT false,
+      ADD COLUMN IF NOT EXISTS "firstVisibleAt" timestamp,
+      ADD COLUMN IF NOT EXISTS "modelRestricted" boolean NOT NULL DEFAULT false,
+      ADD COLUMN IF NOT EXISTS "nsfwLevelLocked" boolean NOT NULL DEFAULT false,
+      ADD COLUMN IF NOT EXISTS "scanJobs" jsonb;
+    CREATE TABLE IF NOT EXISTS "ImageReaction" ("imageId" int, "userId" int, reaction text);
+    CREATE TABLE IF NOT EXISTS "Post" (id int PRIMARY KEY, "userId" int NOT NULL, "publishedAt" timestamp,
+      availability text DEFAULT 'Public', "collectionId" int, "modelVersionId" int, "model3dId" int);
+    CREATE TABLE IF NOT EXISTS "Model3D" (id int PRIMARY KEY, "userId" int, status text, "deletedAt" timestamp);
+    CREATE TABLE IF NOT EXISTS "Model" (id int PRIMARY KEY, mode text, minor boolean, "sfwOnly" boolean, "gallerySettings" jsonb);
+    CREATE TABLE IF NOT EXISTS "ModelVersion" (id int PRIMARY KEY, "modelId" int NOT NULL);
+    CREATE TABLE IF NOT EXISTS "Article" (id int PRIMARY KEY, "coverId" int, status text, "publishedAt" timestamp,
+      ingestion text, "bannerId" int, availability text DEFAULT 'Public', "userId" int);
+    CREATE TYPE "CollectionContributorPermission" AS ENUM ('VIEW', 'ADD', 'ADD_REVIEW', 'MANAGE');
+    CREATE TABLE IF NOT EXISTS "CollectionContributor" ("collectionId" int, "userId" int,
+      permissions "CollectionContributorPermission"[]);
+    CREATE TABLE IF NOT EXISTS "Bounty" (id int PRIMARY KEY, "userId" int, availability text DEFAULT 'Public');
+    CREATE TABLE IF NOT EXISTS "BountyEntry" (id int PRIMARY KEY, "bountyId" int NOT NULL, "userId" int);
+    CREATE TABLE IF NOT EXISTS "Crucible" (id int PRIMARY KEY, status text, "endAt" timestamp, "nsfwLevel" int);
+    CREATE TABLE IF NOT EXISTS "CrucibleEntry" (id int PRIMARY KEY, "crucibleId" int, "userId" int, "imageId" int);
+    CREATE TABLE IF NOT EXISTS "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);`);
+  const triggers = readFileSync(
+    join(
+      process.cwd(),
+      'packages/civitai-db-schema/prisma/programmability/image_post_triggers.sql'
+    ),
+    'utf8'
+  );
+  await holder.db.exec(
+    triggers.match(/CREATE OR REPLACE FUNCTION image_sort_at\([\s\S]*?\$\$;/)![0]
+  );
 });
 
 beforeEach(async () => {
@@ -1249,12 +1291,15 @@ describe('preview pipeline', () => {
     s3.uploadImageBufferToStore.mockImplementation(async (data: Buffer) => ({
       key: data.equals(SCAN_COPY) ? 'scan-copy-key' : 'derivative-key',
     }));
-    images.createImage.mockImplementation(async ({ url }: { url: string }) => {
-      const [row] = await q<{ id: number }>(`INSERT INTO "Image" (url) VALUES ($1) RETURNING id`, [
-        url,
-      ]);
-      return { id: row.id };
-    });
+    images.createImage.mockImplementation(
+      async ({ url, userId }: { url: string; userId: number }) => {
+        const [row] = await q<{ id: number }>(
+          `INSERT INTO "Image" (url, "userId") VALUES ($1, $2) RETURNING id`,
+          [url, userId]
+        );
+        return { id: row.id };
+      }
+    );
     // As deleteImages does: the rows it deleted.
     images.deleteImages.mockImplementation(deleteImagesIn(holder.db));
   });
@@ -1625,16 +1670,20 @@ describe('preview pipeline', () => {
     expect(images.deleteImages).not.toHaveBeenCalled();
   });
 
-  // The copy is hidden by id from the seller too (notServerCopySql); the file itself comes from the deal route.
+  // The copy is hidden by id from the seller too; the file itself comes from the deal route.
   it('serves the seller their own file through the deal route while its copy is hidden from them', async () => {
     const { fileId } = await waiting();
     await files.startPreviewScans();
     const row = await fileRow(fileId);
     expect(row.imageId).not.toBeNull();
-    const { notServerCopySql } = await import('~/server/services/creator-service-review-image-sql');
-    const shown = await pgliteRaw(holder.db)
-      .queryRaw`SELECT i.id FROM "Image" i WHERE i.id = ${row.imageId} AND ${notServerCopySql}`;
-    expect(shown).toEqual([]);
+    const { getImage } = await vi.importActual<typeof ImageService>(
+      '~/server/services/image.service'
+    );
+    // By id, both as a plain read and as the image page reads it (the review opt-in).
+    for (const shownReviewImageLevels of [undefined, 31])
+      await expect(
+        getImage({ id: row.imageId!, userId: SELLER, shownReviewImageLevels })
+      ).rejects.toMatchObject({ code: 'NOT_FOUND' });
     expect(await download(fileId, SELLER)).toMatchObject({ key: row.s3Key });
   });
 
