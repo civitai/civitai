@@ -326,8 +326,9 @@ keys decide, and a decided song dims and the next one opens. Desktop widths only
   `owner=<userId>` lists one owner's disputes (never one on a withheld song). The open dispute has
   "by <owner> · disputed <age> ago · <nth> dispute" under its title, an "Owner's disputes" link
   (that owner, every status), the song card (player and lyrics), its facts, three level cards
-  (Current, Owner asks, and Scan default: PG, the level a song's own scans give every clean song,
-  which nothing stores per song), the owner's comment, "This dispute" (when it was filed, its
+  (Current, Owner asks, and Scan level: the level the song's own scans give it, its lyrics and title,
+  their language and its own cover, by the main app's rule, "—" until the song is scanned), the
+  owner's comment, "This dispute" (when it was filed, its
   ruling once resolved, and the last ruling on a dispute of the song filed before it: "Ruled Oct 30:
   kept PG-13"), "Current rating" (set by its scans while unlocked, else the moderator of the latest
   `setNsfwLevel` row whose `details` `{ from, to }` changed the level, with when and the level

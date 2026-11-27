@@ -1,5 +1,6 @@
 import { CompiledQuery, sql, type Kysely, type RawBuilder } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
+import { browsingLevels } from '@civitai/shared/browsing-levels';
 import { KNIGHTS_VOTE_NSFW_LEVEL_REASON } from '@civitai/shared/new-order';
 import { OWNER_HIDDEN_REVIEWS } from '@civitai/shared/owner-hidden-reviews';
 import { NSFW_LEVEL_BLOCKED } from './pending-deletes.db';
@@ -65,6 +66,51 @@ export const isSongsOwnCover = (
   cover: { userId: number; postId: number | null } | null | undefined,
   song: { userId: number }
 ) => !!cover && cover.userId === song.userId && cover.postId == null;
+
+/** `EntityModeration.entityType` of a song's lyrics and title text scan. */
+export const TRACK_LYRICS_ENTITY_TYPE = 'TrackLyrics';
+/** A song's lyrics profanity verdict: its own row, as EntityModeration is one row per entity. */
+export const TRACK_LYRICS_LANGUAGE_ENTITY_TYPE = 'TrackLyricsLanguage';
+
+const asSongRating = (level: unknown) =>
+  typeof level === 'number' && (browsingLevels as readonly number[]).includes(level) ? level : 1;
+
+/**
+ * A song's level from its own scans (docs/features/music.md "A song's rating"): the highest of PG,
+ * its lyrics and title text scan, its lyrics profanity, and its own cover's rating. Only a text-scan
+ * verdict rates, not an XGuard one (no result version); a cover rates once scanned, and not while it
+ * carries a block. The main app's `songLevel` and the moderator's dispute card both read this.
+ */
+export function songScanLevel(
+  song: { userId: number },
+  verdicts: { entityType: string; nsfwLevel: number | null; result: unknown }[],
+  cover:
+    | {
+        userId: number;
+        postId: number | null;
+        ingestion: string;
+        nsfwLevel: number;
+        blockedFor: string | null;
+      }
+    | null
+    | undefined
+) {
+  const levels = verdicts.map(({ entityType, nsfwLevel, result }) =>
+    entityType === TRACK_LYRICS_LANGUAGE_ENTITY_TYPE ||
+    (result as { version?: unknown } | null)?.version != null
+      ? asSongRating(nsfwLevel)
+      : 1
+  );
+  if (
+    cover &&
+    isSongsOwnCover(cover, song) &&
+    cover.ingestion === 'Scanned' &&
+    cover.nsfwLevel !== NSFW_LEVEL_BLOCKED &&
+    cover.blockedFor == null
+  )
+    levels.push(asSongRating(cover.nsfwLevel));
+  return Math.max(1, ...levels);
+}
 
 /** `isSongsOwnCover` over `Image` aliased `cover`, for the song aliased `song`. */
 export const songsOwnCoverText = (cover: string, song: string) =>
