@@ -22,3 +22,27 @@ export function isMissingTableError(err: unknown): boolean {
   if (/\bcolumns?\b/i.test(message)) return false;
   return /\b42P01\b/.test(message) || /\b(?:relation|table)\s+\S+\s+does not exist/i.test(message);
 }
+
+/**
+ * Is this the "column does not exist" error (a manual migration that adds a column is not applied
+ * yet)? Matched on the ERROR CODE, never on the message, which is driver text that changes between
+ * Prisma versions:
+ *   - `P2022`: Prisma's own "The column `X` does not exist in the current database."
+ *   - `42703`: Postgres `undefined_column`, on a `$queryRaw` path, and what Prisma reports in
+ *     `meta.code` for some engine versions.
+ *
+ * 🔴 NARROW ON PURPOSE. A connection failure, a timeout, a missing TABLE (42P01) and a permission
+ * error all propagate: degrading on those would turn an outage into a silently missing field.
+ *
+ * One spelling, as for {@link isMissingTableError}: new callers import it from here.
+ */
+export function isMissingColumnError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const e = err as { code?: unknown; meta?: unknown };
+  if (e.code === 'P2022' || e.code === '42703') return true;
+  if (e.meta && typeof e.meta === 'object') {
+    const metaCode = (e.meta as { code?: unknown }).code;
+    if (metaCode === '42703' || metaCode === 'P2022') return true;
+  }
+  return false;
+}

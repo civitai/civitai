@@ -68,7 +68,7 @@ const db = { pg: null as unknown as PGlite };
 const BANNED = 3;
 const DELETED = 4;
 const EXCLUDED = 5;
-// Registered first inside the new-account window, but deleted: the threshold skips it.
+// Registered first inside the new-account window, but deleted: the createdAt lookup skips it.
 const DELETED_NEWBIE = 6;
 const NEWBIE = 7;
 
@@ -104,8 +104,8 @@ beforeAll(async () => {
     -- second before it, DELETED_NEWBIE on it, NEWBIE a second later, user 8 after.
     INSERT INTO "User" ("id", "bannedAt", "deletedAt", "excludeFromLeaderboards", "createdAt") VALUES
       (1, NULL, NULL, false, '2020-01-01'), (2, NULL, NULL, false, '2026-10-24 23:59:59'),
-      (${BANNED}, now(), NULL, false, '2026-10-24'), (${DELETED}, NULL, now(), false, '2026-10-24'),
-      (${EXCLUDED}, NULL, NULL, true, '2026-10-24'), (${DELETED_NEWBIE}, NULL, now(), false, '2026-10-25'),
+      (${BANNED}, now(), NULL, false, '2026-10-24'), (${DELETED}, NULL, '2026-11-02 12:00', false, '2026-10-24'),
+      (${EXCLUDED}, NULL, NULL, true, '2026-10-24'), (${DELETED_NEWBIE}, NULL, '2026-11-04 08:00', false, '2026-10-25'),
       (${NEWBIE}, NULL, NULL, false, '2026-10-25 00:00:01'), (8, NULL, NULL, false, '2026-10-30');
     UPDATE "User" SET flags = ${UserFlag.ExcludeFromEventPoints} WHERE id = ${EXCLUDED};
   `);
@@ -291,7 +291,7 @@ describe('standings', () => {
       day('2026-11-02', 1, 21, 'claimed', 'Yellow', 20),
       day('2026-11-02', 1, 21, 'txn-1', 'Yellow', 4),
       day('2026-11-02', 2, 22, 'claimed', 'Blue', 15),
-      // Hidden from every standing: banned, deleted, excluded from event points.
+      // Hidden from every standing: banned, excluded from event points, and deleted that day.
       day('2026-11-02', BANNED, 23, 'claimed', 'Pink', 100),
       day('2026-11-02', DELETED, 24, 'claimed', 'Green', 200),
       day('2026-11-02', EXCLUDED, 24, 'claimed', 'Green', 300),
@@ -376,6 +376,43 @@ describe('standings', () => {
       await settle();
       const { teams } = await getEventStandings(event);
       expect(teams.find((t) => t.team === 'Pink')?.score).toBe(0);
+    });
+  });
+
+  // Deleted accounts are hidden from the UTC day of their delete (2026-11-02 for DELETED), not for
+  // the whole season; a ban still hides the whole season.
+  describe('a deleted account', () => {
+    const set = (assignments: string) =>
+      db.pg.exec(`UPDATE "User" SET ${assignments} WHERE id = ${DELETED}`);
+    beforeEach(() => insertDays([day('2026-11-01', DELETED, 24, 'claimed', 'Green', 40)]));
+    afterEach(() => set(`"bannedAt" = NULL, flags = 0, meta = '{}'`));
+    const green = async () => {
+      await settle();
+      const { teams, history } = await getEventStandings(event);
+      return {
+        score: teams.find((t) => t.team === 'Green')?.score,
+        history: history
+          .find((h) => h.team === 'Green')
+          ?.scores.map((s) => [s.date.toISOString().slice(0, 10), s.score]),
+      };
+    };
+
+    it('keeps the days before its delete and hides its delete day on', async () => {
+      expect(await green()).toEqual({ score: 40, history: [['2026-11-01', 40]] });
+    });
+
+    it('stays hidden the whole season when also banned', async () => {
+      await set('"bannedAt" = now()');
+      expect((await green()).score).toBe(0);
+    });
+
+    it('takes the earlier day when also excluded from event points', async () => {
+      const flag = `flags = ${UserFlag.ExcludeFromEventPoints}`;
+      await set(`${flag}, meta = '{"eventPointsExcludedFrom": "2026-11-01"}'`);
+      expect((await green()).score).toBe(0);
+      allowPostgres();
+      await set(`${flag}, meta = '{"eventPointsExcludedFrom": "2026-11-05"}'`);
+      expect((await green()).score).toBe(40);
     });
   });
 
@@ -1159,7 +1196,7 @@ describe('referee snapshot', () => {
     expect(newAccountMinId).toBe(NEWBIE);
   });
 
-  it('restricts each person from their exclusion start, banned and deleted ones from the start of time', async () => {
+  it('restricts each person from their exclusion start, deleted ones from their delete day, banned ones from the start of time', async () => {
     const from = () => {
       const { restrictedUsers, restrictedFrom } = refereeParams();
       return Object.fromEntries(
@@ -1167,7 +1204,7 @@ describe('referee snapshot', () => {
       );
     };
     await runEventPointsReferee(scored, 'live', HOURLY);
-    expect(from()).toEqual({ [BANNED]: 0, [DELETED]: 0, [EXCLUDED]: 0 });
+    expect(from()).toEqual({ [BANNED]: 0, [DELETED]: Date.UTC(2026, 10, 2), [EXCLUDED]: 0 });
 
     await db.pg.exec(
       `UPDATE "User" SET meta = '{"eventPointsExcludedFrom": "2026-11-03T00:00:00.000Z"}' WHERE id IN (${EXCLUDED}, ${BANNED})`
@@ -1177,7 +1214,7 @@ describe('referee snapshot', () => {
       await runEventPointsReferee(scored, 'live', HOURLY);
       expect(from()).toEqual({
         [BANNED]: 0,
-        [DELETED]: 0,
+        [DELETED]: Date.UTC(2026, 10, 2),
         [EXCLUDED]: Date.UTC(2026, 10, 3),
       });
     } finally {
@@ -1196,6 +1233,16 @@ describe('referee snapshot', () => {
         `UPDATE "User" SET flags = ${UserFlag.ExcludeFromEventPoints} WHERE id = ${EXCLUDED}`
       );
     }
+  });
+
+  // The createdAt lookup skips deleted accounts, and a deleted account now gives until its delete
+  // day, so one registered inside the window must still lower the threshold.
+  it('treats a deleted account registered inside the window as new', async () => {
+    involved = { ...involved, actors: [...involved.actors, DELETED_NEWBIE] };
+    await runEventPointsReferee(scored, 'live', HOURLY);
+    const { restrictedUsers, restrictedFrom, newAccountMinId } = refereeParams();
+    expect(newAccountMinId).toBe(DELETED_NEWBIE);
+    expect(restrictedFrom[restrictedUsers.indexOf(DELETED_NEWBIE)]).toBe(Date.UTC(2026, 10, 4));
   });
 
   it('restricts no one as new when nobody registered inside the window', async () => {

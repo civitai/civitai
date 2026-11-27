@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import { isCommitSha, SOURCE_SLUG_RE } from '~/server/services/blocks/app-source-repo.plan';
 import type { AssistantSaveResult } from '~/server/services/blocks/app-source-repo.service';
 import {
   missingUpdatePaths,
@@ -7,33 +8,22 @@ import {
 import type { SessionUser } from '~/types/session';
 
 /**
- * STAFF PLATFORM UPDATES for App Assistant's server runner: the OPEN updates of the open app
- * (`pending`, and `conflicted` ones the owner has not merged yet), with the files each one changes,
- * and the report of what the runner did with one. FOR the user the run grant names, through the
- * owner API of `app-platform-update.service.ts` (owner or accepted collaborator, flag on).
- *
- * The runner's sandbox is not a git checkout, so the runner applies an update as file contents:
- * each path the update's RECORD lists, as it is at the recorded `commitSha` (what the update writes)
- * and at its `baseCommitSha` (what it was cut from). Both are read by commit id, never by the
- * update's branch, so a commit added to the branch after the push is never applied. The runner
- * keeps no hand-off of its own: it lists the open updates again at every reply and rebuilds them.
- *
- * The answers are here, without I/O (`RunnerPlatformUpdateDeps`); the routes are
- * `runner-platform-updates-route.ts`.
+ * STAFF PLATFORM UPDATES for App Assistant's server runner: the OPEN updates of the open app, with
+ * the files each one changes, and the report of what the runner did with one, for the user the run
+ * grant names, through the owner API of `app-platform-update.service.ts`. How the runner applies
+ * them: `apps/assistant-runner/src/app-assistant/platform-updates.ts`. The answers are here, without
+ * I/O (`RunnerPlatformUpdateDeps`); the routes are `runner-platform-updates-route.ts`.
  *
  *   POST platform-updates           `{ grant, app }` → `{ updates: RunnerPlatformUpdate[] }`
  *   POST platform-updates/resolve   `{ grant, app, id, commitSha, outcome }` → `ResolveAnswer`
  *
  * Off (the flag, Apps for the user, an app with no block, or not theirs): the list answers
- * `{ updates: [] }`, so a runner asking at every reply's start changes nothing. The flag is read
- * first, so with it off nothing else is asked and nothing is refused.
+ * `{ updates: [] }`. The flag is read first, so with it off nothing else is asked or refused.
  *
- * `merged` refuses an update that is no longer verified (withdrawn, or its author is not staff
- * now) BEFORE anything is saved. Otherwise it saves the app from the sandbox (the same save as every
- * App Assistant change) and reports the commit that save wrote on the source repo's `main` as the
- * merge commit, but only once that commit's tree holds the update's change at every path the update
- * names ({@link missingPaths}). A save that went to the assistant's side branch is not on `main`, so
- * the update is reported `conflicted`.
+ * `merged` refuses an update that is no longer verified BEFORE anything is saved. Otherwise it
+ * saves the app from the sandbox and reports the commit that save wrote on `main` as the merge
+ * commit, once that commit's tree holds the update ({@link missingPaths}). A save that went to the
+ * assistant's side branch is not on `main`, so the update is reported `conflicted`.
  */
 
 /**
@@ -131,9 +121,6 @@ const DISABLED: Answer = {
   json: { error: 'Platform updates are not enabled', code: 'disabled' },
 };
 
-const SLUG_RE = /^[a-z][a-z0-9-]{1,38}[a-z0-9]$/;
-const COMMIT_SHA_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
-
 async function gate(
   userId: number,
   deps: RunnerPlatformUpdateDeps
@@ -200,7 +187,7 @@ export async function answerPlatformUpdates(
   app: string,
   deps: RunnerPlatformUpdateDeps
 ): Promise<Answer> {
-  if (!SLUG_RE.test(app)) return NO_UPDATES;
+  if (!SOURCE_SLUG_RE.test(app)) return NO_UPDATES;
   const admitted = await gate(userId, deps);
   if ('answer' in admitted) return admitted.answer;
   let open: OwnerUpdate[];
@@ -214,8 +201,7 @@ export async function answerPlatformUpdates(
   const updates: RunnerPlatformUpdate[] = [];
   for (const update of open) {
     if (!OPEN_STATUSES.has(update.status)) continue;
-    if (!COMMIT_SHA_RE.test(update.commitSha) || !COMMIT_SHA_RE.test(update.baseCommitSha))
-      continue;
+    if (!isCommitSha(update.commitSha) || !isCommitSha(update.baseCommitSha)) continue;
     const { verified } = await deps.verifyCommit({
       userId,
       slug: app,
@@ -299,7 +285,7 @@ export async function answerPlatformUpdateResolve(
   body: { app: string; id: string; commitSha: string; outcome: 'merged' | 'conflicted' },
   deps: RunnerPlatformUpdateDeps
 ): Promise<Answer> {
-  if (!SLUG_RE.test(body.app) || !COMMIT_SHA_RE.test(body.commitSha)) return NOT_FOUND;
+  if (!SOURCE_SLUG_RE.test(body.app) || !isCommitSha(body.commitSha)) return NOT_FOUND;
   const admitted = await gate(userId, deps);
   if ('answer' in admitted) return admitted.off ? DISABLED : admitted.answer;
   let verdict: { verified: boolean; update: OwnerUpdate | null };
@@ -311,8 +297,9 @@ export async function answerPlatformUpdateResolve(
   }
   const found = verdict.update;
   if (!found || found.id !== body.id) return NOT_FOUND;
-  // Withdrawn, or its author is not staff now: refused before anything is saved to `main`.
-  if (verdict.verified !== true || found.status === 'superseded')
+  // Not verified (withdrawn, or its author is not staff now: `verifyPlatformUpdateCommit` folds
+  // both in): refused before anything is saved to `main`.
+  if (verdict.verified !== true)
     return {
       status: 409,
       json: { resolved: false, reason: 'withdrawn' } satisfies ResolveAnswer,
@@ -350,8 +337,7 @@ export async function answerPlatformUpdateResolve(
 
   const saved = await deps.save({ userId, app: body.app });
   if (saved.kind === 'committed') {
-    if (saved.branch === SOURCE_MAIN_BRANCH && COMMIT_SHA_RE.test(saved.sha))
-      return mergedAt(saved.sha);
+    if (saved.branch === SOURCE_MAIN_BRANCH && isCommitSha(saved.sha)) return mergedAt(saved.sha);
     // On the assistant's branch, not `main`: the owner merges that branch, and the update with it.
     const answer = await resolve('conflicted');
     return answer.status === 200
@@ -364,7 +350,7 @@ export async function answerPlatformUpdateResolve(
   if (saved.kind === 'unchanged') {
     // The sandbox already is what the last save wrote: that commit, when it is on main and holds it.
     const last = await deps.lastSave(body.app);
-    if (last?.branch === SOURCE_MAIN_BRANCH && last.sha && COMMIT_SHA_RE.test(last.sha))
+    if (last?.branch === SOURCE_MAIN_BRANCH && last.sha && isCommitSha(last.sha))
       return mergedAt(last.sha);
   }
   return { status: 200, json: { resolved: false, reason: saved.kind } satisfies ResolveAnswer };

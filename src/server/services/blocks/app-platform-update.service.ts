@@ -62,6 +62,7 @@ import {
 } from '~/server/services/blocks/app-platform-update.record';
 import { newAppPlatformUpdateId } from '~/server/utils/app-block-ids';
 import { isVerifiedStaff } from '~/server/services/blocks/app-platform-update-shipped';
+import { latestApprovedCommitSha } from '~/server/services/blocks/latest-approved-build';
 
 // The switch lives in its own small module so the submit path can read it without loading this one.
 export { PLATFORM_UPDATES_FLAG, isPlatformUpdatesEnabled } from './app-platform-update-flag';
@@ -537,9 +538,6 @@ async function pushLocked(args: {
 async function approvedBaseFor(app: ResolvedApp): Promise<string | null> {
   const forgejo = await import('~/server/services/blocks/forgejo.service');
   if (!(await forgejo.sourceRepoIsForkOfBuildRepo(app.slug))) return null;
-  const { latestApprovedCommitSha } = await import(
-    '~/server/services/blocks/app-source-repo.service'
-  );
   const approved = await latestApprovedCommitSha(app.id);
   if (!approved)
     throw new TRPCError({
@@ -648,7 +646,7 @@ async function notifyOwner(opts: {
   });
 }
 
-/** The app’s most recent updates (capped by readRows), newest first, for staff. */
+/** The app’s newest 200 updates (the cap is the record’s `filterSql`), newest first, for staff. */
 export async function listPlatformUpdatesForModerator(args: {
   app: AppRef;
 }): Promise<Array<OwnerPlatformUpdate & { staffUserId: number; mergeCommitSha: string | null }>> {

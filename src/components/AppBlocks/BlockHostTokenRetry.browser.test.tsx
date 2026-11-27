@@ -291,6 +291,68 @@ describe('the per-call budget the block is told', () => {
   });
 });
 
+describe('the browsing level the block is told', () => {
+  // The seam: the mint's `effectiveBrowsingLevel`, through the real `useBlockToken` and
+  // `BlockHost`, to BLOCK_INIT. BlockHost used to drop the field, so the slot's BLOCK_INIT
+  // carried only the domain ceiling and the SDK resolved the viewer's ceiling to it.
+  // Fixture values are pairwise distinct (31 / 3 / 9) so a host forwarding the domain
+  // ceiling, or a hardcoded level, cannot satisfy an assertion meant for another case.
+  type MaturityInit = { maxBrowsingLevel?: number; effectiveBrowsingLevel?: number };
+
+  async function initFor(
+    extra: Record<string, unknown>,
+    ctx: ModelSlotContext = context
+  ): Promise<MaturityInit> {
+    respondWith(() => {
+      const ok = mintOk(++mintCount);
+      const json = ok.json.bind(ok);
+      return { ...ok, json: async () => ({ ...(await json()), ...extra }) } as Response;
+    });
+    renderWithProviders(<BlockHost blockInstall={install} slotContext={ctx} />);
+    const el = await waitForIframe();
+    const inits: MaturityInit[] = [];
+    el.contentWindow!.addEventListener('message', (e: MessageEvent) => {
+      const d = e.data as { type?: string; payload?: MaturityInit } | null;
+      if (d?.type === 'BLOCK_INIT' && d.payload) inits.push(d.payload);
+    });
+    for (let i = 0; i < 200 && inits.length === 0; i++) await advance(5);
+    expect(inits.length).toBeGreaterThan(0);
+    return inits.at(-1)!;
+  }
+
+  test('🔴 a viewer with mature content off, on a mature-capable domain, is told SFW — not the domain ceiling', async () => {
+    const init = await initFor({ domain: 'red', maxBrowsingLevel: 31, effectiveBrowsingLevel: 3 });
+    expect(init.maxBrowsingLevel).toBe(31);
+    expect(init.effectiveBrowsingLevel).toBe(3);
+  });
+
+  test('🔴 a viewer browsing X is told their own level (PG | X)', async () => {
+    const init = await initFor({ domain: 'red', maxBrowsingLevel: 31, effectiveBrowsingLevel: 9 });
+    expect(init.effectiveBrowsingLevel).toBe(9);
+  });
+
+  test("the model's own rating does not widen the viewer's level", async () => {
+    // The page host has no model and the mint never reads `modelNsfwLevel`, so the
+    // slot must forward the mint's value untouched even on an XXX-rated model.
+    const init = await initFor(
+      { domain: 'red', maxBrowsingLevel: 31, effectiveBrowsingLevel: 3 },
+      { ...context, modelNsfwLevel: 16 }
+    );
+    expect(init.effectiveBrowsingLevel).toBe(3);
+  });
+
+  test('is held to the domain ceiling when the mint reports a wider value', async () => {
+    const init = await initFor({ domain: 'blue', maxBrowsingLevel: 3, effectiveBrowsingLevel: 7 });
+    expect(init.effectiveBrowsingLevel).toBe(3);
+  });
+
+  test('is absent when the mint reports none', async () => {
+    const init = await initFor({ domain: 'red', maxBrowsingLevel: 31 });
+    expect(init.maxBrowsingLevel).toBe(31);
+    expect(init.effectiveBrowsingLevel).toBeUndefined();
+  });
+});
+
 describe('a TRANSIENT refresh failure', () => {
   test('🔴 does NOT unmount the block — same <iframe> node, no second beacon', async () => {
     renderWithProviders(<BlockHost blockInstall={install} slotContext={context} />);

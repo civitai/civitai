@@ -1,16 +1,10 @@
 /**
- * Staff ON-BEHALF SUBMIT of a platform update, the PURE half: which bundle a staff submit files,
- * which version it carries, and the refusals a moderator reads. No I/O here. The I/O half is
- * `app-platform-update-submit.service.ts`.
+ * Staff ON-BEHALF SUBMIT of a platform update, the pure half (no I/O).
  *
- * THE BUNDLE is the app's APPROVED build with the update's recorded commit applied on top, path
- * by path. Not the source repo's `main`: that can hold the owner's own unsubmitted work, and a
- * staff submit must never ship code the owner has not sent for review themselves.
- *
- * A path the update changes is applied only when the approved build still holds exactly what the
- * update was written against (the file at the update's base commit, or its absence). Otherwise
- * the approved file and the update's base differ, so applying the update's whole file would also
- * ship whatever made them differ: that path is a conflict and the submit is refused.
+ * The bundle is the app's APPROVED build with the update's recorded commit applied on top, never
+ * the source repo's `main`: that can hold the owner's own unsubmitted work. A path whose approved
+ * content differs from the update's base is a conflict, and the submit is refused: applying the
+ * update's whole file would also ship whatever made them differ.
  */
 
 import semver from 'semver';
@@ -77,6 +71,11 @@ export function planOnBehalfFiles(args: {
   return out;
 }
 
+/** The highest valid version of `approvedVersions`, or `undefined` when none is valid. */
+function highestApproved(approvedVersions: readonly string[]): string | undefined {
+  return approvedVersions.filter((v) => semver.valid(v)).sort(semver.rcompare)[0];
+}
+
 /**
  * The version an on-behalf submit carries: the bundle manifest's own version when it is above
  * every approved version, else the patch after the highest approved one. The same rule a manifest
@@ -84,7 +83,7 @@ export function planOnBehalfFiles(args: {
  * than refused, because the moderator did not choose a version.
  */
 export function onBehalfVersion(manifestVersion: unknown, approvedVersions: readonly string[]) {
-  const highest = approvedVersions.filter((v) => semver.valid(v)).sort(semver.rcompare)[0];
+  const highest = highestApproved(approvedVersions);
   const own = typeof manifestVersion === 'string' && semver.valid(manifestVersion);
   if (!highest) {
     if (own) return manifestVersion as string;
@@ -102,7 +101,7 @@ export function onBehalfVersion(manifestVersion: unknown, approvedVersions: read
 export function assertAboveApproved(version: string, approvedVersions: readonly string[]): void {
   if (!semver.valid(version))
     throw new OnBehalfPlanError(`The version ${version} is not a valid version number`);
-  const highest = approvedVersions.filter((v) => semver.valid(v)).sort(semver.rcompare)[0];
+  const highest = highestApproved(approvedVersions);
   if (highest && !semver.gt(version, highest))
     throw new OnBehalfPlanError(
       `The version ${version} is not above the approved version ${highest}; reload and retry`

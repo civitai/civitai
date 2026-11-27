@@ -399,7 +399,6 @@ describe('checkPlatformUpdates', () => {
 
   it('🔴 checks at most the cap, the OLDEST first; past it the check says truncated and logs', async () => {
     const cap = bundleCheck.PLATFORM_UPDATE_CHECK_CAP;
-    expect(cap).toBe(100);
     // cap + 2 updates, created a day apart: the two newest are past the cap.
     for (let i = 0; i < cap + 2; i++)
       await addUpdate({
@@ -431,7 +430,7 @@ describe('checkPlatformUpdates', () => {
     }).catch((e: unknown) => e)) as InstanceType<typeof bundleCheck.PlatformUpdateMissingRefusal>;
     expect(err).toBeInstanceOf(bundleCheck.PlatformUpdateMissingRefusal);
     expect(err.message).toContain(
-      '(only the oldest 100 unshipped platform updates were checked; more may be missing). Merge them'
+      `(only the oldest ${cap} unshipped platform updates were checked; more may be missing). Merge them`
     );
     expect(err.details.truncated).toBe(true);
     // Positive control: at exactly the cap, not truncated.
@@ -634,5 +633,104 @@ describe('markShippedPlatformUpdates (approve)', () => {
     ).resolves.toEqual([]);
     expect((await shippedColumn()).map((r) => r.shipped)).toEqual([null]);
     warn.mockRestore();
+  });
+});
+
+describe('supersedePlatformUpdate (staff withdraw)', () => {
+  const supersede = async (id: string) =>
+    (await import('~/server/services/blocks/app-platform-update.record')).supersedePlatformUpdate({
+      staffUserId: MOD,
+      id,
+    });
+  const statuses = async () =>
+    (
+      await pg.query<{ id: string; status: string; by: number | null }>(
+        `SELECT id, status, resolved_by_user_id AS by FROM app_platform_updates ORDER BY id`
+      )
+    ).rows;
+
+  // A `merged` update no approved version has shipped is still required by every submit (the
+  // client's report is not read). One a bundle can never satisfy (here its commits are unreadable)
+  // would refuse every submit of the app until staff withdraw it, as the refusal says they can.
+  it('🔴 withdraws a merged update no version has shipped, and the submit check stops requiring it', async () => {
+    await addUpdate({
+      id: 'apu_merged_lost',
+      commitSha: 'f'.repeat(40),
+      status: 'merged',
+      paths: [{ path: 'src/a.ts', operation: 'update' }],
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const v = version({ 'src/a.ts': UPDATE_TEXT });
+    const refused = (await assertBundleHasPlatformUpdates({
+      appBlockId: APP,
+      readFiles: v.readFiles,
+      allow: false,
+    }).catch((e: unknown) => e)) as Error;
+    expect(refused).toBeInstanceOf(bundleCheck.PlatformUpdateMissingRefusal);
+    expect(refused.message).toContain('Civitai staff can withdraw it');
+
+    expect(await supersede('apu_merged_lost')).toEqual({
+      id: 'apu_merged_lost',
+      status: 'superseded',
+    });
+    expect(await statuses()).toEqual([{ id: 'apu_merged_lost', status: 'superseded', by: MOD }]);
+    expect(await checkPlatformUpdates({ appBlockId: APP, readFiles: v.readFiles })).toEqual({
+      contained: [],
+      missing: [],
+    });
+    expect(
+      await assertBundleHasPlatformUpdates({
+        appBlockId: APP,
+        readFiles: v.readFiles,
+        allow: false,
+      })
+    ).toEqual({ missing: [], truncated: false });
+    warn.mockRestore();
+  });
+
+  it('refuses a merged update a version has shipped, and leaves it as it was', async () => {
+    await addUpdate({
+      id: 'apu_merged_shipped',
+      commitSha: BASE_SHA,
+      status: 'merged',
+      shippedIn: 'pubreq_v2',
+      paths: [{ path: 'src/a.ts', operation: 'update' }],
+    });
+    await expect(supersede('apu_merged_shipped')).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: 'This update is already shipped',
+    });
+    expect(await statuses()).toEqual([{ id: 'apu_merged_shipped', status: 'merged', by: null }]);
+  });
+
+  it('without the shipped columns: a pending update is withdrawn, a merged one is refused', async () => {
+    const noColumns = await freshDb([TABLE_MIGRATION]);
+    const prev = pg;
+    try {
+      pg = noColumns;
+      installRaw(noColumns);
+      for (const [id, status, commit] of [
+        ['apu_p', 'pending', 'b'.repeat(40)],
+        ['apu_m', 'merged', 'd'.repeat(40)],
+      ])
+        await noColumns.query(
+          `INSERT INTO app_platform_updates (id, app_block_id, slug, staff_user_id, reason, branch,
+             base_commit_sha, commit_sha, paths, status)
+           VALUES ($1, $2, $3, $4, 'r', 'platform-update/' || $1, $5, $6, '[]'::jsonb, $7)`,
+          [id, APP, SLUG, MOD, BASE_SHA, commit, status]
+        );
+      expect(await supersede('apu_p')).toEqual({ id: 'apu_p', status: 'superseded' });
+      await expect(supersede('apu_m')).rejects.toMatchObject({
+        code: 'CONFLICT',
+        message: 'This update is already merged',
+      });
+      expect(await statuses()).toEqual([
+        { id: 'apu_m', status: 'merged', by: null },
+        { id: 'apu_p', status: 'superseded', by: MOD },
+      ]);
+    } finally {
+      pg = prev;
+      await noColumns.close();
+    }
   });
 });

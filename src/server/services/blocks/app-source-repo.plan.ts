@@ -6,6 +6,7 @@
  */
 
 import { createHash } from 'crypto';
+import { platformUpdatePathShapeRefusal } from '@civitai/shared/platform-update-path';
 import { MAX_FILES_IN_BUNDLE } from '~/server/schema/blocks/publish-request.schema';
 import { forkSeedExclusionReason } from '~/server/services/blocks/fork-seed-exclusions';
 import type { FileOperation } from '~/server/services/blocks/forgejo.service';
@@ -280,15 +281,6 @@ export type PlatformUpdateChange =
   | { operation: 'delete'; path: string };
 
 /**
- * Why `path` may not be written by a platform update, or `null` when it may: a path git would
- * refuse or that escapes the tree, and anything a source repo never holds
- * ({@link sourceRepoNeverHolds}: env files, keys, credentials, dependencies, build output),
- * in ANY letter case (`.ENV`, `.Env.local`, `Node_Modules/…`): a checkout on a case-insensitive
- * file system reads those as the lowercase name. Also anything under a folder the CLI's package
- * drops at every depth ({@link CLI_PACKAGE_DROPPED_DIRS}: `src/build/…`, `packages/x/coverage/…`).
- * The shared lists themselves (fork seed, App Assistant export) are unchanged.
- */
-/**
  * Directory names the CLI's packager (`civitai/cli` `internal/pkgzip`, `excludedDirs`) drops at
  * EVERY depth: VCS metadata, dependency installs, build output and tooling caches. A platform
  * update under one of them could never reach a submitted bundle, so the submit check would refuse
@@ -316,13 +308,19 @@ const CLI_PACKAGE_DROPPED_DIRS = new Set([
   '.turbo',
 ]);
 
+/**
+ * Why `path` may not be written by a platform update, or `null` when it may: a path git would
+ * refuse or that escapes the tree ({@link platformUpdatePathShapeRefusal}, shared with the
+ * assistant runner), and anything a source repo never holds
+ * ({@link sourceRepoNeverHolds}: env files, keys, credentials, dependencies, build output),
+ * in ANY letter case (`.ENV`, `.Env.local`, `Node_Modules/…`): a checkout on a case-insensitive
+ * file system reads those as the lowercase name. Also anything under a folder the CLI's package
+ * drops at every depth ({@link CLI_PACKAGE_DROPPED_DIRS}: `src/build/…`, `packages/x/coverage/…`).
+ * The shared lists themselves (fork seed, App Assistant export) are unchanged.
+ */
 export function platformUpdatePathRefusal(path: string): string | null {
-  if (!path || path.length > 400) return 'is empty or too long';
-  // eslint-disable-next-line no-control-regex
-  if (path.startsWith('/') || path.includes('\\') || /[\x00-\x1f\x7f]/.test(path))
-    return 'is not a relative repo path';
-  if (path.split('/').some((s) => s === '' || s === '.' || s === '..'))
-    return 'is not a relative repo path';
+  const shape = platformUpdatePathShapeRefusal(path);
+  if (shape) return shape;
   if (sourceRepoNeverHolds(path) || sourceRepoNeverHolds(path.toLowerCase()))
     return 'is a file a source repo never holds';
   // Every directory on the path (not the file's own name), in any letter case.

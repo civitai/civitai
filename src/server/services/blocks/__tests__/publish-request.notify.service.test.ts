@@ -35,7 +35,7 @@ const { mockNotify, db, s3, holder } = vi.hoisted(() => {
   // through the primary below, the db client being the process boundary this file mocks.
   const holder: {
     zipBytes: Uint8Array;
-    platformUpdate: { id: string; slug: string; status: string } | null;
+    platformUpdate: { id: string; slug: string; status: string; shipped?: boolean } | null;
   } = { zipBytes: new Uint8Array(), platformUpdate: null };
   const sqlText = (q: unknown): string =>
     Array.isArray(q) ? q.join('?') : String((q as { sql?: unknown })?.sql ?? '');
@@ -95,7 +95,8 @@ const { mockNotify, db, s3, holder } = vi.hoisted(() => {
   const executeRaw = vi.fn(async (...a: unknown[]): Promise<number> => {
     const row = holder.platformUpdate;
     if (!sqlText(a[0]).includes('UPDATE "app_platform_updates"') || !row) return 0;
-    if (row.status !== 'pending' && row.status !== 'conflicted') return 0;
+    // As the record's supersede: pending, conflicted, or merged and not yet shipped.
+    if (row.status === 'superseded' || (row.status === 'merged' && row.shipped)) return 0;
     row.status = 'superseded';
     return 1;
   });
@@ -206,7 +207,7 @@ vi.mock('~/utils/bundle-s3', () => ({
 const supersedeWrites = () =>
   db.write.$executeRaw.mock.calls
     .filter((c) => (c[0] as string[]).join('?').includes('UPDATE "app_platform_updates"'))
-    .map((c) => c.slice(1));
+    .map((c) => c.slice(1, 3));
 
 const { approveRequest, rejectRequest } = await import(
   '~/server/services/blocks/publish-request.service'
@@ -836,10 +837,10 @@ describe('reject of a staff on-behalf submit withdraws its platform update', () 
     });
   });
 
-  it('an update that cannot be withdrawn (already merged) never fails the reject, and the owner is not told it was', async () => {
+  it('an update that cannot be withdrawn (already shipped) never fails the reject, and the owner is not told it was', async () => {
     db.read.appBlockPublishRequest.findUnique.mockResolvedValueOnce(row(ON_BEHALF_SUMMARY));
-    // Merged into the owner's app already: the record's supersede refuses (CONFLICT).
-    holder.platformUpdate = { id: UPDATE_ID, slug: 'cool-app', status: 'merged' };
+    // Shipped in an approved version already: the record's supersede refuses (CONFLICT).
+    holder.platformUpdate = { id: UPDATE_ID, slug: 'cool-app', status: 'merged', shipped: true };
     await expect(
       rejectRequest({
         publishRequestId: 'req_rej_1',
@@ -889,9 +890,8 @@ describe('reject of a staff on-behalf submit withdraws its platform update', () 
 // approve harness: the approve re-checks the bytes it approves and marks shipped, by this request,
 // exactly the unshipped updates those bytes contain.
 //
-// 🔴 THE REGRESSION: at origin/main nothing marks an update shipped, so with the submit check
-// every later submit of the app would be checked for it forever, and an owner's own later edit to
-// the same lines would be refused.
+// Without the approve marking updates shipped, every later submit of the app is checked for the
+// update forever, and an owner's own later edit to the same lines is refused.
 // ---------------------------------------------------------------------------
 
 const forgejo = await import('~/server/services/blocks/forgejo.service');

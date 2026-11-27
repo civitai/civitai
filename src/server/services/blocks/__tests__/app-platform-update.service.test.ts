@@ -1317,6 +1317,9 @@ describe('supersede and modList (staff)', () => {
       caller(OWNER).resolve({ id: pushed.id, outcome: 'merged', mergeCommitSha: 'e'.repeat(40) })
     ).rejects.toMatchObject({ code: 'CONFLICT' });
 
+    // This database has no `shipped` columns, so whether a merged update shipped cannot be read
+    // and it is refused (with them, an unshipped one is withdrawn:
+    // platform-update-bundle-check.pglite.test.ts).
     const merged = await pushAsMod();
     await caller(OWNER).resolve({
       id: merged.id,

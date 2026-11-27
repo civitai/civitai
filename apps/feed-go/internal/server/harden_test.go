@@ -727,9 +727,9 @@ func TestMetricsEndpointLabelIsFeedEndpoint(t *testing.T) {
 	// 25: feed_go_shadow_compare_viewer_total (per-viewer-class body results),
 	// feed_go_shadow_response_viewer_total (the tRPC feeds' per-viewer-class header results),
 	// feed_go_devalue_write_total, feed_go_serve_parity_total, feed_go_eval_capture_total and
-	// feed_go_eval_capture_unresolved_total included.
-	if checked != 25 {
-		t.Fatalf("checked %d per-endpoint families, want 25 (a family was renamed or lost)", checked)
+	// feed_go_eval_capture_unresolved_total included; 26: feed_go_feed_retry_total (seeded on infinite).
+	if checked != 26 {
+		t.Fatalf("checked %d per-endpoint families, want 26 (a family was renamed or lost)", checked)
 	}
 }
 

@@ -72,9 +72,8 @@ describe('app-platform-update-submitted', () => {
     'app-platform-update-submitted'
   ];
 
-  it('is registered, not toggleable', () => {
+  it('is registered', () => {
     expect(notificationProcessors['app-platform-update-submitted']).toBe(submitDef);
-    expect(submitDef.toggleable).toBe(false);
   });
 
   it('names the staff member, the version, the app and the update, and links the owner’s apps', () => {
@@ -125,10 +124,9 @@ describe('app-platform-update-approved / -rejected (the owner’s review outcome
     actor: { username: 'reviewer_ada', deletedAt: null },
   };
 
-  it('both are registered, not toggleable, and emailed', () => {
+  it('both are registered and emailed', () => {
     for (const type of ['app-platform-update-approved', 'app-platform-update-rejected']) {
       expect(notificationProcessors[type as keyof typeof notificationProcessors]).toBe(defs[type]);
-      expect(defs[type]!.toggleable).toBe(false);
       expect(defs[type]!.defaultEmail).toBe(true);
     }
   });

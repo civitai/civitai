@@ -613,9 +613,8 @@ describe('recordPendingFromPush — App Storage permission hooks', () => {
 // the migrations is pinned in platform-update-bundle-check.pglite.test.ts), with this file's
 // stubbed git host and MinIO. Here because it needs exactly this harness.
 //
-// 🔴 THE REGRESSION: at origin/main a bundle (or a push) that lacks a staff update no approved
-// version has shipped is queued as if it had it, and nothing tells the moderator. Every refusal
-// and every record below fails there.
+// A bundle or push that lacks a staff update no approved version has shipped must be refused
+// (bundle) or recorded for the moderator (push); every refusal and record below pins that.
 // ---------------------------------------------------------------------------
 
 const forgejo = await import('~/server/services/blocks/forgejo.service');
@@ -629,8 +628,8 @@ describe('staff platform updates', () => {
     /** The rows the platform-update query answers with; an Error is thrown instead. */
     updateRows: [] as unknown[] | Error,
   };
-  // Loaded where used, so at origin/main (where it does not exist) every other case still runs and
-  // fails on BEHAVIOUR.
+  // Loaded where used, so a missing module fails these cases on behaviour and leaves the rest of
+  // the file running.
   const reviewLines = async (fileSummary: unknown) =>
     (await import('~/components/Apps/reviewPlatformUpdates')).reviewPlatformUpdatesLines(
       fileSummary

@@ -67,7 +67,7 @@ describe('pathHoldsUpdate', () => {
   });
 
   // The update's change is COUNTED: lines it adds and lines it removes, each with its number of
-  // copies. Each case below read "contained" under a set-of-lines rule.
+  // copies.
   describe('counted changes (added and removed lines)', () => {
     const holds = (want: string, base: string | null, have: string) =>
       pathHoldsUpdate({ want: b(want), base: base === null ? null : b(base), have: b(have) });
