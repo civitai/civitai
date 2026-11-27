@@ -40,6 +40,7 @@ vi.mock('../db', () => ({
 const {
   claimNext,
   castVote,
+  countBlockedOpen,
   getCounters,
   getOpenFlaggerVersions,
   getVotedItemOwner,
@@ -980,11 +981,14 @@ describe('a card its moderator cannot use', () => {
     await seedItem(1, { votes: 1, flaggedAt: '2026-10-13T09:00:00Z' });
     await pg.query(`UPDATE "Image" SET ingestion = 'Blocked' WHERE id = 1`);
     const scanned = await seedItem(2, { flaggedAt: '2026-10-13T07:00:00Z' });
+    await seedItem(3, { flaggedAt: '2026-10-13T06:00:00Z' });
     expect((await claimNext(granted(1), {}, NOW))!.itemId).toBe(scanned);
     expect(await claimNext(granted(2), { day: '2026-10-13' }, NOW)).toMatchObject({
       itemId: scanned,
     });
-    expect(await getCounters(3, {}, NOW)).toMatchObject({ openInFilter: 1 });
+    // What the cached open count subtracts, by the same rule the claim applies.
+    expect(await countBlockedOpen({})).toBe(1);
+    expect(await countBlockedOpen({ day: '2026-10-12' })).toBe(0);
   });
 
   describe('whose media is refused to its holder', () => {

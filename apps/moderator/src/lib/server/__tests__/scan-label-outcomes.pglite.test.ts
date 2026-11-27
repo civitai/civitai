@@ -390,6 +390,27 @@ describe('csam-realistic votes', () => {
     expect(await castAs(it1, 13, CSAM)).toEqual({ ok: false, reason: 'not-open' });
   });
 
+  // Ruled by the moderation lead with the rule above: a hold cast as one of the two majority votes
+  // still applies, whatever order the sweeps run in, and the item is the hold's, never decided.
+  it.each([
+    ['block then hold', MINOR_SEXUAL, CSAM, 12],
+    ['hold then block', CSAM, MINOR_SEXUAL, 11],
+  ] as const)(
+    'applies a hold cast within the block majority (%s)',
+    async (_order, first, second, holder) => {
+      const it1 = await seedItem(IMAGE);
+      await castAs(it1, 11, first);
+      await castAs(it1, 12, second);
+      const block = noop();
+      await applyMajorityBlocks({}, deps(block));
+      const { hold, deps: holding } = holdDeps();
+      expect((await applyCsamHolds({}, holding)).held).toEqual([it1]);
+      expect(hold).toHaveBeenCalledExactlyOnceWith(IMAGE, holder);
+      expect(block).not.toHaveBeenCalled();
+      expect(await item(it1)).toMatchObject({ status: 'void', actionResult: 'csam-held' });
+    }
+  );
+
   it('takes the item from every other moderator holding it', async () => {
     const it1 = await seedItem(IMAGE);
     await pg.query(

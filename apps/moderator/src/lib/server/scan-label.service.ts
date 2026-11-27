@@ -49,25 +49,11 @@ type Db = Kysely<DB> | Transaction<DB>;
 /** Control items are a blind calibration sample: their flag version must never be a way to pick them. */
 const CONTROL_SOURCE = 'control-sample';
 
-/**
- * Open items whose image is not blocked. Shared by the claim and the counters, so "Open in this
- * view" counts only what can be claimed. An image the queue's own majority blocked never reaches
- * this: the sweep decides its item (`decideBlockedMajorities`).
- */
-function openItems(db: Db, filters: ScanLabelFilters) {
-  let q = db
-    .selectFrom('ScanLabelItem as i')
-    .where('i.status', '=', 'open')
-    .where(({ not, exists, selectFrom }) =>
-      not(
-        exists(
-          selectFrom('Image as ci')
-            .select(sql`1`.as('one'))
-            .whereRef('ci.id', '=', 'i.imageId')
-            .where('ci.ingestion', '=', 'Blocked')
-        )
-      )
-    );
+type ItemQuery = ReturnType<typeof queueItems>;
+
+/** Open items in these filters, whatever their image. */
+function queueItems(db: Db, filters: ScanLabelFilters) {
+  let q = db.selectFrom('ScanLabelItem as i').where('i.status', '=', 'open');
   if (filters.day) {
     const { start, end } = dayBounds(filters.day);
     q = q.where('i.firstFlaggedAt', '>=', start).where('i.firstFlaggedAt', '<', end);
@@ -86,6 +72,25 @@ function openItems(db: Db, filters: ScanLabelFilters) {
   }
   return q;
 }
+
+/**
+ * The one rule for an item that cannot be claimed because its image is blocked. An image the queue's
+ * own majority blocked never meets it: the sweep decides its item (`decideBlockedMajorities`).
+ */
+const blockedImage = (q: ItemQuery, blocked: boolean) =>
+  q.where(({ exists, not, selectFrom }) => {
+    const rule = exists(
+      selectFrom('Image as ci')
+        .select(sql`1`.as('one'))
+        .whereRef('ci.id', '=', 'i.imageId')
+        .where('ci.ingestion', '=', 'Blocked')
+    );
+    return blocked ? rule : not(rule);
+  });
+
+/** Open items that can be claimed: the claim's candidates. */
+const openItems = (db: Db, filters: ScanLabelFilters) =>
+  blockedImage(queueItems(db, filters), false);
 
 const otherLiveLeases = (db: Db, itemId: number, userId: number, now: Date) =>
   db
@@ -603,23 +608,52 @@ export type ScanLabelCounters = {
   decidedToday: number;
 };
 
-/** Display only, and the count walks every open item, so one fill a minute serves every moderator. */
-const openCount = createCache({
-  name: 'scan-label-open-count:v1',
-  fetch: async ({ day, flaggerVersion }: { day: string; flaggerVersion: string }) => {
-    const { n } = await openItems(dbRead, {
-      day: day || undefined,
-      flaggerVersion: flaggerVersion || undefined,
-    })
-      .select((eb) => eb.fn.countAll<string>().as('n'))
-      .executeTakeFirstOrThrow();
-    return { n: Number(n) };
-  },
-  ttlSeconds: 60,
+const countOf = async (q: ItemQuery) =>
+  Number((await q.select((eb) => eb.fn.countAll<string>().as('n')).executeTakeFirstOrThrow()).n);
+
+type CountArgs = { day: string; flaggerVersion: string };
+const filtersOf = ({ day, flaggerVersion }: CountArgs): ScanLabelFilters => ({
+  day: day || undefined,
+  flaggerVersion: flaggerVersion || undefined,
 });
 
+/** Open items in these filters whose image is blocked: what the open count subtracts. Exported for
+ *  its test; pages read it through `getCounters`. */
+export const countBlockedOpen = (filters: ScanLabelFilters, db: Db = dbRead) =>
+  countOf(blockedImage(queueItems(db, filters), true));
+
+// Display only. The plain count is an index scan; the blocked one probes "Image" for every open item,
+// far too slow for a page load, and that set changes slowly, so it is cached long and read without
+// waiting (`withoutWaiting`). The shown count can lag by up to each TTL.
+const queueCount = createCache({
+  name: 'scan-label-open-count:v2',
+  fetch: async (args: CountArgs) => ({ n: await countOf(queueItems(dbRead, filtersOf(args))) }),
+  ttlSeconds: 60,
+});
+const blockedCount = createCache({
+  name: 'scan-label-blocked-open-count:v1',
+  fetch: async (args: CountArgs) => ({ n: await countBlockedOpen(filtersOf(args)) }),
+  ttlSeconds: 15 * 60,
+});
+
+/** How long a page load waits for a cached value. A miss starts the fill and returns null; the fill
+ *  runs on, so the next load reads it. */
+const CACHE_READ_WAIT_MS = 50;
+
+function withoutWaiting<T>(value: Promise<T>): Promise<T | null> {
+  const settled = value.catch((e) => {
+    console.error('scan label count fill failed', e);
+    return null;
+  });
+  return Promise.race([
+    settled,
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), CACHE_READ_WAIT_MS)),
+  ]);
+}
+
 // Reads the primary, but for the cached open count: it runs straight after a vote, and a lagging
-// replica shows the vote count one behind.
+// replica shows the vote count one behind. Before the blocked count's first fill, the open count
+// includes blocked items.
 export async function getCounters(
   userId: number,
   filters: ScanLabelFilters,
@@ -627,8 +661,10 @@ export async function getCounters(
   db: Kysely<DB> = dbWrite
 ): Promise<ScanLabelCounters> {
   const today = utcDayStart(now);
-  const [open, mine, quota, decided] = await Promise.all([
-    openCount.get({ day: filters.day ?? '', flaggerVersion: filters.flaggerVersion ?? '' }),
+  const countArgs = { day: filters.day ?? '', flaggerVersion: filters.flaggerVersion ?? '' };
+  const [open, blocked, mine, quota, decided] = await Promise.all([
+    queueCount.get(countArgs),
+    withoutWaiting(blockedCount.get(countArgs)),
     db
       .selectFrom('ScanLabelVote')
       .select((eb) => eb.fn.countAll<string>().as('n'))
@@ -647,7 +683,7 @@ export async function getCounters(
       .executeTakeFirstOrThrow(),
   ]);
   return {
-    openInFilter: Number(open.n),
+    openInFilter: Math.max(0, open.n - (blocked?.n ?? 0)),
     myVotesToday: Number(mine.n),
     myQuota: effectiveQuota(quota),
     decidedToday: Number(decided.n),
