@@ -22,7 +22,8 @@ import { claimShadowCompareSlot } from '~/utils/trpc-shadow-compare';
  * data that changes between two sequential calls does not read as a mismatch.
  *
  * The beacon carries the verdict, the procedure, the candidate's id, both byte lengths, both
- * latencies, both HTTP statuses, who answered the candidate request (`candidate_served_by`), and
+ * latencies, both HTTP statuses, who answered the candidate request (`candidate_served_by`), the
+ * feed-go release that handled each leg (`candidate_go_version`, `control_go_version`), and
  * on a mismatch where the texts first differ as a path of keys and indices. Never a response body, a value from one, the request URL (it carries the input) or
  * an error message.
  */
@@ -49,6 +50,8 @@ export type ShadowLegResponse = {
   servedBy?: string;
   /** The edge cache's verdict on this leg (`edgeCacheStatus`); absent when the edge sent none. */
   cacheStatus?: string;
+  /** The feed-go release that handled this leg (`goVersion`); absent when feed-go sent none. */
+  goVersion?: string;
 };
 
 /**
@@ -106,6 +109,25 @@ const CONTROL_PATH_PREFIX = /^((?:https?:\/\/[^/?#]+)?)\/api\/trpc\//;
 /** The Go service names who answered each request; only `go` is its own answer. */
 export const GO_SERVED_HEADER = 'x-feed-go-served';
 
+/**
+ * The feed-go release that handled a request, on every answer it writes or hands back. A cache
+ * stores it with the body, so an answer replayed from the edge or the browser still names the
+ * binary that produced it. Beaconed per leg (`candidate_go_version`, `control_go_version`).
+ */
+export const GO_VERSION_HEADER = 'x-feed-go-version';
+
+const GO_VERSION = /^\d{1,4}\.\d{1,4}\.\d{1,6}(?:-[0-9A-Za-z.]{1,16})?$/;
+
+/**
+ * A release as a short fixed-shape value: a semver like `0.0.51` or `0.0.51-dev` as sent, `dev`
+ * as sent, `other` for anything else, `undefined` when absent.
+ */
+export function goVersion(value: string | null | undefined): string | undefined {
+  if (value === null || value === undefined || value === '') return undefined;
+  const v = value.trim();
+  return v === 'dev' || GO_VERSION.test(v) ? v : 'other';
+}
+
 function goServedBy(value: string | null): string {
   if (value === null) return 'absent';
   return value === 'go' || value === 'node' ? value : 'other';
@@ -126,12 +148,14 @@ export const goTransportCandidate: ShadowCandidate = {
     const response = await globalThis.fetch(url, { ...controlInit, signal });
     const servedBy = goServedBy(response.headers.get(GO_SERVED_HEADER));
     const cacheStatus = edgeCacheStatus(response.headers.get(EDGE_CACHE_STATUS_HEADER));
+    const version = goVersion(response.headers.get(GO_VERSION_HEADER));
     return {
       status: response.status,
       text: await response.text(),
       fallback: servedBy !== 'go',
       servedBy,
       ...(cacheStatus === undefined ? {} : { cacheStatus }),
+      ...(version === undefined ? {} : { goVersion: version }),
     };
   },
 };
@@ -228,10 +252,14 @@ export function createShadowCompareFetch(options: ShadowCompareFetchOptions): Sh
           // A clone, so the app's response body is never touched.
           const text = await response.clone().text();
           const cacheStatus = edgeCacheStatus(response.headers?.get(EDGE_CACHE_STATUS_HEADER));
+          const version = goVersion(response.headers?.get(GO_VERSION_HEADER));
           return legOf(
-            cacheStatus === undefined
-              ? { status: response.status, text }
-              : { status: response.status, text, cacheStatus },
+            {
+              status: response.status,
+              text,
+              ...(cacheStatus === undefined ? {} : { cacheStatus }),
+              ...(version === undefined ? {} : { goVersion: version }),
+            },
             now() - start
           );
         } catch {
@@ -345,6 +373,11 @@ async function settle(
     context.control_cache = control.response.cacheStatus;
   if (candidate.ok && candidate.response.cacheStatus) {
     context.candidate_cache = candidate.response.cacheStatus;
+  }
+  if (control.ok && control.response.goVersion)
+    context.control_go_version = control.response.goVersion;
+  if (candidate.ok && candidate.response.goVersion) {
+    context.candidate_go_version = candidate.response.goVersion;
   }
   if (diff) {
     context.diff_path = diff.path;
