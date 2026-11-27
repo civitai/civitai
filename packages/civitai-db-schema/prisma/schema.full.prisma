@@ -10724,6 +10724,7 @@ enum StrikeReason {
   ProhibitedContent
   ManualModAction
   Scam
+  Copyright
 }
 
 enum StrikeStatus {
