@@ -42,7 +42,8 @@ export type AssociatedModelAddons = {
  * excluded-tag and hidden user/model rules. The owner and moderators skip status, availability,
  * takedown and POI, and also see an unrated (nsfwLevel 0) model; the browsing level and the
  * viewer's hidden users and models bind them like everyone else. `disableMinor` and excluded tags
- * spare only the owner.
+ * spare only the owner. Not mirrored: blocked browsing tags, which gate a tag's own pages, not the
+ * content carrying the tag.
  */
 export function canListAssociatedModel(
   model: AssociatedModelVisibility,

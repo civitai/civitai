@@ -38,7 +38,7 @@ import { safeDecodeURIComponent } from '~/utils/string-helpers';
 import { resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 import { apiBrowsingLevel } from '~/server/utils/browsing-level';
 import { getBrowsingSettingAddons } from '~/server/services/system-cache';
-import { resolveStrictestPoiMinor } from '~/shared/constants/browsing-settings-addons';
+import { resolveStrictestAddons } from '~/shared/constants/browsing-settings-addons';
 import {
   hasCuratedShowcase,
   withCuratedShowcases,
@@ -251,7 +251,7 @@ async function getVersionImageFilter(browsingLevel: number) {
     getShowcaseImageFilter({ browsingLevel }),
     getBrowsingSettingAddons(),
   ]);
-  const { disableMinor: minorExcludedWithinSfw } = resolveStrictestPoiMinor(
+  const { disableMinor: minorExcludedWithinSfw } = resolveStrictestAddons(
     addonData,
     sfwBrowsingLevelsFlag
   );

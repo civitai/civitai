@@ -137,15 +137,6 @@ export function resolveStrictestAddons(
   return { disablePoi, disableMinor, excludedTagIds: [...excludedTagIds] };
 }
 
-export function resolveStrictestPoiMinor(
-  data: BrowsingSettingsAddon[],
-  levels: number,
-  opts?: { isModerator?: boolean }
-) {
-  const { disablePoi, disableMinor } = resolveStrictestAddons(data, levels, opts);
-  return { disablePoi, disableMinor };
-}
-
 // Seed for the hard navigation blocklist (W2) — blocks the tag page and nav, not the
 // content carrying the tag. The redis key `system:blocked-browsing-tags` overrides this
 // when present; ops manage the live list there without a deploy.
