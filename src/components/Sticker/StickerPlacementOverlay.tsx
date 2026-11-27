@@ -17,6 +17,7 @@ import {
   peekToggleCorner,
 } from '~/components/Sticker/peek-toggle-corner';
 import { StickerPlacementActions } from '~/components/Sticker/StickerPlacementActions';
+import { StickerPendingBar } from '~/components/Sticker/StickerPendingBar';
 import { StickerPlacementHoverCard } from '~/components/Sticker/StickerPlacementHoverCard';
 import { freeMarkerVisible } from '~/components/Sticker/free-marker';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -35,6 +36,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type KeyboardEvent,
   type ReactElement,
 } from 'react';
 
@@ -46,6 +48,9 @@ import {
  * so a gap measured to the pixel is a gap the sticker moves into.
  */
 const CONTROL_GAP_PX = 14;
+
+/** Height reserved for the crowded-image bar, which wraps to two rows on a phone. */
+const PENDING_BAR_STRIP_PX = 96;
 
 /** Shared so the two in-box marks cannot drift apart in size or weight. */
 const PLACEMENT_MARK_CLASS =
@@ -381,6 +386,41 @@ export function StickerPlacementOverlay({
   // unmounted either, which would drop the measurements that position them.
   const peekStyle: CSSProperties | undefined = peek ? { visibility: 'hidden' } : undefined;
 
+  // Two or more of the owner's own pending stickers: a pair under each one piles
+  // up on a cluster, so they select a sticker and answer it from one bar.
+  const ownerPending = interactive
+    ? placements.filter((placement) => placement.isPending && placement.ownerId === viewerId)
+    : [];
+  const crowded = ownerPending.length >= 2;
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const selected = crowded
+    ? ownerPending.find((placement) => placement.id === selectedId)
+    : undefined;
+  // The bar sits on the bottom edge unless an owner-pending sticker reaches into
+  // that strip, where it would eat taps meant for the sticker; then the top, if
+  // that is clear. Both blocked: the bottom, and the sticker stays reachable
+  // through the keyboard and the queue.
+  const barEdge = (() => {
+    if (!crowded || controlBox.height <= 0) return 'bottom' as const;
+    const reaches = (edge: 'top' | 'bottom') =>
+      ownerPending.some(({ id, data }) => {
+        const box = stickerBoxes[id];
+        if (!box) return false;
+        const radians = (data.rotation * Math.PI) / 180;
+        const half =
+          (box.height * Math.abs(Math.cos(radians)) + box.width * Math.abs(Math.sin(radians))) / 2;
+        const centre = data.y * controlBox.height;
+        return edge === 'bottom'
+          ? centre + half > controlBox.height - PENDING_BAR_STRIP_PX
+          : centre - half < PENDING_BAR_STRIP_PX;
+      });
+    return reaches('bottom') && !reaches('top') ? ('top' as const) : ('bottom' as const);
+  })();
+  // A selection that is answered, or no longer crowded, must not outlive its row.
+  useEffect(() => {
+    if (selectedId != null && !selected) setSelectedId(null);
+  }, [selectedId, selected]);
+
   if (!placements.length) return null;
 
   const visible = step == null ? ordered : ordered.slice(0, step + 1);
@@ -393,7 +433,15 @@ export function StickerPlacementOverlay({
     visible
       .filter((placement) => placement.isPending && placement.ownerId === viewerId)
       .map(({ data }) => data),
-    takenCorners
+    // The bar owns one edge when crowded; the toggle takes the other.
+    crowded
+      ? [
+          ...(takenCorners ?? []),
+          ...(barEdge === 'top'
+            ? (['top-left', 'top-right'] as const)
+            : (['bottom-left', 'bottom-right'] as const)),
+        ]
+      : takenCorners
   );
 
   return (
@@ -523,6 +571,20 @@ export function StickerPlacementOverlay({
             <div
               key={placement.id}
               ref={placement.isPending ? pendingRef(placement.id) : bindPose?.(placement.id)}
+              {...(crowded && placement.isPending && isOwner
+                ? {
+                    role: 'button',
+                    tabIndex: 0,
+                    'aria-pressed': selectedId === placement.id,
+                    'aria-label': `Select ${art.name}`,
+                    onClick: () => setSelectedId(selectedId === placement.id ? null : placement.id),
+                    onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => {
+                      if (event.key !== 'Enter' && event.key !== ' ') return;
+                      event.preventDefault();
+                      setSelectedId(selectedId === placement.id ? null : placement.id);
+                    },
+                  }
+                : null)}
               className={clsx(
                 'absolute',
                 interactive && 'pointer-events-auto',
@@ -566,7 +628,10 @@ export function StickerPlacementOverlay({
               {placement.isPending && (
                 <span
                   className={clsx(
-                    'pointer-events-none absolute rounded border-2 border-dashed border-yellow-6',
+                    'pointer-events-none absolute rounded border-2 border-yellow-6',
+                    selectedId === placement.id && crowded
+                      ? 'border-solid bg-yellow-6/20'
+                      : 'border-dashed',
                     // Inside the artwork's own box on a card, outside it in the
                     // detail view. A card draws this inside two `overflow-hidden`
                     // layers over `object-fit: cover` media, so an outset ring on
@@ -660,7 +725,7 @@ export function StickerPlacementOverlay({
             box: controlBox,
           });
 
-          if (isOwner && stickerExtent > 0)
+          if (isOwner && stickerExtent > 0 && !crowded)
             pendingControls.push(
               <div key={placement.id}>
                 {/* ⚠️ Known wrong, and left wrong deliberately.
@@ -762,13 +827,22 @@ export function StickerPlacementOverlay({
       {/* Outside the isolated layer so these out-rank every placed sticker, not
           just the one they belong to. Below the draft on purpose
           (DRAFT_STICKER_Z > PENDING_CONTROL_Z): whatever is under the cursor wins. */}
-      {pendingControls.length > 0 && (
+      {(pendingControls.length > 0 || crowded) && (
         <div
           className="pointer-events-none absolute inset-0 overflow-hidden"
           style={{ zIndex: PENDING_CONTROL_Z }}
         >
           <div className="pointer-events-none absolute inset-0" style={peekStyle}>
             {pendingControls}
+            {crowded && (
+              <StickerPendingBar
+                count={ownerPending.length}
+                selected={selected}
+                selectedName={selected ? artwork.get(selected.data.cosmeticId)?.name : undefined}
+                onClear={() => setSelectedId(null)}
+                edge={barEdge}
+              />
+            )}
           </div>
           <Button
             size="sm"
