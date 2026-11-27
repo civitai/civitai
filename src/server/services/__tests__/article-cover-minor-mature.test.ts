@@ -71,8 +71,8 @@ const cover = (
   nsfwLevel,
   minor,
   modelRestricted,
-  ingestion: 'Scanned',
-  needsReview: null,
+  ingestion: 'Scanned' as string,
+  needsReview: null as string | null,
   meta: null,
   metadata: null,
   tags: [],
@@ -438,11 +438,11 @@ describe('the article page under the report-listed rule', () => {
 // An article whose cover is missing can be public, so the legacy key of a cover a reader cannot see
 // must go with it, from the feed and from the article page.
 describe('the legacy cover key of a cover a reader cannot see', () => {
-  const unseen = [
+  const unseen: [string, ReturnType<typeof cover>][] = [
     ['NotFound', { ...cover(1, false), ingestion: 'NotFound' }],
     ['Pending', { ...cover(1, false), ingestion: 'Pending' }],
     ['awaiting review', { ...cover(1, false), needsReview: 'tag' }],
-  ] as const;
+  ];
 
   it.each(unseen)('🔴 is dropped for a stranger when the cover is %s', async (_, image) => {
     expect((await detailArticle(image, viewers['a stranger'], 'coverImage')).cover).toBeNull();
