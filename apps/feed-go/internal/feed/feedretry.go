@@ -78,7 +78,7 @@ func fetchInfiniteFeed(ctx context.Context, f FeedFetcher, query string, viewer 
 	if !on {
 		return ans, err
 	}
-	if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) < attemptTimeout(f)/1000 { // PROBE MUTANT M1
+	if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) < attemptTimeout(f) {
 		observe(RetryHandedBack)
 		return ans, unavailable.Fallback
 	}
