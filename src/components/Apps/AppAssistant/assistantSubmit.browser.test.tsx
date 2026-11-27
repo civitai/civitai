@@ -502,6 +502,28 @@ describe('Submit for review', () => {
     );
   });
 
+  test('a bundle missing staff platform updates (409) says to bring them in, never the CLI override', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(
+      async () =>
+        new Response(
+          JSON.stringify({
+            message:
+              'this bundle does not contain a platform update … or submit with --allow-unmerged-platform-update …',
+            code: 'platform_update_missing',
+            details: {
+              updates: [{ id: 'apu_1', reason: 'Fix', by: 'mod-jane', paths: ['src/a.ts'] }],
+            },
+          }),
+          { status: 409 }
+        )
+    );
+    await expect(
+      sendForReview({ bundle: new Blob(['x']), manifest: MANIFEST }, fetchImpl)
+    ).rejects.toThrow(
+      'Not submitted: this app does not contain the latest updates from Civitai staff yet (apu_1). Ask App Assistant to bring in the platform updates, then submit again.'
+    );
+  });
+
   test('any other refusal that names a CLI command is told in plain words', async () => {
     const fetchImpl = vi.fn<typeof fetch>(
       async () =>

@@ -203,6 +203,67 @@ describe('app-review notifications send email', () => {
     expect(mail.html).not.toContain('Open your app');
   });
 
+  // Through the real detail-fetcher dispatcher (`populateNotificationDetails`) and the real
+  // template: the reviewer is resolved by the registered app-review fetcher, and the prepared
+  // byline is forwarded to the email. `approved` is a LEGACY notification (a stored reviewer id).
+  const approved = (reviewerUserId: number) => ({
+    type: 'app-block-approved',
+    details: { slug: 'pixel-pal', name: 'Pixel Pal', version: '1.0.0', reviewerUserId },
+    userIds: [1],
+  });
+
+  it('🔴 an approval email names the reviewer the dispatcher resolved', async () => {
+    dbMock.dbRead.user.findMany.mockClear();
+    dbMock.dbRead.user.findMany.mockResolvedValue([
+      { id: 31, username: 'reviewer_ada', image: null, deletedAt: null },
+    ] as never);
+    const outcome = await sendNotificationEmails(approved(31));
+    expect(outcome.sent).toBe(1);
+    const mail = vi.mocked(sendEmail).mock.calls[0]![0];
+    expect(mail.text).toContain('Reviewed by @reviewer_ada, Civitai App Review');
+    expect(mail.html).toContain('Reviewed by @reviewer_ada, Civitai App Review');
+    expect(dbMock.dbRead.user.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: [31] }, deletedAt: null } })
+    );
+  });
+
+  it('🔴 an approval email from a deleted reviewer still carries the team byline', async () => {
+    dbMock.dbRead.user.findMany.mockResolvedValue([] as never);
+    const outcome = await sendNotificationEmails(approved(44));
+    expect(outcome.sent).toBe(1);
+    const mail = vi.mocked(sendEmail).mock.calls[0]![0];
+    expect(mail.text).toContain('Reviewed by Civitai App Review');
+    expect(mail.text).not.toContain('Reviewed by @');
+    expect(mail.html).toContain('Reviewed by Civitai App Review');
+  });
+
+  it('🔴 an approval email resolves the reviewer from the decided request, not a stored id', async () => {
+    dbMock.dbRead.appBlockPublishRequest.findMany.mockResolvedValue([
+      { id: 'pubreq_mail', reviewedByUserId: 31 },
+    ] as never);
+    dbMock.dbRead.user.findMany.mockClear();
+    dbMock.dbRead.user.findMany.mockResolvedValue([
+      { id: 31, username: 'reviewer_ada', image: null, deletedAt: null },
+    ] as never);
+    const outcome = await sendNotificationEmails({
+      type: 'app-block-approved',
+      details: {
+        slug: 'pixel-pal',
+        name: 'Pixel Pal',
+        version: '1.0.0',
+        reviewedByModerator: true,
+        reviewRequestId: 'pubreq_mail',
+      },
+      userIds: [1],
+    });
+    expect(outcome.sent).toBe(1);
+    const mail = vi.mocked(sendEmail).mock.calls[0]![0];
+    expect(mail.text).toContain('Reviewed by @reviewer_ada, Civitai App Review');
+    expect(dbMock.dbRead.user.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: [31] }, deletedAt: null } })
+    );
+  });
+
   it('a user who used the one-click unsubscribe gets no more of that email', async () => {
     const link = new URL(getEmailUnsubscribeUrl(1, 'app-block-rejected'));
     expect(await post(Object.fromEntries(link.searchParams))).toBe(200);

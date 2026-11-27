@@ -19,8 +19,8 @@ const { notificationEmail } = await import('~/server/email/templates/notificatio
 
 /**
  * Review attribution: who an app-review decision came from, on the notification (bell + email)
- * and on the developer's own submission history. Pure — the one DB read (the detail fetcher)
- * gets a fake client through its context argument.
+ * and on the developer's own submission history. Pure — the DB reads (the detail fetcher)
+ * get a fake client through its context argument.
  */
 
 /** The decisions that name the individual reviewer. A takedown (`app-listing-hidden`) never does. */
@@ -67,8 +67,10 @@ describe('appReviewByline', () => {
   });
 
   it('maps an emitter attribution to the stored fields', () => {
-    expect(appReviewAttributionDetails({ kind: 'moderator', userId: 7 })).toEqual({
-      reviewerUserId: 7,
+    // A moderator decision stores the decided request and a marker, never the reviewer's id.
+    expect(appReviewAttributionDetails({ kind: 'moderator', requestId: 'pubreq_7' })).toEqual({
+      reviewedByModerator: true,
+      reviewRequestId: 'pubreq_7',
     });
     expect(appReviewAttributionDetails({ kind: 'automated' })).toEqual({
       reviewedAutomatically: true,
@@ -177,15 +179,130 @@ describe('notification email', () => {
 });
 
 describe('appReviewDetailFetcher', () => {
-  const ctx = (users: { id: number; username: string }[]) => {
+  type RequestRow = { id: string; reviewedByUserId: number | null };
+  const ctx = (
+    users: { id: number; username: string }[],
+    requests: { block?: RequestRow[]; listing?: RequestRow[] } = {}
+  ) => {
     const findMany = vi.fn(async (_args: unknown) => users);
+    // Each fake answers only the ids it was asked for, as the real `where: { id: { in } }` does.
+    const requestTable = (rows: RequestRow[]) =>
+      vi.fn(async (args: { where: { id: { in: string[] } } }) =>
+        rows.filter((r) => args.where.id.in.includes(r.id))
+      );
+    const blockFindMany = requestTable(requests.block ?? []);
+    const listingFindMany = requestTable(requests.listing ?? []);
     return {
       findMany,
-      ctx: { db: { user: { findMany } }, showSfwFace: true } as unknown as DetailFetcherContext,
+      blockFindMany,
+      listingFindMany,
+      ctx: {
+        db: {
+          user: { findMany },
+          appBlockPublishRequest: { findMany: blockFindMany },
+          appListingPublishRequest: { findMany: listingFindMany },
+        },
+        showSfwFace: true,
+      } as unknown as DetailFetcherContext,
     };
   };
 
-  it('resolves the stored reviewer into the actor, excluding deleted accounts', async () => {
+  // What a moderator decision stores now: a marker and the decided request, no account id.
+  const decided = (reviewRequestId: string) => ({
+    ...BASE,
+    reviewedByModerator: true,
+    reviewRequestId,
+  });
+
+  it('🔴 resolves the reviewer from the decided request, per type, excluding deleted accounts', async () => {
+    // Both requests carry the SAME id, one in each table: each notification must read the table
+    // its type names, never the other one's row.
+    const {
+      findMany,
+      blockFindMany,
+      listingFindMany,
+      ctx: c,
+    } = ctx([{ id: 31, username: 'reviewer_ada' }], {
+      block: [{ id: 'req_shared', reviewedByUserId: 31 }],
+      listing: [{ id: 'req_shared', reviewedByUserId: 44 }],
+    });
+    const live = { id: 1, type: 'app-block-approved', details: decided('req_shared') };
+    const gone = { id: 2, type: 'app-listing-rejected', details: decided('req_shared') };
+    await appReviewDetailFetcher.fetcher([live, gone], c);
+
+    expect(blockFindMany.mock.calls[0]![0]).toMatchObject({
+      where: { id: { in: ['req_shared'] } },
+    });
+    expect(listingFindMany.mock.calls[0]![0]).toMatchObject({
+      where: { id: { in: ['req_shared'] } },
+    });
+    expect((findMany.mock.calls[0]![0] as { where: unknown }).where).toEqual({
+      id: { in: [31, 44] },
+      deletedAt: null,
+    });
+    expect(live.details).toEqual({
+      ...BASE,
+      actor: { username: 'reviewer_ada' },
+      reviewedByModerator: true,
+    });
+    // 44 is not a live account (deleted): the team byline.
+    expect(gone.details).toEqual({ ...BASE, reviewedByModerator: true });
+    // What the client receives carries neither reviewer id nor the request ids.
+    expect(JSON.stringify([live, gone])).not.toMatch(/\b(31|44)\b|req_shared/);
+    expect(getNotificationMessage(live)?.byline).toBe(
+      'Reviewed by @reviewer_ada, Civitai App Review'
+    );
+    expect(getNotificationMessage(gone)?.byline).toBe('Reviewed by Civitai App Review');
+  });
+
+  it('🔴 the owner’s copy of a staff on-behalf outcome reads the BLOCK request table', async () => {
+    // Its request is an AppBlockPublishRequest (the on-behalf submit), though its type is not
+    // `app-block-*`. The same id in the listing table names another reviewer.
+    const {
+      blockFindMany,
+      listingFindMany,
+      ctx: c,
+    } = ctx([{ id: 31, username: 'reviewer_ada' }], {
+      block: [{ id: 'pubreq_ob', reviewedByUserId: 31 }],
+      listing: [{ id: 'pubreq_ob', reviewedByUserId: 44 }],
+    });
+    const approved = {
+      id: 1,
+      type: 'app-platform-update-approved',
+      details: decided('pubreq_ob'),
+    };
+    const rejected = {
+      id: 2,
+      type: 'app-platform-update-rejected',
+      details: decided('pubreq_ob'),
+    };
+    await appReviewDetailFetcher.fetcher([approved, rejected], c);
+    expect(blockFindMany).toHaveBeenCalledTimes(1);
+    expect(listingFindMany).not.toHaveBeenCalled();
+    for (const n of [approved, rejected]) {
+      expect(n.details).toEqual({
+        ...BASE,
+        actor: { username: 'reviewer_ada' },
+        reviewedByModerator: true,
+      });
+    }
+  });
+
+  it('falls back to the team when the request has no reviewer or is gone', async () => {
+    const { findMany, ctx: c } = ctx([], {
+      block: [{ id: 'pubreq_unset', reviewedByUserId: null }],
+    });
+    const unset = { id: 1, type: 'app-block-rejected', details: decided('pubreq_unset') };
+    const missing = { id: 2, type: 'app-listing-approved', details: decided('alpr_missing') };
+    await appReviewDetailFetcher.fetcher([unset, missing], c);
+    expect(findMany).not.toHaveBeenCalled();
+    for (const n of [unset, missing]) {
+      expect(n.details).toEqual({ ...BASE, reviewedByModerator: true });
+      expect(getNotificationMessage(n)?.byline).toBe('Reviewed by Civitai App Review');
+    }
+  });
+
+  it('resolves a legacy stored reviewer id into the actor, excluding deleted accounts', async () => {
     const { findMany, ctx: c } = ctx([{ id: 31, username: 'reviewer_ada' }]);
     const live = { id: 1, type: 'app-block-approved', details: { ...BASE, reviewerUserId: 31 } };
     const gone = { id: 2, type: 'app-listing-rejected', details: { ...BASE, reviewerUserId: 44 } };
@@ -197,12 +314,40 @@ describe('appReviewDetailFetcher', () => {
     expect((live.details as Record<string, unknown>).actor).not.toHaveProperty('id');
     expect(gone.details).not.toHaveProperty('actor');
     expect(getNotificationMessage(gone)?.byline).toBe('Reviewed by Civitai App Review');
+    expect(getNotificationMessage(live)?.byline).toBe(
+      'Reviewed by @reviewer_ada, Civitai App Review'
+    );
+  });
+
+  it('🔴 returns no reviewer account id from a legacy notification, resolved or deleted', async () => {
+    const { ctx: c } = ctx([{ id: 31, username: 'reviewer_ada' }]);
+    const live = { id: 1, type: 'app-block-approved', details: { ...BASE, reviewerUserId: 31 } };
+    const gone = { id: 2, type: 'app-listing-rejected', details: { ...BASE, reviewerUserId: 44 } };
+    const unset = { id: 3, type: 'app-block-rejected', details: { ...BASE, reviewerUserId: null } };
+    await appReviewDetailFetcher.fetcher([live, gone, unset], c);
+
+    for (const n of [live, gone, unset]) expect(n.details).not.toHaveProperty('reviewerUserId');
+    // Nothing in what the client receives carries either id.
+    expect(JSON.stringify([live, gone, unset])).not.toMatch(/\b(31|44)\b/);
+    expect(live.details).toEqual({
+      ...BASE,
+      actor: { username: 'reviewer_ada' },
+      reviewedByModerator: true,
+    });
+    expect(gone.details).toEqual({ ...BASE, reviewedByModerator: true });
+    // A null id named nobody: no byline, as before attribution.
+    expect(unset.details).toEqual(BASE);
+    expect(getNotificationMessage(unset)?.byline).toBeUndefined();
   });
 
   it('makes no query for notifications without a reviewer', async () => {
-    const { findMany, ctx: c } = ctx([]);
-    await appReviewDetailFetcher.fetcher([{ id: 1, type: 'app-block-rejected', details: BASE }], c);
+    const { findMany, blockFindMany, listingFindMany, ctx: c } = ctx([]);
+    const n = { id: 1, type: 'app-block-rejected', details: { ...BASE } };
+    await appReviewDetailFetcher.fetcher([n], c);
     expect(findMany).not.toHaveBeenCalled();
+    expect(blockFindMany).not.toHaveBeenCalled();
+    expect(listingFindMany).not.toHaveBeenCalled();
+    expect(n.details).toEqual(BASE);
   });
 });
 

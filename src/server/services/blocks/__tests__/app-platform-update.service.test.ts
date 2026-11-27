@@ -27,6 +27,9 @@ import type { SubmitVersionParams } from '~/server/services/blocks/publish-reque
  *     the record, and the owner's notification;
  *   - an app with no source repo gets one as a FORK of its build repo first (the build repo is
  *     only read), so an owner's existing checkout of the build repo merges the update cleanly;
+ *     every update to such a fork (a retry after a failed first push and every later one too) is
+ *     cut from the latest approved commit, never a newer unapproved push; a newer approval is
+ *     synced into the fork, or the push is refused; any other source repo is cut from its main;
  *   - the record names the commit's real parent, and whether the update touches the manifest;
  *   - the owner list returns this app's OPEN updates (pending AND conflicted, oldest first, each
  *     with its status; never merged or superseded), to the owner or an accepted collaborator only;
@@ -218,6 +221,31 @@ class FakeGit {
       if (!this.refs.has(key)) return json(404, {});
       const parent = this.forkOf.get(key);
       return json(200, { fork: !!parent, parent: parent ? { full_name: parent } : null });
+    }
+    if (
+      (m = p.match(/^\/api\/v1\/repos\/([^/]+)\/([^/]+)\/sync_fork\/(.+)$/)) &&
+      method === 'POST'
+    ) {
+      // As Forgejo 17 answers (measured): a fast-forward of the fork's branch to its parent's is a
+      // 204; a fork branch with commits of its own, one already up to date, or a repo that is not
+      // a fork is a 400 and moves nothing.
+      const key = `${m[1]}/${decodeURIComponent(m[2])}`;
+      const name = decodeURIComponent(m[3]);
+      const parent = this.forkOf.get(key);
+      const ours = this.refs.get(key)?.get(name);
+      const theirs = parent ? this.refs.get(parent)?.get(name) : undefined;
+      if (!ours || !theirs || ours === theirs || !this.ancestors(theirs).has(ours))
+        return json(400, { message: 'You can’t sync this branch' });
+      this.refs.get(key)!.set(name, theirs);
+      return json(204);
+    }
+    if ((m = p.match(/^\/api\/v1\/repos\/([^/]+)\/([^/]+)\/branches$/)) && method === 'POST') {
+      // As the real host answers: 409 for a taken name, 500 for a sha the repo does not hold.
+      const key = `${m[1]}/${decodeURIComponent(m[2])}`;
+      if (this.branch(m[1], decodeURIComponent(m[2]), body.new_branch_name)) return json(409, {});
+      if (!this.reachable(key, body.old_ref_name)) return json(500, {});
+      this.refs.get(key)!.set(body.new_branch_name, body.old_ref_name);
+      return json(201, { name: body.new_branch_name });
     }
     if ((m = p.match(/^\/api\/v1\/repos\/([^/]+)\/([^/]+)\/branches\/(.+)$/))) {
       const b = this.branch(m[1], m[2], decodeURIComponent(m[3]));
@@ -683,6 +711,18 @@ describe('push', () => {
     });
   });
 
+  it('a source repo that is not a fork of the build repo is cut from its main, even with an approved version elsewhere', async () => {
+    git.addRepo(BUILD, SLUG, { 'package.json': PKG_OLD, 'src/app.ts': 'export const v = 9;\n' });
+    approved.ab_app = { forgejoCommitSha: git.branch(BUILD, SLUG)!.head, version: '1.0.0' };
+    await existingSourceRepo({ 'package.json': PKG_OLD, 'src/app.ts': 'export const v = 1;\n' });
+    const main = git.branch(SRC, SLUG)!.head;
+    const result = await pushAsMod();
+    expect(result.baseCommitSha).toBe(main);
+    expect(git.parents(result.commitSha)).toEqual([main]);
+    expect(git.branch(SRC, SLUG, result.branch)!.files['src/app.ts']).toBe('export const v = 1;\n');
+    expect(git.writes.filter((w) => w.path.includes('sync_fork'))).toEqual([]);
+  });
+
   it('a source repo under the slug that is not this app’s is never written', async () => {
     git.addRepo(SRC, SLUG, { 'package.json': PKG_OLD });
     // Bound to the OTHER app's block: someone else's repo under this slug.
@@ -786,6 +826,178 @@ describe('an app with no source repo', () => {
       status: 'pending',
       base_commit_sha: head,
     });
+  });
+
+  it('is cut from the latest APPROVED commit, not a newer unapproved push on the build repo’s main', async () => {
+    const { head: approvedSha } = buildRepoWithOwnerCheckout();
+    // The owner pushed again after approval; nobody has reviewed it.
+    const unapproved = git.devPush(
+      BUILD,
+      SLUG,
+      { 'src/app.ts': 'export const v = 3; // unreviewed\n' },
+      'wip'
+    );
+    // Their checkout is at the build repo's main (the unapproved push is theirs), plus a local commit.
+    const ownerCheckout = git.localCommit(unapproved, { 'README.md': '# Pixel Garden (mine)\n' });
+
+    const result = await pushAsMod();
+    expect(result.seededSourceRepo).toBe(true);
+    expect(result.baseCommitSha).toBe(approvedSha);
+    expect(git.parents(result.commitSha)).toEqual([approvedSha]);
+    expect((await updateRows())[0]).toMatchObject({ base_commit_sha: approvedSha });
+    // The update holds the approved code plus its change, none of the unapproved push.
+    expect(git.branch(SRC, SLUG, result.branch)!.files).toEqual({
+      'block.manifest.json': '{"blockId":"pixel-garden"}',
+      'package.json': PKG_NEW,
+      'README.md': '# Pixel Garden\n',
+      '.env': 'K=1',
+      'src/app.ts': 'export const v = 2;\n',
+      'src/sdk-shim.ts': 'export {};\n',
+    });
+    // The source repo's main stays where the fork put it: the git host cannot move a branch back.
+    expect(git.branch(SRC, SLUG)!.head).toBe(unapproved);
+
+    // The owner's checkout merges it cleanly, keeping their unapproved push and their local commit.
+    expect(git.merge(ownerCheckout, result.commitSha)).toEqual({
+      kind: 'clean',
+      files: {
+        'block.manifest.json': '{"blockId":"pixel-garden"}',
+        'package.json': PKG_NEW,
+        'README.md': '# Pixel Garden (mine)\n',
+        '.env': 'K=1',
+        'src/app.ts': 'export const v = 3; // unreviewed\n',
+        'src/sdk-shim.ts': 'export {};\n',
+      },
+    });
+  });
+
+  it('is planned against the APPROVED tree: a file the unapproved push also changed still updates', async () => {
+    const { head: approvedSha } = buildRepoWithOwnerCheckout();
+    git.devPush(BUILD, SLUG, { 'package.json': '{"wip":true}' }, 'wip');
+    const result = await pushAsMod();
+    expect(result.baseCommitSha).toBe(approvedSha);
+    expect(result.paths).toEqual([
+      { path: 'src/sdk-shim.ts', operation: 'create' },
+      { path: 'package.json', operation: 'update' },
+    ]);
+    expect(git.branch(SRC, SLUG, result.branch)!.files['package.json']).toBe(PKG_NEW);
+  });
+
+  it('an approved commit the new source repo does not hold refuses the push', async () => {
+    const { head } = buildRepoWithOwnerCheckout();
+    // Recorded as approved, but on no branch of the build repo, so the fork does not have it.
+    approved.ab_app = {
+      forgejoCommitSha: git.localCommit(head, { 'src/app.ts': 'gone\n' }),
+      version: '1.3.0',
+    };
+    await expect(pushAsMod()).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: 'The app’s approved version is not in its source repo yet; nothing was pushed',
+    });
+    expect([...git.refs.get(`${SRC}/${SLUG}`)!.keys()]).toEqual(['main']);
+    expect(git.commits.filter((c) => c.branch !== 'main')).toEqual([]);
+    expect(await updateRows()).toEqual([]);
+  });
+
+  it('a retry after a first push that failed once the repo existed is still cut from the APPROVED commit', async () => {
+    const { head: approvedSha } = buildRepoWithOwnerCheckout();
+    const unapproved = git.devPush(BUILD, SLUG, { 'src/app.ts': 'export const v = 3;\n' }, 'wip');
+    // The fork is made, then the git host fails the commit.
+    git.beforeCommit = () => {
+      git.beforeCommit = null;
+      throw new Error('git host down');
+    };
+    await expect(pushAsMod()).rejects.toThrow();
+    expect(await updateRows()).toEqual([]);
+    expect(git.branch(SRC, SLUG)!.head).toBe(unapproved);
+
+    const retry = await pushAsMod();
+    expect(retry.seededSourceRepo).toBe(false);
+    expect(retry.baseCommitSha).toBe(approvedSha);
+    expect(git.parents(retry.commitSha)).toEqual([approvedSha]);
+    expect(git.branch(SRC, SLUG, retry.branch)!.files['src/app.ts']).toBe('export const v = 2;\n');
+    expect((await updateRows())[0]).toMatchObject({ base_commit_sha: approvedSha });
+  });
+
+  it('a LATER update to that repo is cut from the approved commit, not the fork’s main', async () => {
+    const { head: approvedSha } = buildRepoWithOwnerCheckout();
+    const unapproved = git.devPush(BUILD, SLUG, { 'src/app.ts': 'export const v = 3;\n' }, 'wip');
+    const first = await pushAsMod();
+    expect(first.seededSourceRepo).toBe(true);
+    expect(git.branch(SRC, SLUG)!.head).toBe(unapproved);
+
+    const later = await svc.pushPlatformUpdate({
+      staffUserId: MOD,
+      app: { slug: SLUG },
+      reason: REASON,
+      changes: [put('README.md', '# Pixel Garden v2\n')],
+    });
+    expect(later.seededSourceRepo).toBe(false);
+    expect(later.baseCommitSha).toBe(approvedSha);
+    expect(git.parents(later.commitSha)).toEqual([approvedSha]);
+    expect(git.branch(SRC, SLUG, later.branch)!.files['src/app.ts']).toBe('export const v = 2;\n');
+  });
+
+  it('a later update after a NEWER approval syncs the fork from the build repo and is cut from it', async () => {
+    const { head: firstApproved } = buildRepoWithOwnerCheckout();
+    const first = await pushAsMod();
+    expect(first.baseCommitSha).toBe(firstApproved);
+
+    // The owner ships 1.3.0 to the build repo, it is approved, then they push more, unreviewed.
+    const newer = git.devPush(BUILD, SLUG, { 'src/app.ts': 'export const v = 4;\n' }, 'v1.3.0');
+    approved.ab_app = { forgejoCommitSha: newer, version: '1.3.0' };
+    const unapproved = git.devPush(BUILD, SLUG, { 'src/app.ts': 'export const v = 5;\n' }, 'wip');
+    const ownerCheckout = git.localCommit(unapproved, { 'README.md': '# Pixel Garden (mine)\n' });
+    const buildBefore = git.branch(BUILD, SLUG);
+
+    const later = await pushAsMod();
+    expect(later.baseCommitSha).toBe(newer);
+    expect(git.parents(later.commitSha)).toEqual([newer]);
+    expect(git.branch(SRC, SLUG, later.branch)!.files).toEqual({
+      'block.manifest.json': '{"blockId":"pixel-garden"}',
+      'package.json': PKG_NEW,
+      'README.md': '# Pixel Garden\n',
+      '.env': 'K=1',
+      'src/app.ts': 'export const v = 4;\n',
+      'src/sdk-shim.ts': 'export {};\n',
+    });
+    // The sync fast-forwarded the fork's main (the build repo is only read).
+    expect(git.branch(SRC, SLUG)!.head).toBe(unapproved);
+    expect(git.branch(BUILD, SLUG)).toEqual(buildBefore);
+    expect(git.writes.filter((w) => w.path.includes(`/${BUILD}/`))).toEqual([
+      { method: 'POST', path: `/api/v1/repos/${BUILD}/${SLUG}/forks` },
+    ]);
+    // An owner's checkout at the build repo's main merges it cleanly.
+    expect(git.merge(ownerCheckout, later.commitSha)).toEqual({
+      kind: 'clean',
+      files: {
+        'block.manifest.json': '{"blockId":"pixel-garden"}',
+        'package.json': PKG_NEW,
+        'README.md': '# Pixel Garden (mine)\n',
+        '.env': 'K=1',
+        'src/app.ts': 'export const v = 5;\n',
+        'src/sdk-shim.ts': 'export {};\n',
+      },
+    });
+  });
+
+  it('a newer approval the fork cannot be synced to (its main has commits of its own) refuses the push', async () => {
+    buildRepoWithOwnerCheckout();
+    await pushAsMod();
+    // Someone pushed to the source repo's main, so it no longer fast-forwards to the build repo's.
+    const own = git.devPush(SRC, SLUG, { 'NOTES.md': 'mine\n' }, 'notes');
+    const newer = git.devPush(BUILD, SLUG, { 'src/app.ts': 'export const v = 4;\n' }, 'v1.3.0');
+    approved.ab_app = { forgejoCommitSha: newer, version: '1.3.0' };
+    const branchesBefore = [...git.refs.get(`${SRC}/${SLUG}`)!.entries()];
+    const rowsBefore = await updateRows();
+
+    await expect(pushAsMod()).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: 'The app’s approved version is not in its source repo yet; nothing was pushed',
+    });
+    expect([...git.refs.get(`${SRC}/${SLUG}`)!.entries()]).toEqual(branchesBefore);
+    expect(git.branch(SRC, SLUG)!.head).toBe(own);
+    expect(await updateRows()).toEqual(rowsBefore);
   });
 
   it('an update to the same file the owner changed is a conflict, not a silent overwrite', async () => {

@@ -83,10 +83,7 @@ import { useFeedSearchSync } from '~/components/AutocompleteSearch/useFeedSearch
 import { ToolSearchItem } from '~/components/AutocompleteSearch/renderItems/tools';
 import { ComicsSearchItem } from '~/components/AutocompleteSearch/renderItems/comics';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import {
-  SEARCH_POLICY_MESSAGE,
-  searchRefusedByLine,
-} from '~/shared/constants/search-refusal.constants';
+import { SearchPolicyMessage } from '~/components/Search/SearchRefusalNotice';
 
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import {
@@ -112,7 +109,6 @@ import {
 } from '~/components/Search/ImageSearchUpload/pending-search-upload';
 import { moreLikeThisHref, offersMoreLikeThis } from '~/components/Image/MoreLikeThisButton';
 
-/** The dropdown's refusal items that show the policy message, as the refusal each one is. */
 const REFUSAL_ITEMS: Record<string, SearchRefusal> = {
   profanity: 'profanity',
   disabled: 'poi',
@@ -803,19 +799,10 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
             : undefined;
           if (refusedBy) {
             return (
-              <Stack gap="xs" align="center">
-                <Text size="sm" align="center" weight={600}>
-                  {SEARCH_POLICY_MESSAGE.title}
-                </Text>
-                <Text size="xs" align="center">
-                  {SEARCH_POLICY_MESSAGE.body}
-                </Text>
-                {currentUser?.isModerator && (
-                  <Text size="xs" align="center" c="dimmed">
-                    {searchRefusedByLine(refusedBy)}
-                  </Text>
-                )}
-              </Stack>
+              <SearchPolicyMessage
+                compact
+                refusedBy={currentUser?.isModerator ? refusedBy : undefined}
+              />
             );
           }
           if (key === 'error') {

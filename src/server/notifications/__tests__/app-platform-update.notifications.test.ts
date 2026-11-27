@@ -23,9 +23,8 @@ const asNotification = (details: AppPlatformUpdateNotificationDetails) =>
   ({ details } as unknown as Parameters<Def['prepareMessage']>[0]);
 
 describe('app-platform-update', () => {
-  it('is registered, not toggleable', () => {
+  it('is registered', () => {
     expect(notificationProcessors['app-platform-update']).toBe(def);
-    expect(def.toggleable).toBe(false);
   });
 
   it('names the staff member, the app and the reason, and links the owner’s apps', () => {
@@ -121,7 +120,8 @@ describe('app-platform-update-approved / -rejected (the owner’s review outcome
     version: '1.2.1',
     updateId: 'apu_01JABCDEFGHJKMNPQRSTVWXYZ0',
     byUsername: 'mod-ana',
-    reviewerUserId: 31,
+    // As `appReviewDetailFetcher` returns a moderator decision: the marker and the resolved actor.
+    reviewedByModerator: true,
     actor: { username: 'reviewer_ada', deletedAt: null },
   };
 

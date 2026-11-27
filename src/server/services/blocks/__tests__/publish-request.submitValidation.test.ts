@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import JSZip from 'jszip';
+import { CIVITAI_BLOCKS_REACT_FLOOR, CIVITAI_SDK_FLOOR } from '@civitai/app-assistant/sdk-floor';
 import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
 import type * as ReviewAutodeployService from '~/server/services/blocks/review-autodeploy.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -445,27 +446,33 @@ describe('submitVersion — advisories', () => {
       }),
       submittedByUserId: 1,
       submitterIsModerator: false,
-      sdkFloorOverride: [{ package: '@civitai/sdk', installed: '0.31.4', minimum: '0.33.0' }],
+      sdkFloorOverride: [
+        { package: '@civitai/sdk', installed: '0.31.4', minimum: CIVITAI_SDK_FLOOR },
+      ],
     });
     expect(db.createPublishRequest).toHaveBeenCalledTimes(1);
     expect(result.advisories.map((a) => [a.code, a.message])).toEqual([
       [
         'sdk-below-floor',
-        "This app's package-lock.json installs @civitai/sdk 0.31.4, below the platform minimum 0.33.0. Upgrade with `npm install @civitai/sdk@latest` and resubmit. The submit was not refused; a moderator sees the version.",
+        `This app's package-lock.json installs @civitai/sdk 0.31.4, below the platform minimum ${CIVITAI_SDK_FLOOR}. Upgrade with \`npm install @civitai/sdk@latest\` and resubmit. The submit was not refused; a moderator sees the version.`,
       ],
       [
         'sdk-below-floor',
-        "This app's package-lock.json installs @civitai/blocks-react 0.80.2, below the platform minimum 0.87.0. Upgrade with `npm install @civitai/blocks-react@latest` and resubmit. The submit was not refused; a moderator sees the version.",
+        `This app's package-lock.json installs @civitai/blocks-react 0.80.2, below the platform minimum ${CIVITAI_BLOCKS_REACT_FLOOR}. Upgrade with \`npm install @civitai/blocks-react@latest\` and resubmit. The submit was not refused; a moderator sees the version.`,
       ],
     ]);
     expect(storedFileSummary().sdkFloor).toEqual({
       lockfile: 'package-lock.json',
       lockfileStatus: 'read',
       below: [
-        { package: '@civitai/sdk', installed: '0.31.4', minimum: '0.33.0' },
-        { package: '@civitai/blocks-react', installed: '0.80.2', minimum: '0.87.0' },
+        { package: '@civitai/sdk', installed: '0.31.4', minimum: CIVITAI_SDK_FLOOR },
+        {
+          package: '@civitai/blocks-react',
+          installed: '0.80.2',
+          minimum: CIVITAI_BLOCKS_REACT_FLOOR,
+        },
       ],
-      override: [{ package: '@civitai/sdk', installed: '0.31.4', minimum: '0.33.0' }],
+      override: [{ package: '@civitai/sdk', installed: '0.31.4', minimum: CIVITAI_SDK_FLOOR }],
     });
     // The file diff the review reads is still there beside it.
     expect(Array.isArray(storedFileSummary().files)).toBe(true);
@@ -476,13 +483,54 @@ describe('submitVersion — advisories', () => {
     const result = await submitVersion({
       bundleBuffer: await bundle(VALID, {
         ...OWN_ACCENT,
-        'package-lock.json': lock('0.33.0', '0.87.0'),
+        'package-lock.json': lock(CIVITAI_SDK_FLOOR, CIVITAI_BLOCKS_REACT_FLOOR),
       }),
       submittedByUserId: 1,
       submitterIsModerator: false,
     });
     expect(result.advisories).toEqual([]);
     expect(storedFileSummary()).not.toHaveProperty('sdkFloor');
+    await settleFollowUps();
+  });
+
+  it('pnpm run build: the at-floor pnpm-lock.yaml is read, never the stale package-lock.json beside it', async () => {
+    const pnpmLock = [
+      "lockfileVersion: '9.0'",
+      'importers:',
+      '  .:',
+      '    dependencies:',
+      "      '@civitai/blocks-react':",
+      `        specifier: ^${CIVITAI_BLOCKS_REACT_FLOOR}`,
+      `        version: ${CIVITAI_BLOCKS_REACT_FLOOR}(react@19.0.0)`,
+      "      '@civitai/sdk':",
+      `        specifier: ^${CIVITAI_SDK_FLOOR}`,
+      `        version: ${CIVITAI_SDK_FLOOR}`,
+      '',
+    ].join('\n');
+    // The override makes the reading recorded, so the lockfile it names is observable.
+    const override = [{ package: '@civitai/sdk', installed: '0.29.1', minimum: CIVITAI_SDK_FLOOR }];
+    const result = await submitVersion({
+      bundleBuffer: await bundle(
+        { ...VALID, buildCommand: 'pnpm run build', outputDir: 'dist' },
+        {
+          ...OWN_ACCENT,
+          'package.json': JSON.stringify({ scripts: { build: 'vite build' } }),
+          'package-lock.json': lock('0.30.0', '0.79.0'),
+          'pnpm-lock.yaml': pnpmLock,
+        }
+      ),
+      submittedByUserId: 1,
+      submitterIsModerator: false,
+      sdkFloorOverride: override,
+    });
+    expect(db.createPublishRequest).toHaveBeenCalledTimes(1);
+    expect(result.advisories).toEqual([]);
+    expect(storedFileSummary().sdkFloor).toEqual({
+      lockfile: 'pnpm-lock.yaml',
+      lockfileStatus: 'read',
+      below: [],
+      override,
+    });
     await settleFollowUps();
   });
 
@@ -509,14 +557,16 @@ describe('submitVersion — advisories', () => {
       }),
       submittedByUserId: 1,
       submitterIsModerator: false,
-      sdkFloorOverride: [{ package: '@civitai/sdk', installed: '0.29.1', minimum: '0.33.0' }],
+      sdkFloorOverride: [
+        { package: '@civitai/sdk', installed: '0.29.1', minimum: CIVITAI_SDK_FLOOR },
+      ],
     });
     expect(result.advisories).toEqual([]);
     expect(storedFileSummary().sdkFloor).toEqual({
       lockfile: 'package-lock.json',
       lockfileStatus: 'unreadable',
       below: [],
-      override: [{ package: '@civitai/sdk', installed: '0.29.1', minimum: '0.33.0' }],
+      override: [{ package: '@civitai/sdk', installed: '0.29.1', minimum: CIVITAI_SDK_FLOOR }],
     });
     await settleFollowUps();
   });

@@ -3,6 +3,8 @@ package evalcapture
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +16,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
 	"github.com/civitai/civitai/apps/feed-go/internal/chwrite"
 	"github.com/civitai/civitai/apps/feed-go/internal/evalcorpus"
+	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 )
 
 // All values are synthetic.
@@ -408,22 +411,71 @@ func TestRecordNeverBlocksOnTheWriter(t *testing.T) {
 	}
 }
 
-// Nothing is written for an endpoint outside the first wave (outcome "", nothing to count) or a
-// viewer that could not be resolved (dropped).
-func TestRecordUnsupportedAndUnknownViewer(t *testing.T) {
+// Nothing is written for an endpoint outside the first wave (outcome "", nothing to count), a viewer
+// that could not be resolved (unresolved, whatever its error) or a request that builds no case
+// (invalid): neither is a lost row, so neither is dropped.
+func TestRecordUnsupportedUnknownViewerAndInvalid(t *testing.T) {
 	r, samples, cases, _ := newRecorder(Config{})
 	s := anonSample(1, "match")
 	s.Request.Endpoint = "v1-images"
 	if o := r.Record(s); o != "" {
 		t.Errorf("unsupported endpoint: %q, want \"\"", o)
 	}
-	s = anonSample(1, "match")
-	s.ViewerKnown = false
-	if o := r.Record(s); o != OutcomeDropped {
-		t.Errorf("unknown viewer: %q, want dropped", o)
+	for _, viewerErr := range []error{nil, fallback.New("bearer-token"), errors.New("boom")} {
+		s = anonSample(2, "match")
+		s.ViewerKnown, s.ViewerErr = false, viewerErr
+		if o := r.Record(s); o != "unresolved" {
+			t.Errorf("unknown viewer (err %v): %q, want unresolved", viewerErr, o)
+		}
+	}
+	// A credential class Capture does not know builds no case.
+	s = anonSample(3, "match")
+	s.Request.CredentialClass = "cookie"
+	if o := r.Record(s); o != "invalid" {
+		t.Errorf("unknown credential class: %q, want invalid", o)
 	}
 	if len(samples.rows)+len(cases.rows) != 0 {
 		t.Errorf("rows written: %d %d", len(samples.rows), len(cases.rows))
+	}
+	// The same recorder still writes a capturable request: the two above took no admission slot.
+	if o := r.Record(anonSample(3, "match")); o != "written" {
+		t.Errorf("after them: %q, want written", o)
+	}
+}
+
+// The outcomes, in order, and the closed set of unresolved reasons, as the metrics read them.
+func TestOutcomesAndUnresolvedReasons(t *testing.T) {
+	if got := strings.Join(Outcomes, ","); got != "written,deduped,unresolved,invalid,dropped" {
+		t.Errorf("Outcomes %s", got)
+	}
+	if got := strings.Join(UnresolvedReasons, ","); got != "bearer-token,session-cache-miss,session-cache-cleared,session-id-mismatch,other" {
+		t.Errorf("UnresolvedReasons %s", got)
+	}
+}
+
+// UnresolvedReason reads the viewer resolve's fallback reason: every bearer-* one is bearer-token,
+// the three session-cache ones are themselves (a detail does not change it), anything else other.
+func TestUnresolvedReason(t *testing.T) {
+	cases := []struct {
+		err  error
+		want string
+	}{
+		{fallback.New("bearer-token"), "bearer-token"},
+		{fallback.New("bearer-key-cache-miss"), "bearer-token"},
+		{fallback.Wrap("bearer-key-cache-miss", errors.New("redis down")), "bearer-token"},
+		{fmt.Errorf("resolve: %w", fallback.New("bearer-malformed")), "bearer-token"},
+		{fallback.New("session-cache-miss"), "session-cache-miss"},
+		{fallback.New("session-cache-cleared"), "session-cache-cleared"},
+		{fallback.Newf("session-id-mismatch", "%s", "41"), "session-id-mismatch"},
+		{fallback.New("v1-models-block-token"), "other"},
+		{fallback.New("session-cache-missing"), "other"},
+		{errors.New("session-cache-miss"), "other"},
+		{nil, "other"},
+	}
+	for _, c := range cases {
+		if got := UnresolvedReason(c.err); got != c.want {
+			t.Errorf("UnresolvedReason(%v) = %q, want %q", c.err, got, c.want)
+		}
 	}
 }
 

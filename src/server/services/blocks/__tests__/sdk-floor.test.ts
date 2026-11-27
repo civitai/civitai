@@ -1,5 +1,7 @@
 import JSZip from 'jszip';
+import semver from 'semver';
 import { describe, expect, it } from 'vitest';
+import { CIVITAI_BLOCKS_REACT_FLOOR, CIVITAI_SDK_FLOOR } from '@civitai/app-assistant/sdk-floor';
 import {
   belowSdkFloor,
   judgeBundleSdkFloor,
@@ -11,10 +13,15 @@ import {
 
 /**
  * The outdated-SDK check, server half. Fixture versions are chosen to differ from the published
- * floors (0.33.0 / 0.87.0) in every part, and package.json's RANGE deliberately disagrees with the
- * lockfile, so a reader of the wrong file — or one that hardcodes the floor — gives a different
- * answer.
+ * floors (`CIVITAI_SDK_FLOOR` / `CIVITAI_BLOCKS_REACT_FLOOR`) in every part, and package.json's
+ * RANGE deliberately disagrees with the lockfile, so a reader of the wrong file — or one that
+ * hardcodes the floor — gives a different answer. Where a case means "the floor" or "above it",
+ * the value is built from the constants, so raising a floor does not edit this file.
  */
+
+/** A version above each floor. */
+const SDK_ABOVE = semver.inc(CIVITAI_SDK_FLOOR, 'minor')!;
+const REACT_ABOVE = semver.inc(CIVITAI_BLOCKS_REACT_FLOOR, 'minor')!;
 
 async function zipOf(files: Record<string, string>): Promise<Buffer> {
   const zip = new JSZip();
@@ -25,7 +32,10 @@ async function zipOf(files: Record<string, string>): Promise<Buffer> {
 
 /** A package.json whose ranges claim to be at the floor. The lockfile below says otherwise. */
 const PKG_AT_FLOOR_RANGE = JSON.stringify({
-  dependencies: { '@civitai/sdk': '^0.33.0', '@civitai/blocks-react': '^0.87.0' },
+  dependencies: {
+    '@civitai/sdk': `^${CIVITAI_SDK_FLOOR}`,
+    '@civitai/blocks-react': `^${CIVITAI_BLOCKS_REACT_FLOOR}`,
+  },
 });
 
 const npmLock = (sdk: string, react?: string) =>
@@ -228,7 +238,7 @@ describe('lockfileFor / lockfile choice follows buildCommand', () => {
   it('pnpm build: a current pnpm-lock beside a stale package-lock → no finding', async () => {
     const zip = await zipOf({
       'package-lock.json': npmLock('0.30.0'),
-      'pnpm-lock.yaml': pnpmLock('0.34.2'),
+      'pnpm-lock.yaml': pnpmLock(SDK_ABOVE),
     });
     await expect(judgeBundleSdkFloor(zip, 'pnpm build')).resolves.toEqual({
       lockfile: 'pnpm-lock.yaml',
@@ -240,12 +250,12 @@ describe('lockfileFor / lockfile choice follows buildCommand', () => {
   it('npm run build: a stale package-lock beside a current pnpm-lock → finding', async () => {
     const zip = await zipOf({
       'package-lock.json': npmLock('0.30.0'),
-      'pnpm-lock.yaml': pnpmLock('0.34.2'),
+      'pnpm-lock.yaml': pnpmLock(SDK_ABOVE),
     });
     await expect(judgeBundleSdkFloor(zip, 'npm run build')).resolves.toEqual({
       lockfile: 'package-lock.json',
       lockfileStatus: 'read',
-      below: [{ package: '@civitai/sdk', installed: '0.30.0', minimum: '0.33.0' }],
+      below: [{ package: '@civitai/sdk', installed: '0.30.0', minimum: CIVITAI_SDK_FLOOR }],
     });
   });
 
@@ -266,8 +276,12 @@ describe('belowSdkFloor', () => {
         ])
       )
     ).toEqual([
-      { package: '@civitai/sdk', installed: '0.31.4', minimum: '0.33.0' },
-      { package: '@civitai/blocks-react', installed: '0.80.2', minimum: '0.87.0' },
+      { package: '@civitai/sdk', installed: '0.31.4', minimum: CIVITAI_SDK_FLOOR },
+      {
+        package: '@civitai/blocks-react',
+        installed: '0.80.2',
+        minimum: CIVITAI_BLOCKS_REACT_FLOOR,
+      },
     ]);
   });
 
@@ -275,8 +289,8 @@ describe('belowSdkFloor', () => {
     expect(
       belowSdkFloor(
         new Map([
-          ['@civitai/sdk', '0.33.0'],
-          ['@civitai/blocks-react', '0.88.1'],
+          ['@civitai/sdk', CIVITAI_SDK_FLOOR],
+          ['@civitai/blocks-react', REACT_ABOVE],
         ])
       )
     ).toEqual([]);
@@ -296,7 +310,11 @@ describe('belowSdkFloor', () => {
 
   it('only blocks-react installed and below: only it is named', () => {
     expect(belowSdkFloor(new Map([['@civitai/blocks-react', '0.86.0']]))).toEqual([
-      { package: '@civitai/blocks-react', installed: '0.86.0', minimum: '0.87.0' },
+      {
+        package: '@civitai/blocks-react',
+        installed: '0.86.0',
+        minimum: CIVITAI_BLOCKS_REACT_FLOOR,
+      },
     ]);
   });
 });
@@ -334,8 +352,12 @@ describe('judgeBundleSdkFloor — never fails or holds up a submit', () => {
       lockfile: 'package-lock.json',
       lockfileStatus: 'read',
       below: [
-        { package: '@civitai/sdk', installed: '0.31.4', minimum: '0.33.0' },
-        { package: '@civitai/blocks-react', installed: '0.80.2', minimum: '0.87.0' },
+        { package: '@civitai/sdk', installed: '0.31.4', minimum: CIVITAI_SDK_FLOOR },
+        {
+          package: '@civitai/blocks-react',
+          installed: '0.80.2',
+          minimum: CIVITAI_BLOCKS_REACT_FLOOR,
+        },
       ],
     });
   });
@@ -343,7 +365,9 @@ describe('judgeBundleSdkFloor — never fails or holds up a submit', () => {
   it('at-floor lockfile → nothing below', async () => {
     await expect(
       judgeBundleSdkFloor(
-        await zipOf({ 'package-lock.json': npmLock('0.33.0', '0.87.0') }),
+        await zipOf({
+          'package-lock.json': npmLock(CIVITAI_SDK_FLOOR, CIVITAI_BLOCKS_REACT_FLOOR),
+        }),
         'npm run build'
       )
     ).resolves.toEqual({ lockfile: 'package-lock.json', lockfileStatus: 'read', below: [] });

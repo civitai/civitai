@@ -1,7 +1,7 @@
 import { TRPCError } from '@trpc/server';
+import { isMissingTableError } from '~/server/services/blocks/missing-table-error';
 
 import { dbRead } from '~/server/db/client';
-import { isMissingTableError } from '~/server/services/blocks/missing-table-error';
 // Static, not a lazy `import()`: `listing-problems` (imported below) already pulls this
 // module into the graph, so naming it here adds no weight — and the batched scan read is
 // on the hot path of every `/apps/mine` render, where a dynamic import would cost a
@@ -348,9 +348,9 @@ export function canonicalOwnerWhereBranches(userId: number): Array<Record<string
 // wrong on every invite, and would drift from what the kind can physically do.
 // ---------------------------------------------------------------------------
 
-// "The table isn't there yet": its own module (missing-table-error.ts), re-exported here so the
-// existing callers are unchanged.
-export { isMissingTableError };
+// Moved to a leaf module (no imports) so a light module can use it without joining this one's
+// import graph; re-exported here, where every existing caller imports it.
+export { isMissingTableError } from '~/server/services/blocks/missing-table-error';
 
 /**
  * Run a collaborator-table READ, degrading to `fallback` when the manual-apply

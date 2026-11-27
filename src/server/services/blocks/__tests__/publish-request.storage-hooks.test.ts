@@ -1,6 +1,6 @@
 import { createHash } from 'crypto';
 import JSZip from 'jszip';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as ManifestSubmitValidation from '~/server/services/blocks/manifest-submit-validation';
 // Submit-time deep manifest validation is pinned in publish-request.submitValidation.test.ts;
 // this file's fixtures are not full manifests, so that seam is a no-op here (approve's own
@@ -604,5 +604,364 @@ describe('recordPendingFromPush — App Storage permission hooks', () => {
     expect(res.publishRequestId).toMatch(/^pubreq_/);
     expect(dbMock.dbWrite.appBlockPublishRequest.create).toHaveBeenCalledTimes(1);
     expect(sourceInserts()).toEqual([[[HOOK_SHA], [HOOK_SRC], [Buffer.byteLength(HOOK_SRC)]]]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// STAFF PLATFORM UPDATES on the same two paths (`platform-update-bundle-check.ts`): the real check
+// and the real record query text over the canonical db mock (the query's own behaviour against
+// the migrations is pinned in platform-update-bundle-check.pglite.test.ts), with this file's
+// stubbed git host and MinIO. Here because it needs exactly this harness.
+//
+// 🔴 THE REGRESSION: at origin/main a bundle (or a push) that lacks a staff update no approved
+// version has shipped is queued as if it had it, and nothing tells the moderator. Every refusal
+// and every record below fails there.
+// ---------------------------------------------------------------------------
+
+const forgejo = await import('~/server/services/blocks/forgejo.service');
+const { FORGEJO_SOURCE_ORG } = await import('~/server/services/blocks/forgejo-orgs');
+
+describe('staff platform updates', () => {
+  const pu = {
+    platformFlag: true,
+    /** `${org ?? 'build'}@${ref}` → path → blob sha (blobs in `h.blobs`) */
+    trees: new Map<string, Map<string, string>>(),
+    /** The rows the platform-update query answers with; an Error is thrown instead. */
+    updateRows: [] as unknown[] | Error,
+  };
+  // Loaded where used, so at origin/main (where it does not exist) every other case still runs and
+  // fails on BEHAVIOUR.
+  const reviewLines = async (fileSummary: unknown) =>
+    (await import('~/components/Apps/reviewPlatformUpdates')).reviewPlatformUpdatesLines(
+      fileSummary
+    );
+
+  const PU_SLUG = 'bundle-gate-int';
+  const PU_APP = 'ab_bundle_gate_int';
+  const PU_AUTHOR = 9301;
+  const PU_BASE_SHA = 'b'.repeat(40);
+  const PU_UPDATE_SHA = 'c'.repeat(40);
+  const PU_PUSHED_SHA = 'd'.repeat(40);
+
+  const PU_BASE_TEXT = 'export const a = 1;\n';
+  const PU_UPDATE_TEXT = 'export const a = 1;\nexport const staffFix = true;\n';
+
+  const PU_MESSAGE =
+    'this bundle does not contain a platform update from Civitai staff that has not shipped yet: ' +
+    'apu_int by mod-jane ("Fix the deprecated SDK call"): src/a.ts. Merge it into the app and ' +
+    'submit again, or submit with --allow-unmerged-platform-update (allowUnmergedPlatformUpdate: ' +
+    'true) to send it for review without it; the moderator is shown what was left out';
+  const PU_MISSING = [
+    { id: 'apu_int', reason: 'Fix the deprecated SDK call', by: 'mod-jane', paths: ['src/a.ts'] },
+  ];
+  const PU_RECORD = (via: 'override' | 'push') => ({
+    via,
+    updates: [{ id: 'apu_int', by: 'mod-jane', paths: ['src/a.ts'] }],
+  });
+
+  /** The record's row as the service's query returns it. */
+  const updateRow = (over: Record<string, unknown> = {}) => ({
+    id: 'apu_int',
+    appBlockId: PU_APP,
+    slug: PU_SLUG,
+    staffUserId: 51,
+    reason: 'Fix the deprecated SDK call',
+    branch: 'platform-update/apu_int',
+    baseCommitSha: PU_BASE_SHA,
+    commitSha: PU_UPDATE_SHA,
+    paths: [{ path: 'src/a.ts', operation: 'update' }],
+    touchesManifest: false,
+    status: 'pending',
+    mergeCommitSha: null,
+    seededSourceRepo: false,
+    createdAt: new Date('2027-01-01T00:00:00Z'),
+    resolvedAt: null,
+    staffUsername: 'mod-jane',
+    staffIsModerator: true,
+    staffBannedAt: null,
+    staffDeletedAt: null,
+    ...over,
+  });
+
+  async function puBundle(files: Record<string, string>): Promise<Buffer> {
+    const zip = new JSZip();
+    zip.file(
+      'block.manifest.json',
+      JSON.stringify({
+        blockId: PU_SLUG,
+        version: '2.0.0',
+        name: 'Bundle Gate',
+        contentRating: 'g',
+      })
+    );
+    zip.file('index.html', '<!doctype html><html><body>gate</body></html>');
+    for (const [path, content] of Object.entries(files)) zip.file(path, content);
+    return Buffer.from(await zip.generateAsync({ type: 'nodebuffer' }));
+  }
+
+  const puSubmit = async (files: Record<string, string>, extra: Record<string, unknown> = {}) =>
+    submitVersion({
+      bundleBuffer: await puBundle(files),
+      submittedByUserId: PU_AUTHOR,
+      // A moderator queueing a version of another account's app: the on-behalf path. An owner's
+      // puSubmit runs the same lines (the check comes after the owner gate either way).
+      submitterIsModerator: true,
+      ...extra,
+    });
+
+  const puRejection = (p: Promise<unknown>) =>
+    p.then(
+      () => null,
+      (e: unknown) => e as Error & { code?: string; status?: number; details?: unknown }
+    );
+
+  /** The platform-update record queries the service ran. */
+  const updateQueries = () =>
+    (dbMock.dbWrite.$queryRaw.mock.calls as unknown[][]).filter(([sql]) =>
+      JSON.stringify(sql).includes('app_platform_updates')
+    );
+
+  const createdFileSummary = () =>
+    (
+      dbMock.dbWrite.appBlockPublishRequest.create.mock.calls[0]?.[0] as {
+        data: { fileSummary: Record<string, unknown> };
+      }
+    )?.data.fileSummary;
+
+  beforeEach(async () => {
+    // The outer beforeEach switched every flag on; here only the platform-updates flag answers.
+    const { FLIPT_FEATURE_FLAGS } = await import('~/server/flipt/client');
+    h.isFlipt.mockImplementation(async (flag: string) =>
+      flag === FLIPT_FEATURE_FLAGS.APP_BLOCKS_PLATFORM_UPDATES ? pu.platformFlag : false
+    );
+    // Trees by repo and commit: the app's source repo (the update's two commits) and the build
+    // repo (the pushed commit, read with the default org).
+    vi.mocked(forgejo.listRepoTreeAtRef).mockImplementation(async (_slug, ref, org) => {
+      const tree = pu.trees.get(`${org ?? 'build'}@${ref}`);
+      if (!tree) throw new Error(`no tree ${org ?? 'build'}@${ref}`);
+      return tree;
+    });
+    pu.platformFlag = true;
+    pu.updateRows = [updateRow()];
+    h.blobs = new Map([
+      ['blob-base', Buffer.from(PU_BASE_TEXT)],
+      ['blob-update', Buffer.from(PU_UPDATE_TEXT)],
+    ]);
+    pu.trees = new Map([
+      [`${FORGEJO_SOURCE_ORG}@${PU_BASE_SHA}`, new Map([['src/a.ts', 'blob-base']])],
+      [`${FORGEJO_SOURCE_ORG}@${PU_UPDATE_SHA}`, new Map([['src/a.ts', 'blob-update']])],
+    ]);
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (sql: unknown) => {
+      if (!JSON.stringify(sql).includes('app_platform_updates')) return [];
+      if (pu.updateRows instanceof Error) throw pu.updateRows;
+      return pu.updateRows;
+    }) as never);
+    dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
+    dbMock.dbRead.appBlock.findFirst.mockResolvedValue({ id: PU_APP, appId: 'appblk-int' });
+    dbMock.dbRead.appBlock.findUnique.mockResolvedValue({ app: { userId: PU_AUTHOR } });
+    dbMock.dbRead.appListing.findFirst.mockResolvedValue(null);
+    dbMock.dbRead.appListingPublishRequest.findFirst.mockResolvedValue(null);
+    dbMock.dbRead.appBlockPublishRequest.findFirst.mockResolvedValue(null);
+    dbMock.dbWrite.appBlockPublishRequest.findFirst.mockResolvedValue(null);
+    dbMock.dbWrite.appBlockPublishRequest.findMany.mockResolvedValue([]);
+    dbMock.dbWrite.appBlockPublishRequest.updateMany.mockResolvedValue({ count: 0 });
+  });
+  afterEach(() => {
+    vi.mocked(forgejo.listRepoTreeAtRef).mockImplementation(async () => h.tree);
+  });
+
+  describe('submitVersion — staff platform updates', () => {
+    it('🔴 refuses a bundle missing an unshipped update: code, 409, message, details; nothing queued', async () => {
+      const err = await puRejection(puSubmit({ 'src/a.ts': PU_BASE_TEXT }));
+      expect(err?.name).toBe('PlatformUpdateMissingRefusal');
+      expect(err?.code).toBe('platform_update_missing');
+      expect(err?.status).toBe(409);
+      expect(err?.message).toBe(PU_MESSAGE);
+      expect(err?.details).toEqual({ updates: PU_MISSING });
+      expect(h.s3Send).not.toHaveBeenCalled();
+      expect(dbMock.dbWrite.appBlockPublishRequest.create).not.toHaveBeenCalled();
+    });
+
+    it('🔴 with allowUnmergedPlatformUpdate: queued, recorded for the moderator, and an advisory', async () => {
+      const result = await puSubmit(
+        { 'src/a.ts': PU_BASE_TEXT },
+        { allowUnmergedPlatformUpdate: true }
+      );
+      expect(createdFileSummary().platformUpdatesMissing).toEqual(PU_RECORD('override'));
+      expect(result.advisories).toContainEqual({
+        code: 'platform-update-missing',
+        message:
+          'Submitted without a platform update from Civitai staff: apu_int by mod-jane ("Fix the ' +
+          'deprecated SDK call"): src/a.ts. The moderator reviewing this version is shown what it left out.',
+      });
+      // The review line reads exactly what the puSubmit wrote (writer → reader, one fixture).
+      expect(await reviewLines(createdFileSummary())).toEqual([
+        {
+          key: 'platform-updates',
+          heading: 'Missing platform updates (submitted with --allow-unmerged-platform-update)',
+          value: 'apu_int by mod-jane: src/a.ts',
+        },
+      ]);
+    });
+
+    it('🔴 a staff on-behalf submit is never refused: recorded via on-behalf, with an advisory', async () => {
+      const result = await puSubmit({ 'src/a.ts': PU_BASE_TEXT }, { submittedOnBehalf: true });
+      expect(result.publishRequestId).toMatch(/^pubreq_/);
+      expect(createdFileSummary().platformUpdatesMissing).toEqual({
+        ...PU_RECORD('override'),
+        via: 'on-behalf',
+      });
+      expect(result.advisories.map((a) => a.code)).toContain('platform-update-missing');
+      expect((await reviewLines(createdFileSummary()))[0]?.heading).toBe(
+        "Missing platform updates (Civitai staff submission on the owner's behalf)"
+      );
+    });
+
+    it('submittedOnBehalf from a submitter who is not a moderator is refused before anything', async () => {
+      const err = await puRejection(
+        puSubmit(
+          { 'src/a.ts': PU_UPDATE_TEXT },
+          { submittedOnBehalf: true, submitterIsModerator: false }
+        )
+      );
+      expect(err?.message).toBe('only a moderator can submit on behalf of an app owner');
+      expect(updateQueries()).toHaveLength(0);
+      expect(dbMock.dbWrite.appBlockPublishRequest.create).not.toHaveBeenCalled();
+    });
+
+    it('🔴 an update whose commit cannot be read refuses as missing, not a read error; the override queues it', async () => {
+      pu.trees.delete(`${FORGEJO_SOURCE_ORG}@${PU_UPDATE_SHA}`);
+      const err = await puRejection(puSubmit({ 'src/a.ts': PU_UPDATE_TEXT }));
+      expect(err?.code).toBe('platform_update_missing');
+      expect(err?.details).toEqual({ updates: [{ ...PU_MISSING[0], unreadable: true }] });
+      expect(err?.message).toContain('Civitai staff can withdraw it');
+      const result = await puSubmit(
+        { 'src/a.ts': PU_UPDATE_TEXT },
+        { allowUnmergedPlatformUpdate: true }
+      );
+      expect(result.publishRequestId).toMatch(/^pubreq_/);
+      expect(createdFileSummary().platformUpdatesMissing).toEqual({
+        via: 'override',
+        updates: [{ id: 'apu_int', by: 'mod-jane', paths: ['src/a.ts'], unreadable: true }],
+      });
+    });
+
+    it('accepts a bundle that has the update’s exact file, and records nothing', async () => {
+      const result = await puSubmit({ 'src/a.ts': PU_UPDATE_TEXT });
+      expect(result.publishRequestId).toMatch(/^pubreq_/);
+      expect(createdFileSummary()).not.toHaveProperty('platformUpdatesMissing');
+      expect(result.advisories.map((a) => a.code)).not.toContain('platform-update-missing');
+      // Positive control: the check did run (one query).
+      expect(updateQueries()).toHaveLength(1);
+    });
+
+    it('accepts a hand-merged file that has every line the update adds', async () => {
+      const merged =
+        '// owner\nexport const a = 1;\nexport const owner = 3;\nexport const staffFix = true;\n';
+      const result = await puSubmit({ 'src/a.ts': merged });
+      expect(result.publishRequestId).toMatch(/^pubreq_/);
+      expect(createdFileSummary()).not.toHaveProperty('platformUpdatesMissing');
+    });
+
+    it('accepts a bundle that holds a delete update (the path gone)', async () => {
+      pu.updateRows = [updateRow({ paths: [{ path: 'src/a.ts', operation: 'delete' }] })];
+      pu.trees.set(`${FORGEJO_SOURCE_ORG}@${PU_UPDATE_SHA}`, new Map());
+      await expect(puSubmit({ 'src/b.ts': 'b\n' })).resolves.toMatchObject({ slug: PU_SLUG });
+      // …and refuses one that still carries the deleted file.
+      const err = await puRejection(puSubmit({ 'src/a.ts': PU_BASE_TEXT }));
+      expect(err?.code).toBe('platform_update_missing');
+    });
+
+    it('is off with the flag off: no query, the bundle is queued', async () => {
+      pu.platformFlag = false;
+      await expect(puSubmit({ 'src/a.ts': PU_BASE_TEXT })).resolves.toMatchObject({
+        slug: PU_SLUG,
+      });
+      expect(updateQueries()).toHaveLength(0);
+    });
+
+    it('is off while the table is missing: the bundle is queued', async () => {
+      pu.updateRows = Object.assign(new Error('relation "app_platform_updates" does not exist'), {
+        code: '42P01',
+      });
+      await expect(puSubmit({ 'src/a.ts': PU_BASE_TEXT })).resolves.toMatchObject({
+        slug: PU_SLUG,
+      });
+      expect(updateQueries()).toHaveLength(1);
+    });
+
+    it('a first version (no app yet) is not checked', async () => {
+      dbMock.dbRead.appBlock.findFirst.mockResolvedValue(null);
+      await expect(puSubmit({ 'src/a.ts': PU_BASE_TEXT })).resolves.toMatchObject({
+        slug: PU_SLUG,
+      });
+      expect(updateQueries()).toHaveLength(0);
+    });
+  });
+
+  describe('recordPendingFromPush — staff platform updates', () => {
+    const push = () =>
+      recordPendingFromPush({
+        slug: PU_SLUG,
+        sha: PU_PUSHED_SHA,
+        appBlockId: PU_APP,
+        manifest: { blockId: PU_SLUG, version: '2.0.0', name: 'Bundle Gate' },
+        version: '2.0.0',
+        pusherUserId: PU_AUTHOR,
+      });
+
+    it('🔴 a push missing an update is recorded, not refused: the moderator record and an advisory', async () => {
+      pu.trees.set(`build@${PU_PUSHED_SHA}`, new Map([['src/a.ts', 'blob-base']]));
+      const result = await push();
+      expect(result.publishRequestId).toMatch(/^pubreq_/);
+      expect(createdFileSummary().platformUpdatesMissing).toEqual(PU_RECORD('push'));
+      expect(result.advisories).toEqual([
+        {
+          code: 'platform-update-missing',
+          message:
+            'This commit does not contain a platform update from Civitai staff: apu_int by mod-jane ' +
+            '("Fix the deprecated SDK call"): src/a.ts. It was recorded for review anyway, and the ' +
+            'moderator is shown what it left out. Merge it and push again.',
+        },
+      ]);
+      expect((await reviewLines(createdFileSummary()))[0]?.heading).toBe(
+        'Missing platform updates (git push, recorded without them)'
+      );
+    });
+
+    it('🔴 the background diff enrichment keeps the record', async () => {
+      h.blobs.set(
+        'blob-manifest',
+        Buffer.from(JSON.stringify({ blockId: PU_SLUG, version: '2.0.0', name: 'Bundle Gate' }))
+      );
+      pu.trees.set(
+        `build@${PU_PUSHED_SHA}`,
+        new Map([
+          ['block.manifest.json', 'blob-manifest'],
+          ['src/a.ts', 'blob-base'],
+        ])
+      );
+      await push();
+      await vi.waitFor(
+        () =>
+          expect(dbMock.dbWrite.appBlockPublishRequest.updateMany).toHaveBeenCalledWith(
+            expect.objectContaining({
+              data: expect.objectContaining({
+                fileSummary: expect.objectContaining({ platformUpdatesMissing: PU_RECORD('push') }),
+              }),
+            })
+          ),
+        // The enrichment is fire-and-forget (a zip rebuild); a cold worker can take seconds.
+        { timeout: 10_000 }
+      );
+    });
+
+    it('a push that contains the update records nothing and says nothing', async () => {
+      pu.trees.set(`build@${PU_PUSHED_SHA}`, new Map([['src/a.ts', 'blob-update']]));
+      const result = await push();
+      expect(createdFileSummary()).not.toHaveProperty('platformUpdatesMissing');
+      expect(result.advisories).toEqual([]);
+      expect(updateQueries()).toHaveLength(1);
+    });
   });
 });
