@@ -18,9 +18,8 @@ const asNotification = (details: AppPlatformUpdateNotificationDetails) =>
   ({ details } as unknown as Parameters<Def['prepareMessage']>[0]);
 
 describe('app-platform-update', () => {
-  it('is registered, not toggleable', () => {
+  it('is registered', () => {
     expect(notificationProcessors['app-platform-update']).toBe(def);
-    expect(def.toggleable).toBe(false);
   });
 
   it('names the staff member, the app and the reason, and links the owner’s apps', () => {

@@ -11,11 +11,6 @@ import { OWNER_SUBMISSIONS_URL } from '~/server/notifications/app-listing.notifi
  * owner's code, and the owner is told who made it and why so they can judge it (operator
  * decision). The name and the "verified" claim come from the server record and the account's
  * moderator status at push time, never from the commit.
- *
- * Imperative like its siblings: emitted directly via `createNotification`, so no `prepareQuery`
- * and no notifications-DB migration (`type` is free-form text). Registered in
- * `utils.notifications.ts`. Dark until the `app-blocks-platform-updates` flag is on: the only
- * emitter is the moderator push.
  */
 
 export type AppPlatformUpdateNotificationDetails = {
