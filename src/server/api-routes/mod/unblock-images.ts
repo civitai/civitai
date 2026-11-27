@@ -30,7 +30,7 @@ const WITHHELD_CHECK_CHUNK = 5_000;
 
 // Ids per primary UPDATE: each row re-reads the withheld rule, so one statement over every candidate
 // holds its row locks for the whole run.
-const UPDATE_CHUNK = 1_000;
+const UPDATE_CHUNK = 200;
 
 export async function unblockModeratedImages(
   user: { id: number },
