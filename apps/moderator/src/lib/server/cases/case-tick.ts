@@ -1,7 +1,6 @@
-import { sendEmailStrict } from '@civitai/email';
 import { sql, type Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
-import { env } from '$env/dynamic/private';
+import { caseAlert } from './case-alert';
 import { casesDb, type CasesDb } from './cases.db';
 
 /** The clocks a case can carry, in the order a moderator should read them. */
@@ -152,40 +151,26 @@ export async function caseTick({
   return result;
 }
 
-/** The moderation alert inbox, shared by intake and the tick. */
-export async function caseAlert(subject: string, text: string, template: string) {
-  const to = env.MODERATION_ALERT_EMAIL;
-  if (!to)
-    throw Object.assign(new Error('MODERATION_ALERT_EMAIL is not set'), { name: 'NoAlertAddress' });
-  await sendEmailStrict({
-    to,
-    subject,
-    text,
-    html: `<pre>${text.replace(
-      /[&<>]/g,
-      (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[ch]!)
-    )}</pre>`,
-    tags: { template, mailClass: 'transactional' },
-  });
-}
+/** The heartbeat in the main DB's KeyValue table, one row under a fixed key. */
+export const keyValueHeartbeat = (mainDb: Kysely<DB>): CaseTickDeps['heartbeat'] => ({
+  read: async () => {
+    const row = await mainDb
+      .selectFrom('KeyValue')
+      .select('value')
+      .where('key', '=', CASE_TICK_HEARTBEAT_KEY)
+      .executeTakeFirst();
+    return (row?.value as CaseTickHeartbeat | undefined) ?? null;
+  },
+  write: (beat) =>
+    mainDb
+      .insertInto('KeyValue')
+      .values({ key: CASE_TICK_HEARTBEAT_KEY, value: JSON.stringify(beat) })
+      .onConflict((oc) => oc.column('key').doUpdateSet({ value: JSON.stringify(beat) }))
+      .execute(),
+});
 
 export const defaultCaseTickDeps = (mainDb: Kysely<DB>): CaseTickDeps => ({
   db: casesDb(),
   alert: (subject, text) => caseAlert(subject, text, 'caseTickAlert'),
-  heartbeat: {
-    read: async () => {
-      const row = await mainDb
-        .selectFrom('KeyValue')
-        .select('value')
-        .where('key', '=', CASE_TICK_HEARTBEAT_KEY)
-        .executeTakeFirst();
-      return (row?.value as CaseTickHeartbeat | undefined) ?? null;
-    },
-    write: (beat) =>
-      mainDb
-        .insertInto('KeyValue')
-        .values({ key: CASE_TICK_HEARTBEAT_KEY, value: JSON.stringify(beat) })
-        .onConflict((oc) => oc.column('key').doUpdateSet({ value: JSON.stringify(beat) }))
-        .execute(),
-  },
+  heartbeat: keyValueHeartbeat(mainDb),
 });

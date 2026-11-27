@@ -13,7 +13,7 @@ import { createIntakeRateLimit } from './intake-rate-limit';
 import { noticeTime, renderNotice } from './notice-render';
 import { defaultSendDeps, hashAddress, sendNotice, type SendDeps } from './send-notice';
 import { verifyTurnstile } from './turnstile';
-import { caseAlert } from './case-tick';
+import { caseAlert } from './case-alert';
 
 /** How long a party's link opens their case. */
 export const PARTY_LINK_DAYS = 365;

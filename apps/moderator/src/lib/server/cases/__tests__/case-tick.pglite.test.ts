@@ -1,9 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import { processDefinitionSchema } from '@civitai/moderation/process-definition';
+import { Kysely } from 'kysely';
+import type { DB } from '@civitai/db-schema/kysely';
+import { freshPglite } from '../../../../test/pglite';
+import { pgliteDialect } from '../../__tests__/abuse-detection-pglite.harness';
 import { casesPglite } from './cases-pglite.harness';
 
 vi.mock('../../redis', () => ({ getSysRedis: () => ({}) }));
-const { caseTick, CASE_TICK_MAX_GAP_MS } = await import('../case-tick');
+const { caseTick, CASE_TICK_MAX_GAP_MS, keyValueHeartbeat } = await import('../case-tick');
 const { fileIntakeCase } = await import('../intake');
 
 const definition = processDefinitionSchema.parse({
@@ -193,5 +197,26 @@ describe('caseTick', () => {
     const lines = alerts[0].text.split('\n');
     expect(lines[0]).toContain('No clock check completed from 2026-11-22T00:00:00.000Z');
     expect(lines[1]).toContain(late.publicRef);
+  });
+});
+
+describe('keyValueHeartbeat', () => {
+  it('writes the heartbeat to KeyValue and reads it back, replacing the last one', async () => {
+    const main = await freshPglite();
+    await main.exec('CREATE TABLE "KeyValue" (key text PRIMARY KEY, value jsonb NOT NULL);');
+    await main.exec(`INSERT INTO "KeyValue" VALUES ('other-key', '1')`);
+    const hb = keyValueHeartbeat(new Kysely<DB>({ dialect: pgliteDialect(main) }));
+
+    expect(await hb.read()).toBeNull();
+    await hb.write({ at: '2026-11-23T08:00:00.000Z', evaluated: 2, alerted: 1, overdue: 1 });
+    await hb.write({ at: '2026-11-23T08:15:00.000Z', evaluated: 3, alerted: 0, overdue: 1 });
+    expect(await hb.read()).toEqual({
+      at: '2026-11-23T08:15:00.000Z',
+      evaluated: 3,
+      alerted: 0,
+      overdue: 1,
+    });
+    const rows = await main.query<{ key: string }>('SELECT key FROM "KeyValue" ORDER BY key');
+    expect(rows.rows.map((r) => r.key)).toEqual(['case-tick-heartbeat', 'other-key']);
   });
 });

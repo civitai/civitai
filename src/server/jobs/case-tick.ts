@@ -5,10 +5,7 @@ import {
 } from '~/server/services/takedown-requests.service';
 import { createJob } from './job';
 
-/**
- * Takedown case clocks. The moderator app evaluates them, records each threshold once, alerts the
- * moderation inbox and writes its own heartbeat; this only puts it on a schedule.
- */
+/** Schedules the moderator app's case clock evaluation. */
 export const caseTickJob = createJob(
   'case-tick',
   '*/15 * * * *',

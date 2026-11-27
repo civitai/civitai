@@ -288,7 +288,6 @@ const casePartyActionAction: ModAction<z.infer<typeof casePartyActionInput>> = {
   handler: (input) => casePartyAction(input, defaultCasePartyDeps(dbWrite)),
 };
 
-/** The scheduled clock evaluation, called by the main app's case-tick job on the cases credential. */
 const caseTickAction: ModAction<z.infer<typeof caseTickInput>> = {
   schema: caseTickInput,
   handler: () => caseTick(defaultCaseTickDeps(dbWrite)),
