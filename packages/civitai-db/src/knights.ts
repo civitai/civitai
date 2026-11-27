@@ -221,7 +221,7 @@ export const modReviewEligibleImage = (eb: ExpressionBuilder<Joined, 'img' | 'p'
 /**
  * No open "KnightsImagePull" on `img`: players reported the image and no moderator has kept it. Read only where yes/no
  * questions and Acolyte pairs are served (`yesNoServableImage` in Knights); sweeps ignore it on purpose, so a pull hides
- * questions and never closes them.
+ * questions rather than closing them (the stale sweep still closes one that ages out).
  */
 export const noOpenImagePull = sql<SqlBool>`NOT EXISTS (
   SELECT 1 FROM "KnightsImagePull" ip WHERE ip."imageId" = img.id AND ip."resolvedAt" IS NULL

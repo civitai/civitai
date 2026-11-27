@@ -99,7 +99,7 @@ graded, as with "Not sure").
   item that caused it (`itemId`). The yes/no
   pick, the vote and the Acolyte pair pick read it through `yesNoServableImage` in `image-gate.ts`, the `KnightsImageGate` check plus
   "no open pull", so the image leaves every yes/no question and practice pair. The sweep's `servableImageForSweeps` does not read it,
-  so the image's other questions are hidden, not closed. Knights then files one main-app Report on the image through
+  so the pull hides the image's other questions rather than closing them; one that ages out while hidden is still closed as stale. Knights then files one main-app Report on the image through
   `POST /api/mod/image/kono-report-image` (`image-report.ts`, `{ imageId }` only, the same token as the rating write-back) and keeps
   its `reportId` on the pull (`filing` 'filed'). An image an earlier pull filed for files nothing more. The route's own 404 (the
   main app no longer has the image) marks the filing 'not-needed' and it is never tried again. Any other failure is logged and the
