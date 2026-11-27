@@ -13,7 +13,7 @@ These App Developer Terms ("Developer Terms") apply to you if you build, publish
 - (b) use only the scopes your App needs, use data received through them only to run the App for the user who granted them, and not sell, share or keep that data longer than the App needs it;
 - (c) comply with all laws that apply to your App, including consumer protection, privacy and export laws;
 - (d) have all rights in what your App uses and produces (Section 9.3 of the Terms applies to your App as User Content); and
-- (e) answer user questions and complaints about your App and its goods.
+- (e) provide a reasonable level of support for your App and its goods, for example by responding to good-faith user questions and complaints within a reasonable time through a channel listed on your App's listing.
 
 **3. Prohibited Apps and features.** In addition to Section 11 of the Terms and our content policies (which apply to everything an App displays or generates), an App must not include or offer:
 - (a) **Gambling and games of chance** in which Buzz, goods bought with Buzz, or anything else of value is staked, paid to enter, or won, including casinos, slots, lotteries, raffles, betting, prediction markets and wagers on outcomes;
