@@ -386,20 +386,20 @@ export function StickerPlacementOverlay({
   // unmounted either, which would drop the measurements that position them.
   const peekStyle: CSSProperties | undefined = peek ? { visibility: 'hidden' } : undefined;
 
-  // Two or more of the owner's own pending stickers: a pair under each one piles
-  // up on a cluster, so they select a sticker and answer it from one bar.
+  // Per-sticker Approve/Decline pairs pile up on a cluster; crowded images use one bar.
+  // Counted over what is drawn, so a history replay does not offer stickers not yet shown.
+  const visible = step == null ? ordered : ordered.slice(0, step + 1);
   const ownerPending = interactive
-    ? placements.filter((placement) => placement.isPending && placement.ownerId === viewerId)
+    ? visible.filter((placement) => placement.isPending && placement.ownerId === viewerId)
     : [];
   const crowded = ownerPending.length >= 2;
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const selected = crowded
     ? ownerPending.find((placement) => placement.id === selectedId)
     : undefined;
-  // The bar sits on the bottom edge unless an owner-pending sticker reaches into
-  // that strip, where it would eat taps meant for the sticker; then the top, if
-  // that is clear. Both blocked: the bottom, and the sticker stays reachable
-  // through the keyboard and the queue.
+  // Bottom, unless an owner-pending sticker reaches into that strip and the top is
+  // clear. If both are blocked the bar stays at the bottom, and covered stickers
+  // stay reachable by keyboard and the queue.
   const barEdge = (() => {
     if (!crowded || controlBox.height <= 0) return 'bottom' as const;
     const reaches = (edge: 'top' | 'bottom') =>
@@ -416,14 +416,11 @@ export function StickerPlacementOverlay({
       });
     return reaches('bottom') && !reaches('top') ? ('top' as const) : ('bottom' as const);
   })();
-  // A selection that is answered, or no longer crowded, must not outlive its row.
   useEffect(() => {
     if (selectedId != null && !selected) setSelectedId(null);
   }, [selectedId, selected]);
 
   if (!placements.length) return null;
-
-  const visible = step == null ? ordered : ordered.slice(0, step + 1);
 
   // The owner's approve/decline, drawn in their own layer below so they out-rank
   // every placed sticker and not just the one they belong to; isolation would cap
@@ -433,7 +430,7 @@ export function StickerPlacementOverlay({
     visible
       .filter((placement) => placement.isPending && placement.ownerId === viewerId)
       .map(({ data }) => data),
-    // The bar owns one edge when crowded; the toggle takes the other.
+    // Keep the peek toggle out of the bar's corners.
     crowded
       ? [
           ...(takenCorners ?? []),

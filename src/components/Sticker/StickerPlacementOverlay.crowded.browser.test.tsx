@@ -63,7 +63,6 @@ const placed = (id: number, x: number, y: number): PlacedSticker =>
     data: { cosmeticId: 9, x, y, scale: 0.15, rotation: 0, flip: false, opacity: 1 },
   } as PlacedSticker);
 
-// Eight stickers within a tenth of the image, as in the report.
 const cluster = Array.from({ length: 8 }, (_, i) =>
   placed(i + 1, 0.4 + (i % 4) * 0.04, 0.4 + Math.floor(i / 4) * 0.05)
 );
@@ -111,12 +110,10 @@ describe('many pending stickers on one image', () => {
     await expect.element(page.getByTestId('acting-on')).toHaveTextContent('3');
     await expect.element(stickerButtons().nth(2)).toHaveAttribute('aria-pressed', 'true');
 
-    // Another sticker moves the single pair rather than adding one.
     await select(5);
     expect(approveButtons()).toHaveLength(1);
     await expect.element(page.getByTestId('acting-on')).toHaveTextContent('6');
 
-    // The selected one again deselects.
     await select(5);
     expect(approveButtons()).toHaveLength(0);
     await expect.element(page.getByText('Pick a sticker to approve or decline')).toBeVisible();
@@ -185,8 +182,7 @@ describe('the bar keeps clear of stickers and the Hide controls pill', () => {
     const bar = rectOf(page.getByRole('group', { name: 'Pending stickers' }).element());
     const pill = rectOf(page.getByRole('button', { name: 'Hide controls' }).element());
     expect(overlaps(bar, pill)).toBe(false);
-    // Every sticker that is not in the bar's strip stays tappable; the one at the
-    // edge is why the bar moves to the other side.
+    // The bar must not cover any rendered sticker; an edge sticker is what forces it to the other side.
     for (const el of stickerButtons().elements()) {
       const box = rectOf(el);
       if (box.height > 0) expect(overlaps(bar, box)).toBe(false);

@@ -6,11 +6,7 @@ import { STICKER_QUEUE_RECEIVED_URL } from '~/components/Placement/queue-routes'
 import { StickerPlacementActions } from '~/components/Sticker/StickerPlacementActions';
 import type { PlacedSticker } from '~/components/Sticker/placement.util';
 
-/**
- * The owner's one set of Approve/Decline when several stickers are pending on an
- * image. A pair per sticker piles up on a cluster; this is a single bar, acting
- * on whichever sticker is selected.
- */
+/** One Approve/Decline bar for the selected sticker, used when several are pending on an image. */
 export function StickerPendingBar({
   count,
   selected,
@@ -30,7 +26,8 @@ export function StickerPendingBar({
   // selection to clear, so it never swallows the Escape that closes a dialog
   // the image is open in.
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.key !== 'Escape' || !selected) return;
+    if (event.key !== 'Escape' || !selected || !event.currentTarget.contains(event.target as Node))
+      return;
     event.stopPropagation();
     onClear();
   };
