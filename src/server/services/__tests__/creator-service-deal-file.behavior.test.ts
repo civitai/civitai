@@ -1612,7 +1612,7 @@ describe('preview pipeline', () => {
     expect(await fileRow(fileId)).toMatchObject({ imageId: null, scanKey: null });
   });
 
-  it('keeps the pointer of a copy removed some other way, on every run', async () => {
+  it('keeps the pointer of a copy removed some other way, and stops walking it', async () => {
     const { fileId } = await waiting();
     await files.startPreviewScans();
     await verdict('Scanned');
@@ -1622,6 +1622,7 @@ describe('preview pipeline', () => {
     expect(await files.deleteScanCopies()).toBe(0);
     expect(await files.deleteScanCopies()).toBe(0);
     expect(await fileRow(fileId)).toMatchObject({ imageId, scanKey });
+    expect(images.deleteImages).not.toHaveBeenCalled();
   });
 
   it('keeps the pointer when a delete fails, so the copy is retried', async () => {

@@ -609,11 +609,12 @@ export type CopyDeleteRecord = (db: Kysely<DB>, deleted: { id: number }[]) => Pr
 /**
  * Lets go of these entries' copies that the delete running it removed, in that delete's own
  * transaction, so a crash cannot leave a copy gone and its entry still pointed: either both commit
- * or neither. An entry no file owns goes with its copy. Collects the entry ids let go in `released`.
+ * or neither. An entry no file owns goes with its copy. Which entries went is read from what the
+ * delete returned once committed, never from here: this runs before the commit, which may fail.
  */
-export function releaseEntryCopies(entryIds: number[], released: number[]): CopyDeleteRecord {
+export function releaseEntryCopies(entryIds: number[]): CopyDeleteRecord {
   return async (db, deleted) => {
-    const { rows } = await sql<{ id: number }>`
+    await sql`
       WITH released AS (
         SELECT e."id", e."fileId" FROM "ServiceDealFileEntry" e
         WHERE e."id" = ANY(${entryIds}::int[])
@@ -627,7 +628,6 @@ export function releaseEntryCopies(entryIds: number[], released: number[]): Copy
         FROM released r WHERE e."id" = r."id" AND r."fileId" IS NOT NULL RETURNING e."id"
       )
       SELECT "id" FROM dropped UNION ALL SELECT "id" FROM cleared`.execute(db);
-    released.push(...rows.map(({ id }) => id));
   };
 }
 
@@ -660,14 +660,13 @@ export async function settleCopyDeletes(entryIds: number[]) {
 /** Marks, deletes and settles these entries' scan copies; returns the entry ids let go. */
 async function deleteEntryCopies(entries: { id: number; imageId: number }[]) {
   const ids = entries.map(({ id }) => id);
-  const released: number[] = [];
   await markCopyDeletes(ids);
-  await deleteImages(
+  const gone = await deleteImages(
     entries.map(({ imageId }) => imageId),
-    releaseEntryCopies(ids, released)
+    releaseEntryCopies(ids)
   );
   await settleCopyDeletes(ids);
-  return released;
+  return entries.filter(({ imageId }) => gone.includes(imageId)).map(({ id }) => id);
 }
 
 /** Deletes every stored version of one object; false (and logged) when any may remain. */
@@ -1823,6 +1822,8 @@ export async function deleteScanCopies({ limit = 50 } = {}) {
     const rows = await dbWrite.$queryRaw<{ id: number; imageId: number }[]>`
       SELECT "id", "imageId" FROM "ServiceDealFile"
       WHERE "imageId" IS NOT NULL AND "id" > ${afterId}::int
+        -- A copy gone some other way keeps its pointer, refused, but is not walked again.
+        AND EXISTS (SELECT 1 FROM "Image" i WHERE i."id" = "imageId")
         AND (("scanStatus" = 'Passed'::"ServiceDealFileScanStatus"
             -- A video publishes by copying its scan copy, so the copy waits for that.
             AND ("mimeType" NOT IN (${VIDEO_MIMES}) OR "watermarkedKey" IS NOT NULL

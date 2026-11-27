@@ -1,3 +1,4 @@
+import { assertNotDealFileImages } from '~/server/services/deal-file-image';
 import { deleteImagesIn } from '~/server/services/__tests__/deal-file-copy.fake';
 import { Prisma } from '@prisma/client';
 import { constants } from '~/server/common/constants';
@@ -2168,6 +2169,42 @@ describe('copies of scanned images', () => {
       expect(await files.purgeRemovedFiles()).toBe(1);
       expect(await q(`SELECT id FROM "Image"`)).toEqual([]);
       expect(await q(`SELECT id FROM "ServiceDealFile" WHERE id = $1`, [fileId])).toEqual([]);
+    });
+
+    const keptWhole = async (fileId: number) => {
+      expect(await q(`SELECT id FROM "ServiceDealFile" WHERE id = $1`, [fileId])).toHaveLength(1);
+      expect(
+        await q(`SELECT id FROM "ServiceDealFileEntry" WHERE "fileId" = $1`, [fileId])
+      ).toHaveLength(1);
+      const [{ id }] = await q<{ id: number }>(`SELECT id FROM "Image"`);
+      await expect(assertNotDealFileImages([id], 'used here')).rejects.toMatchObject({
+        code: 'FORBIDDEN',
+      });
+    };
+
+    it('keeps the file, its entry and its refused copy when the delete fails to commit', async () => {
+      const fileId = await overLevelFinal();
+      images.deleteImages.mockImplementationOnce(
+        async (
+          ids: number[],
+          options: { onDeleted: (db: never, rows: { id: number }[]) => Promise<void> }
+        ) =>
+          deleteImagesIn(holder.db)(ids, {
+            onDeleted: async (db, rows) => {
+              await options.onDeleted(db as never, rows);
+              throw new Error('commit failed');
+            },
+          })
+      );
+      expect(await files.purgeRemovedFiles()).toBe(0);
+      await keptWhole(fileId);
+    });
+
+    it('keeps the file, its entry and its refused copy when the delete fails', async () => {
+      const fileId = await overLevelFinal();
+      images.deleteImages.mockRejectedValueOnce(new Error('store down'));
+      expect(await files.purgeRemovedFiles()).toBe(0);
+      await keptWhole(fileId);
     });
 
     it.each([

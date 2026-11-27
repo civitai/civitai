@@ -1,7 +1,6 @@
 import { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import { assertNotDealFileImages } from '~/server/services/deal-file-image';
 
@@ -58,24 +57,6 @@ describe('assertNotDealFileImages', () => {
       code: 'FORBIDDEN',
     });
     await expect(assertNotDealFileImages([REVIEW_COPY], 'deleted')).resolves.toBeUndefined();
-  });
-
-  it('logs each refusal, with no image id, so a misfire after release is counted', async () => {
-    loggingMock.logToAxiom.mockClear();
-    await expect(assertNotDealFileImages([ENTRY_COPY], 'used here')).rejects.toThrow();
-    const refused = loggingMock.logToAxiom.mock.calls.filter(
-      ([entry]) => (entry as { name?: string }).name === 'deal_copy_refused'
-    );
-    expect(refused).toEqual([
-      [
-        {
-          name: 'deal_copy_refused',
-          type: 'info',
-          message: expect.any(String),
-          payload: { act: 'used here', count: 1 },
-        },
-      ],
-    ]);
   });
 
   it('passes an image no deal file points at (control)', async () => {

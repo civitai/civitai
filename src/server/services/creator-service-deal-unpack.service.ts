@@ -916,16 +916,15 @@ export async function deleteEntryScanCopies({ limit = 50 } = {}) {
   let deleted = 0;
   for (const row of rows) {
     try {
-      const released: number[] = [];
       await markCopyDeletes([row.id]);
-      await deleteImages([row.imageId], {
+      const gone = await deleteImages([row.imageId], {
         updatePosts: false,
         actor: { system: 'creator-service-deal-unpack' },
-        onDeleted: releaseEntryCopies([row.id], released),
+        onDeleted: releaseEntryCopies([row.id]),
       });
       // A copy kept for its case stays pointed at, and so does one gone without our delete.
       await settleCopyDeletes([row.id]);
-      if (released.length) deleted++;
+      if (gone.some(({ id }) => id === row.imageId)) deleted++;
     } catch (error) {
       logUnpack(
         'scan copy delete failed; it will be retried',
