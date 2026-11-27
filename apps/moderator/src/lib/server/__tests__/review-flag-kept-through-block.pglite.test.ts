@@ -280,6 +280,23 @@ describe('blockImage and the block reason', () => {
     expect(await blockedFor(FLAGGED)).toBe('moderated');
     expect(await blockedFor(56)).toBe('moderated');
   });
+
+  it.each(['CSAM', 'Other,CSAM', 'Other, csam '])(
+    'an unblock leaves a row blocked as %j as it is',
+    async (reason) => {
+      await db.query(
+        `INSERT INTO "Image" ("id", "userId", "needsReview", "blockedFor", "ingestion", "nsfwLevel")
+         VALUES (57, 10, NULL, $1, 'Blocked', 32)`,
+        [reason]
+      );
+
+      await expect(
+        acceptImage({ imageId: 57, userId: 2, restoreRemoved: true })
+      ).rejects.toBeInstanceOf(ImageNotRestoredError);
+
+      expect(await blockedFor(57)).toBe(reason);
+    }
+  );
 });
 
 // Removed with only the flag left: the flag's own queue lists it, and must not undo the removal.

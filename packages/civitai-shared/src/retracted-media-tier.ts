@@ -192,13 +192,18 @@ export function moderatorWithheldSql(
   return csamReview ? 'false' : buildModeratorWithheldSql(image);
 }
 
+/** Whether `row."blockedFor"`, a comma list of block reasons, names CSAM anywhere in it. NULL reads false. */
+export function csamBlockedForSql(row: string): string {
+  return `EXISTS (
+      SELECT 1 FROM unnest(string_to_array(${row}."blockedFor", ',')) AS mw_reason(value)
+      WHERE lower(btrim(mw_reason.value)) = 'csam'
+    )`;
+}
+
 function buildModeratorWithheldSql(image: string): string {
   const marked = (row: string) => `(
     COALESCE(${heldItemImageSql(row)}, false)
-    OR EXISTS (
-      SELECT 1 FROM unnest(string_to_array(${row}."blockedFor", ',')) AS mw_reason(value)
-      WHERE lower(btrim(mw_reason.value)) = 'csam'
-    )
+    OR ${csamBlockedForSql(row)}
     OR ${csamSignalImageSql(row, { scanFlag: false, hold: false })}
   )`;
   return `COALESCE((
