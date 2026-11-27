@@ -226,7 +226,7 @@ describe('createRevocationCheck deadline and reporting', () => {
 describe('createRevocationCheck retry and confirmElevated', () => {
   const claimsOf = () => ({ jti: 'j1', sub: '7', signedAt: Date.now() } as never);
   const revokedStore = store({ [SESSION_REGISTRY_KEYS.tokenState]: { j1: 'invalid' } });
-  type Step = 'read' | 'reset' | 'readonly' | 'other-error' | 'timeout' | 'breaker-open';
+  type Step = 'read' | 'reset' | 'readonly' | 'closed' | 'other-error' | 'timeout' | 'breaker-open';
   // `bound` answers each read from `plan` in turn: `read` lets it through, anything else rejects.
   const planned = (plan: Step[]) => {
     let calls = 0;
@@ -234,7 +234,9 @@ describe('createRevocationCheck retry and confirmElevated', () => {
       const step = plan[calls++] ?? 'read';
       if (step === 'read') return read;
       read.catch(() => {});
-      if (step === 'reset') return Promise.reject(new Error('Socket closed unexpectedly'));
+      if (step === 'reset')
+        return Promise.reject(Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' }));
+      if (step === 'closed') return Promise.reject(new Error('The client is closed'));
       if (step === 'readonly')
         return Promise.reject(new Error("READONLY You can't write against a read only replica."));
       if (step === 'other-error') return Promise.reject(new Error('WRONGTYPE Operation'));
@@ -243,13 +245,19 @@ describe('createRevocationCheck retry and confirmElevated', () => {
     return { bound, calls: () => calls };
   };
   // markerCache off where the store holds a revocation: a rejected read still runs and would record it.
-  const checkOver = (redis: SessionRegistryRedis, plan: Step[], onError = vi.fn()) => {
+  const checkOver = (
+    redis: SessionRegistryRedis,
+    plan: Step[],
+    onError = vi.fn(),
+    retryCooldownMs?: number
+  ) => {
     const p = planned(plan);
     const check = createRevocationCheck({
       redis: () => redis,
       bound: p.bound,
       markerCache: false,
       retryDelayMs: () => 0,
+      retryCooldownMs,
       onError,
     });
     return { check, calls: p.calls, onError };
@@ -267,7 +275,7 @@ describe('createRevocationCheck retry and confirmElevated', () => {
     }
   );
 
-  it.each<Step>(['timeout', 'breaker-open', 'other-error'])(
+  it.each<Step>(['timeout', 'breaker-open', 'closed', 'other-error'])(
     'does not retry after a %s',
     async (first) => {
       const { check, calls, onError } = checkOver(store(), [first, 'read']);
@@ -291,6 +299,22 @@ describe('createRevocationCheck retry and confirmElevated', () => {
     expect(calls()).toBe(2);
     expect(onError).toHaveBeenCalledTimes(1);
     expect(await check.confirmElevated(a)).toBe('unavailable');
+  });
+
+  it('stops retrying for the cool-down after a retry fails, then retries again', async () => {
+    const { check, calls } = checkOver(
+      store(),
+      ['reset', 'reset', 'reset', 'reset', 'read'],
+      vi.fn(),
+      50
+    );
+    await check(claimsOf());
+    expect(calls()).toBe(2);
+    await check(claimsOf());
+    expect(calls()).toBe(3);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(await check(claimsOf())).toBe(false);
+    expect(calls()).toBe(5);
   });
 
   it("keeps a failed read unconfirmed when another request's read of the same token answers", async () => {

@@ -61,10 +61,10 @@ const storeAnswers = () => {
   redisMock.sysRedis.get.mockResolvedValue(null);
 };
 
-/** A store the client cannot reach: every read fails with a connection error. */
+/** A store the client cannot reach: every read fails at once, and the check does not retry it. */
 const storeErrors = () => {
-  redisMock.sysRedis.hGet.mockRejectedValue(new Error('ECONNRESET'));
-  redisMock.sysRedis.get.mockRejectedValue(new Error('ECONNRESET'));
+  redisMock.sysRedis.hGet.mockRejectedValue(new Error('The client is closed'));
+  redisMock.sysRedis.get.mockRejectedValue(new Error('The client is closed'));
 };
 
 const outcomes = () => observeSessionLeg.mock.calls.map((c) => c[1]);

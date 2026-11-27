@@ -943,6 +943,7 @@ func TestIsRevokedRetriesOnceAfterAFastError(t *testing.T) {
 		timeout time.Duration
 	}{
 		{"deadline", func(r *testkit.Redis) { r.Delay = time.Second }, 20 * time.Millisecond},
+		{"closed client", func(r *testkit.Redis) { r.Err = redis.ErrClosed }, 0},
 		{"other error", func(r *testkit.Redis) { r.Err = testkit.ErrDown }, 0},
 	} {
 		r := testkit.NewRedis()
@@ -951,5 +952,25 @@ func TestIsRevokedRetriesOnceAfterAFastError(t *testing.T) {
 		if _, failed := rev.Check(context.Background(), revocationClaims()); !failed || r.Calls != 1 {
 			t.Fatalf("%s: failed=%v after %d round trips, want a failed read and no retry", c.name, failed, r.Calls)
 		}
+	}
+}
+
+// After a retry fails, the process stops retrying for RetryCooldown, then retries again.
+func TestIsRevokedStopsRetryingForTheCooldownAfterARetryFails(t *testing.T) {
+	r := testkit.NewRedis()
+	r.Err = errors.New("read tcp 10.0.0.1:6379: connection reset by peer")
+	rev := &Revocation{Redis: r, RetryDelay: func() time.Duration { return 0 }, RetryCooldown: 50 * time.Millisecond}
+	rev.Check(context.Background(), revocationClaims())
+	if r.Calls != 2 {
+		t.Fatalf("first failure: %d round trips, want 2 (one retry)", r.Calls)
+	}
+	rev.Check(context.Background(), revocationClaims())
+	if r.Calls != 3 {
+		t.Fatalf("inside the cool-down: %d round trips, want 3 (no retry)", r.Calls)
+	}
+	time.Sleep(60 * time.Millisecond)
+	rev.Check(context.Background(), revocationClaims())
+	if r.Calls != 5 {
+		t.Fatalf("after the cool-down: %d round trips, want 5 (retrying again)", r.Calls)
 	}
 }

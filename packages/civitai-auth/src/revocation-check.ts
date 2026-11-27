@@ -14,9 +14,10 @@ import type { SessionClaims } from './types';
 // not the policy). `markerCache: false` (each app maps its SESSION_REVOCATION_CACHE=off|0|false to it) turns
 // the record off and restores the plain fail-open.
 //
-// A read that fails fast on a connection-level error (reset, refused, closed, or a replica answering
-// READONLY / NOT-MASTER during a failover) is retried once after a short backoff; one that hit the deadline
-// or the breaker is not, since a retry would wait again.
+// A read that fails fast on a transient connection or failover error (a reset or broken connection, or a
+// node answering READONLY / NOT-MASTER / LOADING / MASTERDOWN while the primary moves) is retried once after a
+// short backoff. A read that hit the deadline or the breaker, or failed any other way (a closed client
+// included), is not. After a retry fails, this process stops retrying for a cool-down.
 //
 // Elevated sessions (a moderator, or an impersonation token) are the exception to the fallback: once the user
 // is resolved the session client asks `confirmElevated`, which refuses the request when that session's read
@@ -91,8 +92,15 @@ export interface RevocationCheckConfig {
   ) => void;
   /** Called after every check with its outcome and wall time in seconds. Observability only. */
   onOutcome?: (outcome: RevocationOutcome, seconds: number) => void;
+  /**
+   * Retry a read that failed fast on a connection-level error once (default true). `false` falls back at
+   * once: the hub, which must not add the backoff to every sign-in during an outage.
+   */
+  retry?: boolean;
   /** Backoff before the one retry after a fast error, in ms (default 200-500, random). */
   retryDelayMs?: () => number;
+  /** How long to stop retrying after a retry fails, in ms (default REVOCATION_RETRY_COOLDOWN_MS). */
+  retryCooldownMs?: number;
 }
 
 class RevocationReadTimeout extends Error {
@@ -118,10 +126,14 @@ const reasonOf = (err: unknown): RevocationFailureReason => {
   return reason === 'timeout' || reason === 'breaker-open' ? reason : 'error';
 };
 
-// Connection-level failures that a second attempt on a fresh connection or the new primary can get past.
-const FAST_ERROR_CODES = new Set(['ECONNRESET', 'ECONNREFUSED', 'EPIPE']);
+// Transient failures a second attempt on a fresh connection or the new primary can get past. A closed or
+// refused connection is not one: it persists for the length of an outage.
+const FAST_ERROR_CODES = new Set(['ECONNRESET', 'EPIPE']);
 const FAST_ERROR_TEXT =
-  /READONLY|NOTMASTER|NOT-MASTER|ECONNRESET|ECONNREFUSED|EPIPE|connection (?:reset|refused|(?:is )?closed)|client is closed|socket closed/i;
+  /^(?:READONLY|NOTMASTER|NOT-MASTER|LOADING|MASTERDOWN)\b|ECONNRESET|EPIPE|connection reset|broken pipe/i;
+
+/** How long a process stops retrying after a retry fails. */
+export const REVOCATION_RETRY_COOLDOWN_MS = 10_000;
 
 function isFastError(err: unknown): boolean {
   if (reasonOf(err) !== 'error') return false;
@@ -186,7 +198,10 @@ export function createRevocationCheck(config: RevocationCheckConfig): Revocation
     return t ?? revocationReadTimeoutMs();
   };
   const bound = config.bound ?? raceDeadline;
+  const retryOn = config.retry ?? true;
   const retryDelayMs = config.retryDelayMs ?? defaultRetryDelayMs;
+  const retryCooldownMs = config.retryCooldownMs ?? REVOCATION_RETRY_COOLDOWN_MS;
+  let retryPausedUntil = 0;
   // Why the read for these claims failed. Each verifyToken call returns its own claims object, so an entry
   // covers that one verification: another request's read of the same token never clears it.
   const failedReads = new WeakMap<SessionClaims, RevocationFailureReason>();
@@ -200,9 +215,14 @@ export function createRevocationCheck(config: RevocationCheckConfig): Revocation
       try {
         revoked = await read();
       } catch (err) {
-        if (!isFastError(err)) throw err;
+        if (!retryOn || !isFastError(err) || Date.now() < retryPausedUntil) throw err;
         await sleep(retryDelayMs());
-        revoked = await read();
+        try {
+          revoked = await read();
+        } catch (retryErr) {
+          retryPausedUntil = Date.now() + retryCooldownMs;
+          throw retryErr;
+        }
       }
       quietly(() => config.onOutcome?.('hit', seconds()));
       failedReads.delete(claims);

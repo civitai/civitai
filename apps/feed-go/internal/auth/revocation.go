@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 	"math/rand/v2"
-	"net"
 	"regexp"
 	"strconv"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -50,6 +50,11 @@ type Revocation struct {
 	OnDegraded func(err error, verdict string)
 	// RetryDelay is the backoff before the one retry after a fast error (default 200-500 ms, random).
 	RetryDelay func() time.Duration
+	// RetryCooldown is how long retries stop after a retry fails (default 10 s,
+	// REVOCATION_RETRY_COOLDOWN_MS).
+	RetryCooldown time.Duration
+
+	retryPausedUntil atomic.Int64 // unix nanos
 }
 
 // IsRevoked reports whether the session has been signed out, banned or cut.
@@ -59,15 +64,16 @@ func (r *Revocation) IsRevoked(ctx context.Context, c *Claims) bool {
 }
 
 // Check is IsRevoked that also reports whether the read failed, so the verdict came from the markers. A
-// read that fails fast on a connection-level error is retried once after RetryDelay, as the package does;
-// one that hit the deadline is not.
+// read that fails on a transient connection or failover error is retried once after RetryDelay, as the
+// package does; one that hit the deadline or failed any other way is not, and none is for RetryCooldown
+// after a retry fails.
 func (r *Revocation) Check(ctx context.Context, c *Claims) (revoked, readFailed bool) {
 	if c.Jti == "" {
 		return false, false
 	}
 	k := revocationKeysOf(c)
 	cmds, err := r.read(ctx, c, k)
-	if err != nil && isFastError(err) {
+	if err != nil && isFastError(err) && time.Now().UnixNano() >= r.retryPausedUntil.Load() {
 		delay := defaultRetryDelay()
 		if r.RetryDelay != nil {
 			delay = r.RetryDelay()
@@ -78,6 +84,13 @@ func (r *Revocation) Check(ctx context.Context, c *Claims) (revoked, readFailed 
 			cmds, err = r.read(ctx, c, k)
 		case <-ctx.Done():
 			t.Stop()
+		}
+		if err != nil {
+			cooldown := r.RetryCooldown
+			if cooldown == 0 {
+				cooldown = 10 * time.Second
+			}
+			r.retryPausedUntil.Store(time.Now().Add(cooldown).UnixNano())
 		}
 	}
 	if err != nil {
@@ -158,16 +171,15 @@ func (r *Revocation) read(ctx context.Context, c *Claims, k revocationKeys) ([6]
 	return cmds, err
 }
 
-// fastErrorText matches the connection-level failures a second attempt can get past (FAST_ERROR_TEXT in
-// packages/civitai-auth/src/revocation-check.ts).
-var fastErrorText = regexp.MustCompile(`(?i)READONLY|NOTMASTER|NOT-MASTER|ECONNRESET|ECONNREFUSED|EPIPE|connection (?:reset|refused|(?:is )?closed)|client is closed|socket closed|broken pipe|use of closed network connection`)
+// fastErrorText matches the transient failures a second attempt can get past (FAST_ERROR_TEXT in
+// packages/civitai-auth/src/revocation-check.ts). A closed or refused connection is not one.
+var fastErrorText = regexp.MustCompile(`(?i)^(?:READONLY|NOTMASTER|NOT-MASTER|LOADING|MASTERDOWN)\b|ECONNRESET|EPIPE|connection reset|broken pipe`)
 
 func isFastError(err error) bool {
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 		return false
 	}
-	if errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.EPIPE) ||
-		errors.Is(err, net.ErrClosed) || errors.Is(err, redis.ErrClosed) {
+	if errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) {
 		return true
 	}
 	return fastErrorText.MatchString(err.Error())
