@@ -26,7 +26,7 @@ export const BUZZ_LIMIT_REFUSALS: readonly BuzzLimitRefusalPattern[] = [];
 
 /** Whose limit refused the call, or null when the response is not a Buzz-limit refusal. */
 export function isApiKeyBuzzLimitRefusal(
-  status: number | undefined,
+  status: number | null | undefined,
   body: unknown,
   patterns: readonly BuzzLimitRefusalPattern[] = BUZZ_LIMIT_REFUSALS
 ): BuzzLimitRefusalSubject | null {
@@ -39,7 +39,7 @@ export function isApiKeyBuzzLimitRefusal(
  * not TOO_MANY_REQUESTS, even for a 429: waiting does not help until the limit's window rolls over.
  */
 export function throwIfApiKeyBuzzLimitRefusal(
-  status: number | undefined,
+  status: number | null | undefined,
   body: unknown,
   patterns: readonly BuzzLimitRefusalPattern[] = BUZZ_LIMIT_REFUSALS
 ) {
