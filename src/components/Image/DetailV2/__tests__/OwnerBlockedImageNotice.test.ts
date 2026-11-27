@@ -131,10 +131,10 @@ describe('OwnerBlockedImageNotice', () => {
   });
 });
 
-const ROW = { id: 4321, createdAt: new Date('2026-03-14T12:00:00Z'), postId: 987 };
+const ROW = { id: 4321, createdAt: new Date('2026-03-14T12:00:00Z') };
 type NoticeImage = React.ComponentProps<typeof OwnerBlockedImageNotice>['image'];
 
-/** Renders `image` whole, unlike `render`, which fixes its id and has no upload date or post. */
+/** Renders `image` whole, unlike `render`, which fixes its id and has no upload date. */
 function renderRow(image: NoticeImage) {
   act(() => {
     root.render(
@@ -156,17 +156,16 @@ describe('OwnerBlockedImageNotice names the image', () => {
   it.each([
     ['the appealable banner', { canAppeal: true }],
     ['the neutral notice', { canAppeal: false }],
-  ])('%s carries the upload date and links the post', (_, data) => {
+  ])('%s carries the upload date', (_, data) => {
     state.appealState = { data, isError: false };
     const el = renderRow({ ...ROW, blockedFor: 'moderated', needsReview: null });
     expect(el.textContent).toContain('Uploaded Mar 14, 2026');
-    expect(el.querySelector('a[href="/posts/987"]')?.textContent).toBe('post #987');
   });
 
-  it('reads the same for every block it cannot appeal, with the identity present', () => {
+  it('reads the same for every block it cannot appeal, with the date present', () => {
     state.appealState = { data: { canAppeal: false }, isError: false };
     const refused = renderRow({ ...ROW, blockedFor: 'moderated' }).innerHTML;
-    expect(refused).toContain('post #987');
+    expect(refused).toContain('Uploaded Mar 14, 2026');
     for (const reason of [
       { blockedFor: 'tos' },
       { blockedFor: 'CSAM' },
@@ -181,10 +180,20 @@ describe('OwnerBlockedImageNotice names the image', () => {
     }
   });
 
-  it('adds nothing for a row with neither field', () => {
+  it('reads the same whether the image is still in a post or not', () => {
+    // The page hands the notice the whole row, `postId` included.
+    const inPost = { ...ROW, blockedFor: 'tos', postId: 987 };
+    const noPost = { ...ROW, blockedFor: 'tos', postId: null };
+    for (const data of [{ canAppeal: false }, { canAppeal: true }]) {
+      state.appealState = { data, isError: false };
+      const html = renderRow(inPost).innerHTML;
+      expect(renderRow(noPost).innerHTML).toBe(html);
+      expect(notice().querySelector('a[href^="/posts/"]')).toBeNull();
+    }
+  });
+
+  it('adds nothing for a row with no upload date', () => {
     state.appealState = { data: { canAppeal: false }, isError: false };
-    const el = renderRow({ id: 4321, blockedFor: 'tos' });
-    expect(el.textContent).not.toContain('Uploaded');
-    expect(el.querySelector('a')).toBeNull();
+    expect(renderRow({ id: 4321, blockedFor: 'tos' }).textContent).not.toContain('Uploaded');
   });
 });

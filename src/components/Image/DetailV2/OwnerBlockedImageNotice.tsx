@@ -1,7 +1,6 @@
 import { IconAlertTriangle } from '@tabler/icons-react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { AppealRemovalPrompt } from '~/components/Dialog/Common/AppealRemovalPrompt';
-import { NextLink } from '~/components/NextLink/NextLink';
 import { isAppealableImage } from '~/shared/utils/appeal';
 import { EntityType } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
@@ -15,7 +14,6 @@ type NoticeImage = {
   blockedFor?: string | null;
   needsReview?: string | null;
   createdAt?: Date | string | null;
-  postId?: number | null;
 };
 
 /**
@@ -66,23 +64,10 @@ export function OwnerBlockedImageNotice({ image }: { image: NoticeImage }) {
 }
 
 /**
- * Tells the owner which image the notice is about, since its media is withheld from them too. Only
- * what the row carries whatever the block, so it never reads differently by reason.
+ * Tells the owner which image the notice is about, since its media is withheld from them too: its
+ * upload date, the same line whatever the block.
  */
-function WhichImage({ image: { createdAt, postId } }: { image: NoticeImage }) {
-  if (!createdAt && !postId) return null;
-  return (
-    <span className="mt-1 block text-xs">
-      {createdAt && <>Uploaded {formatDate(createdAt)}</>}
-      {createdAt && postId && ', '}
-      {postId && (
-        <>
-          {createdAt ? 'in ' : 'In '}
-          <NextLink href={`/posts/${postId}`} className="underline">
-            post #{postId}
-          </NextLink>
-        </>
-      )}
-    </span>
-  );
+function WhichImage({ image: { createdAt } }: { image: NoticeImage }) {
+  if (!createdAt) return null;
+  return <span className="mt-1 block text-xs">Uploaded {formatDate(createdAt)}</span>;
 }
