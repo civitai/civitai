@@ -246,7 +246,12 @@ describe('ClickHouse', () => {
             yield [
               {
                 json: <T>() =>
-                  ({ id: 'r', jobType: 'ComfyImageGen', createdAt: '2024-01-01 00:00:00' } as T),
+                  ({
+                    id: 'r',
+                    userId: 7,
+                    jobType: 'ComfyImageGen',
+                    createdAt: '2024-01-01 00:00:00',
+                  } as T),
               },
             ];
           },
@@ -392,6 +397,8 @@ describe('ClickHouse', () => {
       row('scan', 'CivitaiImageScanning'),
       row('hash', 'MediaHash'),
       row('future', 'SomeNewSystemJob'),
+      row('render', 'model3DPreview'),
+      { ...row('site-token', 'ComfyImageGen'), userId: '0' },
       row('empty', ''),
       row('missing'),
       row('not-text', 7),
@@ -422,6 +429,8 @@ describe('ClickHouse', () => {
     expect(jobs.description).toMatch(/runs itself .* not included/);
   });
 
+  // civitai/civitai#10668: site-run job types stay off the user list, including model3DPreview,
+  // which the site also submits on its own token to render a user's mesh for the rating check.
   it('never lists a job type the site runs on its own', () => {
     for (const t of [
       'CivitaiImageScanning',
@@ -438,6 +447,7 @@ describe('ClickHouse', () => {
       'watermarkDetection',
       'ModelPickleScan',
       'BlobScanGate',
+      'model3DPreview',
     ])
       expect(USER_JOB_TYPES.has(t.toLowerCase()), t).toBe(false);
   });

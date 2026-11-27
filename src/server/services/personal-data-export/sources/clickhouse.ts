@@ -139,7 +139,6 @@ export const USER_JOB_TYPES: ReadonlySet<string> = new Set(
     'ImageUpscaler',
     'PreprocessImage',
     'PreprocessVideo',
-    'model3DPreview',
     'uniRig',
     'videoBackgroundRemoval',
     'videoEnhancement',
@@ -217,8 +216,15 @@ export const USER_JOB_TYPES: ReadonlySet<string> = new Set(
   ].map((t) => t.toLowerCase())
 );
 
+/**
+ * Jobs the site submits on its own token are stored with userId 0, so a row is the user's only when
+ * it carries their id and a listed type. A type the site also submits for a user's content on its
+ * own token (model3DPreview, the post-rating render) is not listed at all.
+ */
 export const isUserJob = (row: Record<string, unknown>) =>
-  typeof row.jobType === 'string' && USER_JOB_TYPES.has(row.jobType.toLowerCase());
+  Number(row.userId) > 0 &&
+  typeof row.jobType === 'string' &&
+  USER_JOB_TYPES.has(row.jobType.toLowerCase());
 
 /** A Buzz row as the owner sees it in the app: no other user's id from `details` or the ledger id. */
 export function redactBuzzRow(row: Record<string, unknown>) {
@@ -458,7 +464,6 @@ export async function exportClickhouse({
           for await (const rows of rs.stream())
             for (const row of rows) {
               const raw = row.json<Record<string, unknown>>();
-              // A row that is not the user's own is dropped before anything counts it.
               if (table.include && !table.include(raw)) continue;
               if (table.unreliable?.(raw)) {
                 entry.leftOut = (entry.leftOut ?? 0) + 1;
