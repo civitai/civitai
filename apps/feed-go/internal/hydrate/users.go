@@ -189,6 +189,14 @@ func HasBlockMarkerSQL(alias string) string {
 	return `(` + a + `."ingestion" = 'Blocked'::"ImageIngestionStatus" OR ` + a + `."nsfwLevel" = 32 OR ` + a + `."blockedFor" IS NOT NULL)`
 }
 
+// OwnerMediaAllowedSQL is ownerMediaAllowedSql(alias) (src/server/common/image-visibility.ts), never
+// NULL, with OWNER_MEDIA_EXEMPT_BLOCKS (src/server/common/image-block-marker.ts) inlined as literals.
+func OwnerMediaAllowedSQL(alias string) string {
+	a := `"` + alias + `"`
+	return `(CASE WHEN ` + a + `."blockedFor" IS NOT NULL THEN ` + a + `."blockedFor" IN ('AiNotVerified') ELSE ` +
+		a + `."ingestion" <> 'Blocked'::"ImageIngestionStatus" END)`
+}
+
 // ImageReviewedSQL is imageReviewedSql(alias) (src/server/common/image-visibility.ts), with its bound
 // values inlined as literals (they are constants).
 func ImageReviewedSQL(alias string) string {

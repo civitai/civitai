@@ -458,6 +458,51 @@ func TestIntegrationThumbnails(t *testing.T) {
 	}
 }
 
+// The miss path's blockMarked / ownerMediaAllowed columns over real rows: a clean thumbnail, a hold
+// that leaves the owner the media (AiNotVerified), a safety block (CSAM), a Blocked ingestion with no
+// reason, and a Blocked level alone (a rating to the owner, a block marker to everyone else).
+func TestIntegrationThumbnailOwnerMediaAllowed(t *testing.T) {
+	e := integSetup(t, true)
+	integtest.Exec(t, e.pool, `DELETE FROM "Image" WHERE id BETWEEN 1105500 AND 1105599;
+		INSERT INTO "Image" (id, url, "userId", type, metadata, "nsfwLevel", width, height, ingestion, "blockedFor") VALUES
+		  (1105501, 'integ-oma-video-1', 1105900, 'video', '{"thumbnailId": 1105511}', 1, 1920, 1080, 'Scanned', NULL),
+		  (1105511, 'integ-oma-clean', 1105900, 'image', '{"parentId": 1105501}', 1, 640, 360, 'Scanned', NULL),
+		  (1105502, 'integ-oma-video-2', 1105900, 'video', '{"thumbnailId": 1105512}', 1, 1920, 1080, 'Scanned', NULL),
+		  (1105512, 'integ-oma-hold', 1105900, 'image', '{"parentId": 1105502}', 1, 640, 360, 'Blocked', 'AiNotVerified'),
+		  (1105503, 'integ-oma-video-3', 1105900, 'video', '{"thumbnailId": 1105513}', 1, 1920, 1080, 'Scanned', NULL),
+		  (1105513, 'integ-oma-csam', 1105900, 'image', '{"parentId": 1105503}', 1, 640, 360, 'Blocked', 'CSAM'),
+		  (1105504, 'integ-oma-video-4', 1105900, 'video', '{"thumbnailId": 1105514}', 1, 1920, 1080, 'Scanned', NULL),
+		  (1105514, 'integ-oma-ingestion', 1105900, 'image', '{"parentId": 1105504}', 1, 640, 360, 'Blocked', NULL),
+		  (1105505, 'integ-oma-video-5', 1105900, 'video', '{"thumbnailId": 1105515}', 1, 1920, 1080, 'Scanned', NULL),
+		  (1105515, 'integ-oma-rating', 1105900, 'image', '{"parentId": 1105505}', 32, 640, 360, 'Scanned', NULL);`)
+
+	got, err := e.src.Thumbnails(integtest.Ctx(t), []int{1105501, 1105502, 1105503, 1105504, 1105505})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		video                  int
+		url                    string
+		servable, ownerAllowed bool
+	}{
+		{1105501, "integ-oma-clean", true, true},
+		{1105502, "integ-oma-hold", false, true},
+		{1105503, "integ-oma-csam", false, false},
+		{1105504, "integ-oma-ingestion", false, false},
+		{1105505, "integ-oma-rating", false, true},
+	} {
+		th, ok := got[c.video]
+		if !ok {
+			t.Errorf("video %d: no thumbnail", c.video)
+			continue
+		}
+		if th.URL != c.url || th.Servable != c.servable || th.OwnerMediaAllowed != c.ownerAllowed {
+			t.Errorf("video %d: url %v servable %v ownerMediaAllowed %v, want %s %v %v",
+				c.video, th.URL, th.Servable, th.OwnerMediaAllowed, c.url, c.servable, c.ownerAllowed)
+		}
+	}
+}
+
 func TestIntegrationImageMetrics(t *testing.T) {
 	e := integSetup(t, false)
 	ctx := integtest.Ctx(t)
