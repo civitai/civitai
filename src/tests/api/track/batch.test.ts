@@ -371,6 +371,10 @@ describe('POST /api/track/batch', () => {
       { table: string; values: Record<string, unknown>[] }
     ];
     expect(table).toBe('feedEvents');
+    // Rows must land, untagged, on a table the cohort DDL has not reached yet.
+    expect(mockInsert.mock.calls[0][0]).toMatchObject({
+      clickhouse_settings: { input_format_skip_unknown_fields: 1 },
+    });
     expect(values).toHaveLength(1);
     expect(values[0]).toMatchObject({
       userId: 5,

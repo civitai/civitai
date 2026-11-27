@@ -65,6 +65,8 @@ describe('feed clicks for a card tracked by an overlay', () => {
     expect(clickRows()).toEqual([]);
   });
 
+  // Without the flag every sentinel card (model-page carousel, post images, images-as-posts) loses
+  // its click rows silently; rendering the sentinel needs the flags provider this suite cannot mount.
   it('ImpressionSentinel asks for its clicks on the parent', () => {
     const source = readFileSync(path.resolve(__dirname, '../ImpressionSentinel.tsx'), 'utf8');
     expect(source).toMatch(/useTrackImpression<\w+>\(impressions, \{ clicksOnParent: true \}\);/);
