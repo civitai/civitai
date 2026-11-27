@@ -39,8 +39,8 @@ export const reviewOfImageSql = Prisma.sql`(
 )`;
 
 /**
- * True in SQL unless image `i` is a review copy whose source Final is held: such a copy is shown to
- * no one, its buyer included, on any path.
+ * True in SQL unless image `i` is a review copy whose source Final is held. Moderators bypass it
+ * (imageVisibilityConditions).
  */
 export const notHeldReviewCopySql = Prisma.sql`NOT EXISTS (
   SELECT 1 FROM "ServiceDealReviewImage" hri
