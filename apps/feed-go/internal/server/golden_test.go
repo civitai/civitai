@@ -48,9 +48,9 @@ const (
 	goldenDir = "../../testdata/golden"
 	// The fixture counts gen.mjs writes: a glob that matches fewer fails, so a moved directory or a
 	// renamed extension cannot pass as zero fixtures.
-	goldenMinAsPosts  = 35
+	goldenMinAsPosts  = 37
 	goldenMinV1       = 52
-	goldenMinInfinite = 155
+	goldenMinInfinite = 158
 	goldenMinModels   = 53
 	goldenIssuer      = "https://auth.example.test"
 	goldenCookieName  = "__Secure-civ-token"
@@ -1029,7 +1029,9 @@ func goldenImageRows(fx *goldenFixture, sql string, args []any) (*testkit.Rows, 
 	collection, hasCollection := goldenArg(args, goldenReCollection, sql)
 	collTag, hasCollTag := goldenArg(args, goldenReCollTag, sql)
 	collOwner, hasCollOwner := goldenArg(args, goldenReCollOwner, sql)
-	if !hasLevel {
+	// getAllImages leaves the level and reviewed gates out only for `requiringMeta` on the red domain,
+	// which then binds its blockedFor reason: any other query without a level clause is refused.
+	if !hasLevel && !goldenReBlockedReason.MatchString(sql) {
 		return nil, errors.New("golden: image query without a level clause")
 	}
 	blockedKeeps, err := goldenBlockedFor(args, sql)
@@ -1089,7 +1091,7 @@ func goldenImageRows(fx *goldenFixture, sql string, args []any) (*testkit.Rows, 
 				continue
 			}
 		}
-		if lv := goldenInt(level); img.NsfwLevel&lv == 0 || img.NsfwLevel == 0 {
+		if lv := goldenInt(level); hasLevel && (img.NsfwLevel&lv == 0 || img.NsfwLevel == 0) {
 			continue
 		}
 		if hasTarget && img.UserID != goldenInt(target) {

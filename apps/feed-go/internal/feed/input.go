@@ -115,8 +115,9 @@ var (
 )
 
 // unsupportedKeys are input keys that change the query in ways not ported yet. Present with a
-// non-empty value, they make the request fall back. `requiringMeta` and `remixOfId` are read only on
-// the feed-service path, where the query mapper refuses them (Input.RequiringMeta / HasRemixOfID).
+// non-empty value, they make the request fall back. `remixOfId` is read only on the feed-service
+// path, where the query mapper refuses it (Input.HasRemixOfID); `requiringMeta` is refused there too,
+// and is getAllImages' clause on every Postgres read (Input.RequiringMeta, ImagesQuery.RequiringMeta).
 var unsupportedKeys = []string{
 	"collectionId", "collectionTagId", "postId", "postIds", "userId", "username", "hubId",
 	"hubExcludedSources", "imageId", "reviewId", "skip", "ids",

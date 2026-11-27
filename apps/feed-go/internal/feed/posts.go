@@ -105,6 +105,9 @@ type Request struct {
 	BannedSession bool
 	// Cap is the domain cap (browsing.DomainCap); 0 = uncapped.
 	Cap int
+	// BoardColor is getRequestBoardDomainColor of the request's host: getAllImages' `domain` in each of
+	// the handler's calls (ImagesQuery.Domain).
+	BoardColor string
 }
 
 // AddonFilters is what enforceBlockedBrowsingTags (the addon half; tag filters are a fallback
@@ -309,6 +312,10 @@ func Serve(ctx context.Context, d *Deps, req Request) (*Result, error) {
 		Tools:      in.Tools,
 		TagIDs:     tags,
 		Techniques: in.Techniques,
+		// So does `requiringMeta`, with the request's `domain`. On the feed path the mapper refuses it
+		// (an empty page, so no hydrate reads it); the pinned and sponsored posts still apply it.
+		RequiringMeta: in.RequiringMeta,
+		Domain:        req.BoardColor,
 	}
 
 	overscan := int(math.Ceil(float64(in.Limit) * 2)) // so posts can be merged
