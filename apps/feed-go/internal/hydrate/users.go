@@ -197,6 +197,43 @@ func OwnerMediaAllowedSQL(alias string) string {
 		a + `."ingestion" <> 'Blocked'::"ImageIngestionStatus" END)`
 }
 
+// ImageBlockedForSQL is imageBlockedForConditions({ userId: viewerID, isModerator })
+// (src/server/common/image-visibility.ts) over "Image" i, the read that serves media (no
+// ownerKeepsBlockedRow): nothing for a moderator; `(i."blockedFor" IS NULL)` with no viewer;
+// otherwise an image with a blockedFor reason is kept only as the viewer's own, where
+// OwnerMediaAllowedSQL allows it. bind adds a query argument and returns its placeholder; it is
+// called once, for a viewer only.
+func ImageBlockedForSQL(viewerID int, isModerator bool, bind func(any) string) []string {
+	if isModerator {
+		return nil
+	}
+	if viewerID == 0 {
+		return []string{`(i."blockedFor" IS NULL)`}
+	}
+	return []string{`(i."blockedFor" IS NULL OR (i."userId" = ` + bind(viewerID) + ` AND ` + OwnerMediaAllowedSQL("i") + `))`}
+}
+
+// OwnerMediaSQL is ownerMediaSql(viewerID) (src/server/common/image-visibility.ts) over "Image" i:
+// the viewer's own images only where OwnerMediaAllowedSQL allows, whatever blockedFor says (a
+// Blocked ingestion with no reason included); `TRUE` with no viewer. bind as for ImageBlockedForSQL.
+func OwnerMediaSQL(viewerID int, bind func(any) string) string {
+	if viewerID == 0 {
+		return `TRUE`
+	}
+	return `("i"."userId" <> ` + bind(viewerID) + ` OR ` + OwnerMediaAllowedSQL("i") + `)`
+}
+
+// BlockedMediaListSQL is blockedMediaListConditions({ userId: viewerID, isModerator })
+// (src/server/common/image-visibility.ts), the block terms of a list that serves media: nothing for
+// a moderator, else ImageBlockedForSQL then OwnerMediaSQL. viewerID must be the viewer Node reads as
+// the owner (feedViewer's id: a session or a full-access key; feed-go answers no other credential).
+func BlockedMediaListSQL(viewerID int, isModerator bool, bind func(any) string) []string {
+	if isModerator {
+		return nil
+	}
+	return append(ImageBlockedForSQL(viewerID, false, bind), OwnerMediaSQL(viewerID, bind))
+}
+
 // ImageReviewedSQL is imageReviewedSql(alias) (src/server/common/image-visibility.ts), with its bound
 // values inlined as literals (they are constants).
 func ImageReviewedSQL(alias string) string {

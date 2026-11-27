@@ -216,6 +216,7 @@ for (const [id, userId, versionId, publishedAt] of [
   [7009, 1002, 6001, day(7)],
   [7010, 1001, null, day(6)],
   [7020, 1002, null, day(6, 6)],
+  [7030, 1002, null, day(6, 18)],
   [7101, 1002, 6301, day(2)],
   [7102, 1001, 6301, day(13)],
   [7103, 1002, 6301, day(1)],
@@ -343,6 +344,15 @@ image(8302, 7301, { index: 1, nsfwLevel: 4 });
 image(8401, 7401);
 // An image that hides its meta: the column holds one, the cache and the lookup answer null.
 image(8030, 7011, { hideMeta: true, hasMeta: false });
+// Post 7030's three images (1002's): one carrying a block that refuses its owner the media (CSAM),
+// one carrying only a hold that leaves the owner the media (AiNotVerified, OWNER_MEDIA_EXEMPT_BLOCKS
+// in src/server/common/image-block-marker.ts), one with no block. The rows still read Scanned and
+// rated, so only the block clauses (blockedMediaListConditions) tell them apart.
+image(8041, 7030, { index: 0 });
+image(8042, 7030, { index: 1 });
+image(8043, 7030, { index: 2 });
+IMAGES[8041].blockedFor = 'CSAM';
+IMAGES[8042].blockedFor = 'AiNotVerified';
 // An acceptableMinor image (1001's), listed only in a collection, and there only to its owner and to
 // moderators.
 image(8501, 7501);
@@ -491,6 +501,11 @@ const META_UNCOMPRESSED = new Set([8002]);
 // imageMetaCache notFound markers (the lookup found no row when the entry was written).
 const META_NOT_FOUND = new Set([8009]);
 const metaOf = (id) => (IMAGES[id].hideMeta ? null : prismaJson(META[id] ?? null));
+
+// OWNER_MEDIA_EXEMPT_BLOCKS and ownerMediaAllowed (src/server/common/image-block-marker.ts).
+const OWNER_MEDIA_EXEMPT_BLOCKS = ['AiNotVerified'];
+const ownerMediaAllowed = (image) =>
+  image.blockedFor != null ? OWNER_MEDIA_EXEMPT_BLOCKS.includes(image.blockedFor) : image.ingestion !== 'Blocked';
 
 // Video thumbnails (thumbnailCache, keyed by the video's id).
 const THUMBNAILS = {
@@ -1270,7 +1285,13 @@ function imageSql(q) {
     if (!(p.publishedAt < NOW)) return false;
     if (!isModerator) {
       if (!((i.availability !== 'Private' && i.ingestion !== 'Blocked') || p.userId === userId)) return false;
-      if (!(i.blockedFor === null || i.userId === userId)) return false;
+      // blockedMediaListConditions({ userId: ownerId }) (src/server/common/image-visibility.ts): an
+      // image with a blockedFor reason is moderators' alone, plus its owner's where ownerMediaAllowed
+      // allows (imageBlockedForConditions); and the owner's own images only where ownerMediaAllowed
+      // allows (ownerMediaSql).
+      const ownersOwn = !!userId && i.userId === userId;
+      if (!(i.blockedFor === null || (ownersOwn && ownerMediaAllowed(i)))) return false;
+      if (ownersOwn && !ownerMediaAllowed(i)) return false;
     }
     if (q.disablePoi && !(i.poi !== true || p.userId === userId)) return false;
     if (q.disableMinor && !(i.minor !== true || (userId && i.userId === userId))) return false;
@@ -4174,6 +4195,34 @@ const INFINITE = [
     viewer: 1004,
     host: HOST.blue,
     input: { ids: [8302, 8301, 8001], sort: 'Newest', browsingLevel: 31, limit: 10 },
+  },
+  {
+    name: 'ids-blocked-owner',
+    description: 'Post 7030’s three images for their owner: the image under a block that refuses the owner the media (CSAM) is left out (blockedMediaListConditions); the one under a hold that leaves the owner the media (AiNotVerified) is kept, as is the unblocked one.',
+    viewer: 1002,
+    host: HOST.green,
+    input: { ids: [8041, 8042, 8043], sort: 'Newest', browsingLevel: 1, limit: 10 },
+  },
+  {
+    name: 'ids-blocked-other-user',
+    description: 'The same images for a signed-in viewer who is not their owner: only the unblocked one.',
+    viewer: 1001,
+    host: HOST.green,
+    input: { ids: [8041, 8042, 8043], sort: 'Newest', browsingLevel: 1, limit: 10 },
+  },
+  {
+    name: 'ids-blocked-signed-out',
+    description: 'The same images signed out: only the unblocked one.',
+    viewer: null,
+    host: HOST.green,
+    input: { ids: [8041, 8042, 8043], sort: 'Newest', browsingLevel: 1, limit: 10 },
+  },
+  {
+    name: 'ids-blocked-moderator',
+    description: 'The same images for a moderator (the positive control): no block clause, all three.',
+    viewer: 1004,
+    host: HOST.green,
+    input: { ids: [8041, 8042, 8043], sort: 'Newest', browsingLevel: 1, limit: 10 },
   },
   {
     name: 'ids-single-signed-out',

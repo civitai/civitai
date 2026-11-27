@@ -58,6 +58,7 @@ const { isGenerationEligible } = await repo(
 const { isModelWithheld } = await repo('src/shared/utils/model-withhold.ts');
 const { canViewPoiModel } = await repo('src/server/utils/poi-model-visibility.ts');
 const { filterImagesForViewer } = await repo('src/server/utils/model-getall-images.ts');
+const { ownerMediaAllowed } = await repo('src/server/common/image-block-marker.ts');
 const levels = await repo('src/shared/constants/browsingLevel.constants.ts');
 const { isMinorContentRestricted } = await repo(
   'packages/civitai-shared/src/minor-content-gate.ts'
@@ -292,7 +293,14 @@ function imageQuery(world, { modelVersionIds, excludedTagIds, user, browsingLeve
             (userId && i.userId === userId)
           : true
       )
-      .filter((i) => isModerator || i.blockedFor == null || (userId && i.userId === userId))
+      // imageBlockedForConditions({ userId, isModerator }): a blocked image is moderators' alone,
+      // plus its owner's where ownerMediaAllowed allows (src/server/common/image-block-marker.ts).
+      .filter(
+        (i) =>
+          isModerator ||
+          i.blockedFor == null ||
+          (userId && i.userId === userId && ownerMediaAllowed(i))
+      )
       .filter((i) => i.needsReview == null && !i.acceptableMinor && (i.nsfwLevel & level) !== 0)
       .filter((i) => i.ingestion === 'Scanned')
       .filter(
