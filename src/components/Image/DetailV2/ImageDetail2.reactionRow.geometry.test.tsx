@@ -311,6 +311,7 @@ afterEach(() => {
   cleanup();
   ctx.hats = true;
   ctx.hideReactions = false;
+  ctx.active = false;
 });
 
 /** Each digit of every count in the reaction row, against the label that clips it. */
@@ -473,7 +474,6 @@ describe.each([480, 600, 768, 900, 1023, 1024, 1100])('image detail at %ipx', (w
 describe('the Remix tray on a 390px image page', () => {
   test('floats above the bottom bar, which sits above the footer, not over its chevron', async () => {
     // As on prod: the page ends above the footer, so the bar is not at the viewport bottom.
-    document.documentElement.style.setProperty('--footer-height', '45px');
     await renderDetail(390, {
       pageHeight: 750,
       beside: <RemixTrayView runs={[]} inProgress={0} ready={2} onDismiss={() => undefined} />,
@@ -485,7 +485,7 @@ describe('the Remix tray on a 390px image page', () => {
     });
     const pill = () =>
       document.querySelector('[aria-label^="Remix runs:"]')!.getBoundingClientRect();
-    // POSITIVE CONTROL: the tray's footer offset alone lands it on the bar's row.
+    // POSITIVE CONTROL (globals.css sets --footer-height: 45px): the tray's footer offset alone lands it on the bar's row.
     const footerOffsetTop = 844 - (45 + 72) - pill().height;
     expect(footerOffsetTop).toBeLessThan(chevron.bottom);
     expect(footerOffsetTop + pill().height).toBeGreaterThan(chevron.top);
@@ -493,7 +493,6 @@ describe('the Remix tray on a 390px image page', () => {
   });
 
   test('follows the bar up when something mounts below the page after it measured', async () => {
-    document.documentElement.style.setProperty('--footer-height', '45px');
     await renderDetail(390, {
       beside: <RemixTrayView runs={[]} inProgress={0} ready={2} onDismiss={() => undefined} />,
     });
@@ -513,5 +512,32 @@ describe('the Remix tray on a 390px image page', () => {
     const pill = () =>
       document.querySelector('[aria-label^="Remix runs:"]')!.getBoundingClientRect();
     await vi.waitFor(() => expect(pill().bottom).toBeLessThanOrEqual(chevron.top));
+  });
+
+  // The footer offset: --footer-height (45px) + 4.5rem, from the viewport bottom.
+  const FOOTER_OFFSET_BOTTOM = 844 - 45 - 72;
+  const tray = <RemixTrayView runs={[]} inProgress={0} ready={2} onDismiss={() => undefined} />;
+  const pillBottom = () =>
+    Math.round(
+      document.querySelector('[aria-label^="Remix runs:"]')!.getBoundingClientRect().bottom
+    );
+
+  test('stays at its footer offset on desktop, where the phone bar is not drawn', async () => {
+    await renderDetail(1100, { beside: tray });
+    await vi.waitFor(() =>
+      expect(document.querySelector('[aria-label^="Remix runs:"]')).not.toBeNull()
+    );
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    expect(pillBottom()).toBe(FOOTER_OFFSET_BOTTOM);
+  });
+
+  test('stays at its footer offset while the sheet is expanded and the bar is at the top', async () => {
+    ctx.active = true;
+    await renderDetail(390, { pageHeight: 750, beside: tray });
+    await vi.waitFor(() =>
+      expect(document.querySelector('[aria-label^="Remix runs:"]')).not.toBeNull()
+    );
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    expect(pillBottom()).toBe(FOOTER_OFFSET_BOTTOM);
   });
 });

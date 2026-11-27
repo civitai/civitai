@@ -105,7 +105,6 @@ export function RemixTrayView({
       className="fixed bottom-[calc(var(--footer-height)+var(--safe-area-inset-bottom-unpaid)+4.5rem)] right-[calc(1rem+var(--safe-area-inset-right))] flex flex-col items-end gap-2"
       style={{
         zIndex: underDialog ? UNDER_DIALOG_Z : TRAY_Z,
-        // Never lower than its footer offset: only ever lifted, above the image page's phone bar.
         ...(barClearance !== null && {
           bottom: `max(calc(var(--footer-height) + var(--safe-area-inset-bottom-unpaid) + 4.5rem), ${barClearance}px)`,
         }),
