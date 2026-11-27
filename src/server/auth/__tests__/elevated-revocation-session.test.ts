@@ -139,15 +139,23 @@ describe('the main app session for an elevated user whose revocation read failed
     expect(result).toEqual({ redirect: { destination: '/', permanent: false } });
   });
 
-  it('refuses a moderator token without a jti, though the store answers', async () => {
+  const jtiLessToken = async () => {
     const { SignJWT, importPKCS8 } = await import('jose');
-    const token = await new SignJWT({ sub: '7', signedAt: Date.now(), iat0: Date.now() })
+    return new SignJWT({ sub: '7', signedAt: Date.now(), iat0: Date.now() })
       .setProtectedHeader({ alg: 'ES256', kid: 'k1', typ: 'JWT' })
       .setIssuedAt()
       .setExpirationTime('1h')
       .setIssuer('https://auth.test')
       .sign(await importPKCS8(h.kp.privateKey, 'ES256'));
-    expect((await read(token)).session).toBeNull();
+  };
+
+  it('refuses a moderator token without a jti, though the store answers', async () => {
+    expect((await read(await jtiLessToken())).session).toBeNull();
+  });
+
+  it('allows the same token without a jti for an ordinary user', async () => {
+    h.user = { id: 7, username: 'seven' };
+    expect((await read(await jtiLessToken())).session?.user).toMatchObject({ id: 7 });
   });
 
   it('still lets an unconfirmed moderator switch accounts through the hub', async () => {

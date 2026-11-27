@@ -454,6 +454,7 @@ describe('hook: the sheet cookie', () => {
   it.each([
     ['login', { status: 'login', redirect: 'https://hub.test/login', reason: 'unavailable' }],
     ['reauth', { status: 'reauth', authorize: 'https://hub.test/a', reason: 'unavailable' }],
+    ['unconfirmed (civitai/civitai#10695)', { status: 'unavailable' }],
   ])(
     'answers 503 when the web session cannot be resolved, without using or clearing the sheet (%s)',
     async (_n, web) => {

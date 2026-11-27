@@ -304,6 +304,7 @@ beforeEach(() => {
   verifyToken.mockResolvedValue(CLAIMS);
   getSessionUserById.mockResolvedValue({ ...MOD });
   isRevoked.mockResolvedValue(false);
+  isRevoked.confirmElevated.mockResolvedValue('ok');
   mintingKeyLive.mockResolvedValue(true);
   scanner.csamHit.clear();
   getBatchMedia.mockResolvedValue({
@@ -372,6 +373,17 @@ describe('one general sign-in a day', () => {
   const batchesOf = async (token: string) =>
     (await hook(`/api/review-media/b/${GENERAL}`, `${COOKIE.review}=${token}`)).locals.reviewSheet
       ?.batches ?? null;
+
+  // civitai/civitai#10695: a moderator whose revocation read failed is refused, and the session is kept.
+  it('answers 503 while the web session is unconfirmed, then opens the batch again', async () => {
+    const token = (await signIn('review', GENERAL))!;
+    isRevoked.confirmElevated.mockResolvedValue('unavailable');
+    const { res } = await hook(`/api/review-media/b/${GENERAL}/0`, `${COOKIE.review}=${token}`);
+    expect(res.status).toBe(503);
+    expect(res.headers.get('set-cookie')).toBeNull();
+    isRevoked.confirmElevated.mockResolvedValue('ok');
+    expect(await open('review', GENERAL, token)).toBe(200);
+  });
 
   it('the review cookie joins a second live general batch minted for this moderator', async () => {
     const token = (await signIn('review', GENERAL))!;
