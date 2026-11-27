@@ -1338,8 +1338,9 @@ function imageSql(q) {
     if (i.needsReview !== null) return false;
     // `acceptableMinor = FALSE`; in a collection the image's owner (and a moderator) still sees it.
     if (i.acceptableMinor && (!q.collectionId || (!isModerator && i.userId !== userId))) return false;
-    // `if (!requiringMeta || domain !== 'red')`: the level and reviewed gates (every fixture image reads
-    // reviewed, so the level is the one that decides here), left out for `requiringMeta` on red.
+    // `if (!requiringMeta || domain !== 'red')`: the level and reviewed gates, left out for
+    // `requiringMeta` on red. Only the level is mirrored (as in the Go harness): the one image that is
+    // not reviewed, 8044, is also outside every level, so the level alone decides it here.
     if (without !== 'metaGates' && !(q.requiringMeta && q.domain === 'red') && ((i.nsfwLevel & browsingLevel) === 0 || i.nsfwLevel === 0)) return false;
     // `if (requiringMeta) AND.push(i."blockedFor" = AiNotVerified)`, after the gates.
     if (without !== 'requiringMeta' && q.requiringMeta && i.blockedFor !== 'AiNotVerified') return false;
