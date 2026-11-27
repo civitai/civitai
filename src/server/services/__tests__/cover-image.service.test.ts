@@ -162,6 +162,17 @@ describe('resolveCoverImageId — an image restricted by its base model', () => 
     });
   });
 
+  it("in production, refuses a service review's copy, its buyer's own row", async () => {
+    dbWriteMock.image.findUnique.mockResolvedValue({
+      nsfwLevel: 1,
+      modelRestricted: false,
+      serviceDealReviewImage: { imageId: 42 },
+    } as never);
+    await expect(productionCoverImageDeps.assertUsableAsCover(42)).rejects.toThrow(
+      COVER_IMAGE_UNAVAILABLE_MESSAGE
+    );
+  });
+
   it('runs the same check on a reused row that is not the current cover', async () => {
     const deps = makeDeps({
       findReusableImageId: vi.fn().mockResolvedValue({ id: 1234, restricted: false }),

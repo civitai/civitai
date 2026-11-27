@@ -80,12 +80,13 @@ beforeAll(async () => {
     );
     CREATE TABLE "ItemDefinition" ("id" integer PRIMARY KEY, "imageUrl" text);
     CREATE TABLE "ImageCdnShopTakedown" (url text, "shopItemId" integer, PRIMARY KEY (url, "shopItemId"));
+    CREATE TABLE "ServiceDealReviewImage" ("reviewId" integer NOT NULL, "imageId" integer NOT NULL);
   `);
 });
 
 beforeEach(async () => {
   await holder.db.exec(
-    `TRUNCATE "Image", "Cosmetic", "CosmeticShopItem", "ItemDefinition", "ImageCdnShopTakedown"`
+    `TRUNCATE "Image", "Cosmetic", "CosmeticShopItem", "ItemDefinition", "ImageCdnShopTakedown", "ServiceDealReviewImage"`
   );
   await holder.db.exec(`
     INSERT INTO "Image" ("userId", url, ingestion) VALUES
@@ -370,5 +371,36 @@ describe('assertClientImageUrlsUsable and shop artwork', () => {
     } finally {
       await holder.db.exec(`RESET enable_seqscan`);
     }
+  });
+});
+
+describe("a service review copy's key", () => {
+  const COPY_KEY = '0a0b0c0d-0000-4000-8000-00000000000e';
+  const MODERATOR = 9;
+  const usable = (url: string, userId: number) =>
+    assertClientImageUrlsUsable({ urls: [url], userId }).then(
+      () => 'accepted',
+      (e: unknown) => {
+        if (e instanceof TRPCError && e.code === 'BAD_REQUEST') return 'refused';
+        throw e;
+      }
+    );
+
+  beforeEach(() =>
+    holder.db.exec(`
+      INSERT INTO "Image" ("userId", url) VALUES (${CALLER}, '${COPY_KEY}');
+      INSERT INTO "ServiceDealReviewImage" ("reviewId", "imageId")
+        SELECT 1, id FROM "Image" WHERE url = '${COPY_KEY}';
+    `)
+  );
+
+  it('is refused as a new image to its own buyer and to a moderator', async () => {
+    expect(await usable(COPY_KEY, CALLER)).toBe('refused');
+    expect(await usable(`https://cdn.example/x/${COPY_KEY}/original=true`, CALLER)).toBe('refused');
+    expect(await usable(COPY_KEY, MODERATOR)).toBe('refused');
+  });
+
+  it("leaves the buyer's ordinary own upload usable (control)", async () => {
+    expect(await usable(OWN_KEY, CALLER)).toBe('accepted');
   });
 });

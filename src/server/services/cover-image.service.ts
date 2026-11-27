@@ -8,6 +8,7 @@ import {
   assertClientImageUrlsUsable,
   assertClientKeysIssuedToCaller,
   COVER_IMAGE_UNAVAILABLE_MESSAGE,
+  imageUrlUnavailableError,
 } from '~/server/services/image-url-ownership';
 import { pickClientImageColumns } from '~/server/utils/image-columns';
 import { isRestrictedImage, RESTRICTED_IMAGE_REASON } from '~/shared/utils/restricted-image';
@@ -128,7 +129,10 @@ export type CoverImageDeps = {
    * no-op measurable.
    */
   logExistenceUnknown: (args: { userId: number }) => void;
-  /** Refuses an image no cover may use: one its base model restricts, or a deal file's scan copy. */
+  /**
+   * Refuses an image no cover may use: one its base model restricts, a deal file's scan copy, or a
+   * service review's copy.
+   */
   assertUsableAsCover: (id: number) => Promise<void>;
 };
 
@@ -142,9 +146,14 @@ async function assertUsableAsCover(id: number) {
   // primary: guards the cover write, so a just-flagged image is seen.
   const image = await dbWrite.image.findUnique({
     where: { id },
-    select: { nsfwLevel: true, modelRestricted: true },
+    select: {
+      nsfwLevel: true,
+      modelRestricted: true,
+      serviceDealReviewImage: { select: { imageId: true } },
+    },
   });
   if (image && isRestrictedImage(image)) throw restrictedCoverError();
+  if (image?.serviceDealReviewImage) throw imageUrlUnavailableError();
   await assertNotDealFileImages([id], 'used here');
 }
 

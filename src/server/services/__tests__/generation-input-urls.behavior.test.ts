@@ -123,12 +123,13 @@ beforeAll(async () => {
     CREATE TABLE "CsamReport" (id int PRIMARY KEY, "userId" int, images jsonb NOT NULL DEFAULT '[]');
     CREATE TABLE "Report" (id int PRIMARY KEY, reason text NOT NULL);
     CREATE TABLE "UserReport" ("userId" int NOT NULL, "reportId" int NOT NULL);
+    CREATE TABLE "ServiceDealReviewImage" ("reviewId" int NOT NULL, "imageId" int NOT NULL);
   `);
 });
 
 beforeEach(async () => {
   await holder.db.exec(`
-    TRUNCATE "Post", "Image", "CsamReport", "Report", "UserReport";
+    TRUNCATE "Post", "Image", "CsamReport", "Report", "UserReport", "ServiceDealReviewImage";
     INSERT INTO "Post" (id, "publishedAt") VALUES (1, now() - interval '1 day');
   `);
   redis.clear();
@@ -176,6 +177,12 @@ describe('assertGenerationInputUrlsUsable', () => {
   it("accepts the caller's own image, whatever its post", async () => {
     await givenImage({ userId: CALLER, postId: null });
     expect(await outcome()).toBe('accepted');
+  });
+
+  it("refuses a service review's copy, its buyer's own image included", async () => {
+    await givenImage({ userId: CALLER, postId: null });
+    await holder.db.exec(`INSERT INTO "ServiceDealReviewImage" VALUES (1, 100)`);
+    expect(await outcome()).toBe('refused');
   });
 
   it.each([

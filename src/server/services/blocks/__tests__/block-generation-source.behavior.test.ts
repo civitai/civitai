@@ -206,6 +206,7 @@ beforeAll(async () => {
   await holder.db.exec(`
     CREATE TABLE "Post" (id int PRIMARY KEY, "publishedAt" timestamp(3),
       availability text NOT NULL DEFAULT 'Public', "tosViolation" boolean NOT NULL DEFAULT false);
+    CREATE TABLE "ServiceDealReviewImage" ("reviewId" int NOT NULL, "imageId" int NOT NULL);
     CREATE TABLE "Image" (
       id int PRIMARY KEY,
       "modelRestricted" boolean NOT NULL DEFAULT false,
