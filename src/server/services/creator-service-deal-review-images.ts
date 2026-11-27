@@ -26,9 +26,9 @@ const SOURCE_MAX_BYTES = 50 * 1024 * 1024;
 
 /**
  * The finals a buyer may attach to their review, with `r` the review, `d` its deal and `f` the
- * file: a still image of the current round that passed its scans, is still kept and has no image
- * held for CSAM or a minor since, on a deal that was never disputed and whose finals all cleared, of
- * a service whose seller allows review work.
+ * file: a still image of the current round that passed its scans, is still kept and is not held
+ * (`finalCsamHeldSql`), on a deal that was never disputed and whose finals all cleared, of a service
+ * whose seller allows review work.
  */
 const attachable = (userId: number) => Prisma.sql`(
   r."buyerId" = ${userId}::int AND r."hiddenAt" IS NULL

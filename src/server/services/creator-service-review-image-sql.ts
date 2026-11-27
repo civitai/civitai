@@ -39,6 +39,15 @@ export const reviewOfImageSql = Prisma.sql`(
 )`;
 
 /**
+ * True in SQL unless image `i` is a review copy whose source Final is held: such a copy is shown to
+ * no one, its buyer included, on any path.
+ */
+export const notHeldReviewCopySql = Prisma.sql`NOT EXISTS (
+  SELECT 1 FROM "ServiceDealReviewImage" hri
+  WHERE hri."imageId" = i."id" AND ${finalCsamHeldSql(Prisma.sql`hri."sourceFileId"`)}
+)`;
+
+/**
  * True in SQL when image `i` is attached to no service review. A review image is the seller's work:
  * it is viewed and reported, never collected, reacted to, commented on, remixed or made a cover.
  */

@@ -139,7 +139,8 @@ let blocks: Array<[number, number]> = [];
 beforeEach(async () => {
   await db.exec(`
     TRUNCATE "User", "Image", "Post", "Article", "CollectionContributor", "Bounty", "BountyEntry",
-      "ImageConnection", "ServiceOffering", "ServiceDeal", "ServiceDealReview", "ServiceDealReviewImage";
+      "ImageConnection", "ServiceOffering", "ServiceDeal", "ServiceDealReview", "ServiceDealReviewImage",
+      "ServiceDealFile", "ServiceDealFileEntry";
     INSERT INTO "User" (id) VALUES (${SELLER}), (${BUYER}), (${OTHER});
     UPDATE "User" SET settings = '{"creatorShop":{"enabled":true}}' WHERE id = ${SELLER};
     INSERT INTO "ServiceOffering" (id, "sellerId") VALUES (1, ${SELLER});
@@ -260,6 +261,41 @@ describe('the image page opt-in', () => {
     await db.exec(`UPDATE "ServiceDealReview" SET "hiddenAt" = now()`);
     expect(await opens(MOD, allBrowsingLevelsFlag)).toBe(true);
     expect(await opens(MOD, undefined)).toBe(true);
+  });
+});
+
+describe('a review copy whose source Final is held', () => {
+  const SCAN = 990000020;
+  /** Points the copy at a source Final whose scan image is `SCAN`, with `held` applied to it. */
+  async function sourced(held: boolean, fileId = 1) {
+    await db.exec(`
+      TRUNCATE "ServiceDealFile", "ServiceDealFileEntry";
+      DELETE FROM "Image" WHERE id = ${SCAN};
+      INSERT INTO "Image" (id, "userId", minor) VALUES (${SCAN}, ${SELLER}, ${held});
+      INSERT INTO "ServiceDealFile" (id) VALUES (1), (2);
+      INSERT INTO "ServiceDealFileEntry" ("fileId", "imageId") VALUES (${fileId}, ${SCAN});
+      UPDATE "ServiceDealReviewImage" SET "sourceFileId" = 1;
+    `);
+  }
+
+  it('is refused to its buyer by id once the source is held', async () => {
+    await sourced(true);
+    expect(await opens({ userId: BUYER }, allBrowsingLevelsFlag)).toBe(false);
+    expect(await opens(STRANGER, allBrowsingLevelsFlag)).toBe(false);
+  });
+
+  it('stays open to its buyer while the source is unheld, or held on another file', async () => {
+    await sourced(false);
+    expect(await opens({ userId: BUYER }, allBrowsingLevelsFlag)).toBe(true);
+    await sourced(true, 2);
+    expect(await opens({ userId: BUYER }, allBrowsingLevelsFlag)).toBe(true);
+    // An ordinary postless image of the same buyer is untouched.
+    expect(await opens({ userId: BUYER }, undefined, UNRELATED)).toBe(true);
+  });
+
+  it('still opens to a moderator', async () => {
+    await sourced(true);
+    expect(await opens(MOD, allBrowsingLevelsFlag)).toBe(true);
   });
 });
 

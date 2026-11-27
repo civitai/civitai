@@ -1875,6 +1875,39 @@ describe('reviews on the offering page', () => {
     expect((await list(RED)).items[0]).toMatchObject({ sellerReply: 'Thanks!' });
   });
 
+  it("drops a copy from the offering's work once its source Final is held", async () => {
+    const { dealId, reviewId } = await shownReview();
+    const imageId = await shownImage(reviewId);
+    const [{ id: fileId }] = await q<{ id: number }>(
+      `INSERT INTO "ServiceDealFile" ("dealId", round, kind, "s3Key", "mimeType", size, status, "scanStatus", "malwareScanStatus")
+       VALUES ($1, 0, 'Final', 'source-key', 'image/png', 1, 'Ready', 'Passed', 'Passed') RETURNING id`,
+      [dealId]
+    );
+    const [{ id: scan }] = await q<{ id: number }>(
+      `INSERT INTO "Image" (url, ingestion) VALUES ('source-scan', 'Scanned') RETURNING id`
+    );
+    await q(
+      `INSERT INTO "ServiceDealFileEntry" ("fileId", "dealId", "entryIndex", "path", "size", "imageId", "scanStatus")
+         VALUES ($1, $2, 0, 'a.png', 1, $3, 'Passed')`,
+      [fileId, dealId, scan]
+    );
+    await q(`UPDATE "ServiceDealReviewImage" SET "sourceFileId" = $1 WHERE "imageId" = $2`, [
+      fileId,
+      imageId,
+    ]);
+    const work = async () =>
+      (
+        await reviewDisplay.getServiceOfferingReviewWork({
+          offeringId: 1,
+          levels: RED,
+          excludedUserIds: [],
+        })
+      ).items.map((i) => i.id);
+    expect(await work()).toEqual([imageId]);
+    await q(`UPDATE "Image" SET minor = true WHERE id = $1`, [scan]);
+    expect(await work()).toEqual([]);
+  });
+
   it('pages the received work across reviews', async () => {
     const a = await shownReview({ minutesAgo: 5 });
     const b = await shownReview();
