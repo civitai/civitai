@@ -151,6 +151,11 @@ function call({
   origin = DOCS_ORIGIN as string | null,
   contentType = method === 'POST' ? 'application/json' : undefined,
   authorization = undefined as string | undefined,
+}: {
+  method?: string;
+  origin?: string | null;
+  contentType?: string;
+  authorization?: string;
 } = {}) {
   const headers: Record<string, string> = { host: `${HOST}:443` };
   if (origin !== null) headers.origin = origin;
