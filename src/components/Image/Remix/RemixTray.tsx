@@ -1,17 +1,76 @@
 import { ActionIcon, getDefaultZIndex, Loader, Paper, Text, UnstyledButton } from '@mantine/core';
 import { IconBrush, IconCheck, IconLoader2, IconPhoto, IconX } from '@tabler/icons-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { RemixRun } from '~/components/Image/Remix/useRemixRuns';
 import { useRemixRuns } from '~/components/Image/Remix/useRemixRuns';
 import { useDialogStore } from '~/components/Dialog/dialogStore';
 import { openRemixAppModal } from '~/components/Dialog/triggers/remix-app';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useRemixTrayClearance } from '~/store/remix-tray-clearance.store';
 
 /** Above Mantine's toasts (`overlay`), which otherwise sit over the tray's corner on a phone. */
 const TRAY_Z = getDefaultZIndex('overlay') + 1;
 /** Under a modal (dialogs start at 300), so the one a row opens is not covered by the tray. */
 const UNDER_DIALOG_Z = 100;
+
+/** Gap between the tray and a bottom bar it clears. */
+const BAR_GAP_PX = 8;
+
+/**
+ * Distance from the viewport bottom to just above the registered bottom bar, or null when no bar
+ * is drawn. The bar's top moves with the footer and the sheet, so it is measured, not assumed.
+ */
+function useBarClearance() {
+  const bars = useRemixTrayClearance((state) => state.bars);
+  const [bottom, setBottom] = useState<number | null>(null);
+  useEffect(() => {
+    if (!bars.length) {
+      setBottom(null);
+      return;
+    }
+    let frame = 0;
+    const measure = () => {
+      frame = 0;
+      // `@md:hidden` draws nothing at desktop width; a hidden bar has no height.
+      const tops = bars
+        .map((bar) => bar.getBoundingClientRect())
+        .filter((rect) => rect.height)
+        .map((rect) => rect.top);
+      setBottom(
+        tops.length
+          ? Math.round(
+              // The layout viewport, which `position: fixed; bottom` is measured against.
+              document.documentElement.clientHeight - Math.min(...tops) + BAR_GAP_PX
+            )
+          : null
+      );
+    };
+    const schedule = () => {
+      if (!frame) frame = requestAnimationFrame(measure);
+    };
+    measure();
+    const observer = new ResizeObserver(schedule);
+    // The bar moves without resizing when a sibling below it (the ad bar) mounts; the sheet
+    // holding it shrinks, so watch that too.
+    bars.forEach((bar) => {
+      observer.observe(bar);
+      const sheet = bar.closest('[data-testid="image-detail-sheet"]');
+      if (sheet) observer.observe(sheet);
+    });
+    window.addEventListener('resize', schedule);
+    document.addEventListener('scroll', schedule, { capture: true, passive: true });
+    document.addEventListener('transitionend', schedule, true);
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+      window.removeEventListener('resize', schedule);
+      document.removeEventListener('scroll', schedule, { capture: true });
+      document.removeEventListener('transitionend', schedule, true);
+    };
+  }, [bars]);
+  return bottom;
+}
 
 const statusLabel: Record<RemixRun['status'], string> = {
   running: 'Generating…',
@@ -37,13 +96,20 @@ export function RemixTrayView({
   const underDialog = useDialogStore((state) =>
     state.dialogs.some((d) => d.type !== 'routed-dialog')
   );
+  const barClearance = useBarClearance();
   if (!inProgress && !ready) return null;
 
   return (
     // Above the footer and the Assistant button that floats over its right end.
     <div
       className="fixed bottom-[calc(var(--footer-height)+var(--safe-area-inset-bottom-unpaid)+4.5rem)] right-[calc(1rem+var(--safe-area-inset-right))] flex flex-col items-end gap-2"
-      style={{ zIndex: underDialog ? UNDER_DIALOG_Z : TRAY_Z }}
+      style={{
+        zIndex: underDialog ? UNDER_DIALOG_Z : TRAY_Z,
+        // Never lower than its footer offset: only ever lifted, above the image page's phone bar.
+        ...(barClearance !== null && {
+          bottom: `max(calc(var(--footer-height) + var(--safe-area-inset-bottom-unpaid) + 4.5rem), ${barClearance}px)`,
+        }),
+      }}
       data-testid="remix-tray"
     >
       {expanded && (
