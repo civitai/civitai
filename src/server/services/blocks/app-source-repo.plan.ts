@@ -264,10 +264,6 @@ export function approvedSeedCommitMessage(args: {
   ])}`;
 }
 
-// ---------------------------------------------------------------------------
-// Staff platform updates (`app-platform-update.service.ts`)
-// ---------------------------------------------------------------------------
-
 /** Every platform update is committed to its own branch, named for the update's id. */
 export const PLATFORM_UPDATE_BRANCH_PREFIX = 'platform-update/';
 

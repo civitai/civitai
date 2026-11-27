@@ -807,13 +807,19 @@ export async function sourceRepoGoverningBlockId(row: SourceRepoRow): Promise<st
   return (await governingBlock(row))?.id ?? null;
 }
 
-export type SeedFromBuildRepoResult = EnsureSourceRepoResult | { kind: 'no-approved-version' };
+export type SeedFromBuildRepoResult =
+  | (EnsureSourceRepoResult & { approvedCommitSha: string })
+  | { kind: 'no-approved-version' };
 
 /**
  * Create `slug`'s source repo for a staff platform update, as a FORK of the app's build repo: the
  * build repo's whole history, `main` where the build repo's `main` is (the build repo is read,
  * never written). An update branch cut from it therefore shares history with an owner's existing
  * checkout of the build repo, and merges into it like any branch would.
+ *
+ * Returns the app's latest approved commit (`approvedCommitSha`), which the caller cuts the
+ * update from: the build repo's `main` may hold a newer push nobody approved. The git host has no
+ * API to move a branch to an older commit, so `main` is left where the fork put it.
  *
  * Only for an app with an approved version (a live app); the fork lineage is recorded from
  * `app_blocks.fork_of_*` when the block has one. Idempotent like {@link ensureSourceRepoLocked};
@@ -851,7 +857,7 @@ export async function seedSourceRepoFromBuildRepoLocked(args: {
           parentAppBlockId: fork.parentAppBlockId,
         }
       : null;
-  return ensureSourceRepoLocked({
+  const ensured = await ensureSourceRepoLocked({
     slug: args.slug,
     ownerUserId: args.ownerUserId,
     origin: 'backfill',
@@ -865,6 +871,7 @@ export async function seedSourceRepoFromBuildRepoLocked(args: {
         }
       : {}),
   });
+  return { ...ensured, approvedCommitSha: approved.forgejoCommitSha };
 }
 
 /** The files a candidate is seeded with. */

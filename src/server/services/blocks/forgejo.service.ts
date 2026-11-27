@@ -1456,6 +1456,43 @@ export async function getBranchHead(
   return info?.commit?.id ?? null;
 }
 
+/** Whether the repo holds commit `sha` (a 404 is `false`; any other failure throws). */
+export async function hasCommit(org: string, slug: string, sha: string): Promise<boolean> {
+  const res = await fjFetch(
+    `/api/v1/repos/${org}/${encodeURIComponent(slug)}/git/commits/${encodeURIComponent(
+      sha
+    )}?stat=false&verification=false&files=false`
+  );
+  if (res.status === 404) {
+    await res.text().catch(() => '');
+    return false;
+  }
+  await unwrap<unknown>(res);
+  return true;
+}
+
+/**
+ * Create `branch` pointing at commit `sha`. `exists` when a branch has the name (nothing changed).
+ * Check {@link hasCommit} first: Forgejo answers a sha the repo does not hold with a 500.
+ */
+export async function createBranchAt(opts: {
+  org: string;
+  slug: string;
+  branch: string;
+  sha: string;
+}): Promise<'created' | 'exists'> {
+  const res = await fjFetch(`/api/v1/repos/${opts.org}/${encodeURIComponent(opts.slug)}/branches`, {
+    method: 'POST',
+    body: JSON.stringify({ new_branch_name: opts.branch, old_ref_name: opts.sha }),
+  });
+  if (res.status === 409) {
+    await res.text().catch(() => '');
+    return 'exists';
+  }
+  await unwrap<unknown>(res);
+  return 'created';
+}
+
 /** One contents-API change. `sha` is the blob the caller expects to replace or delete. */
 export type FileOperation =
   | { operation: 'create'; path: string; content: Buffer }

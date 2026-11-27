@@ -7,7 +7,8 @@
  * a publish request in the owner's name and withdraw the one they have pending.
  *
  * An app with no source repo yet gets one first: a FORK of its build repo (its whole history), so
- * the update branch shares history with an owner's existing checkout of the build repo.
+ * the update branch shares history with an owner's existing checkout of the build repo. That
+ * first update is cut from the app's latest APPROVED commit, not the fork's `main`.
  *
  * THE RECORD IS THE PROOF. Each update is a row in `app_platform_updates` written by the server
  * after the commit landed, carrying the moderator's user id from the session. The commit's author
@@ -78,10 +79,6 @@ const log = (type: 'info' | 'warning' | 'error', message: string, data: Record<s
 
 const unavailable = () =>
   new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Platform updates are not available' });
-
-// ---------------------------------------------------------------------------
-// The table (raw SQL; a missing table reads as "off")
-// ---------------------------------------------------------------------------
 
 export type UpdateRow = {
   id: string;
@@ -168,10 +165,6 @@ async function readRows(
   }
 }
 
-// ---------------------------------------------------------------------------
-// The owner-facing shape (the CLI / App Assistant contract)
-// ---------------------------------------------------------------------------
-
 export type OwnerPlatformUpdate = {
   id: string;
   branch: string;
@@ -216,10 +209,6 @@ export function ownerView(row: UpdateRow): OwnerPlatformUpdate {
   };
 }
 
-// ---------------------------------------------------------------------------
-// App resolution and the owner gate
-// ---------------------------------------------------------------------------
-
 export type AppRef = { appBlockId?: string; slug?: string };
 
 type ResolvedApp = { id: string; slug: string; status: string; ownerUserId: number | null };
@@ -259,10 +248,6 @@ async function appForOwner(userId: number, ref: AppRef): Promise<ResolvedApp> {
   return app;
 }
 
-// ---------------------------------------------------------------------------
-// Owner API
-// ---------------------------------------------------------------------------
-
 /**
  * The app's OPEN updates — `pending` AND `conflicted` — oldest first, each with its `status`.
  * Empty when the table is missing.
@@ -270,7 +255,7 @@ async function appForOwner(userId: number, ref: AppRef): Promise<ResolvedApp> {
  * 🔴 A `conflicted` update stays listed until it is merged or superseded: the client that hit
  * the conflict reported it once, but the owner has not merged it yet, so every later pull must
  * re-print the hand-merge instructions (or retry the merge) and every later submit must still
- * refuse over it. Listing pending only made the update vanish after that one report.
+ * refuse over it.
  */
 export async function listOpenPlatformUpdates(args: {
   userId: number;
@@ -364,10 +349,6 @@ export async function resolvePlatformUpdate(args: {
   return ownerView({ ...row, status: args.outcome, mergeCommitSha: mergeSha });
 }
 
-// ---------------------------------------------------------------------------
-// Moderator API
-// ---------------------------------------------------------------------------
-
 export type PushPlatformUpdateResult = {
   id: string;
   slug: string;
@@ -386,8 +367,9 @@ export type PushPlatformUpdateResult = {
  *
  * Refuses: an account that is not a moderator; a blank or too-long reason; no changes, too many,
  * too large, a path a source repo never holds; an app with neither a source repo nor an approved
- * version; a source repo under the slug that belongs to a different app; `main` moving during the
- * write. Nothing is recorded for a refused push.
+ * version; a source repo under the slug that belongs to a different app; a new source repo that
+ * does not hold the approved commit; `main` moving during the write. Nothing is recorded for a
+ * refused push.
  */
 export async function pushPlatformUpdate(args: {
   staffUserId: number;
@@ -487,6 +469,9 @@ async function pushLocked(args: {
 
   let row = read.row;
   let seeded = false;
+  // Set when this push created the repo: the update is cut from the app's latest APPROVED commit,
+  // never the fork's `main` (the build repo's `main` may hold a newer push nobody approved).
+  let approvedBase: string | null = null;
   if (!row) {
     const seed = await repo.seedSourceRepoFromBuildRepoLocked({
       slug: app.slug,
@@ -506,6 +491,7 @@ async function pushLocked(args: {
       });
     row = seed.row;
     seeded = seed.kind === 'created';
+    if (seeded) approvedBase = seed.approvedCommitSha;
   }
   // A repo under the slug that is not this app's (someone else's fork or assistant app took the
   // slug before this block existed) is never written for it.
@@ -516,7 +502,13 @@ async function pushLocked(args: {
     });
 
   const forgejo = await import('~/server/services/blocks/forgejo.service');
-  const base = await forgejo.getBranchHead(FORGEJO_SOURCE_ORG, app.slug, SOURCE_MAIN_BRANCH);
+  if (approvedBase && !(await forgejo.hasCommit(FORGEJO_SOURCE_ORG, app.slug, approvedBase)))
+    throw new TRPCError({
+      code: 'CONFLICT',
+      message: 'The app’s approved version is not in its source repo; nothing was pushed',
+    });
+  const base =
+    approvedBase ?? (await forgejo.getBranchHead(FORGEJO_SOURCE_ORG, app.slug, SOURCE_MAIN_BRANCH));
   if (!base)
     throw new TRPCError({ code: 'CONFLICT', message: 'The app’s source repo has no main branch' });
   const current = treeFromMap(await forgejo.listRepoTreeAtRef(app.slug, base, FORGEJO_SOURCE_ORG));
@@ -536,11 +528,21 @@ async function pushLocked(args: {
 
   const id = newAppPlatformUpdateId();
   const branch = platformUpdateBranch(id);
+  // Cut from the approved commit: the branch is made there first, and the commit goes onto it.
+  if (
+    approvedBase &&
+    (await forgejo.createBranchAt({
+      org: FORGEJO_SOURCE_ORG,
+      slug: app.slug,
+      branch,
+      sha: approvedBase,
+    })) === 'exists'
+  )
+    throw new TRPCError({ code: 'CONFLICT', message: 'The update’s branch already exists' });
   const commit = await forgejo.commitOperations({
     org: FORGEJO_SOURCE_ORG,
     slug: app.slug,
-    branch: SOURCE_MAIN_BRANCH,
-    newBranch: branch,
+    ...(approvedBase ? { branch } : { branch: SOURCE_MAIN_BRANCH, newBranch: branch }),
     operations: plan.operations,
     message: platformUpdateCommitMessage({
       plan,
@@ -712,7 +714,7 @@ export async function supersedePlatformUpdate(args: {
   return { id: row.id, status: 'superseded' };
 }
 
-/** Every update to an app, newest first, for staff. */
+/** The app's 200 most recent updates, newest first, for staff. */
 export async function listPlatformUpdatesForModerator(args: {
   app: AppRef;
 }): Promise<Array<OwnerPlatformUpdate & { staffUserId: number; mergeCommitSha: string | null }>> {
