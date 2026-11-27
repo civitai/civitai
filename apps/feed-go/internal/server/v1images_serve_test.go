@@ -533,6 +533,22 @@ func TestServeV1ImagesUnsupportedInputs(t *testing.T) {
 	if imagesCount(t, reg, "feed_go_fallback_total", map[string]string{"reason": "index-feed-unconfigured"}) != 1 {
 		t.Errorf("signed out, origin form: want the index-feed-unconfigured fallback")
 	}
+	// The legacy-path shapes with their switches on (V1Deps.Ports, which the route's parse reads too)
+	// get past the query to the same configuration check; `imageId=0` keeps a reason of its own.
+	for _, c := range []struct{ target, reason string }{
+		{"/api/v1/images?imageId=5", "index-feed-unconfigured"},
+		{"/api/v1/images?modelId=5", "index-feed-unconfigured"},
+		{"/api/v1/images?imageId=0", "v1-image-id-zero"},
+	} {
+		reg := prometheus.NewRegistry()
+		up := &v1Upstream{}
+		s := newServer(reg, up)
+		s.V1.Ports = feed.V1Ports{ImageID: true, ModelOnly: true}
+		s.ServeV1ImagesHTTP(httptest.NewRecorder(), v1Request(c.target, nil))
+		if up.count() != 1 || imagesCount(t, reg, "feed_go_fallback_total", map[string]string{"reason": c.reason}) != 1 {
+			t.Errorf("%s with the ports on: proxied=%d, want a %s fallback", c.target, up.count(), c.reason)
+		}
+	}
 }
 
 // PublicMux mounts the images route only with the /api/v1 upstream configured, on its exact path:

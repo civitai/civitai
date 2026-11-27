@@ -143,6 +143,14 @@ type Config struct {
 	// feed.InfinitePorts.HubID), reading the `user-hubs` flag per viewer from FLIPT_URL. Off, such a
 	// request is the `input-hubId` (or `input-hubExcludedSources`) fallback, as before the port.
 	InfiniteServeInputHubID bool
+	// V1ImagesServeImageID is FEED_GO_V1_IMAGES_SERVE_IMAGE_ID (default off): compute a `GET
+	// /api/v1/images` request with `imageId` on the legacy Postgres path (feed.V1Ports.ImageID). Off,
+	// such a request is the `v1-image-id` fallback, as before the port.
+	V1ImagesServeImageID bool
+	// V1ImagesServeModelOnly is FEED_GO_V1_IMAGES_SERVE_MODEL_ONLY (default off): compute a `GET
+	// /api/v1/images` request with a `modelId` and no `modelVersionId` on the legacy Postgres path
+	// (feed.V1Ports.ModelOnly). Off, such a request is the `v1-model-only` fallback, as before the port.
+	V1ImagesServeModelOnly bool
 	// AnswerRegionBlocked is FEED_GO_ANSWER_REGION_BLOCKED (default off): answer a public request from a
 	// region on REGION_BLOCK_CONFIG with the app's own 451 here (server.Server.AnswerRegionBlocked).
 	// Off, it is the `region-blocked` fallback, proxied to the Node app, which answers the 451.
@@ -346,6 +354,9 @@ func Load() (*Config, error) {
 
 		InfiniteServeInputPostIDs: boolEnv("FEED_GO_INFINITE_SERVE_INPUT_POST_IDS", false),
 		InfiniteServeInputHubID:   boolEnv("FEED_GO_INFINITE_SERVE_INPUT_HUB_ID", false),
+
+		V1ImagesServeImageID:   boolEnv("FEED_GO_V1_IMAGES_SERVE_IMAGE_ID", false),
+		V1ImagesServeModelOnly: boolEnv("FEED_GO_V1_IMAGES_SERVE_MODEL_ONLY", false),
 
 		InfiniteAnswerFeedUnavailable: boolEnv("FEED_GO_INFINITE_ANSWER_FEED_UNAVAILABLE", false),
 

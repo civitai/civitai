@@ -179,7 +179,7 @@ func TestComputeFallbackReasonsAreSeeded(t *testing.T) {
 	// The sum, in order: each serve route x (bulkhead, error, deadline, canceled, panic); each
 	// shadow endpoint x (deadline, canceled, panic); each probe endpoint x the same three; and the
 	// request-determined serve series (TestRequestFallbackReasonsAreSeeded).
-	const want = 7*5 + 8*3 + 4*3 + 216
+	const want = 7*5 + 8*3 + 4*3 + 217
 	if n := testutil.CollectAndCount(m.Fallbacks); n != want {
 		t.Fatalf("feed_go_fallback_total has %d series at construction, want %d", n, want)
 	}
@@ -288,7 +288,7 @@ var wantRequestFallbackReasons = map[string][]string{
 		"method", "region-blocked", "crawler-user-agent", "bearer-token",
 		"v1-images-conditional", "v1-images-session-cookie", "input-unknown-key",
 		"v1-host", "v1-query-encoding", "v1-input-duplicate", "v1-input-number", "v1-input-username",
-		"v1-input-period", "v1-input-type", "v1-input-ids", "v1-input-bool", "v1-image-id", "v1-tags",
+		"v1-input-period", "v1-input-type", "v1-input-ids", "v1-input-bool", "v1-image-id", "v1-image-id-zero", "v1-tags",
 		"v1-base-models", "v1-user-zero", "v1-model-only", "v1-sort", "v1-with-tags", "v1-cursor",
 		"v1-legacy-cursor", "v1-page-limit",
 	},
@@ -315,8 +315,8 @@ func TestRequestFallbackReasonsAreSeeded(t *testing.T) {
 		}
 		total += len(want)
 	}
-	if total != 216 {
-		t.Errorf("the literal holds %d (endpoint, reason) pairs, want 216", total)
+	if total != 217 {
+		t.Errorf("the literal holds %d (endpoint, reason) pairs, want 217", total)
 	}
 
 	reg := prometheus.NewRegistry()

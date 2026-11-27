@@ -50,6 +50,8 @@ type V1Deps struct {
 	// http://localhost:3000.
 	NodeProduction bool
 	Now            func() time.Time
+	// Ports are the switches of the shapes ported behind one (ParseV1With).
+	Ports V1Ports
 }
 
 // V1Request is one call.

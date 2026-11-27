@@ -1,6 +1,6 @@
 {
   "name": "fallback-model-only",
-  "description": "A `modelId` without a version takes the legacy Postgres path.",
+  "description": "A `modelId` without a version with FEED_GO_V1_IMAGES_SERVE_MODEL_ONLY off: the shape falls back as before its port.",
   "now": "2026-06-15T12:00:00.000Z",
   "config": {
     "imageLocation": "https://image.example.test/golden"
