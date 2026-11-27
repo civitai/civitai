@@ -23,10 +23,7 @@ const NOW = Math.floor(Date.now() / 1000);
 
 // A made-up session label under a made-up key: never a real one.
 const label = (previewId: string) =>
-  mintPreviewLabel(
-    { kid: 3, previewId, userId: 4242, exp: NOW + 3600 },
-    Buffer.alloc(32, 7)
-  );
+  mintPreviewLabel({ kid: 3, previewId, userId: 4242, exp: NOW + 3600 }, Buffer.alloc(32, 7));
 const LIVE_PREVIEW_HOST = `${label('0123456789abcdef0123456789abcdef')}.${PREVIEW_DOMAIN}`;
 const UNKNOWN_PREVIEW_HOST = `${label('fedcba9876543210fedcba9876543210')}.${PREVIEW_DOMAIN}`;
 const LIVE_TUNNEL_HOST = `dev-0a1b2c3d4e5f6789.${APPS_DOMAIN}`;
@@ -190,6 +187,18 @@ describe('block CORS refuses a preview-shaped origin with no live session', () =
 
   it('a host record whose session carries another host', async () => {
     records[`system:blocks:dev-tunnel:host:${UNKNOWN_PREVIEW_HOST}`] = 'sess_direct';
+    expectNoCors(await call('OPTIONS', `https://${UNKNOWN_PREVIEW_HOST}`));
+  });
+
+  it('a host record whose session claims the other transport', async () => {
+    // A direct-preview host on a record without `transport: "direct"` (read as a tunnel).
+    putSession('sess_mismatch', { host: UNKNOWN_PREVIEW_HOST, hardExpiresAt: NOW + 3600 });
+    expectNoCors(await call('OPTIONS', `https://${UNKNOWN_PREVIEW_HOST}`));
+  });
+
+  it('a session record that is JSON null', async () => {
+    records[`system:blocks:dev-tunnel:host:${UNKNOWN_PREVIEW_HOST}`] = 'sess_null';
+    records['system:blocks:dev-tunnel:session:sess_null'] = 'null';
     expectNoCors(await call('OPTIONS', `https://${UNKNOWN_PREVIEW_HOST}`));
   });
 

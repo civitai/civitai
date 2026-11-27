@@ -1491,6 +1491,8 @@ export async function isActiveSessionHost(host: string): Promise<boolean> {
   if (read.status !== 'ok') return false;
   const { session } = read;
   return (
+    !!session &&
+    typeof session === 'object' &&
     session.host === host &&
     isValidSessionHost(session, domains) &&
     session.hardExpiresAt > nowSec()

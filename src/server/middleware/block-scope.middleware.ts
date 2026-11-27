@@ -867,8 +867,12 @@ async function sessionOriginAllowed(norm: string): Promise<boolean> {
   }
   // `isActiveSessionHost` checks the host's shape before any read, so an arbitrary origin (these
   // routes also serve browser integrations) costs no Redis call.
-  const { isActiveSessionHost } = await import('~/server/services/blocks/dev-tunnel.service');
-  return isActiveSessionHost(host).catch(() => false);
+  try {
+    const { isActiveSessionHost } = await import('~/server/services/blocks/dev-tunnel.service');
+    return await isActiveSessionHost(host);
+  } catch {
+    return false;
+  }
 }
 
 async function originAllowed(origin: string | undefined): Promise<boolean> {
