@@ -207,6 +207,48 @@ func TestCredentialClassOverrideSignsAsARealCredential(t *testing.T) {
 	}
 }
 
+// A tRPC request signs with its credential class only when it is an API credential: a corpus-only
+// image.getInfinite request (the override) signs exactly as the same request carrying a real one of
+// that class, apart from the same request signed out, apart from the other class; a session cookie
+// alone leaves the signature that of a request with no credential (no tRPC shape carried one before).
+func TestTRPCCredentialClassSigns(t *testing.T) {
+	const key = "synthetic-key-0043" // gitleaks:allow synthetic test key
+	const input = `{"json":{"limit":20,"sort":"Newest"}}`
+	req := func(headers map[string]string, class string) Request {
+		h := map[string]string{"host": "blue.example.test", "cf-ipcountry": "US"}
+		for k, v := range headers {
+			h[k] = v
+		}
+		return Request{Endpoint: EndpointInfinite, Input: input, Headers: h, CredentialClass: class}
+	}
+	withKey, only := capture(t, req(map[string]string{"Authorization": "Bearer " + key}, ""), anon), capture(t, req(nil, CredentialHeader), anon)
+	if withKey.Credential != CredentialHeader || only.Credential != CredentialHeader {
+		t.Errorf("credential real %q override %q, want header", withKey.Credential, only.Credential)
+	}
+	if withKey.Signature != only.Signature || withKey.Shape != only.Shape {
+		t.Errorf("the override signs differently:\n real %s\n only %s", withKey.Shape, only.Shape)
+	}
+	if !strings.Contains(only.Shape, `"credential":"header"`) {
+		t.Errorf("shape %s carries no credential class", only.Shape)
+	}
+	none := capture(t, req(nil, ""), anon)
+	if none.Signature == only.Signature || strings.Contains(none.Shape, `"credential"`) {
+		t.Errorf("no credential signs %s, the override %s", none.Shape, only.Shape)
+	}
+	if q := capture(t, req(nil, CredentialQuery), anon); q.Credential != CredentialQuery || q.Signature == only.Signature || !strings.Contains(q.Shape, `"credential":"query"`) {
+		t.Errorf("query override %q %s, header override %s", q.Credential, q.Shape, only.Shape)
+	}
+	session := capture(t, req(map[string]string{"cookie": "__Secure-civ-token=" + key}, ""), anon)
+	if session.Credential != CredentialSession || session.Signature != none.Signature {
+		t.Errorf("a session cookie: credential %q shape %s, want session and the signed-out shape %s", session.Credential, session.Shape, none.Shape)
+	}
+	// Joined with a session cookie, an API credential still signs with its class.
+	both := capture(t, req(map[string]string{"Authorization": "Bearer " + key, "cookie": "__Secure-civ-token=" + key}, ""), anon)
+	if both.Credential != "header+session" || !strings.Contains(both.Shape, `"credential":"header+session"`) {
+		t.Errorf("header and session: credential %q shape %s", both.Credential, both.Shape)
+	}
+}
+
 // HasCredential is true for every way a request can still carry a credential Capture reads or strips,
 // and false for a request carrying none.
 func TestHasCredential(t *testing.T) {

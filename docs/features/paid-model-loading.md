@@ -296,9 +296,6 @@ because the orchestrator posts its event body straight through and `workflowId` 
 `<userId>-<timestamp>`, so a broadcast would name the payer. Pinned by a test asserting `/users/` and
 not `/groups/`.
 
-⚠️ `SignalMessages.SchedulerDownload = 'scheduler:download'` is the generation-history export, not
-this feature.
-
 ### Residency (a repo the site does not check out)
 
 Koen, 2026-09-04: the spine controllers check with each other before evicting and refuse to evict

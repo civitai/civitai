@@ -1,4 +1,6 @@
-export type SeenStorage = Pick<Storage, 'getItem' | 'setItem'>;
+import { sendInBackground, type SeenStorage } from './seen-marker';
+
+export type { SeenStorage };
 
 export type DismissDeps = {
   userId: number | null;
@@ -31,13 +33,6 @@ function writeSeen({ userId, storage }: DismissDeps) {
   } catch {
     // Without storage the server's flag is the only record; the next load shows the dialog if the send failed.
   }
-}
-
-function sendInBackground(deps: DismissDeps) {
-  void deps
-    .send()
-    .then((stored) => (stored ? deps.refresh() : undefined))
-    .catch(() => undefined);
 }
 
 /** Got it, Escape and the backdrop: closed at once, remembered in the browser, recorded on the server in the background. */

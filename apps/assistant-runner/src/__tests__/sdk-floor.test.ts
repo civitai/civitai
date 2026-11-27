@@ -14,6 +14,10 @@ describe('CIVITAI_SDK_FLOOR', () => {
     const minor = (version: string) => version.replace(/^\^/, '').split('.').slice(0, 2).join('.');
     expect(minor(CIVITAI_SDK_FLOOR)).toBe(minor(root!));
   });
+
+  it('keeps patch 0, so this major.minor check and the server’s full-SemVer advisory agree', () => {
+    expect(CIVITAI_SDK_FLOOR).toMatch(/^\d+\.\d+\.0$/);
+  });
 });
 
 describe('checkSdkPin', () => {
