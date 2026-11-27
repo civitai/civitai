@@ -145,7 +145,9 @@ beforeEach(() => {
   }) as never);
 });
 
-const { getRetractedMedia } = await import('~/server/services/retracted-media.service');
+const { getRetractedMedia, getOwnRetractedMedia } = await import(
+  '~/server/services/retracted-media.service'
+);
 
 /** Who sees the image: `none` (refused to every moderator), `anyMod` (any moderator) or `cleared`
  *  (only a moderator cleared for CSAM review). */
@@ -726,5 +728,58 @@ describe("a held account's image outside the moderator routes", () => {
     } finally {
       await pg.exec(`DELETE FROM "CsamReport" WHERE "userId" IN (${OWNER}, 990100301)`);
     }
+  });
+});
+
+describe('getOwnRetractedMedia', () => {
+  const ownerOf = (id: number) => 500 + id;
+  beforeAll(async () => {
+    // `ownerMediaAllowedSql` compares the column as the enum it is in the real schema.
+    // A moderated image whose url another row, blocked as CSAM, shares; and one with a clean sibling.
+    await pg.exec(`
+      CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
+      ALTER TABLE "Image" ALTER COLUMN ingestion TYPE "ImageIngestionStatus" USING ingestion::"ImageIngestionStatus";
+      INSERT INTO "Image" (id, url, ingestion, "blockedFor", "userId") VALUES
+        (900, 'key-900', 'Blocked', 'moderated', 1400),
+        (901, 'key-900', 'Blocked', 'CSAM', 1401),
+        (902, 'key-902', 'Blocked', 'tos,moderated', 1402),
+        (903, 'key-902', 'Scanned', NULL, 1403),
+        (904, 'key-904', 'Blocked', 'moderated,csam', 1404);
+      INSERT INTO "CsamReport" ("userId", details, images) VALUES (1402, '{}', '[]');
+    `);
+  });
+  const own = (id: number, userId = ownerOf(id)) => getOwnRetractedMedia(id, userId);
+
+  it('serves the owner a moderated or tos block with no CSAM mark', async () => {
+    expect(await own(1)).toEqual({ url: 'key-1', type: 'image', mimeType: null });
+    expect(await own(2)).toEqual({ url: 'key-2', type: 'image', mimeType: null });
+  });
+
+  it('serves the owner a report-listed image with no CSAM mark, and a held owner their own', async () => {
+    expect(await own(23)).not.toBeNull();
+    expect(await own(24)).not.toBeNull();
+    expect(await own(902)).toEqual({ url: 'key-902', type: 'image', mimeType: null });
+  });
+
+  it('never serves anyone else', async () => {
+    expect(await own(1, ownerOf(2))).toBeNull();
+    expect(await own(1, 42)).toBeNull();
+  });
+
+  it.each([
+    ['blocked as CSAM', 11],
+    ['in the CSAM queue', 13],
+    ['a CSAM hash block', 27],
+    ['a CSAM hold', 28],
+    ['a CSAM scan flag', 29],
+    ['a CSAM vote', 31],
+    ['a url sibling blocked as CSAM', 900],
+    ['csam in the list', 904],
+    ['an unknown reason', 10],
+    ['a differently cased reason', 5],
+    ['the metadata hold, which the CDN serves', 3],
+    ['no block', 4],
+  ])('refuses the owner an image with %s', async (_, id) => {
+    expect(await own(id)).toBeNull();
   });
 });

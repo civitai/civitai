@@ -175,6 +175,45 @@ function buildCsamRestrictedSql(image: string): string {
 }
 
 /**
+ * Whether the "Image" row aliased `image` carries a CSAM mark that keeps a moderated or tos block's
+ * media from its owner: `csamRowSql` on it, csam anywhere in its comma list of block reasons, or the
+ * same on one of the other rows on its url. A url with `URL_SIBLING_CAP` or more other rows counts
+ * as marked, since the rows past the cap go unread. A NULL reads as marked.
+ *
+ * It leaves out `csamRestrictedSql`'s CSAM report listing and held-file legs on purpose: an owner
+ * keeps seeing their own report-listed and held media (Justin, cards 2026-11-20-160723-1e4c035d and
+ * 2026-11-19-231513-92710efa).
+ */
+export function ownerCsamMarkedSql(image: string): string {
+  if (!/^[a-z_][a-z0-9_]*$/i.test(image) || OWNER_CSAM_MARKED_ALIASES.has(image.toLowerCase()))
+    throw new Error(`Bad table alias: ${image}`);
+  return buildOwnerCsamMarkedSql(image);
+}
+
+function buildOwnerCsamMarkedSql(image: string): string {
+  const marked = (row: string) => `(
+    ${csamRowSql(row)}
+    OR EXISTS (
+      SELECT 1 FROM unnest(string_to_array(${row}."blockedFor", ',')) AS om_reason(value)
+      WHERE lower(btrim(om_reason.value)) = 'csam'
+    )
+  )`;
+  const siblings = (alias: string) =>
+    `SELECT * FROM "Image" ${alias} WHERE ${alias}.url = ${image}."url" AND ${alias}.id <> ${image}.id LIMIT ${URL_SIBLING_CAP}`;
+  return `COALESCE((
+    ${marked(image)}
+    OR EXISTS (SELECT 1 FROM (${siblings('os')}) os WHERE COALESCE(${marked('os')}, true))
+    OR (SELECT count(*) FROM (${siblings('oc')}) oc) >= ${URL_SIBLING_CAP}
+  ), true)`;
+}
+
+const OWNER_CSAM_MARKED_ALIASES = new Set(
+  [...buildOwnerCsamMarkedSql('i').matchAll(/(?:FROM|JOIN) "\w+" (\w+)/g)]
+    .map((m) => m[1].toLowerCase())
+    .concat(['om_reason'])
+);
+
+/**
  * Whether the "Image" row aliased `image` is withheld from a moderator without the CSAM grant, in
  * every moderator view (lists, actions, the retracted-media routes). Withheld when it or any other
  * row on its url is in the CSAM queue, blocked as CSAM (anywhere in its comma list of block

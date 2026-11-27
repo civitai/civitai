@@ -1190,13 +1190,15 @@ export const getImagesAsPostsInfiniteHandler = async ({
 
 export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ctx: Context }) => {
   try {
-    const [image, eventDecorations] = await Promise.all([
+    const ownerBlockedMedia = !!ctx.features?.ownerBlockedMedia;
+    const [{ ownerCsamMarked, ...image }, eventDecorations] = await Promise.all([
       getImage({
         ...input,
         userId: ctx.user?.id,
         isModerator: ctx.user?.isModerator,
         ownerSeesHeld: isSessionOrFullUserKey(ctx),
         shownReviewImageLevels: shownReviewImageLevelsFor(ctx),
+        ownerReviewedBlocks: ownerBlockedMedia,
       }),
       // The hat the image detail draws when it is opened on its own, with no feed to seed it.
       // Safe per viewer only while image.get caches nothing per URL.
@@ -1229,13 +1231,21 @@ export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ct
       if (blocked) throw throwNotFoundError();
     }
 
-    const canSeeMedia = await viewerCanSeeImageMedia(ctx, {
-      nsfwLevel: result.nsfwLevel,
-      userId: result.user.id,
-      postId: result.postId ?? null,
-      ingestion: result.ingestion,
-      blockedFor: result.blockedFor,
-    });
+    // `ownerCsamMarked` never leaves the server: it only decides `reviewedBlocks` below.
+    const reviewedBlocks =
+      ownerBlockedMedia && !actsAsModerator(ctx) && !!ctx.user && ctx.user.id === result.user.id;
+    const canSeeMedia = await viewerCanSeeImageMedia(
+      ctx,
+      {
+        nsfwLevel: result.nsfwLevel,
+        userId: result.user.id,
+        postId: result.postId ?? null,
+        ingestion: result.ingestion,
+        blockedFor: result.blockedFor,
+        ownerCsamMarked,
+      },
+      { reviewedBlocks }
+    );
     // A failed hold lookup serves the image without media rather than failing the page.
     const heldChecked = await withoutHeldFromViewer(ctx, [result]).catch((error) => {
       logToAxiom({
@@ -1247,6 +1257,10 @@ export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ct
       return [];
     });
     const servable = canSeeMedia && !!heldChecked.length;
+    // The CDN does not serve a blocked image, so the owner's browser loads a reviewed block's media
+    // from the owner retracted-media route, by id, and is given no url to ask the CDN for.
+    if (reviewedBlocks && servable && result.blockedFor != null && !ownerMediaAllowed(result))
+      return { ...withoutMedia(result), ownerRetractedMedia: true as const };
     if (servable) return result;
     // A block leaves its owner the notice and the appeal, not the media or its preview.
     if (!ownerMediaAllowed(result))

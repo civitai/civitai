@@ -240,3 +240,116 @@ describe('getImageHandler on a blocked image', () => {
     expect(result.url).toBe(MEDIA);
   });
 });
+
+describe('getImageHandler on a blocked image, with ownerBlockedMedia', () => {
+  const MEDIA = 'blocked-media-key';
+  const PREVIEW = 'blocked-blur-hash';
+  const VIDEO = 'blocked-video-id';
+  function read(
+    row: { blockedFor: string; ownerCsamMarked?: boolean | null },
+    {
+      user = { id: UPLOADER },
+      flag = true,
+    }: { user?: { id: number; isModerator?: boolean }; flag?: boolean } = {}
+  ) {
+    heldLevels.mockResolvedValue(new Map());
+    image.mockResolvedValueOnce({
+      id: 1,
+      postId: null,
+      url: MEDIA,
+      hash: PREVIEW,
+      nsfwLevel: NsfwLevel.PG,
+      ingestion: 'Blocked',
+      metadata: { width: 10, youtubeVideoId: VIDEO, vimeoVideoId: VIDEO },
+      cosmetic: { data: { url: 'frame' } },
+      ...row,
+      user: { id: UPLOADER },
+    });
+    const ctx = {
+      user,
+      features: { canViewNsfw: true, ownerBlockedMedia: flag },
+      req: { headers: {} },
+      cache: null,
+    } as unknown as HandlerCtx;
+    return getImageHandler({ input: { id: 1 }, ctx });
+  }
+  const strings = (value: unknown): string[] =>
+    typeof value === 'string'
+      ? [value]
+      : value && typeof value === 'object'
+      ? Object.values(value).flatMap(strings)
+      : [];
+  const keys = (value: unknown): string[] =>
+    value && typeof value === 'object'
+      ? Object.entries(value).flatMap(([k, v]) => [k, ...keys(v)])
+      : [];
+  const notice = (result: Record<string, unknown>) => {
+    expect(result.url).toBeNull();
+    expect(result.hash).toBeNull();
+    expect(result).not.toHaveProperty('ownerRetractedMedia');
+    for (const media of [MEDIA, PREVIEW, VIDEO, 'frame'])
+      expect(strings(result)).not.toContain(media);
+  };
+
+  it('asks image.get for the CSAM check only with the flag on', async () => {
+    await read({ blockedFor: BlockedReason.Moderated, ownerCsamMarked: false });
+    expect(image).toHaveBeenLastCalledWith(expect.objectContaining({ ownerReviewedBlocks: true }));
+    await read({ blockedFor: BlockedReason.Moderated }, { flag: false });
+    expect(image).toHaveBeenLastCalledWith(expect.objectContaining({ ownerReviewedBlocks: false }));
+  });
+
+  it.each([BlockedReason.Moderated, BlockedReason.TOS, 'moderated,tos'])(
+    'sends the owner of a %s block with no CSAM mark to the owner route, with no url',
+    async (blockedFor) => {
+      const result = await read({ blockedFor, ownerCsamMarked: false });
+      expect(result).toMatchObject({ url: null, hash: PREVIEW, ownerRetractedMedia: true });
+      for (const media of [MEDIA, VIDEO]) expect(strings(result)).not.toContain(media);
+      expect(keys(result)).not.toContain('ownerCsamMarked');
+    }
+  );
+
+  it.each([
+    ['a CSAM mark', { blockedFor: BlockedReason.Moderated, ownerCsamMarked: true }],
+    ['an unread CSAM check', { blockedFor: BlockedReason.Moderated, ownerCsamMarked: null }],
+    ['csam in the list', { blockedFor: 'moderated,csam', ownerCsamMarked: false }],
+    ['an unknown reason', { blockedFor: 'zzz', ownerCsamMarked: false }],
+    ['a moderated and unknown reason', { blockedFor: 'moderated,zzz', ownerCsamMarked: false }],
+  ])('serves its owner only the notice for %s', async (_, row) => {
+    const result = await read(row);
+    notice(result);
+    expect(keys(result)).not.toContain('ownerCsamMarked');
+  });
+
+  it('serves the owner only the notice with the flag off, as before', async () => {
+    notice(
+      await read({ blockedFor: BlockedReason.Moderated, ownerCsamMarked: false }, { flag: false })
+    );
+  });
+
+  it('never sends anyone but the owner to the owner route', async () => {
+    notice(
+      await read(
+        { blockedFor: BlockedReason.Moderated, ownerCsamMarked: false },
+        { user: { id: 99 } }
+      )
+    );
+  });
+
+  it('leaves a moderator their own image by url, not the owner route', async () => {
+    const result = await read(
+      { blockedFor: BlockedReason.Moderated, ownerCsamMarked: false },
+      { user: { id: UPLOADER, isModerator: true } }
+    );
+    expect(result.url).toBe(MEDIA);
+    expect(result).not.toHaveProperty('ownerRetractedMedia');
+  });
+
+  it('leaves a moderator the url, not the owner route', async () => {
+    const result = await read(
+      { blockedFor: BlockedReason.Moderated, ownerCsamMarked: false },
+      { user: { id: 5, isModerator: true } }
+    );
+    expect(result.url).toBe(MEDIA);
+    expect(result).not.toHaveProperty('ownerRetractedMedia');
+  });
+});
