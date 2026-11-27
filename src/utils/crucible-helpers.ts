@@ -1,6 +1,5 @@
 import type { CrucibleJudgingStatus } from '~/server/schema/crucible.schema';
-import type { MediaType } from '~/shared/utils/prisma/enums';
-import { CrucibleIngestionStatus, CrucibleStatus } from '~/shared/utils/prisma/enums';
+import { CrucibleIngestionStatus, CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { getBaseModelConfig } from '~/shared/constants/basemodel.constants';
 import {
   CRUCIBLE_ENTRY_WARNING_PERCENT,
@@ -77,6 +76,25 @@ export function baseModelMakesMediaType(baseModel: string, mediaType: MediaType)
   if (name === 'Other') return true;
   return Array.isArray(type) ? type.includes(mediaType) : type === mediaType;
 }
+
+/** Music crucibles are video crucibles: entrants post a video of their track. */
+export const getCrucibleModelMediaTypes = (contentType: MediaType): MediaType[] =>
+  contentType === MediaType.video ? [MediaType.video, MediaType.audio] : [contentType];
+
+/** "images", "videos or audio": audio has no plural. */
+export const formatMediaTypesNoun = (mediaTypes: MediaType[]) =>
+  mediaTypes
+    .map((mediaType) => (mediaType === MediaType.audio ? mediaType : `${mediaType}s`))
+    .join(' or ');
+
+export const crucibleModelMediaNoun = (contentType: MediaType) =>
+  formatMediaTypesNoun(getCrucibleModelMediaTypes(contentType));
+
+/** Whether a crucible of `contentType` may require a model or base model of `baseModel`. */
+export const baseModelFitsCrucible = (baseModel: string, contentType: MediaType) =>
+  getCrucibleModelMediaTypes(contentType).some((mediaType) =>
+    baseModelMakesMediaType(baseModel, mediaType)
+  );
 
 // `buzzTransactionSchema` caps a description at 100 characters, and a crucible name alone can be 100.
 const BUZZ_DESCRIPTION_MAX_LENGTH = 100;

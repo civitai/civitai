@@ -8386,6 +8386,7 @@ const myImagesSelect = {
   type: true,
   nsfwLevel: true,
   ingestion: true,
+  postId: true,
 } satisfies Prisma.ImageSelect;
 
 /**

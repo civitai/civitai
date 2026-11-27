@@ -437,6 +437,30 @@ describe('createCrucible — resource requirements', () => {
 
     expect(crucibleCreate).toHaveBeenCalled();
   });
+
+  // Music crucibles are video crucibles: entrants post a video of their track.
+  it('lets a video crucible require a music model', async () => {
+    modelVersionFindMany.mockResolvedValue([{ baseModel: 'ACE Audio' }]);
+
+    await createCrucible(
+      input({
+        contentType: MediaType.video,
+        allowedResources: [2727094],
+        allowedBaseModels: ['ACE Audio'],
+      })
+    );
+
+    expect(crucibleCreate).toHaveBeenCalled();
+  });
+
+  it('still refuses a music model on an image crucible', async () => {
+    modelVersionFindMany.mockResolvedValue([{ baseModel: 'ACE Audio' }]);
+
+    await expect(createCrucible(input({ allowedResources: [2727094] }))).rejects.toThrow(
+      /must make images/
+    );
+    expect(crucibleCreate).not.toHaveBeenCalled();
+  });
 });
 
 describe('createCrucible — base model requirements', () => {

@@ -41,6 +41,8 @@ import {
   useGeneratorSelection,
 } from '~/components/EntrySubmit/GeneratorMediaPicker';
 import { InViewLoader } from '~/components/InView/InViewLoader';
+import { NextLink } from '~/components/NextLink/NextLink';
+import { canAddManualResources } from '~/utils/manual-image-resources';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { CONTEST_BANNED_MESSAGE } from '~/shared/constants/contest-ban.constants';
 import { useIsContestBanned } from '~/hooks/useIsContestBanned';
@@ -156,6 +158,8 @@ function ImageCard({
   isAlreadySubmitted,
   isChecking,
   overlayLabel,
+  addModelHref,
+  onLeave,
 }: {
   image: {
     id: number;
@@ -172,6 +176,9 @@ function ImageCard({
   isAlreadySubmitted: boolean;
   isChecking: boolean;
   overlayLabel?: string;
+  /** Where the entrant adds a model detection missed: off-site media loses its metadata. */
+  addModelHref?: string;
+  onLeave: () => void;
 }) {
   const disabled = !isValid || isAlreadySubmitted;
 
@@ -318,6 +325,18 @@ function ImageCard({
                   </span>
                 </div>
               ))}
+              {addModelHref && (
+                <NextLink
+                  href={addModelHref}
+                  className="text-[0.7rem] text-blue-400 underline"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onLeave();
+                  }}
+                >
+                  Used a required model? Add it to your post with + Resource
+                </NextLink>
+              )}
             </div>
           )}
 
@@ -647,6 +666,13 @@ export default function CrucibleSubmitEntryModal({
     const usesAllowedBaseModel =
       !hasNoResources && !ineligibleReasons?.includes('wrong-base-model');
     const requiresBaseModel = allowedBaseModels.length > 0;
+    const missingModel =
+      !eligibilityPending &&
+      ((requiresResources && !usesRequiredModel) || (requiresBaseModel && !usesAllowedBaseModel));
+    const addModelHref =
+      missingModel && image.postId && canAddManualResources(image)
+        ? `/posts/${image.postId}/edit`
+        : undefined;
     const requiredModelLabel = allowedResourceNames?.length
       ? `Uses ${allowedResourceNames.join(' or ')}`
       : 'Uses a required model';
@@ -732,6 +758,7 @@ export default function CrucibleSubmitEntryModal({
         (!requiresResources || usesRequiredModel) &&
         (!requiresBaseModel || usesAllowedBaseModel),
       isAlreadySubmitted,
+      addModelHref,
       isChecking:
         eligibilityPending &&
         !isAlreadySubmitted &&
@@ -1125,8 +1152,14 @@ export default function CrucibleSubmitEntryModal({
                 <>
                   <div className="grid grid-cols-4 gap-3 sm:grid-cols-5">
                     {images.map((image) => {
-                      const { isValid, isAlreadySubmitted, isChecking, criteria, message } =
-                        validateImage(image);
+                      const {
+                        isValid,
+                        isAlreadySubmitted,
+                        isChecking,
+                        criteria,
+                        message,
+                        addModelHref,
+                      } = validateImage(image);
                       const isSelected = selectedImages.includes(image.id);
 
                       return (
@@ -1146,6 +1179,8 @@ export default function CrucibleSubmitEntryModal({
                           onClick={() => toggleImage(image.id)}
                           isAlreadySubmitted={isAlreadySubmitted}
                           isChecking={isChecking}
+                          addModelHref={addModelHref}
+                          onLeave={handleClose}
                           overlayLabel={
                             image.ingestion === ImageIngestionStatus.Error ? message : undefined
                           }
