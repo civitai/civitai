@@ -706,6 +706,7 @@ describe('resolveRatingDisputeAction', () => {
       appliedLevel: 2,
       modComment: 'fine',
       userId: 77,
+      csamReview: false,
     });
     expect(out).toEqual({ success: true, status: 'Actioned' });
   });

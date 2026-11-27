@@ -11,6 +11,7 @@ import { invalidateThumbnails, thumbnailParentId } from './thumbnail-cache';
 import { recordModActivity } from './mod-activity';
 import { queueDocumentsForImageMinorChanges } from './image-models-reindex';
 import { ratingRecordedUnderGrace } from '@civitai/shared/account-deletion-grace';
+import { assertNotWithheld, notWithheldTarget } from './withheld-write';
 
 type ReportStatus = 'Pending' | 'Processing' | 'Actioned' | 'Unactioned';
 
@@ -41,6 +42,9 @@ type ImageNsfwLevelInput = {
   status?: ReportStatus;
   reason?: string;
   userId: number;
+  /** The moderator's CSAM grant: an image withheld from them is left as it is, and this throws
+   *  `WithheldImageError`. */
+  csamReview: boolean;
 };
 
 // Don't mirror the main app's single-image Meilisearch update: that index locks specially on a single-image
@@ -53,11 +57,18 @@ export async function updateImageNsfwLevel(input: ImageNsfwLevelInput): Promise<
 /**
  * `updateImageNsfwLevel`'s writes, on `db`: pass a transaction to commit the rating with the caller's
  * own writes. Returns the cache, activity and search work, in order, for the caller to run once that
- * commits.
+ * commits. An image withheld from a moderator without the grant (`csamReview`) is refused.
  */
 export async function writeImageNsfwLevel(
   db: Kysely<DB> | Transaction<DB>,
-  { id, nsfwLevel, status, reason, userId }: ImageNsfwLevelInput
+  {
+    id,
+    nsfwLevel,
+    status,
+    reason,
+    userId,
+    csamReview,
+  }: ImageNsfwLevelInput
 ): Promise<AfterCommitStep[]> {
   const image = await db
     .selectFrom('Image')
@@ -100,8 +111,10 @@ export async function writeImageNsfwLevel(
     .where('id', '=', id)
     // Re-checked in the write: a rescan that started since the read leaves the song unreviewed.
     .where((eb) => eb.or([eb('type', '<>', 'audio'), eb('ingestion', '=', 'Scanned')]))
+    .where(notWithheldTarget(csamReview))
     .executeTakeFirst();
   if (Number(updated.numUpdatedRows) === 0) {
+    await assertNotWithheld([id], csamReview);
     if (image.type === 'audio') throw new SongRatingRefusedError(id, 'changed');
     throw new Error('Image not found');
   }

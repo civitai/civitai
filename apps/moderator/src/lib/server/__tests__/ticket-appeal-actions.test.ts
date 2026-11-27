@@ -76,6 +76,7 @@ describe('appealResolveImage', () => {
       resolvedReason: 'not-violation',
       internalNotes: undefined,
       userId: 4,
+      csamReview: false,
     });
     expect(parseReason).toHaveBeenCalledWith(expect.any(FormData), 'Approved');
     const text = note.mock.calls[0][1] as string;

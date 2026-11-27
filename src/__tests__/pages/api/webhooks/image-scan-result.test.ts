@@ -550,7 +550,7 @@ describe('image-scan-result webhook - pipeline tests', () => {
         )
         .find(
           (sql: any) =>
-            /"blockedFor" = CASE WHEN "blockedFor" = \$\d+ OR/.test(sql.text) &&
+            /"blockedFor" = CASE WHEN EXISTS \([^$]*?'csam'\s*\) OR/.test(sql.text) &&
             sql.params.at(-1) === 13
         );
       expect(blocked?.params).toContain(ImageIngestionStatus.Blocked);
@@ -909,13 +909,13 @@ describe('image-scan-result webhook - pipeline tests', () => {
         nsfwLevel: param(
           'nsfwLevel',
           // The scan's value is the ELSE arm, after the CSAM and locked-rating arms.
-          `CASE WHEN "blockedFor" = 'CSAM' THEN \\d+[\\s\\S]*?ELSE \\$(\\d+)`
+          `CASE WHEN EXISTS \\([^$]*?'csam'\\s*\\) THEN \\d+[\\s\\S]*?ELSE \\$(\\d+)`
         ),
         // The key the scan sets, which reviewKeyAfterSql weighs against the stored one: the ELSE
         // arm of the stored-CSAM guard.
         needsReview: param(
           'needsReview',
-          `CASE WHEN "blockedFor" = 'CSAM' THEN[\\s\\S]*?ELSE[\\s\\S]*?WHEN \\$(\\d+)::text = 'appeal'`
+          `CASE WHEN EXISTS \\([^$]*?'csam'\\s*\\) THEN[\\s\\S]*?ELSE[\\s\\S]*?WHEN \\$(\\d+)::text = 'appeal'`
         ),
         // What the scan ORs into the stored flag.
         minor: param('minor', `"minor" OR \\$(\\d+)`),

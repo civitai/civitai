@@ -25,7 +25,8 @@ beforeAll(async () => {
   await holder.db.exec(`
     ${CSAM_LINK_TABLES_SQL}
     CREATE TABLE "Image" (id int PRIMARY KEY, url text NOT NULL, "needsReview" text, "blockedFor" text,
-      "userId" int, "pHash" bigint, poi boolean NOT NULL DEFAULT false, minor boolean NOT NULL DEFAULT false);
+      "userId" int, "pHash" bigint, poi boolean NOT NULL DEFAULT false, minor boolean NOT NULL DEFAULT false,
+      "updatedAt" timestamp(3));
     ${WITHHELD_TABLES_SQL}
   `);
 });
@@ -61,6 +62,23 @@ describe('clearing a flag', () => {
     expect(await poi()).toEqual([
       [WITHHELD, true],
       [PLAIN, false],
+    ]);
+  });
+
+  it('stamps updatedAt on the rows it writes, as the Prisma path does', async () => {
+    await updateImagesFlag({
+      ids: [WITHHELD, PLAIN],
+      flag: 'poi',
+      value: false,
+      withheldFor: { csamReview: false },
+    });
+    const { rows } = await holder.db.query<{ id: number; stamped: boolean }>(
+      `SELECT id, "updatedAt" IS NOT NULL AS stamped FROM "Image" WHERE id = ANY($1) ORDER BY id`,
+      [[WITHHELD, PLAIN]]
+    );
+    expect(rows.map((row) => [row.id, row.stamped])).toEqual([
+      [WITHHELD, false],
+      [PLAIN, true],
     ]);
   });
 

@@ -215,7 +215,7 @@ const song = async () =>
     )
   ).rows[0];
 
-const accept = () => acceptCsamReviewedImage({ imageId: COVER, userId: MOD });
+const accept = () => acceptCsamReviewedImage({ csamReview: true, imageId: COVER, userId: MOD });
 const lyricsHold = (status: 'Pending' | 'Confirmed') =>
   db.query(`INSERT INTO "TextScanHold" VALUES ('TrackLyrics', $1, 'csam', $2)`, [SONG, status]);
 
@@ -386,7 +386,7 @@ describe('lifting the song itself', () => {
     await lyricsHold('Confirmed');
 
     expectLockedBeforeLift(
-      await statementsOf(() => acceptCsamReviewedImage({ imageId: SONG, userId: MOD }))
+      await statementsOf(() => acceptCsamReviewedImage({ csamReview: true, imageId: SONG, userId: MOD }))
     );
   });
 
@@ -406,7 +406,7 @@ describe('lifting the song itself', () => {
     await seed({ marker: { lyrics: 5 } });
     await lyricsHold('Confirmed');
 
-    await expect(acceptCsamReviewedImage({ imageId: SONG, userId: MOD })).rejects.toBeInstanceOf(
+    await expect(acceptCsamReviewedImage({ csamReview: true, imageId: SONG, userId: MOD })).rejects.toBeInstanceOf(
       ConfirmedSongHoldError
     );
 
@@ -418,7 +418,7 @@ describe('lifting the song itself', () => {
     await lyricsHold('Confirmed');
 
     await expect(
-      withStaleReplica(SONG, () => acceptCsamReviewedImage({ imageId: SONG, userId: MOD }))
+      withStaleReplica(SONG, () => acceptCsamReviewedImage({ csamReview: true, imageId: SONG, userId: MOD }))
     ).rejects.toBeInstanceOf(ConfirmedSongHoldError);
 
     expect((await song()).needsReview).toBe('csam');
@@ -428,7 +428,7 @@ describe('lifting the song itself', () => {
     await seed({ marker: { lyrics: 5 } });
     await lyricsHold('Pending');
 
-    await acceptCsamReviewedImage({ imageId: SONG, userId: MOD });
+    await acceptCsamReviewedImage({ csamReview: true, imageId: SONG, userId: MOD });
 
     expect((await song()).needsReview).toBeNull();
   });

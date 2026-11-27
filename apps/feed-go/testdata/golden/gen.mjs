@@ -1300,7 +1300,7 @@ function imageSql(q) {
     if (without !== 'minorMature' && !isModerator && isMinorMatureImage(i) && !(userId && i.userId === userId)) return false;
     if (q.excludedTagIds?.length && tagIdsOf(i.id).some((t) => q.excludedTagIds.includes(t)) && !(userId && i.userId === userId)) return false;
     if (!prioritized && q.modelVersionId && !RESOURCES[i.id].some((r) => r.modelVersionId === q.modelVersionId)) return false;
-    if (!prioritized && !q.modelVersionId && q.modelId && !RESOURCES[i.id].some((r) => VERSIONS[r.modelVersionId] === q.modelId)) return false;
+    if (without !== 'model' && !prioritized && !q.modelVersionId && q.modelId && !RESOURCES[i.id].some((r) => VERSIONS[r.modelVersionId] === q.modelId)) return false;
     if (prioritized && q.modelVersionId && p.modelVersionId !== q.modelVersionId) return false;
     if (without !== 'prioritized' && prioritized && !iifOrder && !q.prioritizedUserIds.includes(i.userId)) return false;
     if (without !== 'reactions' && reactionsOn && !REACTIONS.some((r) => r.userId === userId && r.imageId === i.id && q.reactions.includes(r.reaction))) return false;
@@ -1313,6 +1313,8 @@ function imageSql(q) {
     if (without !== 'techniques' && q.techniques?.length && !techniqueIdsOf(i.id).some((t) => q.techniques.includes(t))) return false;
     if (q.postId && i.postId !== q.postId) return false;
     if (q.postIds?.length && !q.postIds.includes(i.postId)) return false;
+    // `if (imageId) AND.push(i.id = imageId)` (the REST endpoint's legacy path).
+    if (without !== 'imageId' && q.imageId && i.id !== q.imageId) return false;
     if (q.excludedUserIds?.length && q.excludedUserIds.includes(i.userId)) return false;
     // EXISTS (… FROM "ImageTool" … HAVING array_agg(it."toolId") @> ARRAY[tools]::integer[]): every
     // listed tool on the image; an image with no tool row has no group, so never matches.
@@ -1326,9 +1328,16 @@ function imageSql(q) {
     // `acceptableMinor = FALSE`; in a collection the image's owner (and a moderator) still sees it.
     if (i.acceptableMinor && (!q.collectionId || (!isModerator && i.userId !== userId))) return false;
     if ((i.nsfwLevel & browsingLevel) === 0 || i.nsfwLevel === 0) return false;
+    // `if (requiringMeta) AND.push(i."blockedFor" = AiNotVerified)`, after the gates (which only the red
+    // domain drops for it; no fixture sends it there).
+    if (without !== 'requiringMeta' && q.requiringMeta && i.blockedFor !== 'AiNotVerified') return false;
     return true;
   };
   let rows = Object.values(IMAGES).filter((i) => passes(i, true));
+  // FROM "ImageResourceNew" irr … JOIN "ModelVersion" mv … WHERE mv."modelId" = <model>: one row per
+  // resource row on a version of the model, so an image that used two of its versions is listed twice.
+  if (!prioritized && !q.modelVersionId && q.modelId)
+    rows = rows.flatMap((i) => RESOURCES[i.id].filter((r) => VERSIONS[r.modelVersionId] === q.modelId).map(() => i));
   // JOIN ct ON ct."imageId" = i.id: one row per matching item, with its note, status and adder.
   if (collectionItems)
     rows = rows.flatMap((i) =>
@@ -1355,7 +1364,17 @@ function imageSql(q) {
   // The same for the ids, new-creators, reactions and prioritized-creators clauses: the tables hold every
   // row each alone decides on.
   // (`ids` only as the input's own: the feed hydrate's ids are the feed's page, whose rows are held.)
-  for (const [key, on] of [['ids', !!q.ids?.length && !q.throwOnStatementTimeout && T.idsCandidates], ['newCreators', !!board], ['reactions', reactionsOn], ['prioritized', prioritized && !iifOrder]]) {
+  // (`imageId`, a version-less model and `requiringMeta` only on the REST endpoint's legacy path, whose
+  // fixtures postdate the rest: T.v1Candidates.)
+  for (const [key, on] of [
+    ['ids', !!q.ids?.length && !q.throwOnStatementTimeout && T.idsCandidates],
+    ['newCreators', !!board],
+    ['reactions', reactionsOn],
+    ['prioritized', prioritized && !iifOrder],
+    ['imageId', !!q.imageId && T.v1Candidates],
+    ['model', !prioritized && !q.modelVersionId && !!q.modelId && T.v1Candidates],
+    ['requiringMeta', !!q.requiringMeta && T.v1Candidates],
+  ]) {
     if (!on) continue;
     without = key;
     for (const i of Object.values(IMAGES)) if (passes(i, true)) T.posts.add(i.postId);
@@ -2393,6 +2412,7 @@ function runV1(spec) {
     postId: num(query.postId),
     modelId: num(query.modelId),
     modelVersionId: num(query.modelVersionId),
+    imageId: num(query.imageId),
     username: query.username,
     userId: num(query.userId),
     period: query.period ?? 'AllTime',
@@ -2418,6 +2438,7 @@ function runV1(spec) {
       return ids;
     })(),
     withMeta: query.withMeta === undefined ? false : booleanString(query.withMeta),
+    requiringMeta: query.requiringMeta === undefined ? undefined : booleanString(query.requiringMeta),
     flatMeta: query.flatMeta === undefined ? undefined : booleanString(query.flatMeta),
   };
   const { limit, page, cursor, nsfw, browsingLevel, type, withMeta, flatMeta, ...data } = p;
@@ -2435,8 +2456,10 @@ function runV1(spec) {
       if (!level) return ok({ items: [], metadata: {} });
     }
   }
-  // runImageSearch: an `ids` batch takes the legacy path (getAllImages), everything else the feed.
-  const useLegacyMethod = Array.isArray(data.ids) && data.ids.length > 0;
+  // runImageSearch's useLegacyMethod: an `ids` batch, an `imageId`, or a `modelId` without a version
+  // take the legacy path (getAllImages), everything else the feed (`postOrder` is the posts route's).
+  const useLegacyMethod =
+    (Array.isArray(data.ids) && data.ids.length > 0) || data.imageId ? true : !!data.modelId && !data.modelVersionId;
   if (!useLegacyMethod && cursor !== undefined && cursor !== '' && !parseFeedCursor(cursor) && !/^(-?\d+)(?:\|[^|]*)?$/.test(cursor))
     throw new NodeError(400, 'cursor');
   const include = ['tagIds', 'profilePictures'];
@@ -3115,10 +3138,98 @@ const V1 = [
     query: 'withMeta=true&flatMeta=false&limit=2',
     replies: { 'levels=1&excludedTags=9901&excludeMinor=1&excludePoi=1&sort=reactions&limit=2': { body: { items: [8005, 8001], ...fc('1718000000000', '8001') } } },
   },
+  // `imageId` and a `modelId` without a version: the same legacy path (runImageSearch's
+  // useLegacyMethod), each behind its own switch (FEED_GO_V1_IMAGES_SERVE_IMAGE_ID / _MODEL_ONLY).
+  {
+    name: 'image-id',
+    description: '`imageId`: getAllImages with `i.id = <imageId>` (no model gate: it names no model); the post’s other image is not on the page.',
+    query: 'imageId=8002&browsingLevel=3',
+    goConfig: { serveV1ImageId: true },
+  },
+  {
+    name: 'image-id-below-level',
+    description: '`imageId` of an R image at the default PG level: the level clause drops it, an empty page.',
+    query: 'imageId=8004',
+    goConfig: { serveV1ImageId: true },
+  },
+  {
+    name: 'image-id-held-post',
+    description: '`imageId` of an R image posted to an SFW-only model: no gallery gate (no model named), so the query returns it, and withoutHeldImages drops it by its post’s hold.',
+    query: 'imageId=8302&browsingLevel=31',
+    goConfig: { serveV1ImageId: true },
+  },
+  {
+    name: 'image-id-limit-zero',
+    description: '`imageId` with `limit=0`: LIMIT 1 reads the image and pops it as the look-ahead row, so the page is empty with a numeric nextCursor and a nextPage.',
+    query: 'imageId=8001&limit=0',
+    goConfig: { serveV1ImageId: true },
+  },
+  {
+    name: 'image-id-with-model',
+    description: '`imageId` with a `modelId` and no version: the model’s resource join lists an image once per version of the model it used (8001 used two), and the image clause keeps both rows.',
+    query: 'imageId=8001&modelId=5001',
+    goConfig: { serveV1ImageId: true, serveV1ModelOnly: true },
+  },
+  {
+    name: 'model-only',
+    description: '`modelId` without a version: getAllImages over the model’s resource rows, by `irr."imageId"` descending (the engagement sorts collapse to it); the look-ahead row’s id is a numeric nextCursor.',
+    query: 'modelId=5001&limit=3',
+    goConfig: { serveV1ModelOnly: true },
+  },
+  {
+    name: 'model-only-oldest-duplicate',
+    description: '`modelId` without a version, Oldest: by id ascending; image 8001 used two of the model’s versions, so it is two rows, and both are items.',
+    query: 'modelId=5001&sort=Oldest&limit=3&browsingLevel=3',
+    goConfig: { serveV1ModelOnly: true },
+  },
+  {
+    name: 'model-only-cursor',
+    description: '`modelId` without a version continued by a numeric cursor (inclusive on `irr."imageId"`).',
+    query: 'modelId=5001&limit=2&cursor=8006',
+    goConfig: { serveV1ModelOnly: true },
+  },
+  {
+    name: 'model-only-page',
+    description: '`modelId` without a version with `page=2`: OFFSET (page - 1) * limit, currentPage and pageSize, nextPage with page=3.',
+    query: 'modelId=5001&page=2&limit=2&sort=Newest',
+    goConfig: { serveV1ModelOnly: true },
+  },
+  {
+    name: 'model-only-held',
+    description: '`modelId` of an SFW-only model: level 31 held to PG|PG-13, so its R image is not read.',
+    query: 'modelId=5002&browsingLevel=31',
+    goConfig: { serveV1ModelOnly: true },
+  },
+  {
+    name: 'model-only-withheld',
+    description: '`modelId` of a taken-down model: `{ items: [], metadata: {} }`, no query.',
+    query: 'modelId=5003',
+    goConfig: { serveV1ModelOnly: true },
+  },
+  {
+    name: 'model-only-requiring-meta',
+    description: '`modelId` without a version with `requiringMeta`: getAllImages adds `i."blockedFor" = AiNotVerified`, which a signed-out caller’s block clauses never keep: an empty page.',
+    query: 'modelId=5001&requiringMeta=true',
+    goConfig: { serveV1ModelOnly: true },
+  },
+  {
+    name: 'ids-requiring-meta-owner',
+    description: '`ids` with `requiringMeta`, signed in as the posts’ creator: only the image blocked as AiNotVerified (its owner keeps it), not the unblocked one, nor the CSAM-blocked one (refused to its owner too).',
+    query: 'ids=8041,8042,8043&requiringMeta=true',
+    viewer: 1002,
+  },
   // Fallbacks.
+  { name: 'fallback-image-id', description: '`imageId` with FEED_GO_V1_IMAGES_SERVE_IMAGE_ID off: the shape falls back as before its port.', query: 'imageId=8001', fallback: 'v1-image-id' },
+  {
+    name: 'fallback-image-id-zero',
+    description: '`imageId=0` with FEED_GO_V1_IMAGES_SERVE_IMAGE_ID on: falsy to runImageSearch (no legacy path) but present to the feed mapper (an empty page), so not ported: the shape’s fallback.',
+    query: 'imageId=0',
+    goConfig: { serveV1ImageId: true, serveV1ModelOnly: true },
+    fallback: 'v1-image-id',
+  },
   { name: 'fallback-ids-hex', description: '`ids` spelled as Number() reads hex: Node takes it, feed-go reads only plain decimals.', query: 'ids=8001,0x1f43', fallback: 'v1-input-ids' },
   { name: 'fallback-ids-feed-cursor', description: 'A feed cursor on an `ids` batch: getCursor cannot read it (a 400 on Node).', query: 'ids=8001&cursor=feed%3A1%3A2', fallback: 'v1-legacy-cursor' },
-  { name: 'fallback-model-only', description: 'A `modelId` without a version takes the legacy Postgres path.', query: 'modelId=5001', fallback: 'v1-model-only' },
+  { name: 'fallback-model-only', description: 'A `modelId` without a version with FEED_GO_V1_IMAGES_SERVE_MODEL_ONLY off: the shape falls back as before its port.', query: 'modelId=5001', fallback: 'v1-model-only' },
   { name: 'fallback-page-limit', description: '`page * limit > 1000` is a 429 on Node.', query: 'page=20&limit=100', fallback: 'v1-page-limit' },
 ];
 
@@ -4719,6 +4830,8 @@ function emitV1() {
   mkdirSync(dir, { recursive: true });
   for (const spec of V1) {
     newTrace(spec.name, spec);
+    // The tables of an `imageId` or version-less model page hold every row its clause alone decides on.
+    T.v1Candidates = true;
     const host = spec.host ?? HOST.blue;
     let expect;
     if (spec.fallback) {
@@ -4732,7 +4845,7 @@ function emitV1() {
       name: spec.name,
       description: spec.description,
       now: NOW.toISOString(),
-      config: { imageLocation: IMAGE_LOCATION },
+      config: { imageLocation: IMAGE_LOCATION, ...(spec.goConfig ?? {}) },
       request: {
         query: spec.query,
         path: '/api/v1/images',

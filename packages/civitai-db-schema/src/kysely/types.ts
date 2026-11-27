@@ -5777,6 +5777,10 @@ export type ScanLabelClaim = {
   userId: number;
   expiresAt: Timestamp;
   token: Generated<string | null>;
+  /**
+   * Set when the moderator skipped the card or it was dropped from their queue; it never comes back to them.
+   */
+  releasedAt: Timestamp | null;
 };
 export type ScanLabelCopyObject = {
   key: string;

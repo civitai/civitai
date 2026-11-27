@@ -34,6 +34,7 @@ import {
   type OtherKind,
 } from '$lib/rating-dispute';
 import { SONG_ENTITY_TYPE, type RatingReviewStatusFilter } from '$lib/rating-review';
+import { holdsCsamReview } from './held-media';
 
 const PAGE_SIZE = 50;
 
@@ -331,7 +332,11 @@ const resolveSchema = z.object({
 export const resolveRatingDisputeAction: Action = async ({ request, locals }) => {
   const parsed = resolveSchema.safeParse(Object.fromEntries(await request.formData()));
   if (!parsed.success) return fail(400, { error: 'Invalid resolution' });
-  const result = await resolveRatingReviewAction({ ...parsed.data, userId: locals.user.id });
+  const result = await resolveRatingReviewAction({
+    ...parsed.data,
+    userId: locals.user.id,
+    csamReview: holdsCsamReview(locals.user),
+  });
   if (!result.ok)
     return fail(409, {
       error: result.error,

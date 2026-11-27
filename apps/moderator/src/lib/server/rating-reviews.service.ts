@@ -1031,13 +1031,15 @@ async function applySongRating(
   trx: Transaction<DB>,
   songId: number,
   appliedLevel: number,
-  moderatorId: number
+  moderatorId: number,
+  csamReview: boolean
 ): Promise<AfterCommitStep[]> {
   try {
     return await writeImageNsfwLevel(trx, {
       id: songId,
       nsfwLevel: appliedLevel,
       userId: moderatorId,
+      csamReview,
     });
   } catch (err) {
     if (err instanceof SongRatingRefusedError) throw new RatingReviewResolveError(err.message);
@@ -1071,11 +1073,14 @@ export async function resolveRatingReview(input: {
   appliedLevel: number;
   modComment?: string;
   moderatorId: number;
+  /** The moderator's own grant to act on media withheld from moderators without it; a song withheld
+   *  from a moderator without it is refused. */
+  csamReview?: boolean;
   /** Set by the Audio review page, the one place a song's dispute is decided: it resolves only
    *  those, and every other caller resolves anything but those. */
   songs?: boolean;
 }): Promise<ResolveResult> {
-  const { reviewId, appliedLevel, modComment, moderatorId } = input;
+  const { reviewId, appliedLevel, modComment, moderatorId, csamReview = false } = input;
 
   let afterSongRating: AfterCommitStep[] = [];
   const core = await dbWrite.transaction().execute(async (trx) => {
@@ -1184,7 +1189,13 @@ export async function resolveRatingReview(input: {
     if (challenge) await applyChallengeOverride(trx, entityId, challenge, appliedLevel);
     else if (crucible) await applyCrucibleOverride(trx, entityId, crucible, appliedLevel);
     else if (song)
-      afterSongRating = await applySongRating(trx, entityId, appliedLevel, moderatorId);
+      afterSongRating = await applySongRating(
+        trx,
+        entityId,
+        appliedLevel,
+        moderatorId,
+        csamReview
+      );
     else if (
       exists &&
       entityType !== 'Challenge' &&

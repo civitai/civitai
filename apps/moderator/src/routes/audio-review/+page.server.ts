@@ -49,6 +49,7 @@ import { getSongLinks } from '$lib/server/song-links.service';
 import { int4Id, parseForm, parseIdList, parseQueryKeys } from '$lib/server/query';
 import { isSong } from '$lib/server/songs';
 import { keyed, parseViolation, refuseWithheld } from './actions';
+import { holdsCsamReview } from '$lib/server/held-media';
 
 const ACT = 'image.moderate';
 
@@ -317,6 +318,7 @@ export const actions: Actions = {
     const result = await resolveRatingReviewAction({
       ...input,
       userId: event.locals.user.id,
+      csamReview: holdsCsamReview(event.locals.user),
       songs: true,
     });
     if (!result.ok) return fail(409, { error: result.error, key: reviewId });
@@ -431,6 +433,7 @@ async function decideAppeal(event: RequestEvent, status: 'Approved' | 'Rejected'
       resolvedMessage,
       ...reason,
       userId: event.locals.user.id,
+      csamReview: holdsCsamReview(event.locals.user),
     });
     if (!closed)
       return fail(409, {

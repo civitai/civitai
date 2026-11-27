@@ -91,7 +91,7 @@ describe("a moderator's rating", () => {
   it('refuses a song its scans have not given their verdict on, and writes nothing', async () => {
     for (const ingestion of ['Pending', 'Rescan', 'Error']) {
       await db.query(`UPDATE "Image" SET "ingestion" = $1 WHERE id = $2`, [ingestion, SONG]);
-      const refusal = updateImageNsfwLevel({ id: SONG, nsfwLevel: 8, userId: 1 });
+      const refusal = updateImageNsfwLevel({ csamReview: true, id: SONG, nsfwLevel: 8, userId: 1 });
       await expect(refusal).rejects.toBeInstanceOf(SongRatingRefusedError);
       await expect(refusal).rejects.toThrow(/not been reviewed yet/);
       expect(await row(SONG)).toEqual({ nsfwLevel: 1, nsfwLevelLocked: false, metadata: {} });
@@ -101,7 +101,7 @@ describe("a moderator's rating", () => {
   it('refuses a removed song as removed, and writes nothing', async () => {
     for (const ingestion of ['Blocked', 'NotFound']) {
       await db.query(`UPDATE "Image" SET "ingestion" = $1 WHERE id = $2`, [ingestion, SONG]);
-      const refusal = updateImageNsfwLevel({ id: SONG, nsfwLevel: 8, userId: 1 });
+      const refusal = updateImageNsfwLevel({ csamReview: true, id: SONG, nsfwLevel: 8, userId: 1 });
       await expect(refusal).rejects.toBeInstanceOf(SongRatingRefusedError);
       await expect(refusal).rejects.toThrow("This song was removed, so it can't be rated.");
       expect(await row(SONG)).toEqual({ nsfwLevel: 1, nsfwLevelLocked: false, metadata: {} });
@@ -130,7 +130,7 @@ describe("a moderator's rating", () => {
     const before = dbHandle.current;
     dbHandle.current = new Kysely({ dialect: pgliteDialect(racing) });
     try {
-      const refusal = updateImageNsfwLevel({ id: REVIEWED_SONG, nsfwLevel: 8, userId: 1 });
+      const refusal = updateImageNsfwLevel({ csamReview: true, id: REVIEWED_SONG, nsfwLevel: 8, userId: 1 });
       await expect(refusal).rejects.toBeInstanceOf(SongRatingRefusedError);
       await expect(refusal).rejects.toThrow('This song changed while it was being rated. Reload.');
     } finally {
@@ -145,7 +145,7 @@ describe("a moderator's rating", () => {
   });
 
   it('rates a song its own scans already reviewed, as it rates a picture', async () => {
-    await updateImageNsfwLevel({ id: REVIEWED_SONG, nsfwLevel: 8, userId: 1, reason: 'mod' });
+    await updateImageNsfwLevel({ csamReview: true, id: REVIEWED_SONG, nsfwLevel: 8, userId: 1, reason: 'mod' });
 
     expect(await row(REVIEWED_SONG)).toEqual({
       nsfwLevel: 8,
@@ -162,7 +162,7 @@ describe("a moderator's rating", () => {
     const { bustCachedObject } = await import('../cache');
     const { queueDocumentsForImageMinorChanges } = await import('../image-models-reindex');
 
-    await updateImageNsfwLevel({ id: REVIEWED_SONG, nsfwLevel: 8, userId: 4 });
+    await updateImageNsfwLevel({ csamReview: true, id: REVIEWED_SONG, nsfwLevel: 8, userId: 4 });
 
     expect((await row(REVIEWED_SONG)).nsfwLevelLocked).toBe(true);
     expect(invalidateThumbnails).toHaveBeenCalledWith(REVIEWED_SONG, [null]);
@@ -186,7 +186,7 @@ describe("a moderator's rating", () => {
     await db.exec(`ALTER TABLE "ImageRatingRequest" RENAME TO "ImageRatingRequestGone"`);
     try {
       await expect(
-        updateImageNsfwLevel({ id: REVIEWED_SONG, nsfwLevel: 8, userId: 4, status: 'Actioned' })
+        updateImageNsfwLevel({ csamReview: true, id: REVIEWED_SONG, nsfwLevel: 8, userId: 4, status: 'Actioned' })
       ).rejects.toThrow(/ImageRatingRequest/);
     } finally {
       await db.exec(`ALTER TABLE "ImageRatingRequestGone" RENAME TO "ImageRatingRequest"`);

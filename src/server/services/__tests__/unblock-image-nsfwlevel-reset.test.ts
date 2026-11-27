@@ -384,12 +384,14 @@ describe('handleUnblockImages and a CSAM block', () => {
     const unblock = dbWrite.$queryRaw.mock.calls.filter(([strings]) =>
       (strings as TemplateStringsArray).join('?').includes('AS "keptBlocked"')
     );
-    // The ids the UPDATE claimed, then the per-row CSAM re-check it carries.
-    const bound = unblock.map(([strings, ...values]) =>
-      // (the last value is RETURNING's kept-blocked status)
-      Prisma.sql(strings as never, ...(values as never[])).values.slice(-4, -1)
+    // The ids the UPDATE claimed, then the per-row CSAM re-check it carries: the block read from the
+    // comma list in the statement's text, the review flag bound.
+    const statements = unblock.map(([strings, ...values]) =>
+      Prisma.sql(strings as never, ...(values as never[]))
     );
-    expect(bound).toEqual([[2, 'CSAM', 'csam']]);
+    // (the last value is RETURNING's kept-blocked status)
+    expect(statements.map((statement) => statement.values.slice(-3, -1))).toEqual([[2, 'csam']]);
+    expect(statements[0].text).toContain(`string_to_array("blockedFor", ',')`);
     expect(result.restored.map((image) => image.id)).toEqual([2]);
   });
 

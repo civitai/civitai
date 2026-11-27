@@ -140,6 +140,7 @@ const appealLabels = async () =>
 describe('the ruling reason', () => {
   it('is written to the appeal it closes, with the note', async () => {
     await resolveImageAppeal({
+      csamReview: true,
       imageId: IMAGE_ID,
       status: 'Rejected',
       resolvedReason: 'other',
@@ -156,6 +157,7 @@ describe('the ruling reason', () => {
     await db.query(`UPDATE "Appeal" SET "status" = 'Approved', "resolvedReason" = 'misclassified'`);
 
     await resolveImageAppeal({
+      csamReview: true,
       imageId: IMAGE_ID,
       status: 'Rejected',
       resolvedReason: 'violation-confirmed',
@@ -173,6 +175,7 @@ describe('resolving one appeal twice at once', () => {
   it('resolveImageAppeal refunds the fee once', async () => {
     const approve = () =>
       resolveImageAppeal({
+        csamReview: true,
         imageId: IMAGE_ID,
         status: 'Approved',
         resolvedReason: 'misclassified',
@@ -191,7 +194,7 @@ describe('resolving one appeal twice at once', () => {
   });
 
   it('acceptImage refunds the fee once', async () => {
-    const accept = () => acceptImage({ imageId: IMAGE_ID, userId: 2 });
+    const accept = () => acceptImage({ csamReview: true, imageId: IMAGE_ID, userId: 2 });
 
     const closed = await Promise.all([accept(), accept()]);
 
@@ -206,6 +209,7 @@ describe('resolving one appeal twice at once', () => {
     await db.query(`UPDATE "Appeal" SET "status" = 'Rejected'`);
 
     const closed = await resolveImageAppeal({
+      csamReview: true,
       imageId: IMAGE_ID,
       status: 'Approved',
       resolvedReason: 'misclassified',
@@ -228,6 +232,7 @@ describe('resolving one appeal twice at once', () => {
     await db.query(`UPDATE "Image" SET "needsReview" = 'minor'`);
 
     await resolveImageAppeal({
+      csamReview: true,
       imageId: IMAGE_ID,
       status: 'Approved',
       resolvedReason: 'misclassified',
@@ -246,6 +251,7 @@ describe('resolving one appeal twice at once', () => {
     await db.query(`UPDATE "Appeal" SET "entityRemovedAt" = now()`);
 
     const closed = await resolveImageAppeal({
+      csamReview: true,
       imageId: IMAGE_ID,
       status: 'Approved',
       resolvedReason: 'false-positive',

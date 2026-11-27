@@ -64,7 +64,7 @@ vi.mock('../mod-activity', () => ({ insertModActivity, recordModActivity }));
 vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn() }));
 vi.mock('../reports.service', () => ({ setReportStatus }));
 
-const { blockImage } = await import('../image-moderation.service');
+const { blockImage, isBannedOwnerBlocked } = await import('../image-moderation.service');
 const { confirmRemoval, declineRemoval } = await import('../image-removal-confirmation.service');
 
 const MIGRATION = readFileSync(
@@ -658,18 +658,53 @@ describe('deciding a held removal', () => {
     expect(setReportStatus.mock.calls.map(([a]) => a.id)).toEqual([7, 8]);
   });
 
-  it('leaves the reports open when the image was removed with its block reason kept meanwhile', async () => {
+  it.each(['CSAM', 'TOS,csam'])(
+    'leaves the reports open when the image was removed for CSAM (%s) meanwhile',
+    async (blockedFor) => {
+      const id = await hold();
+      await db.query(`UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = $2 WHERE id = $1`, [
+        IMAGE,
+        blockedFor,
+      ]);
+
+      expect(await confirmRemoval({ id, userId: CONFIRMER })).toMatchObject({ ok: true });
+
+      expect((await image()).ingestion).toBe('Blocked');
+      expect(setReportStatus).not.toHaveBeenCalled();
+    }
+  );
+
+  it('answers the reports when the image was removed meanwhile for reasons without CSAM (control)', async () => {
     const id = await hold();
     await db.query(
-      `UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'CSAM' WHERE id = $1`,
+      `UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'TOS,Moderated' WHERE id = $1`,
       [IMAGE]
     );
 
     expect(await confirmRemoval({ id, userId: CONFIRMER })).toMatchObject({ ok: true });
 
-    expect((await image()).ingestion).toBe('Blocked');
-    expect(setReportStatus).not.toHaveBeenCalled();
+    expect(setReportStatus).toHaveBeenCalled();
   });
+
+  it.each([
+    ['TOS,Moderated', true],
+    ['TOS,csam', false],
+  ])(
+    "reads a banned owner's image blocked for %s as banned-owner blocked: %s",
+    async (blockedFor, expected) => {
+      await db.query(`UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = $2 WHERE id = $1`, [
+        IMAGE,
+        blockedFor,
+      ]);
+      await db.query(
+        `INSERT INTO "User" ("id", "bannedAt") SELECT "userId", now() FROM "Image" WHERE id = $1
+       ON CONFLICT ("id") DO UPDATE SET "bannedAt" = now()`,
+        [IMAGE]
+      );
+
+      expect(await isBannedOwnerBlocked(IMAGE)).toBe(expected);
+    }
+  );
 
   it('voids the request, leaving the image up, when a later appeal was approved', async () => {
     const id = await hold();

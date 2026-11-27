@@ -447,17 +447,21 @@ describe('an image listed in a CSAM report', () => {
     expect(await deferredRows()).toEqual([]);
   });
 
-  it('fires nothing for an image removed for CSAM after its block', async () => {
-    await block(FLAGGED);
-    await block(OTHER);
-    await db.exec(`UPDATE "Image" SET "blockedFor" = 'CSAM' WHERE id = ${FLAGGED}`);
-    await dismiss(FLAGGED);
-    await dismiss(OTHER);
+  it.each(['CSAM', 'TOS,csam'])(
+    'fires nothing for an image removed for CSAM (%s) after its block',
+    async (blockedFor) => {
+      await block(FLAGGED);
+      await block(OTHER);
+      await db.exec(`UPDATE "Image" SET "blockedFor" = '${blockedFor}' WHERE id = ${FLAGGED}`);
+      await db.exec(`UPDATE "Image" SET "blockedFor" = 'TOS,Moderated' WHERE id = ${OTHER}`);
+      await dismiss(FLAGGED);
+      await dismiss(OTHER);
 
-    expect(notices().map((n) => n.url)).toEqual([`/images/${OTHER}`]);
-    expect(actioned().map((a) => a.id)).toEqual([report(OTHER)]);
-    expect(logged('deferred-effect-skipped')).toEqual([FLAGGED]);
-  });
+      expect(notices().map((n) => n.url)).toEqual([`/images/${OTHER}`]);
+      expect(actioned().map((a) => a.id)).toEqual([report(OTHER)]);
+      expect(logged('deferred-effect-skipped')).toEqual([FLAGGED]);
+    }
+  );
 
   it('fires nothing when the check itself fails', async () => {
     await block(FLAGGED);
@@ -576,12 +580,12 @@ describe('an unblock of it', () => {
   it('is refused while the flag is on, and once the flag is cleared drops its deferred effects unfired', async () => {
     await block(FLAGGED);
     await expect(
-      acceptImage({ imageId: FLAGGED, userId: 2, restoreRemoved: true })
+      acceptImage({ csamReview: true, imageId: FLAGGED, userId: 2, restoreRemoved: true })
     ).rejects.toBeInstanceOf(ImageNotRestoredError);
     expect(await deferredRows()).toEqual([{ imageId: FLAGGED }]);
 
     await db.exec(`UPDATE "Image" SET "needsReview" = NULL WHERE id = ${FLAGGED}`);
-    await acceptImage({ imageId: FLAGGED, userId: 2, restoreRemoved: true });
+    await acceptImage({ csamReview: true, imageId: FLAGGED, userId: 2, restoreRemoved: true });
 
     expect(await deferredRows()).toEqual([]);
     expect(notices()).toEqual([]);

@@ -1,5 +1,9 @@
 import { BlockedReason } from '~/server/common/enums';
-import { graceBlockedSql, scanKeepsByMarkerSql } from '~/server/common/image-visibility';
+import {
+  csamBlockedSql,
+  graceBlockedSql,
+  scanKeepsByMarkerSql,
+} from '~/server/common/image-visibility';
 import { dbWrite } from '~/server/db/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import { blockKeptByBanSql } from '~/server/services/image-scan-pipeline';
@@ -19,7 +23,8 @@ export async function rescanImageById({ id, csamReview }: GetByIdInput & { csamR
     WHERE id = ${id}
       AND ingestion IN ('Blocked'::"ImageIngestionStatus", 'Error'::"ImageIngestionStatus")
       AND "blockedFor" IS NOT NULL
-      AND "blockedFor" NOT IN (${BlockedReason.AiNotVerified}, ${BlockedReason.CSAM})
+      AND "blockedFor" <> ${BlockedReason.AiNotVerified}
+      AND NOT ${csamBlockedSql()}
       AND NOT ${scanKeepsByMarkerSql('Image')}
       AND NOT ${blockKeptByBanSql('Image')}
       AND NOT ${graceBlockedSql}

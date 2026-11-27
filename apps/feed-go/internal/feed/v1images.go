@@ -50,6 +50,8 @@ type V1Deps struct {
 	// http://localhost:3000.
 	NodeProduction bool
 	Now            func() time.Time
+	// Ports are the switches of the shapes ported behind one (ParseV1With).
+	Ports V1Ports
 }
 
 // V1Request is one call.
@@ -162,7 +164,7 @@ func ServeV1(ctx context.Context, d *V1Deps, req V1Request) (*V1Answer, error) {
 
 	var page *v1Result
 	var err error
-	if len(in.IDs) > 0 {
+	if in.Legacy() {
 		viewerUsername := ""
 		if req.Viewer != nil {
 			viewerUsername = req.ViewerUsername
@@ -380,11 +382,12 @@ func v1Page(ctx context.Context, d *V1Deps, in *V1Input, viewer Viewer, level in
 	return res, nil
 }
 
-// v1LegacyPage is runImageSearch's legacy arm for an `ids` batch: getAllImages itself. One Postgres
-// page in getAllImages' own order (the id, descending, ascending for Oldest; a post's own media by
-// its index), paged by `skip` or by a keyset cursor on that order, then the same shaping as the feed
-// path. Unlike the feed's hydrate, an empty page is an answer here (getAllImages does no read rescue),
-// and a statement timeout is an empty page, as Node answers it on this path.
+// v1LegacyPage is runImageSearch's legacy arm (V1Input.Legacy: an `ids` batch, an `imageId`, a model
+// without a version): getAllImages itself. One Postgres page in getAllImages' own order (the id,
+// descending, ascending for Oldest; the resource join's image id under a model scope; a post's own
+// media by its index), paged by `skip` or by a keyset cursor on that order, then the same shaping as
+// the feed path. Unlike the feed's hydrate, an empty page is an answer here (getAllImages does no read
+// rescue), and a statement timeout is an empty page, as Node answers it on this path.
 func v1LegacyPage(ctx context.Context, d *V1Deps, in *V1Input, viewer Viewer, viewerUsername string, level int, usingPaging bool) (*v1Result, error) {
 	cursor := 0
 	if in.Cursor != "" {
@@ -444,9 +447,12 @@ func v1LegacyPage(ctx context.Context, d *V1Deps, in *V1Input, viewer Viewer, vi
 		IsModerator:    viewer.IsModerator,
 		CanSeeSongs:    viewer.CanSeeSongs,
 		PostID:         in.PostID,
+		ImageID:        in.ImageID,
 		TargetUserID:   userID,
 		// `postId && !modelId`: a post's own media, in its order.
 		IndexOrder: in.PostID != 0 && in.ModelID == 0,
+		// The handler leaves `requiringMeta` in the `data` it spreads into getAllImages' input.
+		RequiringMeta: in.RequiringMeta,
 	}
 	rows, err := d.Rows(ctx, q)
 	if err != nil {

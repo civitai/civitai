@@ -39,6 +39,7 @@ import { bustProfilePictures } from './profile-picture-cache';
 import { NsfwLevel } from '@civitai/shared';
 import { FLAG_KEPT_THROUGH_BLOCK } from '$lib/image-review';
 import { holdRemovals, type HeldRemoval } from './removal-hold';
+import { assertNotWithheld, notWithheldTarget } from './withheld-write';
 import {
   claimDeferredBlockEffects,
   dropDeferredBlockEffects,
@@ -64,8 +65,8 @@ import { csamHeldImageSql } from '@civitai/shared/csam-held';
 const NOT_FLAG_ONLY_REMAINING = sql<boolean>`("needsReview" IS DISTINCT FROM ${FLAG_KEPT_THROUGH_BLOCK} OR "ingestion" <> 'Blocked')`;
 
 const BLOCKED_REASON_MODERATED = 'moderated';
-/** The block reason of a CSAM removal; the main app's `csamBlockedSql` reads the same literal. */
-const BLOCKED_REASON_CSAM = 'CSAM';
+/** Twin of the main app's `csamBlockedSql`. */
+const CSAM_BLOCKED = sql<boolean>`${sql.raw(csamBlockedForSql('"Image"'))}`;
 
 /**
  * `csamHeldImageSql`, shared with the main app. A block of a held image sends no owner notice and
@@ -127,7 +128,7 @@ const OWNER_BANNED = sql<boolean>`EXISTS (SELECT 1 FROM "User" u WHERE u.id = "I
 /** A banned owner's image, blocked for anything but CSAM: a report verdict neither restores it nor blocks it
  *  again, whatever blocked it. The ban's own block skips rows already blocked, so a rule block can be the
  *  only cause on record. */
-const BANNED_OWNER_BLOCKED = sql<boolean>`("ingestion" = 'Blocked' AND "blockedFor" IS DISTINCT FROM ${BLOCKED_REASON_CSAM} AND ${OWNER_BANNED})`;
+const BANNED_OWNER_BLOCKED = sql<boolean>`("ingestion" = 'Blocked' AND NOT ${CSAM_BLOCKED} AND ${OWNER_BANNED})`;
 /** What Remove leaves as it is: a banned owner's grace-blocked image still gets the real block, which
  *  clears the breadcrumbs an account restore reads, and so does an image a kept delete hid, whose
  *  marker the block drops so the delete's release cannot lift it. */
@@ -206,7 +207,7 @@ const recompute = async (imageId: number) => {
 // moderator's decision. This accept's own review row is written after this runs, so it does not
 // count. One out of rescan retries goes to Error instead.
 const IMAGE_RESCAN_RETRY_LIMIT = 9; // the main app's IMAGE_RESCAN_RETRY_LIMIT (image-scan-failure.ts)
-const rescanIfUnrated = async (imageId: number) => {
+const rescanIfUnrated = async (imageId: number, csamReview: boolean) => {
   // Read first: most restores are rated, and need neither the tag check nor the write.
   const image = await dbWrite
     .selectFrom('Image')
@@ -228,6 +229,7 @@ const rescanIfUnrated = async (imageId: number) => {
     .updateTable('Image')
     .set({ ingestion: outOfRetries ? 'Error' : 'Rescan' })
     .where('id', '=', imageId)
+    .where(notWithheldTarget(csamReview))
     .where('ingestion', '=', 'Scanned')
     .where('nsfwLevel', '=', 0)
     .where('blockedFor', 'is', null)
@@ -254,11 +256,12 @@ const rescanIfUnrated = async (imageId: number) => {
 
 // update_nsfw_levels_new skips nsfwLevelLocked rows, so a locked Blocked image would stay hidden after
 // unblock. Zeroes the level and drops the lock; the caller must run recompute afterwards.
-const resetBlockedNsfwLevel = (imageId: number) =>
+const resetBlockedNsfwLevel = (imageId: number, csamReview: boolean) =>
   dbWrite
     .updateTable('Image')
     .set({ nsfwLevel: 0, nsfwLevelLocked: false })
     .where('id', '=', imageId)
+    .where(notWithheldTarget(csamReview))
     .where('nsfwLevel', '=', NsfwLevel.Blocked)
     .execute();
 
@@ -331,6 +334,9 @@ type AcceptImageInput = {
   /** The review flag a queue page showed. When given (and this is not a report verdict), an image whose
    *  flag has changed since is not accepted, and this throws `ImageChangedError`. */
   shownNeedsReview?: string | null;
+  /** The moderator's CSAM grant: an image withheld from them is left as it is, and this throws
+   *  `WithheldImageError`. */
+  csamReview: boolean;
 };
 
 /** Accepts an image. An image under the CSAM review flag is left as it is: only the CSAM review
@@ -354,6 +360,7 @@ async function acceptImageUnder(
     restoreRemoved = false,
     keepModeratorRemoved = false,
     shownNeedsReview,
+    csamReview,
   }: AcceptImageInput,
   clearsCsamReview: boolean
 ): Promise<ClosedAppeal | undefined> {
@@ -408,7 +415,8 @@ async function acceptImageUnder(
             : {}),
         })
         .where('id', '=', imageId)
-        .where(sql<boolean>`NOT ${sql.raw(csamBlockedForSql('"Image"'))}`)
+        .where(sql<boolean>`NOT ${CSAM_BLOCKED}`)
+        .where(notWithheldTarget(csamReview))
         .where(sql<boolean>`NOT ${CONFIRMED_SONG_HOLD}`)
         .$if(!clearsCsamReview, (qb) =>
           qb.where('needsReview', 'is distinct from', FLAG_KEPT_THROUGH_BLOCK)
@@ -443,6 +451,7 @@ async function acceptImageUnder(
     );
   });
   if (!updated) {
+    await assertNotWithheld([imageId], csamReview);
     if (checksShown) {
       const now = await dbWrite
         .selectFrom('Image')
@@ -490,7 +499,7 @@ async function acceptImageUnder(
   if (updated.wasCsam) await releaseSongsOfClearedCovers([imageId]);
   if (restored) {
     await dropBlockedImageDeleteQueue(imageId);
-    await resetBlockedNsfwLevel(imageId);
+    await resetBlockedNsfwLevel(imageId, csamReview);
   } else await restartBlockedImageDeleteClock(imageId);
 
   const reviewTags = await reader
@@ -519,7 +528,7 @@ async function acceptImageUnder(
     await queueArticlesForCoverImages([imageId]);
     await queueDocumentsForImageMinorChanges({ minorImageIds: [imageId] });
   }
-  if (restored) await rescanIfUnrated(imageId);
+  if (restored) await rescanIfUnrated(imageId, csamReview);
 
   // Only a moderator removal is logged as one, so only its undoing is a restore. A scanner block
   // (`AiNotVerified` in the POI queue) has no removal event to pair with.
@@ -702,7 +711,7 @@ export async function blockImage({
         >`CASE WHEN "needsReview" = ${FLAG_KEPT_THROUGH_BLOCK} THEN "needsReview" END`,
         ingestion: 'Blocked',
         nsfwLevel: NsfwLevel.Blocked,
-        blockedFor: sql<string>`CASE WHEN "blockedFor" = ${BLOCKED_REASON_CSAM} THEN "blockedFor" ELSE ${BLOCKED_REASON_MODERATED} END`,
+        blockedFor: sql<string>`CASE WHEN ${CSAM_BLOCKED} THEN "blockedFor" ELSE ${BLOCKED_REASON_MODERATED} END`,
         updatedAt: new Date(),
         // Two things happen to `metadata` on a block, and they compose in one expression:
         //   - the account-deletion breadcrumbs come off, always. `jsonb - key` NULL-propagates, so a
@@ -738,7 +747,7 @@ export async function blockImage({
         // Read here, not off the replica read above, which may not have the scan's hash yet.
         pHashText,
         HELD_IMAGE.as('held'),
-        sql<boolean>`"blockedFor" = ${BLOCKED_REASON_CSAM}`.as('removedForCsam'),
+        CSAM_BLOCKED.as('removedForCsam'),
         sql<boolean>`"needsReview" = ${FLAG_KEPT_THROUGH_BLOCK}`.as('underReview'),
       ])
       .where('id', '=', imageId)
@@ -968,7 +977,7 @@ export async function keepPendingAppealFlags(db: Kysely<DB>, imageIds: readonly 
     .where('id', 'in', [...imageIds])
     .where('needsReview', 'is distinct from', FLAG_KEPT_THROUGH_BLOCK)
     // A row holding a CSAM block never takes the appeal flag (main app: keepPendingAppealFlags).
-    .where(sql<boolean>`("blockedFor" = ${BLOCKED_REASON_CSAM}) IS NOT TRUE`)
+    .where(sql<boolean>`NOT ${CSAM_BLOCKED}`)
     .where((eb) =>
       eb.exists(
         eb
@@ -1117,6 +1126,7 @@ export async function resolveImageAppeal({
   internalNotes,
   userId,
   deferAppealEmail = false,
+  csamReview,
 }: {
   imageId: number;
   status: AppealDecision;
@@ -1125,6 +1135,8 @@ export async function resolveImageAppeal({
   internalNotes?: string;
   userId: number;
   deferAppealEmail?: boolean;
+  /** The moderator's CSAM grant: an approval leaves an image withheld from them as it is. */
+  csamReview: boolean;
 }): Promise<ClosedAppeal | undefined> {
   const approved = status === 'Approved';
 
@@ -1174,7 +1186,8 @@ export async function resolveImageAppeal({
       })
       .where('id', '=', imageId)
       .where('needsReview', 'is distinct from', FLAG_KEPT_THROUGH_BLOCK)
-      .where('blockedFor', 'is distinct from', BLOCKED_REASON_CSAM)
+      .where(sql<boolean>`NOT ${CSAM_BLOCKED}`)
+      .where(notWithheldTarget(csamReview))
       .returning(LIFT_KEPT_BLOCKED.as('keptBlocked'))
       .executeTakeFirst();
     written = !!row;
@@ -1182,9 +1195,9 @@ export async function resolveImageAppeal({
     if (written && !restored) await restartBlockedImageDeleteClock(imageId);
     if (restored) {
       await dropBlockedImageDeleteQueue(imageId);
-      await resetBlockedNsfwLevel(imageId);
+      await resetBlockedNsfwLevel(imageId, csamReview);
       await recompute(imageId);
-      await rescanIfUnrated(imageId);
+      await rescanIfUnrated(imageId, csamReview);
     }
     syncSearchIndex({
       entityType: 'image',

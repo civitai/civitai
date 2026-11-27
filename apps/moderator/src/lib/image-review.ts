@@ -1,3 +1,4 @@
+import { blockedForNamesCsam } from '@civitai/shared/csam-blocked-for';
 import type { PromptHighlightCategory } from '@civitai/mod-utils/prompt-audit';
 import {
   CSAM_REVIEW_FLAG,
@@ -72,7 +73,7 @@ export type RemovedState = {
 
 export function removedKind(item: RemovedState): RemovedKind {
   if (item.needsReview === FLAG_KEPT_THROUGH_BLOCK) return 'csamReview';
-  if (item.blockedFor === 'CSAM') return 'csam';
+  if (blockedForNamesCsam(item.blockedFor)) return 'csam';
   if (item.blockedFor === 'moderated') return item.ruleBlocked ? 'rule' : 'moderator';
   return 'other';
 }

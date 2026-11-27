@@ -1,5 +1,5 @@
 import { sql } from 'kysely';
-import { moderatorWithheldSql } from '@civitai/shared/retracted-media-tier';
+import { csamBlockedForSql, moderatorWithheldSql } from '@civitai/shared/retracted-media-tier';
 
 /**
  * Which of `imageIds` the relabel set must never contain: images a CSAM report or block touches (or
@@ -34,7 +34,7 @@ export const csamExcludedImageIds = (imageIds: number[]) => sql<{ id: number }>`
      )
      -- Covers the image's own CSAM block too: it is one of its owner's images.
      OR EXISTS (
-       SELECT 1 FROM "Image" o WHERE o."userId" = i."userId" AND o."blockedFor" = 'CSAM'
+       SELECT 1 FROM "Image" o WHERE o."userId" = i."userId" AND ${sql.raw(csamBlockedForSql('o'))}
      )
      OR ${sql.raw(moderatorWithheldSql('i', { csamReview: false }))}
 `;

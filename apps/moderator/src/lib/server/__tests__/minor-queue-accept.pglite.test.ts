@@ -152,7 +152,8 @@ afterAll(async () => {
 
 describe('minor queue Accept', () => {
   it('clears the minor flag on mature images and keeps it on safe ones', async () => {
-    for (const [i] of LEVELS.entries()) await acceptImage({ imageId: i + 1, userId: 2 });
+    for (const [i] of LEVELS.entries())
+      await acceptImage({ csamReview: true, imageId: i + 1, userId: 2 });
 
     const { rows } = await db.query<{ nsfwLevel: number; minor: boolean }>(
       `SELECT "nsfwLevel", "minor" FROM "Image" ORDER BY "id"`
@@ -164,14 +165,14 @@ describe('minor queue Accept', () => {
   it('queues the articles each accepted image covers', async () => {
     await db.query(`UPDATE "Image" SET "needsReview" = 'minor' WHERE "id" = 1`);
     vi.mocked(queueArticlesForCoverImages).mockClear();
-    await acceptImage({ imageId: 1, userId: 2 });
+    await acceptImage({ csamReview: true, imageId: 1, userId: 2 });
     expect(queueArticlesForCoverImages).toHaveBeenCalledWith([1]);
   });
 
   it('queues the models whose showcase can hold each accepted image', async () => {
     await db.query(`UPDATE "Image" SET "needsReview" = 'minor' WHERE "id" = 1`);
     vi.mocked(queueDocumentsForImageMinorChanges).mockClear();
-    await acceptImage({ imageId: 1, userId: 2 });
+    await acceptImage({ csamReview: true, imageId: 1, userId: 2 });
     expect(queueDocumentsForImageMinorChanges).toHaveBeenCalledWith({ minorImageIds: [1] });
   });
 
@@ -179,7 +180,7 @@ describe('minor queue Accept', () => {
     await db.query(`UPDATE "Image" SET "needsReview" = 'newUser' WHERE "id" = 1`);
     vi.mocked(queueArticlesForCoverImages).mockClear();
     vi.mocked(queueDocumentsForImageMinorChanges).mockClear();
-    await acceptImage({ imageId: 1, userId: 2 });
+    await acceptImage({ csamReview: true, imageId: 1, userId: 2 });
     expect(queueArticlesForCoverImages).not.toHaveBeenCalled();
     expect(queueDocumentsForImageMinorChanges).not.toHaveBeenCalledWith(
       expect.objectContaining({ minorImageIds: expect.anything() })
@@ -194,7 +195,7 @@ describe('minor queue Accept', () => {
     );
 
     await expect(
-      acceptImage({ imageId: 1, userId: 2, shownNeedsReview: 'minor' })
+      acceptImage({ csamReview: true, imageId: 1, userId: 2, shownNeedsReview: 'minor' })
     ).rejects.toBeInstanceOf(ImageChangedError);
 
     const { rows } = await db.query(`SELECT ingestion FROM "Image" WHERE "id" = 1`);
@@ -208,6 +209,7 @@ describe('minor queue Accept', () => {
     );
 
     await acceptImage({
+      csamReview: true,
       imageId: 1,
       userId: 2,
       keepModeratorRemoved: true,
@@ -218,7 +220,7 @@ describe('minor queue Accept', () => {
   it('accepts when the flag is still the one the page showed', async () => {
     await db.query(`UPDATE "Image" SET "needsReview" = 'minor' WHERE "id" = 1`);
 
-    await acceptImage({ imageId: 1, userId: 2, shownNeedsReview: 'minor' });
+    await acceptImage({ csamReview: true, imageId: 1, userId: 2, shownNeedsReview: 'minor' });
 
     const { rows } = await db.query(`SELECT "needsReview" FROM "Image" WHERE "id" = 1`);
     expect(rows).toEqual([{ needsReview: null }]);

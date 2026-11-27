@@ -26,7 +26,7 @@ describe("a song's generation data", () => {
     await expect.element(page.getByText('1945495925')).toBeVisible();
   });
 
-  test('names an on-site song\'s generator Civitai, and one made elsewhere External', async () => {
+  test("names an on-site song's generator Civitai, and one made elsewhere External", async () => {
     const screen = renderWithProviders(<SongMeta meta={meta} onSite />);
     await expect.element(page.getByText('Civitai Generator')).toBeVisible();
     (await screen).rerender(<SongMeta meta={meta} onSite={false} />);

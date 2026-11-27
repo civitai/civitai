@@ -41,8 +41,8 @@ export const ticketAppealDeps: AppealWriteDeps = {
         .executeTakeFirst()
     )?.needsReview ?? null,
   parseReason: (form, verdict) => parseResolutionReason(form, verdict),
-  resolve: ({ imageId, status, resolvedReason, internalNotes, userId }) =>
-    resolveImageAppeal({ imageId, status, resolvedReason, internalNotes, userId }),
+  resolve: ({ imageId, status, resolvedReason, internalNotes, userId, csamReview }) =>
+    resolveImageAppeal({ imageId, status, resolvedReason, internalNotes, userId, csamReview }),
   note: ticketNote,
 };
 

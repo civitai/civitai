@@ -594,7 +594,7 @@ func (s *Server) computeV1For(ctx context.Context, r *http.Request, serving bool
 	if r.Method != http.MethodGet {
 		return nil, fallback.New("method")
 	}
-	in, err := feed.ParseV1(r.URL.RawQuery)
+	in, err := feed.ParseV1With(r.URL.RawQuery, s.V1.Ports)
 	if err != nil {
 		return nil, err
 	}

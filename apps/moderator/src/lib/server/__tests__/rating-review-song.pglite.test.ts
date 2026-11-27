@@ -1,4 +1,8 @@
 import type { PGlite } from '@electric-sql/pglite';
+import {
+  CSAM_LINK_TABLES_SQL,
+  WITHHELD_TABLES_SQL,
+} from '../../../../../../packages/civitai-shared/src/__tests__/csam-restriction-cases';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as ThumbnailCache from '../thumbnail-cache';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
@@ -59,7 +63,17 @@ beforeEach(async () => {
     ADD COLUMN "userId" INTEGER,
     ADD COLUMN "metadata" JSONB NOT NULL DEFAULT '{}',
     ADD COLUMN "nsfwLevelLocked" BOOLEAN NOT NULL DEFAULT FALSE,
-    ADD COLUMN "scanJobs" JSONB`);
+    ADD COLUMN "scanJobs" JSONB,
+    ADD COLUMN IF NOT EXISTS "blockedFor" TEXT,
+    ADD COLUMN IF NOT EXISTS "needsReview" TEXT,
+    ADD COLUMN IF NOT EXISTS "pHash" BIGINT`);
+  // A song rating write refuses media withheld from the moderator: the rule reads these tables.
+  await db.exec(
+    `${CSAM_LINK_TABLES_SQL}\n${WITHHELD_TABLES_SQL}`.replace(
+      /CREATE TABLE "/g,
+      'CREATE TABLE IF NOT EXISTS "'
+    )
+  );
   dbHandle.current = ratingReviewKysely(db);
   owner = await seedUser(db, 'owner');
   mod = await seedUser(db, 'mod');

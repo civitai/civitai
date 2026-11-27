@@ -13,13 +13,13 @@ import {
 } from '@mantine/core';
 import { Tooltip } from '~/components/MantineOverlays';
 import { IconPlus, IconX, IconCube } from '@tabler/icons-react';
-import { useMemo, useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import { baseModels } from '~/shared/constants/basemodel.constants';
 import type { GenerationResource } from '~/shared/types/generation.types';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { ModelType } from '~/shared/utils/prisma/enums';
-import { baseModelMakesMediaType } from '~/utils/crucible-helpers';
+import { baseModelMakesMediaType, formatMediaTypesNoun } from '~/utils/crucible-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -30,8 +30,8 @@ type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   disabled?: boolean;
   /** When false, any published model can be picked, not only ones the generator can run. */
   generatableOnly?: boolean;
-  /** Only models that make this media type can be picked. */
-  mediaType?: MediaType;
+  /** Only models that make one of these media types can be picked. */
+  mediaTypes?: MediaType[];
 };
 
 const RESOURCE_TYPES = [ModelType.Checkpoint, ModelType.LORA, ModelType.LoCon, ModelType.DoRA];
@@ -47,18 +47,12 @@ export function ModelVersionMultiSelect({
   maxSelections = 10,
   disabled,
   generatableOnly = true,
-  mediaType,
+  mediaTypes,
   ...inputWrapperProps
 }: Props) {
   const makesMediaType = (baseModel: string) =>
-    !mediaType || baseModelMakesMediaType(baseModel, mediaType);
-  const mediaBaseModels = useMemo(
-    () =>
-      mediaType
-        ? baseModels.filter((baseModel) => baseModelMakesMediaType(baseModel, mediaType))
-        : undefined,
-    [mediaType]
-  );
+    !mediaTypes || mediaTypes.some((mediaType) => baseModelMakesMediaType(baseModel, mediaType));
+  const mediaNoun = mediaTypes ? formatMediaTypesNoun(mediaTypes) : '';
   // Track selected resources for display
   const [selectedResources, setSelectedResources] = useState<GenerationResource[]>([]);
 
@@ -100,7 +94,7 @@ export function ModelVersionMultiSelect({
     const misfits = resources.filter((resource) => !makesMediaType(resource.baseModel));
     if (misfits.length)
       showErrorNotification({
-        title: `Only models that make ${mediaType}s`,
+        title: `Only models that make ${mediaNoun}`,
         error: new Error(
           `${misfits.map((resource) => resource.model.name).join(', ')} can't be required here.`
         ),
@@ -121,7 +115,10 @@ export function ModelVersionMultiSelect({
       limit: maxSelections - value.length,
       options: {
         canGenerate: generatableOnly || undefined,
-        resources: RESOURCE_TYPES.map((type) => ({ type, baseModels: mediaBaseModels })),
+        resources: RESOURCE_TYPES.map((type) => ({
+          type,
+          baseModels: mediaTypes ? baseModels.filter(makesMediaType) : undefined,
+        })),
         excludeIds: value,
       },
       selectSource: generatableOnly ? 'generation' : 'addResource',
@@ -180,7 +177,7 @@ export function ModelVersionMultiSelect({
                       </Group>
                       {!makesMediaType(resource.baseModel) && (
                         <Text size="xs" c="red">
-                          Doesn&apos;t make {mediaType}s, remove it
+                          Doesn&apos;t make {mediaNoun}, remove it
                         </Text>
                       )}
                     </div>

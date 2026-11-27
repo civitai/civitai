@@ -40,7 +40,12 @@ export const actions: Actions = {
     if (withheld) return fail(403, { error: withheld });
 
     try {
-      await resolveIngestionError({ id, nsfwLevel, userId: locals.user.id });
+      await resolveIngestionError({
+        id,
+        nsfwLevel,
+        userId: locals.user.id,
+        csamReview: holdsCsamReview(locals.user),
+      });
     } catch (e) {
       return fail(400, { error: e instanceof Error ? e.message : 'Failed to resolve.' });
     }

@@ -135,7 +135,8 @@ const purgeRows = async () =>
     )
   ).rows.length;
 
-const resolve = () => resolveIngestionError({ id: IMAGE_ID, nsfwLevel: 1, userId: 99 });
+const resolve = () =>
+  resolveIngestionError({ csamReview: true, id: IMAGE_ID, nsfwLevel: 1, userId: 99 });
 
 describe('spoke resolveIngestionError refusals', () => {
   it.each([

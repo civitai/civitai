@@ -183,8 +183,8 @@ describe('Accept on a held image and the feed sort', () => {
     await pause();
 
     const releasedAt = Date.now();
-    await acceptImage({ imageId: SERVED, userId: 2 });
-    await acceptImage({ imageId: NEVER_SHOWN, userId: 2 });
+    await acceptImage({ csamReview: true, imageId: SERVED, userId: 2 });
+    await acceptImage({ csamReview: true, imageId: NEVER_SHOWN, userId: 2 });
 
     expect(await sortAt(SERVED)).toBe(before.get(SERVED));
     expect(await sortAt(NEVER_HELD)).toBe(before.get(NEVER_HELD));

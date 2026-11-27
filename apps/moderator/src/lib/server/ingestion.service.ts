@@ -14,6 +14,7 @@ import { recordModActivity } from './mod-activity';
 import { queueDocumentsForImageMinorChanges } from './image-models-reindex';
 import { listWithheldIds, withheldRefusal } from './retracted-media';
 import { holdsCsamReview } from './held-media';
+import { assertNotWithheld, notWithheldTarget } from './withheld-write';
 import { getMediaProbeStorage } from './storage';
 import type { MediaType } from '$lib/media/edge-url';
 
@@ -195,8 +196,13 @@ export async function rescanStuckImages({
     .where('id', 'in', ids)
     .where(stuckWhere())
     .where('nsfwLevelLocked', '=', false)
+    .where(notWithheldTarget(holdsCsamReview(viewer)))
     .returning('id')
     .execute();
+  const left = ids.filter((id) => !rescanned.some((row) => row.id === id));
+  if (left.length)
+    skipped += (await listWithheldIds(left, { csamReview: holdsCsamReview(viewer) }, 'to-ingest'))
+      .size;
 
   // One row per image, as `bulkRemove` does: ModActivity keys on the content id.
   await Promise.all(
@@ -306,10 +312,13 @@ export async function resolveIngestionError({
   id,
   nsfwLevel,
   userId,
+  csamReview,
 }: {
   id: number;
   nsfwLevel: number;
   userId: number;
+  /** The moderator's CSAM grant: an image withheld from them is left as it is. */
+  csamReview: boolean;
 }): Promise<void> {
   const image = await dbWrite
     .selectFrom('Image')
@@ -426,9 +435,12 @@ export async function resolveIngestionError({
           .where('User.deletedAt', 'is', null)
       )
     )
+    .where(notWithheldTarget(csamReview))
     .executeTakeFirst();
-  if (Number(result?.numUpdatedRows ?? 0) === 0)
+  if (Number(result?.numUpdatedRows ?? 0) === 0) {
+    await assertNotWithheld([id], csamReview);
     throw new Error('This image changed since the queue loaded; reload the queue.');
+  }
   if (image.blockedFor !== null) await dropBlockedImageDeleteQueue(id);
   await invalidateThumbnails(id, [image.parentId]);
   await bustProfilePictures({ imageIds: [id] });

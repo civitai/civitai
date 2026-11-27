@@ -315,7 +315,7 @@ export const actions: Actions = {
       csamReview: holdsCsamReview(locals.user),
     });
     if (!result.ok) return actionFail(result.error);
-    return { success: true, flagged: input.imageIds.length };
+    return { success: true, flagged: result.count };
   },
 
   // Retool's GetBulkRemoveImageUserIdsForNotifs + SendNotification2: one message per affected ACCOUNT.

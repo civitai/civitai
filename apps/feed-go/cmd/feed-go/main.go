@@ -511,6 +511,8 @@ func run(log *slog.Logger) error {
 		ImageLocation: cfg.ImageLocation,
 		// The Node app this service shadows is the production build (isProd): nextPage on https://<host>.
 		NodeProduction: true,
+		// The legacy-path shapes behind their own switches: computed in the shadow and served alike.
+		Ports: feed.V1Ports{ImageID: cfg.V1ImagesServeImageID, ModelOnly: cfg.V1ImagesServeModelOnly},
 	}
 	// The image.getInfinite shadow shares all of the gallery's dependencies, plus the post→version /
 	// version→model caches and the username lookup the REST port reads, and the blocked tag list.
@@ -772,6 +774,8 @@ func run(log *slog.Logger) error {
 		"FEED_GO_V1_BEARER_AUTH", mc.BearerAuth, "FEED_GO_V1_MODELS_ANSWER_NOT_FOUND", mc.AnswerNotFound)
 	log.Info("public /api/v1/images", "FEED_GO_SERVE_V1_IMAGES", mc.ServeImages,
 		"mounted", srv.V1ImagesFallback != nil)
+	log.Info("GET /api/v1/images legacy-path shapes", "FEED_GO_V1_IMAGES_SERVE_IMAGE_ID", cfg.V1ImagesServeImageID,
+		"FEED_GO_V1_IMAGES_SERVE_MODEL_ONLY", cfg.V1ImagesServeModelOnly)
 	log.Info("public /api/search", "FEED_GO_SERVE_SEARCH", sc.Serve, "mounted", srv.SearchFallback != nil,
 		"search_backend_configured", searchDeps.Upstream != nil)
 	log.Info("public tRPC answers' write format", "TRPC_WRITE_DEVALUE", cfg.WriteDevalue)

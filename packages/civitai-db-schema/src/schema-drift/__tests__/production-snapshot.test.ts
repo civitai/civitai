@@ -302,8 +302,10 @@ describe('production catalog snapshot (2026-10-20)', () => {
     //   `OauthConsent.offlineBuzzLimit` / `.offlineBuzzPeriod`: `20271204120000_recipe_runner_ledger`
     //   the five redesign `UserProfile` columns (`about`, `backgroundImageId`, `sfwBackgroundImageId`,
     //     `pageTheme`, `pinnedItems`): `20271125120000_profile_redesign_customization`
+    //   `ScanLabelClaim.releasedAt`: `20271208120000_scan_label_claim_released`
     const inFlightColumns = new Set([
       'ModActivity.details',
+      'ScanLabelClaim.releasedAt',
       'UserProfile.about',
       'UserProfile.backgroundImageId',
       'UserProfile.sfwBackgroundImageId',
