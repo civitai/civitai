@@ -941,7 +941,7 @@ func (s *Server) ServeInfiniteHTTP(w http.ResponseWriter, r *http.Request) {
 	if s.computeInfiniteFn != nil {
 		fn = s.computeInfiniteFn
 	}
-	if s.AnswerInfiniteFeedUnavailable {
+	if s.ServeInfinite { // PROBE MUTANT M2
 		// The 503 answered here takes away the app's own feed call after a hand-back, so the second call
 		// is made here instead (feed.WithFeedRetry). Off, the hand-back makes it: no retry here.
 		r = r.WithContext(feed.WithFeedRetry(r.Context(), s.countFeedRetry))
