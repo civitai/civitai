@@ -112,6 +112,9 @@ func verifiedCrawler(r *http.Request) bool {
 
 // Server wires a request to the port.
 type Server struct {
+	// Version is this binary's release (main.version), sent as VersionHeader on every public answer
+	// (PublicMux). Empty, the header is not sent.
+	Version string
 	// Readiness answers the internal /readyz (the zero value is ready); Drain fails it at shutdown.
 	Readiness Readiness
 	Resolver  *auth.Resolver

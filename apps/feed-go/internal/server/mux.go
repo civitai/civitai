@@ -16,13 +16,33 @@ import (
 // else proxied to V1ImagesFallback. With SearchFallback set (FEED_GO_SEARCH_FALLBACK_URL), everything under
 // `/api/search/`, computed only with ServeSearch (FEED_GO_SERVE_SEARCH), else proxied to SearchFallback
 // (a path the port does not answer, `/api/search/token` among them, falls back: `search-path`). Nothing
-// else. It never carries a debug route, whatever the pprof toggle says.
-func PublicMux(s *Server) *http.ServeMux {
+// else. It never carries a debug route, whatever the pprof toggle says. Every answer it writes, a
+// route's own, a hand-back's or the mux's 404, carries VersionHeader (withVersion).
+func PublicMux(s *Server) http.Handler {
 	mux := http.NewServeMux()
 	for _, rt := range publicRoutes(s) {
 		mux.Handle(rt.pattern, rt.handler)
 	}
-	return mux
+	return withVersion(mux, s.Version)
+}
+
+// VersionHeader names the feed-go release that handled a public request (Server.Version), on every
+// answer the public listener writes: computed here or handed back to the Node app. Any cache that
+// stores the body stores this header with it, so a stale answer still names the binary that produced
+// it. The name is a wire contract with the web client's shadow compare, so it is a literal.
+const VersionHeader = "X-Feed-Go-Version"
+
+// withVersion sets VersionHeader to version before h runs, so a handler's own headers and a proxied
+// answer's (ReverseProxy adds the upstream's to these) are written alongside it. An empty version
+// sets nothing.
+func withVersion(h http.Handler, version string) http.Handler {
+	if version == "" {
+		return h
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set(VersionHeader, version)
+		h.ServeHTTP(w, r)
+	})
 }
 
 // publicRoute is one pattern PublicMux mounts.
