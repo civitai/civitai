@@ -143,7 +143,9 @@ type Config struct {
 	// rebuild decides its hold (feed.HoldComputingGallery over hydrate.Sources.GalleryHolds: from the
 	// model's row, and with `gallery-settings` in FEED_GO_CACHE_WRITEBACK the whole entry, written
 	// back as Node writes it) instead of the `gallery-settings-miss` fallback. Needs
-	// FEED_GO_COMPUTE_MISSES (otherwise the miss falls back).
+	// FEED_GO_COMPUTE_MISSES (otherwise the miss falls back), and gallery-settings in
+	// FEED_GO_CACHE_WRITEBACK (Load fails without it: Node's fallback fills the key, so serving without
+	// writing it would leave it cold for every other reader).
 	V1ImagesServeGallerySettingsMiss bool
 	// InfiniteServeInputHubID is FEED_GO_INFINITE_SERVE_INPUT_HUB_ID (default off): compute an
 	// `image.getInfinite` request with `hubId` (a user-composed hub, and its `hubExcludedSources`;
@@ -469,6 +471,12 @@ func Load() (*Config, error) {
 	if c.CacheWriteBack.NeedsPrimary() && c.PrimaryDatabaseURL == "" {
 		return nil, errors.New("FEED_GO_CACHE_WRITEBACK needs DATABASE_URL for " + strings.Join(primaryWrites(c.CacheWriteBack), ",") +
 			" (the primary those lookups read)")
+	}
+	// Node's fallback fills the key it rebuilds; serving the miss without writing it back would leave
+	// the key cold for every other reader (Node's included), so the switch needs the write-back.
+	if c.V1ImagesServeGallerySettingsMiss && !c.CacheWriteBack[hydrate.MissGallerySettings] {
+		return nil, errors.New("FEED_GO_V1_IMAGES_SERVE_GALLERY_SETTINGS_MISS needs gallery-settings in FEED_GO_CACHE_WRITEBACK" +
+			" (Node's fallback writes the key; serving without writing would leave it cold for every reader)")
 	}
 	if c.RedisURL == "" || c.RedisSysURL == "" {
 		return nil, errors.New("REDIS_URL and REDIS_SYS_URL are both required")

@@ -134,7 +134,9 @@ falls back (`index-feed-unconfigured`). `FEED_GO_INFINITE_SERVE_GALLERY_SETTINGS
 §14.10) instead of the `gallery-settings-miss` fallback; the computed misses are counted as
 `feed_go_cache_miss_total{cache="gallery-hold"}`. With `gallery-settings` in `FEED_GO_CACHE_WRITEBACK`
 the miss is instead rebuilt in full and written back as Node writes it (counted under
-`cache="gallery-settings"`), so the next read of that model is a hit. The public `/api/v1/models` routes hand their fallbacks to
+`cache="gallery-settings"`), so the next read of that model is a hit. The v1 switch requires that
+write-back (startup fails without it): Node's fallback writes the key, so serving without writing it
+would leave it cold for every other reader. The public `/api/v1/models` routes hand their fallbacks to
 `FEED_GO_V1_FALLBACK_URL`, the Node app that serves `/api/v1` (a different upstream from
 `FEED_GO_FALLBACK_URL`'s; deployment config, not set here); `FEED_GO_SERVE_V1_MODELS=true` without it
 fails startup. The kill is the switch: off, every request there is proxied (DESIGN.md §16.8). Both

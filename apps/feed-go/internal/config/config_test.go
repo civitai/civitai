@@ -326,6 +326,8 @@ func TestLoadV1ImagesGallerySettingsMissDefaultsOff(t *testing.T) {
 	}
 	t.Setenv("FEED_GO_SERVE_V1_IMAGES", "true")
 	t.Setenv("FEED_GO_INFINITE_SERVE_GALLERY_SETTINGS_MISS", "true")
+	t.Setenv("FEED_GO_CACHE_WRITEBACK", "gallery-settings")
+	t.Setenv("DATABASE_URL", "x://primary")
 	for in, want := range map[string]bool{"": false, "false": false, "junk": false, "true": true, "1": true} {
 		t.Setenv("FEED_GO_V1_IMAGES_SERVE_GALLERY_SETTINGS_MISS", in)
 		c, err := Load()
@@ -334,6 +336,14 @@ func TestLoadV1ImagesGallerySettingsMissDefaultsOff(t *testing.T) {
 		}
 		if c.V1ImagesServeGallerySettingsMiss != want {
 			t.Errorf("FEED_GO_V1_IMAGES_SERVE_GALLERY_SETTINGS_MISS=%q -> %v, want %v", in, c.V1ImagesServeGallerySettingsMiss, want)
+		}
+	}
+	// On without the gallery-settings write-back (none, or another cache only) fails startup.
+	t.Setenv("FEED_GO_V1_IMAGES_SERVE_GALLERY_SETTINGS_MISS", "true")
+	for _, wb := range []string{"", "tag-ids,metrics"} {
+		t.Setenv("FEED_GO_CACHE_WRITEBACK", wb)
+		if _, err := Load(); err == nil || !strings.Contains(err.Error(), "needs gallery-settings in FEED_GO_CACHE_WRITEBACK") {
+			t.Errorf("write-back %q: %v, want the needs-write-back error", wb, err)
 		}
 	}
 }
