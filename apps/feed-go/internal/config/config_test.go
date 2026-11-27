@@ -514,6 +514,33 @@ func TestLoadInfiniteHubIDPortDefaultOff(t *testing.T) {
 	}
 }
 
+// FEED_GO_V1_IMAGES_SERVE_IMAGE_ID and FEED_GO_V1_IMAGES_SERVE_MODEL_ONLY are off unless set, each its
+// own switch: neither turns the other on.
+func TestLoadV1ImagesLegacyShapesDefaultOff(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	for in, want := range map[string]bool{"": false, "false": false, "junk": false, "true": true, "1": true} {
+		t.Setenv("FEED_GO_V1_IMAGES_SERVE_IMAGE_ID", in)
+		t.Setenv("FEED_GO_V1_IMAGES_SERVE_MODEL_ONLY", "")
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.V1ImagesServeImageID != want || c.V1ImagesServeModelOnly {
+			t.Errorf("FEED_GO_V1_IMAGES_SERVE_IMAGE_ID=%q -> image id %v, model only %v; want %v, false", in, c.V1ImagesServeImageID, c.V1ImagesServeModelOnly, want)
+		}
+		t.Setenv("FEED_GO_V1_IMAGES_SERVE_IMAGE_ID", "")
+		t.Setenv("FEED_GO_V1_IMAGES_SERVE_MODEL_ONLY", in)
+		if c, err = Load(); err != nil {
+			t.Fatal(err)
+		}
+		if c.V1ImagesServeModelOnly != want || c.V1ImagesServeImageID {
+			t.Errorf("FEED_GO_V1_IMAGES_SERVE_MODEL_ONLY=%q -> model only %v, image id %v; want %v, false", in, c.V1ImagesServeModelOnly, c.V1ImagesServeImageID, want)
+		}
+	}
+}
+
 // TRPC_WRITE_DEVALUE is read as the main app reads it (`=== 'true'`): only the exact string turns it
 // on, and unset is off.
 func TestLoadWriteDevalue(t *testing.T) {
