@@ -1625,6 +1625,19 @@ describe('preview pipeline', () => {
     expect(images.deleteImages).not.toHaveBeenCalled();
   });
 
+  // The copy is hidden by id from the seller too (notServerCopySql); the file itself comes from the deal route.
+  it('serves the seller their own file through the deal route while its copy is hidden from them', async () => {
+    const { fileId } = await waiting();
+    await files.startPreviewScans();
+    const row = await fileRow(fileId);
+    expect(row.imageId).not.toBeNull();
+    const { notServerCopySql } = await import('~/server/services/creator-service-review-image-sql');
+    const shown = await pgliteRaw(holder.db)
+      .queryRaw`SELECT i.id FROM "Image" i WHERE i.id = ${row.imageId} AND ${notServerCopySql}`;
+    expect(shown).toEqual([]);
+    expect(await download(fileId, SELLER)).toMatchObject({ key: row.s3Key });
+  });
+
   it('keeps the pointer when a delete fails, so the copy is retried', async () => {
     const { fileId } = await waiting();
     await files.startPreviewScans();
