@@ -1010,14 +1010,14 @@ func ServeInfinite(ctx context.Context, d *InfiniteDeps, req InfiniteRequest) (*
 	} else {
 		in = in.withPublishedOnlyScoped(0)
 	}
-	// A hub is only expressible on the feed path, so it pins it whatever the flag says (parseHub has
-	// refused a hub beside a Postgres-path input).
 	if in.Hat && req.Viewer != nil && !in.scopedFeed() {
 		// `turfEvent`: hat keys on a signed-in viewer's main feed ask the hat-turf flags and the event
 		// engine (getHatTurfFeedEvent) whether the viewer plays, neither read here. Signed out (or
 		// banned) or on a scoped feed Node never asks, and serves the feed without the keys.
 		return nil, fallback.New("infinite-hat-turf")
 	}
+	// A hub is only expressible on the feed path, so it pins it whatever the flag says (parseHub has
+	// refused a hub beside a Postgres-path input).
 	useIndex := in.HubID != 0 || (d.Config.ImageIndexFeed && !in.dbPath())
 	if useIndex && d.Feed == nil {
 		return nil, fallback.New("index-feed-unconfigured")

@@ -64,8 +64,9 @@ func collectionReadable(p *hydrate.CollectionPermission, viewer Viewer) (bool, e
 // note that is not JSON, a JSON value that is not an object, or an object whose `score` is absent or
 // null; else the score as superjson writes the parsed value (objects in JS property order, a repeated
 // key's last value). ok is false for a score this service does not rebuild byte for byte: a number
-// superjson annotates (-0, or one past float64, which JSON.parse reads as ±Infinity), a `__proto__`
-// key, and a note escaping a lone surrogate (Go's decoder replaces it, JSON.parse keeps it).
+// superjson annotates (-0, or one past float64, which JSON.parse reads as ±Infinity), a key
+// superjson refuses (`__proto__`, `constructor`, `prototype`), and a non-null score whose note
+// escapes a surrogate half (Go's decoder replaces a lone one, JSON.parse keeps it).
 func judgeScore(note *string) (score any, ok bool) {
 	if note == nil || *note == "" {
 		return nil, true
@@ -98,6 +99,10 @@ func judgeScore(note *string) (score any, ok bool) {
 // A valid pair is two such escapes too; both are refused rather than told apart.
 var surrogateEscape = regexp.MustCompile(`\\u[dD][89a-fA-F][0-9a-fA-F]{2}`)
 
+// superjsonForbiddenKeys are the keys superjson's walker refuses at any depth (plainer.js: "Detected
+// property … prototype pollution risk"): Node's response errors on them, so they are never rebuilt.
+var superjsonForbiddenKeys = map[string]bool{"__proto__": true, "constructor": true, "prototype": true}
+
 // judgeScoreModelled reports whether v holds only values superjson writes as plain JSON here.
 func judgeScoreModelled(v any) bool {
 	switch t := v.(type) {
@@ -105,7 +110,7 @@ func judgeScoreModelled(v any) bool {
 		return !math.IsInf(t, 0) && !math.IsNaN(t) && !(t == 0 && math.Signbit(t))
 	case jspack.Obj:
 		for _, kv := range t {
-			if kv.K == "__proto__" || !judgeScoreModelled(kv.V) {
+			if superjsonForbiddenKeys[kv.K] || !judgeScoreModelled(kv.V) {
 				return false
 			}
 		}

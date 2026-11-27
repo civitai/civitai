@@ -144,6 +144,8 @@ func TestJudgeScore(t *testing.T) {
 		{str(`{"score":1e999}`), nil, false},
 		{str(`{"score":[1,-1e999]}`), nil, false},
 		{str(`{"score":{"__proto__":{"a":1}}}`), nil, false},
+		{str(`{"score":{"constructor":1}}`), nil, false},
+		{str(`{"score":[{"prototype":{"x":1}}]}`), nil, false},
 		{str(`{"score":"\ud800"}`), nil, false},
 		{str(`{"note":"\uDC00","score":1}`), nil, false},
 		// A surrogate escape beside a null or absent score: null, as before the port.
