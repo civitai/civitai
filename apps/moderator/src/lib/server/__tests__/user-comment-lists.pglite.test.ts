@@ -29,7 +29,8 @@ beforeEach(async () => {
       "deletedAt" TIMESTAMP, "createdAt" TIMESTAMP NOT NULL,
       "hidden" BOOLEAN NOT NULL DEFAULT false, "hiddenAt" TIMESTAMPTZ(6));
     CREATE TABLE "FeaturePageCommentMirror" ("commentId" INTEGER PRIMARY KEY,
-      "version" INTEGER NOT NULL DEFAULT 1, "scanHiddenAt" TIMESTAMPTZ(6));
+      "version" INTEGER NOT NULL DEFAULT 1, "scanHiddenAt" TIMESTAMPTZ(6), "goneCause" TEXT,
+      "removeWantedAt" TIMESTAMPTZ(6));
     INSERT INTO "CommentV3" VALUES
       -- A model comment from before the flip, and one written on CommentV3 since (no old id).
       (1, 10, 'model', 70, 'old model', false, 501, NULL, '2026-10-01'),
@@ -115,8 +116,11 @@ describe("a user's Feature Pages comments in that list", () => {
           '2026-11-20 01:00:00.123456+00'),
         (21, 12, 'featurePage', 90, 'hidden by the scan', '2026-11-08', true,
           '2026-11-21 01:00:00.5+00'),
-        (22, 12, 'model', 70, 'a model comment', '2026-11-07', false, NULL);
-      INSERT INTO "FeaturePageCommentMirror" VALUES (20, 3, NULL), (21, 1, '2026-11-21 01:00:00.5+00');
+        (22, 12, 'model', 70, 'a model comment', '2026-11-07', false, NULL),
+        (23, 12, 'featurePage', 90, 'refused by the platform', '2026-11-06', false, NULL);
+      INSERT INTO "FeaturePageCommentMirror" ("commentId", version, "scanHiddenAt")
+        VALUES (20, 3, NULL), (21, 1, '2026-11-21 01:00:00.5+00');
+      INSERT INTO "FeaturePageCommentMirror" ("commentId", "goneCause") VALUES (23, 'refused');
     `);
     const { items } = await getComments(12);
     expect(items.map((r) => [r.id, r.fp])).toEqual([
@@ -141,6 +145,8 @@ describe("a user's Feature Pages comments in that list", () => {
         },
       ],
       [22, undefined],
+      // Gone from Feature Pages: nothing to hide or unhide.
+      [23, undefined],
     ]);
   });
 });

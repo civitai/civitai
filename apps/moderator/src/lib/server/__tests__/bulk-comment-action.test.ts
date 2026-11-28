@@ -5,7 +5,7 @@ const recordModActivity = vi.hoisted(() => vi.fn(async (_row: { activity: string
 const foreign = vi.hoisted(() => ({ ids: [] as number[] }));
 const readSql = vi.hoisted(() => [] as string[]);
 // The selected Feature Pages comments still ToS-flagged when read back on the primary.
-const stillFlagged = vi.hoisted(() => ({ ids: [] as number[] }));
+const stillFlagged = vi.hoisted(() => ({ ids: [] as number[], sql: [] as string[] }));
 
 vi.mock('$lib/server/db', async () => {
   const { capturingDb } = await import('../../../test/capture-sql');
@@ -13,7 +13,7 @@ vi.mock('$lib/server/db', async () => {
     sql.includes('"CommentV3"') ? foreign.ids.map((id) => ({ id })) : [];
   const written = (sql: string) =>
     sql.includes('featurePage') ? stillFlagged.ids.map((id) => ({ id })) : [];
-  return { dbRead: capturingDb(readSql, rows), dbWrite: capturingDb([], written) };
+  return { dbRead: capturingDb(readSql, rows), dbWrite: capturingDb(stillFlagged.sql, written) };
 });
 vi.mock('../mod-activity', () => ({ recordModActivity, recordModActivityBatch: vi.fn() }));
 vi.mock('$env/dynamic/private', () => ({
@@ -35,6 +35,7 @@ let batches: number[];
 beforeEach(() => {
   foreign.ids = [];
   stillFlagged.ids = [];
+  stillFlagged.sql.length = 0;
   readSql.length = 0;
   sent = undefined;
   vi.unstubAllGlobals();
@@ -158,6 +159,11 @@ describe('a ToS restore over Feature Pages comments, which it never shows again'
       heldIds: [1, 2, 3],
     });
     expect(activities()).toEqual([]);
+    // Read back as those still flagged and live among the selection.
+    expect(stillFlagged.sql).toHaveLength(1);
+    expect(stillFlagged.sql[0]).toMatch(/"id" in \(\$1, \$2, \$3\)/);
+    expect(stillFlagged.sql[0]).toMatch(/"tosViolation" = \$\d/);
+    expect(stillFlagged.sql[0]).toMatch(/"deletedAt" is null/);
   });
 
   it('names the held ones apart from those restored', async () => {

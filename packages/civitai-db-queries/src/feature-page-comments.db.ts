@@ -75,6 +75,9 @@ export type FpMirrorFactsRow = {
   liftGranted: boolean;
 };
 
+/** SQL: the current hide of comment `c` is the scan's own (mirror row `m`). */
+const FP_SCAN_HIDE = `COALESCE(c."hiddenAt" = m."scanHiddenAt" AND NOT c."tosViolation", false)`;
+
 const FACTS = `
   SELECT m."commentId", m."userId", m."requestId", m.urn, m."goneCause", m.version, m."pushedState",
          m."pushedDigest", m."platformDigest", m."pendingDigest", m."pushAttempts", m."nextPushAt",
@@ -83,7 +86,7 @@ const FACTS = `
          m."modHideSentAt", m."modHideOrigin", m."liftGrantedVersion",
          COALESCE(m."modHideOrigin" IN ('scan', 'moderator') AND m."liftGrantedAt" > m."modHideSentAt"
            AND m."liftGrantedVersion" = m.version, false) AS "liftGranted",
-         COALESCE(c."hiddenAt" = m."scanHiddenAt" AND NOT c."tosViolation", false) AS "scanHide",
+         ${FP_SCAN_HIDE} AS "scanHide",
          c.id IS NOT NULL AS "commentExists", c.hidden, c."tosViolation", c."deletedAt", c.content,
          c."createdAt", c."entityId" AS "topicId",
          COALESCE(c."replyToId", c."parentId") AS "parentId",
@@ -732,6 +735,7 @@ export type FpUnhideHeld =
   | 'foreign'
   | 'held'
   | 'flagged'
+  | 'scanning'
   | 'author'
   | 'reported'
   | 'pushing';
@@ -742,9 +746,10 @@ export type FpUnhideHeld =
  * dismissing its report instead (unactionReportLiftingScanHide). Locks as that does; the lift's time
  * is taken under them and is strictly after both the hide and the last moderator hide sent, so the
  * reconcile lifts it on the platform. It also grants the version, so a replayed scan of the same
- * text does not hide it again. `exceptReportId`: the report the moderator is ruling on, which does
- * not hold the unhide; the platform lift still waits for it to close. `held`: nothing was written,
- * and why.
+ * text does not hide it again, so it is made only once a scan of the current text (`contentHash`,
+ * as `currentScanContentHashes` computes it) finished clean: never over a scan still pending, failed
+ * or flagged. `exceptReportId`: the report the moderator is ruling on, which does not hold the
+ * unhide; the platform lift still waits for it to close. `held`: nothing was written, and why.
  */
 export async function liftModeratorFpHide(
   db: Kysely<DB>,
@@ -755,6 +760,7 @@ export async function liftModeratorFpHide(
     seenHiddenAt,
     seenVersion,
     exceptReportId,
+    contentHash,
   }: {
     commentId: number;
     actorId: number;
@@ -762,6 +768,7 @@ export async function liftModeratorFpHide(
     seenHiddenAt: string;
     seenVersion: number;
     exceptReportId?: number;
+    contentHash: string | null;
   }
 ): Promise<{ lifted: { commentId: number; version: number } } | { held: FpUnhideHeld }> {
   return db.transaction().execute(async (trx) => {
@@ -778,13 +785,14 @@ export async function liftModeratorFpHide(
       `SELECT n.t::text AS at,
          (NOT c.hidden OR c."hiddenAt" IS DISTINCT FROM NULLIF($3, '')::timestamptz OR m.version <> $4
            OR n.t <= c."hiddenAt") AS changed,
-         COALESCE(c."hiddenAt" = m."scanHiddenAt", false) AS scan,
+         ${FP_SCAN_HIDE} AS scan,
          c."tosViolation" AS tos,
          COALESCE(m."modHideOrigin" = 'foreign', false) AS foreign,
          ${csamQueueHeldText('CommentV3', 'm."commentId"')} AS held,
-         EXISTS (SELECT 1 FROM "EntityModeration" em WHERE em."entityType" = 'CommentV3'
-           AND em."entityId" = m."commentId"
-           AND coalesce(cardinality(em."triggeredLabels"), 0) > 0) AS flagged,
+         COALESCE(em.status::text = 'Failed'
+           OR (em.status::text = 'Succeeded' AND coalesce(cardinality(em."triggeredLabels"), 0) > 0),
+           false) AS flagged,
+         em.status IS NULL OR em.status::text NOT IN ('Succeeded', 'Failed') AS scanning,
          NOT ${fpAuthorInStanding('u')} AS author,
          ${openPersonReport('m."commentId"', '$2', '$5::int')} AS reported,
          (COALESCE(m."leaseUntil" > now(), false)
@@ -792,9 +800,11 @@ export async function liftModeratorFpHide(
        FROM (SELECT clock_timestamp() AS t) n, "FeaturePageCommentMirror" m
        JOIN "CommentV3" c ON c.id = m."commentId"
        LEFT JOIN "User" u ON u.id = c."userId"
+       LEFT JOIN "EntityModeration" em ON em."entityType" = 'CommentV3'
+         AND em."entityId" = m."commentId" AND em."contentHash" = $6
        WHERE m."commentId" = $1 AND c."entityType"::text = 'featurePage'
          AND c."deletedAt" IS NULL AND m."goneCause" IS NULL AND m."removeWantedAt" IS NULL`,
-      [commentId, systemUserId, seenHiddenAt, seenVersion, exceptReportId ?? null]
+      [commentId, systemUserId, seenHiddenAt, seenVersion, exceptReportId ?? null, contentHash]
     );
     if (!f) return { held: 'gone' as const };
     const held = (
@@ -805,6 +815,7 @@ export async function liftModeratorFpHide(
         'foreign',
         'held',
         'flagged',
+        'scanning',
         'author',
         'reported',
         'pushing',
@@ -833,4 +844,28 @@ export async function liftModeratorFpHide(
     );
     return { lifted };
   });
+}
+
+/**
+ * What a moderator sees of each live Feature Pages comment's hide, and posts back to hide or unhide
+ * it: `hiddenAt` as text, microseconds kept. A comment gone, or owed a removal, has no entry.
+ */
+export function readFpHideStates(db: Kysely<DB>, commentIds: number[]) {
+  if (!commentIds.length) return Promise.resolve([]);
+  return rows<{
+    commentId: number;
+    hidden: boolean;
+    hiddenAt: string | null;
+    version: number;
+    scanHide: boolean;
+    tosViolation: boolean;
+  }>(
+    db,
+    `SELECT m."commentId", c.hidden, c."hiddenAt"::text AS "hiddenAt", m.version,
+       ${FP_SCAN_HIDE} AS "scanHide", c."tosViolation"
+     FROM "FeaturePageCommentMirror" m JOIN "CommentV3" c ON c.id = m."commentId"
+     WHERE m."commentId" = ANY($1::int[]) AND c."deletedAt" IS NULL
+       AND m."goneCause" IS NULL AND m."removeWantedAt" IS NULL`,
+    [commentIds]
+  );
 }

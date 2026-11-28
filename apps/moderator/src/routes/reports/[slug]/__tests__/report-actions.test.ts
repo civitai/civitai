@@ -14,6 +14,7 @@ const updateReportNotes = vi.fn();
 const canAccess = vi.fn(() => true);
 
 const getReportedGame = vi.fn();
+const getReportedEntityId = vi.fn();
 vi.mock('$lib/server/reports.service', () => ({
   getReports,
   getReportStatusCounts: vi.fn(async () => ({})),
@@ -21,6 +22,7 @@ vi.mock('$lib/server/reports.service', () => ({
   updateReportNotes,
   getReportedGame,
   getGameMirrors: vi.fn(async () => []),
+  getReportedEntityId,
 }));
 const delistGame = vi.fn();
 vi.mock('$lib/server/game-frame', async (importOriginal) => ({
@@ -28,8 +30,14 @@ vi.mock('$lib/server/game-frame', async (importOriginal) => ({
   delistGame,
 }));
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
-// The SvelteKit runtime the main-app endpoint client reads the session from; no test here calls it.
-vi.mock('$app/server', () => ({ getRequestEvent: vi.fn() }));
+// The SvelteKit runtime and env the main-app endpoint client reads the moderator's session from.
+vi.mock('$app/server', () => ({
+  getRequestEvent: () => ({
+    locals: {},
+    request: { headers: new Headers({ cookie: 'civ-token=the-moderators-session' }) },
+  }),
+}));
+vi.mock('$env/dynamic/private', () => ({ env: { CIVITAI_APP_URL: 'https://civitai.com' } }));
 // Imports the main-app client (`$app/server`, private env), which nothing else in this graph loads.
 vi.mock('$lib/server/storyline-scan-lift.service', () => ({ liftStorylineScanTakedown: vi.fn() }));
 vi.mock('$lib/server/service-review-reports.service', () => ({
@@ -212,5 +220,58 @@ describe('delistGame action', () => {
     getReportedGame.mockResolvedValue(null);
     expect(failure(await delist()).status).toBe(410);
     expect(delistGame).not.toHaveBeenCalled();
+  });
+});
+
+describe('fpVisibility action', () => {
+  const unhide = { id: '42', commentId: '500', hidden: 'false', seenVersion: '2' };
+  const SEEN_AT = '2026-11-20 01:00:00.123456+00';
+  let sent: unknown[];
+  beforeEach(() => {
+    sent = [];
+    getReportedEntityId.mockResolvedValue(500);
+    vi.stubGlobal('fetch', (_url: string, init?: { body?: string }) => {
+      sent.push(init?.body ? JSON.parse(init.body) : undefined);
+      return Promise.resolve(
+        new Response(JSON.stringify({ held: 'reported' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      );
+    });
+  });
+
+  it("unhides the report's own comment, the report being ruled on not holding it", async () => {
+    const result = await actions.fpVisibility(
+      event({ ...unhide, seenHiddenAt: SEEN_AT }, 'comment')
+    );
+    expect(getReportedEntityId).toHaveBeenCalledWith('commentV3', 42);
+    expect(sent).toEqual([
+      {
+        commentId: 500,
+        hidden: false,
+        seenVersion: 2,
+        seenHiddenAt: SEEN_AT,
+        exceptReportId: 42,
+      },
+    ]);
+    expect(failure(result)).toEqual({
+      status: 409,
+      error: 'Someone else has an open report on this comment. Rule on it first.',
+    });
+  });
+
+  it('never acts on a comment the report is not on', async () => {
+    getReportedEntityId.mockResolvedValue(501);
+    const result = await actions.fpVisibility(event({ ...unhide, seenHiddenAt: '' }, 'comment'));
+    expect(failure(result).status).toBe(410);
+    expect(sent).toEqual([]);
+  });
+
+  it('is refused outside the comment queue, or without access to it', async () => {
+    expect(failure(await actions.fpVisibility(event(unhide, 'image'))).status).toBe(403);
+    canAccess.mockReturnValue(false);
+    expect(failure(await actions.fpVisibility(event(unhide, 'comment'))).status).toBe(403);
+    expect(sent).toEqual([]);
   });
 });

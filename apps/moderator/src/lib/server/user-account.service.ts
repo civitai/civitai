@@ -1,7 +1,8 @@
 import { sql, type RawBuilder } from '@civitai/db/kysely';
 import { BOX_OPENING_REWARD_STATUS, MOD_GRANT_SOURCE_PREFIX } from '@civitai/shared/mystery-box';
 import { dbRead } from './db';
-import { type FpCommentState, getFpCommentStates } from './fp-comment-state';
+import type { FpCommentState } from '$lib/fp-comment';
+import { getFpCommentStates } from './fp-comment-state';
 import { getClickhouse } from './clickhouse';
 import { clickhouseDate, isClickhouseDateTime } from './clickhouse-date';
 import { utcMs } from '$lib/format';

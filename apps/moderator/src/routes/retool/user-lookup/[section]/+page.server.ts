@@ -4,11 +4,7 @@ import type { Actions, PageServerLoad } from './$types';
 import { canAccess, denied, requiresGrant } from '$lib/server/access';
 import { int4Id, jsonField, parseForm, userIdSchema } from '$lib/server/query';
 import { isInt4Id, MAX_INT4 } from '$lib/server/users.service';
-import {
-  FP_HIDDEN_MESSAGE,
-  FP_SHOWN_MESSAGE,
-  setFpCommentVisibility,
-} from '$lib/server/fp-comment-visibility.service';
+import { setFpCommentVisibility } from '$lib/server/fp-comment-visibility.service';
 import { checkedResolutionReason, resolutionReasonFields } from '$lib/server/resolution-reason';
 import { RETIRED_SECTIONS, isSection } from '../sections';
 import {
@@ -880,12 +876,7 @@ export const actions: Actions = {
       seen: { version: input.seenVersion, hiddenAt: input.seenHiddenAt || null },
     });
     if (!result.ok) return contentFail(result.error);
-    return {
-      success: true,
-      fpCommentId: input.commentId,
-      fpState: result.state,
-      message: input.hidden ? FP_HIDDEN_MESSAGE : FP_SHOWN_MESSAGE,
-    };
+    return { success: true, fpState: result.state, message: result.message };
   }),
 
   // The typed-username confirmation is checked SERVER-side as well as in the UI: this is irreversible,

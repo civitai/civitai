@@ -18,7 +18,12 @@ import { textScanTextHash } from '~/server/services/text-scan/prompt';
 import { constants } from '~/server/common/constants';
 import { ReportReason, ReportStatus } from '~/shared/utils/prisma/enums';
 import { ReportEntity } from '~/shared/utils/report-helpers';
-import { FP_AUTO_HIDE_REPORT_COMMENT } from '@civitai/db-queries/feature-page-comments';
+import {
+  FP_AUTO_HIDE_REPORT_COMMENT,
+  liftModeratorFpHide,
+} from '@civitai/db-queries/feature-page-comments';
+import { kyselyWrite } from '~/server/db/kyselyDb';
+import { currentScanContentHashes } from '~/server/services/text-scan/submit';
 import { OPEN_REPORT_STATUSES } from '@civitai/db-queries/image-removal-confirmation';
 
 /**
@@ -408,5 +413,26 @@ export async function moderatorHideFpComment({
       [actorId, commentId]
     );
     return { hidden: true as const };
+  });
+}
+
+/**
+ * A moderator shows again a Feature Pages comment they or another moderator hid
+ * (liftModeratorFpHide), bound to what they saw, and only over a clean finished scan of its text
+ * now. An edit after the hash is read bumps the version, which the bind refuses.
+ */
+export async function moderatorUnhideFpComment(input: {
+  commentId: number;
+  actorId: number;
+  seenHiddenAt: string;
+  seenVersion: number;
+  exceptReportId?: number;
+}) {
+  const contentHash =
+    (await currentScanContentHashes('CommentV3', [input.commentId])).get(input.commentId) ?? null;
+  return liftModeratorFpHide(kyselyWrite, {
+    ...input,
+    systemUserId: constants.system.user.id,
+    contentHash,
   });
 }

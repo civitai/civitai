@@ -1,6 +1,11 @@
 import { error, fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
-import { setReportStatus, getGameMirrors, getReportedGame } from '$lib/server/reports.service';
+import {
+  setReportStatus,
+  getGameMirrors,
+  getReportedEntityId,
+  getReportedGame,
+} from '$lib/server/reports.service';
 import { delistGame, delistReason } from '$lib/server/game-frame';
 import {
   getDeletedReportStorylines,
@@ -20,13 +25,9 @@ import { isServiceOfferingTakedownReason } from '@civitai/shared/service-offerin
 import { getReportedServiceReviews } from '$lib/server/service-review-reports.service';
 import { serviceReviewActions } from './service-review-actions.server';
 import { canAccess } from '$lib/server/access';
-import { type FpCommentState, getFpCommentStates } from '$lib/server/fp-comment-state';
-import {
-  FP_HIDDEN_MESSAGE,
-  FP_SHOWN_MESSAGE,
-  getReportCommentId,
-  setFpCommentVisibility,
-} from '$lib/server/fp-comment-visibility.service';
+import type { FpCommentState } from '$lib/fp-comment';
+import { getFpCommentStates } from '$lib/server/fp-comment-state';
+import { setFpCommentVisibility } from '$lib/server/fp-comment-visibility.service';
 import { isInt4Id } from '$lib/server/users.service';
 import { loadReportQueue } from '$lib/server/report-queue-load';
 import { reportStatusActions } from '$lib/server/report-queue-actions';
@@ -260,7 +261,7 @@ export const actions: Actions = {
     if ((hidden !== 'true' && hidden !== 'false') || typeof seenHiddenAt !== 'string')
       return fail(400, { error: 'Invalid request.' });
     // The comment the report is on, never one posted alongside it.
-    if ((await getReportCommentId(id)) !== commentId)
+    if ((await getReportedEntityId('commentV3', id)) !== commentId)
       return fail(410, { error: 'That report no longer exists.', gone: true });
 
     const result = await setFpCommentVisibility({
@@ -270,11 +271,7 @@ export const actions: Actions = {
       seen: { version: seenVersion, hiddenAt: seenHiddenAt || null },
     });
     if (!result.ok) return fail(409, { error: result.error });
-    return {
-      success: true,
-      fpState: result.state,
-      message: hidden === 'true' ? FP_HIDDEN_MESSAGE : FP_SHOWN_MESSAGE,
-    };
+    return { success: true, fpState: result.state, message: result.message };
   },
 
   /** Leaves the report's status as it is. */

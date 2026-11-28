@@ -1,13 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Whose the comment is, by the ownership read; the state the primary reads back after an action.
-const owner = vi.hoisted(() => ({ ids: [] as number[] }));
+const owner = vi.hoisted(() => ({
+  ids: [] as number[],
+  sql: [] as string[],
+  params: [] as unknown[][],
+}));
 const readBack = vi.hoisted(() => ({ rows: [] as Record<string, unknown>[] }));
 
 vi.mock('$lib/server/db', async () => {
   const { capturingDb } = await import('../../../test/capture-sql');
   return {
-    dbRead: capturingDb([], () => owner.ids.map((id) => ({ id }))),
+    dbRead: capturingDb(owner.sql, () => owner.ids.map((id) => ({ id })), owner.params),
     dbWrite: capturingDb([], () => readBack.rows),
   };
 });
@@ -27,6 +31,8 @@ let answer: Record<string, unknown>;
 let sent: unknown[];
 beforeEach(() => {
   owner.ids = [];
+  owner.sql.length = 0;
+  owner.params.length = 0;
   readBack.rows = [];
   sent = [];
   vi.unstubAllGlobals();
@@ -50,7 +56,11 @@ describe("a moderator's hide or unhide of a Feature Pages comment", () => {
     readBack.rows = [state];
     await expect(
       setFpCommentVisibility({ commentId: 5, reportId: 40, hidden: false, seen: SEEN })
-    ).resolves.toMatchObject({ ok: true, state: { version: 2, hidden: false } });
+    ).resolves.toMatchObject({
+      ok: true,
+      state: { version: 2, hidden: false },
+      message: expect.stringContaining('once this report is closed'),
+    });
     expect(sent).toEqual([
       {
         commentId: 5,
@@ -82,5 +92,29 @@ describe("a moderator's hide or unhide of a Feature Pages comment", () => {
       setFpCommentVisibility({ commentId: 5, authorId: 8, hidden: true, seen: SEEN })
     ).resolves.toMatchObject({ ok: false });
     expect(sent).toEqual([]);
+    // The read is scoped to that comment and that author.
+    expect(owner.sql).toHaveLength(1);
+    expect(owner.sql[0]).toMatch(/"id" = \$1 and "userId" = \$2/);
+    expect(owner.params[0]).toEqual([5, 8]);
+  });
+
+  it("hides the account's own comment, bound to the version on screen", async () => {
+    owner.ids = [5];
+    answer = { hidden: true };
+    readBack.rows = [{ commentId: 5, version: 2, hidden: true, hiddenAt: SEEN.hiddenAt }];
+    await expect(
+      setFpCommentVisibility({ commentId: 5, authorId: 8, hidden: true, seen: SEEN })
+    ).resolves.toMatchObject({ ok: true, state: { hidden: true } });
+    expect(sent).toEqual([{ commentId: 5, hidden: true, seenVersion: 2 }]);
+  });
+
+  it('names a text the scan has not cleared yet', async () => {
+    answer = { held: 'scanning' };
+    await expect(
+      setFpCommentVisibility({ commentId: 5, hidden: false, seen: SEEN })
+    ).resolves.toEqual({
+      ok: false,
+      error: 'The text scan has not cleared this text yet. Try again once it has.',
+    });
   });
 });

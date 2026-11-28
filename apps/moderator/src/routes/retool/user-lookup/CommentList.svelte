@@ -65,9 +65,18 @@
   const flaggedNow = (c: T) => tosAfterAction.get(c.id) ?? !!c.tosViolation;
   // Feature Pages comments a ToS restore skipped: it never shows them again, so they stay removed.
   const held = new SvelteSet<number>();
-  // This session's hide state per Feature Pages comment, read back by the action that changed it.
-  const fpAfterAction = new SvelteMap<number, FpCommentState | null>();
-  const fpNow = (c: T) => (fpAfterAction.has(c.id) ? fpAfterAction.get(c.id) : c.fp);
+  // This session's hide state per Feature Pages comment, read back by the action that changed it
+  // (null: gone), kept only while the loaded state is the one it changed: a newer load wins.
+  const fpAfterAction = new SvelteMap<number, { from: string; state: FpCommentState | null }>();
+  const fpKey = (c: T) => JSON.stringify(c.fp ?? null);
+  const fpNow = (c: T) => {
+    const after = fpAfterAction.get(c.id);
+    return after && after.from === fpKey(c) ? after.state : c.fp;
+  };
+  const fpGone = (c: T) => {
+    const after = fpAfterAction.get(c.id);
+    return !!after && after.from === fpKey(c) && after.state === null;
+  };
   // Outlives a page turn: the panel keeps this mounted while paging.
   const selected = new SelectionSet<number>();
   let partial = $state<string | null>(null);
@@ -106,7 +115,15 @@
         removed = [...removed, ...acted];
         onDeleted?.();
       } else
-        for (const id of acted) if (!heldIds.includes(id)) tosAfterAction.set(id, data?.op === 'tos');
+        for (const id of acted) {
+          if (heldIds.includes(id)) continue;
+          tosAfterAction.set(id, data?.op === 'tos');
+          // A ToS removal hides a Feature Pages comment too: no Hide or Unhide is offered for it.
+          const row = rows.find((r) => r.id === id);
+          const fp = row && fpNow(row);
+          if (row && fp && data?.op === 'tos')
+            fpAfterAction.set(id, { from: fpKey(row), state: { ...fp, tosViolation: true } });
+        }
     },
   });
 
@@ -181,8 +198,10 @@
                   action="?/fpVisibility"
                   fields={{ userId }}
                   canAct={canBulkAct}
-                  onchange={(next) => fpAfterAction.set(c.id, next)}
+                  onchange={(next) => fpAfterAction.set(c.id, { from: fpKey(c), state: next })}
                 />
+              {:else if fpGone(c)}
+                <span class="text-xs text-dark-2">This comment no longer exists.</span>
               {/if}
               <span class="text-xs text-dark-2">{dateTime(c.createdAt)}</span>
             </div>

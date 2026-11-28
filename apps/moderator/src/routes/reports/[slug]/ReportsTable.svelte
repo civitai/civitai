@@ -56,7 +56,8 @@
   let { data }: { data: PageData } = $props();
 
   // A Feature Pages comment's hide as the action that changed it read it back, over the loaded one.
-  let fpAfterAction = $state<Record<number, FpCommentState | null>>({});
+  // Kept only while the loaded state is the one it changed: a newer load wins.
+  let fpAfterAction = $state<Record<number, { from: string; state: FpCommentState | null }>>({});
 
   /**
    * A `gone` refusal means the report was deleted underneath the moderator, so the queue reloads and
@@ -501,21 +502,27 @@
         {/if}
 
         {#if data.type === 'commentV3' && selected.entityId != null && data.fpComments[selected.entityId]}
-          {@const fp =
-            selected.entityId in fpAfterAction
-              ? fpAfterAction[selected.entityId]
-              : data.fpComments[selected.entityId]}
+          {@const loaded = data.fpComments[selected.entityId]}
+          {@const after = fpAfterAction[selected.entityId]}
+          {@const fp = after && after.from === JSON.stringify(loaded) ? after.state : loaded}
           <div class="rounded-lg border border-dark-4 bg-dark-6 p-3">
             <p class="mb-2 text-sm font-medium">Feature Pages comment</p>
             {#if fp}
-              <FpCommentVisibility
-                commentId={selected.entityId}
-                {fp}
-                action="?/fpVisibility"
-                fields={{ id: selected.id }}
-                canAct
-                onchange={(next) => (fpAfterAction[selected.entityId!] = next)}
-              />
+              <!-- Keyed on the report: its outcome message belongs to the report it was made on. -->
+              {#key selected.id}
+                <FpCommentVisibility
+                  commentId={selected.entityId}
+                  {fp}
+                  action="?/fpVisibility"
+                  fields={{ id: selected.id }}
+                  canAct
+                  onchange={(next) =>
+                    (fpAfterAction[selected.entityId!] = {
+                      from: JSON.stringify(loaded),
+                      state: next,
+                    })}
+                />
+              {/key}
             {:else}
               <p class="text-sm text-dark-2">This comment no longer exists.</p>
             {/if}

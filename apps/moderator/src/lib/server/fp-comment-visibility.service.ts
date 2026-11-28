@@ -1,8 +1,10 @@
-import { type FpCommentState, getFpCommentStates } from './fp-comment-state';
+import type { FpUnhideHeld } from '@civitai/db-queries/feature-page-comments';
+import type { FpCommentState } from '$lib/fp-comment';
 import { dbRead } from './db';
+import { getFpCommentStates } from './fp-comment-state';
 import { callModEndpoint } from './user-actions.service';
 
-const HELD: Record<string, string> = {
+const HELD: Record<FpUnhideHeld, string> = {
   gone: 'That comment no longer exists. Reload.',
   changed: 'This comment changed since you looked. Reload.',
   scan: 'The text scan hid this comment. Set its scan report to Unactioned to show it again.',
@@ -10,18 +12,15 @@ const HELD: Record<string, string> = {
   foreign: 'It was hidden by another action on the platform first, so it stays hidden.',
   held: 'This comment is held for a child-safety check, so it stays hidden.',
   flagged: 'The text scan flagged this comment, so it stays hidden.',
+  scanning: 'The text scan has not cleared this text yet. Try again once it has.',
   author: "The comment's author is banned or muted, so it stays hidden.",
   reported: 'Someone else has an open report on this comment. Rule on it first.',
   pushing: 'This comment is being sent to the platform. Try again in a minute.',
 };
 
-export const FP_HIDDEN_MESSAGE = 'Hidden on the site now, and on the platform within minutes.';
-export const FP_SHOWN_MESSAGE =
-  'Visible on the site now, and on the platform after the next daily reconcile.';
-
 /**
  * Hides or unhides one Feature Pages comment as the acting moderator, bound to the state they saw.
- * On success, the state it left, read back.
+ * On success, the state it left, read back, and what the moderator is told.
  */
 export async function setFpCommentVisibility(input: {
   commentId: number;
@@ -31,7 +30,9 @@ export async function setFpCommentVisibility(input: {
   reportId?: number;
   hidden: boolean;
   seen: Pick<FpCommentState, 'version' | 'hiddenAt'>;
-}): Promise<{ ok: true; state: FpCommentState | null } | { ok: false; error: string }> {
+}): Promise<
+  { ok: true; state: FpCommentState | null; message: string } | { ok: false; error: string }
+> {
   if (input.authorId !== undefined) {
     const own = await dbRead
       .selectFrom('CommentV3')
@@ -57,18 +58,15 @@ export async function setFpCommentVisibility(input: {
   if (!result.ok) return result;
   const held = result.body.held;
   if (typeof held === 'string')
-    return { ok: false, error: HELD[held] ?? 'Nothing changed. Reload.' };
-  if (result.body.hidden !== input.hidden) return { ok: false, error: 'Nothing changed. Reload.' };
+    return { ok: false, error: HELD[held as FpUnhideHeld] ?? 'Nothing changed. Reload.' };
   const state = (await getFpCommentStates([input.commentId])).get(input.commentId) ?? null;
-  return { ok: true, state };
-}
-
-/** The comment a comment report is on, or null when the report is gone. */
-export async function getReportCommentId(reportId: number) {
-  const row = await dbRead
-    .selectFrom('CommentV3Report')
-    .select('commentId')
-    .where('reportId', '=', reportId)
-    .executeTakeFirst();
-  return row?.commentId ?? null;
+  return {
+    ok: true,
+    state,
+    message: input.hidden
+      ? 'Hidden on the site now, and on the platform within minutes.'
+      : input.reportId
+      ? 'Visible on the site now, and on the platform once this report is closed and the next daily reconcile runs.'
+      : 'Visible on the site now, and on the platform after the next daily reconcile.',
+  };
 }

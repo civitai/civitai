@@ -532,7 +532,7 @@ export async function bulkCommentAction(input: {
 
   let affected = 0;
   let failed = 0;
-  let held = 0;
+  const heldIds: number[] = [];
   for (let i = 0; i < input.commentIds.length; i += MOD_ENDPOINT_ID_BATCH) {
     const commentIds = input.commentIds.slice(i, i + MOD_ENDPOINT_ID_BATCH);
     const result = await callModEndpoint(path, { commentIds }, label);
@@ -551,21 +551,22 @@ export async function bulkCommentAction(input: {
     affected +=
       input.action === 'bulkDelete' ? countOf(result.body, ['deleted']) : countOf(tos, ['count']);
     failed += input.action === 'restoreFromTos' ? countOf(tos, ['failed']) : 0;
-    // Feature Pages comments the restore never shows again: they stay removed.
-    held += input.action === 'restoreFromTos' ? countOf(tos, ['held']) : 0;
+    // Feature Pages comments the restore never shows again: they stay removed. The endpoint counts
+    // them only, so their ids are read back.
+    if (input.action === 'restoreFromTos' && countOf(tos, ['held']))
+      heldIds.push(
+        ...(
+          await dbWrite
+            .selectFrom('CommentV3')
+            .select('id')
+            .where('id', 'in', commentIds)
+            .where(sql<boolean>`"entityType"::text = 'featurePage'`)
+            .where('tosViolation', '=', true)
+            .where('deletedAt', 'is', null)
+            .execute()
+        ).map((r) => r.id)
+      );
   }
-  // Which they are, read back: the endpoint counts them only.
-  const heldIds = held
-    ? (
-        await dbWrite
-          .selectFrom('CommentV3')
-          .select('id')
-          .where('id', 'in', input.commentIds)
-          .where(sql<boolean>`"entityType"::text = 'featurePage'`)
-          .where('tosViolation', '=', true)
-          .execute()
-      ).map((r) => r.id)
-    : [];
 
   // Reporting success on zero would write a ModActivity row attributing a deletion that did not happen.
   if (affected === 0 && failed === 0 && !heldIds.length)

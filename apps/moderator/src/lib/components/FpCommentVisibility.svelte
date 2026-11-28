@@ -5,9 +5,8 @@
   import type { FpCommentState } from '$lib/fp-comment';
   import TipButton from './TipButton.svelte';
 
-  // A Feature Pages comment's hide, with the moderator's Hide or Unhide. Posts the version and the
-  // hide on screen, so a comment that changed since is refused rather than acted on blind. The scan's
-  // own hide is lifted by its scan report's Unactioned, so it offers no Unhide.
+  // Posts the seen version and hide so a comment that changed since is refused. The scan's own hide
+  // is lifted by its report's Unactioned, so it offers no Unhide.
   let {
     commentId,
     fp,
