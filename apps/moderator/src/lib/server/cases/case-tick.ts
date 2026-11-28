@@ -46,7 +46,8 @@ export type CaseTickDeps = {
 /**
  * Evaluates the clocks of open, non-test, non-imported cases and records each crossed threshold once
  * (the unique case_event threshold key makes a rerun a no-op). Alerts on every recorded threshold not
- * yet alerted, plus a note when the schedule has a gap; a failed alert is retried on the next run.
+ * yet alerted, plus a note when the schedule has a gap. Thresholds whose alert failed are retried on the
+ * next run; the gap note is not, though a failed one counts in `unsent`.
  * `evaluated` counts the cases read, so a run that saw nothing reports 0 instead of looking healthy.
  */
 export async function caseTick({
@@ -109,7 +110,7 @@ export async function caseTick({
             case_id: c.id,
             type: 'clock',
             threshold: `${clock.kind}@${when.toISOString()}`,
-            data: JSON.stringify({ at: at.toISOString() }),
+            data: JSON.stringify({ at: at.toISOString(), owed: true }),
           })
           .onConflict(onThreshold)
           .execute();
@@ -128,105 +129,120 @@ export async function caseTick({
         ]
       : [];
 
-  // Every recorded threshold without a `clock-alerted` event is still owed an alert, whichever run
-  // recorded it. The rows are claimed for the send, so an overlapping run skips them.
+  // Every threshold marked `owed` without a `clock-alerted` event is still owed an alert, whichever run
+  // recorded it. Unmarked thresholds predate the marker: they were only ever committed together with
+  // a sent alert, so they are done. A marker rather than a date cutoff, so no deploy time or clock
+  // skew decides it. The rows are claimed for the send, so an overlapping run skips them.
   const cases = new Map(open.map((c) => [Number(c.id), c]));
-  const { alerted, unsent, failed } = await db.transaction().execute(async (trx) => {
-    const pending = cases.size
-      ? await trx
-          .selectFrom('case_event as e')
-          .select(['e.id', 'e.case_id as caseId', 'e.threshold'])
-          .where('e.type', '=', 'clock')
-          .where('e.case_id', 'in', [...cases.keys()])
-          .where(({ not, exists, selectFrom }) =>
-            not(
-              exists(
-                selectFrom('case_event as s')
-                  .whereRef('s.case_id', '=', 'e.case_id')
-                  .where('s.type', '=', 'clock-alerted')
-                  .whereRef('s.threshold', '=', 'e.threshold')
-                  .select(sql`1`.as('one'))
+  let alerted = 0;
+  let unsent = 0;
+  // Written on every path, so a failure while recording an alert never makes the clocks look stopped.
+  try {
+    const failed = await db.transaction().execute(async (trx) => {
+      const pending = cases.size
+        ? await trx
+            .selectFrom('case_event as e')
+            .select(['e.id', 'e.case_id as caseId', 'e.threshold'])
+            .where('e.type', '=', 'clock')
+            .where(sql<string>`e.data->>'owed'`, '=', 'true')
+            .where('e.case_id', 'in', [...cases.keys()])
+            .where(({ not, exists, selectFrom }) =>
+              not(
+                exists(
+                  selectFrom('case_event as s')
+                    .whereRef('s.case_id', '=', 'e.case_id')
+                    .where('s.type', '=', 'clock-alerted')
+                    .whereRef('s.threshold', '=', 'e.threshold')
+                    .select(sql`1`.as('one'))
+                )
               )
             )
+            .orderBy('e.id')
+            .forUpdate()
+            .skipLocked()
+            .execute()
+        : [];
+      const lines = pending.map((p) => {
+        const c = cases.get(Number(p.caseId))!;
+        const [kind, iso] = (p.threshold ?? '').split(/@(.*)/s) as [ClockKind, string];
+        const clock = CLOCKS.find((k) => k.kind === kind);
+        const hours = Math.round(((at.getTime() - new Date(iso).getTime()) / 36e5) * 10) / 10;
+        return {
+          minor: c.minor,
+          kind,
+          text: `${c.minor ? '[MINOR, escalate to Legal] ' : ''}${c.publicRef} (${
+            c.processKey
+          }) is ${clock?.label ?? kind}: ${iso} (${hours}h ago)`,
+        };
+      });
+      const rank = (kind: ClockKind) => CLOCKS.findIndex((k) => k.kind === kind);
+      lines.sort((a, b) => Number(b.minor) - Number(a.minor) || rank(a.kind) - rank(b.kind));
+      if (!lines.length && !gapNote.length) return null;
+
+      try {
+        await alert(
+          lines.length
+            ? `Takedown clocks: ${lines.length} case threshold${
+                lines.length === 1 ? '' : 's'
+              } crossed`
+            : `Takedown clocks: no clock check completed for over ${
+                CASE_TICK_MAX_GAP_MS / 36e5
+              } hours`,
+          [...gapNote, ...lines.map((l) => l.text)].join('\n')
+        );
+      } catch (e) {
+        unsent = lines.length + gapNote.length;
+        return { code: (e as Error)?.name || 'Error', pending };
+      }
+      alerted = lines.length;
+      // If this insert fails after the send, the next run sends the same lines again: a duplicate
+      // alert is acceptable, a missed one is not.
+      if (pending.length)
+        await trx
+          .insertInto('case_event')
+          .values(
+            pending.map((p) => ({
+              case_id: p.caseId,
+              type: 'clock-alerted',
+              threshold: p.threshold,
+              data: JSON.stringify({ at: at.toISOString() }),
+            }))
           )
-          .orderBy('e.id')
-          .forUpdate()
-          .skipLocked()
-          .execute()
-      : [];
-    const lines = pending.map((p) => {
-      const c = cases.get(Number(p.caseId))!;
-      const [kind, iso] = (p.threshold ?? '').split(/@(.*)/s) as [ClockKind, string];
-      const clock = CLOCKS.find((k) => k.kind === kind);
-      const hours = Math.round(((at.getTime() - new Date(iso).getTime()) / 36e5) * 10) / 10;
-      return {
-        minor: c.minor,
-        kind,
-        text: `${c.minor ? '[MINOR, escalate to Legal] ' : ''}${c.publicRef} (${c.processKey}) is ${
-          clock?.label ?? kind
-        }: ${iso} (${hours}h ago)`,
-      };
+          .onConflict(onThreshold)
+          .execute();
+      return null;
     });
-    const rank = (kind: ClockKind) => CLOCKS.findIndex((k) => k.kind === kind);
-    lines.sort((a, b) => Number(b.minor) - Number(a.minor) || rank(a.kind) - rank(b.kind));
-    if (!lines.length && !gapNote.length) return { alerted: 0, unsent: 0, failed: null };
 
-    try {
-      await alert(
-        lines.length
-          ? `Takedown clocks: ${lines.length} case threshold${
-              lines.length === 1 ? '' : 's'
-            } crossed`
-          : `Takedown clocks: no clock check completed for over ${
-              CASE_TICK_MAX_GAP_MS / 36e5
-            } hours`,
-        [...gapNote, ...lines.map((l) => l.text)].join('\n')
-      );
-    } catch (e) {
-      const code = (e as Error)?.name || 'Error';
-      return { alerted: 0, unsent: lines.length + gapNote.length, failed: { code, pending } };
+    // One unsent event per case and error code for as long as its oldest owed threshold stays unsent,
+    // not one per run.
+    if (failed) {
+      const oldest = new Map<number, string | null>();
+      for (const p of failed.pending)
+        if (!oldest.has(Number(p.caseId))) oldest.set(Number(p.caseId), p.threshold);
+      if (oldest.size)
+        await db
+          .insertInto('case_event')
+          .values(
+            [...oldest].map(([caseId, threshold]) => ({
+              case_id: caseId,
+              type: 'clock-alert-unsent',
+              threshold: `${failed.code}:${threshold}`,
+              data: JSON.stringify({ at: at.toISOString(), code: failed.code }),
+            }))
+          )
+          .onConflict(onThreshold)
+          .execute();
     }
-    // If this insert fails after the send, the next run sends the same lines again: a duplicate
-    // alert is acceptable, a missed one is not.
-    if (pending.length)
-      await trx
-        .insertInto('case_event')
-        .values(
-          pending.map((p) => ({
-            case_id: p.caseId,
-            type: 'clock-alerted',
-            threshold: p.threshold,
-            data: JSON.stringify({ at: at.toISOString() }),
-          }))
-        )
-        .onConflict(onThreshold)
-        .execute();
-    return { alerted: lines.length, unsent: 0, failed: null };
-  });
-
-  // One unsent event per case and error code for as long as its oldest owed threshold stays unsent,
-  // not one per run.
-  if (failed) {
-    const oldest = new Map<number, string | null>();
-    for (const p of failed.pending)
-      if (!oldest.has(Number(p.caseId))) oldest.set(Number(p.caseId), p.threshold);
-    if (oldest.size)
-      await db
-        .insertInto('case_event')
-        .values(
-          [...oldest].map(([caseId, threshold]) => ({
-            case_id: caseId,
-            type: 'clock-alert-unsent',
-            threshold: `${failed.code}:${threshold}`,
-            data: JSON.stringify({ at: at.toISOString(), code: failed.code }),
-          }))
-        )
-        .onConflict(onThreshold)
-        .execute();
+  } finally {
+    await heartbeat.write({
+      at: at.toISOString(),
+      evaluated: open.length,
+      alerted,
+      overdue,
+      unsent,
+    });
   }
-  const result = { evaluated: open.length, alerted, overdue, unsent };
-  await heartbeat.write({ at: at.toISOString(), ...result });
-  return result;
+  return { evaluated: open.length, alerted, overdue, unsent };
 }
 
 export const keyValueHeartbeat = (mainDb: Kysely<DB>): CaseTickDeps['heartbeat'] => ({

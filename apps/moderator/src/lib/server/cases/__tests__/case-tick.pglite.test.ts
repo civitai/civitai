@@ -202,6 +202,31 @@ describe('caseTick', () => {
     expect(unsent.rows[0].n).toBe(2);
   });
 
+  it('does not re-send a threshold recorded before the owed marker existed', async () => {
+    const { pg, file, alerts, deps } = await setup();
+    const late = await file('2026-11-20T10:00:00Z');
+    // As the earlier code left it: committed only together with a sent alert, no marker.
+    await pg.query(
+      "INSERT INTO case_event (case_id, type, threshold, data) SELECT id, 'clock', 'overdue@' || to_char(due_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'), '{}' FROM case_record WHERE public_ref = $1",
+      [late.publicRef]
+    );
+    expect(await caseTick(deps('2026-11-23T12:00:00Z'))).toMatchObject({ alerted: 0, unsent: 0 });
+    expect(alerts).toEqual([]);
+  });
+
+  it('writes the heartbeat when recording a sent alert fails', async () => {
+    const { pg, file, deps, heartbeat } = await setup();
+    await file('2026-11-20T10:00:00Z');
+    await pg.exec(`
+      CREATE FUNCTION no_alerted() RETURNS trigger AS $$
+      BEGIN IF NEW.type = 'clock-alerted' THEN RAISE EXCEPTION 'disk full'; END IF; RETURN NEW; END
+      $$ LANGUAGE plpgsql;
+      CREATE TRIGGER no_alerted BEFORE INSERT ON case_event FOR EACH ROW EXECUTE FUNCTION no_alerted();
+    `);
+    await expect(caseTick(deps('2026-11-23T12:00:00Z'))).rejects.toThrow('disk full');
+    expect(heartbeat()).toMatchObject({ at: '2026-11-23T12:00:00.000Z', evaluated: 1 });
+  });
+
   it('still alerts when the heartbeat cannot be read', async () => {
     const { file, alerts, deps } = await setup();
     const late = await file('2026-11-20T10:00:00Z');
