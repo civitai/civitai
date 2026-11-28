@@ -503,15 +503,20 @@ describe('POST /api/track/batch', () => {
   // request attaches it to the Tracker before any event is dispatched (the rows arrive through
   // Tracker.onSend) and holds the mirror for every search and action row, the two kinds beacon-go
   // writes; impression and feed events are not waited for.
-  it('wires a sampled request to the beacon-go shadow: attach first, then wait for each search and action', async () => {
+  it('wires a sampled request to the beacon-go shadow: attach first, wait for every sink, capture the feed rows and the hatted count', async () => {
     const order: string[] = [];
     const handle = {
       attach: vi.fn(() => order.push('attach')),
       waitFor: vi.fn((p: unknown) => order.push(`wait:${String((p as { tag?: string }).tag)}`)),
+      capture: vi.fn(),
+      hattedViews: vi.fn((n: number) => order.push(`hatted:${n}`)),
     };
     mockBeginShadow.mockReturnValueOnce(handle);
+    // Signed out (an earlier test leaves a session behind): the feed row's viewer is the anonymous one.
+    mockGetSession.mockResolvedValue(null);
     const searched = Object.assign(Promise.resolve(true), { tag: 'search' });
     const acted = Object.assign(Promise.resolve(true), { tag: 'action' });
+    const impressed = Object.assign(Promise.resolve(), { tag: 'impression' });
     mockSearch.mockImplementationOnce(() => {
       order.push('search');
       return searched;
@@ -520,10 +525,18 @@ describe('POST /api/track/batch', () => {
       order.push('action');
       return acted;
     });
+    mockImpressions.mockImplementationOnce(() => {
+      order.push('impression');
+      return impressed;
+    });
+    const feedEvent = {
+      kind: 'feed' as const,
+      data: { event: 'load', sessionKey: 'shadow-1', feed: 'images', page: '/images' },
+    };
     const handler = await importHandlerWithShadow();
     const req = makeReq({
       origin: 'https://civitai.com',
-      body: [searchEvent, impressionEvent, actionEvent],
+      body: [searchEvent, impressionEvent, feedEvent, actionEvent],
     });
     const res = makeRes();
 
@@ -536,11 +549,34 @@ describe('POST /api/track/batch', () => {
     expect(endpoint).toBe('track-batch');
     expect((sends as () => boolean)()).toBe(true);
     expect(handle.attach).toHaveBeenCalledTimes(1);
-    expect(order).toEqual(['attach', 'search', 'wait:search', 'action', 'wait:action']);
+    // The feed event's promise is the recorder's own (untagged); no impression here is hatted.
+    expect(order).toEqual([
+      'attach',
+      'search',
+      'wait:search',
+      'impression',
+      'wait:impression',
+      'wait:undefined',
+      'action',
+      'wait:action',
+      'hatted:0',
+    ]);
     expect(handle.waitFor).toHaveBeenNthCalledWith(1, searched);
-    expect(handle.waitFor).toHaveBeenNthCalledWith(2, acted);
+    expect(handle.waitFor).toHaveBeenNthCalledWith(2, impressed);
+    expect(handle.waitFor).toHaveBeenNthCalledWith(4, acted);
     expect(mockImpressions).toHaveBeenCalledTimes(1);
+    // The feed row (this file samples every session) reaches the sampler as it is buffered.
+    await handle.waitFor.mock.calls[2][0];
+    expect(handle.capture).toHaveBeenCalledTimes(1);
+    const [table, row] = handle.capture.mock.calls[0] as unknown as [
+      string,
+      Record<string, unknown>
+    ];
+    expect(table).toBe('feedEvents');
+    expect(row).toMatchObject({ event: 'load', sessionKey: 'shadow-1', feed: 'images', userId: 0 });
     expect(res.status).toHaveBeenCalledWith(200);
+    const { feedEventsRecorder } = await import('~/server/services/feed-events.service');
+    await feedEventsRecorder().flush();
   });
 
   it('asks the shadow sampler before the origin guard, and dispatches nothing on a 400', async () => {

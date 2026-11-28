@@ -10,6 +10,7 @@ cmd/beacon-go 21
 internal/auth 94
 internal/beacon 94
 internal/config 91
+internal/flipt 97
 internal/hydrate 85
 internal/jsvalue 92
 internal/safe 100

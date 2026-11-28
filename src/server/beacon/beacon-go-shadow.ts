@@ -34,9 +34,12 @@ import {
  * What is captured, and when:
  * - the response: status and the endpoint-decided headers at `finish`, and the body from the
  *   handler's `res.end` (wrapped for the sampled request only);
- * - the writes: each row `Tracker.send` dispatches (`Tracker.onSend`), as `JSON.stringify(row)`,
- *   the bytes it POSTs. /pulse does not await its view, so the sample is sent only once the
- *   response has finished AND the view's promise (`waitFor`) has settled.
+ * - the writes: each row `Tracker.send` dispatches and each row `Tracker.sendMany` inserts
+ *   (`Tracker.onSend`), and each feed events row the recorder buffers (`capture`), as
+ *   `JSON.stringify(row)`. /pulse does not await its view, so the sample is sent only once the
+ *   response has finished AND the view's promise (`waitFor`) has settled;
+ * - /api/track/batch's hatted view count (`hattedViews`): beacon-go must never answer a batch that
+ *   earns event points.
  *
  * Forwarded: the headers the outcome depends on (including the client-ip chain and the user agent,
  * which land in the rows), the SESSION cookies only (beacon-go re-verifies their signature), and an
@@ -134,6 +137,8 @@ export type BeaconGoShadowSample = {
   bodyIsString: boolean;
   responseBody: string;
   writes: { table: string; body: string }[];
+  /** /api/track/batch: the hatted entities passed to awardViewPoints. */
+  hattedViews: number;
   pending: Promise<unknown>[];
   done: boolean;
 };
@@ -181,6 +186,7 @@ export function createBeaconGoShadow(deps: BeaconGoShadowDeps) {
         responseHeaders: pickBeaconResponseHeaders(res),
         responseBody: sample.responseBody,
         writes: sample.writes,
+        hattedViews: sample.hattedViews,
       });
     } catch {
       record('skipped_encode', sample.endpoint);
@@ -253,6 +259,7 @@ export function createBeaconGoShadow(deps: BeaconGoShadowDeps) {
         bodyIsString,
         responseBody: '',
         writes: [],
+        hattedViews: 0,
         pending: [],
         done: false,
       };
@@ -321,8 +328,12 @@ export function resetBeaconGoShadowForTests() {
 
 /** What a handler holds for a sampled request. */
 export type BeaconGoShadowHandle = {
-  /** Capture every row this Tracker sends. */
+  /** Capture every row this Tracker sends (tracker rows and its direct inserts). */
   attach(tracker: { onSend?: (table: string, row: object) => void }): void;
+  /** Capture one row a sink other than the Tracker writes (the feed events recorder). */
+  capture(table: string, row: object): void;
+  /** Record how many hatted entities the handler passed to awardViewPoints. */
+  hattedViews(count: number): void;
   /** Hold the send until an un-awaited tracker call settles. */
   waitFor(promise: Promise<unknown>): void;
 };
@@ -344,6 +355,10 @@ export function beginBeaconGoShadow(
     return {
       attach: (tracker) => {
         tracker.onSend = (table, row) => owner.captureWrite(sample, table, row);
+      },
+      capture: (table, row) => owner.captureWrite(sample, table, row),
+      hattedViews: (count) => {
+        sample.hattedViews = count;
       },
       waitFor: (p) => owner.waitFor(sample, p),
     };

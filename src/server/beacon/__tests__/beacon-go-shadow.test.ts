@@ -293,6 +293,33 @@ describe('beacon-go shadow payload', () => {
     expect(record).toHaveBeenCalledWith('sent', 'track-batch');
   });
 
+  // A track batch's impression rows (Tracker.sendMany through onSend), its feed rows (capture) and
+  // its hatted view count all reach beacon-go; a count of 0 is left out (the test above), so the
+  // other beacons' payloads keep their shape.
+  it('sends impression and feed rows and a non-zero hatted view count', async () => {
+    const { shadow, fetchMock } = harness({ config: { trackBatchRate: 1 } });
+    const res = new FakeRes();
+    const sample = shadow.begin(
+      request({ url: '/api/track/batch', headers: { host: 'www.example.test' }, body: [] }),
+      res,
+      'track-batch'
+    )!;
+    expect(sample.hattedViews).toBe(0);
+    sample.hattedViews = 2;
+    shadow.captureWrite(sample, 'impressions', { userId: 0, entityType: 'Image', entityId: 1 });
+    shadow.captureWrite(sample, 'feedEvents', { event: 'load', sessionKey: 'k' });
+    res.end();
+    res.emit('finish');
+    await flush();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const node = JSON.parse(fetchMock.mock.calls[0][1].body as string).node;
+    expect(node.hattedViews).toBe(2);
+    expect(node.writes).toEqual([
+      { table: 'impressions', body: '{"userId":0,"entityType":"Image","entityId":1}' },
+      { table: 'feedEvents', body: '{"event":"load","sessionKey":"k"}' },
+    ]);
+  });
+
   it('counts a non-2xx answer, a timeout and a network error', async () => {
     const answers: [() => Promise<Response>, string][] = [
       [() => Promise.resolve(new Response(null, { status: 503 })), 'rejected'],

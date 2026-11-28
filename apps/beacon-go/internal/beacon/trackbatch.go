@@ -44,12 +44,56 @@ const (
 	// drops such an event and keeps the rest; this service does not reproduce the drop, because a
 	// value Node has started accepting since the copy was taken would be lost. Node decides.
 	ReasonTrackEventInvalid = "track-event-invalid"
+	// ReasonTrackImpressionEventPoints: the impressions sink is on, but an impression names an
+	// Image, Model or Article while a scored event's points window is open (eventPointsMayAward).
+	// Node may then award view points for it (hattedImpressionEntities / awardViewPoints: Redis
+	// dedupe and totals, a ClickHouse ledger row, a live push), which depends on the event's hat map
+	// in Redis; this service does not reproduce that, so the whole batch stays on Node.
+	ReasonTrackImpressionEventPoints = "track-impression-event-points"
+	// ReasonTrackFeedSampleRate: the feed sink is on, but there is no current reading of the
+	// `feed-events-sample-rate` Flipt variant, so whether Node would record the event is unknown.
+	ReasonTrackFeedSampleRate = "track-feed-sample-rate"
+	// ReasonTrackFeedSampled: the feed sink is on and a feed event's session is sampled, so Node
+	// records a row for it. That row needs what this service does not have: the viewer's
+	// personal-hot-lead cohort (a per-user Flipt evaluation), the build's page-route manifest
+	// (pageRouteLabel) and the recorder's buffer. Only unsampled sessions, which record nothing, are
+	// answered here.
+	ReasonTrackFeedSampled = "track-feed-sampled"
 )
 
-// TrackBatch is src/pages/api/track/batch.ts for a batch of `search` and `action` events. Every other
-// event kind, and any event this service would reject, falls back with the whole request (see the
-// reasons above).
-func (e *Engine) TrackBatch(ctx context.Context, r *Request) (Outcome, error) {
+// Sinks are the /api/track/batch sinks beyond the tracker service (whose search and action rows are
+// always answered when the route is): Impressions (Tracker.impressions) and Feed (the feed events
+// recorder, unsampled sessions only).
+type Sinks struct {
+	Impressions bool
+	Feed        bool
+}
+
+// AllSinks is every ported sink (the shadow comparison computes with it).
+var AllSinks = Sinks{Impressions: true, Feed: true}
+
+// SinksLabel is the bounded `sinks` label of a batch this service answers: which optional sinks it
+// used (one of SinkLabels).
+func SinksLabel(s Sinks) string {
+	switch {
+	case s.Impressions && s.Feed:
+		return "impressions-feed"
+	case s.Impressions:
+		return "impressions"
+	case s.Feed:
+		return "feed"
+	}
+	return "core"
+}
+
+// SinkLabels are SinksLabel's values: `core` is search and action rows only (step 1).
+var SinkLabels = []string{"core", "impressions", "feed", "impressions-feed"}
+
+// TrackBatch is src/pages/api/track/batch.ts for a batch of `search` and `action` events, plus, with
+// their sinks on, `impression` events (outside every event-points window) and `feed` events of
+// unsampled sessions. Every other event, and any event this service would reject, falls back with the
+// whole request (see the reasons above), so no batch is ever split between the two writers.
+func (e *Engine) TrackBatch(ctx context.Context, r *Request, sinks Sinks) (Outcome, error) {
 	pb, resp, out, done, err := prologue(r)
 	if done {
 		return out, err
@@ -65,18 +109,28 @@ func (e *Engine) TrackBatch(ctx context.Context, r *Request) (Outcome, error) {
 	if parsed.Kind != jsvalue.Array || len(parsed.A) == 0 || len(parsed.A) > TrackBatchMax {
 		return Outcome{Response: send400(resp, "invalid input")}, nil
 	}
-	events, err := parseTrackEvents(parsed.A)
+	b, err := e.parseTrackEvents(parsed.A, sinks)
 	if err != nil {
 		return Outcome{}, err
 	}
-	// No tracker: Tracker.send writes nothing and never resolves the session (search and action rows
-	// go only through send).
-	if !e.TrackerEnabled {
-		return Outcome{Response: end200(resp)}, nil
+	out = Outcome{Response: end200(resp), Sinks: Sinks{Impressions: len(b.impressions) > 0, Feed: b.feed}}
+	// No tracker: Tracker.send writes nothing (search and action rows go only through send).
+	// Impressions do not go through send: Tracker.impressions inserts whenever the ClickHouse client
+	// exists, which the impressions sink presumes (serve mode requires its configuration).
+	tracked := e.TrackerEnabled && len(b.events) > 0
+	if !tracked && len(b.impressions) == 0 {
+		// Nothing to write (feed events here are unsampled: the recorder never reads the session for
+		// them), so the session is never read either.
+		return out, nil
 	}
-	ip, err := resolveClientIP(r)
-	if err != nil {
-		return Outcome{}, err
+	ip, userAgent := "", "unknown"
+	if tracked {
+		if ip, err = resolveClientIP(r); err != nil {
+			return Outcome{}, err
+		}
+		if ua, ok := r.Header("user-agent"); ok {
+			userAgent = ua
+		}
 	}
 	// One Tracker for the whole batch: the session is resolved once, after the 200 (the handler awaits
 	// none of the events), so no rolling refresh can reach this response, and none is attempted.
@@ -88,12 +142,11 @@ func (e *Engine) TrackBatch(ctx context.Context, r *Request) (Outcome, error) {
 	if user != nil {
 		userID = float64(user.ID)
 	}
-	userAgent := "unknown"
-	if ua, ok := r.Header("user-agent"); ok {
-		userAgent = ua
+	writes := make([]Write, 0, len(b.events)+len(b.impressions))
+	if !tracked {
+		b.events = nil
 	}
-	writes := make([]Write, 0, len(events))
-	for _, ev := range events {
+	for _, ev := range b.events {
 		// track(): `{...actorMeta, ...custom}`, actorMeta `{userId}` alone under skipActorMeta.
 		row := jsvalue.NewObject()
 		row.Set("userId", jsvalue.NumberValue(userID))
@@ -107,7 +160,22 @@ func (e *Engine) TrackBatch(ctx context.Context, r *Request) (Outcome, error) {
 		}
 		writes = append(writes, Write{Table: ev.table, Body: jsvalue.Stringify(jsvalue.ObjectValue(row))})
 	}
-	return Outcome{Response: end200(resp), Writes: writes}, nil
+	// Tracker.impressions: one insert per event, every row of it stamped with the viewer's id only.
+	for i, imp := range b.impressions {
+		for _, row := range imp.rows(userID) {
+			writes = append(writes, Write{Table: TableImpressions, Body: row, Sink: SinkClickHouse, Insert: i})
+		}
+	}
+	out.Writes = writes
+	return out, nil
+}
+
+// trackBatch is a batch this service can answer: its tracker events, its impressions, and whether it
+// carried a feed event (every one of them unsampled).
+type trackBatch struct {
+	events      []trackEvent
+	impressions []impressionEvent
+	feed        bool
 }
 
 // trackEvent is one accepted event: its table, the custom part of its row (the Tracker method's
@@ -119,12 +187,15 @@ type trackEvent struct {
 }
 
 // parseTrackEvents is parseTrackBatch's per-event parse (trackBatchEventSchema, a discriminated union
-// on `kind`) for the kinds this service writes. Any other element is a fallback; when several are,
-// the reason is the first of impression, feed, an unported action type, an invalid event, so the
-// impression and feed rates read as the share of batches carrying one.
-func parseTrackEvents(items []jsvalue.Value) ([]trackEvent, error) {
-	out := make([]trackEvent, 0, len(items))
-	var impression, feed, unported, invalid bool
+// on `kind`) for the kinds this service answers. Any other element is a fallback; when several are,
+// the reason is the first of: an impression with its sink off, a feed event with its sink off, an
+// impression an event-points window may award for, no sample-rate reading, a sampled feed session,
+// an unported action type, an invalid event. So with the sinks off the impression and feed rates
+// read as the share of batches carrying one, as they did before those sinks existed.
+func (e *Engine) parseTrackEvents(items []jsvalue.Value, sinks Sinks) (trackBatch, error) {
+	b := trackBatch{events: make([]trackEvent, 0, len(items))}
+	var impressionOff, feedOff, points, unported, invalid bool
+	var feedKeys []string
 	for _, item := range items {
 		kind, data, ok := eventParts(item)
 		if !ok {
@@ -133,21 +204,40 @@ func parseTrackEvents(items []jsvalue.Value) ([]trackEvent, error) {
 		}
 		switch kind {
 		case "impression":
-			impression = true
+			if !sinks.Impressions {
+				impressionOff = true
+				continue
+			}
+			ev, ok := parseImpressionEvent(data)
+			if !ok {
+				invalid = true
+				continue
+			}
+			points = points || ev.pointEligible
+			b.impressions = append(b.impressions, ev)
 		case "feed":
-			feed = true
+			if !sinks.Feed {
+				feedOff = true
+				continue
+			}
+			key, ok := parseFeedEvent(data)
+			if !ok {
+				invalid = true
+				continue
+			}
+			feedKeys = append(feedKeys, key)
 		case "search":
 			ev, ok := parseSearchEvent(data)
 			if !ok {
 				invalid = true
 				continue
 			}
-			out = append(out, ev)
+			b.events = append(b.events, ev)
 		case "action":
 			ev, res := parseActionEvent(data)
 			switch res {
 			case armOK:
-				out = append(out, ev)
+				b.events = append(b.events, ev)
 			case armUnported:
 				unported = true
 			default:
@@ -158,16 +248,36 @@ func parseTrackEvents(items []jsvalue.Value) ([]trackEvent, error) {
 		}
 	}
 	switch {
-	case impression:
-		return nil, fallback.New(ReasonTrackImpression)
-	case feed:
-		return nil, fallback.New(ReasonTrackFeed)
-	case unported:
-		return nil, fallback.New(ReasonTrackActionUnported)
-	case invalid:
-		return nil, fallback.New(ReasonTrackEventInvalid)
+	case impressionOff:
+		return trackBatch{}, fallback.New(ReasonTrackImpression)
+	case feedOff:
+		return trackBatch{}, fallback.New(ReasonTrackFeed)
+	case points && eventPointsMayAward(e.now()):
+		return trackBatch{}, fallback.New(ReasonTrackImpressionEventPoints)
 	}
-	return out, nil
+	if len(feedKeys) > 0 {
+		// Read only when a feed event is present: a batch without one never depends on the dial.
+		rate, ok := 0.0, false
+		if e.FeedSampleRate != nil {
+			rate, ok = e.FeedSampleRate()
+		}
+		if !ok {
+			return trackBatch{}, fallback.New(ReasonTrackFeedSampleRate)
+		}
+		for _, key := range feedKeys {
+			if feedSessionKept(key, rate) {
+				return trackBatch{}, fallback.New(ReasonTrackFeedSampled)
+			}
+		}
+		b.feed = true
+	}
+	switch {
+	case unported:
+		return trackBatch{}, fallback.New(ReasonTrackActionUnported)
+	case invalid:
+		return trackBatch{}, fallback.New(ReasonTrackEventInvalid)
+	}
+	return b, nil
 }
 
 // eventParts reads `{kind, data}`: an object whose `kind` is a string. `data` is returned as found

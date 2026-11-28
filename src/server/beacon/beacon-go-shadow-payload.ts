@@ -160,6 +160,11 @@ export function buildBeaconGoShadowPayload(parts: {
   responseHeaders: Record<string, string>;
   responseBody: string;
   writes: { table: string; body: string }[];
+  /**
+   * /api/track/batch: how many hatted entities the handler passed to awardViewPoints. Sent only when
+   * above 0 (beacon-go reads absent as 0), so the other beacons' payloads are unchanged.
+   */
+  hattedViews?: number;
 }): string {
   const { target, query } = shadowTarget(parts.target);
   return JSON.stringify({
@@ -174,6 +179,7 @@ export function buildBeaconGoShadowPayload(parts: {
       headers: parts.responseHeaders,
       body: parts.responseBody,
       writes: parts.writes,
+      ...(parts.hattedViews ? { hattedViews: parts.hattedViews } : {}),
     },
   });
 }

@@ -209,3 +209,72 @@ func TestTrackBatchServeSwitch(t *testing.T) {
 		}
 	}
 }
+
+// The two sink switches read like the route's (exactly `true`), default off, and serve only with the
+// route on; each requires what it writes through in serve mode, and is not checked in shadow mode.
+func TestTrackBatchSinkSwitches(t *testing.T) {
+	for _, c := range []struct {
+		route, imp, feed  string
+		wantImp, wantFeed bool
+	}{
+		{"", "", "", false, false},
+		{"true", "", "", false, false},
+		{"true", "true", "", true, false},
+		{"true", "", "true", false, true},
+		{"true", "TRUE", "1", false, false},
+		{"", "true", "true", false, false},
+		{"true", " true ", " true ", true, true},
+	} {
+		m := base()
+		m["BEACON_GO_TRACK_BATCH_SERVE"] = c.route
+		m["BEACON_GO_TRACK_BATCH_SERVE_IMPRESSIONS"] = c.imp
+		m["BEACON_GO_TRACK_BATCH_SERVE_FEED"] = c.feed
+		cfg, err := Load(env(m))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if imp, feed := cfg.ServeSinks(); imp != c.wantImp || feed != c.wantFeed {
+			t.Errorf("route %q impressions %q feed %q: %v %v, want %v %v", c.route, c.imp, c.feed, imp, feed, c.wantImp, c.wantFeed)
+		}
+	}
+	serve := func(extra map[string]string) error {
+		m := base()
+		m["BEACON_GO_MODE"] = "serve"
+		m["BEACON_GO_FALLBACK_URL"] = "http://node.example.test"
+		m["CLICKHOUSE_TRACKER_URL"] = "http://tracker.example.test"
+		m["BEACON_GO_TRACK_BATCH_SERVE"] = "true"
+		for k, v := range extra {
+			m[k] = v
+		}
+		_, err := Load(env(m))
+		return err
+	}
+	if err := serve(nil); err != nil {
+		t.Fatalf("route alone: %v", err)
+	}
+	for name, c := range map[string]struct {
+		extra map[string]string
+		ok    bool
+	}{
+		"impressions without ClickHouse": {map[string]string{"BEACON_GO_TRACK_BATCH_SERVE_IMPRESSIONS": "true"}, false},
+		"impressions without a username": {map[string]string{"BEACON_GO_TRACK_BATCH_SERVE_IMPRESSIONS": "true", "CLICKHOUSE_HOST": "http://ch.example.test:8123"}, false},
+		"impressions, host not a URL":    {map[string]string{"BEACON_GO_TRACK_BATCH_SERVE_IMPRESSIONS": "true", "CLICKHOUSE_HOST": "ch:8123", "CLICKHOUSE_USERNAME": "u"}, false},
+		"impressions configured":         {map[string]string{"BEACON_GO_TRACK_BATCH_SERVE_IMPRESSIONS": "true", "CLICKHOUSE_HOST": "http://ch.example.test:8123", "CLICKHOUSE_USERNAME": "u"}, true},
+		"feed without Flipt":             {map[string]string{"BEACON_GO_TRACK_BATCH_SERVE_FEED": "true"}, false},
+		"feed, Flipt not a URL":          {map[string]string{"BEACON_GO_TRACK_BATCH_SERVE_FEED": "true", "FLIPT_URL": "flipt"}, false},
+		"feed configured":                {map[string]string{"BEACON_GO_TRACK_BATCH_SERVE_FEED": "true", "FLIPT_URL": "http://flipt.example.test"}, true},
+		"sinks on, route off":            {map[string]string{"BEACON_GO_TRACK_BATCH_SERVE": "", "BEACON_GO_TRACK_BATCH_SERVE_IMPRESSIONS": "true", "BEACON_GO_TRACK_BATCH_SERVE_FEED": "true"}, true},
+	} {
+		if err := serve(c.extra); (err == nil) != c.ok {
+			t.Errorf("%s: err %v", name, err)
+		}
+	}
+	// Shadow mode checks none of it.
+	m := base()
+	m["BEACON_GO_TRACK_BATCH_SERVE_IMPRESSIONS"] = "true"
+	m["BEACON_GO_TRACK_BATCH_SERVE_FEED"] = "true"
+	cfg, err := Load(env(m))
+	if err != nil || cfg.ClickHouseWorkers != 8 || cfg.ClickHouseQueue != 2000 {
+		t.Fatalf("shadow: %v %+v", err, cfg)
+	}
+}

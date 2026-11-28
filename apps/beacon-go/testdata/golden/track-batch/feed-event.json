@@ -16,6 +16,12 @@
   "session": null,
   "trackerEnabled": true,
   "fallback": "track-feed",
+  "sinks": {
+    "impressions": false,
+    "feed": false
+  },
+  "feedSampleRate": 0,
+  "now": 1780003600000,
   "expect": {
     "status": 200,
     "headers": {

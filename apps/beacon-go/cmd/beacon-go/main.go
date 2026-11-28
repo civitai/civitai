@@ -23,6 +23,7 @@ import (
 	"github.com/civitai/civitai/apps/beacon-go/internal/auth"
 	"github.com/civitai/civitai/apps/beacon-go/internal/beacon"
 	"github.com/civitai/civitai/apps/beacon-go/internal/config"
+	"github.com/civitai/civitai/apps/beacon-go/internal/flipt"
 	"github.com/civitai/civitai/apps/beacon-go/internal/hydrate"
 	"github.com/civitai/civitai/apps/beacon-go/internal/server"
 	"github.com/civitai/civitai/apps/beacon-go/internal/sysredis"
@@ -69,6 +70,38 @@ func trackerWriter(cfg *config.Config, metrics *server.Metrics, reg prometheus.R
 	w.Start(cfg.TrackerWorkers, cfg.TrackerQueue)
 	reg.MustRegister(server.TrackerQueueDepth(w.Depth))
 	return w
+}
+
+// insertWriter builds and starts the serve-mode direct ClickHouse writer (the impression inserts),
+// counted under the same series as the tracker rows (table `impressions`, one count per insert).
+func insertWriter(cfg *config.Config, metrics *server.Metrics) *tracker.Client {
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.MaxIdleConnsPerHost = cfg.ClickHouseWorkers
+	w := tracker.NewClickHouse(cfg.ClickHouseHost, cfg.ClickHouseUsername, cfg.ClickHousePassword, &http.Client{Transport: tr})
+	w.Record = func(table, result string) { metrics.TrackerWrites.WithLabelValues(table, result).Inc() }
+	w.Observe = func(table string, d time.Duration) {
+		metrics.TrackerSendSeconds.WithLabelValues(table).Observe(d.Seconds())
+	}
+	w.Start(cfg.ClickHouseWorkers, cfg.ClickHouseQueue)
+	return w
+}
+
+// feedSampleRate starts the background read of the feed events sample rate, or returns nil when
+// FLIPT_URL is unset (every batch with a feed event then falls back).
+func feedSampleRate(ctx context.Context, cfg *config.Config, log *slog.Logger) (func() (float64, bool), error) {
+	if cfg.FliptURL == "" {
+		return nil, nil
+	}
+	c, err := flipt.New(flipt.Config{URL: cfg.FliptURL, ClientToken: cfg.FliptToken, Environment: cfg.FliptEnvironment})
+	if err != nil {
+		return nil, err
+	}
+	rate := flipt.NewRate(func(ctx context.Context) (bool, string, error) {
+		return c.Variant(ctx, beacon.FeedEventsSampleRateFlag)
+	}, beacon.ParseSampleRate)
+	rate.OnError = func(err error) { log.Warn("feed events sample rate read failed", "err", err) }
+	rate.Start(ctx)
+	return rate.Value, nil
 }
 
 func run(log *slog.Logger) error {
@@ -136,6 +169,12 @@ func run(log *slog.Logger) error {
 		UpdateAgeMs:    cfg.UpdateAgeMs,
 		ModeFor:        cfg.ModeFor,
 	}
+	if cfg.Mode == server.ModeServe {
+		engine.TrackBatchSinks.Impressions, engine.TrackBatchSinks.Feed = cfg.ServeSinks()
+	}
+	if engine.FeedSampleRate, err = feedSampleRate(ctx, cfg, log); err != nil {
+		return err
+	}
 	srv := &server.Server{
 		Engine:        engine,
 		Mode:          cfg.Mode,
@@ -158,9 +197,16 @@ func run(log *slog.Logger) error {
 		w := trackerWriter(cfg, metrics, reg)
 		srv.Writer = w
 		writer = w
+		if engine.TrackBatchSinks.Impressions {
+			ins := insertWriter(cfg, metrics)
+			srv.Inserts = ins
+			writer = writers{w, ins}
+		}
 		public = append(public, server.PublicHTTPServer(cfg.Addr, server.PublicMux(srv)))
 	}
-	log.Info("starting", "mode", cfg.Mode, "track_batch_serve", cfg.TrackBatchServe)
+	log.Info("starting", "mode", cfg.Mode, "track_batch_serve", cfg.TrackBatchServe,
+		"track_batch_impressions", engine.TrackBatchSinks.Impressions, "track_batch_feed", engine.TrackBatchSinks.Feed,
+		"feed_sample_rate", engine.FeedSampleRate != nil)
 
 	servers := append([]*http.Server{internal}, public...)
 	errs := make(chan error, len(servers))
@@ -196,6 +242,25 @@ type drainer interface {
 // rowWriter is the tracker side of the drain (tracker.Client); nil in shadow mode.
 type rowWriter interface {
 	Close(ctx context.Context) (tracker.Abandoned, error)
+}
+
+// writers drains several row writers in turn within one grace period, merging what they give up on.
+type writers []rowWriter
+
+func (ws writers) Close(ctx context.Context) (tracker.Abandoned, error) {
+	all := tracker.Abandoned{Dropped: map[string]int{}}
+	var first error
+	for _, w := range ws {
+		a, err := w.Close(ctx)
+		for t, n := range a.Dropped {
+			all.Dropped[t] += n
+		}
+		all.InFlight += a.InFlight
+		if err != nil && first == nil {
+			first = err
+		}
+	}
+	return all, first
 }
 
 // shutdown is the one grace period, in order: the public listener drains (no new beacon can queue a

@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -52,6 +53,14 @@ type Fixture struct {
 	} `json:"session"`
 	TrackerEnabled bool   `json:"trackerEnabled"`
 	Fallback       string `json:"fallback"`
+	// Sinks, FeedSampleRate and Now are the track-batch fixtures' engine: the optional sinks answered
+	// (absent: both on), the sample-rate reading (null: none; absent: 0) and the clock (0: GoldenNow).
+	Sinks *struct {
+		Impressions bool `json:"impressions"`
+		Feed        bool `json:"feed"`
+	} `json:"sinks"`
+	FeedSampleRate json.RawMessage `json:"feedSampleRate"`
+	NowMs          int64           `json:"now"`
 	Expect         struct {
 		Status  int               `json:"status"`
 		Headers map[string]string `json:"headers"`
@@ -167,13 +176,31 @@ func (fx *Fixture) Engine() *beacon.Engine {
 			user.Tier, user.TierSet = *s.Tier, true
 		}
 	}
+	now := GoldenNow
+	if fx.NowMs != 0 {
+		now = time.UnixMilli(fx.NowMs)
+	}
+	sinks := beacon.AllSinks
+	if fx.Sinks != nil {
+		sinks = beacon.Sinks{Impressions: fx.Sinks.Impressions, Feed: fx.Sinks.Feed}
+	}
+	rate, rateOK := 0.0, true
+	if s := strings.TrimSpace(string(fx.FeedSampleRate)); s == "null" {
+		rateOK = false
+	} else if s != "" {
+		if err := json.Unmarshal(fx.FeedSampleRate, &rate); err != nil {
+			panic(fmt.Sprintf("%s: feedSampleRate %s", fx.Name, s))
+		}
+	}
 	return &beacon.Engine{
-		Sessions:       stubSessions{user: user},
-		TrackerEnabled: fx.TrackerEnabled,
-		HubOrigin:      "https://auth.example.test",
-		UpdateAgeMs:    86_400_000,
-		ModeFor:        func(string) (string, bool) { return "shared", true },
-		Now:            func() time.Time { return GoldenNow },
+		Sessions:        stubSessions{user: user},
+		TrackerEnabled:  fx.TrackerEnabled,
+		HubOrigin:       "https://auth.example.test",
+		UpdateAgeMs:     86_400_000,
+		ModeFor:         func(string) (string, bool) { return "shared", true },
+		Now:             func() time.Time { return now },
+		TrackBatchSinks: sinks,
+		FeedSampleRate:  func() (float64, bool) { return rate, rateOK },
 	}
 }
 
@@ -206,11 +233,27 @@ func (fx *Fixture) CheckOutcome(t testing.TB, out beacon.Outcome) {
 	if len(out.Writes) != len(e.Writes) {
 		t.Fatalf("%d writes, Node %d", len(out.Writes), len(e.Writes))
 	}
+	// Table by table, in order within each (as shadow.Compare compares): Node dispatches the sinks
+	// without awaiting them, so only one table's rows have an order.
+	type nodeWrite = struct {
+		Table  string `json:"table"`
+		Body   string `json:"body"`
+		Sha256 string `json:"sha256"`
+		Length int    `json:"length"`
+	}
+	want := map[string][]nodeWrite{}
+	for _, ew := range e.Writes {
+		want[ew.Table] = append(want[ew.Table], ew)
+	}
+	taken := map[string]int{}
 	for i, w := range out.Writes {
-		ew := e.Writes[i]
-		if w.Table != ew.Table {
-			t.Errorf("write %d table %s, Node %s", i, w.Table, ew.Table)
+		n := taken[w.Table]
+		taken[w.Table]++
+		if n >= len(want[w.Table]) {
+			t.Errorf("write %d: an extra %s row %s", i, w.Table, w.Body)
+			continue
 		}
+		ew := want[w.Table][n]
 		if ew.Sha256 != "" {
 			sum := sha256.Sum256(w.Body)
 			if hex.EncodeToString(sum[:]) != ew.Sha256 || len(w.Body) != ew.Length {

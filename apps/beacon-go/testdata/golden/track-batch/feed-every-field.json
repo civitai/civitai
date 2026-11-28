@@ -1,0 +1,38 @@
+{
+  "name": "feed-every-field",
+  "endpoint": "track-batch",
+  "request": {
+    "method": "POST",
+    "target": "/api/track/batch",
+    "headers": {
+      "host": "www.example.test",
+      "origin": "https://www.example.test",
+      "content-type": "application/json",
+      "user-agent": "Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0",
+      "cf-connecting-ip": "203.0.113.7"
+    },
+    "body": "[{\"kind\":\"feed\",\"data\":{\"event\":\"click\",\"sessionKey\":\"k1\",\"feed\":\"search\",\"page\":\"/search/models\",\"sort\":\"Newest\",\"pageIndex\":10000,\"filters\":{\"index\":\"models\",\"junk\":\"x\"},\"entityType\":\"Model\",\"entityId\":2147483647,\"position\":0,\"seenIds\":[],\"extra\":true}}]"
+  },
+  "session": null,
+  "trackerEnabled": true,
+  "fallback": "",
+  "sinks": {
+    "impressions": true,
+    "feed": true
+  },
+  "feedSampleRate": 0,
+  "now": 1780003600000,
+  "expect": {
+    "status": 200,
+    "headers": {
+      "vary": "Authorization",
+      "access-control-allow-origin": "*",
+      "access-control-allow-headers": "Authorization, Content-Type, *",
+      "access-control-allow-methods": "POST",
+      "cache-control": "public, s-maxage=300, stale-while-revalidate=150"
+    },
+    "body": "",
+    "writes": []
+  },
+  "shadow": "{\"method\":\"POST\",\"target\":\"/api/track/batch\",\"query\":\"\",\"headers\":{\"host\":\"www.example.test\",\"origin\":\"https://www.example.test\",\"user-agent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"content-type\":\"application/json\",\"cf-connecting-ip\":\"203.0.113.7\"},\"body\":\"[{\\\"kind\\\":\\\"feed\\\",\\\"data\\\":{\\\"event\\\":\\\"click\\\",\\\"sessionKey\\\":\\\"k1\\\",\\\"feed\\\":\\\"search\\\",\\\"page\\\":\\\"/search/models\\\",\\\"sort\\\":\\\"Newest\\\",\\\"pageIndex\\\":10000,\\\"filters\\\":{\\\"index\\\":\\\"models\\\",\\\"junk\\\":\\\"x\\\"},\\\"entityType\\\":\\\"Model\\\",\\\"entityId\\\":2147483647,\\\"position\\\":0,\\\"seenIds\\\":[],\\\"extra\\\":true}}]\",\"bodyIsString\":false,\"node\":{\"status\":200,\"headers\":{\"access-control-allow-origin\":\"*\",\"access-control-allow-headers\":\"Authorization, Content-Type, *\",\"access-control-allow-methods\":\"POST\",\"vary\":\"Authorization\",\"cache-control\":\"public, s-maxage=300, stale-while-revalidate=150\"},\"body\":\"\",\"writes\":[]}}"
+}

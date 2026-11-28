@@ -157,6 +157,54 @@ func TestDecodeRefusesMalformedSamples(t *testing.T) {
 	}
 }
 
+// `hattedViews` is optional (absent is 0, as every ping and pulse sample sends it) and a
+// non-negative integer; an answered batch for which Node awarded any is a writes mismatch.
+func TestHattedViews(t *testing.T) {
+	base := `{"method":"POST","target":"/api/track/batch","query":"","headers":{},"body":"","bodyIsString":true,"node":{"status":200,"headers":{},"body":"","writes":[]%s}}`
+	for _, c := range []struct {
+		extra string
+		n     int
+		ok    bool
+	}{{"", 0, true}, {`,"hattedViews":3`, 3, true}, {`,"hattedViews":-1`, 0, false}, {`,"hattedViews":1.5`, 0, false}, {`,"hattedViews":"2"`, 0, false}} {
+		s, err := Decode([]byte(strings.Replace(base, "%s", c.extra, 1)))
+		if (err == nil) != c.ok || (err == nil && s.Node.HattedViews != c.n) {
+			t.Errorf("%q: err %v", c.extra, err)
+		}
+	}
+	out := beacon.Outcome{Response: beacon.Response{Status: 200}}
+	if v := Compare(out, nil, &NodeSide{Status: 200, Headers: map[string]string{}}); v.Result != ResultMatch {
+		t.Fatalf("no hatted views: %+v", v)
+	}
+	v := Compare(out, nil, &NodeSide{Status: 200, Headers: map[string]string{}, HattedViews: 1})
+	if v.Result != ResultMismatchWrites || len(v.Diffs) != 1 || v.Diffs[0] != DiffPointsViews {
+		t.Fatalf("hatted views: %+v", v)
+	}
+}
+
+// Rows are compared table by table: the same rows in a different order ACROSS tables match, a
+// different order within one table does not.
+func TestCompareWritesPerTable(t *testing.T) {
+	out := beacon.Outcome{Response: beacon.Response{Status: 200}, Writes: []beacon.Write{
+		{Table: "search", Body: []byte(`{"a":1}`)}, {Table: "impressions", Body: []byte(`{"e":1}`)}, {Table: "impressions", Body: []byte(`{"e":2}`)},
+	}}
+	node := &NodeSide{Status: 200, Headers: map[string]string{}, Writes: []NodeWrite{
+		{Table: "impressions", Body: `{"e":1}`}, {Table: "search", Body: `{"a":1}`}, {Table: "impressions", Body: `{"e":2}`},
+	}}
+	if v := Compare(out, nil, node); v.Result != ResultMatch {
+		t.Fatalf("across tables: %+v", v)
+	}
+	node.Writes[0].Body, node.Writes[2].Body = `{"e":2}`, `{"e":1}`
+	if v := Compare(out, nil, node); v.Result != ResultMismatchWrites || len(v.Diffs) != 2 || v.Diffs[0] != "write:impressions:e" {
+		t.Fatalf("within a table: %+v", v)
+	}
+	// A Node feed row this service did not write, with the counts equal.
+	node.Writes[2] = NodeWrite{Table: "feedEvents", Body: `{}`}
+	v := Compare(out, nil, node)
+	if v.Result != ResultMismatchWrites || strings.Join(v.Diffs, ",") != "write:feedEvents:table,write:impressions:table" {
+		t.Fatalf("a feed row: %+v", v)
+	}
+}
+
 // The query marker rebuilds what the engine needs: HasQuery, and a token for the session resolver,
 // without the key itself.
 func TestQueryMarker(t *testing.T) {

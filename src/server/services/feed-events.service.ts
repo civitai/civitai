@@ -109,10 +109,14 @@ export function buildFeedEventRow(
 }
 
 export type FeedEventsRecorder = {
-  /** `getViewer` runs only for a sampled session; a null viewer drops the event. */
+  /**
+   * `getViewer` runs only for a sampled session; a null viewer drops the event. `onRow`, when given,
+   * sees the row as it is buffered (the beacon-go shadow sampler compares it); it must not throw.
+   */
   record: (
     input: TrackFeedInput,
-    getViewer: () => Promise<FeedEventViewer | null>
+    getViewer: () => Promise<FeedEventViewer | null>,
+    onRow?: (row: FeedEventRow) => void
   ) => Promise<void>;
   flush: () => Promise<void>;
 };
@@ -127,13 +131,18 @@ export function createFeedEventsRecorder(
   });
   return {
     // Sampled per browser session, so a session's loads, seen rows and clicks are kept together.
-    record: async (input, getViewer) => {
+    record: async (input, getViewer, onRow) => {
       if (!(await rows.keeps(input.sessionKey))) return;
       const viewer = await getViewer();
       if (!viewer) return;
-      await rows.push((at) => buildFeedEventRow(input, viewer, at), {
-        sampleKey: input.sessionKey,
-      });
+      await rows.push(
+        (at) => {
+          const row = buildFeedEventRow(input, viewer, at);
+          onRow?.(row);
+          return row;
+        },
+        { sampleKey: input.sessionKey }
+      );
     },
     flush: rows.flush,
   };
