@@ -78,11 +78,16 @@ export type FpMirrorFactsRow = {
 /** SQL: the current hide of comment `c` is the scan's own (mirror row `m`). */
 const FP_SCAN_HIDE = `COALESCE(c."hiddenAt" = m."scanHiddenAt" AND NOT c."tosViolation", false)`;
 
-/** SQL: the scan verdict row `em` is not clean: it failed, or it finished with a label. */
-const fpScanFlagged = (em: string) =>
-  `COALESCE(${em}.status::text = 'Failed'
-     OR (${em}.status::text = 'Succeeded' AND coalesce(cardinality(${em}."triggeredLabels"), 0) > 0),
-     false)`;
+/**
+ * SQL: the scan of a comment's current text, from its verdict row `em` joined on that text's
+ * contentHash (no row: not scanned yet). 'pending' until it finished; 'not clean' when it failed or
+ * finished with a label; otherwise 'clean'.
+ */
+const fpTextScan = (em: string) =>
+  `CASE WHEN ${em}.status IS NULL OR ${em}.status::text NOT IN ('Succeeded', 'Failed') THEN 'pending'
+     WHEN ${em}.status::text = 'Failed'
+       OR coalesce(cardinality(${em}."triggeredLabels"), 0) > 0 THEN 'not clean'
+     ELSE 'clean' END`;
 
 const FACTS = `
   SELECT m."commentId", m."userId", m."requestId", m.urn, m."goneCause", m.version, m."pushedState",
@@ -469,16 +474,17 @@ export async function countFpSubjectWaits(db: Kysely<DB>) {
   return { waiting: row?.n ?? 0, oldestMinutes: row?.oldestMinutes ?? 0 };
 }
 
-/** The comment's scan verdict as stored: its status, the text it was for, and whether it flagged. */
-export async function readFpScanVerdict(db: Kysely<DB>, commentId: number) {
-  const [row] = await rows<{ status: string; contentHash: string | null; flagged: boolean }>(
+/** The scan of the comment's text with this contentHash (fpTextScan). */
+export async function readFpTextScan(db: Kysely<DB>, commentId: number, contentHash: string) {
+  const [row] = await rows<{ scan: 'clean' | 'not clean' | 'pending' }>(
     db,
-    `SELECT status::text AS status, "contentHash",
-            ${fpScanFlagged('em')} AS flagged
-     FROM "EntityModeration" em WHERE "entityType" = 'CommentV3' AND "entityId" = $1`,
-    [commentId]
+    `SELECT ${fpTextScan('em')} AS scan
+     FROM (SELECT 1) one
+     LEFT JOIN "EntityModeration" em ON em."entityType" = 'CommentV3' AND em."entityId" = $1
+       AND em."contentHash" = $2`,
+    [commentId, contentHash]
   );
-  return row;
+  return row.scan;
 }
 
 /** By urn, for the reconcile. */
@@ -803,8 +809,8 @@ export async function liftModeratorFpHide(
            OR n.t <= c."hiddenAt") AS changed,
          ${FP_SCAN_HIDE} AS scan,
          c."tosViolation" AS tos,
-         ${fpScanFlagged('em')} AS flagged,
-         em.status IS NULL OR em.status::text NOT IN ('Succeeded', 'Failed') AS scanning,
+         ${fpTextScan('em')} = 'not clean' AS flagged,
+         ${fpTextScan('em')} = 'pending' AS scanning,
          ${fpLiftHolds('$2', '$5::int')},
          COALESCE(n.t <= m."modHideSentAt", false) AS "sentLater"
        FROM (SELECT clock_timestamp() AS t) n, "FeaturePageCommentMirror" m

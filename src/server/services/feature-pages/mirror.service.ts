@@ -21,7 +21,7 @@ import {
   markFpRunbookRemoval,
   readFpMirrorByUrns,
   readFpMirrorFacts,
-  readFpScanVerdict,
+  readFpTextScan,
   readFpMirrorFactsPage,
   readFpRunbookCounts,
   readFpScanCandidates,
@@ -219,11 +219,13 @@ type HeldOutcome =
   | { kind: 'retry'; status: number | 'unreachable' };
 
 /**
- * Whether a comment the platform holds hidden is hidden there by a moderator: the platform keeps one
- * moderator source, so only that hide would a lift from here clear. A pipeline or site hide is not.
+ * Whether a comment the platform holds hidden is hidden there by another moderator: the platform
+ * keeps one moderator source, so only that hide would a lift from here clear. A pipeline or site hide
+ * is not, and nor is this mirror's own last hide (its sent time), which keeps the origin it had.
  */
 async function moderatorHidThere(
-  held: HeldOutcome
+  held: HeldOutcome,
+  row: FpMirrorFactsRow
 ): Promise<boolean | { retry: number | 'unreachable' }> {
   if (held.kind !== 'held' || held.state !== 'hidden') return false;
   let read: Awaited<ReturnType<typeof readDecidingVerdict>>;
@@ -234,7 +236,11 @@ async function moderatorHidThere(
     throw e;
   }
   if ('failed' in read) return { retry: read.status };
-  return read.verdict?.source === 'moderator' && read.verdict.verdict === 'hidden';
+  const v = read.verdict;
+  if (v?.source !== 'moderator' || v.verdict !== 'hidden') return false;
+  if (row.modHideSentAt && Date.parse(v.at ?? '') === row.modHideSentAt.getTime())
+    return row.modHideOrigin === 'foreign';
+  return true;
 }
 
 /** What the platform holds for a comment, by its sourceId: never its text. */
@@ -635,7 +641,7 @@ async function pushRow(e: Evaluated): Promise<PushResult> {
       if (held.kind === 'held') {
         if (held.state === 'erased') return erased();
         if (state === 'mod-hidden' && row.pushedState !== 'mod-hidden') {
-          const there = await moderatorHidThere(held);
+          const there = await moderatorHidThere(held, row);
           if (typeof there !== 'boolean') return fail(there.retry, 'verdict-source');
           foreign = there;
         }
@@ -667,7 +673,7 @@ async function pushRow(e: Evaluated): Promise<PushResult> {
     if (row.pushedState !== 'mod-hidden' && !steps.includes('by-source')) {
       const held = await readBySource(row.commentId);
       if (held.kind === 'retry') return fail(held.status, 'by-source');
-      const there = await moderatorHidThere(held);
+      const there = await moderatorHidThere(held, row);
       if (typeof there !== 'boolean') return fail(there.retry, 'verdict-source');
       foreign = there;
     }
@@ -714,11 +720,7 @@ const finishedFor = (
 async function currentTextScan(commentId: number) {
   const hash = (await currentScanContentHashes('CommentV3', [commentId])).get(commentId);
   if (!hash) return 'pending' as const;
-  const verdict = await readFpScanVerdict(kyselyWrite, commentId);
-  if (finishedFor(verdict?.status, verdict?.contentHash, hash))
-    return verdict!.flagged ? ('not clean' as const) : ('clean' as const);
-  if (verdict?.status === 'Failed' && verdict.contentHash === hash) return 'not clean' as const;
-  return 'pending' as const;
+  return readFpTextScan(kyselyWrite, commentId, hash);
 }
 
 /** What the frame shows: shown on civitai, and pushed to the platform as shown. */

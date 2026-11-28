@@ -342,7 +342,6 @@ export type UserComment = {
   /** What the comment is ON. A reply carries its entity on its own row. */
   entityType: string;
   entityId: number;
-  /** A Feature Pages comment's hide, which a moderator can hide or unhide here. */
   fp?: FpCommentState;
 };
 

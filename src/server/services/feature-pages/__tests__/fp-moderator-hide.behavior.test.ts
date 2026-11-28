@@ -276,6 +276,19 @@ describe("a moderator's hide and unhide of a Feature Pages comment", () => {
     expect(decided(id)).toBe('hidden');
   });
 
+  it('hidden again before the reconcile lifts its own hide there, it stays this mirror’s and can be shown again', async () => {
+    const id = await hiddenByModerator();
+    await unhide(id);
+    await runMirror(mirror);
+    expect(decided(id)).toBe('hidden');
+    expect(await hide(id)).toEqual({ hidden: true });
+    await runMirror(mirror);
+    expect(await mirrorRow(id)).toMatchObject({ modHideOrigin: 'moderator' });
+    expect(await unhide(id)).toMatchObject({ lifted: { commentId: id } });
+    await settle();
+    expect(decided(id)).toBe('visible');
+  });
+
   it('a settled row whose text scan is no longer clean gets no lift sent', async () => {
     const id = await hiddenByModerator();
     await unhide(id);
