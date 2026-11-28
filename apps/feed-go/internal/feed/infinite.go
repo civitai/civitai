@@ -1517,11 +1517,10 @@ func fetchInfiniteRows(ctx context.Context, d *InfiniteDeps, q ImagesQuery, view
 // BuildInfiniteImages is getAllImagesUncaptured's per-image transform under stripImageForInfiniteWire
 // only (image.getInfinite does not apply the gallery's stripImageForAsPostsWire): the gallery wire
 // plus `availability`, `meta` (null: 'metaSelect' is not ported), `baseModel` (undefined:
-// includeBaseModel is not ported) and `judgeScore` (null outside a collection; in
-// one, parseJudgeScore of the item's note, judgeScore, whose unmodelled scores fetchInfiniteRows has
-// already handed back). A collection page's row also
-// carries `collectionItemStatus` and `collectionItemAddedById` (the SELECT's columns, after
-// `restricted`). The publish filter is BuildImages'.
+// includeBaseModel is not ported) and `judgeScore` (null outside a collection; in one,
+// parseJudgeScore(note), whose unmodelled scores fetchInfiniteRows has already handed back). A
+// collection page's row also carries `collectionItemStatus` and `collectionItemAddedById` (the
+// SELECT's columns, after `restricted`). The publish filter is BuildImages'.
 func BuildInfiniteImages(rows []RawImage, hy *Hydrated, viewer Viewer, now time.Time) []Image {
 	images := BuildImages(rows, hy, viewer, now)
 	byID := make(map[int]*RawImage, len(rows))

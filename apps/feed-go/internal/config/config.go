@@ -509,8 +509,6 @@ func Load() (*Config, error) {
 		return nil, errors.New("FEED_GO_CACHE_WRITEBACK needs DATABASE_URL for " + strings.Join(primaryWrites(c.CacheWriteBack), ",") +
 			" (the primary those lookups read)")
 	}
-	// Node's fallback fills the key it rebuilds; serving the miss without writing it back would leave
-	// the key cold for every other reader (Node's included), so the switch needs the write-back.
 	if c.V1ImagesServeGallerySettingsMiss && !c.CacheWriteBack[hydrate.MissGallerySettings] {
 		return nil, errors.New("FEED_GO_V1_IMAGES_SERVE_GALLERY_SETTINGS_MISS needs gallery-settings in FEED_GO_CACHE_WRITEBACK" +
 			" (Node's fallback writes the key; serving without writing would leave it cold for every reader)")

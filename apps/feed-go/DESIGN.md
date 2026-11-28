@@ -2866,8 +2866,8 @@ the `input-newCreators` fallback, as before. On:
   AND "publishedAt" >= $1 AND "publishedAt" < $2 [AND "type" = ANY(…)])`, joined after the FROM of
   every base-model path (`JOIN ranged ON ranged."id" = m."id"`). Its values are bound first, as
   Prisma numbers them; `status` is not ported, so the CTE always holds the Published condition.
-- **Load.** Measured before the port: a plain `EXPLAIN` of the CTE body on a replica uses
-  `Model_status_publishedAt_idx` (an index scan, about 20k rows for 31 days). The text is pinned by
+- **Load.** A plain `EXPLAIN` of the CTE body on a replica uses `Model_status_publishedAt_idx` (an
+  index scan; it estimated about 20k rows for a 31-day range on 2026-11-28). The text is pinned by
   `TestBuildPublishedRange*` and run against Postgres by
   `TestIntegrationModelPagePublishedRangeAndNewCreators`.
 
