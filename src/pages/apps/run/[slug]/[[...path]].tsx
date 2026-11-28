@@ -118,6 +118,12 @@ interface AppRunProps {
    */
   privateRunStatus: string | null;
   /**
+   * PRIVATE RUN of an app whose live files were unpublished (its takedown is confirmed), so
+   * its subdomain 404s: the page shows a notice instead of a blank frame. Always `false` on
+   * the public path. Read server-side from the takedown marker; never a probe of the host.
+   */
+  privateRunUnpublished: boolean;
+  /**
    * Where this run was launched from (`?from=home` on the My apps home's tile links), for the
    * run chrome's way out only: `home` → "My apps" (`/apps`), anything else → "Marketplace"
    * (`/apps/store`). Read here, server-side, so the first render already says the right
@@ -294,6 +300,12 @@ export const getServerSideProps = createServerSideProps<PageProps>({
       const privateHidden = hiddenFor(block.contentRating);
       if (privateHidden) return privateHidden;
 
+      // The app's live files were unpublished (a confirmed takedown), so its subdomain 404s and
+      // framing it would show a blank page. Lazy, like the hide read above; it never throws.
+      const privateRunUnpublished = await import(
+        '~/server/services/blocks/live-unpublish.service'
+      ).then(({ isLiveAppUnpublished }) => isLiveAppUnpublished(block.blockId));
+
       // 🔴 NO `recordAppListingOpen` HERE, AND ITS ABSENCE IS THE FEATURE. Recording the
       // play would move `views.count` / `views.uniqueViewers` on the OWNER'S OWN analytics
       // panel — which both lies about real usage and tells a suspended publisher exactly
@@ -321,6 +333,7 @@ export const getServerSideProps = createServerSideProps<PageProps>({
           betaMessage: null,
           audience: access.audience,
           privateRunStatus: block.status,
+          privateRunUnpublished,
           launchOrigin,
           // A delisted app is not on anyone's home; a moderator's or owner's private run is
           // not a use to record (the same reason it writes no recents entry or play).
@@ -399,6 +412,7 @@ export const getServerSideProps = createServerSideProps<PageProps>({
         // whether an absent key means "public" or "forgot to set it".
         audience: null,
         privateRunStatus: null,
+        privateRunUnpublished: false,
         launchOrigin,
         isHiddenForViewer: hiddenForViewer,
       },
@@ -539,6 +553,22 @@ export function privateRunNotice(args: { audience: PrivateRunAudience; status: s
   return `${why} ${which}`;
 }
 
+/** Shown in place of the frame when a private run's app has had its live files unpublished. */
+export const PRIVATE_RUN_UNPUBLISHED_NOTICE =
+  "This app's files have been unpublished, so there is nothing to run here. New versions are still reviewed through the review queue.";
+
+/**
+ * Whether the run page frames the app. Only a PRIVATE run of an unpublished app does not: its
+ * subdomain 404s, so the frame would be blank. The public path always frames (it is only
+ * reached for an approved app, whose pointer is live).
+ */
+export function framesApp(args: {
+  audience: PrivateRunAudience | null;
+  privateRunUnpublished: boolean;
+}): boolean {
+  return !(args.audience != null && args.privateRunUnpublished);
+}
+
 function RunPage(props: PageProps) {
   if ('hiddenByBrowsingLevel' in props) {
     return <HiddenByBrowsingLevelNotice {...props.hiddenByBrowsingLevel} />;
@@ -563,6 +593,7 @@ function AppPage(props: AppRunProps) {
     audience,
     launchOrigin,
     privateRunStatus,
+    privateRunUnpublished,
     isHiddenForViewer,
   } = props;
   const currentUser = useCurrentUser();
@@ -785,82 +816,94 @@ function AppPage(props: AppRunProps) {
           width: '100%',
         }}
       >
-        <PageBlockHost
-          appBlockId={appBlockId}
-          blockId={blockId}
-          appId={appId}
-          blockInstanceId={blockInstanceId}
-          appName={appName}
-          iframeSrc={iframeSrc}
-          bootSkeleton={bootSkeleton}
-          // The full-page run surface — public, or `private-run` on the delisted fallback.
-          //
-          // 🔴 THE SURFACE STAYS SPLIT EVEN THOUGH THE ROUTE IS NOW SHARED, and this is the
-          // single most important line of the route merge. `private-run` carries an
-          // UNCONDITIONAL refusal of the BLOCK_INIT fragment fast path
-          // (`blockInitFragmentEnabledWith`, refusal (1)) — a delisted app must boot on its
-          // ordinary path, because the fast path perturbs `location.hash` routing and the
-          // behaviour under diagnosis may be exactly that. Collapsing both onto `page-run`
-          // would silently hand a suspended app the fast path its own gate refuses.
-          // Pinned by `run-page-private-run.test.ts`.
-          surface={hostSurfaceFor(audience)}
-          // 🔴 THE DOUBLE-SCROLLBAR FIX, and it is only half of one — it is
-          // correct ONLY in combination with `scrollable: false` on the `Page`
-          // options below. `fit="fill"` makes the host claim no height of its
-          // own, which needs an ancestor chain that already bounds it; the
-          // default scrolling layout does not, so shipping either half alone
-          // regresses this page, in OPPOSITE directions. Both measured, not
-          // reasoned — this comment has now been wrong in BOTH directions, once
-          // by guessing and once by "correcting" a claim that was already right:
-          //
-          //   Drop `fill` → the host claims `100dvh - 60px` again. The
-          //   `overflow-hidden` chain sits ABOVE this wrapper, and this wrapper
-          //   is `overflowY: 'auto'`, so the excess is SCROLLED, not clipped:
-          //   a page scrollbar beside the block's own — the exact bug this PR
-          //   removes. (Measured 708px of host in a 600px wrapper,
-          //   `USER_SCROLLABLE=true`.)
-          //
-          //   Drop `scrollable: false` → the `ScrollArea` branch bounds nothing,
-          //   so `flex: 1` has nothing to resolve against and the host is sized
-          //   only by `FILL_MIN_HEIGHT_PX` — a fixed slab, whatever the viewport.
-          //
-          // Neither is clipping. Nothing in this layout clips, because this
-          // wrapper can always scroll.
-          fit="fill"
-          sandbox={sandbox}
-          trustTier={trustTier}
-          slug={slug}
-          token={token}
-          expiresAt={expiresAt}
-          tokenKind={kind}
-          declaredScopes={scopes}
-          missingScopes={missingScopes}
-          signedScopes={signedScopes}
-          needsConsent={needsConsent}
-          domain={domain}
-          maxBrowsingLevel={maxBrowsingLevel}
-          effectiveBrowsingLevel={effectiveBrowsingLevel}
-          appData={appData}
-          tokenError={error != null}
-          tokenTerminal={terminal}
-          viewer={viewer}
-          viewerImage={viewerImage}
-          theme={theme}
-          onConsentGranted={refresh}
-          onRetryToken={refresh}
-          // The chrome's "Recently run" shortcuts point at this very route, so
-          // what decides whether they resolve is exactly this route's own
-          // `getServerSideProps` predicate — which requires BOTH flags (see the
-          // 404 above). `appBlocksPages` alone is NOT it: `appBlocks` is the
-          // block-runtime kill-switch and Flipt can disable as well as enable,
-          // so pages-on/blocks-off is reachable and would render guaranteed-404
-          // links. (Both are redundantly true here, since we already passed that
-          // gate; it is written out anyway so all four chrome mounters carry ONE
-          // greppable shape and a future surface can't justify a per-surface
-          // constant.)
-          canOpenPage={!!(features.appBlocks && features.appBlocksPages)}
-          launchOrigin={launchOrigin}
-        />
+        {framesApp({ audience, privateRunUnpublished }) ? (
+          <PageBlockHost
+            appBlockId={appBlockId}
+            blockId={blockId}
+            appId={appId}
+            blockInstanceId={blockInstanceId}
+            appName={appName}
+            iframeSrc={iframeSrc}
+            bootSkeleton={bootSkeleton}
+            // The full-page run surface — public, or `private-run` on the delisted fallback.
+            //
+            // 🔴 THE SURFACE STAYS SPLIT EVEN THOUGH THE ROUTE IS NOW SHARED, and this is the
+            // single most important line of the route merge. `private-run` carries an
+            // UNCONDITIONAL refusal of the BLOCK_INIT fragment fast path
+            // (`blockInitFragmentEnabledWith`, refusal (1)) — a delisted app must boot on its
+            // ordinary path, because the fast path perturbs `location.hash` routing and the
+            // behaviour under diagnosis may be exactly that. Collapsing both onto `page-run`
+            // would silently hand a suspended app the fast path its own gate refuses.
+            // Pinned by `run-page-private-run.test.ts`.
+            surface={hostSurfaceFor(audience)}
+            // 🔴 THE DOUBLE-SCROLLBAR FIX, and it is only half of one — it is
+            // correct ONLY in combination with `scrollable: false` on the `Page`
+            // options below. `fit="fill"` makes the host claim no height of its
+            // own, which needs an ancestor chain that already bounds it; the
+            // default scrolling layout does not, so shipping either half alone
+            // regresses this page, in OPPOSITE directions. Both measured, not
+            // reasoned — this comment has now been wrong in BOTH directions, once
+            // by guessing and once by "correcting" a claim that was already right:
+            //
+            //   Drop `fill` → the host claims `100dvh - 60px` again. The
+            //   `overflow-hidden` chain sits ABOVE this wrapper, and this wrapper
+            //   is `overflowY: 'auto'`, so the excess is SCROLLED, not clipped:
+            //   a page scrollbar beside the block's own — the exact bug this PR
+            //   removes. (Measured 708px of host in a 600px wrapper,
+            //   `USER_SCROLLABLE=true`.)
+            //
+            //   Drop `scrollable: false` → the `ScrollArea` branch bounds nothing,
+            //   so `flex: 1` has nothing to resolve against and the host is sized
+            //   only by `FILL_MIN_HEIGHT_PX` — a fixed slab, whatever the viewport.
+            //
+            // Neither is clipping. Nothing in this layout clips, because this
+            // wrapper can always scroll.
+            fit="fill"
+            sandbox={sandbox}
+            trustTier={trustTier}
+            slug={slug}
+            token={token}
+            expiresAt={expiresAt}
+            tokenKind={kind}
+            declaredScopes={scopes}
+            missingScopes={missingScopes}
+            signedScopes={signedScopes}
+            needsConsent={needsConsent}
+            domain={domain}
+            maxBrowsingLevel={maxBrowsingLevel}
+            effectiveBrowsingLevel={effectiveBrowsingLevel}
+            appData={appData}
+            tokenError={error != null}
+            tokenTerminal={terminal}
+            viewer={viewer}
+            viewerImage={viewerImage}
+            theme={theme}
+            onConsentGranted={refresh}
+            onRetryToken={refresh}
+            // The chrome's "Recently run" shortcuts point at this very route, so
+            // what decides whether they resolve is exactly this route's own
+            // `getServerSideProps` predicate — which requires BOTH flags (see the
+            // 404 above). `appBlocksPages` alone is NOT it: `appBlocks` is the
+            // block-runtime kill-switch and Flipt can disable as well as enable,
+            // so pages-on/blocks-off is reachable and would render guaranteed-404
+            // links. (Both are redundantly true here, since we already passed that
+            // gate; it is written out anyway so all four chrome mounters carry ONE
+            // greppable shape and a future surface can't justify a per-surface
+            // constant.)
+            canOpenPage={!!(features.appBlocks && features.appBlocksPages)}
+            launchOrigin={launchOrigin}
+          />
+        ) : (
+          <Alert
+            variant="light"
+            color="gray"
+            icon={<IconEyeOff size={16} />}
+            m="md"
+            data-testid="apps-run-private-run-unpublished"
+          >
+            {PRIVATE_RUN_UNPUBLISHED_NOTICE}
+          </Alert>
+        )}
       </Box>
     </>
   );

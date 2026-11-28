@@ -232,6 +232,25 @@ export async function isReadinessProbeApp(
   return readinessListIncludes(slug, d);
 }
 
+/**
+ * Whether an unpublish of the app SUCCEEDED and nothing has written its pointer since: the
+ * takedown marker is `confirmed` (a deploy or a restore clears it). The private run reads it to
+ * show a notice instead of framing a subdomain that 404s. False on anything else, including a
+ * marker that cannot be read: the private run then frames the app as before.
+ */
+export async function isLiveAppUnpublished(
+  slug: string,
+  deps: Partial<LiveUnpublishDeps> = {}
+): Promise<boolean> {
+  const d = { ...defaultDeps, ...deps };
+  try {
+    return (await d.store.readTakedown(slug)) === 'confirmed';
+  } catch (err) {
+    warn(`takedown marker of ${slug} unreadable; private run frames the app`, err);
+    return false;
+  }
+}
+
 /** How long the approve that a late hold re-suspends waits on the takedown before it answers. */
 export const LATE_HOLD_TAKEDOWN_WAIT_MS = 20_000;
 
