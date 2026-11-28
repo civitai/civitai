@@ -48,3 +48,7 @@ apps/training-studio/src/lib/data/tag-categories.json
 # generators own the format; both files are compared structurally, never byte for byte.
 packages/civitai-flipt/parity/expected.json
 packages/civitai-flipt/parity/latest-divergences.json
+
+# The generator owns their bytes: `remixSpecToSource` output and the dry-run trace, compared
+# byte for byte by spec-source.test.ts and replayed by the runner's goldens test.
+src/shared/remix-apps/__tests__/__goldens__/
