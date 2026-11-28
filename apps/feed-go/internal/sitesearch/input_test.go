@@ -68,6 +68,7 @@ func TestParseBodyRefusals(t *testing.T) {
 		{RouteSearch, `{"limit":"10"}`, "search-input-invalid"},
 		{RouteSearch, `{"limit":1e300}`, "search-input-invalid"},
 		{RouteSearch, `{"hitsPerPage":101}`, "search-input-invalid"},
+		{RouteSearch, `{"hitsPerPage":-1}`, "search-input-invalid"},
 		{RouteSearch, `{"cropLength":1001}`, "search-input-invalid"},
 		{RouteSearch, `{"q":3}`, "search-input-invalid"},
 		{RouteSearch, `{"q":"` + strings.Repeat("a", 1001) + `"}`, "search-input-invalid"},
@@ -126,16 +127,10 @@ func TestFacetStrippedKeysAreStrippedByZod(t *testing.T) {
 	if !slices.Equal(lacking, want) {
 		t.Errorf("siteSearchParamsSchema keys siteFacetSearchSchema lacks: %v, want %v", lacking, want)
 	}
-	for _, k := range want {
-		if facet.Has(k) {
-			t.Errorf("%s is a siteFacetSearchSchema key: zod no longer strips it", k)
-		}
-	}
 }
 
 // The facet route drops the keys zod strips as Node does: unread (a value zod would refuse on the
-// search route included), never forwarded, and the rest of the call is unchanged. On the search
-// route they are the schema's own keys, read and refused as zod refuses them.
+// search route included), never forwarded, and the rest of the call is unchanged.
 func TestFacetDropsStrippedKeys(t *testing.T) {
 	body := `{"q":"","facetName":"type","facetQuery":"lo","filter":"a = 1","attributesToHighlight":["*"],"attributesToCrop":[],` +
 		`"attributesToRetrieve":["id"],"cropLength":5000,"cropMarker":"...","facets":["type"],"highlightPreTag":"<b>",` +
@@ -147,10 +142,6 @@ func TestFacetDropsStrippedKeys(t *testing.T) {
 	call := req.Call(ViewerOf(Session{}))
 	if want := `{"q":"","facetName":"type","facetQuery":"lo","filter":"a = 1"}`; string(call.Body) != want {
 		t.Errorf("call body\n got %s\nwant %s", call.Body, want)
-	}
-	// On the search route the same values are zod's to refuse.
-	if _, err := ParseBody(RouteSearch, ToolsIndex, []byte(`{"hitsPerPage":-1}`)); fallback.Reason(err) != "search-input-invalid" {
-		t.Errorf("search route, hitsPerPage -1: %v, want search-input-invalid", err)
 	}
 }
 
