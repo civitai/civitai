@@ -10,6 +10,7 @@ import {
   csamCaseCleanupSql,
 } from '../../../../packages/civitai-shared/src/__tests__/csam-restriction-cases';
 import { POST_PENDING_DELETE_REASON } from '@civitai/db-queries/content-deletion';
+import { serverCopyTablesSql } from '@civitai/db-queries/test/image-uses';
 import {
   CSAM_REPORT_LISTED_IMAGE_IDS_SQL,
   heldImageSql,
@@ -775,6 +776,7 @@ describe('getOwnRetractedMedia', () => {
       CREATE TABLE IF NOT EXISTS "ServiceDealReviewImage" ("reviewId" int NOT NULL, "imageId" int NOT NULL UNIQUE, "sourceFileId" int);
       CREATE TABLE IF NOT EXISTS "ServiceDealFile" (id serial PRIMARY KEY, "imageId" int);
       CREATE TABLE IF NOT EXISTS "ServiceDealFileEntry" (id serial PRIMARY KEY, "fileId" int, "imageId" int);
+      ${serverCopyTablesSql};
       INSERT INTO "Image" (id, url, ingestion, "blockedFor", "userId") VALUES
         (900, 'key-900', 'Blocked', 'moderated', 1400),
         (901, 'key-900', 'Blocked', 'CSAM', 1401),

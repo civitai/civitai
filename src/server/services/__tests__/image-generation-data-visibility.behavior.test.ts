@@ -1,3 +1,4 @@
+import { serverCopyTablesSql } from '@civitai/db-queries/test/image-uses';
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -96,6 +97,8 @@ beforeAll(async () => {
       id serial PRIMARY KEY, "collectionId" int NOT NULL, "imageId" int, "addedById" int,
       status text NOT NULL
     );
+    ${serverCopyTablesSql};
+    ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS url text;
   `);
   const raw = pgliteRaw(db);
   // Tagged-template calls, and `managesPostCollection`'s single prebuilt `Prisma.sql` argument.

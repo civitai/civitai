@@ -1,3 +1,4 @@
+import { serverCopyTablesSql } from '@civitai/db-queries/test/image-uses';
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
@@ -123,6 +124,8 @@ beforeAll(async () => {
       (${MINOR_XXX}, ${OWNER}, 1, 5, 16, true),
       (${ALL_FLAGGED_IMAGES[0]}, ${OWNER}, 2, 0, 4, true),
       (${ALL_FLAGGED_IMAGES[1]}, ${OWNER}, 2, 1, 8, true);
+    ${serverCopyTablesSql};
+    ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS url text;
   `);
   // Typed integer parameters, as Prisma binds them: `unnest(ARRAY[$1])` is text otherwise.
   (dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockImplementation(
