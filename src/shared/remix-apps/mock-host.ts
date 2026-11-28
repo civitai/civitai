@@ -28,10 +28,12 @@ export function firstAnswer(spec: RemixAsk): RemixAnswer {
   return 'remix';
 }
 
+export const MOCK_IMAGE_URL_PREFIX = 'mock://remix/';
+
 /** Placeholder outputs shaped like the real ones: as many images, at the size they would be. */
 export function mockResult(request: RemixWorkflowRequest, step: number): RemixWorkflowResult {
   const image = (i: number, width?: number, height?: number): RemixImage => ({
-    url: `mock://remix/${step}/${i}`,
+    url: `${MOCK_IMAGE_URL_PREFIX}${step}/${i}`,
     // A size the app chose can be any number.
     width: remixLogSize(width),
     height: remixLogSize(height),
