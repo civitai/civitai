@@ -81,6 +81,13 @@ export function baseModelMakesMediaType(baseModel: string, mediaType: MediaType)
 export const getCrucibleModelMediaTypes = (contentType: MediaType): MediaType[] =>
   contentType === MediaType.video ? [MediaType.video, MediaType.audio] : [contentType];
 
+/** A music crucible's model: makes audio but not video. "Other" passes both checks, so it is not one. */
+export const isCrucibleTrackModel = (contentType: MediaType, baseModel?: string) =>
+  contentType === MediaType.video &&
+  baseModel !== undefined &&
+  baseModelMakesMediaType(baseModel, MediaType.audio) &&
+  !baseModelMakesMediaType(baseModel, MediaType.video);
+
 /** "images", "videos or audio": audio has no plural. */
 export const formatMediaTypesNoun = (mediaTypes: MediaType[]) =>
   mediaTypes

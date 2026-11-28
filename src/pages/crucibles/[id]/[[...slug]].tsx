@@ -42,6 +42,7 @@ import {
   CRUCIBLE_PRIZE_BUZZ_TYPE,
   areCrucibleEntriesClosed,
   getCrucibleEntriesCloseAt,
+  isCrucibleTrackModel,
 } from '~/utils/crucible-helpers';
 import { Flags } from '~/shared/utils/flags';
 import type { CrucibleBuzzType } from '~/components/Crucible/crucible-create-form';
@@ -893,15 +894,15 @@ function CrucibleReviewNotice({
   );
 }
 
-function useGeneratableVersionIds(versionIds: number[]) {
+function useGeneratableVersions(versionIds: number[]) {
   const { data: resources } = trpc.generation.getResourceDataByIds.useQuery(
     { ids: versionIds },
     { enabled: versionIds.length > 0 }
   );
-  return new Set(
+  return new Map(
     resources
       ?.filter((resource) => resource.canGenerate || resource.substitute?.canGenerate)
-      .map((resource) => resource.id)
+      .map((resource) => [resource.id, resource.baseModel])
   );
 }
 
@@ -913,19 +914,30 @@ function GenerateEntryButton({
   contentType: MediaType;
   requiredVersionIds: number[];
 }) {
-  const generatable = useGeneratableVersionIds(requiredVersionIds);
+  const generatable = useGeneratableVersions(requiredVersionIds);
   const generatableIds = requiredVersionIds.filter((id) => generatable.has(id));
   if (requiredVersionIds.length > 0 && !generatableIds.length) return null;
 
-  return (
+  // The generator takes its mode from the preselected (first) model, so that model picks the label.
+  const isTrack = isCrucibleTrackModel(contentType, generatable.get(generatableIds[0]));
+  const button = (
     <Button
       variant="filled"
       fullWidth
       leftSection={<IconBrush size={16} />}
       onClick={() => openCrucibleGenerator(contentType, generatableIds)}
     >
-      Generate an entry
+      {isTrack ? 'Make your track' : 'Generate an entry'}
     </Button>
+  );
+  if (!isTrack) return button;
+  return (
+    <div>
+      {button}
+      <Text size="xs" c="dimmed" ta="center" mt={4}>
+        Then post a video of it and add the model with + Resource.
+      </Text>
+    </div>
   );
 }
 
@@ -1030,7 +1042,7 @@ function EligibleModelsPanel({
     id: crucibleId,
     browsingLevel,
   });
-  const generatable = useGeneratableVersionIds(versionIds);
+  const generatable = useGeneratableVersions(versionIds);
   const missing = isLoading ? 0 : versionIds.length - models.length;
 
   return (
