@@ -391,8 +391,8 @@ describe("retryArticleErrorImages, the reconcile job's retry round", () => {
     expect(await requeued()).toEqual([FAILED.id]);
   });
 
-  // Ruled by the Moderation Lead: an image with no file behind it never keeps an article hidden;
-  // a stored one keeps blocking until it scans clean.
+  // civitai/civitai#10722: an image with no file behind it never keeps an article hidden; a stored
+  // one keeps blocking until it scans clean.
   describe('an Error image whose file is gone', () => {
     const GONE = image(33, { ingestion: 'Error' });
     const gone =
@@ -400,7 +400,7 @@ describe("retryArticleErrorImages, the reconcile job's retry round", () => {
       async () =>
         new Set(ids);
 
-    // Kills: re-queueing every Error image (the code before this change; RED on main).
+    // Kills: re-queueing every Error image.
     it('is set NotFound instead of being sent to scan again', async () => {
       storeImages({ connected: [GONE, FAILED] });
 

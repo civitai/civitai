@@ -64,8 +64,9 @@ const PROBE_CONCURRENCY = 4;
 /** The ids among `images` whose file is confirmed gone (`isConfirmedAbsent`). A failed lookup confirms none. */
 export async function findAbsentImages(
   images: { id: number; url: string }[],
-  deps: AbsentImageDeps = defaultDeps
+  overrides: Partial<AbsentImageDeps> = {}
 ) {
+  const deps = { ...defaultDeps, ...overrides };
   const absent = new Set<number>();
   const probeable = images.filter((image) => isProbeableMediaKey(image.url));
   if (!probeable.length) return absent;
