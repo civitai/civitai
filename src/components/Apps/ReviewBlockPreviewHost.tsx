@@ -25,8 +25,11 @@ import { trpc } from '~/utils/trpc';
  *      self-bound to the mod, render-only scope-stripped, forced-SFW, synthetic
  *      non-resolving ids, short TTL). See the router + publish-request.service.
  *   2. SANDBOX — `trustTier` is FORCED to `'unverified'` regardless of the
- *      manifest's declared tier, so `intersectSandbox` drops `allow-same-origin`
- *      → the iframe runs at an OPAQUE origin (the C1 self-escalation defense).
+ *      manifest's declared tier, and the page host is mounted with `reviewMode`,
+ *      which `mayGrantSameOrigin` refuses even with `appBlocksSameOriginFrames` on;
+ *      a `review-<sha16>` host is refused by name too. So `intersectSandbox` drops
+ *      `allow-same-origin` → the iframe runs at an OPAQUE origin (the C1
+ *      self-escalation defense).
  *      PageBlockHost derives its opaque postMessage transport from that same
  *      sandbox string internally (usePostMessage), so BLOCK_INIT is posted with
  *      `targetOrigin:'*'` and inbound `origin:'null'` is accepted — the exact path
@@ -261,7 +264,8 @@ export function ReviewBlockPreviewHost({
         // review block can't open a popup or trigger a download aimed at the mod's
         // tab. Keeps allow-scripts (+ allow-forms if declared).
         sandbox={clampReviewSandbox(mintData.sandbox)}
-        // FORCED unverified → opaque origin (drops allow-same-origin). C1 defense.
+        // FORCED unverified, plus `reviewMode` below → opaque origin (no allow-same-origin,
+        // whatever the viewer's flags). C1 defense.
         trustTier="unverified"
         slug={slug}
         token={mintData.token}

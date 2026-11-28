@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useMemo, useState } from 'react';
+import type { AppFrameDomains } from '~/shared/constants/app-frame-hosts.constants';
 import type { UserContentSettings } from '~/server/schema/user.schema';
 import type { UserSettingsChat } from '~/server/schema/chat.schema';
 import type { TosMeta } from '~/server/services/content.service';
@@ -61,6 +62,8 @@ type AppProviderProps = {
   domain: ColorDomain;
   host: string;
   serverDomains: ServerDomains;
+  /** App Block frame roots (`~/server/utils/app-frame-domains`); absent when the boot had no server props. */
+  appFrameDomains?: AppFrameDomains;
   availableOAuthProviders: string[];
   verifiedBot: VerifiedBot | null;
   // Whether the request is from a logged-in user (`!!session || hasAuthCookie`,
@@ -91,6 +94,8 @@ type AppContext = {
   domain: Record<ColorDomain, boolean>;
   host: string;
   serverDomains: ServerDomains;
+  /** Read only through `useAppFrameOriginPolicy`. */
+  appFrameDomains?: AppFrameDomains;
   availableOAuthProviders: string[];
   verifiedBot: VerifiedBot | null;
   announcements?: AnnouncementsSeed;
@@ -146,6 +151,7 @@ export function AppProvider({
   domain,
   host,
   serverDomains,
+  appFrameDomains,
   availableOAuthProviders,
   verifiedBot,
   isAuthed,
@@ -214,6 +220,7 @@ export function AppProvider({
     },
     host,
     serverDomains,
+    appFrameDomains,
     availableOAuthProviders,
     verifiedBot,
     announcements: reviveAnnouncementsSeed(announcements),

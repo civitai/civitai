@@ -312,10 +312,56 @@ off for everyone): `app-blocks-post-creation` (`posts:write:self`),
 `app-blocks-app-reactions` (`social:react:self`; off refuses both reaction
 procedures at once). See `src/server/services/app-blocks-flag.ts`.
 
+## Frame origin and storage
+
+An app frame runs either at an OPAQUE origin (`'null'`: no localStorage,
+IndexedDB, SharedWorker or cookies; every attempt throws `SecurityError`) or at
+its REAL origin, `https://<slug>.<APPS_DOMAIN>` for a published app,
+`dev-<16 hex>.<APPS_DOMAIN>` for a dev tunnel, or its session host under
+`APP_ASSISTANT_PREVIEW_DOMAIN` for an App Assistant preview.
+
+- **Who gets a real origin:** see the sandbox bullet under "Threat model
+  highlights". For an unverified app it is the `appBlocksSameOriginFrames` flag
+  (Flipt `app-blocks-same-origin-frames`, created off), so a preview and the
+  published app behave alike for the same viewer. While the flag is off for a
+  viewer the frame stays opaque, so an app must tolerate storage being
+  unavailable. Use `app.storage` for anything that must persist.
+- **Partitioned:** browser storage (and any service worker) in the frame is
+  keyed by the app's origin AND the top-level site, so it is the app's own under
+  civitai.com and separate from the same app opened directly or under another
+  Civitai site.
+- **Not durable:** Safari may evict script-written storage after a period
+  without a visit; third-party cookies are unreliable in every browser (the
+  frame is cross-site to civitai.com).
+- **Previews lose it:** a dev tunnel or App Assistant preview host is minted per
+  session, so its storage is gone when the session ends.
+- **Service workers:** allowed. An app with a real origin may register a service
+  worker scoped to its own app origin, partitioned per app under civitai.com like
+  its storage. The platform cannot guarantee that a takedown or a new version
+  evicts an installed worker: a worker that serves fully from its cache keeps
+  running at its own origin until it updates itself. The intent is that Civitai
+  stops framing a taken-down app, so its worker is no longer reached from
+  civitai.com.
+- **Fixed per mount:** the host decides once when it mounts (a sandbox change
+  applies only when the frame navigates), so a flag change takes effect on the
+  next mount, not in a frame already loaded.
+
 ## Threat model highlights
 
 - **Iframe sandbox** is the primary isolation. Sandbox token allowlist is
-  trust-tier gated; `allow-same-origin` is internal-only.
+  trust-tier gated; a manifest can declare `allow-same-origin` only at the
+  `internal` tier. The HOST adds it (`mayGrantSameOrigin` in
+  `src/components/AppBlocks/sandbox.ts`, the one rule every host uses) for
+  `verified`/`internal`, and for `unverified` only with the viewer's
+  `appBlocksSameOriginFrames` flag on — and in every case only when
+  `iframe.src` is `https:`, has no port, and its host is the app's OWN frame
+  host: `<blockId>.<APPS_DOMAIN>`, a dev tunnel `dev-<16 hex>.<APPS_DOMAIN>`,
+  or an App Assistant preview session host under `APP_ASSISTANT_PREVIEW_DOMAIN`
+  (so an app is never framed at another app's origin). Never for a review host
+  (`review-<sha16>`, and every review mount is refused by `reviewMode` whatever
+  its host), never under a root on the embedding site. An unverified app that
+  declares an `apps:storage:shared:*` scope stays opaque even with the flag on
+  (GATE-2, `shared-content-safety.ts`). See "Frame origin and storage" below.
 - **CORS** on `/api/v1/block-tokens` is same-origin only (exact-host
   match). Block iframes never call this endpoint; the host page fetches
   and passes the token via `BLOCK_INIT`.

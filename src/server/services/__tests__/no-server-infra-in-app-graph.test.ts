@@ -171,6 +171,12 @@ const SERVER_ONLY_EDGES: { file: string; spec: string; reason: string }[] = [
   },
   {
     file: 'src/pages/_app.tsx',
+    spec: '~/server/utils/app-frame-domains',
+    reason:
+      'the App Block frame roots (APPS_DOMAIN, APP_ASSISTANT_PREVIEW_DOMAIN), read per server render; server-only because it reads the server env.',
+  },
+  {
+    file: 'src/pages/_app.tsx',
     spec: '~/server/utils/static-asset-cache',
     reason:
       'makes a page render on a static-asset Cache-Control rule path private; server-only because it writes a response header.',

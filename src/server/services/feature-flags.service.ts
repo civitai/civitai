@@ -989,6 +989,12 @@ const featureFlags = createFeatureFlags({
   // only on-switch + kill-switch. (Mirrors the `hiddenPrefsCompact` /
   // `genTabDeferView` `availability: []` precedent.)
   appBlocksAgenticReview: { availability: [], fliptKey: 'app-blocks-agentic-review' },
+  // UNVERIFIED App Block frames at a REAL origin (`allow-same-origin`), so an app can use
+  // localStorage, IndexedDB, SharedWorker and cookies. Read only by `useAppFrameOriginPolicy`;
+  // `mayGrantSameOrigin` (`~/components/AppBlocks/sandbox`) still requires an app-frame host
+  // (published, dev tunnel or App Assistant preview) and refuses review mounts. `[]`: dark for
+  // everyone, mods included, until the Flipt flag serves true.
+  appBlocksSameOriginFrames: { availability: [], fliptKey: 'app-blocks-same-origin-frames' },
   // The agent review's CONNECT lane: the `AgentReviewPanel` in the off-site review modal, for an
   // OAuth-connect listing request. `[]` for the `appBlocksAgenticReview` reason; the server half
   // is `isAppListingsAgenticReviewEnabled`, on the same key.

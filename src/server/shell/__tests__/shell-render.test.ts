@@ -361,6 +361,7 @@ describe('the /images/[imageId] shell is one object for every viewer and every U
   it('hands the client exactly the reviewed pageProps', () => {
     const allowlist = [
       'adsGated',
+      'appFrameDomains',
       'availableOAuthProviders',
       'browsingSettingsAddons',
       'canIndex',

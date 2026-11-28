@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { clampReviewSandbox, effectiveSandboxIsOpaque, intersectSandbox } from '../sandbox';
+import {
+  clampReviewSandbox,
+  effectiveSandboxIsOpaque,
+  intersectSandbox,
+  type AppFrameOriginPolicy,
+} from '../sandbox';
 
 /**
  * L-SANDBOX coverage. intersectSandbox derives the iframe `sandbox`
@@ -166,5 +171,202 @@ describe('effectiveSandboxIsOpaque (transport-mode derivation)', () => {
     expect(effectiveSandboxIsOpaque('allow-scripts allow-same-origin')).toBe(false);
     // word-boundary safe: a token that merely contains the substring is not a match
     expect(effectiveSandboxIsOpaque('allow-same-origin-ish')).toBe(true);
+  });
+});
+
+/**
+ * Same-origin app frames (`mayGrantSameOrigin`, through `intersectSandbox`'s `frame`).
+ *
+ * The first case is the REGRESSION: an unverified app on its canonical published host,
+ * with the viewer flag on, must run at a real origin (before this change it was always
+ * opaque, so SharedWorker / localStorage / IndexedDB failed with origin 'null').
+ *
+ * The INVARIANT cases pin the boundary of the grant. For `unverified` they are guards
+ * only: no such input got the token before the change either. For `verified`/`internal`
+ * they are NEW BEHAVIOUR, red on the pre-change code: those tiers used to get the token
+ * on any src, and now get it only on an app-frame host (when a policy exists).
+ */
+describe('intersectSandbox with a frame-origin policy', () => {
+  // Pairwise-distinct roots, neither of them on the embedder's site (`example.org`).
+  const APPS = 'apps-root.example';
+  const PREVIEW = 'preview-root.example.net';
+  const APP = 'my-app';
+  const DEV = 'dev-0123456789abcdef';
+  const SESSION = `s${'a'.repeat(61)}`;
+  const policy = (over: Partial<AppFrameOriginPolicy> = {}): AppFrameOriginPolicy => ({
+    appsDomain: APPS,
+    previewDomain: PREVIEW,
+    embedderHost: 'site.example.org',
+    unverifiedEnabled: true,
+    ...over,
+  });
+  const tokens = (
+    src: string | undefined,
+    trustTier: string,
+    p: AppFrameOriginPolicy | null = policy(),
+    extra: { reviewMode?: boolean; appLabel?: string; scopes?: string[] } = {}
+  ) =>
+    intersectSandbox('allow-forms', trustTier, {
+      src,
+      policy: p,
+      appLabel: 'appLabel' in extra ? extra.appLabel : APP,
+      scopes: extra.scopes,
+      reviewMode: extra.reviewMode,
+    }).split(/\s+/);
+
+  it('REGRESSION: unverified + flag on + its own published host → allow-same-origin', () => {
+    const out = tokens(`https://${APP}.${APPS}/`, 'unverified');
+    expect(out).toContain('allow-same-origin');
+    expect(out).toContain('allow-forms');
+    expect(effectiveSandboxIsOpaque(out.join(' '))).toBe(false);
+  });
+
+  it('unverified + flag on: dev tunnel and App Assistant preview hosts get it too', () => {
+    expect(tokens(`https://${DEV}.${APPS}/?dev=t`, 'unverified')).toContain('allow-same-origin');
+    expect(tokens(`https://${SESSION}.${PREVIEW}/`, 'unverified')).toContain('allow-same-origin');
+  });
+
+  it('INVARIANT: unverified never gets it with the flag off, or with no policy', () => {
+    const src = `https://${APP}.${APPS}/`;
+    expect(tokens(src, 'unverified', policy({ unverifiedEnabled: false }))).not.toContain(
+      'allow-same-origin'
+    );
+    expect(tokens(src, 'unverified', null)).not.toContain('allow-same-origin');
+    // Control in the same test: the same src with the flag on does get it.
+    expect(tokens(src, 'unverified')).toContain('allow-same-origin');
+  });
+
+  it('INVARIANT: unverified never gets it while declaring a shared-storage scope (GATE-2)', () => {
+    const src = `https://${APP}.${APPS}/`;
+    expect(
+      tokens(src, 'unverified', policy(), { scopes: ['apps:storage', 'apps:storage:shared:read'] })
+    ).not.toContain('allow-same-origin');
+    // Control: other storage scopes do not block it.
+    expect(
+      tokens(src, 'unverified', policy(), { scopes: ['apps:storage', 'apps:storage:publish'] })
+    ).toContain('allow-same-origin');
+  });
+
+  const NEVER: Array<[string, string]> = [
+    ['the embedding site', 'https://site.example.org/apps/run/my-app'],
+    ['a subdomain of the embedding site', `https://${APP}.site.example.org/`],
+    ['another app’s published host', `https://other-app.${APPS}/`],
+    ['its own label under the preview root', `https://${APP}.${PREVIEW}/`],
+    ['a session label under the apps root', `https://${SESSION}.${APPS}/`],
+    ['a dev label under the preview root', `https://${DEV}.${PREVIEW}/`],
+    ['a malformed dev label', `https://dev-0123.${APPS}/`],
+    ['plain http', `http://${APP}.${APPS}/`],
+    ['an explicit port', `https://${APP}.${APPS}:8443/`],
+    ['credentials in the URL', `https://u:p@${APP}.${APPS}/`],
+    ['the root itself', `https://${APPS}/`],
+    ['two labels deep', `https://a.${APP}.${APPS}/`],
+    // `<app>x<root>`: dropping the dot from the suffix test would read the label as `<app>`.
+    ['a lookalike without the dot', `https://${APP}x${APPS}/`],
+    ['the root as a left-hand label', `https://${APPS}.evil.example/`],
+    ['a trailing-dot host', `https://${APP}.${APPS}./`],
+    ['an empty label (URL keeps a leading dot)', `https://.${APPS}/`],
+    ['a relative src', '/apps/my-app/'],
+    ['an unparseable src', 'not a url'],
+    ['no src', ''],
+  ];
+
+  for (const [name, src] of NEVER) {
+    it(`INVARIANT: never for ${name}, at any tier`, () => {
+      for (const tier of ['unverified', 'verified', 'internal']) {
+        expect(tokens(src, tier), `${tier} ${src}`).not.toContain('allow-same-origin');
+      }
+    });
+  }
+
+  it('INVARIANT: a review host is refused even when it is the app label', () => {
+    const review = 'review-0123456789abcdef';
+    for (const tier of ['unverified', 'verified', 'internal']) {
+      expect(
+        tokens(`https://${review}.${APPS}/`, tier, policy(), { appLabel: review })
+      ).not.toContain('allow-same-origin');
+    }
+  });
+
+  it('INVARIANT: with no app label, only dev tunnel and preview hosts qualify', () => {
+    expect(
+      tokens(`https://${APP}.${APPS}/`, 'unverified', policy(), { appLabel: undefined })
+    ).not.toContain('allow-same-origin');
+    expect(
+      tokens(`https://${DEV}.${APPS}/`, 'unverified', policy(), { appLabel: undefined })
+    ).toContain('allow-same-origin');
+  });
+
+  it('the default port is normalised away by URL, so :443 is the canonical host', () => {
+    expect(new URL(`https://${APP}.${APPS}:443/`).port).toBe('');
+    expect(tokens(`https://${APP}.${APPS}:443/`, 'unverified')).toContain('allow-same-origin');
+  });
+
+  it('INVARIANT: an unknown embedding host grants nothing, at any tier', () => {
+    for (const tier of ['unverified', 'verified', 'internal']) {
+      expect(tokens(`https://${APP}.${APPS}/`, tier, policy({ embedderHost: '' }))).not.toContain(
+        'allow-same-origin'
+      );
+    }
+  });
+
+  it('INVARIANT: a root on the embedding site, or a parent of it, is ignored', () => {
+    // The embedder's site is `example.org`: the site itself, a root under it, and a root
+    // that is a parent of it are all refused, at every tier.
+    for (const root of ['example.org', 'apps.example.org', 'site.example.org']) {
+      const p = policy({ appsDomain: root, previewDomain: null });
+      for (const tier of ['unverified', 'verified', 'internal']) {
+        expect(tokens(`https://${APP}.${root}/`, tier, p), `${tier} ${root}`).not.toContain(
+          'allow-same-origin'
+        );
+      }
+    }
+    // A bare TLD is never a root.
+    expect(
+      tokens(`https://${APP}.example/`, 'unverified', policy({ appsDomain: 'example' }))
+    ).not.toContain('allow-same-origin');
+  });
+
+  it('INVARIANT: the embedding host is compared without its port', () => {
+    // A dev or preview host header carries a port; the site check must still see the site.
+    const p = policy({ appsDomain: 'apps.example.org', embedderHost: 'site.example.org:8443' });
+    expect(tokens(`https://${APP}.apps.example.org/`, 'unverified', p)).not.toContain(
+      'allow-same-origin'
+    );
+  });
+
+  it('a mixed-case src or app label is the same host (URL lowercases the host)', () => {
+    expect(tokens(`https://MY-APP.${APPS.toUpperCase()}/`, 'unverified')).toContain(
+      'allow-same-origin'
+    );
+    expect(
+      tokens(`https://${APP}.${APPS}/`, 'unverified', policy(), { appLabel: 'My-App' })
+    ).toContain('allow-same-origin');
+  });
+
+  it('INVARIANT: a review mount never gets it, whatever the host or tier', () => {
+    for (const tier of ['unverified', 'verified', 'internal']) {
+      expect(tokens(`https://${APP}.${APPS}/`, tier, policy(), { reviewMode: true })).not.toContain(
+        'allow-same-origin'
+      );
+    }
+  });
+
+  it('INVARIANT: verified/internal with a policy keep it only on their own frame host', () => {
+    for (const tier of ['verified', 'internal']) {
+      expect(tokens(`https://${APP}.${APPS}/`, tier)).toContain('allow-same-origin');
+      expect(tokens('https://elsewhere.example.com/', tier)).not.toContain('allow-same-origin');
+      // The trusted grant does not depend on the viewer flag, nor on the GATE-2 scope rule.
+      expect(
+        tokens(`https://${APP}.${APPS}/`, tier, policy({ unverifiedEnabled: false }), {
+          scopes: ['apps:storage:shared:read'],
+        })
+      ).toContain('allow-same-origin');
+    }
+  });
+
+  it('verified/internal with NO policy keep the token as before (no AppProvider above the host)', () => {
+    for (const tier of ['verified', 'internal']) {
+      expect(tokens('http://localhost:5173/', tier, null)).toContain('allow-same-origin');
+    }
   });
 });
