@@ -29,9 +29,14 @@ const NOT_QUEUED = 'This account is no longer in the strike review queue. Reload
 
 export const load: PageServerLoad = async ({ url, locals }) => {
   requireAccess(locals.user, url.pathname);
+  // The repeat-infringer section fails on its own: an error there must not take the muted-account
+  // queue down with it.
   const [{ rows, total }, repeatInfringers] = await Promise.all([
     getStrikeReviewQueue(),
-    getRepeatInfringerQueue(),
+    getRepeatInfringerQueue().catch((error: unknown) => {
+      console.error('repeat-infringer queue failed', error);
+      return null;
+    }),
   ]);
   return {
     rows,

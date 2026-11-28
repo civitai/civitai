@@ -1,7 +1,7 @@
 import { sql } from '@civitai/db/kysely';
 import { dbWrite } from './db';
 
-/** Repeat-infringer policy (option A): this many copyright removal events inside the window send the
+/** Repeat-infringer policy: this many copyright removal events inside the window send the
  *  account to a moderator's review. */
 export const REPEAT_INFRINGER_THRESHOLD = 3;
 export const REPEAT_INFRINGER_WINDOW_MONTHS = 12;
@@ -84,6 +84,10 @@ export async function getRepeatInfringerQueue(): Promise<{
       's.internalNotes',
     ])
     .where('s.reason', '=', 'Copyright')
+    // The same window the count uses, so the list shows what the badge counts.
+    .where(
+      sql<boolean>`s."createdAt" > now() - make_interval(months => ${REPEAT_INFRINGER_WINDOW_MONTHS})`
+    )
     .where(
       's.userId',
       'in',

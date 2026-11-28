@@ -45,11 +45,15 @@
       account page if that is the decision; either way, mark it reviewed with a note. A new removal
       after the review brings the account back.
     </p>
-    <p class="mt-1 text-xs text-dark-2">
-      {num(data.repeatInfringers.total)} account{data.repeatInfringers.total === 1 ? '' : 's'} waiting.
-    </p>
+    {#if data.repeatInfringers}
+      <p class="mt-1 text-xs text-dark-2">
+        {num(data.repeatInfringers.total)} account{data.repeatInfringers.total === 1 ? '' : 's'} waiting.
+      </p>
+    {/if}
   </header>
-  {#if data.repeatInfringers.rows.length === 0}
+  {#if !data.repeatInfringers}
+    <p class="text-sm text-red-300">The repeat-infringer queue could not be loaded. Reload to retry.</p>
+  {:else if data.repeatInfringers.rows.length === 0}
     <p class="text-sm text-dark-2">No accounts are waiting for repeat-infringer review.</p>
   {:else}
     {#each data.repeatInfringers.rows as row (row.userId)}

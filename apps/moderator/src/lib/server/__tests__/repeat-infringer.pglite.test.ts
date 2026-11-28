@@ -44,7 +44,7 @@ const {
   REPEAT_INFRINGER_THRESHOLD,
   REPEAT_INFRINGER_WINDOW_MONTHS,
 } = await import('../repeat-infringer.service');
-const { actions } = await import('../../../routes/users/strike-review/+page.server');
+const { actions, load } = await import('../../../routes/users/strike-review/+page.server');
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const MIGRATION = join(
@@ -58,6 +58,8 @@ CREATE TABLE "User" (
   "username" TEXT,
   "meta" JSONB,
   "muted" BOOLEAN NOT NULL DEFAULT FALSE,
+  "mutedAt" TIMESTAMP(3),
+  "muteExpiresAt" TIMESTAMP(3),
   "bannedAt" TIMESTAMP(3),
   "deletedAt" TIMESTAMP(3)
 );
@@ -71,7 +73,11 @@ CREATE TABLE "UserStrike" (
   "internalNotes" TEXT,
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now(),
   "expiresAt" TIMESTAMP(3) NOT NULL DEFAULT now() + interval '30 days',
-  "voidedAt" TIMESTAMP(3)
+  "voidedAt" TIMESTAMP(3),
+  "voidReason" TEXT,
+  "entityType" TEXT,
+  "entityId" INTEGER,
+  "issuedBy" INTEGER
 );
 `;
 
@@ -277,5 +283,55 @@ describe('repeat-infringer Reviewed action', () => {
 
     expect(result).toMatchObject({ status: 409 });
     expect(addUserNote).not.toHaveBeenCalled();
+  });
+});
+
+describe('strike review page load', () => {
+  it('still loads the muted-account queue when the repeat-infringer query fails', async () => {
+    await db.exec(`INSERT INTO "User" ("id", "username", "meta", "muted") VALUES
+      (5, 'muted', '{"strikeFlaggedForReview": true}', true)`);
+    await db.exec(
+      `INSERT INTO "UserStrike" ("userId", "reason", "points") VALUES (5, 'TOSViolation', 3)`
+    );
+    // Fail only the repeat-infringer queries (the ones that group by user), at execution, so the
+    // connection is released as it would be after a real database error.
+    const base = pgliteDialect(db);
+    dbHandle.current = new Kysely({
+      dialect: {
+        createAdapter: () => base.createAdapter(),
+        createIntrospector: (k) => base.createIntrospector(k),
+        createQueryCompiler: () => base.createQueryCompiler(),
+        createDriver: () => {
+          const driver = base.createDriver();
+          return {
+            init: () => driver.init(),
+            destroy: () => driver.destroy(),
+            beginTransaction: (c, s) => driver.beginTransaction(c, s),
+            commitTransaction: (c) => driver.commitTransaction(c),
+            rollbackTransaction: (c) => driver.rollbackTransaction(c),
+            releaseConnection: (c) => driver.releaseConnection(c),
+            acquireConnection: async () => {
+              const connection = await driver.acquireConnection();
+              return {
+                executeQuery: async (query) => {
+                  if (query.sql.includes('HAVING count')) throw new Error('boom');
+                  return connection.executeQuery(query);
+                },
+                streamQuery: (query, chunk) => connection.streamQuery(query, chunk),
+              };
+            },
+          };
+        },
+      },
+    });
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const data = (await load({
+      url: new URL('http://x/users/strike-review'),
+      locals: { user: { id: 42, username: 'mod42', roles: ['moderator:admin'] } },
+    } as never)) as { rows: { userId: number }[]; repeatInfringers: unknown };
+
+    expect(data.repeatInfringers).toBeNull();
+    expect(data.rows.map((r) => r.userId)).toEqual([5]);
   });
 });

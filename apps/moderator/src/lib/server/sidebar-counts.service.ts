@@ -239,9 +239,10 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     // Bounded until `User_strikeReview_idx` exists: without it this scans every muted account. The page
     // holds both queues, so the badge counts both.
     bounded(async () => {
+      // A failed repeat-infringer count must not drop the muted-account badge.
       const [review, repeat] = await Promise.all([
         countStrikeReview(),
-        countRepeatInfringerReview(),
+        countRepeatInfringerReview().catch(() => 0),
       ]);
       return review + repeat;
     }),

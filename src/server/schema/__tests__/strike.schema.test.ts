@@ -4,6 +4,7 @@ import { StrikeReason } from '~/shared/utils/prisma/enums';
 
 const base = { userId: 1, description: 'd' };
 
+// The 0-point Copyright strike: civitai/civitai#10736 (repeat-infringer review).
 describe('createStrikeSchema points', () => {
   it('accepts a 0-point Copyright strike, which records the removal without escalating', () => {
     const result = createStrikeSchema.safeParse({
