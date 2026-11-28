@@ -298,6 +298,17 @@ describe('setAssociatedResources model side', () => {
       expect(await remaining(107)).toEqual([MODELS.mature.id]);
     });
 
+    it('refuses an owner browsing at PG an R target', async () => {
+      const R_MODEL = 13;
+      await h.pg.query(
+        `INSERT INTO "Model" (id, name, "nsfwLevel", "userId", status, availability, poi, minor)
+         VALUES ($1, 'r', $2, $3, 'Published', 'Public', false, false)`,
+        [R_MODEL, NsfwLevel.R, ITEM_OWNER]
+      );
+      await expect(linkTo(R_MODEL, PG)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+      expect(await remaining(107)).not.toContain(R_MODEL);
+    });
+
     it.each(['private', 'unpublished', 'takenDown'] as const)(
       'refuses a %s model of another user',
       async (state) => {

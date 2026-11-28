@@ -352,6 +352,8 @@ describe("a moderator editing another user's model", () => {
   });
 });
 
+// Decided on civitai/civitai#10684: the list drops an article whose author blocked the viewer, as
+// article.getById does, and a save keeps it.
 describe('associated articles whose author blocked the viewer', () => {
   const BLOCKED_VIEWER = VIEWERS.stranger!.id!;
   const VIEWERS_MODEL = 500;
