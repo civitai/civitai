@@ -294,11 +294,7 @@ func parseRow(raw string) ([]string, error) {
 	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
 		return nil, errShape // trailing data
 	}
-	// A duplicate key is read by JSON.parse as its last value and by Go's map the same, but a
-	// duplicate `id` / `data` is no DTO any writer makes: refuse it rather than reason about it.
-	if dupKeys(raw) {
-		return nil, errShape
-	}
+	// A repeated key: JSON.parse and Go's map decode both keep the last value.
 	id, hasID := obj["id"]
 	present := hasID && !bytes.Equal(bytes.TrimSpace(id), []byte("null"))
 	data := []string{}
@@ -322,29 +318,4 @@ func parseRow(raw string) ([]string, error) {
 		return nil, nil
 	}
 	return data, nil
-}
-
-// dupKeys reports whether the top-level object repeats a key.
-func dupKeys(raw string) bool {
-	dec := json.NewDecoder(strings.NewReader(raw))
-	if t, err := dec.Token(); err != nil || t != json.Delim('{') {
-		return true
-	}
-	seen := map[string]bool{}
-	for dec.More() {
-		t, err := dec.Token()
-		if err != nil {
-			return true
-		}
-		k, _ := t.(string)
-		if seen[k] {
-			return true
-		}
-		seen[k] = true
-		var skip json.RawMessage
-		if err := dec.Decode(&skip); err != nil {
-			return true
-		}
-	}
-	return false
 }

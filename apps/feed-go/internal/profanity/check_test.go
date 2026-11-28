@@ -30,7 +30,7 @@ func TestParseRow(t *testing.T) {
 		{raw: `["a"]`, shape: true},
 		{raw: `null`, shape: true},
 		{raw: `{"id":1,"data":[]} x`, shape: true},
-		{raw: `{"id":1,"data":[],"data":["a"]}`, shape: true},
+		{raw: `{"id":1,"data":[],"data":["a"]}`, want: []string{"a"}}, // last wins, as in JSON.parse
 		{raw: `{"id":1,`, shape: true},
 	} {
 		got, err := parseRow(c.raw)
