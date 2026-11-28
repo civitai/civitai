@@ -3979,11 +3979,12 @@ handed back, `bearer-token`), so `skipped_credential` does not occur in practice
   values: an unbounded label, and index values in the log).
 - **Classification** (`ClassifySearch` on two bodies, `classifySearchBodies`): `match`;
   `membership` when the hits differ as a set (by `id`; a facet search's `facetHits` by `value`; per
-  multi-search result) or the hits are the same and every difference is in a member describing the
-  call or the matched set (the echoed `query` / `limit` / `offset` / `page` / `hitsPerPage` /
-  `indexUid` / `facetQuery`; `estimatedTotalHits`, `totalHits`, `totalPages`, `facetDistribution`,
-  `facetStats`, `facetHits.*.count`); `order` when the same hits come in another order; `fields` when
-  the same hits in the same order differ in a hit or another member. **Index churn is expected and
+  multi-search result) or the hits are the same and every difference is in a count over the matched
+  set (`estimatedTotalHits`, `totalHits`, `totalPages`, `facetDistribution`, `facetStats`,
+  `facetHits.*.count`); `order` when the same hits come in another order; `fields` when the same hits
+  in the same order differ in a hit or another member. The members the backend echoes from the call
+  (`query`, `limit`, `offset`, `page`, `hitsPerPage`, `indexUid`, `facetQuery`) are `fields`, never
+  `membership`: no churn moves them, so a difference there is the two ports sending different calls. **Index churn is expected and
   lands in these results**: a document indexed or removed between the two calls is `membership`, a
   re-rank `order`, a document updated between them (its stats) `fields` under that hit field's
   category. Read the replay's `membership` / `order` and its `hits.*.stats.*`-style categories as the
@@ -4000,9 +4001,20 @@ handed back, `bearer-token`), so `skipped_credential` does not occur in practice
   (the API request policy, the method check: answers Go would not have served) and the refund
   under-counts by one; a replay that timed out or broke after Node counted it is not refunded and
   over-counts by one. A request served at the window's last slot is Node's 429 on the replay
-  (`upstream_status`, refunded): the count Node saw included Go's own.
+  (`upstream_status`, refunded): the count Node saw included Go's own. While a replay is in flight
+  (until Node answers, at most the 10 s replay deadline) the window holds one extra count, so a real
+  request of that viewer at the last slot in that interval can be refused one slot early. A session
+  that changes between the serve and the replay (signed out in between) is counted by Node in the
+  other bucket while Go refunds the served one.
 - **Costs.** Each replay is Node CPU for the whole request (session, the search call, reshaping) and a
-  second search-backend query, at the serve-parity rate of the route's served volume.
+  second search-backend query, at the serve-parity rate of the route's served volume. The rate and
+  the 4 replay slots per pod are shared with the other replayed routes (no per-route rate): site
+  search answers a request per keystroke, so it is likely the busiest replayed route, and once it is
+  served its replays take slots the other routes' replays then find busy (`dropped_queue`). Before
+  serving search, read the other routes' `compared` per hour against the parity alert's 100-per-hour
+  guard and the backend's headroom at the current rate; a per-route rate is the follow-up if they
+  conflict. The replays also show in Node's own `/api/search` request metrics and error logs (only
+  the tRPC path leaves a replay out of its metrics).
 
 **Byte-level divergence**: values the rules do not touch are the backend's bytes; Node writes them with
 `JSON.stringify`. A JSON reader sees the same values, but an integral float the backend writes `5.0` is

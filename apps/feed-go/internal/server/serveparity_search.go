@@ -144,13 +144,14 @@ func cutFacetDistribution(category, path string) (string, string, bool) {
 	return c, p, true
 }
 
-// searchSetCategories are the members of a search answer that describe the call or the whole matched
-// set rather than one hit: the echoed call (`query`, `limit`, `offset`, `page`, `hitsPerPage`,
-// `indexUid`, `facetQuery`) and the counts over every match (`estimatedTotalHits`, `totalHits`,
-// `totalPages`, `facetDistribution`, `facetStats`; a facet search's `facetHits.*.count`). Each is
-// matched at the top level and in each multi-search result.
+// searchSetCategories are the members of a search answer that count the whole matched set rather
+// than describe one hit, so index churn between the two backend calls moves them with the same page of
+// hits: `estimatedTotalHits`, `totalHits`, `totalPages`, `facetDistribution`, `facetStats`, a facet
+// search's `facetHits.*.count`. Each is matched at the top level and in each multi-search result. The
+// members the backend ECHOES from the call (`query`, `limit`, `offset`, `page`, `hitsPerPage`,
+// `indexUid`, `facetQuery`) are deliberately not here: no churn changes them, so a difference there is
+// the two ports sending different calls, and it is `fields`, never read as the churn floor.
 var searchSetCategories = []string{
-	"query", "limit", "offset", "page", "hitsPerPage", "indexUid", "facetQuery",
 	"estimatedTotalHits", "totalHits", "totalPages", "facetDistribution", "facetStats", "facetHits.*.count",
 }
 
@@ -173,13 +174,14 @@ func searchSetCategory(category string) bool {
 //
 //   - `match`: no difference (CompareSearch).
 //   - `membership`: the hits differ as a set (keyed by `id`; a facet search's `facetHits` by `value`;
-//     a multi-search's per result), or the hits are the same and every difference is in a member
-//     that describes the call or the matched set (searchSetCategories: the echoed query, the counts).
-//     Index churn between the two calls lands here, as does a call that differs.
+//     a multi-search's per result), or the hits are the same and every difference is in a count over
+//     the matched set (searchSetCategories). Index churn between the two calls lands here (as does a
+//     call that differs enough to change the hits).
 //   - `order`: the same hits in another order (a re-rank between the calls, or a different sort).
-//   - `fields`: the same hits in the same order, and a hit (or another member) differs: the shaping,
-//     or a hit document updated between the two calls (its stats, say), which the bodies cannot tell
-//     apart. feed_go_shadow_field_diffs_total's category names which.
+//   - `fields`: the same hits in the same order, and a hit or another member differs: the shaping, a
+//     member the backend echoes from the call (`query`, `limit`, …: the calls differ), or a hit document
+//     updated between the two calls (its stats, say), which the bodies cannot tell apart.
+//     feed_go_shadow_field_diffs_total's category names which.
 func classifySearchBodies(r *shadow.Report, goBody, nodeBody []byte) string {
 	if r.Match {
 		return "match"

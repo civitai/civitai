@@ -188,7 +188,8 @@ func TestServeParitySearchReplaysToTheSearchApp(t *testing.T) {
 // A served search stays counted ONCE in the viewer's rate-limit window, however the replay ends. Node
 // counts the replay in the same window before it answers (searchNode with rate set); Go refunds one
 // count when Node answered it itself (its 200, or its 429 at the window's last slot, which Node also
-// counted), and nothing when the proxy could not reach Node (its empty 502: Node counted nothing).
+// counted; its own 502, which has a body), and nothing when the proxy could not reach Node (its
+// empty 502: Node counted nothing).
 // A request Go could not count (its store failed open) is refunded nothing: Node's count is its one.
 func TestServeParitySearchCountsTheRequestOnce(t *testing.T) {
 	signedIn, err := auth.SessionUserFrom(7, map[string]any{"id": int64(7)})
@@ -211,6 +212,8 @@ func TestServeParitySearchCountsTheRequestOnce(t *testing.T) {
 		{"Node answers a signed-in viewer", signedIn, "site-search:rate-limit:user:7", http.StatusOK, searchToolsHits, 0, false, true, ParityCompared, 1},
 		{"Node's 429 at the last slot", nil, searchIPKey, http.StatusTooManyRequests, `{"code":"too_many_requests"}`, searchRateIPMax - 1, false, true, ParityUpstreamStatus, searchRateIPMax},
 		{"Node unreachable", nil, searchIPKey, http.StatusBadGateway, "", 0, false, false, ParityUpstreamError, 1},
+		// Node's own 502 carries a body: Node answered (and counted it), so it is refunded.
+		{"Node's own 502", nil, searchIPKey, http.StatusBadGateway, `{"error":"x"}`, 0, false, true, ParityUpstreamStatus, 1},
 		{"Go's store failed open", nil, searchIPKey, http.StatusOK, searchToolsHits, 0, true, true, ParityCompared, 1},
 	}
 	for _, tc := range cases {
@@ -352,6 +355,11 @@ func TestCompareSearchBodies(t *testing.T) {
 		{"same hits, the count and a hit's field", `{"hits":[{"id":1,"name":"a"}],"estimatedTotalHits":1}`,
 			`{"hits":[{"id":1,"name":"b"}],"estimatedTotalHits":2}`, "fields", []string{"estimatedTotalHits", "hits.*.name"}},
 		{"an extra member", `{"hits":[]}`, `{"hits":[],"extra":1}`, "fields", []string{"extra"}},
+		// An echoed call member differs only when the two ports sent different calls: never churn.
+		{"the echoed limit, same hits", `{"hits":[{"id":1}],"limit":21,"estimatedTotalHits":1}`,
+			`{"hits":[{"id":1}],"limit":20,"estimatedTotalHits":1}`, "fields", []string{"limit"}},
+		{"a result's echoed query, same hits", `{"results":[{"indexUid":"a","hits":[{"id":1}],"query":"u"}]}`,
+			`{"results":[{"indexUid":"a","hits":[{"id":1}],"query":"t"}]}`, "fields", []string{"results.*.query"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
