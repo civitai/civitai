@@ -430,6 +430,7 @@ export async function retryErrorArticles(now: Date, deps: ErrorRetryDeps = error
     left: 0,
     rounds: 0,
     images: 0,
+    gone: 0,
     texts: 0,
     deferred: 0,
     exhausted: 0,
@@ -490,8 +491,12 @@ export async function retryErrorArticles(now: Date, deps: ErrorRetryDeps = error
         counts.deferred++;
         continue;
       }
-      imageBudget -= images.sent;
+      // Images set NotFound were probed, so they spend the tick's budget like those sent.
+      imageBudget -= images.sent + images.gone;
       counts.images += images.sent;
+      counts.gone += images.gone;
+      // A NotFound image no longer hides the article; one left with no other problem goes public now.
+      if (images.gone) await deps.recomputeAndRead(id);
 
       const moderation = articleHasText(article.title, article.content)
         ? await deps.readTextCheck(id)
@@ -516,7 +521,7 @@ export async function retryErrorArticles(now: Date, deps: ErrorRetryDeps = error
         action: 'error-retry-round',
         message: `round ${state.rounds + 1}: ${images.sent} image(s)${
           resendText ? ', text check' : ''
-        } sent again`,
+        } sent again${images.gone ? `; ${images.gone} missing image(s) set NotFound` : ''}`,
       });
     } catch (e) {
       counts.errors++;

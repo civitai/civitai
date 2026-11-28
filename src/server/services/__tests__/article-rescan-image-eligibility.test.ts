@@ -184,15 +184,20 @@ beforeEach(() => {
   dbMock.dbRead.imageConnection.findFirst.mockResolvedValue({ imageId: 1 } as never);
 });
 
+/** Ids an `updateManyAndReturn` set to `ingestion`. */
+const written = async (ingestion: string) => {
+  const { calls, results } = dbMock.dbWrite.image.updateManyAndReturn.mock;
+  const rows = await Promise.all(
+    results.filter((_, i) => calls[i][0]?.data.ingestion === ingestion).map((r) => r.value)
+  );
+  return rows.flatMap((set: { id: number }[]) => set.map(({ id }) => id));
+};
+
 /** Ids the rescan flipped to Rescan and the ids it sent to scan; both must agree. */
 const requeued = async () => {
   expect(dbMock.dbWrite.image.updateMany).not.toHaveBeenCalled();
   expect(dbMock.dbWrite.image.update).not.toHaveBeenCalled();
-  const flipped = (
-    await Promise.all(
-      dbMock.dbWrite.image.updateManyAndReturn.mock.results.map(({ value }) => value)
-    )
-  ).flatMap((rows: { id: number }[]) => rows.map(({ id }) => id));
+  const flipped = await written('Rescan');
   const sent = enqueueImageIngestion.mock.calls.flatMap(([arg]) =>
     arg.images.map((img: { id: number }) => img.id)
   );
@@ -351,6 +356,7 @@ describe("retryArticleErrorImages, the reconcile job's retry round", () => {
       includeNotFound: true,
       budget: 10,
       fullBudget: true,
+      absentImages: async () => new Set<number>(),
       ...over,
     });
 
@@ -358,14 +364,14 @@ describe("retryArticleErrorImages, the reconcile job's retry round", () => {
   it('never re-submits a failed image a moderator has yet to review', async () => {
     storeImages({ connected: [image(32, { ingestion: 'Error', needsReview: 'minor' })] });
 
-    expect(await retry()).toEqual({ sent: 0, deferred: false });
+    expect(await retry()).toEqual({ sent: 0, deferred: false, gone: 0 });
     expect(await requeued()).toEqual([]);
   });
 
   it('re-submits the same failed image once nothing awaits review', async () => {
     storeImages({ connected: [image(32, { ingestion: 'Error' })] });
 
-    expect(await retry()).toEqual({ sent: 1, deferred: false });
+    expect(await retry()).toEqual({ sent: 1, deferred: false, gone: 0 });
     expect(await requeued()).toEqual([32]);
   });
 
@@ -385,10 +391,84 @@ describe("retryArticleErrorImages, the reconcile job's retry round", () => {
     expect(await requeued()).toEqual([FAILED.id]);
   });
 
+  // civitai/civitai#10722: an image with no file behind it never keeps an article hidden; a stored
+  // one keeps blocking until it scans clean.
+  describe('an Error image whose file is gone', () => {
+    const GONE = image(33, { ingestion: 'Error' });
+    const gone =
+      (...ids: number[]) =>
+      async () =>
+        new Set(ids);
+
+    // Kills: re-queueing every Error image.
+    it('is set NotFound instead of being sent to scan again', async () => {
+      storeImages({ connected: [GONE, FAILED] });
+
+      expect(await retry({ absentImages: gone(GONE.id) })).toEqual({
+        sent: 1,
+        deferred: false,
+        gone: 1,
+      });
+      expect(await written('NotFound')).toEqual([GONE.id]);
+      expect(await requeued()).toEqual([FAILED.id]);
+    });
+
+    // Control. Kills: setting NotFound without a confirmed absence.
+    it('stays Error and is sent again while its file may still be stored', async () => {
+      storeImages({ connected: [GONE] });
+
+      expect(await retry()).toEqual({ sent: 1, deferred: false, gone: 0 });
+      expect(await written('NotFound')).toEqual([]);
+      expect(await requeued()).toEqual([GONE.id]);
+    });
+
+    // Kills: probing an image under review, which would then leave the retry's hands.
+    it('is never asked about while a moderator has yet to review it', async () => {
+      const absentImages = vi.fn(async () => new Set<number>());
+      storeImages({ connected: [image(34, { ingestion: 'Error', needsReview: 'minor' })] });
+
+      await retry({ absentImages });
+
+      expect(absentImages).toHaveBeenCalledWith([]);
+      expect(await written('NotFound')).toEqual([]);
+    });
+
+    // Kills: an unconditional NotFound write over a block that landed after the read.
+    it('stays as it is when it is blocked between the read and the write', async () => {
+      landedAfterRead[GONE.id] = { blockedFor: 'tos' };
+      storeImages({ connected: [GONE] });
+
+      expect(await retry({ absentImages: gone(GONE.id) })).toMatchObject({ gone: 0 });
+      expect(await written('NotFound')).toEqual([]);
+    });
+
+    // Kills: dropping the `ingestion: Error` guard, which would overwrite a scan that landed.
+    it('keeps a scan result that landed between the read and the write', async () => {
+      landedAfterRead[GONE.id] = { ingestion: 'Scanned' };
+      storeImages({ connected: [GONE] });
+
+      expect(await retry({ absentImages: gone(GONE.id) })).toMatchObject({ gone: 0 });
+    });
+
+    // Kills: probing a NotFound image again on the first round.
+    it('asks only about Error images', async () => {
+      const absentImages = vi.fn(async () => new Set<number>());
+      storeImages({ connected: [FAILED, MISSING] });
+
+      await retry({ absentImages });
+
+      expect(absentImages).toHaveBeenCalledWith([expect.objectContaining({ id: FAILED.id })]);
+    });
+  });
+
   it('sends nothing when the images exceed what is left of the tick', async () => {
     storeImages({ connected: [FAILED, MISSING] });
 
-    expect(await retry({ budget: 1, fullBudget: false })).toEqual({ sent: 0, deferred: true });
+    expect(await retry({ budget: 1, fullBudget: false })).toEqual({
+      sent: 0,
+      deferred: true,
+      gone: 0,
+    });
     expect(await requeued()).toEqual([]);
   });
 });

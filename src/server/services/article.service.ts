@@ -152,6 +152,7 @@ import { getFilesByEntity } from './file.service';
 import { articleContentJson } from '~/server/utils/article-content-json';
 import { getContentMedia } from '~/server/services/article-content-cleanup.service';
 import { isProbeableMediaKey } from '~/server/utils/created-image-media-probe';
+import { findAbsentImages } from '~/server/services/article-absent-images';
 import {
   assertContentLinkHoldWritable,
   classifyUnlinkedContentUrls,
@@ -3823,31 +3824,55 @@ async function rearmArticleImages(images: RescanImage[], articleUserId: number, 
  * One retry round for an article at ingestion Error: re-queues its Error images, and its NotFound
  * ones when `includeNotFound`. Sends nothing, and says `deferred`, when the eligible images exceed
  * `budget`, unless `budget` is the whole tick's (`fullBudget`), which then takes the first ones.
+ * An Error image whose file is confirmed gone (`findAbsentImages`) is set NotFound instead, since a
+ * scan of it can only fail again; `gone` counts them, and the caller recomputes the article.
  */
 export async function retryArticleErrorImages({
   article,
   includeNotFound,
   budget,
   fullBudget,
+  absentImages = findAbsentImages,
 }: {
   article: { id: number; userId: number; coverId: number | null; bannerId: number | null };
   includeNotFound: boolean;
   budget: number;
   fullBudget: boolean;
-}): Promise<{ sent: number; deferred: boolean }> {
+  absentImages?: (images: { id: number; url: string }[]) => Promise<Set<number>>;
+}): Promise<{ sent: number; deferred: boolean; gone: number }> {
   const failed = (await articleRescanCandidates(article)).filter(
     (image) =>
       (image.ingestion === ImageIngestionStatus.Error ||
         (includeNotFound && image.ingestion === ImageIngestionStatus.NotFound)) &&
       canRescanArticleImage(image, article.userId)
   );
-  if (failed.length > budget && !fullBudget) return { sent: 0, deferred: true };
+  if (failed.length > budget && !fullBudget) return { sent: 0, deferred: true, gone: 0 };
+  const batch = failed.slice(0, budget);
+  const absent = await absentImages(
+    batch.filter((image) => image.ingestion === ImageIngestionStatus.Error)
+  );
+  const gone = await markArticleImagesNotFound([...absent], article.userId);
   const sent = await rearmArticleImages(
-    failed.slice(0, budget),
+    batch.filter((image) => !absent.has(image.id)),
     article.userId,
     'article-ingestion-error-retry'
   );
-  return { sent: sent.length, deferred: false };
+  return { sent: sent.length, deferred: false, gone: gone.size };
+}
+
+/** Sets NotFound on the images still at Error and still eligible (`rescanArticleImageWhere`); returns the ids it set. */
+async function markArticleImagesNotFound(imageIds: number[], articleUserId: number) {
+  if (!imageIds.length) return new Set<number>();
+  const set = await dbWrite.image.updateManyAndReturn({
+    where: {
+      id: { in: imageIds },
+      ...rescanArticleImageWhere(articleUserId),
+      ingestion: ImageIngestionStatus.Error,
+    },
+    data: { ingestion: ImageIngestionStatus.NotFound },
+    select: { id: true },
+  });
+  return new Set(set.map(({ id }) => id));
 }
 
 /**
