@@ -4,14 +4,14 @@ const {
   mockDbWrite,
   mockUnblock,
   mockSysRedis,
-  mockResetNsfwLevel,
+  mockRerate,
   mockQueueSearchIndex,
   mockBustCachesForPosts,
 } = vi.hoisted(() => ({
   mockDbWrite: { $queryRaw: vi.fn(), $executeRaw: vi.fn() },
   mockUnblock: vi.fn(),
   mockSysRedis: { sAdd: vi.fn(), sMembers: vi.fn(), sRem: vi.fn() },
-  mockResetNsfwLevel: vi.fn(async () => undefined),
+  mockRerate: vi.fn(async () => undefined),
   mockQueueSearchIndex: vi.fn(async () => undefined),
   mockBustCachesForPosts: vi.fn(async () => undefined),
 }));
@@ -22,7 +22,7 @@ vi.mock('~/server/redis/client', () => ({
   REDIS_SYS_KEYS: { SYSTEM: { PENDING_IMAGE_RESTORES: 'system:pending-image-restores' } },
 }));
 vi.mock('~/server/services/image.service', () => ({
-  resetBlockedNsfwLevel: mockResetNsfwLevel,
+  rerateLiftedImages: mockRerate,
   queueImageSearchIndexUpdate: mockQueueSearchIndex,
 }));
 vi.mock('~/server/services/post.service', () => ({ bustCachesForPosts: mockBustCachesForPosts }));

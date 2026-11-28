@@ -612,8 +612,11 @@ export const liftedNeedsReviewSql = Prisma.sql`(CASE WHEN ${ownerDeletedSql} THE
 export const liftedBlockedForSql = Prisma.sql`(CASE WHEN ${ownerDeletedSql} THEN ${KEPT.blockedFor}::text END)`;
 /** `ingestion` for a lifted row. */
 export const liftedIngestionSql = Prisma.sql`(CASE WHEN ${ownerDeletedSql} THEN ${KEPT.ingestion} ELSE ${RECORDED.ingestion} END)::"ImageIngestionStatus"`;
-/** `nsfwLevel` for a lifted row: Blocked while it stays blocked, as the grace block sets it. */
-export const liftedNsfwLevelSql = Prisma.sql`(CASE WHEN ${ownerDeletedSql} THEN ${KEPT.nsfwLevel}::int ELSE "nsfwLevel" END)`;
+/** `nsfwLevel` for a lifted row: Blocked while it stays blocked, as the grace block sets it; a
+ *  restored row comes off Blocked here, in the lift itself, for the recompute after it to rate. */
+export const liftedNsfwLevelSql = Prisma.sql`(CASE WHEN ${ownerDeletedSql} THEN ${KEPT.nsfwLevel}::int WHEN "nsfwLevel" = ${NsfwLevel.Blocked} THEN 0 ELSE "nsfwLevel" END)`;
+/** `nsfwLevelLocked` for a lifted row: a block can leave the lock on, which the recompute skips. */
+export const liftedNsfwLevelLockedSql = Prisma.sql`(CASE WHEN NOT ${ownerDeletedSql} AND "nsfwLevel" = ${NsfwLevel.Blocked} THEN FALSE ELSE "nsfwLevelLocked" END)`;
 /** For RETURNING: the lifted row stayed blocked because its owner is deleted. */
 export const liftKeptBlockedSql = Prisma.sql`(ingestion = ${KEPT.ingestion}::"ImageIngestionStatus")`;
 

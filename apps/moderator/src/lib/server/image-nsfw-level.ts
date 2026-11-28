@@ -72,6 +72,12 @@ export async function updateImageNsfwLevel({
     .executeTakeFirst();
   if (Number(written.numUpdatedRows) === 0) {
     await assertNotWithheld([id], csamReview);
+    const stillThere = await dbWrite
+      .selectFrom('Image')
+      .select('id')
+      .where('id', '=', id)
+      .executeTakeFirst();
+    if (!stillThere) throw new Error('Image not found');
     throw new BlockedImageRatingError(id);
   }
   if (status) {
