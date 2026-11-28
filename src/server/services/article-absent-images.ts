@@ -10,13 +10,6 @@ import { outboundFetch } from '~/server/utils/fetch-timeout';
 
 export type EdgeVerdict = 'present' | 'absent' | 'unknown';
 
-/** What the image server's answer for an original says of it. Only a 404 says absent. */
-export function edgeVerdict(status: number): EdgeVerdict {
-  if (status === 404) return 'absent';
-  if (status === 200 || status === 206) return 'present';
-  return 'unknown';
-}
-
 /**
  * Whether an image's file is gone: the upload store answers absent, and the image server answers
  * 404 for a url it is not denying. A url it denies also answers 404 with the file stored, and a key
@@ -32,8 +25,11 @@ export function isConfirmedAbsent(answers: {
 
 const EDGE_PROBE_TIMEOUT_MS = 3000;
 
-async function probeEdge(key: string): Promise<EdgeVerdict> {
-  const url = getEdgeUrl(key, { original: true });
+/**
+ * What the image server answers for one byte of `url`. Only a 404 says absent; a 403, a 5xx, a
+ * timeout or a url that is not absolute says nothing.
+ */
+export async function probeEdgeUrl(url: string): Promise<EdgeVerdict> {
   if (!/^https?:\/\//.test(url)) return 'unknown';
   try {
     const res = await outboundFetch(url, {
@@ -41,7 +37,9 @@ async function probeEdge(key: string): Promise<EdgeVerdict> {
       timeoutMs: EDGE_PROBE_TIMEOUT_MS,
     });
     await res.body?.cancel();
-    return edgeVerdict(res.status);
+    if (res.status === 404) return 'absent';
+    if (res.status === 200 || res.status === 206) return 'present';
+    return 'unknown';
   } catch {
     return 'unknown';
   }
@@ -57,7 +55,7 @@ export type AbsentImageDeps = {
 const defaultDeps: AbsentImageDeps = {
   // Objects are stored under lowercase keys.
   probeStore: (key) => probeCreatedImageMedia(key.toLowerCase()),
-  probeEdge,
+  probeEdge: (key) => probeEdgeUrl(getEdgeUrl(key, { original: true })),
   deniedUrls: cdnStateUrls,
 };
 

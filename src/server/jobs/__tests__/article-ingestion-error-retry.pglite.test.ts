@@ -139,6 +139,20 @@ describe('the Error retry pass', () => {
     expect(recomputes(2)).toBe(1);
   });
 
+  // Kills: charging only the images sent, which lets one tick probe 200 images per article.
+  it('charges images set NotFound to the tick budget', async () => {
+    await seed(1, { enteredAt: ENTERED, rounds: 0 });
+    await seed(2, { enteredAt: ENTERED, rounds: 0 });
+    goneImages[1] = 150;
+    failing[2] = 100;
+
+    await retryErrorArticles(new Date(ENTERED + DAY), deps);
+
+    expect(retryImages).toHaveBeenLastCalledWith(
+      expect.objectContaining({ article: expect.objectContaining({ id: 2 }), budget: 50 })
+    );
+  });
+
   it('shares one image budget across a tick, deferring an article that does not fit', async () => {
     await seed(1, { enteredAt: ENTERED, rounds: 0 });
     await seed(2, { enteredAt: ENTERED, rounds: 0 });

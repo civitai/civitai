@@ -491,7 +491,8 @@ export async function retryErrorArticles(now: Date, deps: ErrorRetryDeps = error
         counts.deferred++;
         continue;
       }
-      imageBudget -= images.sent;
+      // Images set NotFound were probed, so they spend the tick's budget like those sent.
+      imageBudget -= images.sent + images.gone;
       counts.images += images.sent;
       counts.gone += images.gone;
       // A NotFound image no longer hides the article; one left with no other problem goes public now.

@@ -1,7 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  edgeVerdict,
   findAbsentImages,
+  probeEdgeUrl,
   type AbsentImageDeps,
 } from '~/server/services/article-absent-images';
 
@@ -73,17 +73,40 @@ describe('findAbsentImages: a file counts as gone only when both stores say so',
   });
 });
 
-describe('edgeVerdict', () => {
-  // Kills: `status >= 400` as absent, which would read a 403 or a 503 as a missing file.
-  it.each([
-    [404, 'absent'],
-    [200, 'present'],
-    [206, 'present'],
-    [403, 'unknown'],
-    [500, 'unknown'],
-    [503, 'unknown'],
-    [410, 'unknown'],
-  ])('reads %i as %s', (status, verdict) => {
-    expect(edgeVerdict(status)).toBe(verdict);
+describe('probeEdgeUrl: what the image server says of a file', () => {
+  const URL = `https://images.test/${KEY}/original=true`;
+  const answer = (status: number) =>
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status }));
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it('reads a 404 as absent, asking for one byte', async () => {
+    const fetch = answer(404);
+    expect(await probeEdgeUrl(URL)).toBe('absent');
+    expect(new Headers(fetch.mock.calls[0][1]?.headers).get('range')).toBe('bytes=0-0');
+  });
+
+  it.each([200, 206])('reads a %i as present', async (status) => {
+    answer(status);
+    expect(await probeEdgeUrl(URL)).toBe('present');
+  });
+
+  // Kills: `status >= 400` as absent, which would read a refusal or an outage as a missing file.
+  it.each([403, 503])('reads a %i as no answer', async (status) => {
+    answer(status);
+    expect(await probeEdgeUrl(URL)).toBe('unknown');
+  });
+
+  // Kills: a catch that answers absent, which would publish an article on a timeout.
+  it('reads a failed or timed-out request as no answer', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new DOMException('timeout', 'TimeoutError'));
+    expect(await probeEdgeUrl(URL)).toBe('unknown');
+  });
+
+  // Kills: probing a relative url (no image location configured), whose 404 is our own app's.
+  it('never asks when the url is not absolute', async () => {
+    const fetch = answer(404);
+    expect(await probeEdgeUrl(`/${KEY}/original=true`)).toBe('unknown');
+    expect(fetch).not.toHaveBeenCalled();
   });
 });
