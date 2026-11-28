@@ -18,8 +18,8 @@ const DOCS_ORIGIN = 'https://developer.civitai.com';
 const RATE_LIMIT = { keyName: 'apiKey:docsKey', rules: [{ limit: 10, period: 60 * 60 }] };
 
 /**
- * Mints a developer docs key for the signed-in user: read access plus generation, a daily Buzz
- * limit, a 30-day expiry, listed in Settings > API keys. GET stays while the docs move to POST.
+ * Mints a developer docs key for the signed-in user (docs-api-key.constants.ts). GET goes once the
+ * docs call this with POST (civitai/civitai#10723).
  */
 export default AuthedEndpoint(
   async function handler(req, res, user, session) {

@@ -64,6 +64,7 @@ export async function getUserApiKeys({
       createdAt: true,
       lastUsedAt: true,
       buzzLimit: true,
+      expiresAt: true,
     },
   });
   // The scope as a number: this is a tRPC response, whose scope fields stay JSON numbers.
