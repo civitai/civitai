@@ -422,6 +422,65 @@ describe('saving content whose stored url cannot be proved', () => {
   });
 });
 
+describe('content naming an existing row by url', () => {
+  const COPIES = {
+    'a review copy': (id: number) =>
+      q(`INSERT INTO "ServiceDealReviewImage" ("reviewId", "imageId") VALUES (1, $1)`, [id]),
+    "a deal file's copy": (id: number) =>
+      q(`INSERT INTO "ServiceDealFile" ("imageId") VALUES ($1)`, [id]),
+  };
+  const givenRow = async (userId: number) =>
+    (
+      await q<{ id: number }>(`INSERT INTO "Image" (url, "userId") VALUES ($1, $2) RETURNING id`, [
+        KEY,
+        userId,
+      ])
+    )[0].id;
+  const save = (storedContent: string | null) =>
+    assertArticleContentUrlsUsable({
+      content: CONTENT,
+      storedContent,
+      userId: AUTHOR,
+      ownerId: AUTHOR,
+    }).then(
+      () => 'accepted',
+      (e: { code?: string }) => e.code ?? e
+    );
+  const connected = async () =>
+    (await q<{ imageId: number }>(`SELECT "imageId" FROM "ImageConnection"`)).map((r) => r.imageId);
+
+  beforeEach(() => db.exec(`TRUNCATE "ServiceDealReviewImage", "ServiceDealFile"`));
+
+  it.each(Object.entries(COPIES))('refuses %s a save adds, and links no copy', async (_, mark) => {
+    const id = await givenRow(AUTHOR);
+    await mark(id);
+    expect(await save(null)).toBe('FORBIDDEN');
+    await link();
+    expect(await connected()).toEqual([]);
+    expect(await rows()).toEqual([KEY]);
+  });
+
+  it.each(Object.entries(COPIES))(
+    'accepts %s already stored, and still links no copy',
+    async (_, mark) => {
+      await mark(await givenRow(AUTHOR));
+      expect(await save(CONTENT)).toBe('accepted');
+      await link();
+      expect(await connected()).toEqual([]);
+    }
+  );
+
+  it.each([
+    ["the owner's own image", AUTHOR],
+    ["another user's ordinary image", OTHER],
+  ])('accepts and links %s', async (_, userId) => {
+    const id = await givenRow(userId);
+    expect(await save(null)).toBe('accepted');
+    await link();
+    expect(await connected()).toEqual([id]);
+  });
+});
+
 describe('settling a held article', () => {
   beforeEach(async () => {
     lookupsDown();
