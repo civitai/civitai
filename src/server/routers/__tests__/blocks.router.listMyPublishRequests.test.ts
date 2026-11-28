@@ -964,7 +964,8 @@ describe('listMyPublishRequests — staff submissions on the owner’s behalf', 
     const rows = await caller.listMyPublishRequests();
 
     expect(rows.map((r) => [r.id, r.staffSubmission])).toEqual([
-      ['req-staff', { staffUsername: 'mod-ana', platformUpdateId: UPDATE }],
+      // Never the staff member's username: the owner reads it as from CivitaiOfficial.
+      ['req-staff', { platformUpdateId: UPDATE }],
       ['req-own', null],
     ]);
   });

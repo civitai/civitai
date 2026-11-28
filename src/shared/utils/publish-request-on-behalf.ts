@@ -6,6 +6,8 @@
  * names the owner it was filed for.
  */
 
+import { APP_PLATFORM_UPDATE_SENDER } from '~/shared/constants/app-assistant.constants';
+
 export type OnBehalfRecord = {
   platformUpdateId: string;
   staffUserId: number | null;
@@ -54,19 +56,21 @@ export function readOnBehalf(fileSummary: unknown): OnBehalfRecord | null {
   };
 }
 
-/** What an owner-facing list carries for a staff submission: who filed it, and which update. */
-export type StaffSubmission = { staffUsername: string | null; platformUpdateId: string };
+/**
+ * What an owner-facing list carries for a staff submission: which update. Not the staff member:
+ * the owner reads it as from {@link APP_PLATFORM_UPDATE_SENDER} (operator decision); moderator
+ * views read the full record with {@link readOnBehalf}.
+ */
+export type StaffSubmission = { platformUpdateId: string };
 
 /** The list label's projection of a request's `fileSummary`, or `null` for an ordinary submit. */
 export function staffSubmissionOf(fileSummary: unknown): StaffSubmission | null {
   const rec = readOnBehalf(fileSummary);
-  return rec ? { staffUsername: rec.staffUsername, platformUpdateId: rec.platformUpdateId } : null;
+  return rec ? { platformUpdateId: rec.platformUpdateId } : null;
 }
 
 /** The label an owner-facing list shows beside a staff submission. */
-export function staffSubmissionLabel(s: StaffSubmission): string {
-  return `Staff submission by ${s.staffUsername ?? 'Civitai staff'} (platform update)`;
-}
+export const STAFF_SUBMISSION_LABEL = `Platform update submitted by ${APP_PLATFORM_UPDATE_SENDER}`;
 
 /**
  * What a copy of a staff on-behalf request records in place of its `onBehalf`

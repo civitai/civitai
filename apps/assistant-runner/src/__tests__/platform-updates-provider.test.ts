@@ -87,7 +87,7 @@ const UPDATE: PendingPlatformUpdate = {
   reason: 'Fix the storage call',
   touchesManifest: false,
   status: 'pending',
-  by: { username: 'staffer' },
+  by: { username: 'CivitaiOfficial (App Assistant)' },
   verified: true,
   files: [{ path: 'src/a.ts', operation: 'update', base: 'a0\n', update: 'a1\n' }],
 };
@@ -129,7 +129,7 @@ describe('platform updates as a reply opens', () => {
     expect(files.get('my-app/src/a.ts')).toBe('a1\n');
     expect(civitai.resolved).toEqual(['apu_1:merged']);
     expect(tools.instructions).toContain(
-      '["staffer (verified Civitai staff) updated your app: Fix the storage call","Changed: src/a.ts"]'
+      '["CivitaiOfficial (App Assistant) updated your app: Fix the storage call","Changed: src/a.ts"]'
     );
   });
 

@@ -134,6 +134,7 @@ import { FORGEJO_REVIEW_ORG } from '~/server/services/blocks/forgejo-orgs';
 import type { BuildAttemptSignals } from '~/shared/constants/app-block-build.constants';
 import type { ReviewStorageCleanupOutcome } from '~/server/metrics/app-block-runtime.metrics';
 import type { ApproveClaim } from '~/server/services/blocks/publish-request-holds.service';
+import { APP_PLATFORM_UPDATE_SENDER } from '~/shared/constants/app-assistant.constants';
 
 // dbRead/dbWrite/newUlid/bundle-s3 are dynamically imported inside the
 // functions that need them so the pure helpers (extract/diff) can be
@@ -286,10 +287,11 @@ export type SubmitVersionParams = {
  * is pending for the app: the owner cannot withdraw it, so it says what it is and when their own
  * submit can go through.
  */
-export function staffPendingSubmitRefusal(slug: string, staffUsername: string | null): string {
+export function staffPendingSubmitRefusal(slug: string): string {
+  // The owner reads it as from the official sender, never the staff member (operator decision).
   return (
     `slug ${slug} has a pending Civitai staff submission of a platform update by ` +
-    `${staffUsername ?? 'Civitai staff'}, under review; your submit can go through once it is ` +
+    `${APP_PLATFORM_UPDATE_SENDER}, under review; your submit can go through once it is ` +
     `reviewed`
   );
 }
@@ -1369,7 +1371,7 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     }
     // The owner cannot withdraw a staff submission, so say what it is and when theirs can go in.
     const staffPending = readOnBehalf(conflicting.fileSummary);
-    if (staffPending) throw new Error(staffPendingSubmitRefusal(slug, staffPending.staffUsername));
+    if (staffPending) throw new Error(staffPendingSubmitRefusal(slug));
     throw new Error(
       `slug ${slug} already has a pending submission from another user; wait for it to be reviewed before submitting a different bundle`
     );

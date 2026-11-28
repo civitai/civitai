@@ -63,6 +63,7 @@ import {
 import { newAppPlatformUpdateId } from '~/server/utils/app-block-ids';
 import { isVerifiedStaff } from '~/server/services/blocks/app-platform-update-shipped';
 import { latestApprovedCommitSha } from '~/server/services/blocks/latest-approved-build';
+import { APP_PLATFORM_UPDATE_SENDER } from '~/shared/constants/app-assistant.constants';
 
 // The switch lives in its own small module so the submit path can read it without loading this one.
 export { PLATFORM_UPDATES_FLAG, isPlatformUpdatesEnabled } from './app-platform-update-flag';
@@ -110,6 +111,11 @@ export type OwnerPlatformUpdate = {
    */
   touchesManifest: boolean;
   status: PlatformUpdateStatus;
+  /**
+   * `username` is {@link APP_PLATFORM_UPDATE_SENDER} for the owner when `verifiedStaff`, else
+   * `null`; never the staff member's own (operator decision). Only
+   * {@link listPlatformUpdatesForModerator} names the staff member.
+   */
   by: { username: string | null; verifiedStaff: boolean };
   /** ISO-8601. */
   createdAt: string;
@@ -121,6 +127,7 @@ export type OwnerPlatformUpdate = {
  * Never from commit text.
  */
 export function ownerView(row: UpdateRow): OwnerPlatformUpdate {
+  const verifiedStaff = isVerifiedStaff(row);
   return {
     id: row.id,
     branch: row.branch,
@@ -131,8 +138,10 @@ export function ownerView(row: UpdateRow): OwnerPlatformUpdate {
     touchesManifest: row.touchesManifest === true,
     status: row.status,
     by: {
-      username: row.staffUsername ?? null,
-      verifiedStaff: isVerifiedStaff(row),
+      // Only an update the server still trusts is named as from the official account; one whose
+      // author is no longer staff names nobody, so official credibility never rides on it.
+      username: verifiedStaff ? APP_PLATFORM_UPDATE_SENDER : null,
+      verifiedStaff,
     },
     createdAt: new Date(row.createdAt).toISOString(),
   };
@@ -345,7 +354,7 @@ export async function pushPlatformUpdate(args: {
 
   const { withSourceRepoLock } = await import('~/server/services/blocks/app-source-repo.service');
   const result = await withSourceRepoLock(app.slug, () =>
-    pushLocked({ ...args, reason, app, ownerUserId: app.ownerUserId!, byUsername: staff.username })
+    pushLocked({ ...args, reason, app, ownerUserId: app.ownerUserId! })
   );
   if (!result)
     throw new TRPCError({
@@ -389,7 +398,6 @@ async function pushLocked(args: {
   changes: PlatformUpdateChange[];
   app: ResolvedApp;
   ownerUserId: number;
-  byUsername: string | null;
 }): Promise<PushPlatformUpdateResult> {
   const { app } = args;
   const repo = await import('~/server/services/blocks/app-source-repo.service');
@@ -467,7 +475,8 @@ async function pushLocked(args: {
     message: platformUpdateCommitMessage({
       plan,
       updateId: id,
-      byUsername: args.byUsername,
+      // The owner reads the trailer in `git log`: the official sender, never the staff member.
+      byUsername: APP_PLATFORM_UPDATE_SENDER,
       reason: args.reason,
     }),
     author: PLATFORM_AUTHOR,
@@ -653,9 +662,14 @@ export async function listPlatformUpdatesForModerator(args: {
   const app = await resolveApp(args.app);
   if (!app) throw APP_NOT_FOUND();
   const rows = await readRows({ kind: 'all-for-app', appBlockId: app.id });
-  return (rows ?? []).map((r) => ({
-    ...ownerView(r),
-    staffUserId: r.staffUserId,
-    mergeCommitSha: r.mergeCommitSha,
-  }));
+  return (rows ?? []).map((r) => {
+    const view = ownerView(r);
+    return {
+      ...view,
+      // Staff see who pushed it; the owner's view says APP_PLATFORM_UPDATE_SENDER.
+      by: { ...view.by, username: r.staffUsername ?? null },
+      staffUserId: r.staffUserId,
+      mergeCommitSha: r.mergeCommitSha,
+    };
+  });
 }

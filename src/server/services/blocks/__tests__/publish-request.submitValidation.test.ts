@@ -766,7 +766,8 @@ describe('submitVersion — a staff submit on the owner’s behalf (platform upd
           submitterIsModerator: false,
         })
       ).rejects.toThrow(
-        'slug my-app has a pending Civitai staff submission of a platform update by mod-ana, ' +
+        'slug my-app has a pending Civitai staff submission of a platform update by ' +
+          'CivitaiOfficial (App Assistant), ' +
           'under review; your submit can go through once it is reviewed'
       );
       expect(db.createPublishRequest).not.toHaveBeenCalled();

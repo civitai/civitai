@@ -675,7 +675,8 @@ describe('push', () => {
           'Platform update: add src/sdk-shim.ts, update package.json\n\n' +
           'Bump @civitai/app-sdk to 2.4.0: the old floor stops working on Dec 1.\n\n' +
           `Platform-Update: ${result.id}\n` +
-          'Platform-Update-By: mod-ana\n' +
+          // The owner reads the trailer in `git log`: the official sender, not the staff member.
+          'Platform-Update-By: CivitaiOfficial (App Assistant)\n' +
           'Reason: Bump @civitai/app-sdk to 2.4.0: the old floor stops working on Dec 1.',
       },
     ]);
@@ -1154,7 +1155,8 @@ describe('the owner API', () => {
           : [{ path: 'PRIVACY.md', operation: 'create' }],
       touchesManifest: false,
       status: 'pending',
-      by: { username: 'mod-ana', verifiedStaff: true },
+      // The owner's view names the official sender, never the staff member (`mod-ana`).
+      by: { username: 'CivitaiOfficial (App Assistant)', verifiedStaff: true },
       createdAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
     }));
     expect(await caller(OWNER).listPending({ slug: SLUG })).toEqual({ updates: expected });
@@ -1221,7 +1223,10 @@ describe('🔴 "verified staff" comes from the record, never from commit text', 
     // Positive control: the real update's commit IS verified through the same call.
     expect(
       await caller(OWNER).verifyCommit({ slug: SLUG, commitSha: real.commitSha })
-    ).toMatchObject({ verified: true, update: { id: real.id, by: { username: 'mod-ana' } } });
+    ).toMatchObject({
+      verified: true,
+      update: { id: real.id, by: { username: 'CivitaiOfficial (App Assistant)' } },
+    });
   });
 
   it('a recorded update whose author is no longer a moderator is not verified', async () => {
@@ -1232,7 +1237,11 @@ describe('🔴 "verified staff" comes from the record, never from commit text', 
       await caller(OWNER).verifyCommit({ slug: SLUG, commitSha: pushed.commitSha })
     ).toMatchObject({
       verified: false,
-      update: { id: pushed.id, by: { username: 'ex-mod-bo', verifiedStaff: false } },
+      update: {
+        id: pushed.id,
+        // No longer staff: named as nobody, never as the official account.
+        by: { username: null, verifiedStaff: false },
+      },
     });
   });
 });
@@ -1262,7 +1271,11 @@ describe('verifyCommit answers false for an update that is no longer staff’s',
       await caller(OWNER).verifyCommit({ slug: SLUG, commitSha: pushed.commitSha })
     ).toMatchObject({
       verified: false,
-      update: { id: pushed.id, by: { username: 'ex-mod-bo', verifiedStaff: false } },
+      update: {
+        id: pushed.id,
+        // No longer staff: named as nobody, never as the official account.
+        by: { username: null, verifiedStaff: false },
+      },
     });
     expect((await caller(OWNER).listPending({ slug: SLUG })).updates[0].by.verifiedStaff).toBe(
       false
@@ -1349,10 +1362,13 @@ describe('supersede and modList (staff)', () => {
       code: 'FORBIDDEN',
     });
     const { updates } = await caller(MOD).modList({ slug: SLUG });
-    expect(updates.map((u) => [u.id, u.status, u.staffUserId, u.mergeCommitSha])).toEqual([
-      [c.id, 'pending', MOD, null],
-      [b.id, 'merged', EX_MOD, '9'.repeat(40)],
-      [a.id, 'superseded', MOD, null],
+    // Staff see the real staff member; only the owner's view says CivitaiOfficial (App Assistant).
+    expect(
+      updates.map((u) => [u.id, u.status, u.staffUserId, u.by.username, u.mergeCommitSha])
+    ).toEqual([
+      [c.id, 'pending', MOD, 'mod-ana', null],
+      [b.id, 'merged', EX_MOD, 'ex-mod-bo', '9'.repeat(40)],
+      [a.id, 'superseded', MOD, 'mod-ana', null],
     ]);
     flags.platformUpdates = false;
     expect(await caller(MOD).modList({ slug: SLUG })).toEqual({ updates: [] });

@@ -13,7 +13,9 @@ import { OWNER_SUBMISSIONS_URL } from '~/server/notifications/app-listing.notifi
 
 /**
  * The owner's notice of a staff platform update. Pinned as the whole string: the copy is the
- * product (who, that they are verified staff, why, and what happens next).
+ * product (who, why, and what happens next). Every type reads as from "CivitaiOfficial (App
+ * Assistant)", never the staff member's username the details still store (`mod-ana` below), so a
+ * row written before that decision renders the same way.
  */
 
 type Def = (typeof appPlatformUpdateNotifications)['app-platform-update'];
@@ -27,7 +29,7 @@ describe('app-platform-update', () => {
     expect(notificationProcessors['app-platform-update']).toBe(def);
   });
 
-  it('names the staff member, the app and the reason, and links the owner’s apps', () => {
+  it('is from CivitaiOfficial (App Assistant), not the stored staff username; names the app and the reason', () => {
     const details: AppPlatformUpdateNotificationDetails = {
       slug: 'pixel-garden',
       updateId: 'apu_01JABCDEFGHJKMNPQRSTVWXYZ0',
@@ -36,7 +38,7 @@ describe('app-platform-update', () => {
     };
     expect(def.prepareMessage(asNotification(details))).toEqual({
       message:
-        'mod-ana (verified Civitai staff) pushed an update to your app "pixel-garden": ' +
+        'CivitaiOfficial (App Assistant) pushed an update to your app "pixel-garden": ' +
         'Bump @civitai/app-sdk to 2.4.0. It is merged into your app the next time you pull it ' +
         'or open it in the App Assistant, if it applies cleanly.',
       url: OWNER_SUBMISSIONS_URL,
@@ -57,7 +59,7 @@ describe('app-platform-update', () => {
     };
     expect(def.prepareMessage(asNotification(details))).toEqual({
       message:
-        'mod-ana (verified Civitai staff) pushed an update to your app "pixel-garden": ' +
+        'CivitaiOfficial (App Assistant) pushed an update to your app "pixel-garden": ' +
         "Drop the unused storage scope. It changes your app's manifest or a storage hook, which " +
         'decide what your app is allowed to do. It is merged into your app the next time you ' +
         'pull it or open it in the App Assistant, if it applies cleanly.',
@@ -76,7 +78,7 @@ describe('app-platform-update-submitted', () => {
     expect(notificationProcessors['app-platform-update-submitted']).toBe(submitDef);
   });
 
-  it('names the staff member, the version, the app and the update, and links the owner’s apps', () => {
+  it('is from CivitaiOfficial (App Assistant), not the stored staff username; names the version, the app and the update', () => {
     const details: AppPlatformUpdateSubmittedNotificationDetails = {
       slug: 'pixel-garden',
       updateId: 'apu_01JABCDEFGHJKMNPQRSTVWXYZ0',
@@ -89,7 +91,7 @@ describe('app-platform-update-submitted', () => {
       submitDef.prepareMessage({ details } as unknown as Parameters<SubmitDef['prepareMessage']>[0])
     ).toEqual({
       message:
-        'mod-ana (verified Civitai staff) submitted version 1.2.1 of your app "pixel-garden" for ' +
+        'CivitaiOfficial (App Assistant) submitted version 1.2.1 of your app "pixel-garden" for ' +
         'review on your behalf: your approved version with their update (Bump @civitai/app-sdk ' +
         'to 2.4.0.). A moderator reviews it like any other submission. The update also stays on ' +
         'its branch and is merged into your app the next time you pull it or open it in the App ' +
@@ -131,7 +133,7 @@ describe('app-platform-update-approved / -rejected (the owner’s review outcome
     }
   });
 
-  it('approved: names the staff member and the version, links the run page when it can', () => {
+  it('approved: from CivitaiOfficial (App Assistant), the reviewer still named in the byline; links the run page when it can', () => {
     expect(
       prepare('app-platform-update-approved', {
         ...BASE,
@@ -141,7 +143,7 @@ describe('app-platform-update-approved / -rejected (the owner’s review outcome
       })
     ).toEqual({
       message:
-        'Version 1.2.1 of your app "Pixel Garden", which mod-ana (verified Civitai staff) ' +
+        'Version 1.2.1 of your app "Pixel Garden", which CivitaiOfficial (App Assistant) ' +
         'submitted on your behalf as a platform update, was approved and will be live in a few ' +
         'minutes. Note from the reviewer: Thanks for the bump.',
       url: '/apps/run/pixel-garden',
@@ -160,13 +162,13 @@ describe('app-platform-update-approved / -rejected (the owner’s review outcome
       })
     ).toEqual({
       message:
-        'Version 1.2.1 of your app "pixel-garden", which mod-ana (verified Civitai staff) ' +
+        'Version 1.2.1 of your app "pixel-garden", which CivitaiOfficial (App Assistant) ' +
         'submitted on your behalf as a platform update, was not approved: Breaks the gallery layout',
       url: OWNER_SUBMISSIONS_URL,
       byline: 'Reviewed by @reviewer_ada, Civitai App Review',
     });
     expect(prepare('app-platform-update-rejected', BASE).message).toBe(
-      'Version 1.2.1 of your app "Pixel Garden", which mod-ana (verified Civitai staff) ' +
+      'Version 1.2.1 of your app "Pixel Garden", which CivitaiOfficial (App Assistant) ' +
         'submitted on your behalf as a platform update, was not approved.'
     );
   });
@@ -180,7 +182,7 @@ describe('app-platform-update-approved / -rejected (the owner’s review outcome
       })
     ).toEqual({
       message:
-        'Version 1.2.1 of your app "Pixel Garden", which mod-ana (verified Civitai staff) ' +
+        'Version 1.2.1 of your app "Pixel Garden", which CivitaiOfficial (App Assistant) ' +
         'submitted on your behalf as a platform update, was not approved: Breaks the gallery ' +
         'layout. The update was withdrawn and will not be merged into your app.',
       url: OWNER_SUBMISSIONS_URL,
@@ -194,16 +196,53 @@ describe('app-platform-update-approved / -rejected (the owner’s review outcome
         updateWithdrawn: true,
       }).message
     ).toBe(
-      'Version 1.2.1 of your app "Pixel Garden", which mod-ana (verified Civitai staff) ' +
+      'Version 1.2.1 of your app "Pixel Garden", which CivitaiOfficial (App Assistant) ' +
         'submitted on your behalf as a platform update, was not approved: Breaks the gallery ' +
         'layout. The update was withdrawn and will not be merged into your app.'
     );
     expect(
       prepare('app-platform-update-rejected', { ...BASE, updateWithdrawn: true }).message
     ).toBe(
-      'Version 1.2.1 of your app "Pixel Garden", which mod-ana (verified Civitai staff) ' +
+      'Version 1.2.1 of your app "Pixel Garden", which CivitaiOfficial (App Assistant) ' +
         'submitted on your behalf as a platform update, was not approved. The update was ' +
         'withdrawn and will not be merged into your app.'
     );
+  });
+});
+
+/**
+ * 🔴 The stored `byUsername` never reaches the owner: two rows that differ ONLY in it render
+ * byte-identical messages, for every type (an old row naming a staff member included).
+ */
+describe('the stored staff username is never rendered', () => {
+  const all = {
+    ...appPlatformUpdateNotifications,
+    ...appPlatformUpdateSubmitNotifications,
+  } as unknown as Record<
+    string,
+    { prepareMessage: (n: unknown) => { message: string } | undefined | null }
+  >;
+  const details = {
+    slug: 'pixel-garden',
+    name: 'Pixel Garden',
+    version: '1.2.1',
+    updateId: 'apu_01JABCDEFGHJKMNPQRSTVWXYZ0',
+    publishRequestId: 'pubreq_01JABCDEFGHJKMNPQRSTVWXYZ0',
+    reason: 'Bump @civitai/app-sdk to 2.4.0.',
+    reviewedByModerator: true,
+    actor: { username: 'reviewer_ada', deletedAt: null },
+  };
+  it.each([
+    'app-platform-update',
+    'app-platform-update-submitted',
+    'app-platform-update-approved',
+    'app-platform-update-rejected',
+  ])('%s', (type) => {
+    const render = (byUsername: string) =>
+      all[type]!.prepareMessage({ details: { ...details, byUsername } })!.message;
+    const a = render('mod-ana');
+    expect(render('staff-zed-9')).toBe(a);
+    expect(a).not.toContain('mod-ana');
+    expect(a).toContain('CivitaiOfficial (App Assistant) ');
   });
 });

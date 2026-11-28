@@ -4,7 +4,7 @@ import {
   ownerCopyOf,
   readOnBehalf,
   shipsNoPlatformUpdates,
-  staffSubmissionLabel,
+  STAFF_SUBMISSION_LABEL,
   staffSubmissionOf,
 } from '~/shared/utils/publish-request-on-behalf';
 
@@ -42,12 +42,12 @@ describe('readOnBehalf', () => {
       expect(hasOnBehalfRecord(summary)).toBe(false);
   });
 
-  it('labels a staff submission, naming the staff member or the team', () => {
+  it('🔴 labels a staff submission as from CivitaiOfficial (App Assistant), never the staff member', () => {
     const s = staffSubmissionOf({ ...files, onBehalf: REC })!;
-    expect(s).toEqual({ staffUsername: 'mod-ana', platformUpdateId: REC.platformUpdateId });
-    expect(staffSubmissionLabel(s)).toBe('Staff submission by mod-ana (platform update)');
-    expect(staffSubmissionLabel({ ...s, staffUsername: null })).toBe(
-      'Staff submission by Civitai staff (platform update)'
+    // The owner-facing projection does not carry the staff member's username at all.
+    expect(s).toEqual({ platformUpdateId: REC.platformUpdateId });
+    expect(STAFF_SUBMISSION_LABEL).toBe(
+      'Platform update submitted by CivitaiOfficial (App Assistant)'
     );
   });
 

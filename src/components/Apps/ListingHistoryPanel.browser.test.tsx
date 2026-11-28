@@ -244,10 +244,7 @@ describe('the stream', () => {
             status: 'pending',
             version: '1.0.1',
             canWithdraw: false,
-            staffSubmission: {
-              staffUsername: 'mod-ana',
-              platformUpdateId: 'apu_01JABCDEFGHJKMNPQRSTVWXYZ0',
-            },
+            staffSubmission: { platformUpdateId: 'apu_01JABCDEFGHJKMNPQRSTVWXYZ0' },
           }),
           entry({ id: 'own_1', status: 'approved', version: '1.0.0' }),
         ]}
@@ -255,7 +252,7 @@ describe('the stream', () => {
     );
     await expect
       .element(page.getByTestId('apps-history-staff-submission-staff_1'))
-      .toHaveTextContent('Staff submission by mod-ana (platform update)');
+      .toHaveTextContent('Platform update submitted by CivitaiOfficial (App Assistant)');
     expect(page.getByTestId('apps-history-staff-submission-own_1').query()).toBeNull();
   });
 

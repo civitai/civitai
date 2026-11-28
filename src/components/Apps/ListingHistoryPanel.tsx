@@ -20,7 +20,7 @@ import { currentlyPublishedVersionId } from '~/components/Apps/submissionsTable'
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { BuildAttemptSignals } from '~/shared/constants/app-block-build.constants';
 import {
-  staffSubmissionLabel,
+  STAFF_SUBMISSION_LABEL,
   type StaffSubmission,
 } from '~/shared/utils/publish-request-on-behalf';
 import { formatDate } from '~/utils/date-helpers';
@@ -372,7 +372,7 @@ export function ListingHistoryEntryRow({
           color="cyan"
           data-testid={`apps-history-staff-submission-${e.id}`}
         >
-          {staffSubmissionLabel(e.staffSubmission)}
+          {STAFF_SUBMISSION_LABEL}
         </Badge>
       ) : null}
       {deployStatus !== undefined ? (
