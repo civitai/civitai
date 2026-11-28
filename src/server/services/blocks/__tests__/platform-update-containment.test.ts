@@ -340,6 +340,63 @@ describe('dependency files (package.json, pnpm-lock.yaml)', () => {
     ]);
   });
 
+  it('🔴 a lockfile whose aliases fan one mapping out to many importers is not walked', async () => {
+    // 300 importers × the same 300-entry mapping: 90,000 entries from a few KB of YAML, past the
+    // cap, so the file gets only the line check (and is refused, naming no change).
+    const n = 300;
+    const bomb = [
+      "lockfileVersion: '9.0'",
+      'importers:',
+      '  .:',
+      '    dependencies: &d',
+      ...Array.from(
+        { length: n },
+        (_, i) => `      p${i}: {specifier: ^1.0.${i}, version: 1.0.${i}}`
+      ),
+      ...Array.from({ length: n }, (_, i) => `  i${i}:\n    dependencies: *d`),
+    ].join('\n');
+    expect(await missingUpdateChanges(DEP_PATHS, depSides({ pkg: owner.pkg, lock: bomb }))).toEqual(
+      [{ path: 'pnpm-lock.yaml', changes: [] }]
+    );
+  });
+
+  it('a package.json update that changes no value (formatting only) gets only the line check', async () => {
+    const base = packageJson(BASE_V);
+    const want = JSON.stringify(JSON.parse(base));
+    // Parses, every value equal: no dependency reading, so only the exact bytes hold it.
+    expect(
+      await missingUpdatePaths([{ path: 'package.json' }], async () => ({
+        want: b(want),
+        base: b(base),
+        have: b(packageJson(OWNER_V)),
+      }))
+    ).toEqual(['package.json']);
+  });
+
+  it('an importer the update removes must have its packages gone', async () => {
+    const withSub = (lock: string) =>
+      lock.replace(
+        'packages:\n',
+        '  tools:\n    devDependencies:\n      rimraf:\n        specifier: ^5.0.1\n' +
+          '        version: 5.0.1\n\npackages:\n'
+      );
+    const sides = (have: string) => ({
+      want: b(pnpmLock(UPDATE_V)),
+      base: b(withSub(pnpmLock(BASE_V))),
+      have: b(have),
+    });
+    expect(
+      await missingUpdateChanges([{ path: 'pnpm-lock.yaml' }], async () =>
+        sides(withSub(owner.lock))
+      )
+    ).toEqual([
+      {
+        path: 'pnpm-lock.yaml',
+        changes: ['pnpm-lock.yaml (importer tools): rimraf must be removed, bundle resolves 5.0.1'],
+      },
+    ]);
+  });
+
   it('the dependency reading applies by file name only: another file keeps the line check', async () => {
     const sides = await depSides(owner)('pnpm-lock.yaml');
     expect(await missingUpdatePaths([{ path: 'deps.yaml' }], async () => sides)).toEqual([

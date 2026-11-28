@@ -45,11 +45,20 @@ export function pnpmResolvedVersion(node: unknown): string | null {
 const DEP_SETS = ['dependencies', 'devDependencies', 'optionalDependencies'] as const;
 
 /**
+ * At most this many direct-dependency entries, over every importer, are read. YAML aliases let a
+ * small file name one mapping from many importers (`dependencies: *d`), and the parser shares it
+ * rather than copying it, so a walk over every importer costs importers × entries from a few
+ * hundred KB of input. A real lockfile's direct dependencies are far below this.
+ */
+export const PNPM_DIRECT_DEPENDENCY_CAP = 50_000;
+
+/**
  * Every direct dependency of every importer: importer (`.` for the root, and for a v5 lockfile's
  * top-level sets) → package name → resolved version ({@link pnpmResolvedVersion}). A package listed
  * in more than one set of an importer keeps the first (`dependencies`, then `devDependencies`, then
  * `optionalDependencies`). Throws when `body` is not a pnpm lockfile ({@link pnpmProjectDocument}),
- * or an entry has no version string (so the caller cannot tell what it resolves to).
+ * an entry has no version string (so the caller cannot tell what it resolves to), or it lists more
+ * than {@link PNPM_DIRECT_DEPENDENCY_CAP} entries.
  */
 export function pnpmDirectDependencies(body: string): Map<string, Map<string, string>> {
   const lock = pnpmProjectDocument(body);
@@ -58,6 +67,7 @@ export function pnpmDirectDependencies(body: string): Map<string, Map<string, st
       ? Object.entries(lock.importers)
       : [['.', lock]];
   const out = new Map<string, Map<string, string>>();
+  let read = 0;
   for (const [importer, sets] of importers) {
     if (!sets || typeof sets !== 'object') throw new Error(`importer ${importer} is not a mapping`);
     const deps = new Map<string, string>();
@@ -67,7 +77,13 @@ export function pnpmDirectDependencies(body: string): Map<string, Map<string, st
       if (typeof entries !== 'object' || Array.isArray(entries)) {
         throw new Error(`${importer} ${set} is not a mapping`);
       }
-      for (const [name, node] of Object.entries(entries)) {
+      const names = Object.keys(entries);
+      read += names.length;
+      if (read > PNPM_DIRECT_DEPENDENCY_CAP) {
+        throw new Error(`more than ${PNPM_DIRECT_DEPENDENCY_CAP} direct dependency entries`);
+      }
+      for (const name of names) {
+        const node = (entries as Record<string, unknown>)[name];
         if (deps.has(name)) continue;
         const version = pnpmResolvedVersion(node);
         if (version === null) throw new Error(`${importer} ${name} has no version`);
