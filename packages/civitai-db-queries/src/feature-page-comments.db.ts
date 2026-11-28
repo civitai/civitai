@@ -668,8 +668,7 @@ export async function unactionReportLiftingScanHide(
          LEFT JOIN "User" u ON u.id = c."userId"
          WHERE m."commentId" = $1 AND m."scanHideReportId" = $3
            AND r."userId" = $2 AND r.reason = 'AdminAttention' AND r.details->>'comment' = $4
-           AND c."deletedAt" IS NULL AND c.hidden AND NOT c."tosViolation"
-           AND c."hiddenAt" = m."scanHiddenAt" AND m."goneCause" IS NULL
+           AND c."deletedAt" IS NULL AND c.hidden AND ${FP_SCAN_HIDE} AND m."goneCause" IS NULL
            AND m."removeWantedAt" IS NULL`,
         [commentId, systemUserId, reportId, FP_AUTO_HIDE_REPORT_COMMENT]
       );
@@ -710,8 +709,7 @@ export async function unactionReportLiftingScanHide(
          WHERE m."commentId" = $1 AND c."entityType"::text = 'featurePage'
            AND m."scanHideReportId" = r.id AND r."userId" = $3 AND r.reason = 'AdminAttention'
            AND r.details->>'comment' = $5
-           AND c."deletedAt" IS NULL AND c.hidden AND NOT c."tosViolation"
-           AND c."hiddenAt" = m."scanHiddenAt" AND m."scanHiddenVersion" = m.version
+           AND c."deletedAt" IS NULL AND c.hidden AND ${FP_SCAN_HIDE} AND m."scanHiddenVersion" = m.version
            AND m."goneCause" IS NULL AND m."removeWantedAt" IS NULL
            AND m."modHideOrigin" IS DISTINCT FROM 'foreign'
            AND (m."leaseUntil" IS NULL OR m."leaseUntil" < now())

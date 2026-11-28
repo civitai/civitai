@@ -991,9 +991,8 @@ async function readDecidingVerdict(
 }
 
 /**
- * Why the row may not be shown yet, and how long to wait, or null when it may. Nothing is shown until
- * a finished scan of its current text found nothing, or a moderator lifted the scan's hide of that
- * text, and only while its author is in standing.
+ * Why the row may not be shown yet, and how long to wait, or null when it may: text scan inactive,
+ * current text unscanned, not clean without a lift for this version, or author not in standing.
  */
 async function visibleGate(row: FpMirrorFactsRow) {
   if ((await getTextScanMode('CommentV3', row.commentId)) !== 'active')

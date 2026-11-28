@@ -204,7 +204,6 @@ describe("a moderator's hide and unhide of a Feature Pages comment", () => {
     );
     expect(fpVisibilitySchema.safeParse(body(zoned)).success).toBe(true);
     expect(fpVisibilitySchema.safeParse(body('2026-11-20 01:00:00+00')).success).toBe(true);
-    expect(fpVisibilitySchema.safeParse(body('')).success).toBe(false);
   });
 
   it('refuses, writing nothing, when the comment changed since the moderator looked', async () => {

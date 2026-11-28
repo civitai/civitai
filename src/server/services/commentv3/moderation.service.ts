@@ -6,9 +6,11 @@ import { onTopicCommentsRemoved } from '~/server/events/points/hooks';
 import {
   type CommentGoneCause,
   deleteComments,
+  getStoredComment,
   prismaRunner,
   setCommentFlags,
 } from '~/server/services/commentv3/write.service';
+import { trackModActivity } from '~/server/services/moderator.service';
 import { logToAxiom } from '~/server/logging/client';
 import { TRPCError } from '@trpc/server';
 import { commentV3CsamHold, hasOpenCommentReport } from '~/server/services/commentv3/review-hold';
@@ -396,7 +398,7 @@ export async function moderatorHideFpComment({
 }): Promise<{ hidden: true } | { held: 'gone' | 'changed' }> {
   return dbWrite.$transaction(async (tx) => {
     const db = prismaRunner(tx);
-    await db.query(`SELECT id FROM "CommentV3" WHERE id = $1 FOR UPDATE`, [commentId]);
+    await getStoredComment(db, commentId, 'FOR UPDATE');
     const { rows } = await db.query<{ changed: boolean }>(
       `SELECT (c.hidden OR c."tosViolation" OR m.version <> $2) AS changed
        FROM "FeaturePageCommentMirror" m JOIN "CommentV3" c ON c.id = m."commentId"
@@ -407,10 +409,10 @@ export async function moderatorHideFpComment({
     if (!rows[0]) return { held: 'gone' as const };
     if (rows[0].changed) return { held: 'changed' as const };
     await setCommentFlags(db, [commentId], { hidden: true });
-    await db.query(
-      `INSERT INTO "ModActivity" ("userId", "entityType", activity, "entityId")
-       VALUES ($1, 'commentV3', 'fpHide', $2) ON CONFLICT DO NOTHING`,
-      [actorId, commentId]
+    await trackModActivity(
+      actorId,
+      { entityType: 'commentV3', activity: 'fpHide', entityId: commentId },
+      tx
     );
     return { hidden: true as const };
   });
