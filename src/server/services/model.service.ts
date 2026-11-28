@@ -6336,12 +6336,11 @@ export async function shownAssociatedArticleIds(
   reader: ArticleRegionReader,
   browsingLevel: number
 ) {
-  const articles = ids.length
-    ? await dbRead.article.findMany({
-        where: { id: { in: ids } },
-        select: { id: true, ...articleReadSelect },
-      })
-    : [];
+  if (!ids.length) return { shown: new Set<number>(), regionDependent: false };
+  const articles = await dbRead.article.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, ...articleReadSelect },
+  });
   return filterAssociatedArticles(articles, reader, browsingLevel);
 }
 
