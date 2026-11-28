@@ -1,4 +1,4 @@
-import { ImageSort } from '~/server/common/enums';
+import { ImageSort, ModelSort, ModelSortHidden } from '~/server/common/enums';
 import type { FilterSubTypes } from '~/providers/FiltersProvider';
 
 export type SortAvailability = {
@@ -43,3 +43,8 @@ export function resolveFeedSort<T extends string>(
   if (!resolvedSortTypes.includes(type)) return value;
   return isSortAvailable({ type, value }, availability) ? value : ImageSort.MostReactions;
 }
+
+/** The model sorts a viewer can pick: the feed's sort menu and the model search's. */
+export const modelSortOptions = Object.values(ModelSort).filter(
+  (x) => !Object.values(ModelSortHidden).includes(x)
+);

@@ -33,7 +33,14 @@ export function ModelFeedFilters({ ...groupProps }: GroupProps) {
       {periodMode && (
         <Popover>
           <Popover.Target>
-            <LegacyActionIcon variant="filled" color="blue" radius="xl" size={36} mr={4}>
+            <LegacyActionIcon
+              variant="filled"
+              color="blue"
+              radius="xl"
+              size={36}
+              mr={4}
+              aria-label="Period filter disabled"
+            >
               <IconExclamationMark size={20} strokeWidth={3} />
             </LegacyActionIcon>
           </Popover.Target>
