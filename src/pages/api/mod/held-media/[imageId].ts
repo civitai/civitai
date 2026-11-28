@@ -1,5 +1,4 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import * as z from 'zod';
 import { isProbeableMediaKey } from '@civitai/shared/media-key';
 import {
   heldServeRecord,
@@ -10,14 +9,13 @@ import {
 import { logToAxiom } from '~/server/logging/client';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { getHeldMedia } from '~/server/services/held-media.service';
+import { storedMediaQuerySchema } from '~/server/schema/stored-media.schema';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 import { streamStoredMedia } from '~/server/utils/stream-stored-media';
 import type { SessionUser } from '~/types/session';
 
 export const config = { api: { responseLimit: false } };
-
-const query = z.object({ imageId: z.coerce.number().int().positive().max(2_147_483_647) });
 
 /**
  * A held image or video for the CSAM report page, from storage rather than the public CDN. The
@@ -32,7 +30,7 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
   if (!getFeatureFlags({ user, req }).csamReports)
     return void res.status(403).json({ error: 'Forbidden' });
 
-  const parsed = query.safeParse(req.query);
+  const parsed = storedMediaQuerySchema.safeParse(req.query);
   if (!parsed.success) return void res.status(400).json({ error: 'Bad image id' });
   const { imageId } = parsed.data;
 

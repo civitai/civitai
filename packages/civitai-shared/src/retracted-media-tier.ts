@@ -196,10 +196,7 @@ export function ownerCsamMarkedSql(image: string): string {
 function buildOwnerCsamMarkedSql(image: string): string {
   const marked = (row: string) => `(
     ${csamRowSql(row)}
-    OR EXISTS (
-      SELECT 1 FROM unnest(string_to_array(${row}."blockedFor", ',')) AS om_reason(value)
-      WHERE lower(btrim(om_reason.value)) = 'csam'
-    )
+    OR ${csamBlockedForSql(row)}
   )`;
   const siblings = (alias: string) =>
     `SELECT * FROM "Image" ${alias} WHERE ${alias}.url = ${image}."url" AND ${alias}.id <> ${image}.id LIMIT ${URL_SIBLING_CAP}`;
@@ -216,7 +213,7 @@ const OWNER_CSAM_MARKED_ALIASES = new Set(
   [...buildOwnerCsamMarkedSql('i').matchAll(/(?:FROM|JOIN) "\w+" (\w+)/g)]
     .map((m) => m[1].toLowerCase())
     // Derived-table and function aliases the pattern above does not see.
-    .concat(['om_reason', 'rl_e', 'le', 'listed', 'rl_ids'])
+    .concat(['mw_reason', 'rl_e', 'le', 'listed', 'rl_ids'])
 );
 
 /**

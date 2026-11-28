@@ -357,19 +357,13 @@ describe('getImageHandler on a blocked image, with ownerBlockedMedia', () => {
     );
   });
 
-  it('leaves a moderator their own image by url, not the owner route', async () => {
+  it.each([
+    ['their own image', UPLOADER],
+    ["another user's image", 5],
+  ])('leaves a moderator %s by url, not the owner route', async (_, id) => {
     const result = await read(
       { blockedFor: BlockedReason.Moderated, ownerCsamMarked: false },
-      { user: { id: UPLOADER, isModerator: true } }
-    );
-    expect(result.url).toBe(MEDIA);
-    expect(result).not.toHaveProperty('ownerRetractedMedia');
-  });
-
-  it('leaves a moderator the url, not the owner route', async () => {
-    const result = await read(
-      { blockedFor: BlockedReason.Moderated, ownerCsamMarked: false },
-      { user: { id: 5, isModerator: true } }
+      { user: { id, isModerator: true } }
     );
     expect(result.url).toBe(MEDIA);
     expect(result).not.toHaveProperty('ownerRetractedMedia');

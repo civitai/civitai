@@ -1263,8 +1263,7 @@ export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ct
       return [];
     });
     const servable = canSeeMedia && !!heldChecked.length;
-    // The CDN does not serve a blocked image, so the owner's browser loads a reviewed block's media
-    // from the owner retracted-media route, by id, and is given no url to ask the CDN for.
+    // The CDN does not serve a blocked image; the owner loads it from the owner retracted-media route.
     if (reviewedBlocks && servable && result.blockedFor != null && !ownerMediaAllowed(result))
       return { ...withoutMedia(result), ownerRetractedMedia: true as const };
     if (servable) return result;

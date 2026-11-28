@@ -31,7 +31,6 @@ const endpoint = AuthedEndpoint(
           60,
           { failOpen: false }
         ),
-      // The image page's own opt-in levels, so a review image opens here as it does there.
       readMedia: async (imageId) =>
         getOwnRetractedMedia(imageId, user.id, {
           shownReviewImageLevels: shownReviewImageLevelsFor({
