@@ -335,12 +335,13 @@ its REAL origin, `https://<slug>.<APPS_DOMAIN>` for a published app,
   frame is cross-site to civitai.com).
 - **Previews lose it:** a dev tunnel or App Assistant preview host is minted per
   session, so its storage is gone when the session ends.
-- **Service workers:** an app with a real origin may register a service worker
-  scoped to its own app origin. Its scripts are served `no-cache`, and a
-  taken-down or replaced app's paths answer `404`/`410` (a takedown also sends
-  `Clear-Site-Data: "storage"`), so a takedown or a new version replaces or
-  removes the worker on the next load. Workers, like storage, are partitioned
-  per app under civitai.com.
+- **Service workers:** allowed. An app with a real origin may register a service
+  worker scoped to its own app origin, partitioned per app under civitai.com like
+  its storage. The platform cannot guarantee that a takedown or a new version
+  evicts an installed worker: a worker that serves fully from its cache keeps
+  running at its own origin until it updates itself. The intent is that Civitai
+  stops framing a taken-down app, so its worker is no longer reached from
+  civitai.com.
 - **Fixed per mount:** the host decides once when it mounts (a sandbox change
   applies only when the frame navigates), so a flag change takes effect on the
   next mount, not in a frame already loaded.
