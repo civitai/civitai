@@ -1008,7 +1008,8 @@ describe('a staff submission on the owner’s behalf is labelled', () => {
     expect(entries.map((e) => [e.id, e.staffSubmission, e.canWithdraw])).toEqual([
       [
         'pubreq_staff',
-        { staffUsername: 'mod-ana', platformUpdateId: 'apu_01JABCDEFGHJKMNPQRSTVWXYZ0' },
+        // Never the staff member's username: the owner reads it as from CivitaiOfficial.
+        { platformUpdateId: 'apu_01JABCDEFGHJKMNPQRSTVWXYZ0' },
         false,
       ],
       ['pubreq_own', null, false],

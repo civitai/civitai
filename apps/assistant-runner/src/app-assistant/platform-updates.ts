@@ -88,22 +88,23 @@ export interface PlatformUpdateSource {
   ): Promise<PlatformUpdateResolve>;
 }
 
-function staffName(update: PendingPlatformUpdate): string {
+/**
+ * Who the update is from, as civitai names it to the owner: "CivitaiOfficial (App Assistant)",
+ * never the staff member (`ownerView` in civitai's `app-platform-update.service.ts`). Only a
+ * verified update is ever named, so the name stands alone.
+ */
+function senderName(update: PendingPlatformUpdate): string {
   return update.by.username ?? 'Civitai staff';
 }
 
 /** The update's one line for the user once it is merged AND saved. Only for a verified update. */
 export function verifiedUpdateLine(update: PendingPlatformUpdate): string {
-  return `${staffName(update)} (verified Civitai staff) updated your app: ${oneLine(
-    update.reason
-  )}`;
+  return `${senderName(update)} updated your app: ${oneLine(update.reason)}`;
 }
 
 /** The update's one line for the user while it is not merged and saved yet. */
 export function staffUpdateLine(update: PendingPlatformUpdate): string {
-  return `${staffName(update)} (verified Civitai staff) made an update to your app: ${oneLine(
-    update.reason
-  )}`;
+  return `${senderName(update)} made an update to your app: ${oneLine(update.reason)}`;
 }
 
 function pathsOf(update: PendingPlatformUpdate): string[] {

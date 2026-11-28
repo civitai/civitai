@@ -6,13 +6,17 @@ import {
 import { appReviewByline, withApprovalNote } from '~/server/notifications/app-review-attribution';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 import { OWNER_SUBMISSIONS_URL } from '~/server/notifications/app-listing.notifications';
+import { APP_PLATFORM_UPDATE_SENDER } from '~/shared/constants/app-assistant.constants';
 
 /**
  * App Blocks — Civitai staff SUBMITTED a new version of the recipient's app for review on their
  * behalf: the approved version with a staff platform update applied
  * (`app-platform-update-submit.service.ts`). It goes through the normal moderator review.
  *
- * Like `app-platform-update`, it names the staff member (operator decision). Imperative: emitted
+ * Like `app-platform-update`, the owner reads every one of these as from
+ * {@link APP_PLATFORM_UPDATE_SENDER}, never the staff member: `byUsername` is stored in the
+ * details for the record and never rendered, so older rows read the same way. The approved and
+ * rejected types' byline still names the REVIEWER (`appReviewByline`). Imperative: emitted
  * directly via `createNotification`, so no `prepareQuery` and no notifications-DB migration.
  */
 
@@ -24,7 +28,7 @@ export type AppPlatformUpdateSubmittedNotificationDetails = {
   publishRequestId: string;
   /** The version the request carries. */
   version: string;
-  /** The staff member's username at submit time. */
+  /** The staff member's username at submit time. Kept for the record; never rendered. */
   byUsername: string;
   /** The update's recorded reason, rendered verbatim. */
   reason: string;
@@ -39,7 +43,7 @@ export type AppPlatformUpdateSubmittedNotificationDetails = {
 export type AppPlatformUpdateReviewedNotificationDetails = AppBlockModerationNotificationDetails & {
   /** `apu_<ULID>`. */
   updateId: string;
-  /** The staff member who submitted it, as recorded at submit time. */
+  /** The staff member who submitted it, as recorded at submit time. Never rendered. */
   byUsername: string;
   /**
    * Rejected only: the reject withdrew the platform update (`superseded`), so it is no longer
@@ -54,12 +58,12 @@ function quotedApp(details: AppPlatformUpdateReviewedNotificationDetails): strin
   return `"${name || details.slug}"`;
 }
 
-/** The shared head: whose submission this was, and that it is the owner's app. */
+/** The shared head: that the official sender submitted it, and that it is the owner's app. */
 function onBehalfHead(details: AppPlatformUpdateReviewedNotificationDetails): string {
   const version = details.version ? `Version ${details.version}` : 'The version';
   return (
-    `${version} of your app ${quotedApp(details)}, which ${details.byUsername} ` +
-    `(verified Civitai staff) submitted on your behalf as a platform update,`
+    `${version} of your app ${quotedApp(details)}, which ${APP_PLATFORM_UPDATE_SENDER} ` +
+    `submitted on your behalf as a platform update,`
   );
 }
 
@@ -108,7 +112,7 @@ export const appPlatformUpdateSubmitNotifications = createNotificationProcessor(
       const details = notification.details as AppPlatformUpdateSubmittedNotificationDetails;
       return {
         message:
-          `${details.byUsername} (verified Civitai staff) submitted version ${details.version} ` +
+          `${APP_PLATFORM_UPDATE_SENDER} submitted version ${details.version} ` +
           `of your app "${details.slug}" for review on your behalf: your approved version with ` +
           `their update (${details.reason}). A moderator reviews it like any other submission. ` +
           `The update also stays on its branch and is merged into your app the next time you ` +
