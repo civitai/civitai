@@ -1,5 +1,8 @@
+import { useState } from 'react';
 import { afterEach, describe, expect, test } from 'vitest';
 import { page } from 'vitest/browser';
+import type { FeatureAccess } from '~/server/services/feature-flags.service';
+import { FeatureFlagsProvider } from '~/providers/FeatureFlagsProvider';
 import { PageBlockHost } from '~/components/AppBlocks/PageBlockHost';
 import type { BlockHostSurface } from '~/components/AppBlocks/blockInitFragmentGate';
 import { installTrpcWire, renderWithTrpcWire } from '../../../test/trpcWireHarness';
@@ -137,5 +140,57 @@ describe('PageBlockHost: versioned frame path', () => {
     expect(base(versioned.src)).toBe(`https://my-app.${APPS_ROOT}/v/${SHA}/`);
     expect(versioned.sandbox.split(/\s+/)).toContain('allow-same-origin');
     expect(versioned.sandbox).toBe(root.sandbox);
+  });
+});
+
+/**
+ * 🔴 THE FLAG IS FROZEN FOR THE MOUNT. A flags change that lands after the frame loaded (the
+ * provider's `seed`, which is how a shell page's per-viewer flags arrive) must not move the
+ * frame's `src`: that would navigate a running app. A nested real `FeatureFlagsProvider`
+ * supplies the flags so the test can change them after mount without a module mock.
+ */
+describe('PageBlockHost: versioned frame path flag is read once per mount', () => {
+  let flip: ((on: boolean) => void) | undefined;
+  function LateFlags({ initialOn }: { initialOn: boolean }) {
+    const [on, setOn] = useState(initialOn);
+    flip = setOn;
+    const flags = (on ? ON : {}) as FeatureAccess;
+    return (
+      <FeatureFlagsProvider flags={{} as FeatureAccess} seed={{ flags }}>
+        <PageBlockHost {...props} surface="page-run" versionSha={SHA} />
+      </FeatureFlagsProvider>
+    );
+  }
+
+  async function srcAfterFlip(initialOn: boolean): Promise<{ before: string; after: string }> {
+    wire = installTrpcWire({});
+    const screen = await renderWithTrpcWire(<LateFlags initialOn={initialOn} />, {
+      viewer: { id: 42, username: 'tester' },
+      flags: {},
+      appFrameDomains: { appsDomain: APPS_ROOT, previewDomain: null },
+    });
+    const iframe = page.getByTestId('app-page-iframe');
+    await expect.element(iframe).toBeInTheDocument();
+    const before = (iframe.element() as HTMLIFrameElement).getAttribute('src') ?? '';
+    flip?.(!initialOn);
+    // Let the provider re-render with the new flags before reading again.
+    await new Promise((r) => setTimeout(r, 50));
+    const after = (iframe.element() as HTMLIFrameElement).getAttribute('src') ?? '';
+    await screen.unmount();
+    wire.restore();
+    wire = undefined;
+    return { before, after };
+  }
+
+  test('flag turned ON after mount: the frame stays at the root', async () => {
+    const { before, after } = await srcAfterFlip(false);
+    expect(base(before)).toBe(APP_SRC);
+    expect(base(after)).toBe(APP_SRC);
+  });
+
+  test('flag turned OFF after mount: the frame stays at its version path', async () => {
+    const { before, after } = await srcAfterFlip(true);
+    expect(base(before)).toBe(`https://my-app.${APPS_ROOT}/v/${SHA}/`);
+    expect(base(after)).toBe(`https://my-app.${APPS_ROOT}/v/${SHA}/`);
   });
 });
