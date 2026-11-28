@@ -188,7 +188,7 @@ beforeEach(() => {
 const written = async (ingestion: string) => {
   const { calls, results } = dbMock.dbWrite.image.updateManyAndReturn.mock;
   const rows = await Promise.all(
-    results.filter((_, i) => (calls[i][0] as any).data.ingestion === ingestion).map((r) => r.value)
+    results.filter((_, i) => calls[i][0]?.data.ingestion === ingestion).map((r) => r.value)
   );
   return rows.flatMap((set: { id: number }[]) => set.map(({ id }) => id));
 };
