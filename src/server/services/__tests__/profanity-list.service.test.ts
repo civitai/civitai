@@ -274,8 +274,8 @@ describe('isProfaneSearch', () => {
     expect(await count('fallback')).toBe(fallback + 1);
   });
 
-  // The label is how moderators find which entry drives refusals. If it ever carried the query,
-  // user text would land in Prometheus and its cardinality would be unbounded.
+  // Pins that the label never carries the query: user text in it would make Prometheus cardinality
+  // unbounded.
   async function labelsMovedBy(source: string, query: string) {
     const { hits } = ensureRegisterProfanityListMetrics();
     const entries = async () =>
