@@ -1,65 +1,33 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as HotReads5 from '@civitai/db-queries/hot-reads-5';
-import type * as CollectionService from '~/server/services/collection.service';
-import type * as HomeBlockAccess from '~/server/services/home-block-access';
-import type * as HomeBlockCache from '~/server/services/home-block-cache.service';
-import type { HomeBlockCacheTier } from '~/server/prom/home-block-get.metrics';
 import { HomeBlockType } from '~/shared/utils/prisma/enums';
 
 /**
  * `home_block_get_total`: every getHomeBlockById call is counted once, under the tier that answered
- * it, its block type and whether the viewer is signed in. Driven through the real service; the row
- * read, the gates and the shared entry are faked so each path can be reached on its own.
+ * it, its block type and whether the viewer is signed in. Driven through the real service, gates and
+ * cache; only the row read and Redis are faked. An Announcement row renders from its metadata
+ * alone, so it reaches every cache tier with no other read. The collection audience paths
+ * (`denied`, `uncached`) are pinned in home-block-collection-audience.test.ts.
  */
 
 const state = vi.hoisted(() => ({
   row: undefined as Record<string, unknown> | undefined,
-  canView: true,
-  audience: 'all' as 'all' | 'viewer' | 'none',
-  // What the faked shared entry reports, and whether it throws instead.
-  cacheTier: 'redis' as HomeBlockCacheTier,
-  cacheThrows: false,
+  rowThrows: false,
 }));
 
 vi.mock('@civitai/db-queries/hot-reads-5', async (importOriginal) => ({
   ...(await importOriginal<typeof HotReads5>()),
-  getHomeBlockRow: vi.fn(async () => state.row),
+  getHomeBlockRow: vi.fn(async () => {
+    if (state.rowThrows) throw new Error('replica down');
+    return state.row && { ...state.row };
+  }),
 }));
-
-vi.mock('~/server/services/home-block-access', async (importOriginal) => ({
-  ...(await importOriginal<typeof HomeBlockAccess>()),
-  canViewHomeBlock: vi.fn(async () => state.canView),
-}));
-
-vi.mock('~/server/services/home-block-collection-access', () => ({
-  getCollectionBlockAudience: vi.fn(async () => state.audience),
-}));
-
-vi.mock('~/server/services/home-block-cache.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof HomeBlockCache>()),
-  getHomeBlockCached: vi.fn(
-    async (
-      block: { id: number },
-      _domain: unknown,
-      metadata: unknown,
-      _source: unknown,
-      onTier?: (tier: HomeBlockCacheTier) => void
-    ) => {
-      if (state.cacheThrows) throw new Error('read failed');
-      onTier?.(state.cacheTier);
-      return state.cacheTier === 'no_identifier' ? null : { ...block, metadata };
-    }
-  ),
-}));
-
-vi.mock('~/server/services/collection.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof CollectionService>()),
-  getCollectionById: vi.fn(async ({ input }: { input: { id: number } }) => ({ id: input.id })),
-  getCollectionItemsByCollectionId: vi.fn(async () => ({ items: [], nextCursor: undefined })),
-}));
+vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
 
 const { getHomeBlockById } = await import('~/server/services/home-block.service');
+const { resetHomeBlockL1ForTests } = await import('~/server/services/home-block-cache.service');
 const { homeBlockGetCounter } = await import('~/server/prom/home-block-get.metrics');
 
 type Readable = {
@@ -87,10 +55,10 @@ async function countedBy(call: () => Promise<unknown>) {
 const SIGNED_OUT = undefined;
 const SIGNED_IN = { id: 300 };
 const BLOCK_ID = 7;
-const rowOf = (type: HomeBlockType, metadata: object = {}) => ({
+const rowOf = (type: string, metadata: object = {}) => ({
   id: BLOCK_ID,
   type,
-  userId: 200,
+  userId: -1,
   sourceId: null,
   metadata,
 });
@@ -98,30 +66,43 @@ const rowOf = (type: HomeBlockType, metadata: object = {}) => ({
 const get = (viewer: { id: number } | undefined) => () =>
   getHomeBlockById({ id: BLOCK_ID, viewer });
 
+// A fake Redis: values go through a JSON round trip, as a real store's encode/decode would.
+const store = new Map<string, string>();
+
 beforeEach(() => {
   vi.clearAllMocks();
-  state.row = rowOf(HomeBlockType.Leaderboard);
-  state.canView = true;
-  state.audience = 'all';
-  state.cacheTier = 'redis';
-  state.cacheThrows = false;
+  store.clear();
+  redisMock.redis.packed.get.mockImplementation(async (key: string) =>
+    store.has(key) ? JSON.parse(store.get(key) as string) : null
+  );
+  redisMock.redis.packed.set.mockImplementation(async (key: string, value: unknown) => {
+    store.set(key, JSON.stringify(value));
+    return 'OK';
+  });
+  state.row = rowOf(HomeBlockType.Announcement, { title: 'A' });
+  state.rowThrows = false;
   dbMock.dbWrite.homeBlock.findUnique.mockResolvedValue(null as never);
+  resetHomeBlockL1ForTests(() => false);
 });
 
 describe('home_block_get_total', () => {
-  it.each(['l1', 'redis', 'miss'] as const)(
-    'a call the shared entry answers from %s counts once under that tier',
-    async (tier) => {
-      state.cacheTier = tier;
-      expect(await countedBy(get(SIGNED_OUT))).toEqual({ [`Leaderboard/${tier}/anon`]: 1 });
-      expect(await countedBy(get(SIGNED_IN))).toEqual({ [`Leaderboard/${tier}/authed`]: 1 });
-    }
-  );
+  it('L1 off: a cold call is a miss, the next is a Redis hit, for either viewer', async () => {
+    expect(await countedBy(get(SIGNED_OUT))).toEqual({ 'Announcement/miss/anon': 1 });
+    expect(await countedBy(get(SIGNED_IN))).toEqual({ 'Announcement/redis/authed': 1 });
+    expect(await countedBy(get(SIGNED_OUT))).toEqual({ 'Announcement/redis/anon': 1 });
+  });
+
+  it('L1 on: a cold call is a miss, the next ones are L1 hits', async () => {
+    resetHomeBlockL1ForTests(() => true);
+    expect(await countedBy(get(SIGNED_IN))).toEqual({ 'Announcement/miss/authed': 1 });
+    expect(await countedBy(get(SIGNED_IN))).toEqual({ 'Announcement/l1/authed': 1 });
+    expect(await countedBy(get(SIGNED_OUT))).toEqual({ 'Announcement/l1/anon': 1 });
+  });
 
   it('a row with no cache identifier counts as no_identifier', async () => {
-    state.row = rowOf(HomeBlockType.CosmeticShop);
-    state.cacheTier = 'no_identifier';
-    expect(await countedBy(get(SIGNED_OUT))).toEqual({ 'CosmeticShop/no_identifier/anon': 1 });
+    state.row = rowOf(HomeBlockType.Social);
+    expect(await countedBy(get(SIGNED_OUT))).toEqual({ 'Social/no_identifier/anon': 1 });
+    expect(redisMock.redis.packed.get).not.toHaveBeenCalled();
   });
 
   it('a missing row counts as not_found, with type none', async () => {
@@ -130,32 +111,21 @@ describe('home_block_get_total', () => {
   });
 
   it('a gated row the viewer may not see counts as denied', async () => {
-    state.row = rowOf(HomeBlockType.Event);
-    state.canView = false;
-    expect(await countedBy(get(SIGNED_OUT))).toEqual({ 'Event/denied/anon': 1 });
-  });
-
-  it('a collection the viewer may not read counts as denied', async () => {
-    state.row = rowOf(HomeBlockType.Collection, { collection: { id: 70 } });
-    state.audience = 'none';
-    expect(await countedBy(get(SIGNED_IN))).toEqual({ 'Collection/denied/authed': 1 });
-  });
-
-  it('a collection shown to this viewer only counts as uncached, never as a cache tier', async () => {
-    state.row = rowOf(HomeBlockType.Collection, { collection: { id: 70 } });
-    state.audience = 'viewer';
-    expect(await countedBy(get(SIGNED_IN))).toEqual({ 'Collection/uncached/authed': 1 });
+    // A flag that is no feature flag gates the row off for everyone.
+    state.row = rowOf(HomeBlockType.Announcement, { featureFlag: 'not-a-feature-flag' });
+    expect(await countedBy(get(SIGNED_OUT))).toEqual({ 'Announcement/denied/anon': 1 });
   });
 
   it('a call that throws counts as error', async () => {
-    state.row = rowOf(HomeBlockType.Feed);
-    state.cacheThrows = true;
-    expect(await countedBy(get(SIGNED_OUT))).toEqual({ 'Feed/error/anon': 1 });
+    state.rowThrows = true;
+    dbMock.dbWrite.homeBlock.findUnique.mockRejectedValue(new Error('primary down') as never);
+    await expect(get(SIGNED_OUT)()).rejects.toThrow('primary down');
+    expect(await countedBy(get(SIGNED_OUT))).toEqual({ 'none/error/anon': 1 });
   });
 
   it('a type outside HomeBlockType is labelled other, never its raw value', async () => {
-    state.row = { ...rowOf(HomeBlockType.Leaderboard), type: 'SomethingNew' };
-    expect(await countedBy(get(SIGNED_OUT))).toEqual({ 'other/redis/anon': 1 });
+    state.row = rowOf('SomethingNew');
+    expect(await countedBy(get(SIGNED_OUT))).toEqual({ 'other/no_identifier/anon': 1 });
   });
 
   it('a moderator flag without an id is still anon (the label keys on a signed-in id)', async () => {
@@ -163,6 +133,6 @@ describe('home_block_get_total', () => {
       await countedBy(() =>
         getHomeBlockById({ id: BLOCK_ID, viewer: { isModerator: true } as never })
       )
-    ).toEqual({ 'Leaderboard/redis/anon': 1 });
+    ).toEqual({ 'Announcement/miss/anon': 1 });
   });
 });
