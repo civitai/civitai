@@ -227,9 +227,9 @@ func TestLoadGetAllServeHidePaidDefaultsOff(t *testing.T) {
 	}
 }
 
-// The verified-crawler, `newCreators` and published-range ports of model.getAll are each their own
-// switch, off by default: no other switch (the route's, another port's) turns one on.
-func TestLoadGetAllServeVerifiedBotNewCreatorsPublishedRangeDefaultsOff(t *testing.T) {
+// The `newCreators` and published-range ports of model.getAll are each their own switch, off by
+// default: no other switch (the route's, another port's) turns one on.
+func TestLoadGetAllServeNewCreatorsPublishedRangeDefaultsOff(t *testing.T) {
 	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
 		t.Setenv(k, "x://"+k)
 	}
@@ -237,7 +237,6 @@ func TestLoadGetAllServeVerifiedBotNewCreatorsPublishedRangeDefaultsOff(t *testi
 		env  string
 		read func(*Config) bool
 	}{
-		{"FEED_GO_GETALL_SERVE_VERIFIED_BOT", func(c *Config) bool { return c.GetAllServeVerifiedBot }},
 		{"FEED_GO_GETALL_SERVE_INPUT_NEW_CREATORS", func(c *Config) bool { return c.GetAllServeInputNewCreators }},
 		{"FEED_GO_GETALL_SERVE_INPUT_PUBLISHED_RANGE", func(c *Config) bool { return c.GetAllServeInputPublishedRange }},
 	}
@@ -254,7 +253,7 @@ func TestLoadGetAllServeVerifiedBotNewCreatorsPublishedRangeDefaultsOff(t *testi
 		}
 		t.Setenv(sw.env, "")
 	}
-	// Each its own switch: the route's, the older ports' and the two others' do not turn it on.
+	// Each its own switch: the route's, the older ports' and the other's do not turn it on.
 	t.Setenv("FEED_GO_SERVE_MODEL_GETALL", "true")
 	t.Setenv("FEED_GO_GETALL_SERVE_INPUT_IDS", "true")
 	t.Setenv("FEED_GO_GETALL_SERVE_INPUT_FOLLOWED", "true")

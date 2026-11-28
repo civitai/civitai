@@ -447,11 +447,11 @@ func TestIntegrationModelPageIDsAndFollowed(t *testing.T) {
 		ViewerID: 3101903, Followed: true})), []int{})
 }
 
-// A published range (DESIGN.md §15.2.10) against Postgres: the seed's published models (3101001 and
+// A published range (DESIGN.md §15.2.9) against Postgres: the seed's published models (3101001 and
 // 3101002, both published 2026-06-02 00:00) are in a range that holds that day and out of one that
 // ends the day before (the end bound is the midnight after the last day, exclusive) or starts the day
 // after; the CTE's type filter, a split cursor and each base-model path keep the feed's own filters.
-// Then `newCreators` (§15.2.9): a board holding 3101902 keeps its one published public model, an
+// Then `newCreators` (§15.2.8): a board holding 3101902 keeps its one published public model, an
 // empty board (`1 = 0`) none.
 func TestIntegrationModelPagePublishedRangeAndNewCreators(t *testing.T) {
 	pool := integtest.Postgres(t)

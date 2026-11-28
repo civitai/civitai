@@ -19,7 +19,7 @@ import (
 // reads it: null and the strings z.stringbool refuses are Node's 400 (input-invalid).
 func TestPortNewCreators(t *testing.T) {
 	for _, raw := range []string{`{"json":{"newCreators":true}}`, `{"json":{"newCreators":"true"}}`, `{"json":{"newCreators":1}}`, `{"json":{"newCreators":"false"}}`} {
-		for _, p := range []Ports{{}, allPorts, {HidePaid: true, PublishedRange: true, VerifiedBot: true}} {
+		for _, p := range []Ports{{}, allPorts, {HidePaid: true, PublishedRange: true}} {
 			if _, err := parseWith(t, raw, p); fallback.Reason(err) != "input-newCreators" {
 				t.Errorf("off %+v, %s: %v (%q), want input-newCreators", p, raw, err, fallback.Reason(err))
 			}
@@ -70,7 +70,7 @@ func TestPortPublishedRange(t *testing.T) {
 		`{"json":{"publishedTo":"2026-06-02"}}`:                              "input-publishedTo",
 		`{"json":{"publishedFrom":"junk"}}`:                                  "input-publishedFrom",
 	} {
-		for _, p := range []Ports{{}, {NewCreators: true, VerifiedBot: true, IDs: true, Followed: true, HidePaid: true}} {
+		for _, p := range []Ports{{}, {NewCreators: true, IDs: true, Followed: true, HidePaid: true}} {
 			if _, err := parseWith(t, raw, p); fallback.Reason(err) != want {
 				t.Errorf("off %+v, %s: %v (%q), want %s", p, raw, err, fallback.Reason(err), want)
 			}

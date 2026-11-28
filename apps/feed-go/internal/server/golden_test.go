@@ -51,7 +51,7 @@ const (
 	goldenMinAsPosts  = 37
 	goldenMinV1       = 52
 	goldenMinInfinite = 164
-	goldenMinModels   = 75
+	goldenMinModels   = 70
 	goldenIssuer      = "https://auth.example.test"
 	goldenCookieName  = "__Secure-civ-token"
 )
@@ -119,11 +119,9 @@ type goldenFixture struct {
 		ServeInputFollowed bool `json:"serveInputFollowed"`
 		// ServeHidePaid is FEED_GO_GETALL_SERVE_HIDE_PAID (absent: off, Hide Paid falls back).
 		ServeHidePaid bool `json:"serveHidePaid"`
-		// ServeVerifiedBot, ServeInputNewCreators and ServePublishedRange are
-		// FEED_GO_GETALL_SERVE_VERIFIED_BOT, FEED_GO_GETALL_SERVE_INPUT_NEW_CREATORS and
-		// FEED_GO_GETALL_SERVE_INPUT_PUBLISHED_RANGE (model-getall/; absent: off, a verified-crawler
-		// header, `newCreators` or a published range falls back).
-		ServeVerifiedBot      bool `json:"serveVerifiedBot"`
+		// ServeInputNewCreators and ServePublishedRange are FEED_GO_GETALL_SERVE_INPUT_NEW_CREATORS and
+		// FEED_GO_GETALL_SERVE_INPUT_PUBLISHED_RANGE (model-getall/; absent: off, `newCreators` or a
+		// published range falls back).
 		ServeInputNewCreators bool `json:"serveInputNewCreators"`
 		ServePublishedRange   bool `json:"servePublishedRange"`
 		// ServeUserCosmeticsMiss is FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS (model-getall/; absent:
@@ -170,10 +168,7 @@ type goldenFixture struct {
 		Fallback  string          `json:"fallback"`
 		Envelope  json.RawMessage `json:"envelope"`
 		Cacheable *bool           `json:"cacheable"`
-		// ViewerClass is the viewer class a model-getall fixture sending headers is counted under
-		// (FeedViewerClasses: `crawler` for a verified crawler); "" = derived from the session.
-		ViewerClass string          `json:"viewerClass"`
-		Body        json.RawMessage `json:"body"`
+		Body      json.RawMessage `json:"body"`
 		// Writes is every cache key Node's fetches write for the request's misses (a served
 		// fixture; none when the caches are warm): a packed value, with its expiry.
 		Writes map[string]goldenWrite `json:"writes"`
@@ -2835,7 +2830,7 @@ func goldenSetupModelsMode(t testing.TB, fx *goldenFixture, writeBack bool) *gol
 			CoverageNext: fx.Config.CoverageNext, LoadingOpenToAll: fx.Config.LoadingOpenToAll,
 			VisibleDecorationEvents: events,
 			Ports: modelfeed.Ports{IDs: fx.Config.ServeInputIDs, Followed: fx.Config.ServeInputFollowed, HidePaid: fx.Config.ServeHidePaid,
-				VerifiedBot: fx.Config.ServeVerifiedBot, NewCreators: fx.Config.ServeInputNewCreators, PublishedRange: fx.Config.ServePublishedRange},
+				NewCreators: fx.Config.ServeInputNewCreators, PublishedRange: fx.Config.ServePublishedRange},
 			ServeUserCosmeticsMiss: fx.Config.ServeUserCosmeticsMiss,
 			ServeMembershipMiss:    fx.Config.ServeMembershipMiss,
 		},
@@ -2883,29 +2878,19 @@ func goldenRunModelsMode(t *testing.T, fx *goldenFixture, writeBack bool) {
 	for _, p := range goldenWriteProblems(fx, state[0], state[1], writeBack) {
 		t.Error(p)
 	}
-	// The cache policy computeModelGetAll documents (createContext's): the public TTL exactly when
-	// there is no session and no verified crawler, none otherwise. A fixture sending headers records
-	// Node's own answer (expect.cacheable); every other one is cacheable exactly when signed out.
-	cacheable := fx.Request.Session == nil
-	if fx.Expect.Cacheable != nil {
-		cacheable = *fx.Expect.Cacheable
-	}
-	if cacheable && (c.ttl == nil || *c.ttl != trpc.SignedOutTTL) {
+	// The cache policy computeModelGetAll documents: the public TTL exactly when there is no session,
+	// none for a session.
+	if fx.Request.Session == nil && (c.ttl == nil || *c.ttl != trpc.SignedOutTTL) {
 		t.Errorf("signed out: want the public cache TTL %+v, got %v", trpc.SignedOutTTL, c.ttl)
 	}
-	if !cacheable && c.ttl != nil {
-		t.Errorf("a session or a verified crawler: want no cache TTL, got %+v", *c.ttl)
+	if fx.Request.Session != nil && c.ttl != nil {
+		t.Errorf("a session: want no cache TTL, got %+v", *c.ttl)
 	}
-	// The per-class shadow series count a signed-out answer as `anon` (a verified crawler's as
-	// `crawler`, expect.viewerClass), a session's never.
-	if want := fx.Expect.ViewerClass; want != "" {
-		if c.viewerClass != want {
-			t.Errorf("viewer class %q, want %q", c.viewerClass, want)
-		}
-	} else if fx.Request.Session == nil && c.viewerClass != FeedViewerAnon {
+	// The per-class shadow series count a signed-out answer as `anon`, a session's never.
+	if fx.Request.Session == nil && c.viewerClass != FeedViewerAnon {
 		t.Errorf("signed out: viewer class %q, want %q", c.viewerClass, FeedViewerAnon)
 	}
-	if fx.Request.Session != nil && (c.viewerClass == FeedViewerAnon || c.viewerClass == FeedViewerCrawler || c.viewerClass == "") {
+	if fx.Request.Session != nil && (c.viewerClass == FeedViewerAnon || c.viewerClass == "") {
 		t.Errorf("a session: viewer class %q, want a session class", c.viewerClass)
 	}
 }

@@ -12,28 +12,26 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/modelfeed"
 )
 
-// The verified crawler on model.getAll, as image.getInfinite reads it (verifiedCrawler). Off (the
-// default), any value of the header is the `verified-bot` fallback, as before. On, a Node sample's
-// `googlebot` / `bingbot` is a crawler: signed in for the cap where mature content is allowed
-// (uncapped on blue and red), signed out on green; any other value is no crawler (a signed-out
-// visitor); and on the public route the header is read as absent (the app's policy strips it from
-// every user agent that reaches this service). The request carries its board color either way.
-func TestPrepareModelGetAllVerifiedBot(t *testing.T) {
+// A verified crawler on model.getAll is not ported: any value of the verified-crawler header falls
+// back (`verified-bot`), as on main, with every model.getAll port switched on, on a Node sample (shadow,
+// probe) and on the public route, before the session is read and before any store is read
+// (computeModelGetAll included). With the ports on, the input carries the two new ports' shapes, so
+// the header check, not an input refusal, decides it (with them off such an input is refused first,
+// as on main, so that case sends a plain one).
+func TestModelGetAllVerifiedBotFallsBack(t *testing.T) {
 	ctx := auth.WithResolved(context.Background(), nil, nil)
+	const plain = `{"json":{"browsingLevel":31}}`
+	const ported = `{"json":{"browsingLevel":31,"newCreators":true,"publishedFrom":"2026-06-01","publishedTo":"2026-06-02"}}`
+	input := plain
 	sampled := func(host, bot string) *http.Request {
-		h := map[string]string{"host": host}
-		if bot != "" {
-			h[verifiedBotHeader] = bot
-		}
-		r, err := SyntheticModelGetAllRequest(ctx, ShadowRequest{Input: `{"json":{"browsingLevel":31}}`, Headers: h})
+		r, err := SyntheticModelGetAllRequest(ctx, ShadowRequest{Input: input, Headers: map[string]string{"host": host, verifiedBotHeader: bot}})
 		if err != nil {
 			t.Fatal(err)
 		}
 		return r
 	}
 	public := func(host, bot string) *http.Request {
-		u := "/api/trpc/" + ProcedureModelGetAll + "?input=" + url.QueryEscape(`{"json":{"browsingLevel":31}}`)
-		r, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+		r, err := http.NewRequestWithContext(ctx, http.MethodGet, "/api/trpc/"+ProcedureModelGetAll+"?input="+url.QueryEscape(input), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -41,46 +39,44 @@ func TestPrepareModelGetAllVerifiedBot(t *testing.T) {
 		r.Header.Set(verifiedBotHeader, bot)
 		return r
 	}
-	off := &Server{Models: &modelfeed.Deps{}, Hosts: goldenHosts, HostPrimaries: goldenPrimaries}
-	for _, bot := range []string{"googlebot", "bingbot", "1"} {
-		if _, _, err := off.prepareModelGetAllViewer(ctx, sampled("blue.example.test", bot)); fallback.Reason(err) != "verified-bot" {
-			t.Errorf("off, %q: %v (%q), want verified-bot", bot, err, fallback.Reason(err))
+	every := modelfeed.Ports{IDs: true, Followed: true, HidePaid: true, NewCreators: true, PublishedRange: true}
+	for _, ports := range []modelfeed.Ports{{}, every} {
+		input = plain
+		if ports.NewCreators {
+			input = ported
+		}
+		s := &Server{Models: &modelfeed.Deps{Config: modelfeed.Config{Ports: ports}}, Hosts: goldenHosts, HostPrimaries: goldenPrimaries}
+		for _, host := range []string{"blue.example.test", "red.example.test", "green.example.test"} {
+			for _, bot := range []string{"googlebot", "bingbot", "1"} {
+				for route, r := range map[string]*http.Request{"sample": sampled(host, bot), "public": public(host, bot)} {
+					if _, _, err := s.prepareModelGetAllViewer(ctx, r); fallback.Reason(err) != "verified-bot" {
+						t.Errorf("ports %+v, %s %s %q: prepare %v (%q), want verified-bot", ports, route, host, bot, err, fallback.Reason(err))
+					}
+					if _, err := s.computeModelGetAll(ctx, r); fallback.Reason(err) != "verified-bot" {
+						t.Errorf("ports %+v, %s %s %q: compute %v (%q), want verified-bot", ports, route, host, bot, err, fallback.Reason(err))
+					}
+				}
+			}
 		}
 	}
-	on := &Server{Models: &modelfeed.Deps{Config: modelfeed.Config{Ports: modelfeed.Ports{VerifiedBot: true}}},
-		Hosts: goldenHosts, HostPrimaries: goldenPrimaries}
-	for _, c := range []struct {
-		name    string
-		r       *http.Request
-		crawler bool
-		cap     int
-		board   string
-	}{
-		{"googlebot on blue", sampled("blue.example.test", "googlebot"), true, 0, "blue"},
-		{"bingbot on red", sampled("red.example.test", "bingbot"), true, 0, "red"},
-		{"bingbot on green", sampled("green.example.test", "bingbot"), true, browsing.PublicLevels, "green"},
-		{"not a crawler's value", sampled("blue.example.test", "1"), false, browsing.PublicLevels, "blue"},
-		{"no header", sampled("blue.example.test", ""), false, browsing.PublicLevels, "blue"},
-		{"the public route", public("blue.example.test", "googlebot"), false, browsing.PublicLevels, "blue"},
-	} {
-		mreq, user, err := on.prepareModelGetAllViewer(ctx, c.r)
-		if err != nil {
-			t.Fatalf("on, %s: %v (%q)", c.name, err, fallback.Reason(err))
-		}
-		if mreq.Crawler != c.crawler || mreq.Cap != c.cap || mreq.Viewer != nil || user != nil || mreq.BoardColor != c.board {
-			t.Errorf("on, %s: crawler %v cap %d viewer %v board %q, want %v %d none %q",
-				c.name, mreq.Crawler, mreq.Cap, mreq.Viewer, mreq.BoardColor, c.crawler, c.cap, c.board)
-		}
+	// The control: the same request with no header is prepared (the header alone refuses it).
+	input = ported
+	s := &Server{Models: &modelfeed.Deps{Config: modelfeed.Config{Ports: every}}, Hosts: goldenHosts, HostPrimaries: goldenPrimaries}
+	r, err := SyntheticModelGetAllRequest(ctx, ShadowRequest{Input: input, Headers: map[string]string{"host": "red.example.test"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mreq, _, err := s.prepareModelGetAllViewer(ctx, r)
+	if err != nil || mreq.BoardColor != "red" || !mreq.Input.NewCreators || mreq.Cap != browsing.PublicLevels {
+		t.Errorf("no header: %v (%q), board %q newCreators %v cap %d; want prepared, red, true, %d",
+			err, fallback.Reason(err), mreq.BoardColor, mreq.Input.NewCreators, mreq.Cap, browsing.PublicLevels)
 	}
 }
 
-// goldenNewPortFixtures are the served model-getall fixtures of the verified-crawler, `newCreators`
-// and published-range ports, each with the reason the same request falls back with while its switch
+// goldenNewPortFixtures are the served model-getall fixtures of the `newCreators` and published-range
+// ports, each with the reason the same request falls back with while its switch
 // is off.
 var goldenNewPortFixtures = map[string]string{
-	"verified-bot-nsfw-host":             "verified-bot",
-	"verified-bot-sfw-host":              "verified-bot",
-	"verified-bot-header-not-a-crawler":  "verified-bot",
 	"new-creators-signed-out":            "input-newCreators",
 	"new-creators-red-board":             "input-newCreators",
 	"new-creators-empty-board":           "input-newCreators",
@@ -94,12 +90,12 @@ func TestModelGetAllNewPortsSwitch(t *testing.T) {
 	for name, offReason := range goldenNewPortFixtures {
 		t.Run(name, func(t *testing.T) {
 			fx := goldenLoad(t, goldenDir+"/model-getall/"+name+".json")
-			if !fx.Config.ServeVerifiedBot && !fx.Config.ServeInputNewCreators && !fx.Config.ServePublishedRange {
+			if !fx.Config.ServeInputNewCreators && !fx.Config.ServePublishedRange {
 				t.Fatal("a port fixture must switch its port on")
 			}
 			goldenRunModels(t, fx)
 			off := *fx
-			off.Config.ServeVerifiedBot, off.Config.ServeInputNewCreators, off.Config.ServePublishedRange = false, false, false
+			off.Config.ServeInputNewCreators, off.Config.ServePublishedRange = false, false
 			off.Expect.Fallback = offReason
 			if _, err := goldenComputeModels(t, &off); fallback.Reason(err) != offReason {
 				t.Fatalf("switch off: %v (reason %q), want %q", err, fallback.Reason(err), offReason)

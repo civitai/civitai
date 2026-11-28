@@ -117,8 +117,8 @@ type Input struct {
 
 // Ports are the input shapes ported behind their own serve switch, each off by default: off, the
 // shape falls back as it always has (`input-ids`, `input-followed`, `input-newCreators`,
-// `input-publishedFrom`, `verified-bot`, …), so turning one on is the only way it is ever computed
-// (DESIGN.md §15.2.4, §15.2.8–§15.2.10).
+// `input-publishedFrom`, …), so turning one on is the only way it is ever computed (DESIGN.md
+// §15.2.4, §15.2.8, §15.2.9).
 type Ports struct {
 	// IDs is FEED_GO_GETALL_SERVE_INPUT_IDS: compute a request with `ids`.
 	IDs bool
@@ -127,9 +127,6 @@ type Ports struct {
 	// HidePaid is FEED_GO_GETALL_SERVE_HIDE_PAID: compute a request with `hidePaid` true (the
 	// free-version rule, DESIGN.md §15.2.7). Off, it is the `input-hidePaid` fallback.
 	HidePaid bool
-	// VerifiedBot is FEED_GO_GETALL_SERVE_VERIFIED_BOT: compute a request carrying the verified-crawler
-	// header. Off, any value of it is the `verified-bot` fallback.
-	VerifiedBot bool
 	// NewCreators is FEED_GO_GETALL_SERVE_INPUT_NEW_CREATORS: compute a request with `newCreators`.
 	NewCreators bool
 	// PublishedRange is FEED_GO_GETALL_SERVE_INPUT_PUBLISHED_RANGE: compute a request with

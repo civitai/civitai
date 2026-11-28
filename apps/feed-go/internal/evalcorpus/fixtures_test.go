@@ -84,7 +84,7 @@ var (
 // goldenMinSigned is, per directory, how many fixtures at least must get a signature (the counts on
 // the day this test was written: a fixture removed by mistake shows up here).
 var goldenMinSigned = map[string]int{
-	"as-posts": 35, "infinite": 150, "model-getall": 75, "v1-models": 13, "v1-models-headers": 5,
+	"as-posts": 35, "infinite": 150, "model-getall": 70, "v1-models": 13, "v1-models-headers": 5,
 }
 
 var sigRE = regexp.MustCompile(`^[0-9a-f]{16}$`)

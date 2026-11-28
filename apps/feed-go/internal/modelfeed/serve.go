@@ -117,9 +117,6 @@ type Request struct {
 	Viewer *Viewer
 	// Cap is the domain cap (browsing.DomainCap); 0 = uncapped.
 	Cap int
-	// Crawler is whether the request is a verified crawler's (read only with Ports.VerifiedBot): it is
-	// no viewer, and its answer is never edge-cached.
-	Crawler bool
 	// BoardColor is the request's board color (getRequestBoardDomainColor): which "new & upcoming"
 	// board `newCreators` reads.
 	BoardColor string

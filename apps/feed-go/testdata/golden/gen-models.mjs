@@ -81,8 +81,6 @@ const { commaDelimitedNumberArray, booleanString } = await repo('src/utils/zod-h
 const { publishedDateSchema, publishedRangeBounds, publishedRangeError } = await repo(
   'src/shared/utils/published-range.ts'
 );
-// requestVerifiedCrawler's parse of the header the API request policy left.
-const { parseVerifiedBotHeader } = await repo('src/server/utils/bot-detection/header.ts');
 const { subscriptionProductMetadataSchema } = await repo('src/server/schema/subscriptions.schema.ts');
 const { constants } = await repo('src/server/common/constants.ts');
 
@@ -1519,24 +1517,14 @@ function getModelsFeed(input, ctx) {
   return { items: [...(pinned?.items ?? []), ...results], nextCursor };
 }
 
-/** The tRPC request: applyDomainFeature + resolveRequestBrowsingLevels on the parsed input. Returns the
- *  answer, whether createContext makes it edge-cacheable (no session user and no verified crawler),
- *  and whether the request is a verified crawler's. */
+/** The tRPC request: applyDomainFeature + resolveRequestBrowsingLevels on the parsed input. */
 function runModels(spec) {
   const session = spec.viewer ? SESSIONS[spec.viewer] : null;
   if (session) T.packed.set(`${K.session}:${session.id}`, session);
   const user = session && !session.bannedAt ? { ...session } : undefined;
   const color = Object.entries(HOST).find(([, h]) => h === spec.host)?.[0] ?? 'blue';
   const canViewNsfw = color === 'blue' || color === 'red';
-  // requestDomainBrowsingLevelCap: a verified crawler (the header as the API policy left it,
-  // requestVerifiedCrawler) counts as signed in where mature content is allowed.
-  const crawler = parseVerifiedBotHeader(spec.headers?.['x-civitai-verified-bot']) !== null;
-  const isAuthorized = !!user || (crawler && canViewNsfw);
-  const cap = !isAuthorized
-    ? publicBrowsingLevelsFlag
-    : !canViewNsfw
-    ? sfwBrowsingLevelsFlag
-    : undefined;
+  const cap = !user ? publicBrowsingLevelsFlag : !canViewNsfw ? sfwBrowsingLevelsFlag : undefined;
   const raw = structuredClone(spec.input);
   if (user && raw.browsingLevel === undefined) throw new Error('the saved level is not modelled');
   if (cap !== undefined) raw.browsingLevel = (raw.browsingLevel ?? 0) & cap || cap;
@@ -1561,8 +1549,7 @@ function runModels(spec) {
     getAllModelImagesSlim: spec.config.modelImagesSlim,
     coverageNext: spec.config.coverageNext,
   };
-  const value = getModelsFeed(input, { user, features, domain: boardColorOf(spec.host) });
-  return { value, cacheable: !session && !crawler, crawler };
+  return getModelsFeed(input, { user, features, domain: boardColorOf(spec.host) });
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -2094,57 +2081,6 @@ const SPECS = [
     input: { sort: 'Highest Rated', limit: 10, browsingLevel: 1, username: 'artist_two', hidePaid: 'true' },
     pages: [{ cursor: null, ids: [5022, 5023, 5024] }],
   },
-  // A verified crawler (the header as the app's API policy left it: `googlebot` / `bingbot`), served
-  // only behind FEED_GO_GETALL_SERVE_VERIFIED_BOT; off, any value of the header is the verified-bot
-  // fallback.
-  {
-    name: 'verified-bot-nsfw-host',
-    description:
-      'A verified crawler, signed out, on an NSFW host: authorized for the cap (level 31 uncapped, so the mature model shows its own face and R image), no viewer, never edge-cached.',
-    host: HOST.blue,
-    headers: { 'x-civitai-verified-bot': 'googlebot' },
-    config: { serveVerifiedBot: true },
-    input: { sort: 'Highest Rated', limit: 2, browsingLevel: 31 },
-    pages: [{ cursor: null, ids: [5001, 5006] }],
-  },
-  {
-    name: 'verified-bot-sfw-host',
-    description:
-      'A verified crawler on the SFW host: no mature content there, so it counts as signed out for the cap (PG: the .com face), and is still not edge-cached.',
-    host: HOST.green,
-    headers: { 'x-civitai-verified-bot': 'bingbot' },
-    config: { serveVerifiedBot: true },
-    input: { sort: 'Highest Rated', limit: 2, browsingLevel: 31 },
-    pages: [{ cursor: null, ids: [5001, 5006] }],
-  },
-  {
-    name: 'verified-bot-header-not-a-crawler',
-    description:
-      'A verified-crawler header whose value is no crawler the app names: parseVerifiedBotHeader reads it as none, so the signed-out PG page, edge-cacheable.',
-    host: HOST.blue,
-    headers: { 'x-civitai-verified-bot': '1' },
-    config: { serveVerifiedBot: true },
-    input: { sort: 'Highest Rated', limit: 2, browsingLevel: 31 },
-    pages: [{ cursor: null, ids: [5001, 5006] }],
-  },
-  {
-    name: 'fallback-verified-bot-off',
-    description: 'A verified crawler with its switch off (the default): not served.',
-    host: HOST.blue,
-    headers: { 'x-civitai-verified-bot': 'googlebot' },
-    input: { sort: 'Highest Rated', limit: 2, browsingLevel: 31 },
-    fallback: 'verified-bot',
-  },
-  {
-    name: 'fallback-verified-bot-no-level',
-    description:
-      'A verified crawler on an NSFW host with no browsingLevel: nothing caps it and it has no saved level, so Node binds no level (model-level-absent, kept a fallback).',
-    host: HOST.blue,
-    headers: { 'x-civitai-verified-bot': 'googlebot' },
-    config: { serveVerifiedBot: true },
-    input: { sort: 'Highest Rated', limit: 2 },
-    fallback: 'model-level-absent',
-  },
   // `newCreators` (behind FEED_GO_GETALL_SERVE_INPUT_NEW_CREATORS): the "new & upcoming" models board of
   // the request's board color (new_creators: [1002]; new_creators-red: [1001, 1002]), and the addons
   // under the `newCreators` scope (701, on model 5001 only).
@@ -2396,10 +2332,8 @@ for (const spec of SPECS) {
     expect = { fallback: spec.fallback };
   } else {
     let value;
-    let cacheable;
-    let crawler;
     try {
-      ({ value, cacheable, crawler } = runModels({ ...spec, config }));
+      value = runModels({ ...spec, config });
     } catch (err) {
       // `nodeThrows`: Node's own error is the expected outcome (feed-go must hand it to Node).
       if (!(spec.nodeThrows && spec.nodeThrows.test(String(err?.message ?? err))))
@@ -2414,13 +2348,6 @@ for (const spec of SPECS) {
           envelope: JSON.parse(JSON.stringify(superjson.serialize(value))),
           writes: writeEntries(),
         };
-    // A fixture sending headers (the verified-crawler header) records createContext's cache policy
-    // and the viewer class it is counted under: a verified crawler's answer is never edge-cached.
-    if (spec.headers && !spec.fallback) {
-      if (spec.viewer) throw new Error(`${spec.name}: a header fixture is signed out`);
-      expect.cacheable = cacheable;
-      expect.viewerClass = crawler ? 'crawler' : 'anon';
-    }
     if (!spec.fallback) writeDevalueBody('model-getall', spec.name, value);
   }
   writeFileSync(
@@ -2433,7 +2360,7 @@ for (const spec of SPECS) {
         config,
         request: {
           input: inputEnvelope,
-          headers: { host: spec.host, ...(spec.headers ?? {}) },
+          headers: { host: spec.host },
           session: spec.viewer ? { userId: spec.viewer } : null,
         },
         redis: redisEntries(T.dropKeys),

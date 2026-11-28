@@ -9,8 +9,8 @@ import "github.com/civitai/civitai/apps/feed-go/internal/auth"
 // public TTL), and its headers decide who else is served it.
 //
 //   - anon: no session user and no verified crawler (the edge-cacheable answer).
-//   - crawler: a verified crawler with no session user (image.getInfinite, and model.getAll with
-//     FEED_GO_GETALL_SERVE_VERIFIED_BOT on; as-posts hands a verified bot back). Never edge-cached.
+//   - crawler: a verified crawler with no session user (image.getInfinite only; the other two hand a
+//     verified bot back). Never edge-cached.
 //   - banned: a banned session (no viewer, but a session user, so never edge-cached).
 //   - user, moderator: a signed-in viewer.
 const (
@@ -37,8 +37,8 @@ func isFeedViewerEndpoint(endpoint string) bool {
 	return false
 }
 
-// feedViewerClass is the class of a request with session user (nil: none) and, for image.getInfinite
-// and model.getAll, whether it is a verified crawler's.
+// feedViewerClass is the class of a request with session user (nil: none) and, for image.getInfinite,
+// whether it is a verified crawler's.
 func feedViewerClass(user *auth.SessionUser, crawler bool) string {
 	switch {
 	case user == nil && crawler:
