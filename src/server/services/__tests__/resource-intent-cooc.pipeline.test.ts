@@ -14,8 +14,9 @@ import { fakeImageDb, freshDb } from './resource-intent-cooc.harness';
 vi.setConfig({ testTimeout: 60_000 });
 
 const DAY = 86_400_000;
-// Fixed, and earlier than the wall clock the database stamps `builtAt` with, so a pin measured
-// from it also satisfies the CHECK measured from `builtAt`.
+// Fixed, for the date-derived expectations (train window, UTC train end). Never measure a
+// persisted study pin from it: the CHECK measures the pin from `builtAt`, which the database
+// stamps with its own clock, so a pin fixed relative to NOW expires once the wall clock passes it.
 const NOW = new Date('2026-10-01T12:34:56.789Z');
 const SEED = RESOURCE_INTENT_COOC_SPEC.defaultSeed;
 const PROD_TRAIN_END = new Date('2026-09-30T00:00:00.000Z');
@@ -259,19 +260,32 @@ describe('cooc build pipeline', () => {
   });
 
   it('a study at exactly now minus one day, pinned exactly 58 days, is accepted', async () => {
-    const { sql } = await freshDb();
-    const trainEnd = new Date(NOW.getTime() - DAY);
+    const { db, sql } = await freshDb();
+    // The real clock, not NOW: the row's pin CHECK is measured from `builtAt`, which the guard
+    // trigger stamps from the database clock at insert. Read before the insert, so builtAt >= now
+    // and a pin of exactly now + 58 days satisfies both the app check (measured from `now`) and
+    // the CHECK (pinnedUntil > builtAt AND pinnedUntil <= builtAt + 58 days).
+    const now = new Date();
+    const trainEnd = new Date(now.getTime() - DAY);
+    const pinnedUntil = new Date(now.getTime() + 58 * DAY);
     const s = await buildCoocSnapshot({
       kind: 'study',
       trainEnd,
       seed: SEED,
-      pinnedUntil: new Date(NOW.getTime() + 58 * DAY),
+      pinnedUntil,
       dryRun: false,
-      now: NOW,
+      now,
       query: imageDb({}, trainEnd).query,
       sql,
     });
     expect([s.kind, s.created, s.trainEnd]).toEqual(['study', true, trainEnd.toISOString()]);
+    const [row] = (
+      await db.query<{ status: string; pinnedUntil: Date }>(
+        `SELECT "status", "pinnedUntil" FROM "ResourceIntentCoocSnapshot"`
+      )
+    ).rows;
+    expect(row.status).toBe('ready');
+    expect(row.pinnedUntil.getTime()).toBe(pinnedUntil.getTime());
   });
 
   it('a model seen with two types keeps the first one drawn, and the build reports the conflicts', async () => {

@@ -122,6 +122,20 @@ type ImagesQuery struct {
 	// RandomCursor pages a Random collection page inside the CTE: `"sortKey" < <sortKey> OR ("sortKey"
 	// = <sortKey> AND "imageId" < <id>)`; nil = the first page. Its Seed is not read here (RandomSeed).
 	RandomCursor *RandomCursor
+	// PerVersionTopN reads a model scope (ModelID without a ModelVersionID) one version at a time: each
+	// of the model's versions contributes its first Skip+Limit+1 matching rows in the page's order
+	// (`CROSS JOIN LATERAL`, a newest-first or oldest-first index scan of the version's resource rows),
+	// and those are merged, offset and limited (perVersionModelScope). Same rows as the single join
+	// getAllImages runs, without reading the model's whole gallery first. Read only for the image-id
+	// orders (none of IndexOrder, a collection, the prioritized branch).
+	PerVersionTopN bool
+}
+
+// perVersionModelScope is whether Build reads the model scope per version (PerVersionTopN): only
+// where the page's order is the resource row's image id, which each version's slice shares.
+func (q *ImagesQuery) perVersionModelScope() bool {
+	return q.PerVersionTopN && q.ModelID != 0 && q.ModelVersionID == 0 && len(q.PrioritizedUserIDs) == 0 &&
+		q.CollectionID == 0 && !q.IndexOrder
 }
 
 // random is a collection page in the Random order.
@@ -237,15 +251,24 @@ func (q *ImagesQuery) Build() Built {
 	from := `FROM "Image" i`
 	var joins []string
 	prioritized := len(q.PrioritizedUserIDs) > 0
+	perVersion := q.perVersionModelScope()
+	modelArg := ""
 	// `!prioritizeUser && (modelId || modelVersionId)`: a prioritized request does not join the model.
 	if !prioritized && (q.ModelID != 0 || q.ModelVersionID != 0) {
 		from = `FROM "ImageResourceNew" irr`
 		joins = append(joins, `JOIN "Image" i ON i.id = irr."imageId"`)
-		if q.ModelVersionID != 0 {
+		switch {
+		case q.ModelVersionID != 0:
 			and = append(and, `irr."modelVersionId" = `+a.add(q.ModelVersionID))
 			cacheTTL = 10 * time.Minute // CacheTTL.md
 			tags = append(tags, "images-modelVersion:"+strconv.Itoa(q.ModelVersionID))
-		} else {
+		case perVersion:
+			// The version is the lateral's (perVersionModelScope); the model is the outer query's.
+			and = append(and, `irr."modelVersionId" = mv.id`)
+			modelArg = a.add(q.ModelID)
+			cacheTTL = 10 * time.Minute
+			tags = append(tags, "images-model:"+strconv.Itoa(q.ModelID))
+		default:
 			joins = append(joins, `JOIN "ModelVersion" mv ON mv.id = irr."modelVersionId"`)
 			and = append(and, `mv."modelId" = `+a.add(q.ModelID))
 			cacheTTL = 10 * time.Minute
@@ -322,6 +345,10 @@ func (q *ImagesQuery) Build() Built {
 		// The collection's newest items first (only beside a collectionId: ParseInfinite), the cursor
 		// on the item id (getCursor, descending and inclusive).
 		orderBy, cursorCol, cursorOp = `ct."collectionItemId" DESC`, `ct."collectionItemId"`, "<="
+	case perVersion && q.Sort == SortOldest:
+		// i."id" ASC, spelled on the resource row (the same value) so each version's slice is an index
+		// scan of its resource rows from the cursor up.
+		orderBy, cursorCol, cursorOp = `irr."imageId" ASC`, `irr."imageId"`, ">="
 	case q.Sort == SortOldest:
 		orderBy, cursorCol, cursorOp = `i."id" ASC`, `i."id"`, ">="
 	case strings.Contains(from, "irr"):
@@ -447,7 +474,7 @@ func (q *ImagesQuery) Build() Built {
     OFFSET ` + strconv.Itoa(q.Skip)
 	}
 
-	sql := with + `
+	selectSQL := `
     SELECT
       i.id,
       i.name,
@@ -506,8 +533,33 @@ func (q *ImagesQuery) Build() Built {
         (i."nsfwLevel" & ` + strconv.Itoa(browsing.NSFWLevels) + `) = 0
         OR NOT i."modelRestricted"` + restrictedOwnerSQL + `
       )
-    ORDER BY ` + orderBy + offset + `
+    ORDER BY ` + orderBy
+
+	var sql string
+	if perVersion {
+		// getAllImages' model scope is one join over every resource row of the model's versions, sorted
+		// and then limited: Postgres reads the whole gallery first. The page is the same rows read per
+		// version: a row of the page is among its own version's first Skip+Limit+1 in the page's order
+		// (one resource row per image and version, the primary key), so each version contributes those
+		// and the merge keeps the order, the offset and the limit. An image the model's versions share
+		// is one row per version, as in the join; its rows are identical (nothing per version is
+		// selected), so their order among themselves cannot show.
+		dir := "DESC"
+		if q.Sort == SortOldest {
+			dir = "ASC"
+		}
+		sql = with + `
+    SELECT t.* FROM "ModelVersion" mv
+    CROSS JOIN LATERAL (` + selectSQL + `
+    LIMIT ` + a.add(q.Skip+q.Limit+1) + `
+    ) t
+    WHERE mv."modelId" = ` + modelArg + `
+    ORDER BY t."cursorId" ` + dir + offset + `
     LIMIT ` + a.add(q.Limit+1)
+	} else {
+		sql = with + selectSQL + offset + `
+    LIMIT ` + a.add(q.Limit+1)
+	}
 
 	personalizedViewer := 0
 	if reactions || (q.ViewerID != 0 && q.TargetUserID == q.ViewerID) {

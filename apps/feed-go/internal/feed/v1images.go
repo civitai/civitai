@@ -451,6 +451,9 @@ func v1LegacyPage(ctx context.Context, d *V1Deps, in *V1Input, viewer Viewer, vi
 		IndexOrder: in.PostID != 0 && in.ModelID == 0,
 		// The handler leaves `requiringMeta` in the `data` it spreads into getAllImages' input.
 		RequiringMeta: in.RequiringMeta,
+		// A model without a version: the same page read per version, so its cost is the page's, not
+		// the model's whole gallery's (DESIGN.md §13.2.1, Cost).
+		PerVersionTopN: true,
 	}
 	rows, err := d.Rows(ctx, q)
 	if err != nil {

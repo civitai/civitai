@@ -1084,6 +1084,8 @@ func goldenImageRows(fx *goldenFixture, sql string, args []any) (*testkit.Rows, 
 	}
 	var out [][]any
 	var kept []goldenImage
+	// keptVersion[i] is the resource row's version kept[i] was read through (0: no model scope).
+	var keptVersion []int
 	itemOf := map[int]goldenCollectionItem{} // kept index -> its item (a collection page)
 	for _, img := range fx.DB.Images {
 		if hasIDs && !goldenHas(goldenInts(ids), img.ID) {
@@ -1101,15 +1103,15 @@ func goldenImageRows(fx *goldenFixture, sql string, args []any) (*testkit.Rows, 
 		// FROM "ImageResourceNew" irr JOIN … (JOIN "ModelVersion" mv for a model): one row per matching
 		// resource row. A version matches at most one row of an image; a model, one per version of it the
 		// image used, so such an image is listed once per version.
-		copies := 1
+		copies := []int{0}
 		if hasVersion || hasModel {
-			copies = 0
+			copies = nil
 			for _, r := range img.Resources {
 				if (hasVersion && r.ModelVersionID == goldenInt(version)) || (!hasVersion && versionModel[r.ModelVersionID] == goldenInt(model)) {
-					copies++
+					copies = append(copies, r.ModelVersionID)
 				}
 			}
-			if copies == 0 {
+			if len(copies) == 0 {
 				continue
 			}
 		}
@@ -1220,13 +1222,19 @@ func goldenImageRows(fx *goldenFixture, sql string, args []any) (*testkit.Rows, 
 			}
 			continue
 		}
-		for range copies {
+		for _, v := range copies {
 			kept = append(kept, img)
+			keptVersion = append(keptVersion, v)
 		}
 	}
 	if hasCollection {
 		// Carry each row's item through the sort and the paging below.
 		return goldenCollectionRows(sql, args, kept, itemOf)
+	}
+	if m := goldenRePerVersion.FindStringSubmatch(sql); m != nil {
+		return goldenPerVersionRows(sql, args, m, kept, keptVersion)
+	} else if strings.Contains(sql, `LATERAL`) {
+		return nil, errors.New("golden: a lateral the harness does not evaluate")
 	}
 	// The system user's IIF ahead of the sort's own order (prioritizedUserIds [-1] without a post of
 	// its own), or the prioritized creators' oldest-post order in place of it.
@@ -1300,6 +1308,89 @@ func goldenImageRows(fx *goldenFixture, sql string, args []any) (*testkit.Rows, 
 			cursor = goldenPtr(img.Index)
 		}
 		out = append(out, img.row(cursor))
+	}
+	return testkit.NewRows(goldenImageColumns, out...), nil
+}
+
+// goldenRePerVersion is the per-version model scope's frame (feed.ImagesQuery.PerVersionTopN): the
+// lateral's order and limit, the outer model clause, the merge's order, offset and limit.
+var goldenRePerVersion = regexp.MustCompile(`ORDER BY irr\."imageId" (ASC|DESC)\s+LIMIT \$(\d+)\s+\) t\s+` +
+	`WHERE mv\."modelId" = \$(\d+)\s+ORDER BY t\."cursorId" (ASC|DESC)(?:\s+OFFSET (\d+))?\s+LIMIT \$(\d+)\s*$`)
+
+// goldenPerVersionRows answers the per-version model scope as Postgres evaluates it: per version of
+// the model (kept[i] read through keptVersion[i]), the rows past the cursor in the lateral's order,
+// the first <lateral limit> of them; then all versions' rows in the merge's order, offset and limited.
+// A lateral that does not scope its resource rows to the outer version is refused.
+func goldenPerVersionRows(sql string, args []any, m []string, kept []goldenImage, keptVersion []int) (*testkit.Rows, error) {
+	if !strings.Contains(sql, `SELECT t.* FROM "ModelVersion" mv
+    CROSS JOIN LATERAL (`) || !strings.Contains(sql, ` AND irr."modelVersionId" = mv.id AND `) {
+		return nil, errors.New("golden: a per-version model scope without its lateral, or a lateral not scoped to the version")
+	}
+	bound := func(s string) (int, error) {
+		n, _ := strconv.Atoi(s)
+		if n < 1 || n > len(args) {
+			return 0, fmt.Errorf("golden: a per-version bind $%s past the arguments", s)
+		}
+		return goldenInt(args[n-1]), nil
+	}
+	inner, err := bound(m[2])
+	if err != nil {
+		return nil, err
+	}
+	limit, err := bound(m[6])
+	if err != nil {
+		return nil, err
+	}
+	type row struct {
+		img     goldenImage
+		version int
+	}
+	var rows []row
+	cursor := goldenReCursor.FindStringSubmatch(sql)
+	if cursor != nil && cursor[1] != `irr."imageId"` {
+		return nil, fmt.Errorf("golden: a per-version cursor on %s", cursor[1])
+	}
+	for i, img := range kept {
+		if cursor != nil {
+			c, err := bound(cursor[3])
+			if err != nil {
+				return nil, err
+			}
+			if (cursor[2] == "<=" && img.ID > c) || (cursor[2] == ">=" && img.ID < c) {
+				continue
+			}
+		}
+		rows = append(rows, row{img, keptVersion[i]})
+	}
+	byID := func(asc bool) {
+		sort.SliceStable(rows, func(a, b int) bool {
+			if asc {
+				return rows[a].img.ID < rows[b].img.ID
+			}
+			return rows[a].img.ID > rows[b].img.ID
+		})
+	}
+	byID(m[1] == "ASC")
+	perVersion := map[int]int{}
+	capped := rows[:0:0]
+	for _, r := range rows {
+		if perVersion[r.version] < inner {
+			perVersion[r.version]++
+			capped = append(capped, r)
+		}
+	}
+	rows = capped
+	byID(m[4] == "ASC")
+	if m[5] != "" {
+		n, _ := strconv.Atoi(m[5])
+		rows = rows[min(n, len(rows)):]
+	}
+	if len(rows) > limit {
+		rows = rows[:limit]
+	}
+	out := make([][]any, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, r.img.row(r.img.ID))
 	}
 	return testkit.NewRows(goldenImageColumns, out...), nil
 }
