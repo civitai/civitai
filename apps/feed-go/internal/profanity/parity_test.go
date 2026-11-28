@@ -105,7 +105,7 @@ func corpus(t *testing.T, d *Data) []string {
 	}
 	bases = append(bases, d.WhitelistWords...)
 	leet := strings.NewReplacer("a", "4", "e", "3", "i", "1", "o", "0", "s", "5")
-	var out []string
+	out := make([]string, 0, 10*len(bases))
 	for _, b := range bases {
 		if !isASCII(b) {
 			t.Fatalf("corpus base %q is not ASCII: the two generators would split it differently", b)

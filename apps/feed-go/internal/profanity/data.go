@@ -14,6 +14,7 @@ package profanity
 import (
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 )
 
@@ -63,7 +64,7 @@ func ParseData(raw []byte) (*Data, error) {
 	}
 	if len(d.BlockedWords) == 0 || len(d.WhitelistWords) == 0 || len(d.English) == 0 ||
 		d.MinManagedEntries <= 0 || d.MinDatasetWordLength <= 0 || d.MinUnboundedLetters <= 0 {
-		return nil, fmt.Errorf("profanity data: incomplete")
+		return nil, errors.New("profanity data: incomplete")
 	}
 	for _, t := range []struct {
 		in  ChainTable
