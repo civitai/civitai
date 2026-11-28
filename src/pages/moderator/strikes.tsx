@@ -706,8 +706,7 @@ function IssueStrikeModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [opened, defaultUserId]);
 
-  // A Copyright strike defaults to 0 points: it records the removal for the repeat-infringer count
-  // without escalating. The moderator can still raise it.
+  // Copyright defaults to 0 points: it records the removal for the repeat-infringer count without escalating.
   const reason = form.watch('reason');
   useEffect(() => {
     const points = form.getValues('points');

@@ -8,8 +8,10 @@ const {
   countSiteAppeals,
   getRestrictedVerdictCount,
   countTrainingDataReview,
+  countRepeatInfringerReview,
 } = vi.hoisted(() => ({
   countTrainingDataReview: vi.fn(),
+  countRepeatInfringerReview: vi.fn(),
   getRestrictedVerdictCount: vi.fn(),
   getFlaggedCount: vi.fn(),
   getHeldDetectionModelCount: vi.fn(),
@@ -78,7 +80,7 @@ vi.mock('../minor-hash.service', () => ({
 
 vi.mock('../training-moderation.service', () => ({ countTrainingDataReview }));
 vi.mock('../strike-review.service', () => ({ countStrikeReview }));
-vi.mock('../repeat-infringer.service', () => ({ countRepeatInfringerReview: async () => 0 }));
+vi.mock('../repeat-infringer.service', () => ({ countRepeatInfringerReview }));
 vi.mock('../restricted-nsfw-verdicts', () => ({ getRestrictedVerdictCount }));
 vi.mock('../site-appeals.service', () => ({ countSiteAppeals }));
 
@@ -91,6 +93,7 @@ beforeEach(() => {
   getHeldDetectionModelCount.mockResolvedValue(3);
   getRestrictedVerdictCount.mockResolvedValue(0);
   countTrainingDataReview.mockResolvedValue(0);
+  countRepeatInfringerReview.mockResolvedValue(0);
   getMinorQueueCounts.mockResolvedValue({ pending: 10, pendingWithDetection: 1 });
 });
 
@@ -166,6 +169,18 @@ describe('sidebar count strikeReview', () => {
     const counts = (await getSidebarCounts()).counts;
     expect(counts).not.toHaveProperty('strikeReview');
     expect(counts).toMatchObject({ modelFlagsAppeals: 4 });
+  });
+
+  it('adds the repeat-infringer queue to the muted-account queue', async () => {
+    countStrikeReview.mockResolvedValue(2);
+    countRepeatInfringerReview.mockResolvedValue(3);
+    expect((await getSidebarCounts()).counts).toMatchObject({ strikeReview: 5 });
+  });
+
+  it('keeps the muted-account count when the repeat-infringer count fails', async () => {
+    countStrikeReview.mockResolvedValue(2);
+    countRepeatInfringerReview.mockRejectedValue(new Error('db down'));
+    expect((await getSidebarCounts()).counts).toMatchObject({ strikeReview: 2 });
   });
 });
 

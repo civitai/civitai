@@ -116,7 +116,7 @@ afterEach(async () => {
 const queued = async () => (await getRepeatInfringerQueue()).rows.map((r) => r.userId);
 
 describe('repeat-infringer queue', () => {
-  it('pins the repeat-infringer policy Justin chose (2026-11-24): 3 removals in 12 months', () => {
+  it('pins the repeat-infringer policy (civitai/civitai#10736): 3 removals in 12 months', () => {
     expect(REPEAT_INFRINGER_THRESHOLD).toBe(3);
     expect(REPEAT_INFRINGER_WINDOW_MONTHS).toBe(12);
   });
@@ -199,7 +199,7 @@ describe('repeat-infringer queue', () => {
 
   it.each([
     ['a non-timestamp string', 'soon'],
-    ['a number', 12345],
+    ['a number', 1234],
     ['an object', { at: 'x' }],
     ['a date-only string', '2099-01-01'],
   ])('reads %s in reviewedAt as unreviewed, without failing the query', async (_label, value) => {

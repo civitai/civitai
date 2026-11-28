@@ -1,20 +1,11 @@
-import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
 import { strikePointsAllowed } from '~/server/schema/strike.schema';
 import { createStrike } from '~/server/services/strike.service';
 import { defineModeratorEndpoint } from '~/server/utils/moderator-endpoint';
 import { EntityType, StrikeReason } from '~/shared/utils/prisma/enums';
 
-export default defineModeratorEndpoint('strike.create', {
-  summary: 'Issue a strike against an account.',
-  returns: '{ strike, skipped }',
-  notes: [
-    '`issuedBy` is the calling moderator.',
-    'Non-manual strikes are limited to one per user per day; a rate-limited call returns `skipped: true` with a null strike rather than failing. `ManualModAction` bypasses that limit.',
-    'Any moderator may issue a strike — no extra permission, consistent with mute/unmute.',
-  ],
-  rateLimit: { max: 30, windowSeconds: 60 },
-  input: z.object({
+export const createStrikeInput = z
+  .object({
     userId: z.coerce.number().int().positive().describe('The account to strike.'),
     reason: z.enum(StrikeReason).describe('Why the strike was issued.'),
     points: z.coerce
@@ -43,13 +34,23 @@ export default defineModeratorEndpoint('strike.create', {
       .max(365)
       .default(365)
       .describe('Lifetime in days.'),
-  }),
+  })
+  .refine((input) => strikePointsAllowed(input.reason, input.points), {
+    path: ['points'],
+    message: 'Only a Copyright strike can carry 0 points',
+  });
+
+export default defineModeratorEndpoint('strike.create', {
+  summary: 'Issue a strike against an account.',
+  returns: '{ strike, skipped }',
+  notes: [
+    '`issuedBy` is the calling moderator.',
+    'Non-manual strikes are limited to one per user per day; a rate-limited call returns `skipped: true` with a null strike rather than failing. `ManualModAction` bypasses that limit.',
+    'Any moderator may issue a strike — no extra permission, consistent with mute/unmute.',
+  ],
+  rateLimit: { max: 30, windowSeconds: 60 },
+  input: createStrikeInput,
   async handler(input, ctx) {
-    if (!strikePointsAllowed(input.reason, input.points))
-      throw new TRPCError({
-        code: 'BAD_REQUEST',
-        message: 'Only a Copyright strike can carry 0 points',
-      });
     const strike = await createStrike({
       userId: input.userId,
       reason: input.reason,
