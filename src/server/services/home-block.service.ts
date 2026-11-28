@@ -36,6 +36,8 @@ import { getCrucibles, withEntryCounts } from '~/server/services/crucible.servic
 import { crucibleListSelect } from '~/server/selectors/crucible.selector';
 import {
   bustSystemHomeBlockCaches,
+  forgetHomeBlockRows,
+  readHomeBlockRowThrough,
   getHomeBlockCached,
 } from '~/server/services/home-block-cache.service';
 import {
@@ -260,11 +262,15 @@ export const getHomeBlockById = async ({
       dbReadFallbackCounter.inc({ entity: 'homeBlock', caller: 'getHomeBlockById' });
       return dbWrite.homeBlock.findUnique(homeBlockFindArgs);
     };
+    // With `home-block-server-cache` on, through this process's copy of the row for up to 10s
+    // (`readHomeBlockRowThrough`: the staleness bound and why it cannot widen who sees a block).
     const homeBlock =
       id !== undefined
-        ? await readHomeBlockViaKysely((await loadKyselyDb()).kyselyRead, id).then(
-            (row) => row ?? fallback(),
-            fallback
+        ? await readHomeBlockRowThrough(id, async (blockId) =>
+            readHomeBlockViaKysely((await loadKyselyDb()).kyselyRead, blockId).then(
+              (row) => row ?? fallback(),
+              fallback
+            )
           )
         : await readHomeBlockViaPrisma(dbRead, id).catch(fallback);
 
@@ -997,6 +1003,7 @@ export const upsertHomeBlock = async ({
         throw e;
       });
 
+    forgetHomeBlockRows([updated.id]);
     if (updated.userId === SYSTEM_HOMEBLOCK_USER_ID) await bustSystemHomeBlockCaches(updated);
 
     return updated;
@@ -1053,10 +1060,12 @@ export const deleteHomeBlockById = async ({
   if (!homeBlock) return null;
 
   // The check above reads the replica; the owner filter holds on the row actually deleted.
-  return await dbWrite.homeBlock.delete({ where }).catch((e) => {
+  const deleted = await dbWrite.homeBlock.delete({ where }).catch((e) => {
     if (isPrismaRecordNotFound(e)) return null;
     throw e;
   });
+  if (deleted) forgetHomeBlockRows([deleted.id]);
+  return deleted;
 };
 
 type FeaturedCollectionsPool = NonNullable<HomeBlockMetaSchema['featuredCollections']>;
@@ -1183,6 +1192,7 @@ async function updateFeaturedPool(
     where: { id: block.id },
     data: { metadata: newMetadata },
   });
+  forgetHomeBlockRows([block.id]);
 
   // Bust the permanent-blocks list cache so if the FeaturedCollections row is flagged permanent,
   // the 1-day-TTL'd list doesn't serve stale metadata to cold-cache users. And the system map,
@@ -1466,5 +1476,8 @@ export const setHomeBlocksOrder = async ({
     );
   }
 
-  return dbWrite.$transaction(transactions);
+  const result = await dbWrite.$transaction(transactions);
+  // Only the removals change a column the row copy holds; the updates here move `index` alone.
+  forgetHomeBlockRows(homeBlocksToRemove.map((i) => i.id));
+  return result;
 };
