@@ -73,8 +73,14 @@ const { postgresSlugify } = await repo('src/utils/string-helpers.ts');
 const { isMinorContentRestricted } = await repo(
   'packages/civitai-shared/src/minor-content-gate.ts'
 );
-// getAllModelsSchema's `ids` and `followed` (src/server/schema/model.schema.ts) are these helpers.
+// getAllModelsSchema's `ids`, `followed` and `newCreators` (src/server/schema/model.schema.ts) are
+// these helpers.
 const { commaDelimitedNumberArray, booleanString } = await repo('src/utils/zod-helpers.ts');
+// getAllModelsSchema's `publishedFrom` / `publishedTo` (publishedDateSchema), and getModelsRaw's
+// range check and bounds.
+const { publishedDateSchema, publishedRangeBounds, publishedRangeError } = await repo(
+  'src/shared/utils/published-range.ts'
+);
 const { subscriptionProductMetadataSchema } = await repo('src/server/schema/subscriptions.schema.ts');
 const { constants } = await repo('src/server/common/constants.ts');
 
@@ -158,6 +164,18 @@ const ADDONS = [
   { type: 'some', nsfwLevels: [4, 8, 16], disableMinor: true, excludedTagIds: [9911] },
   { type: 'some', nsfwLevels: [1, 2, 4, 8, 16], disablePoi: true, excludedTagIds: [9901] },
 ];
+// ADDONS plus an entry scoped to the "new & upcoming" boards (`scope: 'newCreators'`): it applies only
+// to a `newCreators` request (resolveBrowsingSettingsAddons' scope). Its tag (701) is on model 5001
+// only, which a request that resolved the addons with the scope leaves out.
+const ADDONS_NEW_CREATORS = [
+  ...ADDONS,
+  { type: 'some', nsfwLevels: [1, 2, 4, 8, 16], scope: 'newCreators', excludedTagIds: [701] },
+];
+// packed:caches:new-creators:<boardId> (getNewCreatorUserIds' fetchThroughCache entry) for the models
+// boards: each board's creators in board order. `cachedAt` is a number (Date.now()), fresh within the
+// hour's ttl.
+const NEW_CREATOR_BOARDS = { new_creators: [1002], 'new_creators-red': [1001, 1002] };
+const NEW_CREATORS_CACHED_AT = NOW.getTime() - 10 * 60_000;
 
 const rank = (d, t, c = 3) => ({
   downloadCount: d,
@@ -489,6 +507,7 @@ const K = {
   privacy: 'packed:caches:user-metric-privacy-defaults',
   membership: 'packed:caches:creator-membership-valid',
   official: 'packed:caches:official-models',
+  newCreators: 'packed:caches:new-creators',
   session: 'session:data2',
 };
 const notFound = (idKey, id) => ({ [idKey]: id, notFound: true, cachedAt: CACHED_AT });
@@ -549,6 +568,10 @@ class Trace {
     this.writes = new Map(); // key -> what Node's fetch writes on the cold miss ({value, ex})
     this.events = new Set(spec.events ?? []);
     this.badSubscriptions = !!spec.badSubscriptions;
+    // The browsing-settings addons on the system redis (`spec.addons`, else ADDONS), and a fixture's
+    // own new-creators board entries by board id (`spec.newCreatorBoards`; null: no key).
+    this.addons = spec.addons ?? ADDONS;
+    this.newCreatorBoards = spec.newCreatorBoards ?? {};
     this.db = {
       modelVersionRows: [],
       modelHashes: [],
@@ -696,7 +719,7 @@ function enforceBlockedBrowsingTagsForModels(input, viewer) {
   const level =
     onlySelectableLevels(input.browsingLevel || publicBrowsingLevelsFlag) ||
     publicBrowsingLevelsFlag;
-  const resolved = resolveBrowsingSettingsAddons(ADDONS, level, {
+  const resolved = resolveBrowsingSettingsAddons(T.addons, level, {
     isModerator: viewer.isModerator,
     scope: input.newCreators ? 'newCreators' : undefined,
   });
@@ -718,6 +741,28 @@ function enforceBlockedBrowsingTagsForModels(input, viewer) {
     ];
   return { emptyResult: false };
 }
+
+/** getNewCreatorUserIds({ entity: 'models', domain }) (new-creators.service.ts): the board
+ *  getNewCreatorBoardId picks for the request's board color (red: `new_creators-red`; every other
+ *  color, or none: `new_creators`), through fetchThroughCache; a fresh entry is served as cached. */
+function getNewCreatorUserIds({ entity, domain }) {
+  if (entity !== 'models') throw new Error('only the models boards are modelled');
+  const boardId = domain === 'red' ? 'new_creators-red' : 'new_creators';
+  const key = `${K.newCreators}:${boardId}`;
+  const value =
+    boardId in T.newCreatorBoards
+      ? T.newCreatorBoards[boardId]
+      : { data: NEW_CREATOR_BOARDS[boardId], cachedAt: NEW_CREATORS_CACHED_AT };
+  if (value == null) throw new Error('a board miss is rebuilt from the database: not modelled');
+  if (!(NOW.getTime() - 3600 * 1000 <= value.cachedAt))
+    throw new Error('an expired board is refreshed: not modelled');
+  T.packed.set(key, value);
+  return [...value.data];
+}
+
+/** getRequestBoardDomainColor (server-domain.ts) over the fixture hosts: each host is its color's
+ *  primary and no alias, so the host's own color. */
+const boardColorOf = (host) => Object.entries(HOST).find(([, h]) => h === host)?.[0];
 
 /** The ORDER BY fields of a sort (getModelsRaw), for the CONCAT cursor Postgres hands out. */
 const SORT_FIELDS = {
@@ -766,13 +811,15 @@ function boundCursor(cursor) {
 /** The page query: the fixture's next page, checked against the cursor Node sends. With a collection
  *  the page records the values Node binds into its CollectionItem semi-join (the collection, the
  *  viewer its in-review items are kept for, the collection tag), which the harness checks feed-go
- *  binds too; likewise a non-empty `ids` (`mm."modelId" IN (…)`) and a signed-in `followed`'s follow
- *  list (`mm."userId" IN (…)`, or `1 = 0` for none). */
+ *  binds too; likewise a non-empty `ids` (`mm."modelId" IN (…)`), a signed-in `followed`'s follow
+ *  list (`mm."userId" IN (…)`, or `1 = 0` for none), the `newCreators` board (`mm."userId" IN (…)`,
+ *  or `1 = 0` for an empty board) and a published range's bounds (`m."publishedAt" >= gte AND
+ *  m."publishedAt" < lt`, and the `ranged` CTE over the same bounds). */
 function pageQuery(
   input,
   take,
   viewerId,
-  { onlyModelIds, excludeModelIds, followedUserIds } = {}
+  { onlyModelIds, excludeModelIds, followedUserIds, newCreatorUserIds, published } = {}
 ) {
   const listed = T.pages.shift();
   if (!listed) throw new Error(`${T.name}: Node asks for a page the fixture does not list`);
@@ -799,6 +846,16 @@ function pageQuery(
   else if (followedUserIds) {
     if (rows.length) throw new Error(`${T.name}: a \`1 = 0\` page answers no row`);
     page.followedNone = true;
+  }
+  if (newCreatorUserIds?.length) page.newCreatorUserIds = newCreatorUserIds;
+  else if (newCreatorUserIds) {
+    if (rows.length) throw new Error(`${T.name}: a \`1 = 0\` page answers no row`);
+    page.newCreatorsNone = true;
+  }
+  // getModelsRaw builds the `ranged` CTE only with both bounds (publishedRangeError refuses one end).
+  if (published?.gte || published?.lt) {
+    if (!published.gte || !published.lt) throw new Error(`${T.name}: one published bound`);
+    page.published = mark({ gte: published.gte, lt: published.lt });
   }
   if (input.collectionId)
     page.collection = {
@@ -852,11 +909,15 @@ function getUserCollectionPermissionsById({ id, userId }) {
 function getModelsRaw({
   input,
   user: sessionUser,
+  domain,
   include,
   eventDecorationViewer: _v,
   onlyModelIds,
   excludeModelIds,
 }) {
+  // Ahead of everything else: a range publishedRangeError refuses is Node's BAD_REQUEST.
+  const publishedError = publishedRangeError({ from: input.publishedFrom, to: input.publishedTo });
+  if (publishedError) throw new Error(`a 400 is not a served answer: ${publishedError}`);
   const enforcement = enforceBlockedBrowsingTagsForModels(input, {
     id: sessionUser?.id,
     username: sessionUser?.username,
@@ -888,6 +949,11 @@ function getModelsRaw({
     T.db.followsRead++;
     isPrivate = true;
   }
+  // `newCreators`: the board of the request's board color, on every getModelsRaw call; global per
+  // domain, so it does not mark the query private. An empty board is `1 = 0`.
+  let newCreatorUserIds;
+  if (input.newCreators) newCreatorUserIds = getNewCreatorUserIds({ entity: 'models', domain });
+  const published = publishedRangeBounds({ from: input.publishedFrom, to: input.publishedTo });
   if (input.collectionId) {
     const permissions = getUserCollectionPermissionsById({
       userId: sessionUser?.id,
@@ -903,6 +969,8 @@ function getModelsRaw({
     onlyModelIds,
     excludeModelIds,
     followedUserIds,
+    newCreatorUserIds,
+    published,
   });
   const userIds = [...new Set(models.map((m) => m.userId))];
   const modelIds = models.map((m) => m.id);
@@ -1255,6 +1323,7 @@ function getValidCreatorMembershipMap(userIds) {
 function getModelsWithImagesAndModelVersions({
   input,
   user,
+  domain,
   imagesPerModel,
   biasImageSlice,
   metricPrivacyEnabled,
@@ -1268,6 +1337,7 @@ function getModelsWithImagesAndModelVersions({
   const { items, isPrivate, nextCursor } = getModelsRaw({
     input: rawInput,
     user,
+    domain,
     include: ['cosmetics'],
     onlyModelIds,
     excludeModelIds,
@@ -1412,6 +1482,7 @@ function getModelsFeed(input, ctx) {
   const queryOptions = {
     user: ctx.user,
     heldViewer: true, // a session (or signed out)
+    domain: ctx.domain, // getRequestBoardDomainColor
     imagesPerModel: slim ? images.GET_ALL_IMAGES_PER_MODEL_SLIM : images.GET_ALL_IMAGES_PER_MODEL,
     biasImageSlice: slim,
     metricPrivacyEnabled: true,
@@ -1471,11 +1542,14 @@ function runModels(spec) {
   if ('ids' in raw) input.ids = commaDelimitedNumberArray().optional().parse(raw.ids);
   if ('followed' in raw) input.followed = booleanString().optional().parse(raw.followed);
   if ('hidePaid' in raw) input.hidePaid = booleanString().optional().parse(raw.hidePaid);
+  if ('newCreators' in raw) input.newCreators = booleanString().optional().parse(raw.newCreators);
+  for (const key of ['publishedFrom', 'publishedTo'])
+    if (key in raw) input[key] = publishedDateSchema.optional().parse(raw[key]);
   const features = {
     getAllModelImagesSlim: spec.config.modelImagesSlim,
     coverageNext: spec.config.coverageNext,
   };
-  return getModelsFeed(input, { user, features });
+  return getModelsFeed(input, { user, features, domain: boardColorOf(spec.host) });
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -2007,6 +2081,161 @@ const SPECS = [
     input: { sort: 'Highest Rated', limit: 10, browsingLevel: 1, username: 'artist_two', hidePaid: 'true' },
     pages: [{ cursor: null, ids: [5022, 5023, 5024] }],
   },
+  // `newCreators` (behind FEED_GO_GETALL_SERVE_INPUT_NEW_CREATORS): the "new & upcoming" models board of
+  // the request's board color (new_creators: [1002]; new_creators-red: [1001, 1002]), and the addons
+  // under the `newCreators` scope (701, on model 5001 only).
+  {
+    name: 'new-creators-signed-out',
+    description:
+      '`newCreators` signed out on the SFW host: the page is held to the SFW board’s creators (`mm."userId" IN (…)`).',
+    host: HOST.green,
+    addons: ADDONS_NEW_CREATORS,
+    config: { serveInputNewCreators: true },
+    input: { newCreators: true, sort: 'Newest', limit: 2, browsingLevel: 31 },
+    pages: [{ cursor: null, ids: [5002, 5009] }],
+  },
+  {
+    name: 'new-creators-red-board',
+    description:
+      '`newCreators` (as a string) signed in on the red host: the red board (two creators) on every page; the scoped addon’s tag leaves 5001 out, so the loop reads a second page.',
+    host: HOST.red,
+    viewer: 1003,
+    addons: ADDONS_NEW_CREATORS,
+    config: { serveInputNewCreators: true },
+    input: { newCreators: 'true', sort: 'Highest Rated', limit: 2, browsingLevel: 31 },
+    pages: [
+      { cursor: null, ids: [5001, 5002, 5009] },
+      { cursor: '4|4|5009', ids: [5009] },
+    ],
+  },
+  {
+    name: 'new-creators-empty-board',
+    description: 'An unpopulated board: `1 = 0`, an empty answer (never the unfiltered feed).',
+    host: HOST.green,
+    config: { serveInputNewCreators: true },
+    newCreatorBoards: { new_creators: { data: [], cachedAt: NEW_CREATORS_CACHED_AT } },
+    input: { newCreators: true, limit: 2, browsingLevel: 1 },
+    pages: [{ cursor: null, ids: [] }],
+  },
+  {
+    name: 'new-creators-false',
+    description:
+      '`newCreators: false` with the switch on: no board is read (none is held) and the scoped addon does not apply.',
+    host: HOST.green,
+    addons: ADDONS_NEW_CREATORS,
+    config: { serveInputNewCreators: true },
+    input: { newCreators: false, sort: 'Highest Rated', limit: 2, browsingLevel: 31 },
+    pages: [{ cursor: null, ids: [5001, 5002, 5009] }],
+  },
+  {
+    name: 'fallback-new-creators-off',
+    description: '`newCreators` with its switch off (the default): not served.',
+    host: HOST.green,
+    input: { newCreators: true, browsingLevel: 1 },
+    fallback: 'input-newCreators',
+  },
+  {
+    name: 'fallback-new-creators-miss',
+    description: 'No board entry: Node builds it from the database (fetchThroughCache’s fetch).',
+    host: HOST.green,
+    config: { serveInputNewCreators: true },
+    newCreatorBoards: { new_creators: null },
+    input: { newCreators: true, browsingLevel: 1 },
+    fallback: 'new-creators-miss',
+  },
+  {
+    name: 'fallback-new-creators-stale',
+    description:
+      'A board entry older than its hour: Node refreshes it (or serves it stale under another caller’s lock).',
+    host: HOST.green,
+    config: { serveInputNewCreators: true },
+    newCreatorBoards: { new_creators: { data: [1002], cachedAt: NOW.getTime() - 2 * 3600_000 } },
+    input: { newCreators: true, browsingLevel: 1 },
+    fallback: 'new-creators-stale',
+  },
+  {
+    name: 'fallback-new-creators-null',
+    description: '`newCreators: null`: booleanString().optional() refuses it, Node’s BAD_REQUEST.',
+    host: HOST.green,
+    config: { serveInputNewCreators: true },
+    input: { newCreators: null, browsingLevel: 1 },
+    node400: () => !booleanString().optional().safeParse(null).success,
+    fallback: 'input-invalid',
+  },
+  // `publishedFrom` / `publishedTo` (behind FEED_GO_GETALL_SERVE_INPUT_PUBLISHED_RANGE): UTC days, the
+  // half-open range [from 00:00Z, to + 1 day 00:00Z), at most 31 days.
+  {
+    name: 'published-range-signed-out',
+    description:
+      'A published range of the widest span (31 days), signed out: the bounds and the `ranged` CTE in the page query, the lookahead cursor kept.',
+    host: HOST.green,
+    config: { servePublishedRange: true },
+    input: {
+      publishedFrom: '2026-05-15',
+      publishedTo: '2026-06-15',
+      sort: 'Newest',
+      limit: 2,
+      browsingLevel: 1,
+    },
+    pages: [{ cursor: null, ids: [5002, 5009, 5001] }],
+  },
+  {
+    name: 'published-range-split-cursor-types',
+    description:
+      'One day, a type filter and a split keyset cursor: the CTE (with the type) leads the UNION ALL form.',
+    host: HOST.blue,
+    viewer: 1003,
+    config: { servePublishedRange: true },
+    input: {
+      publishedFrom: '2026-06-02',
+      publishedTo: '2026-06-02',
+      types: ['LORA'],
+      sort: 'Highest Rated',
+      limit: 1,
+      cursor: '70|80|5002',
+      browsingLevel: 31,
+    },
+    pages: [{ cursor: '70|80|5002', ids: [5002] }],
+  },
+  {
+    name: 'fallback-published-from-off',
+    description: '`publishedFrom` with its switch off (the default): not served.',
+    host: HOST.green,
+    input: { publishedFrom: '2026-06-01', publishedTo: '2026-06-02', browsingLevel: 1 },
+    fallback: 'input-publishedFrom',
+  },
+  {
+    name: 'fallback-published-to-off',
+    description: '`publishedTo` alone with its switch off: not served (`input-publishedTo`).',
+    host: HOST.green,
+    input: { publishedTo: '2026-06-02', browsingLevel: 1 },
+    fallback: 'input-publishedTo',
+  },
+  ...[
+    ['one-end', { publishedFrom: '2026-06-01' }, 'only one end'],
+    ['reversed', { publishedFrom: '2026-06-02', publishedTo: '2026-06-01' }, 'the end before the start'],
+    ['too-wide', { publishedFrom: '2026-05-14', publishedTo: '2026-06-15' }, '32 days'],
+  ].map(([what, range, desc]) => ({
+    name: `fallback-published-range-${what}`,
+    description: `A published range getModelsRaw refuses (${desc}): Node’s BAD_REQUEST.`,
+    host: HOST.green,
+    config: { servePublishedRange: true },
+    input: { ...range, browsingLevel: 1 },
+    node400: () => !!publishedRangeError({ from: range.publishedFrom, to: range.publishedTo }),
+    fallback: 'input-published-range',
+  })),
+  ...[
+    ['not-a-day', '2026-02-30', 'a day the calendar does not have'],
+    ['null', null, 'null'],
+  ].map(([what, from, desc]) => ({
+    name: `fallback-published-date-${what}`,
+    description: `A publishedFrom publishedDateSchema refuses (${desc}): Node’s BAD_REQUEST.`,
+    host: HOST.green,
+    config: { servePublishedRange: true },
+    input: { publishedFrom: from, publishedTo: '2026-03-01', browsingLevel: 1 },
+    node400: () => !publishedDateSchema.optional().safeParse(from).success,
+    fallback: 'input-invalid',
+  })),
 ];
 
 /** What Node writes on this fixture's cold misses, as the Go harness compares it. */
@@ -2092,7 +2321,14 @@ for (const spec of SPECS) {
   const config = { ...CONFIG, ...(spec.config ?? {}), decorationEvents: spec.events ?? [] };
   const inputEnvelope = JSON.stringify(superjson.serialize(spec.input));
   let expect;
+  // `spec.node400`: the request is one Node answers with its BAD_REQUEST (checked with Node's own
+  // schema helpers and range check here), so the fixture's fallback is a 400 left to Node.
+  if (spec.node400 && !spec.node400())
+    throw new Error(`${spec.name}: Node does not refuse this input`);
   if (spec.fallback && !spec.pages) {
+    // A fallback read after the cache: the board entries it reads are held (a stale one included).
+    for (const [boardId, value] of Object.entries(spec.newCreatorBoards ?? {}))
+      if (value != null) T.packed.set(`${K.newCreators}:${boardId}`, value);
     expect = { fallback: spec.fallback };
   } else {
     let value;
@@ -2128,7 +2364,7 @@ for (const spec of SPECS) {
           session: spec.viewer ? { userId: spec.viewer } : null,
         },
         redis: redisEntries(T.dropKeys),
-        sysRedis: { 'system:browsing-setting-addons': { raw: JSON.stringify(ADDONS) } },
+        sysRedis: { 'system:browsing-setting-addons': { raw: JSON.stringify(T.addons) } },
         db: dbTables(),
         expect,
       },

@@ -1,3 +1,4 @@
+import { serverCopyTablesSql } from '@civitai/db-queries/test/image-uses';
 import { PGlite } from '@electric-sql/pglite';
 import type { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -152,6 +153,8 @@ beforeAll(async () => {
     INSERT INTO "BountyEntry" (id, "bountyId", "userId") VALUES (1, 1, ${OWNER});
     INSERT INTO "ImageConnection" ("imageId", "entityId", "entityType") VALUES
       (${ON_BOUNTY}, 1, 'Bounty'), (${ON_BOUNTY_ENTRY}, 1, 'BountyEntry');
+    ${serverCopyTablesSql};
+    ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS url text;
   `);
 });
 

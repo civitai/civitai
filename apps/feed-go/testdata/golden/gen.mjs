@@ -1746,32 +1746,47 @@ function resolveImageModelIds({ modelId, modelVersionId, postId, postIds = [] })
   for (const m of modelIds) T.models.add(m);
   return modelIds;
 }
-/** getGallerySettingsByModelId's rebuild of an absent key (model.service.ts), for what the hold
- *  reads: `getModel` (getDbWithoutLag('model', id): no lag flag in any fixture, so the replica's row),
- *  null for no row; `sfwHeld = minor || sfwOnly`; and, when the model has settings or is held,
- *  getGalleryHiddenPreferences' `level` (`settings.level ?? allBrowsingLevelsFlag`, over the stored
- *  settings with `level: heldGalleryLevel(stored.level, model)` for a held model). Node then SETs the
- *  key for a week; feed-go does not (the entry's creatorHiddenUserIds is a primary read), so the write
- *  is not recorded. The hidden tags, users and images and the pinned posts are not modelled: no reader
- *  of a rebuilt entry here reads them. */
-function rebuildGallerySettingsHold(modelId) {
+/** getGallerySettingsByModelId's rebuild of an absent key (model.service.ts): `getModel`
+ *  (getDbWithoutLag('model', id): no lag flag in any fixture, so the replica's row), null for no row
+ *  (nothing written); `sfwHeld = minor || sfwOnly`; when the model has settings (the fixture's stored
+ *  `gallerySettings` is `{ level }`, or null for a null galleryLevel) or is held,
+ *  `{ ...getGalleryHiddenPreferences(...), creatorHiddenUserIds, sfwHeld }` (the stored settings with
+ *  `level: heldGalleryLevel(stored.level, model)` for a held model; `level ?? allBrowsingLevelsFlag`),
+ *  else the `none` marker. Node SETs `toJson` of it (JSON.stringify: no bigint here) for a week
+ *  (CacheTTL.week), recorded as a raw write. No fixture model stores hidden tags, users, images or
+ *  pinned posts, and no creator hides a user (the fixture has no CreatorGalleryHiddenUser row), so
+ *  those lists are empty. */
+function rebuildGallerySettings(key, modelId) {
   const model = MODELS[modelId];
   if (!model) return null;
   const sfwHeld = model.minor || model.sfwOnly;
-  const stored = model.galleryLevel === null ? {} : { level: model.galleryLevel };
-  if (model.galleryLevel === null && !sfwHeld) return null;
-  if (!sfwHeld) return { level: stored.level ?? allBrowsingLevelsFlag, sfwHeld };
-  // heldGalleryLevel: Flags.intersection(stored ?? 0, limit) || limit (browsingLevel.constants.ts),
-  // limit = modelBrowsingLevelLimit (minorContentBrowsingLevelsFlag = sfwBrowsingLevelsFlag here).
-  const limit = model.minor || model.sfwOnly ? sfwBrowsingLevelsFlag : allBrowsingLevelsFlag;
-  return { level: intersection(stored.level ?? 0, limit) || limit, sfwHeld };
+  const gallerySettings = model.galleryLevel === null ? null : { level: model.galleryLevel };
+  let settings = null;
+  if (gallerySettings || sfwHeld) {
+    const stored = gallerySettings ?? {};
+    // heldGalleryLevel: Flags.intersection(stored ?? 0, limit) || limit (browsingLevel.constants.ts),
+    // limit = modelBrowsingLevelLimit (minorContentBrowsingLevelsFlag = sfwBrowsingLevelsFlag here).
+    const limit = model.minor || model.sfwOnly ? sfwBrowsingLevelsFlag : allBrowsingLevelsFlag;
+    const level = sfwHeld ? intersection(stored.level ?? 0, limit) || limit : stored.level;
+    const preferences = {
+      hiddenTags: [],
+      hiddenUsers: [],
+      hiddenImages: {},
+      level: level ?? allBrowsingLevelsFlag,
+      pinnedPosts: {},
+    };
+    settings = { ...preferences, creatorHiddenUserIds: [], sfwHeld };
+  }
+  const none = { none: true, hiddenTags: [], hiddenUsers: [], hiddenImages: {}, pinnedPosts: {} };
+  T.writes.set(key, { raw: JSON.stringify(settings ?? none), ex: 60 * 60 * 24 * 7 });
+  return settings;
 }
 function gallerySettingsOf(modelId) {
   const key = `model:gallery-settings:${modelId}`;
   T.models.add(modelId);
   if (T.cold.has(key)) {
     T.coldRead.add(key);
-    return rebuildGallerySettingsHold(modelId);
+    return rebuildGallerySettings(key, modelId);
   }
   T.raw.set(key, JSON.stringify(GALLERY_SETTINGS[modelId]));
   const cached = GALLERY_SETTINGS[modelId];
@@ -3080,6 +3095,32 @@ const V1 = [
     description: 'An SFW-only model’s version: level 31 intersected with the held level 3.',
     query: 'modelVersionId=6101&browsingLevel=31&limit=5',
     replies: { 'levels=1%2C2&excludedTags=9901&versionIds=6101&excludeMinor=1&excludePoi=1&sort=reactions&limit=5': { body: { items: [8301] } } },
+  },
+  // A model's gallery-settings key absent (getShowcaseHeldLevels' miss: getGallerySettingsByModelId
+  // rebuilds it from the model row and writes it back for a week), answered with
+  // FEED_GO_V1_IMAGES_SERVE_GALLERY_SETTINGS_MISS on; off, the miss falls back.
+  {
+    name: 'cold-gallery-settings-held-model-version',
+    description: 'held-model-version with model 5002’s gallery-settings key absent: the rebuild reads the row (SFW-only, stored level 3), held at heldGalleryLevel(3) = PG|PG-13, so the same page; Node writes the rebuilt entry back for a week.',
+    query: 'modelVersionId=6101&browsingLevel=31&limit=5',
+    goConfig: { serveGallerySettingsMiss: true },
+    cold: ['model:gallery-settings:5002'],
+    replies: { 'levels=1%2C2&excludedTags=9901&versionIds=6101&excludeMinor=1&excludePoi=1&sort=reactions&limit=5': { body: { items: [8301] } } },
+  },
+  {
+    name: 'cold-gallery-settings-unheld-model-version',
+    description: 'model-version-id-filter with model 5001’s gallery-settings key absent: the rebuild finds it neither minor nor SFW-only with no stored settings, so no hold, and Node writes the `none` marker back for a week.',
+    query: 'modelVersionId=6001&limit=3',
+    goConfig: { serveGallerySettingsMiss: true },
+    cold: ['model:gallery-settings:5001'],
+    replies: { 'levels=1&excludedTags=9901&versionIds=6001&excludeMinor=1&excludePoi=1&sort=reactions&limit=3': { body: { items: [8005, 8001, 8003], ...fc('1718100000000', '8003') } } },
+  },
+  {
+    name: 'cold-gallery-settings-switch-off',
+    description: 'held-model-version with model 5002’s gallery-settings key absent and FEED_GO_V1_IMAGES_SERVE_GALLERY_SETTINGS_MISS off: the gallery-settings-miss fallback, as before the port.',
+    query: 'modelVersionId=6101&browsingLevel=31&limit=5',
+    cold: ['model:gallery-settings:5002'],
+    fallback: 'gallery-settings-miss',
   },
   {
     name: 'withheld-model-version',
@@ -4858,7 +4899,9 @@ function writeEntries() {
   for (const key of T.cold) if (!T.coldRead.has(key)) throw new Error(`fixture ${T.fixture}: cold key ${key} never read`);
   const out = {};
   for (const [key, w] of [...T.writes.entries()].sort()) {
-    out[key] = { value: mark(w.value), packed: packMarked(mark(w.value)), ex: w.ex };
+    // A plain string value (the gallery settings' JSON) is recorded as written; the rest is packed.
+    if (w.raw !== undefined) out[key] = { raw: w.raw, ex: w.ex };
+    else out[key] = { value: mark(w.value), packed: packMarked(mark(w.value)), ex: w.ex };
   }
   return out;
 }
@@ -4988,7 +5031,9 @@ function emitV1() {
     } else {
       const { value } = runV1({ ...spec, host });
       checkReplies(spec);
-      expect = { body: JSON.parse(JSON.stringify(value)) };
+      // Only a fixture whose misses Node writes carries `writes` (the harness reads none as nothing).
+      const writes = writeEntries();
+      expect = { body: JSON.parse(JSON.stringify(value)), ...(Object.keys(writes).length ? { writes } : {}) };
     }
     writeFixture(dir, spec.name, {
       name: spec.name,

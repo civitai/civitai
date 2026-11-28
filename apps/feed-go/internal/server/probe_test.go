@@ -71,7 +71,7 @@ var goldenProbeCases = []goldenProbeCase{
 	{"infinite", ProcedureInfinite, goldenMinInfinite, goldenSetup, (*Server).computeInfinite, SyntheticInfiniteRequest,
 		[]string{hydrate.CacheMetrics, CacheNewCreators}, []string{hydrate.CacheTagIDs}, true},
 	{"model-getall", ProcedureModelGetAll, goldenMinModels, goldenSetupModels, (*Server).computeModelGetAll, SyntheticModelGetAllRequest,
-		[]string{hydrate.CacheUserCosmetics}, []string{CacheModelData, CacheModelTags, CacheModelFrames, CacheModelDecorations, hydrate.CacheTagIDs,
+		[]string{hydrate.CacheUserCosmetics, CacheNewCreators}, []string{CacheModelData, CacheModelTags, CacheModelFrames, CacheModelDecorations, hydrate.CacheTagIDs,
 			CacheOfficialModels}, false},
 	// GET /api/v1/images: the probe runs the public route's compute (a session is handed back there),
 	// under hydrate.WithPresence as model.getAll's does. The golden server reads no ClickHouse and no

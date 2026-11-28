@@ -60,7 +60,7 @@ import { clearAccountDeletionImageMarkers } from '~/server/services/account-dele
 import { getRequestBrowsingLevel, requestServableLevels } from '~/server/utils/browsing-level';
 import { shownReviewImageLevelsFor } from '~/server/utils/review-image-levels';
 import { holdLeavesImage } from '~/server/utils/held-level';
-import { resolveStrictestPoiMinor } from '~/shared/constants/browsing-settings-addons';
+import { resolveStrictestAddons } from '~/shared/constants/browsing-settings-addons';
 import { DELETE_PROCESSING_MESSAGE } from '~/shared/constants/delete-after-review.constants';
 import { filterImagesForViewer } from '~/server/utils/model-getall-images';
 import { resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
@@ -481,7 +481,7 @@ export const getImagesForModelVersionHandler = async ({
       );
   // Not resolved at the viewer's own level (the request carries none), so at the strictest level
   // a viewer here could pick.
-  const settings = resolveStrictestPoiMinor(
+  const settings = resolveStrictestAddons(
     await getBrowsingSettingAddons(),
     requestServableLevels(ctx),
     { isModerator: actsAsModerator(ctx) }

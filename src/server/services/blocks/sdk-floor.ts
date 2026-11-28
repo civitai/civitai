@@ -1,9 +1,9 @@
 import JSZip from 'jszip';
 import semver from 'semver';
-import yaml from 'js-yaml';
 import { PLATFORM_SDK_FLOORS, type PlatformSdkFloor } from '@civitai/app-assistant/sdk-floor';
 import type { Advisory } from '@civitai/app-assistant/theme-evidence';
 import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
+import { type PnpmDepSets, pnpmProjectDocument, pnpmResolvedVersion } from './pnpm-lockfile';
 
 /**
  * THE OUTDATED-SDK CHECK, server half. The platform publishes a minimum version for each package
@@ -144,31 +144,15 @@ function npmLockfile(body: string): LockfileLookup {
  * `0.31.0(react@19.0.0)` or `0.31.0_react@19.0.0` — stripped.
  */
 function pnpmLockfile(body: string): LockfileLookup {
-  type DepSets = {
-    dependencies?: Record<string, unknown>;
-    devDependencies?: Record<string, unknown>;
-  };
-  // pnpm 11+ may write TWO documents: a leading boot document (pnpm's own version and config
-  // dependencies, which also carries `importers["."]`) and then the project lockfile. The
-  // project lockfile is always the last document, so read that one.
-  const docs = yaml.loadAll(body);
-  const lock = asObject(docs[docs.length - 1] ?? {}) as DepSets & {
-    importers?: Record<string, DepSets>;
-  };
-  const sets: DepSets[] = [];
+  const lock = pnpmProjectDocument(body);
+  const sets: PnpmDepSets[] = [];
   if (lock.importers?.['.']) sets.push(lock.importers['.']);
   sets.push(lock);
   return (name) => {
     for (const set of sets) {
       for (const deps of [set.dependencies, set.devDependencies]) {
         if (!deps || typeof deps !== 'object' || !(name in deps)) continue;
-        const node = deps[name];
-        let v: unknown = node;
-        if (node && typeof node === 'object') v = (node as { version?: unknown }).version;
-        if (typeof v !== 'string') return null;
-        const cut = v.search(/[(_]/);
-        const clean = cut >= 0 ? v.slice(0, cut) : v;
-        return clean || null;
+        return pnpmResolvedVersion(deps[name]);
       }
     }
     return null;

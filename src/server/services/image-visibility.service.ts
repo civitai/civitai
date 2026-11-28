@@ -16,8 +16,9 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { isPgInt4, queryPrismaSql } from '~/server/db/prisma-sql-kysely';
 import {
+  notDealFileCopySql,
   notHeldReviewCopySql,
-  notReviewImageSql,
+  notServerCopySql,
   shownReviewImageSql,
 } from '~/server/services/creator-service-review-image-sql';
 import { canSeeSongs, songsHiddenSql } from '~/server/services/song-visibility-sql';
@@ -243,8 +244,10 @@ export function imageVisibilityConditions({
     ...imageBlockedForConditions({ userId, ownerKeepsBlockedRow }),
     imageNotRestrictedSql({ viewerId: userId }),
     // Without the opt-in, a review image is closed to its uploader too (moderators aside); with it,
-    // one whose source Final is held still is.
-    shownReviewImageLevels === undefined ? notReviewImageSql : notHeldReviewCopySql,
+    // one whose source Final is held still is. A deal file's own copy is closed either way.
+    shownReviewImageLevels === undefined
+      ? notServerCopySql
+      : Prisma.sql`(${notHeldReviewCopySql} AND ${notDealFileCopySql})`,
     ...(music === false ? [songsHiddenSql({ music, ownerId: userId })!] : []),
   ];
 }

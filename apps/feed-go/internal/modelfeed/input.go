@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/inputschema"
@@ -104,11 +105,20 @@ type Input struct {
 	// falls back): any truthy value turns hidePrivateModels off, and for a signed-in viewer the page is
 	// held to the creators they follow.
 	Followed bool
+	// NewCreators is `newCreators` (booleanString; read only with Ports.NewCreators, otherwise a truthy
+	// value falls back): the page is held to the creators on the request's "new & upcoming" board.
+	NewCreators bool
+	// PublishedFrom / PublishedTo are `publishedFrom` / `publishedTo` (read only with
+	// Ports.PublishedRange, otherwise a non-empty one falls back): each a UTC day (its midnight),
+	// both set or neither (zero).
+	PublishedFrom time.Time
+	PublishedTo   time.Time
 }
 
 // Ports are the input shapes ported behind their own serve switch, each off by default: off, the
-// shape falls back as it always has (`input-ids`, `input-followed`), so turning one on is the only
-// way it is ever computed (DESIGN.md §15.2.4).
+// shape falls back as it always has (`input-ids`, `input-followed`, `input-newCreators`,
+// `input-publishedFrom`, …), so turning one on is the only way it is ever computed (DESIGN.md
+// §15.2.4, §15.2.8, §15.2.9).
 type Ports struct {
 	// IDs is FEED_GO_GETALL_SERVE_INPUT_IDS: compute a request with `ids`.
 	IDs bool
@@ -117,6 +127,11 @@ type Ports struct {
 	// HidePaid is FEED_GO_GETALL_SERVE_HIDE_PAID: compute a request with `hidePaid` true (the
 	// free-version rule, DESIGN.md §15.2.7). Off, it is the `input-hidePaid` fallback.
 	HidePaid bool
+	// NewCreators is FEED_GO_GETALL_SERVE_INPUT_NEW_CREATORS: compute a request with `newCreators`.
+	NewCreators bool
+	// PublishedRange is FEED_GO_GETALL_SERVE_INPUT_PUBLISHED_RANGE: compute a request with
+	// `publishedFrom` / `publishedTo`.
+	PublishedRange bool
 }
 
 // modelsSchema is model.getAll's allow-list and defaults (why: the inputschema package doc).
@@ -178,7 +193,8 @@ func ParseWith(m map[string]any, p Ports) (*Input, error) {
 		return nil, fallback.New("input-ids")
 	}
 	for _, k := range unsupportedKeys {
-		if (k == "ids" && p.IDs) || (k == "followed" && p.Followed) {
+		if (k == "ids" && p.IDs) || (k == "followed" && p.Followed) || (k == "newCreators" && p.NewCreators) ||
+			((k == "publishedFrom" || k == "publishedTo") && p.PublishedRange) {
 			continue
 		}
 		if v, ok := m[k]; ok && !isEmpty(v) {
@@ -348,12 +364,84 @@ func ParseWith(m map[string]any, p Ports) (*Input, error) {
 			return nil, fallback.NewfSafe("input-invalid", "followed", "followed: %v", err)
 		}
 	}
+	// `newCreators: booleanString().optional()`: present, it must be a boolean, a z.stringbool string
+	// or a number; null is the schema's 400 too (optional admits only an absent key).
+	if v, ok := m["newCreators"]; ok && p.NewCreators {
+		if v == nil {
+			return nil, fallback.NewfSafe("input-invalid", "newCreators", "newCreators: null")
+		}
+		if in.NewCreators, err = booleanString(v); err != nil {
+			return nil, fallback.NewfSafe("input-invalid", "newCreators", "newCreators: %v", err)
+		}
+	}
+	var hasFrom, hasTo bool
+	if p.PublishedRange {
+		if in.PublishedFrom, hasFrom, err = publishedDay(m, "publishedFrom"); err != nil {
+			return nil, err
+		}
+		if in.PublishedTo, hasTo, err = publishedDay(m, "publishedTo"); err != nil {
+			return nil, err
+		}
+		// getModelsRaw's publishedRangeError, a 400 thrown before any read: after every schema check,
+		// which zod makes first.
+		if err := publishedRangeError(in.PublishedFrom, in.PublishedTo, hasFrom, hasTo); err != nil {
+			return nil, err
+		}
+	}
 	// Last, so a value the schema refuses is still input-invalid. Node keeps a gated model that has a
 	// free Published version and shows that version; only the port behind p.HidePaid does too.
 	if in.HidePaid && !p.HidePaid {
 		return nil, fallback.New("input-hidePaid")
 	}
 	return in, nil
+}
+
+// publishedDayPattern is publishedDateSchema's DATE_RE (src/shared/utils/published-range.ts): JS `\d`
+// is ASCII only.
+var publishedDayPattern = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}$`)
+
+// publishedRangeMaxDays is PUBLISHED_RANGE_MAX_DAYS.
+const publishedRangeMaxDays = 31
+
+// publishedDay reads `publishedFrom` / `publishedTo` through publishedDateSchema.optional(): absent is
+// no day; present, it must be a string of the form YYYY-MM-DD that names a real UTC calendar day (the
+// schema's `new Date(…T00:00:00.000Z).toISOString()` round trip, which a day past the month's end
+// fails). Anything else, null and "" included, is the schema's 400 (input-invalid). The day is its
+// UTC midnight.
+func publishedDay(m map[string]any, key string) (time.Time, bool, error) {
+	v, ok := m[key]
+	if !ok {
+		return time.Time{}, false, nil
+	}
+	s, isStr := v.(string)
+	if !isStr || !publishedDayPattern.MatchString(s) {
+		return time.Time{}, false, fallback.NewfSafe("input-invalid", fallback.Token(key), "%s %v", key, v)
+	}
+	t, err := time.Parse(time.DateOnly, s)
+	if err != nil || t.Format(time.DateOnly) != s {
+		return time.Time{}, false, fallback.NewfSafe("input-invalid", fallback.Token(key), "%s %q", key, s)
+	}
+	return t, true, nil
+}
+
+// publishedRangeError is publishedRangeError (published-range.ts): neither end is no range; one end
+// only, an end before the start, or more than PUBLISHED_RANGE_MAX_DAYS between them is Node's 400
+// (`input-published-range`). A day this port cannot carry is that fallback too: year 0 (Postgres has
+// no year 0) and 0001-01-01, which is time.Time's zero, the "no range" the page query reads.
+func publishedRangeError(from, to time.Time, hasFrom, hasTo bool) error {
+	switch {
+	case !hasFrom && !hasTo:
+		return nil
+	case !hasFrom || !hasTo:
+		return fallback.NewfSafe("input-published-range", "one-end", "one end of the published range")
+	case to.Before(from):
+		return fallback.NewfSafe("input-published-range", "reversed", "publishedTo before publishedFrom")
+	case to.Sub(from) > publishedRangeMaxDays*24*time.Hour:
+		return fallback.NewfSafe("input-published-range", "too-wide", "a published range over %d days", publishedRangeMaxDays)
+	case from.IsZero() || from.Year() == 0 || to.Year() == 0:
+		return fallback.NewfSafe("input-published-range", "day-out-of-range", "a published day this port cannot bind")
+	}
+	return nil
 }
 
 // commaDelimitedIDs is `ids` through commaDelimitedNumberArray (src/utils/zod-helpers.ts): a string is

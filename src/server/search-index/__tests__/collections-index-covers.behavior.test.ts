@@ -1,3 +1,4 @@
+import { serverCopyTablesSql } from '@civitai/db-queries/test/image-uses';
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -308,6 +309,8 @@ beforeAll(async () => {
       (${ARTICLE_PENDING_COVER}, ${OWNER}, NULL), (${ARTICLE_SERVABLE_COVER}, ${OWNER}, NULL);
     INSERT INTO "CollectionItem" (id, "collectionId", "articleId") VALUES
       (952, ${ARTICLE_PENDING_COVER}, 85), (953, ${ARTICLE_SERVABLE_COVER}, 86);
+    ${serverCopyTablesSql};
+    ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS url text;
     -- Songs: collection 9001's cover is a song with a picture as its item; 9002's only item is a song.
     INSERT INTO "Post" (id, "userId", "publishedAt", availability) VALUES
       (9010, ${STRANGER}, now() - interval '1 day', 'Public');

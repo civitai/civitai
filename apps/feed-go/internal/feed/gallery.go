@@ -31,7 +31,7 @@ type GalleryStore struct {
 // Settings returns a model's gallery settings, nil for "none". A key that Node would rebuild (absent,
 // or built before the SFW hold) falls back: the rebuild reads the model and the creator's hidden users.
 func (g *GalleryStore) Settings(ctx context.Context, modelID int) (*GallerySettings, error) {
-	raw, err := g.Cache.Get(ctx, g.Prefix+"model:gallery-settings:"+strconv.Itoa(modelID)).Bytes()
+	raw, err := g.Cache.Get(ctx, hydrate.GallerySettingsKey(g.Prefix, modelID)).Bytes()
 	if errors.Is(err, redis.Nil) {
 		return nil, fallback.New("gallery-settings-miss")
 	}
@@ -64,7 +64,7 @@ func (g *GalleryStore) settingsRead(ctx context.Context, modelIDs []int) (map[in
 	cmds := make([]*redis.StringCmd, len(modelIDs))
 	_, _ = g.Cache.Pipelined(ctx, func(p redis.Pipeliner) error {
 		for i, id := range modelIDs {
-			cmds[i] = p.Get(ctx, g.Prefix+"model:gallery-settings:"+strconv.Itoa(id))
+			cmds[i] = p.Get(ctx, hydrate.GallerySettingsKey(g.Prefix, id))
 		}
 		return nil
 	})
@@ -93,14 +93,27 @@ type GalleryHoldSource interface {
 	GalleryHolds(ctx context.Context, modelIDs []int) (map[int]hydrate.GalleryHold, error)
 }
 
-// holdComputingGallery is the gallery image.getInfinite's hold gates read with
-// InfinitePorts.GallerySettingsMiss on: its SettingsMany answers an absent key from the model's own
-// row (GalleryHoldSource), as getShowcaseHeldLevels' getGallerySettingsByModelId rebuild does, holding
-// only what the hold reads (`sfwHeld` and `level`: heldLevels is its one reader here). A model the
-// rebuild finds no row for is no settings (nil), as Node's null. Every other read is the store's.
+// holdComputingGallery is the gallery the hold gates read with a gallery-settings miss served
+// (image.getInfinite's InfinitePorts.GallerySettingsMiss, GET /api/v1/images'
+// FEED_GO_V1_IMAGES_SERVE_GALLERY_SETTINGS_MISS): its SettingsMany answers an absent key from the
+// model's own row (GalleryHoldSource; with the gallery settings written back, the entry Node would
+// write, which it also writes), as getShowcaseHeldLevels' getGallerySettingsByModelId rebuild does,
+// holding only what the hold reads (`sfwHeld` and `level`: heldLevels is its one reader here). A model
+// the rebuild finds no row for is no settings (nil), as Node's null. Every other read is the store's.
 type holdComputingGallery struct {
 	*GalleryStore
 	holds GalleryHoldSource
+}
+
+// HoldComputingGallery is store with an absent gallery-settings key's hold computed by holds
+// (holdComputingGallery), for GET /api/v1/images' hold gates with
+// FEED_GO_V1_IMAGES_SERVE_GALLERY_SETTINGS_MISS on; nil holds is the store itself (the miss falls
+// back).
+func HoldComputingGallery(store *GalleryStore, holds GalleryHoldSource) V1Gallery {
+	if holds == nil {
+		return store
+	}
+	return holdComputingGallery{GalleryStore: store, holds: holds}
 }
 
 func (g holdComputingGallery) SettingsMany(ctx context.Context, modelIDs []int) (map[int]*GallerySettings, error) {

@@ -542,7 +542,8 @@ func (s *Server) computeModelGetAll(ctx context.Context, r *http.Request) (*comp
 }
 
 // prepareModelGetAllViewer is computeModelGetAll up to the handler call, with the session user it
-// resolved (nil: none); the Go-first probe runs the same steps.
+// resolved (nil: none); the Go-first probe runs the same steps. The request carries its board color
+// for `newCreators`.
 func (s *Server) prepareModelGetAllViewer(ctx context.Context, r *http.Request) (modelfeed.Request, *auth.SessionUser, error) {
 	if s.Models == nil {
 		return modelfeed.Request{}, nil, fallback.New("model-getall-unconfigured")
@@ -569,7 +570,11 @@ func (s *Server) prepareModelGetAllViewer(ctx context.Context, r *http.Request) 
 	isModerator := authorized && user.IsModerator
 	color := s.Hosts.ColorOf(r.Host)
 	restricted := regionMatches(s.RegionRules, r)
-	req := modelfeed.Request{Input: in, Cap: browsing.DomainCap(authorized, browsing.CanViewNsfw(color, restricted, isModerator))}
+	req := modelfeed.Request{
+		Input:      in,
+		Cap:        browsing.DomainCap(authorized, browsing.CanViewNsfw(color, restricted, isModerator)),
+		BoardColor: s.Hosts.BoardColorOf(r.Host, s.HostPrimaries),
+	}
 	if authorized {
 		req.Viewer = &modelfeed.Viewer{ID: user.ID, Username: user.Username, IsModerator: isModerator,
 			CanSeeSongs: s.canSeeSongs(ctx, user, isModerator)}

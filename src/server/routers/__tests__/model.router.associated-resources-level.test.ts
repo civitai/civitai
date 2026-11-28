@@ -22,6 +22,11 @@ const PG_MODEL = 11;
 const X_MODEL = 12;
 const PRIVATE_MODEL = 13;
 const MINOR_MODEL = 14;
+const TAGGED_MODEL = 15;
+const SITE_EXCLUDED_TAG = 100;
+const MATURE_EXCLUDED_TAG = 101;
+const VIEWER_HIDDEN_TAG = 102;
+const HIDDEN_USER = 30;
 const linkedModel = (id: number, nsfwLevel: number, availability = 'Public', minor = false) => ({
   id,
   toArticle: null,
@@ -38,8 +43,14 @@ const linkedModel = (id: number, nsfwLevel: number, availability = 'Public', min
     poi: false,
     minor,
     sfwName: null,
+    tagsOnModels: [] as { tagId: number }[],
   },
 });
+const taggedModel = (tagId: number, id = TAGGED_MODEL) => {
+  const linked = linkedModel(id, NsfwLevel.PG);
+  linked.toModel.tagsOnModels = [{ tagId }];
+  return linked;
+};
 
 const PG_ARTICLE = 31;
 const X_ARTICLE = 32;
@@ -76,7 +87,7 @@ function caller(
     acceptableOrigin: true,
     tokenScope: TokenScope.Full,
     apiKeyId: null,
-    req: { headers: {} },
+    req: { headers: {}, cookies: {} },
     res: { setHeader: () => undefined, removeHeader: () => undefined },
     cache: { edgeTTL: user ? 0 : 60 },
     features: { canViewNsfw },
@@ -99,16 +110,40 @@ function listedIds(
     .then((items) => items.map(({ item }) => item.id));
 }
 
-// The site's addon rules turn minor content off at every level. Read once per process (memoised),
-// so it holds for the whole file.
+// The site's addon rules turn minor content off and exclude one tag at every level, and exclude
+// another tag only where mature levels are browsed. Read once per process (memoised), so they hold
+// for the whole file.
 beforeAll(() => {
   redisMock.sysRedis.get.mockResolvedValue(
-    JSON.stringify([{ type: 'none', nsfwLevels: [], disableMinor: true }]) as never
+    JSON.stringify([
+      { type: 'none', nsfwLevels: [], disableMinor: true, excludedTagIds: [SITE_EXCLUDED_TAG] },
+      { type: 'some', nsfwLevels: [NsfwLevel.X], excludedTagIds: [MATURE_EXCLUDED_TAG] },
+    ]) as never
   );
 });
 
+// The viewer's hidden preferences, as the per-user cache hash holds them.
+function hide({
+  tags = [],
+  users = [],
+  models = [],
+}: Partial<Record<'tags' | 'users' | 'models', number[]>> = {}) {
+  redisMock.redis.packed.hGetAll.mockResolvedValue({
+    'hidden-tags-4': tags.map((id) => ({ id, name: `tag ${id}` })),
+    'hidden-users-5': users.map((id) => ({ id, username: `user ${id}` })),
+    'hidden-models-3': models,
+    'hidden-images-3': [],
+    'hidden-images-implicit': [],
+    'hidden-model3ds-1': [],
+    'blocked-users-2': [],
+    'blocked-by-users-2': [],
+  } as never);
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  redisMock.redis.packed.get.mockResolvedValue([] as never);
+  hide();
   dbMock.dbWrite.modelAssociations.findMany.mockResolvedValue([
     linkedModel(PG_MODEL, NsfwLevel.PG),
     linkedModel(X_MODEL, NsfwLevel.X),
@@ -171,6 +206,64 @@ describe('model.getAssociatedResourcesSimple minor content', () => {
   });
 });
 
+describe('model.getAssociatedResourcesSimple excluded tags and hidden preferences', () => {
+  const ids = (
+    linked: ReturnType<typeof linkedModel>[],
+    user: { id: number; isModerator?: boolean } | undefined,
+    canViewNsfw = true
+  ) => {
+    dbMock.dbWrite.modelAssociations.findMany.mockResolvedValue([
+      linkedModel(PG_MODEL, NsfwLevel.PG),
+      ...linked,
+    ] as never);
+    return listedIds(user, canViewNsfw);
+  };
+
+  it('hides a model carrying a tag the site rules exclude, from signed-out and signed-in alike', async () => {
+    expect(await ids([taggedModel(SITE_EXCLUDED_TAG)], undefined)).toEqual([PG_MODEL]);
+    expect(await ids([taggedModel(SITE_EXCLUDED_TAG)], signedIn(5))).toEqual([PG_MODEL]);
+  });
+
+  it('applies a tag excluded only at mature levels where mature levels are servable', async () => {
+    expect(await ids([taggedModel(MATURE_EXCLUDED_TAG)], signedIn(5), false)).toEqual([
+      PG_MODEL,
+      TAGGED_MODEL,
+    ]);
+    expect(await ids([taggedModel(MATURE_EXCLUDED_TAG)], signedIn(5), true)).toEqual([PG_MODEL]);
+  });
+
+  it('shows a model with an excluded tag to its owner, and to moderators for the site rules', async () => {
+    expect(await ids([taggedModel(SITE_EXCLUDED_TAG)], signedIn(ITEM_OWNER))).toContain(
+      TAGGED_MODEL
+    );
+    expect(
+      await ids([taggedModel(SITE_EXCLUDED_TAG)], { ...signedIn(9), isModerator: true })
+    ).toContain(TAGGED_MODEL);
+  });
+
+  it("hides a model carrying one of the viewer's hidden tags, unless the cookie turns hiding off", async () => {
+    hide({ tags: [VIEWER_HIDDEN_TAG] });
+    expect(await ids([taggedModel(VIEWER_HIDDEN_TAG)], signedIn(5))).toEqual([PG_MODEL]);
+    expect(
+      await listedIds(signedIn(5), true, {
+        req: { headers: {}, cookies: { disableHidden: 'true' } },
+      })
+    ).toEqual([PG_MODEL, TAGGED_MODEL]);
+  });
+
+  it('hides a model by a user the viewer hid', async () => {
+    hide({ users: [HIDDEN_USER] });
+    const byHiddenUser = linkedModel(TAGGED_MODEL, NsfwLevel.PG);
+    byHiddenUser.toModel.userId = HIDDEN_USER;
+    expect(await ids([byHiddenUser], signedIn(5))).toEqual([PG_MODEL]);
+  });
+
+  it('hides a model the viewer hid', async () => {
+    hide({ models: [X_MODEL] });
+    expect(await ids([linkedModel(X_MODEL, NsfwLevel.X)], signedIn(5))).toEqual([PG_MODEL]);
+  });
+});
+
 describe('model.setAssociatedResources', () => {
   const FROM_OWNER = 5;
   const removedIds = async (
@@ -206,6 +299,14 @@ describe('model.setAssociatedResources', () => {
     expect(await removedIds(true, linkedModel(MINOR_MODEL, NsfwLevel.PG, 'Public', true))).toEqual(
       []
     );
+  });
+
+  it('a save keeps links hidden by an excluded tag or a hidden model', async () => {
+    expect(await removedIds(true, taggedModel(SITE_EXCLUDED_TAG))).toEqual([]);
+    vi.clearAllMocks();
+    redisMock.redis.packed.get.mockResolvedValue([] as never);
+    hide({ models: [PG_MODEL] });
+    expect(await removedIds(true, linkedModel(PG_MODEL, NsfwLevel.PG))).toEqual([]);
   });
 
   it("a save on a scoped key keeps a link to the caller's own private model", async () => {

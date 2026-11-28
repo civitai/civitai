@@ -30,8 +30,17 @@ func NewCreatorBoardID(boardColor string) string {
 	return "images-new"
 }
 
-// NewCreatorBoards reads getNewCreatorUserIds' cached board for image.getInfinite's `newCreators`
-// (no maxFollowers: the procedure never sets it). Only a fresh entry is answered: Node rebuilds a
+// NewCreatorModelBoardID is getNewCreatorBoardId('models', domain), model.getAll's `newCreators`
+// board: red has its own; every other color, or none, reads the SFW one.
+func NewCreatorModelBoardID(boardColor string) string {
+	if boardColor == "red" {
+		return "new_creators-red"
+	}
+	return "new_creators"
+}
+
+// NewCreatorBoards reads getNewCreatorUserIds' cached board for image.getInfinite's and model.getAll's
+// `newCreators` (no maxFollowers: neither procedure sets it). Only a fresh entry is answered: Node rebuilds a
 // missing one from the database and refreshes an expired one (or serves it stale while another
 // caller holds the lock, which this service cannot tell), so those fall back (`new-creators-miss`,
 // `new-creators-stale`), as does a read error (`new-creators-read-failed`: Node fails open to the

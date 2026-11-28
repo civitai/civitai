@@ -530,8 +530,9 @@ describe('updateCollectionCoverImage', () => {
     );
     afterEach(() => holder.db.exec(`TRUNCATE "ServiceDealFile"`));
 
-    it('is refused as a cover the owner could otherwise see', async () => {
-      await expect(setCover(PUBLISHED)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    // Hidden from its owner too, so it answers as an image they cannot see.
+    it('is refused as a cover, even of a published post the owner could otherwise see', async () => {
+      await expect(setCover(PUBLISHED)).rejects.toMatchObject({ code: 'NOT_FOUND' });
       expect(dbMock.dbWrite.collection.update).not.toHaveBeenCalled();
     });
 
@@ -564,14 +565,14 @@ describe('updateCollectionCoverImage', () => {
       ).rejects.toMatchObject({ code: 'FORBIDDEN' });
     });
 
-    it('is refused as a collection item the viewer could otherwise see', async () => {
+    it('is refused as a collection item, even of a published post the owner could otherwise see', async () => {
       await expect(
         assertCollectionItemsVisibleToViewer({
           itemKey: 'imageId',
           ids: [PUBLISHED],
           userId: OWNER,
         })
-      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      ).rejects.toMatchObject({ code: 'NOT_FOUND' });
     });
   });
 });
@@ -662,7 +663,9 @@ describe('upsertCollection with no cover sent', () => {
     expect(await edit(REMOVED, true)).toEqual({ disconnect: true });
   });
   describe("a new cover a deal file points at, the owner's own upload", () => {
-    beforeEach(() => holder.db.exec(`UPDATE "Image" SET url = 'deal-copy' WHERE id = ${OWNER_UPLOAD}`));
+    beforeEach(() =>
+      holder.db.exec(`UPDATE "Image" SET url = 'deal-copy' WHERE id = ${OWNER_UPLOAD}`)
+    );
     afterEach(() =>
       holder.db.exec(`
         TRUNCATE "ServiceDealFile", "ServiceDealFileEntry";

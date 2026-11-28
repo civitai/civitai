@@ -1,3 +1,4 @@
+import { serverCopyTablesSql } from '@civitai/db-queries/test/image-uses';
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
@@ -312,6 +313,8 @@ beforeAll(async () => {
       (28, ${POST_ITEM_REMOVED_LEVEL}, 9);
     INSERT INTO "Collection" ("id", "userId")
       SELECT DISTINCT "collectionId", 1 FROM "CollectionItem";
+    ${serverCopyTablesSql};
+    ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS url text;
   `);
 });
 

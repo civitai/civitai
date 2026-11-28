@@ -1,0 +1,46 @@
+{
+  "name": "fallback-new-creators-stale",
+  "description": "A board entry older than its hour: Node refreshes it (or serves it stale under another caller’s lock).",
+  "now": "2026-06-15T12:00:00.000Z",
+  "config": {
+    "baseModelMetrics": true,
+    "modelImagesSlim": true,
+    "coverageNext": true,
+    "loadingOpenToAll": true,
+    "decorationEvents": [],
+    "serveInputNewCreators": true
+  },
+  "request": {
+    "input": "{\"json\":{\"newCreators\":true,\"browsingLevel\":1}}",
+    "headers": {
+      "host": "green.example.test"
+    },
+    "session": null
+  },
+  "redis": {
+    "packed:caches:new-creators:new_creators": {
+      "value": {
+        "data": [
+          1002
+        ],
+        "cachedAt": 1781517600000
+      },
+      "packed": "3gACpGRhdGGRzQPqqGNhY2hlZEF0y0J57KuUUAAA"
+    }
+  },
+  "sysRedis": {
+    "system:browsing-setting-addons": {
+      "raw": "[{\"type\":\"some\",\"nsfwLevels\":[4,8,16],\"disableMinor\":true,\"excludedTagIds\":[9911]},{\"type\":\"some\",\"nsfwLevels\":[1,2,4,8,16],\"disablePoi\":true,\"excludedTagIds\":[9901]}]"
+    }
+  },
+  "db": {
+    "modelPages": [],
+    "paidAccess": [],
+    "coverImages": [],
+    "tags": [],
+    "creators": []
+  },
+  "expect": {
+    "fallback": "new-creators-stale"
+  }
+}

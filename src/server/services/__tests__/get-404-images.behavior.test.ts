@@ -1,3 +1,4 @@
+import { serverCopyTablesSql } from '@civitai/db-queries/test/image-uses';
 import { PGlite } from '@electric-sql/pglite';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -77,6 +78,8 @@ beforeAll(async () => {
       (1, ${CLEAN}, 'ACCEPTED'), (1, ${ACCEPTABLE_MINOR}, 'ACCEPTED'), (1, ${HELD}, 'ACCEPTED'),
       (1, ${HIDDEN_META}, 'ACCEPTED'), (1, ${BLOCKED_FOR}, 'ACCEPTED'), (1, ${TOS_VIOLATION}, 'ACCEPTED'),
       (1, ${POSTLESS}, 'ACCEPTED'), (1, ${BY_BANNED}, 'ACCEPTED'), (1, ${BY_DELETED}, 'ACCEPTED');
+    ${serverCopyTablesSql};
+    ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS url text;
   `);
   const raw = pgliteRaw(db);
   (dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockImplementation(raw.queryRaw);

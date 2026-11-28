@@ -246,9 +246,10 @@ export type ResolveAnswer =
 
 /**
  * The paths of `update` whose change the tree at `sha` does not hold, by the shared predicate
- * (`pathHoldsUpdate` in `platform-update-containment.ts`, the one the submit and approve checks
- * use): the update's own blob (equal blob ids are equal bytes), a delete with the path gone, or a
- * hand-merged text file with every line the update adds and none it removes, counted.
+ * (`updatePathGaps` in `platform-update-containment.ts`, the one the submit and approve checks
+ * use): the update's own blob (equal blob ids are equal bytes), a delete with the path gone, a
+ * hand-merged text file with every line the update adds and none it removes, counted, or a
+ * `package.json` / `pnpm-lock.yaml` with every dependency change the update makes.
  */
 export async function missingPaths(
   app: string,

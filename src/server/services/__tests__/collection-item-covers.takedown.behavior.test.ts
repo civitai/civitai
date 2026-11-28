@@ -1,3 +1,4 @@
+import { serverCopyTablesSql } from '@civitai/db-queries/test/image-uses';
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
@@ -125,6 +126,8 @@ beforeAll(async () => {
       (${MODEL3D_RESTRICTED_R}, ${STRANGER}, NULL, 61),
       (${ARTICLE_ON_TAKEN_DOWN}, ${STRANGER}, 62, NULL),
       (${ARTICLE_ON_LIVE}, ${STRANGER}, 63, NULL);
+    ${serverCopyTablesSql};
+    ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS url text;
   `);
 });
 

@@ -1,3 +1,4 @@
+import { serverCopyTablesSql } from '@civitai/db-queries/test/image-uses';
 import { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -60,7 +61,9 @@ const SCHEMA = `
     id serial PRIMARY KEY, "collectionId" int NOT NULL, "imageId" int, "addedById" int,
     status text NOT NULL
   );
-`;
+  ${serverCopyTablesSql};
+    ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS url text;
+  `;
 
 let replica: PGlite;
 let primary: PGlite;

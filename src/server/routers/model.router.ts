@@ -43,7 +43,13 @@ import {
   upsertModelHandler,
 } from '~/server/controllers/model.controller';
 import { dbRead } from '~/server/db/client';
-import { applyUserPreferences, cacheIt, edgeCacheIt, rateLimit } from '~/server/middleware.trpc';
+import {
+  applyUserPreferences,
+  cacheIt,
+  edgeCacheIt,
+  rateLimit,
+  resolveHiddenPreferenceExclusions,
+} from '~/server/middleware.trpc';
 import { getAllQuerySchema, getByIdSchema } from '~/server/schema/base.schema';
 import type { EarlyAccessRefundSummary } from '~/server/services/model-early-access-refund.service';
 import { toEarlyAccessRefundSummary } from '~/server/services/model-early-access-refund.service';
@@ -138,7 +144,7 @@ import type { Context } from '~/server/createContext';
 import { getBrowsingSettingAddons } from '~/server/services/system-cache';
 import { requestServableLevels } from '~/server/utils/browsing-level';
 import { actsAsModerator } from '~/server/utils/image-media-visibility';
-import { resolveStrictestPoiMinor } from '~/shared/constants/browsing-settings-addons';
+import { resolveStrictestAddons } from '~/shared/constants/browsing-settings-addons';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { readModelPoiAndOwnerViaKysely } from '~/server/services/hot-reads-6.reads';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -275,8 +281,9 @@ const modelFileUrlsForOwner = ownerOnlyFileUrls<Awaited<ReturnType<typeof getMod
 });
 
 /**
- * Resolved on the server, never read from the input. The list is asked for at every level, so this
- * is on if it is on at any level the request may be served, as the image gallery resolves it.
+ * Resolved on the server, never read from the input. The list is asked for at every level, so each
+ * addon rule holds if it holds at any level the request may be served, as the image gallery
+ * resolves it.
  */
 async function resolveAssociatedModelAddons(
   ctx: Pick<
@@ -284,12 +291,21 @@ async function resolveAssociatedModelAddons(
     'user' | 'features' | 'req' | 'apiKeyId' | 'apiKeyType' | 'subject' | 'tokenScope'
   >
 ): Promise<AssociatedModelAddons> {
-  const { disableMinor } = resolveStrictestPoiMinor(
-    await getBrowsingSettingAddons(),
+  const [addons, hidden] = await Promise.all([
+    getBrowsingSettingAddons(),
+    resolveHiddenPreferenceExclusions(ctx),
+  ]);
+  const { disableMinor, excludedTagIds } = resolveStrictestAddons(
+    addons,
     requestServableLevels(ctx),
     { isModerator: actsAsModerator(ctx) }
   );
-  return { disableMinor };
+  return {
+    disableMinor,
+    excludedTagIds: [...new Set([...excludedTagIds, ...hidden.excludedTagIds])],
+    excludedUserIds: hidden.excludedUserIds,
+    excludedModelIds: hidden.excludedModelIds,
+  };
 }
 
 export const modelRouter = router({

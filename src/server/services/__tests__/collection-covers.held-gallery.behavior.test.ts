@@ -1,3 +1,4 @@
+import { serverCopyTablesSql } from '@civitai/db-queries/test/image-uses';
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
@@ -158,6 +159,8 @@ beforeAll(async () => {
       (79, 53, 'legacy-unheld', 'Published', now() - interval '1 day', 'Public', 'Scanned', ${
         NsfwLevel.PG13
       });
+    ${serverCopyTablesSql};
+    ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS url text;
   `);
 });
 
