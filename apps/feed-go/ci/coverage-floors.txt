@@ -33,6 +33,7 @@ internal/inputschema 80
 internal/jskeys 100
 internal/jspack 88
 internal/modelfeed 92
+internal/profanity 92
 internal/safe 100
 internal/server 93
 internal/shadow 95
