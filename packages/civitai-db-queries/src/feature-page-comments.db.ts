@@ -741,15 +741,11 @@ export type FpUnhideHeld =
   | 'pushing';
 
 /**
- * A moderator shows again a Feature Pages comment hidden by a moderator, bound to the hide and text
- * version they saw (`seenHiddenAt` is `hiddenAt::text`). The scan's own hide is lifted by
- * dismissing its report instead (unactionReportLiftingScanHide). Locks as that does; the lift's time
- * is taken under them and is strictly after both the hide and the last moderator hide sent, so the
- * reconcile lifts it on the platform. It also grants the version, so a replayed scan of the same
- * text does not hide it again, so it is made only once a scan of the current text (`contentHash`,
- * as `currentScanContentHashes` computes it) finished clean: never over a scan still pending, failed
- * or flagged. `exceptReportId`: the report the moderator is ruling on, which does not hold the
- * unhide; the platform lift still waits for it to close. `held`: nothing was written, and why.
+ * A moderator shows again a Feature Pages comment a moderator hid, bound to the hide and text version
+ * they saw (`seenHiddenAt` is `hiddenAt::text`), and grants that version. Made only over a clean
+ * finished scan of the current text (`contentHash`). Never lifts the scan's own hide: its report's
+ * Unactioned does (unactionReportLiftingScanHide). `exceptReportId` does not hold the unhide.
+ * `held`: nothing was written, and why.
  */
 export async function liftModeratorFpHide(
   db: Kysely<DB>,
