@@ -8,8 +8,9 @@ import { revocationDegradedTotal } from '../metrics';
 
 // The shared revocation check (the same one the main app, the hub and the other spokes use), so a logged-out
 // or banned session is rejected here too. Bounded by REDIS_SYS_READ_TIMEOUT_MS (default 1000ms). When the read
-// fails it answers from the revocation markers this process has already read, and allows a session with none
-// known — a redis blip must not reject everyone. Without a sys redis configured there is nothing to check.
+// fails it answers from the revocation markers this process has already read, and allows an ordinary session
+// with none known — a redis blip must not reject everyone. Without a sys redis configured there is nothing to
+// check, so an ordinary session is allowed. Impersonation sessions are the exception: see the verifier below.
 const checkRevocation = createRevocationCheck({
   redis: () => getSysRedis() as unknown as SessionRegistryRedis,
   // SESSION_REVOCATION_CACHE=off|0|false (any case) turns off the record of seen revocations; anything else,
