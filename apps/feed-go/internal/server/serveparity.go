@@ -258,8 +258,10 @@ func (s *Server) sampleParity(r *http.Request, endpoint string, c *computed, vie
 }
 
 // parityReplaysCredential reports whether a served answer to a credentialed request is replayed with
-// its credential: on the images route only, for an answer computed for the key (an API-key viewer
-// class: ServeV1ImagesBearer). That route's answer is the key's user's, which is exactly what the
+// its credential: on the images route only, for an answer computed for the key's user (the api-key and
+// api-key-scoped classes: ServeV1ImagesBearer). A credential that stands for no session (a download or
+// service token, a client-credentials key: api-key-anon) is never re-sent: its answer is anyone's,
+// which the signed-out replays already compare. That route's answer is the key's user's, which is exactly what the
 // replay compares, and the replay goes only to the Node app the request would have been handed back
 // to, which reads the key from the principal cache as the served compute did (a served key had no
 // lastUsedAt write due). Every other credentialed answer is still skipped_credential.
@@ -268,7 +270,7 @@ func parityReplaysCredential(endpoint string, c *computed) bool {
 		return false
 	}
 	switch c.viewerClass {
-	case V1ViewerAPIKey, V1ImagesViewerAPIKeyScoped, V1ImagesViewerAPIKeyAnon:
+	case V1ViewerAPIKey, V1ImagesViewerAPIKeyScoped:
 		return true
 	}
 	return false

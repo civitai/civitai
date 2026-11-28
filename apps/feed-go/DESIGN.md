@@ -2134,7 +2134,8 @@ key), `api-key-scoped` and `api-key-anon` (a credential that stands for no sessi
 
 **Serve-parity** (`FEED_GO_SERVE_PARITY_V1_IMAGES`, default off; needs `FEED_GO_V1_IMAGES_FALLBACK_URL`):
 the §7.2 sampler also replays the images route's served answers to that route's own Node app. It is
-the one route whose API-key answers are replayed with their credential (`parityReplaysCredential`):
+the one route whose API-key answers (`api-key`, `api-key-scoped`; never `api-key-anon`, whose
+credential stands for no session) are replayed with their credential (`parityReplaysCredential`):
 the answer is the key's user's, which is what the replay compares, and it goes only to the Node app
 the request would have been handed back to. Every other credentialed answer stays `skipped_credential`.
 

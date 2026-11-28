@@ -298,8 +298,9 @@ func TestServeParityV1ImagesReplaysAPIKeyAnswers(t *testing.T) {
 	})
 }
 
-// parityReplaysCredential's set is exactly the images route's API-key classes: any other endpoint, or
-// an images answer for a cookie or no credential, is not a credentialed replay. Literal ledger.
+// parityReplaysCredential's set is exactly the images route's two classes of a key's user (api-key,
+// api-key-scoped): any other endpoint, a credential that stands for no session (api-key-anon), or an
+// images answer for a cookie or no credential, is not a credentialed replay. Literal ledger.
 func TestParityReplaysCredentialOnlyOnImagesKeyAnswers(t *testing.T) {
 	for _, c := range []struct {
 		endpoint, class string
@@ -307,7 +308,7 @@ func TestParityReplaysCredentialOnlyOnImagesKeyAnswers(t *testing.T) {
 	}{
 		{EndpointV1Images, V1ViewerAPIKey, true},
 		{EndpointV1Images, V1ImagesViewerAPIKeyScoped, true},
-		{EndpointV1Images, V1ImagesViewerAPIKeyAnon, true},
+		{EndpointV1Images, V1ImagesViewerAPIKeyAnon, false}, // a service token is never re-sent
 		{EndpointV1Images, FeedViewerUser, false},
 		{EndpointV1Images, FeedViewerAnon, false},
 		{EndpointV1Images, "", false},
