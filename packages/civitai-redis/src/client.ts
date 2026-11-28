@@ -3366,6 +3366,8 @@ const REDIS_KEYS_UNPREFIXED = {
     // Once-an-hour marker per version and per file for the orchestrator cache bust after a failed
     // scan; a lost marker costs one more bust.
     MODEL_FILE_SCAN_FAILURE_BUST: 'webhooks:model-file-scan:failure-bust',
+    // Tipalti event ids being or already handled — `webhooks:tipalti:event:${eventId}`.
+    TIPALTI_EVENT: 'webhooks:tipalti:event',
   },
   REMIX_APP: {
     // A choice ask's per-option prices, per run, segment and step, while that ask is open.
@@ -3663,10 +3665,6 @@ const REDIS_KEYS_UNPREFIXED = {
   },
   CREATOR_SERVICES: {
     ACCESS_RECORDED_SINCE: 'packed:caches:creator-services:access-recorded-since',
-  },
-  WEBHOOKS: {
-    // Tipalti event ids being or already handled — `webhooks:tipalti:event:${eventId}`.
-    TIPALTI_EVENT: 'webhooks:tipalti:event',
   },
   CREATOR_PROGRAM: {
     CAPS: 'packed:caches:creator-program:caps',
