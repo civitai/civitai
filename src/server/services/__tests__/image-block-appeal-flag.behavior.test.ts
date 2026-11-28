@@ -5,6 +5,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { BlockedReason } from '~/server/common/enums';
+import { WITHHELD_TABLES_SQL } from '../../../../packages/civitai-shared/src/__tests__/csam-restriction-cases';
 import type * as NotificationService from '~/server/services/notification.service';
 import type * as EmailTemplates from '~/server/email/templates';
 import type * as BuzzService from '~/server/services/buzz.service';
@@ -101,6 +102,8 @@ beforeAll(async () => {
       ingestion text,
       "blockedFor" text,
       "nsfwLevel" int NOT NULL DEFAULT 0,
+      "nsfwLevelLocked" boolean NOT NULL DEFAULT false,
+      url text,
       "needsReview" text,
       "postId" int,
       "pHash" bigint,
@@ -126,10 +129,10 @@ beforeAll(async () => {
       category text,
       "createdAt" timestamp(3) NOT NULL DEFAULT now()
     );
-    CREATE TABLE "CsamReport" (id serial PRIMARY KEY);
     -- The stand-in keeps ingestion as text; queries cast to the enum's name.
     CREATE DOMAIN "ImageIngestionStatus" AS text;
-    CREATE TABLE "User" (id int PRIMARY KEY, "deletedAt" timestamp(3), "bannedAt" timestamp(3));
+    ${WITHHELD_TABLES_SQL}
+    ALTER TABLE "User" ADD COLUMN "deletedAt" timestamp(3), ADD COLUMN "bannedAt" timestamp(3);
     CREATE DOMAIN "JobQueueType" AS text;
     CREATE TABLE "JobQueue" (
       "entityId" int NOT NULL, "entityType" "EntityType" NOT NULL, type "JobQueueType" NOT NULL, data jsonb,
@@ -599,10 +602,10 @@ describe('approving an image appeal', () => {
     await approve();
 
     expect(await imageRow(APPEALED)).toMatchObject({ ingestion: 'Blocked' });
-    const restoreWrites = dbMock.dbWrite.$executeRaw.mock.calls.filter(([strings]) =>
-      (strings as TemplateStringsArray).join('?').includes('"nsfwLevelLocked" = FALSE')
-    );
-    expect(restoreWrites).toEqual([]);
+    const { rows } = await holder.db.query(`SELECT "nsfwLevel" FROM "Image" WHERE id = $1`, [
+      APPEALED,
+    ]);
+    expect(rows).toEqual([{ nsfwLevel: 32 }]);
     expect(loggingMock.logToAxiom.mock.calls.map(([e]) => (e as { name?: string }).name)).toContain(
       'appeal-approval-not-restored'
     );

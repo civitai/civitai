@@ -106,7 +106,7 @@ const {
   handleBlockImages,
   handleUnblockImages,
   updateNsfwLevel,
-  resetBlockedNsfwLevel,
+  rerateLiftedImages,
   reportCsamImages,
 } = await import('../image.service');
 
@@ -270,7 +270,7 @@ describe('a moderator re-rate', () => {
 });
 
 // The tag-derived recompute: unblocks, appeal approvals and account restores reach it through
-// resetBlockedNsfwLevel, and its result can move an avatar across the safe-for-work gate either way.
+// rerateLiftedImages, and its result can move an avatar across the safe-for-work gate either way.
 describe('a recompute of the rating from tags', () => {
   it('refreshes the cached profile picture of the user whose avatar was recomputed, after it', async () => {
     await updateNsfwLevel([AVATAR, OTHER_IMAGE]);
@@ -283,8 +283,8 @@ describe('a recompute of the rating from tags', () => {
     );
   });
 
-  it('refreshes it when an unblock resets and recomputes the rating', async () => {
-    await resetBlockedNsfwLevel(AVATAR);
+  it('refreshes it when a lift re-rates the image', async () => {
+    await rerateLiftedImages([AVATAR]);
 
     expect(pictureLookups()).toEqual([[AVATAR]]);
     expect(refreshPicture).toHaveBeenCalledWith([AVATAR_OWNER]);

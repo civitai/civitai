@@ -55,7 +55,7 @@ import {
 import { violationInputSchema } from '$lib/violations';
 import { parseImageFlagValue } from '$lib/image-flags';
 import { isRatingLevel } from '$lib/nsfw-levels';
-import { updateImageNsfwLevel } from '$lib/server/image-nsfw-level';
+import { BlockedImageRatingError, updateImageNsfwLevel } from '$lib/server/image-nsfw-level';
 import { setImageFlag } from '$lib/server/user-actions.service';
 import { checkedResolutionReason, resolutionReasonFields } from '$lib/server/resolution-reason';
 import type { ResolutionVerdict } from '@civitai/shared/resolution-reasons';
@@ -565,6 +565,7 @@ export const imageQueueActions = {
     // Sequential, and the failures are named: a partial batch the moderator cannot see is worse than
     // a refusal, because the images it did rate are indistinguishable from the ones it did not.
     const failed: number[] = [];
+    const blocked: string[] = [];
     for (const id of imageIds) {
       try {
         await updateImageNsfwLevel({
@@ -577,17 +578,23 @@ export const imageQueueActions = {
       } catch (e) {
         console.error('[images] setRating failed', { id, error: e });
         failed.push(id);
+        if (e instanceof BlockedImageRatingError) blocked.push(e.message);
       }
     }
-    if (failed.length)
-      return fail(400, {
-        error:
-          failed.length === imageIds.length
-            ? 'Could not set that rating — reload the queue.'
-            : `Rated ${imageIds.length - failed.length} of ${
-                imageIds.length
-              }. Failed: ${failed.join(', ')}.`,
+    if (failed.length) {
+      const allBlocked = blocked.length === failed.length;
+      const summary =
+        failed.length === imageIds.length
+          ? allBlocked
+            ? ''
+            : 'Could not set that rating — reload the queue.'
+          : `Rated ${imageIds.length - failed.length} of ${imageIds.length}. Failed: ${failed.join(
+              ', '
+            )}.`;
+      return fail(allBlocked && failed.length === imageIds.length ? 409 : 400, {
+        error: [summary, ...blocked].filter(Boolean).join(' '),
       });
+    }
     return { success: true, nsfwLevel };
   },
 

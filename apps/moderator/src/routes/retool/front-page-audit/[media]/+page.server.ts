@@ -4,7 +4,7 @@ import type { Actions, PageServerLoad } from './$types';
 import { canAccess } from '$lib/server/access';
 import { parseForm, parseQuery } from '$lib/server/query';
 import { validNsfwLevels } from '@civitai/shared';
-import { updateImageNsfwLevel } from '$lib/server/image-nsfw-level';
+import { BlockedImageRatingError, updateImageNsfwLevel } from '$lib/server/image-nsfw-level';
 import { holdsCsamReview } from '$lib/server/held-media';
 import { withheldRefusal, withheldRow, withheldRows } from '$lib/server/retracted-media';
 import {
@@ -139,6 +139,7 @@ export const actions: Actions = {
       });
     } catch (e) {
       console.error('[front-page-audit] setRating failed', e);
+      if (e instanceof BlockedImageRatingError) return actionFail(e.message);
       return actionFail('Could not set that rating — it may have been removed. Reload the sweep.');
     }
     // Retool's InsertRatingGame, after the rating commits — the research dataset must not be able to

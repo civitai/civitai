@@ -996,3 +996,33 @@ describe('a queue accept of an image under the CSAM review flag', () => {
     expect(await row(FLAGGED_LIVE)).toMatchObject({ needsReview: null, ingestion: 'Scanned' });
   });
 });
+
+describe('setRating on a blocked image', () => {
+  const setRating = (imageIds: number[]) =>
+    imageQueueActions.setRating(event({ imageIds: imageIds.join(','), nsfwLevel: '1' }));
+
+  it('names the block, so the moderator knows to lift it first', async () => {
+    expect(await setRating([HELD])).toMatchObject({
+      status: 409,
+      data: { error: `Image ${HELD} is blocked: lift the block before rating it.` },
+    });
+  });
+
+  it('names the block on a Front Page Audit sweep too', async () => {
+    const { actions } = await import(
+      '../../../routes/retool/front-page-audit/[media]/+page.server'
+    );
+    expect(
+      await actions.setRating!(event({ imageId: String(HELD), nsfwLevel: '1' }))
+    ).toMatchObject({
+      data: { error: `Image ${HELD} is blocked: lift the block before rating it.` },
+    });
+  });
+
+  it('control: an image that is gone keeps the reload message', async () => {
+    expect(await setRating([999])).toMatchObject({
+      status: 400,
+      data: { error: 'Could not set that rating — reload the queue.' },
+    });
+  });
+});

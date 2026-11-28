@@ -20,7 +20,7 @@ import { logToAxiom } from '~/server/logging/client';
 import {
   queueImageSearchIndexUpdate,
   refreshImageLevelCaches,
-  resetBlockedNsfwLevel,
+  rerateLiftedImages,
   dropBlockedImageDeleteQueue,
 } from '~/server/services/image.service';
 import { bustCachesForPosts } from '~/server/services/post.service';
@@ -219,6 +219,16 @@ async function raiseToRecordedFloor(rows: { id: number; floorLevel: number | nul
   if (raised.length) await refreshImageLevelCaches(raised.map((x) => x.id));
 }
 
+/** A row at Blocked the restore leaves visible (the rows `visible` below keeps): no CSAM block,
+ *  current or recorded, and no recorded Blocked ingestion. Reads the pre-update row, so it uses the
+ *  recorded prior keys. */
+const RESTORED_FROM_BLOCKED = Prisma.sql`(
+  "nsfwLevel" = ${NsfwLevel.Blocked}
+  AND (${csamBlockedSql()}) IS NOT TRUE
+  AND NOT ${csamInBlockedFor(Prisma.sql`("metadata"->>${PRIOR_BLOCKED_FOR_KEY}::text)`)}
+  AND "metadata"->>${PRIOR_INGESTION_KEY}::text <> 'Blocked'
+)`;
+
 /** An account restore is no moderator's ruling on the media, so it lifts no withheld image. */
 const WITHHELD_FROM_RESTORE = Prisma.raw(moderatorWithheldSql('i', { csamReview: false }));
 
@@ -239,7 +249,6 @@ export function restoreAccountDeletionImageBatch(userId: number) {
       recordedReview: string | null;
       recordedLevel: number | null;
       floorLevel: number | null;
-      nsfwLevelLocked: boolean;
     }[]
   >`
     UPDATE "Image"
@@ -267,8 +276,17 @@ export function restoreAccountDeletionImageBatch(userId: number) {
           THEN "needsReview"
           ELSE c."recordedReview"
         END,
-        -- Read from the updated row itself, not from the claim's columns.
-        "nsfwLevel" = COALESCE(${recordedLevelSql('restore')}, "nsfwLevel"),
+        -- Read from the updated row itself, not from the claim's columns. A restored row with no
+        -- recorded rating comes off Blocked and unlocked here, for the caller's re-rate.
+        "nsfwLevel" = COALESCE(
+          ${recordedLevelSql('restore')},
+          CASE WHEN ${RESTORED_FROM_BLOCKED} THEN 0 END,
+          "nsfwLevel"
+        ),
+        "nsfwLevelLocked" = CASE
+          WHEN ${recordedLevelSql('restore')} IS NULL AND ${RESTORED_FROM_BLOCKED} THEN FALSE
+          ELSE "nsfwLevelLocked"
+        END,
         "metadata" = "metadata"${minusPriorKeysSql}
     FROM (
       SELECT i.id, i."needsReview" AS "currentReview",
@@ -297,7 +315,7 @@ export function restoreAccountDeletionImageBatch(userId: number) {
       FOR UPDATE OF i
     ) c
     WHERE "Image".id = c.id
-    RETURNING "Image".id, "postId", ingestion, "blockedFor", "needsReview", "nsfwLevelLocked", c."currentReview", c."recordedReview", c."recordedLevel", c."floorLevel"
+    RETURNING "Image".id, "postId", ingestion, "blockedFor", "needsReview", c."currentReview", c."recordedReview", c."recordedLevel", c."floorLevel"
   `;
 }
 
@@ -366,19 +384,11 @@ export async function unblockAccountDeletionImages(userId: number) {
     // A row whose recorded rating was put back above; re-rating it would drop a moderator's lock.
     const rerate = visible.filter((x) => x.recordedLevel == null);
     const rated = visible.filter((x) => x.recordedLevel != null).map((x) => x.id);
-    // One the restore left unlocked and found locked by the reset was rated by a moderator in
-    // between: the reset passes it by.
-    const rerateUnlocked = rerate.filter((x) => !x.nsfwLevelLocked).map((x) => x.id);
-    const rerateLocked = rerate.filter((x) => x.nsfwLevelLocked).map((x) => x.id);
     if (ids.length)
       await limitConcurrency(
         [
-          // Blocking force-set `nsfwLevel` to Blocked and left the rating lock on, which the
-          // recompute skips; resetBlockedNsfwLevel is the shared undo for that.
           async () => {
-            if (rerateUnlocked.length)
-              await resetBlockedNsfwLevel(rerateUnlocked, { unlockedOnly: true });
-            if (rerateLocked.length) await resetBlockedNsfwLevel(rerateLocked);
+            await rerateLiftedImages(rerate.map((x) => x.id));
             await raiseToRecordedFloor(rerate);
           },
           () => refreshImageLevelCaches(rated),

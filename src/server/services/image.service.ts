@@ -92,6 +92,7 @@ import {
   liftedNeedsReviewSql,
   reviewKeyAfterSql,
   liftedNsfwLevelSql,
+  liftedNsfwLevelLockedSql,
   liftKeptBlockedSql,
   csamBlockedSql,
   liftableByUnblock,
@@ -1456,6 +1457,7 @@ export async function handleUnblockImages({
             "needsReview" = ${reviewKeyAfterSql('human', liftedNeedsReviewSql)},
             "blockedFor" = ${liftedBlockedForSql},
             "nsfwLevel" = ${liftedNsfwLevelSql},
+            "nsfwLevelLocked" = ${liftedNsfwLevelLockedSql},
             "metadata" = ${unblockedMetadataSql},
             ${needsReview === 'poi' ? Prisma.sql`"poi" = false,` : Prisma.sql``}
             ${
@@ -1498,7 +1500,7 @@ export async function handleUnblockImages({
             needsReview: false,
           }))
       ),
-      resetBlockedNsfwLevel(restoredIds),
+      rerateLiftedImages(restoredIds),
       dropBlockedImageDeleteQueue(restoredIds),
       restartBlockedImageDeleteClock([...keptIds]),
       queueImageSearchIndexUpdate({
@@ -1557,6 +1559,7 @@ export async function handleUnblockImages({
       entityType: EntityType.Image,
       status: AppealStatus.Approved,
       userId: moderatorId,
+      csamReview,
     });
   }
 
@@ -1953,25 +1956,14 @@ export async function refreshImageLevelCaches(ids: number[]) {
   await queueDocumentsForImageMinorChanges({ levelImageIds: ids });
 }
 
-// Single source of truth for restoring an image's rating after it's unblocked.
-// Blocking force-sets nsfwLevel=Blocked and may leave the rating lock on; the recompute
-// (update_nsfw_levels_new) skips locked rows, so a Blocked-locked row can never be restored
-// by updateNsfwLevel alone. Reset+unlock only the Blocked rows (never-corrupted locks are
-// preserved), then recompute; a never-tagged row the recompute leaves unrated goes back to the scanner.
-/** `unlockedOnly`: passes by a row locked since the caller read it unlocked (a moderator's rating). */
-export async function resetBlockedNsfwLevel(
-  ids: number | number[],
-  { unlockedOnly = false }: { unlockedOnly?: boolean } = {}
-) {
-  if (!Array.isArray(ids)) ids = [ids];
+/**
+ * Rates images a lift just took off the Blocked level (the lift itself resets and unlocks them), then
+ * sends a never-tagged one the recompute leaves unrated back to the scanner. The recompute skips a
+ * locked row, so a moderator's rating since the lift stands.
+ */
+export async function rerateLiftedImages(ids: number[]) {
   ids = [...new Set(ids)];
   if (!ids.length) return;
-  await dbWrite.$executeRaw`
-    UPDATE "Image"
-    SET "nsfwLevel" = 0, "nsfwLevelLocked" = FALSE
-    WHERE id IN (${Prisma.join(ids)}) AND "nsfwLevel" = ${NsfwLevel.Blocked}
-      AND (${!unlockedOnly} OR NOT "nsfwLevelLocked");
-  `;
   await updateNsfwLevel(ids);
   await rescanUnratedImages(ids);
 }

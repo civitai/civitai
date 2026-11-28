@@ -19,7 +19,7 @@ vi.mock('../../../../event-engine-common/feeds', () => ({ ImagesFeed: class {} }
 vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService: class {} }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 
-const { resetBlockedNsfwLevel } = await import('../image.service');
+const { rerateLiftedImages } = await import('../image.service');
 
 const UNTAGGED = 1; // blocked before its scan landed: no tags at all
 const TAGGED = 2; // blocked after a scan: an R tag is live
@@ -73,20 +73,20 @@ beforeAll(async () => {
 afterAll(() => db.close());
 
 beforeEach(async () => {
-  // Each row as the unblock UPDATE leaves it: Scanned, block reason cleared, still at Blocked (32)
-  // and locked. The CSAM row keeps its block.
+  // Each row as a lift leaves it: Scanned, block reason cleared, off Blocked and unlocked. The CSAM
+  // row keeps its block.
   await db.exec(`
     DELETE FROM "Image"; DELETE FROM "TagsOnImageDetails"; DELETE FROM "JobQueue";
     DELETE FROM "ModActivity";
     INSERT INTO "Image" (id, ingestion, "nsfwLevel", "nsfwLevelLocked", "blockedFor", "scanJobs") VALUES
-      (${UNTAGGED}, 'Scanned', 32, true, NULL, NULL),
-      (${TAGGED}, 'Scanned', 32, true, NULL, NULL),
-      (${REVIEW_TAGS_ONLY}, 'Scanned', 32, true, NULL, NULL),
+      (${UNTAGGED}, 'Scanned', 0, false, NULL, NULL),
+      (${TAGGED}, 'Scanned', 0, false, NULL, NULL),
+      (${REVIEW_TAGS_ONLY}, 'Scanned', 0, false, NULL, NULL),
       (${STILL_BLOCKED}, 'Blocked', 32, true, 'CSAM', NULL),
-      (${REASON_KEPT}, 'Scanned', 32, true, 'Moderated', NULL),
-      (${OUT_OF_RETRIES}, 'Scanned', 32, true, NULL, '{"retryCount": 9}'),
-      (${PRIOR_REVIEW}, 'Scanned', 32, true, NULL, NULL),
-      (${OTHER_ACTIVITY}, 'Scanned', 32, true, NULL, NULL);
+      (${REASON_KEPT}, 'Scanned', 0, false, 'Moderated', NULL),
+      (${OUT_OF_RETRIES}, 'Scanned', 0, false, NULL, '{"retryCount": 9}'),
+      (${PRIOR_REVIEW}, 'Scanned', 0, false, NULL, NULL),
+      (${OTHER_ACTIVITY}, 'Scanned', 0, false, NULL, NULL);
     INSERT INTO "TagsOnImageDetails" VALUES (${TAGGED}, 4, false), (${REVIEW_TAGS_ONLY}, 4, true);
     INSERT INTO "ModActivity" VALUES ('image', ${PRIOR_REVIEW}, 'review'),
       ('image', ${OTHER_ACTIVITY}, 'block'), ('report', ${OTHER_ACTIVITY}, 'review');
@@ -103,14 +103,14 @@ async function state(id: number) {
   return rows[0];
 }
 
-describe('resetBlockedNsfwLevel', () => {
+describe('rerateLiftedImages', () => {
   it('sends an unblocked image the scanner never tagged back to the scanner', async () => {
-    await resetBlockedNsfwLevel([UNTAGGED, TAGGED, REVIEW_TAGS_ONLY, STILL_BLOCKED]);
+    await rerateLiftedImages([UNTAGGED, TAGGED, REVIEW_TAGS_ONLY, STILL_BLOCKED]);
     expect(await state(UNTAGGED)).toEqual({ ingestion: 'Rescan', nsfwLevel: 0, queued: true });
   });
 
   it('keeps a moderator ruling: an image whose tags a moderator disabled is not rescanned', async () => {
-    await resetBlockedNsfwLevel([UNTAGGED, TAGGED, REVIEW_TAGS_ONLY, STILL_BLOCKED]);
+    await rerateLiftedImages([UNTAGGED, TAGGED, REVIEW_TAGS_ONLY, STILL_BLOCKED]);
     expect(await state(REVIEW_TAGS_ONLY)).toEqual({
       ingestion: 'Scanned',
       nsfwLevel: 0,
@@ -119,7 +119,7 @@ describe('resetBlockedNsfwLevel', () => {
   });
 
   it('does not re-audit an image a moderator reviewed before: no rescan, nothing queued', async () => {
-    await resetBlockedNsfwLevel([PRIOR_REVIEW]);
+    await rerateLiftedImages([PRIOR_REVIEW]);
     expect(await state(PRIOR_REVIEW)).toEqual({
       ingestion: 'Scanned',
       nsfwLevel: 0,
@@ -128,7 +128,7 @@ describe('resetBlockedNsfwLevel', () => {
   });
 
   it('still rescans an image whose only mod activity is not an image review (control)', async () => {
-    await resetBlockedNsfwLevel([OTHER_ACTIVITY]);
+    await rerateLiftedImages([OTHER_ACTIVITY]);
     expect(await state(OTHER_ACTIVITY)).toEqual({
       ingestion: 'Rescan',
       nsfwLevel: 0,
@@ -137,17 +137,17 @@ describe('resetBlockedNsfwLevel', () => {
   });
 
   it('rates an unblocked image from its live tags and leaves it Scanned (control)', async () => {
-    await resetBlockedNsfwLevel([UNTAGGED, TAGGED, REVIEW_TAGS_ONLY, STILL_BLOCKED]);
+    await rerateLiftedImages([UNTAGGED, TAGGED, REVIEW_TAGS_ONLY, STILL_BLOCKED]);
     expect(await state(TAGGED)).toEqual({ ingestion: 'Scanned', nsfwLevel: 4, queued: false });
   });
 
   it('does not send an image that still carries a block reason to the scanner', async () => {
-    await resetBlockedNsfwLevel([REASON_KEPT]);
+    await rerateLiftedImages([REASON_KEPT]);
     expect(await state(REASON_KEPT)).toMatchObject({ ingestion: 'Scanned', queued: false });
   });
 
   it('marks an unrated image out of scan retries Error, with nothing queued', async () => {
-    await resetBlockedNsfwLevel([OUT_OF_RETRIES]);
+    await rerateLiftedImages([OUT_OF_RETRIES]);
     expect(await state(OUT_OF_RETRIES)).toEqual({
       ingestion: 'Error',
       nsfwLevel: 0,
@@ -157,27 +157,22 @@ describe('resetBlockedNsfwLevel', () => {
 
   it('leaves an image already queued for a scan queued once', async () => {
     await db.exec(`INSERT INTO "JobQueue" VALUES ('ImageScan', 'Image', ${UNTAGGED})`);
-    await resetBlockedNsfwLevel([UNTAGGED]);
+    await rerateLiftedImages([UNTAGGED]);
     const { rows } = await db.query(`SELECT 1 FROM "JobQueue" WHERE "entityId" = $1`, [UNTAGGED]);
     expect(rows).toHaveLength(1);
     expect(await state(UNTAGGED)).toMatchObject({ ingestion: 'Rescan' });
   });
 
-  it('with unlockedOnly, passes by a row locked since its caller read it unlocked', async () => {
-    await db.exec(`UPDATE "Image" SET "nsfwLevelLocked" = false WHERE id = ${REVIEW_TAGS_ONLY}`);
-    await resetBlockedNsfwLevel([TAGGED, REVIEW_TAGS_ONLY], { unlockedOnly: true });
-    // A moderator's lock at Blocked: kept.
-    expect(await state(TAGGED)).toEqual({ ingestion: 'Scanned', nsfwLevel: 32, queued: false });
-    // Control: an unlocked row is still reset.
-    expect(await state(REVIEW_TAGS_ONLY)).toEqual({
-      ingestion: 'Scanned',
-      nsfwLevel: 0,
-      queued: false,
-    });
+  it("keeps a moderator's rating locked since the lift", async () => {
+    await db.exec(
+      `UPDATE "Image" SET "nsfwLevel" = 16, "nsfwLevelLocked" = true WHERE id = ${TAGGED}`
+    );
+    await rerateLiftedImages([TAGGED, REVIEW_TAGS_ONLY]);
+    expect(await state(TAGGED)).toEqual({ ingestion: 'Scanned', nsfwLevel: 16, queued: false });
   });
 
   it('does not send an image that is still blocked to the scanner', async () => {
-    await resetBlockedNsfwLevel([STILL_BLOCKED]);
+    await rerateLiftedImages([STILL_BLOCKED]);
     expect(await state(STILL_BLOCKED)).toMatchObject({ ingestion: 'Blocked', queued: false });
   });
 });

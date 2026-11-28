@@ -28,7 +28,7 @@ vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageService>()),
   getImagesModRules: vi.fn(async () => []),
-  resetBlockedNsfwLevel: vi.fn(async () => undefined),
+  rerateLiftedImages: vi.fn(async () => undefined),
   refreshImageLevelCaches: vi.fn(async () => undefined),
   dropBlockedImageDeleteQueue: vi.fn(async () => undefined),
   queueImageSearchIndexUpdate: vi.fn(async () => undefined),
@@ -79,7 +79,7 @@ import {
   ingestImageById,
   refreshImageLevelCaches,
   requeueUnverifiedImages,
-  resetBlockedNsfwLevel,
+  rerateLiftedImages,
 } from '~/server/services/image.service';
 import { evaluateRules } from '~/server/utils/mod-rules';
 import { createNotification } from '~/server/services/notification.service';
@@ -1743,16 +1743,7 @@ describe('a restore puts back the rating the grace block replaced', () => {
     );
     return rows[0].kept;
   };
-  /** The reset's own first statement, so a row it is handed loses its level and lock as in prod. */
-  const resetLikeProd = () =>
-    vi.mocked(resetBlockedNsfwLevel).mockImplementation(async (ids, options) => {
-      await holder.db.query(
-        `UPDATE "Image" SET "nsfwLevel" = 0, "nsfwLevelLocked" = false
-         WHERE id = ANY($1) AND "nsfwLevel" = 32 AND ($2 OR NOT "nsfwLevelLocked")`,
-        [Array.isArray(ids) ? ids : [ids], !options?.unlockedOnly]
-      );
-    });
-  const resetIds = () => vi.mocked(resetBlockedNsfwLevel).mock.calls.flatMap(([ids]) => ids);
+  const resetIds = () => vi.mocked(rerateLiftedImages).mock.calls.flatMap(([ids]) => ids);
 
   it.each([
     [
@@ -1764,7 +1755,6 @@ describe('a restore puts back the rating the grace block replaced', () => {
     ['the minor flag', 112, false, `UPDATE "Image" SET minor = true WHERE id = 112;`],
     ['a rating lock at Blocked', 113, true, ''],
   ])('an Error row kept at Blocked by %s comes back kept', async (_, id, locked, arm) => {
-    resetLikeProd();
     await holder.db.exec(`
         INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", "nsfwLevelLocked", metadata) VALUES
           (${id}, ${OWNER}, 'Blocked', 'moderated', 32, ${locked}, ${graced({
@@ -1787,7 +1777,6 @@ describe('a restore puts back the rating the grace block replaced', () => {
   });
 
   it("brings a moderator's rating lock back locked at its level; an unlocked rating is re-rated with it as a floor", async () => {
-    resetLikeProd();
     await holder.db.exec(`
       INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", "nsfwLevelLocked", metadata) VALUES
         (114, ${OWNER}, 'Blocked', 'moderated', 32, true, ${graced({
@@ -1832,14 +1821,9 @@ describe('a restore puts back the rating the grace block replaced', () => {
       .split('---')
       .find((part) => part.includes('FUNCTION update_nsfw_levels_new('));
     expect(recompute, 'update_nsfw_levels_new not found in its programmability file').toBeTruthy();
-    // resetBlockedNsfwLevel's own statements: the reset, then the recompute it runs.
-    vi.mocked(resetBlockedNsfwLevel).mockImplementation(async (ids) => {
-      const list = Array.isArray(ids) ? ids : [ids];
-      await holder.db.query(
-        `UPDATE "Image" SET "nsfwLevel" = 0, "nsfwLevelLocked" = false WHERE id = ANY($1) AND "nsfwLevel" = 32`,
-        [list]
-      );
-      await holder.db.query(`SELECT update_nsfw_levels_new($1::int[])`, [list]);
+    // rerateLiftedImages's recompute.
+    vi.mocked(rerateLiftedImages).mockImplementationOnce(async (ids) => {
+      await holder.db.query(`SELECT update_nsfw_levels_new($1::int[])`, [ids]);
     });
     await holder.db.exec(`
       CREATE TABLE IF NOT EXISTS "Tag" (id int PRIMARY KEY, "nsfwLevel" int NOT NULL);
@@ -1909,7 +1893,6 @@ describe('a restore puts back the rating the grace block replaced', () => {
   });
 
   it('re-rates a row whose rating changed during the window, keeping a moderator lock', async () => {
-    resetLikeProd();
     await holder.db.exec(`
       INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", "nsfwLevelLocked", metadata) VALUES
         -- A moderator rated it X and locked it after the grace block.
@@ -1960,7 +1943,6 @@ describe('a restore puts back the rating the grace block replaced', () => {
   });
 
   it('re-rates a row whose recorded rating is not a whole level, or has no lock beside it', async () => {
-    resetLikeProd();
     const crumbs = (level: unknown, locked?: boolean) =>
       `'${JSON.stringify({
         accountDeletionPriorIngestion: 'Scanned',
@@ -1992,19 +1974,12 @@ describe('a restore puts back the rating the grace block replaced', () => {
     });
   });
 
-  it('keeps a Blocked rating a moderator lands between the restore and its reset', async () => {
-    vi.mocked(resetBlockedNsfwLevel).mockImplementation(async (ids, options) => {
-      const list = Array.isArray(ids) ? ids : [ids];
-      // The moderator's rating, committed after the restore statement and before the reset.
+  it('keeps a Blocked rating a moderator lands between the restore and its re-rate', async () => {
+    vi.mocked(rerateLiftedImages).mockImplementationOnce(async (ids) => {
+      // The moderator's rating, committed after the restore statement and before the re-rate.
       await holder.db.query(
         `UPDATE "Image" SET "nsfwLevel" = 32, "nsfwLevelLocked" = true WHERE id = ANY($1)`,
-        [list]
-      );
-      // The reset's own first statement.
-      await holder.db.query(
-        `UPDATE "Image" SET "nsfwLevel" = 0, "nsfwLevelLocked" = false
-         WHERE id = ANY($1) AND "nsfwLevel" = 32 AND ($2 OR NOT "nsfwLevelLocked")`,
-        [list, !options?.unlockedOnly]
+        [ids]
       );
     });
     await holder.db.exec(`
@@ -2026,7 +2001,6 @@ describe('a restore puts back the rating the grace block replaced', () => {
   });
 
   it("puts back a moderator's lock when the image was unblocked during the window", async () => {
-    resetLikeProd();
     await holder.db.exec(`
       INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", "nsfwLevelLocked", metadata) VALUES
         (138, ${OWNER}, 'Blocked', 'moderated', 32, false, ${graced({
@@ -2075,7 +2049,6 @@ describe('a restore puts back the rating the grace block replaced', () => {
   });
 
   it('keeps a locked recorded rating off a row with a CSAM block, current or recorded', async () => {
-    resetLikeProd();
     await holder.db.exec(`
       INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", "nsfwLevelLocked", metadata) VALUES
         (140, ${OWNER}, 'Blocked', 'CSAM', 32, true, ${graced({
@@ -2102,7 +2075,6 @@ describe('a restore puts back the rating the grace block replaced', () => {
   });
 
   it('keeps a lift-kept rating off a row CSAM-blocked after the lift', async () => {
-    resetLikeProd();
     await holder.db.exec(`
       INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", "nsfwLevelLocked", metadata) VALUES
         (142, ${OWNER}, 'Blocked', 'moderated', 32, true, ${graced({
@@ -2137,7 +2109,6 @@ describe('a restore puts back the rating the grace block replaced', () => {
   });
 
   it('re-rates a row with no rating recorded, as before', async () => {
-    resetLikeProd();
     await holder.db.exec(`
       INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", "nsfwLevelLocked", metadata) VALUES
         (116, ${OWNER}, 'Blocked', 'moderated', 32, true, ${graced({ ingestion: 'Scanned' })});
@@ -2153,8 +2124,31 @@ describe('a restore puts back the rating the grace block replaced', () => {
     });
   });
 
+  it('leaves a row fully restored when a step after the restore throws', async () => {
+    // A minor review outranks the recorded appeal, so the pending-appeal read runs after the write.
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", "nsfwLevelLocked", "needsReview", metadata) VALUES
+        (139, ${OWNER}, 'Blocked', 'moderated', 32, true, 'minor', '${JSON.stringify({
+      accountDeletionPriorIngestion: 'Scanned',
+      accountDeletionPriorBlockedFor: null,
+      accountDeletionPriorNeedsReview: 'appeal',
+    })}');
+      INSERT INTO "Appeal" ("entityType", "entityId", status) VALUES ('Image', 139, 'Pending');
+    `);
+    dbMock.dbWrite.appeal.findMany.mockRejectedValueOnce(new Error('appeal read down'));
+
+    await expect(unblockAccountDeletionImages(OWNER)).rejects.toThrow('appeal read down');
+
+    expect(await rating(139)).toEqual({
+      ingestion: 'Scanned',
+      nsfwLevel: 0,
+      nsfwLevelLocked: false,
+    });
+    // Control: the read that threw is the one after the write.
+    expect(dbMock.dbWrite.appeal.findMany).toHaveBeenCalled();
+  });
+
   it('leaves a CSAM row Blocked at Blocked, whatever it recorded', async () => {
-    resetLikeProd();
     await holder.db.exec(`
       INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", "nsfwLevelLocked", metadata) VALUES
         (117, ${OWNER}, 'Blocked', 'CSAM', 32, false, ${graced({

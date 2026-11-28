@@ -3,16 +3,16 @@ import { Prisma } from '@prisma/client';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { blockedForNamesCsam } from '@civitai/shared/csam-blocked-for';
 
-const { mockResetNsfwLevel, mockDropDeleteQueue, mockQueueSearchIndex, mockBustCachesForPosts } =
+const { mockRerate, mockDropDeleteQueue, mockQueueSearchIndex, mockBustCachesForPosts } =
   vi.hoisted(() => ({
-    mockResetNsfwLevel: vi.fn(async () => undefined),
+    mockRerate: vi.fn(async () => undefined),
     mockDropDeleteQueue: vi.fn(async () => undefined),
     mockQueueSearchIndex: vi.fn(async () => undefined),
     mockBustCachesForPosts: vi.fn(async () => undefined),
   }));
 
 vi.mock('~/server/services/image.service', () => ({
-  resetBlockedNsfwLevel: mockResetNsfwLevel,
+  rerateLiftedImages: mockRerate,
   refreshImageLevelCaches: vi.fn(async () => undefined),
   dropBlockedImageDeleteQueue: mockDropDeleteQueue,
   queueImageSearchIndexUpdate: mockQueueSearchIndex,
@@ -84,11 +84,15 @@ let ownerLive = true;
 function splitTopLevel(body: string) {
   const parts: string[] = [];
   let depth = 0;
+  let quoted = false;
   let current = '';
   for (const char of body) {
-    if (char === '(') depth++;
+    if (char === "'") quoted = !quoted;
+    else if (quoted) {
+      // A comma in a string literal splits nothing.
+    } else if (char === '(') depth++;
     else if (char === ')') depth--;
-    if (char === ',' && depth === 0) {
+    if (char === ',' && depth === 0 && !quoted) {
       parts.push(current);
       current = '';
     } else current += char;
@@ -428,7 +432,7 @@ describe('unblockAccountDeletionImages', () => {
     expect(images[0]).toMatchObject({ ingestion: 'Blocked', blockedFor: 'CSAM', metadata: {} });
     // Control: the other image is restored and goes through the unhide follow-ups.
     expect(images[1]).toMatchObject({ ingestion: 'Scanned', blockedFor: null });
-    expect(mockResetNsfwLevel.mock.calls).toEqual([[[2], { unlockedOnly: true }]]);
+    expect(mockRerate.mock.calls).toEqual([[[2]]]);
     expect(result).toMatchObject({ unblocked: 1, stillBlocked: 1 });
   });
 
@@ -482,7 +486,7 @@ describe('unblockAccountDeletionImages', () => {
 
     // A still-blocked row has to keep its Blocked rating; only the rows the block hid get the
     // reset-and-recompute that undoes the forced level and the rating lock.
-    expect(mockResetNsfwLevel).toHaveBeenCalledWith([1], { unlockedOnly: true });
+    expect(mockRerate).toHaveBeenCalledWith([1]);
     expect(mockQueueSearchIndex).toHaveBeenCalledWith({
       ids: [1],
       action: SearchIndexUpdateQueueAction.Update,
@@ -532,7 +536,7 @@ describe('unblockAccountDeletionImages', () => {
       withheld: 0,
       drained: true,
     });
-    expect(mockResetNsfwLevel).not.toHaveBeenCalled();
+    expect(mockRerate).not.toHaveBeenCalled();
     expect(mockBustCachesForPosts).not.toHaveBeenCalled();
   });
 
@@ -546,13 +550,13 @@ describe('unblockAccountDeletionImages', () => {
     expect(claimedPerPass).toEqual([RESTORE_BATCH_SIZE, RESTORE_BATCH_SIZE, 3, 0]);
     expect(result.unblocked).toBe(total);
     expect(images.every((row) => row.ingestion === 'Scanned')).toBe(true);
-    for (const [ids] of mockResetNsfwLevel.mock.calls as unknown as number[][][])
+    for (const [ids] of mockRerate.mock.calls as unknown as number[][][])
       expect(ids.length).toBeLessThanOrEqual(RESTORE_BATCH_SIZE);
   });
 
   it('stops at the next pass once the owner is banned or deleted again', async () => {
     images = Array.from({ length: RESTORE_BATCH_SIZE + 3 }, (_, i) => hidden(i + 1, 'Scanned'));
-    mockResetNsfwLevel.mockImplementationOnce(async () => {
+    mockRerate.mockImplementationOnce(async () => {
       ownerLive = false;
     });
 
@@ -614,7 +618,7 @@ describe('unblockAccountDeletionImages', () => {
       withheld: 0,
       drained: true,
     });
-    expect(mockResetNsfwLevel).toHaveBeenCalledWith([1, 3], { unlockedOnly: true });
+    expect(mockRerate).toHaveBeenCalledWith([1, 3]);
   });
 
   it('stops instead of spinning when a claimed row comes back unchanged', async () => {
@@ -636,7 +640,7 @@ describe('unblockAccountDeletionImages', () => {
       searchIndexQueued = resolve;
     });
     // Serial follow-up never reaches the queue call, so the reset never settles and this hangs.
-    mockResetNsfwLevel.mockImplementationOnce(async () => {
+    mockRerate.mockImplementationOnce(async () => {
       await queued;
     });
     mockQueueSearchIndex.mockImplementationOnce(async () => {
@@ -652,7 +656,7 @@ describe('unblockAccountDeletionImages', () => {
   it('busts the post caches only after the pass has reset the levels', async () => {
     images = [hidden(1, 'Scanned', { postId: 900 })];
     const order: string[] = [];
-    mockResetNsfwLevel.mockImplementationOnce(async () => {
+    mockRerate.mockImplementationOnce(async () => {
       await new Promise((resolve) => setTimeout(resolve, 5));
       order.push('reset');
     });

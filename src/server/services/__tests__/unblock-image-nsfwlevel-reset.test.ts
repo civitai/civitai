@@ -64,7 +64,7 @@ function makePermissive(overrides: Record<string, unknown> = {}): any {
 //
 //   dbRead.image.findMany       image.service.ts:668   (handleUnblockImages)
 //   dbWrite.$queryRaw           image.service.ts:692   (the unblock UPDATE)
-//   dbWrite.$executeRaw         image.service.ts:894   (resetBlockedNsfwLevel)
+//   dbWrite.$executeRaw         image.service.ts       (the unblock's follow-up writes)
 //   dbWrite.$executeRawUnsafe   image.service.ts:878   (updateNsfwLevel, the recompute)
 //   dbWrite.appeal.updateManyAndReturn  report.service.ts  (resolveEntityAppeal claims the appeals)
 //   dbRead.user.findMany        report.service.ts:743
@@ -256,7 +256,7 @@ function useAppealTable(rows: AppealRow[]) {
   );
 }
 
-describe('handleUnblockImages — nsfwLevel reset+unlock on unblock (ClickUp 868kfwdzq)', () => {
+describe('handleUnblockImages', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     capturedQueryRaw.length = 0;
@@ -273,27 +273,6 @@ describe('handleUnblockImages — nsfwLevel reset+unlock on unblock (ClickUp 868
         needsReview: null,
       },
     ]);
-  });
-
-  it('resets nsfwLevel and clears the lock for Blocked rows, then recomputes', async () => {
-    await handleUnblockImages({
-      csamReview: true,
-      ids: [128489949],
-      moderatorId: undefined,
-      removeMinorFlag: false,
-    } as any);
-
-    const resetSql = capturedExecRaw.join('\n');
-
-    // Blocked rows are reset to Unrated (0) and unlocked (scoped by the WHERE to
-    // nsfwLevel = Blocked only), so the recompute below isn't a no-op.
-    expect(resetSql).toContain('"nsfwLevel" = 0');
-    expect(resetSql).toContain('"nsfwLevelLocked" = FALSE');
-    expect(resetSql).toContain('AND "nsfwLevel" =');
-
-    // The reset/unlock must be followed by the recompute — otherwise the row would
-    // sit at Unrated instead of its true level.
-    expect(capturedExecUnsafe.some((sql) => sql.includes('update_nsfw_levels_new'))).toBe(true);
   });
 
   // An accept out of the minor queue rewrites "minor", which no trigger watches.
@@ -421,12 +400,6 @@ describe('handleUnblockImages and a CSAM block', () => {
   });
 });
 
-// Second door onto the same bug: a moderator approving an image appeal DIRECTLY via
-// report.router `resolveAppeal` (not through handleUnblockImages). resolveEntityAppeal's
-// approved branch clears blockedFor/ingestion itself, then calls the SHARED
-// resetBlockedNsfwLevel helper (the single source of truth for the level restore) — so a
-// rating-locked image is no longer left stuck at Blocked. No recursion (it does not call
-// handleUnblockImages).
 describe('handleUnblockImages and a block that put its effects off', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -459,7 +432,7 @@ describe('handleUnblockImages and a block that put its effects off', () => {
   });
 });
 
-describe('resolveEntityAppeal — reset+unlock on appeal approval (ClickUp 868kfwdzq, 2nd door)', () => {
+describe('resolveEntityAppeal on an image', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     capturedQueryRaw.length = 0;
@@ -479,31 +452,18 @@ describe('resolveEntityAppeal — reset+unlock on appeal approval (ClickUp 868kf
     ]);
   });
 
-  it('calls the shared reset+unlock helper on approval, then recomputes', async () => {
-    await resolveEntityAppeal({
-      ids: [128489949],
-      entityType: ENTITY_IMAGE,
-      status: APPEAL_APPROVED,
-      userId: 2023372,
-    } as any);
-
-    const resetSql = capturedExecRaw.join('\n');
-
-    expect(resetSql).toContain('"nsfwLevel" = 0');
-    expect(resetSql).toContain('"nsfwLevelLocked" = FALSE');
-    expect(resetSql).toContain('AND "nsfwLevel" =');
-    expect(capturedExecUnsafe.some((sql) => sql.includes('update_nsfw_levels_new'))).toBe(true);
-  });
-
   it('clears the appeal review on the approved image, which a scan would keep', async () => {
     const pg = new PGlite();
     await pg.exec(`CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Rescan', 'Error', 'Blocked');
-      CREATE TABLE "User" (id int PRIMARY KEY, "deletedAt" timestamp);
-      CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int, "postId" int, "pHash" bigint,
-      "nsfwLevel" int NOT NULL, "needsReview" text, "blockedFor" text, metadata jsonb,
-      ingestion "ImageIngestionStatus");
-      INSERT INTO "User" VALUES (1, NULL);
-      INSERT INTO "Image" VALUES (128489949, 1, NULL, 999, 32, 'appeal', 'moderated', '{}'::jsonb, 'Blocked');`);
+      ${CSAM_LINK_TABLES_SQL}
+      ${WITHHELD_TABLES_SQL}
+      ALTER TABLE "User" ADD "deletedAt" timestamp;
+      CREATE TABLE "Image" (id int PRIMARY KEY, url text NOT NULL DEFAULT 'u', "userId" int, "postId" int,
+      "pHash" bigint, "nsfwLevel" int NOT NULL, "nsfwLevelLocked" boolean NOT NULL DEFAULT false,
+      "needsReview" text, "blockedFor" text, metadata jsonb, ingestion "ImageIngestionStatus");
+      INSERT INTO "User" (id) VALUES (1);
+      INSERT INTO "Image" (id, "userId", "postId", "pHash", "nsfwLevel", "needsReview", "blockedFor", metadata, ingestion)
+        VALUES (128489949, 1, NULL, 999, 32, 'appeal', 'moderated', '{}'::jsonb, 'Blocked');`);
     const raw = pgliteRaw(pg);
     const capture = dbWrite.$queryRaw.getMockImplementation();
     dbWrite.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) =>
@@ -711,7 +671,8 @@ describe('handleUnblockImages — minor queue Accept truth table', () => {
       CREATE TABLE "User" (id int PRIMARY KEY, "deletedAt" timestamp);
       CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int, "nsfwLevel" int NOT NULL,
       minor boolean NOT NULL, "needsReview" text, "blockedFor" text, metadata jsonb,
-      "scannedAt" timestamp, ingestion "ImageIngestionStatus", "scanJobs" jsonb);
+      "scannedAt" timestamp, ingestion "ImageIngestionStatus", "scanJobs" jsonb,
+      "nsfwLevelLocked" boolean NOT NULL DEFAULT false);
       CREATE TABLE "TagsOnImageDetails" ("imageId" int, disabled boolean);
       CREATE TABLE "ModActivity" ("entityType" text, "entityId" int, activity text);`);
     const levels: [number, boolean][] = [
@@ -1215,5 +1176,168 @@ describe('handleUnblockImages and an image withheld from the moderator', () => {
 
   it('is lifted, and its appeal approved, for a moderator holding the grant', async () => {
     expect(await run(true)).toMatchObject({ restored: [1], appealClaimed: true });
+  });
+});
+
+/**
+ * Both lift doors, on real SQL: the lift UPDATE itself takes a restored row off Blocked and unlocks
+ * it, so a step after it that throws cannot leave the row Scanned at Blocked. Image 1 is appealed
+ * and Blocked under a rating lock; a CSAM-blocked image 2 on the same url makes it withheld from a
+ * moderator without the grant.
+ */
+describe('a lift of a Blocked, rating-locked image', () => {
+  const TAG_LEVEL = 4;
+  type Door = 'unblock' | 'appeal';
+  const lift = async (
+    door: Door,
+    {
+      csamReview = true,
+      ownerDeleted = false,
+      withheld = false,
+      recomputeThrows = false,
+    }: {
+      csamReview?: boolean;
+      ownerDeleted?: boolean;
+      withheld?: boolean;
+      recomputeThrows?: boolean;
+    } = {}
+  ) => {
+    const pg = new PGlite();
+    await pg.exec(`CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Rescan', 'Error', 'Blocked');
+      ${CSAM_LINK_TABLES_SQL}
+      ${WITHHELD_TABLES_SQL}
+      ALTER TABLE "User" ADD "deletedAt" timestamp, ADD "bannedAt" timestamp;
+      CREATE TABLE "Image" (id int PRIMARY KEY, url text NOT NULL, "pHash" bigint, "userId" int,
+      "postId" int, "nsfwLevel" int NOT NULL, "nsfwLevelLocked" boolean NOT NULL DEFAULT false,
+      minor boolean NOT NULL DEFAULT false, "needsReview" text, "blockedFor" text, metadata jsonb,
+      "scannedAt" timestamp, ingestion "ImageIngestionStatus", "scanJobs" jsonb);
+      -- Stands in for the tag recompute: rates an unlocked row at R, as its tags would.
+      CREATE FUNCTION update_nsfw_levels_new(ids int[]) RETURNS void LANGUAGE sql AS
+        $$ UPDATE "Image" SET "nsfwLevel" = ${TAG_LEVEL} WHERE id = ANY(ids) AND NOT "nsfwLevelLocked" $$;
+      INSERT INTO "User" (id, "deletedAt") VALUES (1, ${
+        ownerDeleted ? 'now()' : 'NULL'
+      }), (2, NULL);
+      INSERT INTO "Image" (id, url, "userId", "nsfwLevel", "nsfwLevelLocked", "blockedFor", "needsReview", metadata, ingestion) VALUES
+        (1, 'shared', 1, 32, true, 'moderated', 'appeal', '{}', 'Blocked');
+      ${
+        withheld
+          ? `INSERT INTO "Image" (id, url, "userId", "nsfwLevel", "blockedFor", ingestion) VALUES (2, 'shared', 2, 32, 'CSAM', 'Blocked');`
+          : ''
+      }`);
+    const raw = pgliteRaw(pg);
+    const capture = dbWrite.$queryRaw.getMockImplementation();
+    const captureExec = dbWrite.$executeRaw.getMockImplementation();
+    const captureUnsafe = dbWrite.$executeRawUnsafe.getMockImplementation();
+    dbWrite.$executeRaw.mockImplementation((() => Promise.resolve(0)) as never);
+    // Only the lift UPDATEs run on the database; every other raw read answers empty.
+    dbWrite.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) =>
+      /AS "keptBlocked"/.test(strings.join(''))
+        ? raw.queryRaw(strings, ...values)
+        : Promise.resolve([])) as never);
+    dbWrite.$executeRawUnsafe.mockImplementation((async (sql: string) => {
+      if (!sql.includes('update_nsfw_levels_new')) return 0;
+      if (recomputeThrows) throw new Error('recompute down');
+      await pg.query(sql);
+      return 0;
+    }) as never);
+    const appeal = {
+      id: 50,
+      entityId: 1,
+      entityType: ENTITY_IMAGE,
+      userId: 1,
+      status: APPEAL_APPROVED,
+      buzzTransactionId: null,
+      resolvedAt: new Date(),
+      createdAt: new Date('2026-01-01T00:00:00Z'),
+    };
+    vi.mocked(dbWrite.appeal.updateManyAndReturn)
+      .mockClear()
+      .mockResolvedValue([appeal] as never);
+    vi.mocked(dbWrite.appeal.updateMany)
+      .mockClear()
+      .mockResolvedValue({ count: 1 } as never);
+    mockFindMany.mockResolvedValue([
+      {
+        id: 1,
+        userId: 1,
+        pHash: null,
+        postId: null,
+        nsfwLevel: 32,
+        blockedFor: 'moderated',
+        needsReview: 'appeal',
+      },
+    ] as never);
+    try {
+      const done =
+        door === 'unblock'
+          ? handleUnblockImages({ ids: [1], moderatorId: 9, csamReview })
+          : resolveEntityAppeal({
+              ids: [1],
+              entityType: ENTITY_IMAGE,
+              status: APPEAL_APPROVED,
+              userId: 9,
+            } as never);
+      const error = await done.then(
+        () => null,
+        (e: unknown) => e
+      );
+      const { rows } = await pg.query<Record<string, unknown>>(
+        `SELECT ingestion::text AS ingestion, "nsfwLevel", "nsfwLevelLocked" FROM "Image" WHERE id = 1`
+      );
+      const reopened = vi
+        .mocked(dbWrite.appeal.updateMany)
+        .mock.calls.some(([args]) => (args as any)?.data?.status === 'Pending');
+      return { error, row: rows[0], reopened };
+    } finally {
+      if (capture) dbWrite.$queryRaw.mockImplementation(capture);
+      if (captureExec) dbWrite.$executeRaw.mockImplementation(captureExec);
+      if (captureUnsafe) dbWrite.$executeRawUnsafe.mockImplementation(captureUnsafe);
+      await pg.close();
+    }
+  };
+
+  const lifted = { ingestion: 'Scanned', nsfwLevel: TAG_LEVEL, nsfwLevelLocked: false };
+  const liftedUnrated = { ...lifted, nsfwLevel: 0 };
+  const kept = { ingestion: 'Blocked', nsfwLevel: 32, nsfwLevelLocked: true };
+
+  it.each<Door>(['unblock', 'appeal'])(
+    '%s: comes off Blocked, unlocked, and rated from its tags',
+    async (door) => {
+      expect(await lift(door)).toMatchObject({ error: null, row: lifted, reopened: false });
+    }
+  );
+
+  it.each<Door>(['unblock', 'appeal'])(
+    '%s: keeps level and lock while the owner is deleted',
+    async (door) => {
+      expect(await lift(door, { ownerDeleted: true })).toMatchObject({ row: kept });
+    }
+  );
+
+  it.each<Door>(['unblock', 'appeal'])(
+    '%s: a recompute that throws leaves the row fully lifted',
+    async (door) => {
+      const result = await lift(door, { recomputeThrows: true });
+      expect(result.row).toEqual(liftedUnrated);
+      // The unblock passes the error on; the appeal approval logs it and stays approved.
+      if (door === 'unblock') expect(result.error).toBeInstanceOf(Error);
+      else expect(result).toMatchObject({ error: null, reopened: false });
+    }
+  );
+
+  it('appeal: an approval without the grant leaves a withheld image blocked, back to Pending', async () => {
+    expect(await lift('appeal', { withheld: true })).toMatchObject({
+      row: kept,
+      reopened: true,
+    });
+  });
+
+  it("unblock: a granted moderator's unblock of a withheld image settles its appeal approved", async () => {
+    expect(await lift('unblock', { withheld: true, csamReview: true })).toMatchObject({
+      error: null,
+      row: lifted,
+      reopened: false,
+    });
+    expect(dbWrite.appeal.updateManyAndReturn).toHaveBeenCalled();
   });
 });

@@ -118,3 +118,20 @@ describe("policy: a rating write doesn't move a blocked row's level; re-blocking
     expect(recordModActivity).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('a row that vanishes between the read and the write', () => {
+  it('says not found, not blocked', async () => {
+    await seed('Scanned', 4, null);
+    const query = db.query.bind(db);
+    // Deleted after the read the write starts from, before the write itself.
+    db.query = (async (text: string, ...rest: unknown[]) => {
+      if (/^update "Image"/i.test(text.trim()))
+        await query(`DELETE FROM "Image" WHERE "id" = $1`, [IMAGE_ID]);
+      return query(text, ...(rest as []));
+    }) as typeof db.query;
+
+    const refusal = rate(1);
+    await expect(refusal).rejects.toThrow('Image not found');
+    await expect(refusal).rejects.not.toBeInstanceOf(BlockedImageRatingError);
+  });
+});

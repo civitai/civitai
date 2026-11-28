@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { notWithheldTargetSql } from '@civitai/shared/retracted-media-tier';
 import { randomUUID } from 'crypto';
 import { MERGE_PERMISSION_REPORT_REASON } from '@civitai/shared/merge-permission';
 import { NO_REPORT_REWARD_KEY, reportersWithoutReward } from '@civitai/shared/report-reward';
@@ -10,6 +11,7 @@ import {
   reviewKeyAfterSql,
   csamBlockedSql,
   liftedNsfwLevelSql,
+  liftedNsfwLevelLockedSql,
   liftKeptBlockedSql,
   liftableByUnblockSql,
 } from '~/server/common/image-visibility';
@@ -43,7 +45,7 @@ import {
   bulkRemoveBlockedImages,
   queueImageSearchIndexUpdate,
   dropBlockedImageDeleteQueue,
-  resetBlockedNsfwLevel,
+  rerateLiftedImages,
   restartBlockedImageDeleteClock,
 } from '~/server/services/image.service';
 import {
@@ -1878,10 +1880,13 @@ export async function resolveEntityAppeal({
   refundBuzz,
   userId,
   modelAppealKind,
+  csamReview = false,
 }: ResolveAppealInput & {
   userId?: number;
   /** 'flag' leaves a model's pending lock review, which is ruled on by its own path, open. */
   modelAppealKind?: 'flag';
+  /** The resolving moderator's CSAM grant: without it, an approval lifts no withheld image. */
+  csamReview?: boolean;
 }) {
   // An approval of an image removed for CSAM or under the review flag is refused whole, and every
   // appeal stays Pending. One that turns so after this read is reopened by `settleResolvedAppeals`.
@@ -1933,7 +1938,7 @@ export async function resolveEntityAppeal({
   });
   if (appeals.length === 0) return [];
 
-  await settleResolvedAppeals(appeals, { status, resolvedMessage, refundBuzz });
+  await settleResolvedAppeals(appeals, { status, resolvedMessage, refundBuzz, csamReview });
   return appeals;
 }
 
@@ -1957,13 +1962,18 @@ export async function settleResolvedAppeals(
     resolvedMessage,
     refundBuzz,
     lockReview,
+    csamReview = false,
   }: Pick<ResolveAppealInput, 'status' | 'resolvedMessage' | 'refundBuzz'> & {
     /** Set for a model's lock review: the owner's words come from `lockReviewRulingMessage`, not
      *  `resolvedMessage`. */
     lockReview?: { unlocked: RequestableLock[]; reason?: string | null; cooldown?: boolean };
+    /** As `resolveEntityAppeal` takes it. */
+    csamReview?: boolean;
   }
 ) {
   const approved = status === AppealStatus.Approved;
+  // An approval never lifts a withheld image, whichever caller settles it.
+  const notWithheld = Prisma.raw(notWithheldTargetSql({ csamReview }));
 
   // Batch-fetch recipients once to avoid N+1 lookups inside the loop.
   const recipientIds = [...new Set(appeals.map((a) => a.userId))];
@@ -1990,10 +2000,12 @@ export async function settleResolvedAppeals(
                 SET "needsReview" = ${reviewKeyAfterSql('human', liftedNeedsReviewSql)},
                     "blockedFor" = ${liftedBlockedForSql},
                     "nsfwLevel" = ${liftedNsfwLevelSql},
+                    "nsfwLevelLocked" = ${liftedNsfwLevelLockedSql},
                     ingestion = ${liftedIngestionSql},
                     "metadata" = ${liftedMetadataSql}
                 WHERE id = ${appeal.entityId}
                   AND ${liftableByUnblockSql}
+                  AND ${notWithheld}
                 RETURNING "postId", "pHash", ${liftKeptBlockedSql} AS "keptBlocked"
               `
             : await dbWrite.$queryRaw<Written[]>`
@@ -2011,9 +2023,7 @@ export async function settleResolvedAppeals(
           const restored = approved && !updated.keptBlocked;
           if (approved && !restored) await restartBlockedImageDeleteClock([appeal.entityId]);
           if (restored) {
-            // Shared restore path: reset+unlock a Blocked-locked row so the recompute isn't a
-            // no-op, then recompute. Same helper handleUnblockImages uses. (ClickUp 868kfwdzq)
-            await resetBlockedNsfwLevel(appeal.entityId);
+            await rerateLiftedImages([appeal.entityId]);
             await dropBlockedImageDeleteQueue([appeal.entityId]);
           }
           if (approved) {
