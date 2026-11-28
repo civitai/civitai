@@ -14,7 +14,8 @@ import (
 // (src/server/schema/site-search.schema.ts): siteSearchParamsSchema (`indexes/:uid/search`), each
 // query of siteMultiSearchSchema (`multi-search`: the params plus `indexUid`) and siteFacetSearchSchema
 // (`indexes/:uid/facet-search`). zod strips an unknown key; here a key outside the generated schema
-// keys (inputschema) falls back (`input-unknown-key`), as on every other port (DESIGN.md §5.1). A value
+// keys (inputschema) falls back (`input-unknown-key`), as on every other port (DESIGN.md §5.1), but for
+// the facet route's facetStrippedKeys, dropped as zod drops them. A value
 // zod refuses is Node's 400 and falls back (`search-input-invalid`), and so does one this reader cannot
 // prove zod accepts (an integer past 2^53, say): a fallback is never wrong.
 
@@ -207,9 +208,34 @@ var facetKinds = map[string]int{
 	"matchingStrategy": kindStrategy,
 }
 
+// facetStrippedKeys are the siteSearchParamsSchema keys siteFacetSearchSchema lacks. The site's search
+// client sends a facet search as its whole search (instant-meilisearch's searchForFacetValues spreads
+// the adapted search params, highlight attributes included, and adds facetName and facetQuery), so
+// they arrive, and zod strips them unread. The facet route drops them as Node does, value unread and
+// never forwarded, rather than falling back (DESIGN.md §18.3). Any other key outside the schema still
+// falls back. The deploy gap: one of these becoming a siteFacetSearchSchema key regenerates
+// schemas.json on the web PR that adds it, where TestFacetStrippedKeysAreStrippedByZod fails; the
+// feed-go change that reads it must ship first.
+var facetStrippedKeys = map[string]bool{
+	"attributesToCrop":      true,
+	"attributesToHighlight": true,
+	"attributesToRetrieve":  true,
+	"cropLength":            true,
+	"cropMarker":            true,
+	"facets":                true,
+	"highlightPostTag":      true,
+	"highlightPreTag":       true,
+	"hitsPerPage":           true,
+	"limit":                 true,
+	"offset":                true,
+	"page":                  true,
+	"sort":                  true,
+}
+
 // readParams reads an object against one schema: kinds (what each key is), schema (the generated key
-// list) and required (keys zod requires).
-func readParams(raw []byte, kinds map[string]int, schema *inputschema.Schema, required ...string) (*Params, error) {
+// list), stripped (keys outside the schema dropped as zod strips them, rather than falling back; nil
+// for none) and required (keys zod requires).
+func readParams(raw []byte, kinds map[string]int, schema *inputschema.Schema, stripped map[string]bool, required ...string) (*Params, error) {
 	if !isObject(raw) {
 		return nil, invalid("body", "not an object")
 	}
@@ -222,6 +248,9 @@ func readParams(raw []byte, kinds map[string]int, schema *inputschema.Schema, re
 	var unknown []string
 	for _, m := range o.members {
 		kind, known := kinds[m.key]
+		if !known && stripped[m.key] && !schema.Has(m.key) {
+			continue
+		}
 		if !known || !schema.Has(m.key) {
 			unknown = append(unknown, m.key)
 			continue
@@ -385,7 +414,7 @@ func ParseBody(route Route, index string, body []byte) (*Request, error) {
 		}
 		qschema := inputschema.Get(inputschema.SiteMultiSearchQuery)
 		for _, e := range elems {
-			p, err := readParams(trim(e), queryKinds, qschema, "indexUid")
+			p, err := readParams(trim(e), queryKinds, qschema, nil, "indexUid")
 			if err != nil {
 				return nil, err
 			}
@@ -396,13 +425,13 @@ func ParseBody(route Route, index string, body []byte) (*Request, error) {
 			return nil, fallback.NewfSafe("input-unknown-key", fallback.Token(unknown[0]), "unknown key %q", unknown[0])
 		}
 	case RouteSearch:
-		p, err := readParams(trim(body), paramsKinds, inputschema.Get(inputschema.SiteSearchParams))
+		p, err := readParams(trim(body), paramsKinds, inputschema.Get(inputschema.SiteSearchParams), nil)
 		if err != nil {
 			return nil, err
 		}
 		req.Params = p
 	case RouteFacet:
-		p, err := readParams(trim(body), facetKinds, inputschema.Get(inputschema.SiteFacetSearch), "facetName")
+		p, err := readParams(trim(body), facetKinds, inputschema.Get(inputschema.SiteFacetSearch), facetStrippedKeys, "facetName")
 		if err != nil {
 			return nil, err
 		}

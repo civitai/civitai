@@ -95,11 +95,62 @@ func TestParseBodyRefusals(t *testing.T) {
 		{RouteMulti, `{"queries":[{"indexUid":"tools_v2"}],"federation":{}}`, "input-unknown-key"},
 		{RouteMulti, `{"queries":[{"indexUid":"tools_v2","federationOptions":{}}]}`, "input-unknown-key"},
 		{RouteFacet, `{"facetQuery":"a"}`, "search-input-invalid"},
-		{RouteFacet, `{"facetName":"type","limit":3}`, "input-unknown-key"},
+		{RouteFacet, `{"facetName":"type","limit":3,"vector":[1]}`, "input-unknown-key"},
+		{RouteFacet, `{"facetName":"type","indexUid":"tools_v2"}`, "input-unknown-key"},
+		{RouteFacet, `{"facetQuery":"a","attributesToHighlight":["*"]}`, "search-input-invalid"},
+		{RouteFacet, `{"facetName":3,"limit":3}`, "search-input-invalid"},
 	} {
 		if _, err := ParseBody(c.route, "tools_v2", []byte(c.body)); fallback.Reason(err) != c.want {
 			t.Errorf("%d %s: %v, want %s", c.route, c.body, err, c.want)
 		}
+	}
+}
+
+// facetStrippedKeys is a reviewed parity decision, pinned as literals: every key is a
+// siteSearchParamsSchema key that siteFacetSearchSchema lacks, so zod strips it on the facet route, and
+// together they are all such keys. It fails on the web PR that adds one of them to the facet schema,
+// or a key to the search schema (each regenerates schemas.json).
+func TestFacetStrippedKeysAreStrippedByZod(t *testing.T) {
+	want := []string{"attributesToCrop", "attributesToHighlight", "attributesToRetrieve", "cropLength", "cropMarker", "facets",
+		"highlightPostTag", "highlightPreTag", "hitsPerPage", "limit", "offset", "page", "sort"}
+	if got := slices.Sorted(maps.Keys(facetStrippedKeys)); !slices.Equal(got, want) {
+		t.Errorf("facetStrippedKeys = %v, want %v (a change here is a reviewed parity decision)", got, want)
+	}
+	params, facet := inputschema.Get(inputschema.SiteSearchParams), inputschema.Get(inputschema.SiteFacetSearch)
+	var lacking []string
+	for _, k := range params.Keys() {
+		if !facet.Has(k) {
+			lacking = append(lacking, k)
+		}
+	}
+	if !slices.Equal(lacking, want) {
+		t.Errorf("siteSearchParamsSchema keys siteFacetSearchSchema lacks: %v, want %v", lacking, want)
+	}
+	for _, k := range want {
+		if facet.Has(k) {
+			t.Errorf("%s is a siteFacetSearchSchema key: zod no longer strips it", k)
+		}
+	}
+}
+
+// The facet route drops the keys zod strips as Node does: unread (a value zod would refuse on the
+// search route included), never forwarded, and the rest of the call is unchanged. On the search
+// route they are the schema's own keys, read and refused as zod refuses them.
+func TestFacetDropsStrippedKeys(t *testing.T) {
+	body := `{"q":"","facetName":"type","facetQuery":"lo","filter":"a = 1","attributesToHighlight":["*"],"attributesToCrop":[],` +
+		`"attributesToRetrieve":["id"],"cropLength":5000,"cropMarker":"...","facets":["type"],"highlightPreTag":"<b>",` +
+		`"highlightPostTag":"</b>","hitsPerPage":-1,"limit":"20","offset":3,"page":1,"sort":null}`
+	req, err := ParseBody(RouteFacet, ToolsIndex, []byte(body))
+	if err != nil {
+		t.Fatalf("facet search with the stripped keys: %v, want accepted", err)
+	}
+	call := req.Call(ViewerOf(Session{}))
+	if want := `{"q":"","facetName":"type","facetQuery":"lo","filter":"a = 1"}`; string(call.Body) != want {
+		t.Errorf("call body\n got %s\nwant %s", call.Body, want)
+	}
+	// On the search route the same values are zod's to refuse.
+	if _, err := ParseBody(RouteSearch, ToolsIndex, []byte(`{"hitsPerPage":-1}`)); fallback.Reason(err) != "search-input-invalid" {
+		t.Errorf("search route, hitsPerPage -1: %v, want search-input-invalid", err)
 	}
 }
 
