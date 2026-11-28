@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { ReactNode } from 'react';
 import type * as ServerDomain from '~/server/utils/server-domain';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 // Module scope, not a test body: from a body this transform is charged to one test's
 // 60s budget. See vitest.config.mts.
 import '~/pages/apps/run/[slug]/[[...path]]';
@@ -509,6 +511,107 @@ describe('private-run SSR — the inherited gates [REG]', () => {
     mockResolvePrivateRunAccess.mockResolvedValue({ allowed: false, reason: 'no-role' });
     expect(await resolver()(ctx({ host: 'civitai.com' }))).toEqual({ notFound: true });
     expect(await resolver()(ctx({ host: 'civitai.red' }))).toEqual({ notFound: true });
+  });
+});
+
+// An app whose live files were unpublished (takedown marker `confirmed`) 404s on its own
+// subdomain, so framing it would show a blank page: the run page shows a notice instead. Read
+// from the marker the live-unpublish reconciler writes, through the global redis mock.
+describe('private run of an UNPUBLISHED app — a notice, not a blank frame [REG]', () => {
+  const MARKER = 'system:blocks:live-pointer-takedown:seed-explorer-fixture';
+  function marker(value: string | null) {
+    redisMock.sysRedis.get.mockImplementation(async (k: string) => (k === MARKER ? value : null));
+  }
+  // The redis mock is reset once per FILE, not per test: start every case from "no marker".
+  beforeEach(() => marker(null));
+  const allowed = () =>
+    mockResolvePrivateRunAccess.mockResolvedValue({
+      allowed: true,
+      audience: 'moderator',
+      block: BLOCK(),
+    });
+
+  it('🔴 a confirmed takedown sets privateRunUnpublished, and the page does not frame the app', async () => {
+    marker('confirmed');
+    allowed();
+    // The URL slug differs from the block's id on purpose: the marker is keyed by the BLOCK id,
+    // the same id the takedown path writes it under.
+    const res = await resolver()(ctx({ slug: 'a-different-url-slug' }));
+    expect(res.props).toMatchObject({ audience: 'moderator', privateRunUnpublished: true });
+    const { framesApp } = await import('~/pages/apps/run/[slug]/[[...path]]');
+    expect(framesApp(res.props)).toBe(false);
+  });
+
+  it('no marker, or only an attempt: the app is framed as before', async () => {
+    const { framesApp } = await import('~/pages/apps/run/[slug]/[[...path]]');
+    for (const value of [null, 'attempted']) {
+      marker(value);
+      allowed();
+      const res = await resolver()(ctx());
+      expect(res.props.privateRunUnpublished).toBe(false);
+      expect(framesApp(res.props)).toBe(true);
+    }
+  });
+
+  it('an unreadable marker frames the app as before', async () => {
+    redisMock.sysRedis.get.mockRejectedValue(new Error('redis down'));
+    allowed();
+    const res = await resolver()(ctx());
+    expect(res.props.privateRunUnpublished).toBe(false);
+  });
+
+  it('the PUBLIC path always frames and never reads the marker', async () => {
+    marker('confirmed');
+    const reads = redisMock.sysRedis.get.mock.calls.length;
+    mockResolvePageBlockBySlug.mockResolvedValue({
+      appBlockId: 'apb_public',
+      blockId: 'seed-explorer-fixture',
+      appId: 'app_public',
+      iframeSrc: 'https://public-app.civit.ai',
+      sandbox: 'allow-scripts',
+      trustTier: 'unverified',
+      name: 'Public App',
+      pageTitle: 'Public',
+      scopes: [],
+      contentRating: 'g',
+      bootSkeleton: false,
+    });
+    const res = await resolver()(ctx());
+    expect(res.props).toMatchObject({ audience: null, privateRunUnpublished: false });
+    expect(redisMock.sysRedis.get.mock.calls.slice(reads).map((c) => c[0])).not.toContain(MARKER);
+    const { framesApp } = await import('~/pages/apps/run/[slug]/[[...path]]');
+    expect(framesApp(res.props)).toBe(true);
+  });
+
+  it('🔴 the frame slot shows the notice INSTEAD of the frame when unpublished, the frame otherwise', async () => {
+    const { FrameOrUnpublishedNotice, PRIVATE_RUN_UNPUBLISHED_NOTICE } = await import(
+      '~/pages/apps/run/[slug]/[[...path]]'
+    );
+    const { Alert } = await import('@mantine/core');
+    const frame = { stands: 'for the PageBlockHost element' } as unknown as ReactNode;
+    const notice = FrameOrUnpublishedNotice({ framed: false, children: frame });
+    expect(notice.type).toBe(Alert);
+    expect(notice.props['data-testid']).toBe('apps-run-private-run-unpublished');
+    expect(notice.props.children).toBe(PRIVATE_RUN_UNPUBLISHED_NOTICE);
+    const framed = FrameOrUnpublishedNotice({ framed: true, children: frame });
+    expect(framed.type).not.toBe(Alert);
+    expect(framed.props.children).toBe(frame);
+  });
+
+  it('🔴 the chrome notice above does not claim a build is being served when unpublished', async () => {
+    const { privateRunNotice } = await import('~/pages/apps/run/[slug]/[[...path]]');
+    for (const status of ['suspended', 'pending']) {
+      expect(privateRunNotice({ audience: 'moderator', status, unpublished: true })).toBe(
+        'You are viewing this app as a moderator. It is not publicly listed, and its live files have been unpublished.'
+      );
+    }
+  });
+
+  it('the notice says the files were unpublished and where new versions are reviewed', async () => {
+    const { PRIVATE_RUN_UNPUBLISHED_NOTICE } = await import('~/pages/apps/run/[slug]/[[...path]]');
+    expect(PRIVATE_RUN_UNPUBLISHED_NOTICE).toBe(
+      "This app's files have been unpublished, so there is nothing to run here. New versions are still reviewed through the review queue."
+    );
   });
 });
 

@@ -1412,6 +1412,9 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 	start := time.Now()
 	phase := s.startPhase()
 	c, err := s.computeWithin(ctx, r, "shadow", computeFn)
+	// Site search: what the public route would have done with the request, by the compute's final
+	// outcome (the budget's deadline, a cancellation and a panic included).
+	s.observeSearchServable(endpoint, r, err)
 	if err != nil {
 		if reason := fallback.Reason(err); reason != "" {
 			s.endPhase(ctx, phase, endpoint, "compute", "fallback")
