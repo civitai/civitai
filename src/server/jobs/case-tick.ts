@@ -17,6 +17,9 @@ export const caseTickJob = createJob(
     }
     const result = await runCaseTick();
     logToAxiom({ name: 'case-tick', payload: result });
+    // The clocks ran but nobody was told; the moderator app retries the alert next run.
+    if (result.unsent > 0)
+      logToAxiom({ type: 'error', name: 'case-tick-alert-unsent', payload: result });
     return result;
   },
   { lockExpiration: 5 * 60 }

@@ -24,6 +24,8 @@ const caseTickResult = z.object({
   evaluated: z.number(),
   alerted: z.number(),
   overdue: z.number(),
+  // A moderator app older than this field sends none.
+  unsent: z.number().default(0),
 });
 
 /** One clock evaluation in the moderator app, which records and alerts on its own. */
