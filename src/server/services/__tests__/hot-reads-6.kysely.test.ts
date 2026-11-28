@@ -45,6 +45,9 @@ import * as queries from '@civitai/db-queries/hot-reads-6';
 import { dbMock, resetSharedMocks } from '~/__tests__/mocks';
 import { kyselyRead } from '~/server/db/kyselyDb';
 import { isFlipt } from '~/server/flipt/client';
+import { BlockedByUsers } from '~/server/services/user-preferences.service';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { ApiKeyType } from '~/shared/utils/prisma/enums';
 
 const flag = vi.mocked(isFlipt);
 const q = vi.mocked(queries);
@@ -83,7 +86,11 @@ describe('findUserIdByUsername', () => {
 });
 
 describe('getAssociatedResourcesCardDataHandler', () => {
-  async function cardRead(nsfwLevel: number, browsingLevel = 31) {
+  async function cardRead(
+    nsfwLevel: number,
+    browsingLevel = 31,
+    { status = 'Published', ctx = {} as Record<string, unknown> } = {}
+  ) {
     const { getAssociatedResourcesCardDataHandler } = await import(
       '~/server/controllers/model.controller'
     );
@@ -96,7 +103,7 @@ describe('getAssociatedResourcesCardDataHandler', () => {
         userId: PRIMARY_USER,
         nsfwLevel,
         publishedAt: new Date('2026-01-01'),
-        status: 'Published',
+        status,
         ingestion: 'Scanned',
         availability: 'Public',
       },
@@ -105,7 +112,7 @@ describe('getAssociatedResourcesCardDataHandler', () => {
     const cache = { edgeTTL: 60, browserTTL: 60, staleWhileRevalidate: 60 };
     await getAssociatedResourcesCardDataHandler({
       input: { fromId: ID, type: 'Suggested', browsingLevel } as never,
-      ctx: { user: undefined, features: {}, cache, req: { headers: {} } } as never,
+      ctx: { user: undefined, features: {}, cache, req: { headers: {} }, ...ctx } as never,
     });
     return { fetched: getArticles.mock.calls[0]?.[0].ids ?? [], edgeCached: cache.edgeTTL > 0 };
   }
@@ -120,5 +127,36 @@ describe('getAssociatedResourcesCardDataHandler', () => {
 
   it('keeps an answer with an article above SFW out of the edge cache', async () => {
     expect(await cardRead(4)).toEqual({ fetched: [ARTICLE], edgeCached: false });
+  });
+
+  describe('for the author of a draft', () => {
+    const owner = { user: { id: PRIMARY_USER } };
+    const scopedKey = {
+      ...owner,
+      apiKeyId: 9,
+      apiKeyType: ApiKeyType.User,
+      subject: { type: 'apiKey', id: 9 },
+      tokenScope: TokenScope.ModelsRead,
+    };
+
+    it('shows it on a session, as the list does', async () => {
+      expect((await cardRead(1, 31, { status: 'Draft', ctx: owner })).fetched).toEqual([ARTICLE]);
+    });
+
+    it('hides it on a scoped key, as the list does', async () => {
+      expect((await cardRead(1, 31, { status: 'Draft', ctx: scopedKey })).fetched).toEqual([]);
+    });
+
+    it('still hides an article whose author blocked the caller on a scoped key', async () => {
+      const blocked = vi
+        .spyOn(BlockedByUsers, 'getCached')
+        .mockResolvedValue([{ id: PRIMARY_USER, username: 'author' }] as never);
+      try {
+        const caller = { ...scopedKey, user: { id: PRIMARY_USER + 1 } };
+        expect((await cardRead(1, 31, { ctx: caller })).fetched).toEqual([]);
+      } finally {
+        blocked.mockRestore();
+      }
+    });
   });
 });

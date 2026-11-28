@@ -50,7 +50,7 @@ import {
   rateLimit,
   resolveHiddenPreferenceExclusions,
 } from '~/server/middleware.trpc';
-import { articleRegionReaderOf } from '~/server/utils/article-region';
+import { associatedResourcesReadersOf } from '~/server/utils/article-region';
 import { keepAnswerOutOfEdgeCache } from '~/server/utils/image-media-visibility';
 import { getAllQuerySchema, getByIdSchema } from '~/server/schema/base.schema';
 import type { EarlyAccessRefundSummary } from '~/server/services/model-early-access-refund.service';
@@ -140,7 +140,6 @@ import {
 } from '~/server/services/training-data-restricted.service';
 import { isModelDeletedOrTakenDown } from '~/server/utils/model-withheld';
 import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
-import { ownerOrModeratorViewer } from '~/server/auth/full-user-credential';
 import type { AssociatedModelAddons } from '~/server/services/associated-model-visibility';
 import type { Context } from '~/server/createContext';
 import { getBrowsingSettingAddons } from '~/server/services/system-cache';
@@ -163,17 +162,6 @@ const modelVisibleToViewer = (pick: (input: any) => number | undefined) =>
   });
 const modelByIdVisible = modelVisibleToViewer((input) => input.id);
 const associationSourceVisible = modelVisibleToViewer((input) => input.fromId);
-
-/**
- * The caller, as the region reader reads them (blocks apply on any key), and the viewer linked
- * models and articles are shown to: the owner's view only on a session or a full-access key, and
- * moderator rights only as the region reader grants them.
- */
-const associatedResourcesReadersOf = (ctx: Context) => {
-  const reader = articleRegionReaderOf(ctx);
-  const viewer = { ...reader.viewer, id: ownerOrModeratorViewer(ctx)?.id };
-  return [reader, viewer] as const;
-};
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();

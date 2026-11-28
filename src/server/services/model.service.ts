@@ -6334,6 +6334,7 @@ async function filterAssociatedArticles(
 export async function shownAssociatedArticleIds(
   ids: number[],
   reader: ArticleRegionReader,
+  viewer: ArticleReader,
   browsingLevel: number
 ) {
   if (!ids.length) return { shown: new Set<number>(), regionDependent: false };
@@ -6341,7 +6342,7 @@ export async function shownAssociatedArticleIds(
     where: { id: { in: ids } },
     select: { id: true, ...articleReadSelect },
   });
-  return filterAssociatedArticles(articles, reader, browsingLevel);
+  return filterAssociatedArticles(articles, reader, viewer, browsingLevel);
 }
 
 export const getAssociatedResourcesSimple = async (

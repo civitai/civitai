@@ -404,7 +404,12 @@ describe('associated articles whose author blocked the viewer', () => {
 
   it('are withheld from that viewer on the card read', async () => {
     const card = (viewer: { id: number }) =>
-      shownAssociatedArticleIds([ARTICLES.live.id], { isRestricted: () => false, viewer }, 31);
+      shownAssociatedArticleIds(
+        [ARTICLES.live.id],
+        { isRestricted: () => false, viewer },
+        viewer,
+        31
+      );
     expect([...(await card({ id: BLOCKED_VIEWER })).shown]).toEqual([]);
     expect([...(await card({ id: 99 })).shown]).toEqual([ARTICLES.live.id]);
   });
@@ -479,11 +484,12 @@ describe('associated articles above SFW in a restricted region', () => {
 
   it('are withheld from the card read by the same rule', async () => {
     const ids = REGION_ARTICLES.map(([id]) => id);
-    const reader = (restricted: boolean) => ({ isRestricted: () => restricted, viewer: { id: 8 } });
-    const restricted = await shownAssociatedArticleIds(ids, reader(true), 31);
+    const viewer = { id: 8 };
+    const reader = (restricted: boolean) => ({ isRestricted: () => restricted, viewer });
+    const restricted = await shownAssociatedArticleIds(ids, reader(true), viewer, 31);
     expect([...restricted.shown]).toEqual([13]);
     expect(restricted.regionDependent).toBe(true);
-    expect([...(await shownAssociatedArticleIds(ids, reader(false), 31)).shown]).toEqual([
+    expect([...(await shownAssociatedArticleIds(ids, reader(false), viewer, 31)).shown]).toEqual([
       11, 12, 13,
     ]);
   });

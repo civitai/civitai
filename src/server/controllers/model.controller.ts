@@ -170,7 +170,7 @@ import {
   holdShowcaseImages,
   shownAssociatedArticleIds,
 } from '~/server/services/model.service';
-import { articleRegionReaderOf } from '~/server/utils/article-region';
+import { associatedResourcesReadersOf } from '~/server/utils/article-region';
 import { keepAnswerOutOfEdgeCache } from '~/server/utils/image-media-visibility';
 import { getOfficialModelIds } from '~/server/services/resource-select.service';
 import { isPersonalHotLeadViewer } from '~/server/services/personal-hot-lead.service';
@@ -2123,7 +2123,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
         .filter(({ resourceType }) => resourceType === 'article')
         .map(({ id }) => id)
         .filter(isDefined),
-      articleRegionReaderOf(ctx),
+      ...associatedResourcesReadersOf(ctx),
       input.browsingLevel
     );
     if (articleShown.regionDependent) keepAnswerOutOfEdgeCache(ctx);

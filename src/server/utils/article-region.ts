@@ -1,5 +1,6 @@
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
+import { ownerOrModeratorViewer } from '~/server/auth/full-user-credential';
 import { eventViewerOf } from '~/server/events/event-viewer';
 import { canViewOwnerOnly } from '~/server/utils/poi-model-visibility';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
@@ -31,6 +32,19 @@ export function articleRegionReaderOf(
 ): ArticleRegionReader {
   // A moderator only on a session or a full-access personal key, as for moderatorProcedure.
   return { viewer: eventViewerOf(ctx), isRestricted: () => isRegionRestricted(getRegion(ctx.req)) };
+}
+
+/**
+ * The caller, as the region reader reads them (blocks apply on any key), and the viewer linked
+ * models and articles are shown to: the owner's view only on a session or a full-access key, and
+ * moderator rights only as the region reader grants them.
+ */
+export function associatedResourcesReadersOf(
+  ctx: Parameters<typeof articleRegionReaderOf>[0] & Parameters<typeof ownerOrModeratorViewer>[0]
+) {
+  const reader = articleRegionReaderOf(ctx);
+  const viewer = { ...reader.viewer, id: ownerOrModeratorViewer(ctx)?.id };
+  return [reader, viewer] as const;
 }
 
 /**
