@@ -33,12 +33,18 @@ import {
 } from '$lib/server/knights/yesno-reference.service';
 import {
   getYesNoAxes,
+  getOrphanImagePulls,
   getYesNoQuestionItems,
+  imagePullImageIds,
+  keepReportedQuestion,
+  removeReportedQuestion,
   retireYesNoQuestion,
+  returnImagePull,
   rewordYesNoQuestion,
   unretireYesNoQuestion,
   yesNoQuestionImageIds,
   YESNO_QUESTION_STATUSES,
+  type OrphanImagePull,
   type YesNoQuestionItem,
   type YesNoQuestionQuery,
 } from '$lib/server/knights/yesno-question.service';
@@ -77,6 +83,9 @@ const forms = {
   deleteYesNo: z.object({ id: int4Id }),
   retireQuestion: z.object({ id: int4Id, note: z.string().trim() }),
   unretireQuestion: z.object({ id: int4Id }),
+  keepReported: z.object({ id: int4Id }),
+  removeReported: z.object({ id: int4Id }),
+  returnImage: z.object({ id: int4Id }),
   rewordQuestion: z.object({ id: int4Id, prompt: z.string().trim(), note: z.string().trim() }),
   add: z.object({ image: imageRef, level, explanation: why }),
   update: z.object({ id: int4Id, level, explanation: why }),
@@ -161,7 +170,8 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     return /^\d+$/.test(q) ? { ...base, search: { text: q, imageId } } : { ...base, imageId };
   };
 
-  const [counts, yesNoCount, core, fresh, spotCheck, yesNo, questions, queue, axes] =
+  const reportedFilter = questionsTab && status === 'reported';
+  const [counts, yesNoCount, core, fresh, spotCheck, yesNo, questions, queue, axes, pulled] =
     await Promise.all([
       getCoreSetCounts(),
       getYesNoReferenceCount(),
@@ -180,6 +190,12 @@ export const load: PageServerLoad = async ({ url, locals }) => {
           )
         : Promise.resolve(blank<Served<YesNoQuestionItem>>()),
       questionsTab ? getYesNoAxes() : Promise.resolve([]),
+      // Images still pulled after the question that pulled them was removed: listed under Reported to be returned.
+      reportedFilter
+        ? getOrphanImagePulls().then((items) =>
+            withholding({ items, total: items.length, page: 1 }, locals.user, 'knights-trials-questions')
+          )
+        : Promise.resolve(blank<Served<OrphanImagePull>>()),
     ]);
   const shown = { core, fresh, 'spot-check': spotCheck, 'yes-no': yesNo, questions: queue }[tab];
   return {
@@ -196,6 +212,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
       items: queue.items,
       axes: axes.map((a) => ({ key: a.key, label: a.key.replace(AXIS_PREFIX, '') })),
       filters: { axis, status },
+      pulledImages: pulled.items,
     },
   };
 };
@@ -284,6 +301,28 @@ export const actions: Actions = {
       'restore the question',
       ({ id }) => unretireYesNoQuestion({ id, by: event.locals.user!.id }),
       ({ id }) => yesNoQuestionImageIds(id)
+    ),
+  // Keeping serves the image again, so it is refused when the image is withheld from the moderator, as a restore is.
+  keepReported: (event) =>
+    run(
+      event,
+      forms.keepReported,
+      'keep the question',
+      ({ id }) => keepReportedQuestion({ id, by: event.locals.user!.id }),
+      ({ id }) => yesNoQuestionImageIds(id)
+    ),
+  removeReported: (event) =>
+    run(event, forms.removeReported, 'remove the question', ({ id }) =>
+      removeReportedQuestion({ id, by: event.locals.user!.id })
+    ),
+  // Returning serves the image again, so it is refused when the image is withheld from the moderator.
+  returnImage: (event) =>
+    run(
+      event,
+      forms.returnImage,
+      'return the image',
+      ({ id }) => returnImagePull({ id, by: event.locals.user!.id }),
+      ({ id }) => imagePullImageIds(id)
     ),
   rewordQuestion: (event) =>
     run(

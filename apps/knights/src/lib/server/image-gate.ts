@@ -2,6 +2,7 @@ import { sql, type Expression, type ExpressionBuilder, type SqlBool } from 'kyse
 import type { DB } from '@civitai/db-schema/kysely';
 import {
   modReviewContent as modReviewContentFromTables,
+  noOpenImagePull,
   noOpenImageReport,
   SERVABLE_IMAGE_CONTENT_MARKER,
   servableImage as servableImageFromTables,
@@ -87,3 +88,10 @@ export const servableImageForSweeps = (eb: Builder) =>
 /** `modReviewEligibleImage`, through the gate: the content half and no open report on the image. */
 export const modReviewEligibleImage = (_eb: Builder) =>
   sql<SqlBool>`(${imageGate('modReviewContent')} AND ${noOpenImageReport})`;
+
+/**
+ * `servableImage` for a yes/no question or an Acolyte pair: the gate, and no open pull of the image (`noOpenImagePull`).
+ * Only those two read the pull; the rating feed does not, and the sweeps read `servableImageForSweeps` on purpose, so a
+ * pull hides questions until a moderator decides rather than closing them (the stale sweep still closes one that ages out).
+ */
+export const yesNoServableImage = (eb: Builder) => eb.and([imageGate('servable'), noOpenImagePull]);

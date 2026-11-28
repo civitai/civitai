@@ -25,7 +25,7 @@ Its `prompt` is a plain fallback question for the axis (`axisPrompt` in `keys.ts
 question text of its own; overlapping axes share one;
 `votesToResolve` (default 5) feeds the label store's rule row (`minHuman`); it and `maxVotes` no longer decide a question in the game,
 which follows the rating stage rule below. The item's own `votesNeeded` is unused for yes/no.
-Statuses: `Open`, `Consensus`, `Closed` (reason `no-consensus`, `unplayable`, `stale`, `retired` or `moderator-retired`). A yes/no item is never `Resolved`, so write-back and the rating
+Statuses: `Open`, `Consensus`, `Reported` (players reported it, see [Reports](#reports)), `Closed` (reason `no-consensus`, `unplayable`, `stale`, `retired`, `moderator-retired` or `report-removed`). A yes/no item is never `Resolved`, so write-back and the rating
 escalation and settle sweeps never touch it (it has no `expiresAt`; its own stage escalation is below). Rating `getFeed` and `castVote` exclude items with an `audience`. The partial unique index that allows one
 open rating item per question and image exempts yes/no items, which share an axis and an image.
 
@@ -81,6 +81,33 @@ node adapter's request body limit), repeats the header in each, and posts them o
 and the page sums the counts, showing `moderated` and each skip reason on their own. It is dry-run by default (parse, check the images exist and can be served, and count; no writes). Each real chunk is logged to Axiom with the moderator id and counts.
 Upload only the cleaned file: a withdrawn id is retired only within its own chunk's run, which is why the file must hold no inactive rows.
 
+## Reports (`report.ts`)
+
+On a queue question a player can report the pair beside "Not sure", picking "Problem with the image" or "Problem with the question".
+The reason rides the same `?/skip` action, so a report pays nothing, smites nothing, records no answer and gets the same reply as any
+skip; muted players are refused like every other action. Tag review items and Acolyte practice pairs offer no report (a pair is
+graded, as with "Not sure").
+
+- A report is one `KnightsQuestionReport` row per player and item (migration `20271208120000_knights_question_report`, by hand),
+  with the question key and image as a snapshot. The reporter is never dealt that item again (`pickYesNo`), and the report counts as
+  a question served for the run cadence, like a "Not sure". A report from a player whose vote would not count (held, so weighing
+  0, or due a career reset) is stored with `counted` false and does not count toward the threshold.
+- `recordReport` takes the item row lock, as a vote does, and no player lock. When the item's counted, unresolved reports reach the Config
+  page's `yesNoReportThreshold` distinct players, the item becomes `Reported`: serving and voting read only `Open`, so nobody is dealt
+  it, and the sweep, which reads only `Open`, never closes it. Below the threshold nothing changes for anyone else.
+- When most of those reports name the image, the image is pulled too: an open `KnightsImagePull` row (one per image) naming the
+  item that caused it (`itemId`). The yes/no
+  pick, the vote and the Acolyte pair pick read it through `yesNoServableImage` in `image-gate.ts`, the `KnightsImageGate` check plus
+  "no open pull", so the image leaves every yes/no question and practice pair. The sweep's `servableImageForSweeps` does not read it,
+  so the pull hides the image's other questions rather than closing them; one that ages out while hidden is still closed as stale. Knights then files one main-app Report on the image through
+  `POST /api/mod/image/kono-report-image` (`image-report.ts`, `{ imageId }` only, the same token as the rating write-back) and keeps
+  its `reportId` on the pull (`filing` 'filed'). An image an earlier pull filed for files nothing more. The route's own 404 (the
+  main app no longer has the image) marks the filing 'not-needed' and it is never tried again. Any other failure is logged and the
+  image stays pulled; the tick (`fileOpenImagePulls`) retries pending filings, fewest attempts first, each waiting out the
+  write-back's backoff, four at a time within a 45 s budget.
+- The import treats a `Reported` item like a moderated one: a changed file row does not rewrite it. A producer withdrawing it closes
+  it as `retired` and resolves its reports.
+
 ## Moderator cleanup
 
 The moderator app's Trials page has a Questions tab (same grant) listing player questions, filterable by axis and status and searchable
@@ -92,6 +119,13 @@ by text or image. A moderator can:
 - **Restore** a `moderator-retired` question that has no answers. Restore is refused while a reworded copy of it is open (retire the copy first), so a question never has two live versions.
 - **Reword** a question. This always retires it and opens a new item `<producer id>:rN` with `meta.rewordOf`, so answers under a producer
   id are always answers to the producer's wording.
+- Under the **Reported** filter, see each reported question's counted reason counts and reporters and, for an image pull, whether
+  this question caused it and the main-app report's status with a link to it. **Keep** (refused, as Restore is, when the image can
+  no longer be shown) opens the question again and resolves its reports and the pull it caused, so the image's open questions and
+  Acolyte pairs are served again; answered questions on it that the stale sweep closed meanwhile stay closed. **Remove** closes it
+  for good as `report-removed`, with no label and no write-back; its pending answers become `inconclusive` and the image stays
+  pulled. A pull whose question is no longer `Reported` (removed, or withdrawn by the import) is listed under Pulled images with that
+  question's reason counts, and **Return image** resolves it. The Closed filter leaves reported questions out.
 
 Closing a row is shared with Knights (`closeYesNoItemRow` in `@civitai/db/knights`). The moderator locks only the item row and its
 votes, never player rows.
@@ -128,8 +162,8 @@ votes, never player rows.
   player's own hidden tags on the site never apply, and Acolyte practice is not filtered.
 - A stretch is `KNIGHTS_YESNO_STRETCH` questions of one axis in a row (default 8); the next axis starts with a banner. The player's
   latest yes/no answers in the ledger say where they are in a stretch, so no state is kept. `GET /play/next` hands out up to 10 items at once, so each pick also counts the yes/no questions already handed out ahead of it and not yet on the ledger (`ahead` in `pickYesNo`): the stretch cap and the new-category banner hold across the buffer, and the banner is on the first question of a stretch only.
-- A question is offered only to a rank that may judge Knight items, on an image `servableImage` accepts, if it is `Open`, if the
-  player has not answered it, and if they have not answered the same words about the same image under another id. Questions under
+- A question is offered only to a rank that may judge Knight items, on an image `yesNoServableImage` accepts, if it is `Open`, if the
+  player has not answered or reported it, and if they have not answered the same words about the same image under another id. Questions under
   way come first, so they reach their consensus.
 - The page gets the words, a sealed token (`feed-token.ts`), the image and a banner heading. It never gets the producer's id, the
   effects, the axis, the model's prediction or the image's rating.
@@ -218,7 +252,7 @@ and whichever side rules first takes it out of the other's queue. Off unless the
 
 `/judgments` shows the question's words and the answer; it is pending until the question closes, then right, wrong or set aside like
 any rating. The Codex has a short paragraph that says only that an answer is graded against the Order's final answer. Hotkeys, banner and the status line are in `/play`. On a question, Skip is a "Not sure" answer pill (Space, the same `?/skip`
-action: no pay, no smite, plus a `KnightsUnsure` row, best effort); ratings keep Skip. An Acolyte's practice pair has no "Not sure": every
+action: no pay, no smite, plus a `KnightsUnsure` row, best effort), with a Report pill beside it (R, see [Reports](#reports)); ratings keep Skip. An Acolyte's practice pair has no "Not sure": every
 pair is graded, and abstaining would keep a wrong answer out of the promotion window (`?/apprentice` refuses `unsure` as an answer
 not on offer). A run of questions opens with "Question time" and ends with a "Questions done"
 banner ([motion](knights-motion-and-sound.md)). A hidden check is rolled only on a rating slot, at its own rate

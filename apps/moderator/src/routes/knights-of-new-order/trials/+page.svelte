@@ -18,6 +18,8 @@
   import LevelPicker from './LevelPicker.svelte';
   import ListSearch from './ListSearch.svelte';
   import SpotCheckCard from './SpotCheckCard.svelte';
+  import { trialsCount, trialsNoun } from '$lib/knights/report-copy';
+  import PulledImageCard from './PulledImageCard.svelte';
   import QuestionCard from './QuestionCard.svelte';
   import YesNoReferenceCard from './YesNoReferenceCard.svelte';
   import type { PageData } from './$types';
@@ -35,6 +37,7 @@
     (
       [
         { value: 'open', label: 'Open' },
+        { value: 'reported', label: 'Reported' },
         { value: 'closed', label: 'Closed' },
         { value: 'all', label: 'All' },
       ] as const
@@ -54,13 +57,7 @@
       keepFocus: true,
       noScroll: true,
     });
-  const nouns = {
-    core: 'core images',
-    fresh: 'fresh images',
-    'spot-check': 'images to spot-check',
-    'yes-no': 'pairs',
-    questions: 'questions',
-  } as const;
+
   const toPage = (p: number) =>
     goto(urlWith(page.url, { page: p === 1 ? null : p }), { keepFocus: true, noScroll: true });
   const empty = {
@@ -76,7 +73,7 @@
     text: data.search.text,
     error: data.search.error,
     total: data.paging.total,
-    noun: nouns[data.tab],
+    noun: trialsCount(data.tab, data.paging.total),
   });
 
   let level = $state<number | null>(null);
@@ -211,7 +208,8 @@
   <p class="mb-3 text-sm text-dark-2">
     The yes/no questions players are asked, one per image and question. Retire one that makes no sense
     for its image, or reword it (which retires it and opens a new question); answers already given
-    stay recorded, and pending ones become inconclusive and earn no gold. Search by image URL, by
+    stay recorded, and pending ones become inconclusive and earn no gold. A question enough players
+    reported waits under Reported, served to nobody: keep it to serve it again, or remove it. Search by image URL, by
     image id or a number in the question, or by words in the question.
   </p>
   <div class="mb-3 flex flex-wrap items-center gap-2">
@@ -236,6 +234,17 @@
     <div class="flex flex-col gap-3">
       {#each data.questionQueue.items as item (item.id)}
         <QuestionCard {item} />
+      {/each}
+    </div>
+  {/if}
+  {#if data.questionQueue.pulledImages.length > 0}
+    <h3 class="mt-6 mb-1 text-sm font-medium text-dark-0">Pulled images ({data.questionQueue.pulledImages.length})</h3>
+    <p class="mb-3 text-sm text-dark-2">
+      Images whose question was removed while they were pulled. Return an image to serve its open questions again.
+    </p>
+    <div class="flex flex-col gap-3">
+      {#each data.questionQueue.pulledImages as pull (pull.id)}
+        <PulledImageCard {pull} />
       {/each}
     </div>
   {/if}
@@ -278,6 +287,6 @@
   page={data.paging.page}
   total={data.paging.total}
   perPage={data.pageSize}
-  label={nouns[data.tab]}
+  label={trialsNoun(data.tab)}
   onPageChange={toPage}
 />

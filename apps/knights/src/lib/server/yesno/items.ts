@@ -1,14 +1,15 @@
 import type { Kysely, Transaction } from 'kysely';
 import { MOD_TAG_REVIEW_SOURCE } from '@civitai/db/knights';
-import { modReviewEligibleImage, servableImage, servableImageForSweeps } from '../image-gate';
+import { modReviewEligibleImage, servableImageForSweeps, yesNoServableImage } from '../image-gate';
 import type { DB } from '@civitai/db-schema/kysely';
 import { YESNO_AUDIENCE, YESNO_CONSENSUS_VOTES, YESNO_KEY_PREFIX } from './keys';
 
 type Executor = Kysely<DB> | Transaction<DB>;
 
 /**
- * Open yes/no questions for players whose image the public feeds would show. Both the feed and the vote start from here, so
- * they cannot disagree. `forSweeps` uses `servableImageForSweeps`, for the sweep, which must not close over a rule that only hides.
+ * Open yes/no questions for players whose image the public feeds would show and players have not pulled (`yesNoServableImage`).
+ * Both the feed and the vote start from here, so they cannot disagree. `forSweeps` uses `servableImageForSweeps`, for the sweep,
+ * which must not close over a rule that only hides: a pull only hides, until a moderator keeps or removes the question.
  * Tag review items (`tagReview`) are a set of their own: their image must also be eligible for a moderator review queue
  * (`modReviewEligibleImage`), so the reads behind that check run only where those items are asked for.
  */
@@ -24,7 +25,7 @@ export function playableItems(
     .where('i.status', '=', 'Open')
     .where('i.audience', '=', YESNO_AUDIENCE.players)
     .where('q.active', '=', true)
-    .where(forSweeps ? servableImageForSweeps : servableImage);
+    .where(forSweeps ? servableImageForSweeps : yesNoServableImage);
   return tagReview
     ? base.where('i.source', '=', MOD_TAG_REVIEW_SOURCE).where(modReviewEligibleImage)
     : base.where('i.source', '<>', MOD_TAG_REVIEW_SOURCE);

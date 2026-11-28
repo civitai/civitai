@@ -17,6 +17,7 @@ import { parseTimestampAsUtc } from '@civitai/db/kysely';
 import { JIT_OFF_STATEMENT, SERVABLE_IMAGE_CONTENT_MARKER } from '@civitai/db/knights';
 import type { DB } from '@civitai/db-schema/kysely';
 import {
+  KNIGHTS_APP_COLUMN_UPDATES,
   KNIGHTS_APP_FUNCTIONS,
   KNIGHTS_APP_GRANTS,
   KNIGHTS_APP_ROLE,
@@ -33,6 +34,7 @@ const MIGRATIONS = [
   '20271128120100_knights_unsure',
   '20271130120000_knights_queue_item_verdict_labelled',
   '20271130120100_knights_queue_item_verdict_unlabelled_idx',
+  '20271208120000_knights_question_report',
 ].map((name) =>
   fileURLToPath(
     new URL(
@@ -480,6 +482,14 @@ async function grantAppRole(pg: PGlite) {
       .map(
         ([table, privileges]) =>
           `GRANT ${privileges.join(', ')} ON ${quoted(table)} TO ${KNIGHTS_APP_ROLE};`
+      ),
+    ...Object.entries(KNIGHTS_APP_COLUMN_UPDATES)
+      .filter(([table]) => present.has(table))
+      .map(
+        ([table, columns]) =>
+          `GRANT UPDATE (${columns.map((c) => `"${c}"`).join(', ')}) ON ${quoted(
+            table
+          )} TO ${KNIGHTS_APP_ROLE};`
       ),
     ...KNIGHTS_APP_SEQUENCES.filter((s) => present.has(s)).map(
       (s) => `GRANT USAGE ON SEQUENCE "${s}" TO ${KNIGHTS_APP_ROLE};`

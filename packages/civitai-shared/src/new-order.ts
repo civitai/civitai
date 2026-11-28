@@ -54,6 +54,20 @@ export const KNIGHTS_BLOCK_REASONS = [
   { value: 'Other', label: 'Other' },
 ] as const;
 
+/** Why a player reports a yes/no question, in the order the picker lists them. Stored as `KnightsQuestionReport.reason`. */
+export const KNIGHTS_REPORT_REASONS = [
+  { value: 'image', label: 'Problem with the image' },
+  { value: 'question', label: 'Problem with the question' },
+] as const;
+
+export type KnightsReportReason = (typeof KNIGHTS_REPORT_REASONS)[number]['value'];
+
+/** The reason whose majority also pulls the image. */
+export const KNIGHTS_IMAGE_REPORT_REASON: KnightsReportReason = KNIGHTS_REPORT_REASONS[0].value;
+
+export const isKnightsReportReason = (value: unknown): value is KnightsReportReason =>
+  KNIGHTS_REPORT_REASONS.some((reason) => reason.value === value);
+
 /**
  * The Knights v2 image sources switch, stored as JSON under `system:knights-v2-sources` in sysRedis.
  * The main app reads it to decide what to enqueue and the moderator app writes it, so the shape and the
@@ -142,6 +156,13 @@ export const KNIGHTS_GAME_SETTINGS = {
     kind: 'toggle',
     env: 'KNIGHTS_YESNO_PLAYER_DEFAULT',
     label: 'Questions for players who have not chosen',
+  },
+  yesNoReportThreshold: {
+    kind: 'number',
+    env: 'KNIGHTS_YESNO_REPORT_THRESHOLD',
+    label: 'Reports to pull a question',
+    range: 'a whole number greater than 0',
+    valid: (n: number) => Number.isInteger(n) && n > 0,
   },
   apprenticeSmites: {
     kind: 'toggle',

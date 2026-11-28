@@ -40,6 +40,18 @@ export const REFERENCE_STATUS = {
 export const YESNO_QUESTION_MAX = 600;
 /** `reason` of a yes/no item a moderator closed. The import never reopens one. */
 export const MODERATOR_RETIRED = 'moderator-retired';
+/** `status` of a player yes/no item enough players reported: served to nobody until a moderator keeps or removes it. */
+export const YESNO_REPORTED = 'Reported';
+/** `reason` of a reported yes/no item a moderator removed: never served again, and the import never reopens it. */
+export const REPORT_REMOVED = 'report-removed';
+/** `reason` of a "KnightsImagePull": most reports on the pulled question named the image. */
+export const IMAGE_PULL_REPORTED = 'players-reported';
+/** `filing` of a "KnightsImagePull": its main-app report is still to file, filed, or not needed (the image is gone). */
+export const IMAGE_PULL_FILING = {
+  pending: 'pending',
+  filed: 'filed',
+  notNeeded: 'not-needed',
+} as const;
 export const MODERATION_META_KEY = 'moderation';
 export const REWORD_OF_META_KEY = 'rewordOf';
 /** The image's level when a rating item went to the Inquisitors: what "pushed down" was measured from. */
@@ -205,6 +217,15 @@ export const modReviewContent = (eb: ExpressionBuilder<Joined, 'img' | 'p'>) =>
  */
 export const modReviewEligibleImage = (eb: ExpressionBuilder<Joined, 'img' | 'p'>) =>
   eb.and([modReviewContent(eb), noOpenImageReport]);
+
+/**
+ * No open "KnightsImagePull" on `img`: players reported the image and no moderator has kept it. Read only where yes/no
+ * questions and Acolyte pairs are served (`yesNoServableImage` in Knights); sweeps ignore it on purpose, so a pull hides
+ * questions rather than closing them (the stale sweep still closes one that ages out).
+ */
+export const noOpenImagePull = sql<SqlBool>`NOT EXISTS (
+  SELECT 1 FROM "KnightsImagePull" ip WHERE ip."imageId" = img.id AND ip."resolvedAt" IS NULL
+)`;
 
 /** No report waiting on a moderator names the image `img`. */
 export const noOpenImageReport = sql<SqlBool>`NOT EXISTS (

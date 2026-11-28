@@ -1,16 +1,29 @@
 <script lang="ts">
-  import { BLOCK_REASONS, type BlockReason } from '$lib/block-reasons';
+  import { BLOCK_REASONS } from '$lib/block-reasons';
   import { modal } from '$lib/modal';
 
-  let { onpick, oncancel }: { onpick: (reason: BlockReason) => void; oncancel: () => void } = $props();
+  type Reason = { value: string; label: string };
+
+  // The Blocked reasons unless told otherwise; the report picker passes its own title and reasons.
+  let {
+    onpick,
+    oncancel,
+    title = 'Why is it blocked?',
+    reasons = BLOCK_REASONS,
+  }: {
+    onpick: (reason: string) => void;
+    oncancel: () => void;
+    title?: string;
+    reasons?: readonly Reason[];
+  } = $props();
 </script>
 
 <!-- On a wide screen this covers the answer row in place; at 640px and under it is a bottom sheet over a dimmed page. -->
 <div class="backdrop" role="presentation" onclick={(event) => event.target === event.currentTarget && oncancel()}>
   <div class="panel" role="dialog" aria-modal="true" aria-labelledby="block-reason-title" tabindex="-1" use:modal={{ onescape: oncancel }}>
-    <p id="block-reason-title" class="title">Why is it blocked?</p>
+    <p id="block-reason-title" class="title">{title}</p>
     <div class="options">
-      {#each BLOCK_REASONS as reason, index (reason.value)}
+      {#each reasons as reason, index (reason.value)}
         <button type="button" class="reason" onclick={() => onpick(reason.value)} data-autofocus={index === 0 ? '' : undefined}>
           <kbd class="key" aria-hidden="true">{index + 1}</kbd>
           <span>{reason.label}</span>

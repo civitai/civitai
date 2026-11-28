@@ -47,16 +47,30 @@ const keyOf = (ref: ItemRef) =>
   ref.kind === 'yesno' ? `y${ref.id}` : `r${ref.kind === 'hidden' ? -ref.id : ref.id}`;
 
 /**
- * The player's recent votes and "Not sure" answers, oldest first, then the items already handed out ahead of them that have
- * neither yet. A "Not sure" counts as a question served, so a run ends at its rolled length whatever the player answers. A
- * hidden check sits in the ledger under the negative of its reference id, so it keys the same either way.
+ * The player's recent votes, "Not sure" answers and reports, oldest first, then the items already handed out ahead of them
+ * that have none yet. A "Not sure" or a report counts as a question served, so a run ends at its rolled length whatever the
+ * player answers. A hidden check sits in the ledger under the negative of its reference id, so it keys the same either way.
  */
 export async function servedHistory(
   db: Executor,
   userId: number,
   ahead: ItemRef[] = []
 ): Promise<Served[]> {
-  const [votes, unsure] = await Promise.all([
+  // Best effort: serving must not stop over them. Without these rows the cadence counts votes only.
+  const skipped = (table: 'KnightsUnsure' | 'KnightsQuestionReport', what: string) =>
+    db
+      .selectFrom(table)
+      .select(['itemId', 'createdAt'])
+      .where('playerId', '=', userId)
+      .where('itemId', 'is not', null)
+      .orderBy('createdAt', 'desc')
+      .limit(HISTORY)
+      .execute()
+      .catch((error) => {
+        console.error(`knights: could not read ${what} for the cadence`, { userId, error });
+        return [];
+      });
+  const [votes, unsure, reports] = await Promise.all([
     db
       .selectFrom('KnightsVote as v')
       .leftJoin('KnightsQueueItem as i', 'i.id', 'v.itemId')
@@ -65,26 +79,12 @@ export async function servedHistory(
       .orderBy('v.createdAt', 'desc')
       .limit(HISTORY)
       .execute(),
-    db
-      .selectFrom('KnightsUnsure as u')
-      .select(['u.itemId', 'u.createdAt'])
-      .where('u.playerId', '=', userId)
-      .where('u.itemId', 'is not', null)
-      .orderBy('u.createdAt', 'desc')
-      .limit(HISTORY)
-      .execute()
-      .catch((error) => {
-        // Best effort: serving must not stop over it. Without these rows the cadence counts votes only.
-        console.error('knights: could not read Not sure answers for the cadence', {
-          userId,
-          error,
-        });
-        return [];
-      }),
+    skipped('KnightsUnsure', 'Not sure answers'),
+    skipped('KnightsQuestionReport', 'reports'),
   ]);
   const recent = [
     ...votes.map((row) => ({ at: row.createdAt.getTime(), yesno: row.yesno, itemId: row.itemId })),
-    ...unsure.map((row) => ({
+    ...[...unsure, ...reports].map((row) => ({
       at: row.createdAt.getTime(),
       yesno: true,
       itemId: row.itemId as number,

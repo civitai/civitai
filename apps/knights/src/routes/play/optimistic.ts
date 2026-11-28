@@ -16,6 +16,8 @@ export type PickedItem = {
     height: number | null;
     /** The opaque name live drops use for this item (`live-key.ts`). */
     live: string;
+    /** A yes/no question the player may report; absent on everything else. */
+    reportable?: boolean;
   };
   banner: { heading: string } | null;
   category: { heading: string } | null;

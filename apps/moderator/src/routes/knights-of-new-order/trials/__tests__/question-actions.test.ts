@@ -4,6 +4,10 @@ const svc = vi.hoisted(() => ({
   retire: vi.fn(),
   unretire: vi.fn(),
   reword: vi.fn(),
+  keep: vi.fn(),
+  remove: vi.fn(),
+  returnPull: vi.fn(),
+  orphans: vi.fn(),
   items: vi.fn(),
   axes: vi.fn(),
 }));
@@ -12,10 +16,15 @@ vi.mock('$lib/server/knights/yesno-question.service', () => ({
   retireYesNoQuestion: svc.retire,
   unretireYesNoQuestion: svc.unretire,
   rewordYesNoQuestion: svc.reword,
+  keepReportedQuestion: svc.keep,
+  removeReportedQuestion: svc.remove,
+  returnImagePull: svc.returnPull,
+  getOrphanImagePulls: svc.orphans,
+  imagePullImageIds: vi.fn(async () => []),
   getYesNoQuestionItems: svc.items,
   getYesNoAxes: svc.axes,
   yesNoQuestionImageIds: vi.fn(async () => []),
-  YESNO_QUESTION_STATUSES: ['open', 'closed', 'all'],
+  YESNO_QUESTION_STATUSES: ['open', 'reported', 'closed', 'all'],
 }));
 vi.mock('$lib/server/knights/yesno-reference.service', () => ({
   addYesNoReference: vi.fn(),
@@ -83,6 +92,28 @@ describe('Knights of New Order question actions', () => {
     });
   });
 
+  it('keeps and removes a reported question as the acting moderator', async () => {
+    svc.keep.mockResolvedValueOnce({ ok: true });
+    expect(await actions.keepReported(formEvent({ id: '12' }))).toEqual({
+      success: true,
+      agreed: undefined,
+    });
+    expect(svc.keep).toHaveBeenCalledWith({ id: 12, by: 77 });
+
+    svc.remove.mockResolvedValueOnce({ ok: false, error: 'Only a reported question can be kept or removed.' });
+    expect(await actions.removeReported(formEvent({ id: '12' }))).toMatchObject({ status: 409 });
+    expect(svc.remove).toHaveBeenCalledWith({ id: 12, by: 77 });
+  });
+
+  it('returns a pulled image as the acting moderator', async () => {
+    svc.returnPull.mockResolvedValueOnce({ ok: true });
+    expect(await actions.returnImage(formEvent({ id: '9' }))).toEqual({
+      success: true,
+      agreed: undefined,
+    });
+    expect(svc.returnPull).toHaveBeenCalledWith({ id: 9, by: 77 });
+  });
+
   it('restores a question as the acting moderator', async () => {
     svc.unretire.mockResolvedValueOnce({ ok: true });
     await actions.unretireQuestion(formEvent({ id: '12' }));
@@ -120,6 +151,15 @@ describe('Knights of New Order questions tab load', () => {
   });
 
   it('labels the axes once and passes an unknown axis from the URL through', async () => {
+    svc.orphans.mockResolvedValueOnce([{ id: 9, imageId: 5, imageKey: 'k5', imageName: null }]);
+    const reported = await loadQuestions('&status=reported');
+    expect(reported.questionQueue.filters.status).toBe('reported');
+    expect(reported.questionQueue.pulledImages).toEqual([
+      { id: 9, imageId: 5, imageKey: 'k5', imageName: null, restricted: false },
+    ]);
+    expect((await loadQuestions('&status=open')).questionQueue.pulledImages).toEqual([]);
+    expect(svc.orphans).toHaveBeenCalledTimes(1);
+    svc.items.mockClear();
     const data = await loadQuestions('&axis=knights.yesno.gone&status=closed');
     expect(data.questionQueue.axes).toEqual([{ key: 'knights.yesno.violence', label: 'violence' }]);
     expect(data.questionQueue.filters).toEqual({ axis: 'knights.yesno.gone', status: 'closed' });

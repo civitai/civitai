@@ -61,6 +61,11 @@ export const NUMBER_ROWS: Record<NumberKey, { unit: string; percent?: true; desc
       unit: 'days',
       description: 'A question nobody has answered for this long is closed.',
     },
+    yesNoReportThreshold: {
+      unit: 'players',
+      description:
+        'Players who must report a question before it stops being served to anyone and waits for a moderator in Trials, Questions, Reported.',
+    },
     harvestHiddenCheckShare: {
       unit: '%',
       percent: true,

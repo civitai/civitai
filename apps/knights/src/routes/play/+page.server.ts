@@ -48,6 +48,9 @@ import { feedSecret, resetDeps } from '$lib/server/smites/runtime';
 import { dismissResetNotice, hasUnseenReset } from '$lib/server/smites/smites.service';
 import { castYesNoVote } from '$lib/server/yesno/vote';
 import { recordUnsure } from '$lib/server/yesno/unsure';
+import { reportYesNo } from '$lib/server/yesno/report';
+import { reportDeps } from '$lib/server/yesno/runtime';
+import { isReportReason } from '$lib/report-reasons';
 import { apprenticeDeps } from '$lib/server/apprenticeship/runtime';
 import { crossedMilestone } from '$lib/server/apprenticeship/standing';
 import { acolyteLevelGoldSince } from '$lib/server/apprenticeship/level-gold';
@@ -453,10 +456,15 @@ export const actions: Actions = {
     }
     const now = queueDeps.now();
     await recordSkip(skipStore, locals.user.id, ref, now);
-    // On a question the skip is the "Not sure" answer, counted per question; the reply stays the same for every kind.
-    // Dismissing a question other players settled posts the same skip (`settled`), and is no answer at all.
-    if (ref.kind === 'yesno' && form.get('settled') !== '1')
-      await recordUnsure(db, { playerId: locals.user.id, itemId: ref.id, now });
+    // On a question the skip is the "Not sure" answer, counted per question, or a report when it carries a reason; the
+    // reply stays the same for every kind and outcome. Dismissing a question other players settled posts the same skip
+    // (`settled`), and is no answer at all.
+    if (ref.kind === 'yesno' && form.get('settled') !== '1') {
+      const reason = form.get('report');
+      const answer = { playerId: locals.user.id, itemId: ref.id, now };
+      if (isReportReason(reason)) await reportYesNo(db, { ...answer, reason }, reportDeps);
+      else await recordUnsure(db, answer);
+    }
     return { success: true };
   },
 

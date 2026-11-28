@@ -1,5 +1,5 @@
 import type { Kysely, Transaction } from 'kysely';
-import { closeYesNoItemRow, gradeKnightsVotes } from '@civitai/db/knights';
+import { closeYesNoItemRow, gradeKnightsVotes, YESNO_REPORTED } from '@civitai/db/knights';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import type { XpDelta } from '../progression/legacy-exp';
@@ -50,14 +50,16 @@ export async function closeYesNoItem(
 
 /**
  * Closes an open question outside a vote (the sweep, a retired import row). Lock order is the vote's: the item row, then the
- * voters' player rows in id order. Returns null when the question was no longer open, else the XP to mirror.
+ * voters' player rows in id order. Returns null when the question was no longer open, else the XP to mirror. With
+ * `reported` a question players reported is closed too, and its reports resolved; the sweep never passes it.
  */
 export async function closeOpenYesNoItem(
   db: Kysely<DB>,
   itemId: number,
   reason: RetireReason,
   now: Date,
-  meta?: Record<string, unknown>
+  meta?: Record<string, unknown>,
+  { reported = false }: { reported?: boolean } = {}
 ): Promise<XpDelta[] | null> {
   return db.transaction().execute(async (trx) => {
     const locked = await trx
@@ -67,7 +69,16 @@ export async function closeOpenYesNoItem(
       .where('audience', 'is not', null)
       .forUpdate()
       .executeTakeFirst();
-    if (!locked || locked.status !== 'Open') return null;
+    if (!locked) return null;
+    const wasReported = reported && locked.status === YESNO_REPORTED;
+    if (locked.status !== 'Open' && !wasReported) return null;
+    if (wasReported)
+      await trx
+        .updateTable('KnightsQuestionReport')
+        .set({ resolvedAt: utc(now) })
+        .where('itemId', '=', itemId)
+        .where('resolvedAt', 'is', null)
+        .execute();
     await lockItemVoters(trx, itemId);
     return closeYesNoItem(trx, itemId, { kind: 'none', reason, meta }, now);
   });
