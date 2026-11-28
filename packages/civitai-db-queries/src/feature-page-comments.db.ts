@@ -78,6 +78,12 @@ export type FpMirrorFactsRow = {
 /** SQL: the current hide of comment `c` is the scan's own (mirror row `m`). */
 const FP_SCAN_HIDE = `COALESCE(c."hiddenAt" = m."scanHiddenAt" AND NOT c."tosViolation", false)`;
 
+/** SQL: the scan verdict row `em` is not clean: it failed, or it finished with a label. */
+const fpScanFlagged = (em: string) =>
+  `COALESCE(${em}.status::text = 'Failed'
+     OR (${em}.status::text = 'Succeeded' AND coalesce(cardinality(${em}."triggeredLabels"), 0) > 0),
+     false)`;
+
 const FACTS = `
   SELECT m."commentId", m."userId", m."requestId", m.urn, m."goneCause", m.version, m."pushedState",
          m."pushedDigest", m."platformDigest", m."pendingDigest", m."pushAttempts", m."nextPushAt",
@@ -468,8 +474,8 @@ export async function readFpScanVerdict(db: Kysely<DB>, commentId: number) {
   const [row] = await rows<{ status: string; contentHash: string | null; flagged: boolean }>(
     db,
     `SELECT status::text AS status, "contentHash",
-            coalesce(cardinality("triggeredLabels"), 0) > 0 AS flagged
-     FROM "EntityModeration" WHERE "entityType" = 'CommentV3' AND "entityId" = $1`,
+            ${fpScanFlagged('em')} AS flagged
+     FROM "EntityModeration" em WHERE "entityType" = 'CommentV3' AND "entityId" = $1`,
     [commentId]
   );
   return row;
@@ -761,8 +767,9 @@ export type FpUnhideHeld =
 /**
  * A moderator shows again a Feature Pages comment a moderator hid, bound to the hide and text version
  * they saw (`seenHiddenAt` is `hiddenAt::text`). Made only over a clean finished scan of the current
- * text (`contentHash`), and grants no version: a later scan of the text still hides it. Never lifts the scan's own hide: its report's
- * Unactioned does (unactionReportLiftingScanHide). `exceptReportId` does not hold the unhide.
+ * text (`contentHash`), and grants no version: a later scan of the text still hides it. Never lifts
+ * the scan's own hide: its report's Unactioned does (unactionReportLiftingScanHide).
+ * `exceptReportId` does not hold the unhide.
  * `held`: nothing was written, and why.
  */
 export async function liftModeratorFpHide(
@@ -796,9 +803,7 @@ export async function liftModeratorFpHide(
            OR n.t <= c."hiddenAt") AS changed,
          ${FP_SCAN_HIDE} AS scan,
          c."tosViolation" AS tos,
-         COALESCE(em.status::text = 'Failed'
-           OR (em.status::text = 'Succeeded' AND coalesce(cardinality(em."triggeredLabels"), 0) > 0),
-           false) AS flagged,
+         ${fpScanFlagged('em')} AS flagged,
          em.status IS NULL OR em.status::text NOT IN ('Succeeded', 'Failed') AS scanning,
          ${fpLiftHolds('$2', '$5::int')},
          COALESCE(n.t <= m."modHideSentAt", false) AS "sentLater"
@@ -815,7 +820,7 @@ export async function liftModeratorFpHide(
     const held = (
       ['changed', 'scan', 'tos', 'flagged', 'scanning', ...FP_LIFT_HOLDS, 'sentLater'] as const
     ).find((why) => f[why]);
-    // A hide sent at or after now: the lift would not be strictly after it, as while pushing.
+    // A hide sent at or after now: a lift must be strictly later, so hold it as a push in flight.
     if (held) return { held: held === 'sentLater' ? 'pushing' : held };
     await rows(
       trx,

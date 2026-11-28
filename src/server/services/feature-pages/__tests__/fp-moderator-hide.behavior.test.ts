@@ -276,6 +276,17 @@ describe("a moderator's hide and unhide of a Feature Pages comment", () => {
     expect(decided(id)).toBe('hidden');
   });
 
+  it('a settled row whose text scan is no longer clean gets no lift sent', async () => {
+    const id = await hiddenByModerator();
+    await unhide(id);
+    await runMirror(mirror);
+    expect(await mirrorRow(id)).toMatchObject({ nextPushAt: null });
+    await flagScan(id);
+    expect(await reconcile()).toMatchObject({ moderatorLifts: 0 });
+    expect(modVisibleBySource()).toHaveLength(0);
+    expect(decided(id)).toBe('hidden');
+  });
+
   it('refuses while a push holds the row, or the last hide sent is not strictly before the lift', async () => {
     const id = await hiddenByModerator();
     await q(

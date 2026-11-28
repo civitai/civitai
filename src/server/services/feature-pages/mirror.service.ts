@@ -461,16 +461,9 @@ async function pushRow(e: Evaluated): Promise<PushResult> {
     return 'pushed';
   }
 
-  // Nothing is shown until a finished scan of its current text found nothing, or a moderator lifted
-  // the scan's hide of that text, and only while its author is in standing.
   if (state === 'visible') {
-    if ((await getTextScanMode('CommentV3', row.commentId)) !== 'active')
-      return wait(SCAN_INACTIVE_WAIT_MINUTES, 'text scan not active');
-    const scan = await currentTextScan(row.commentId);
-    if (scan === 'not clean' && row.liftGrantedVersion !== row.version)
-      return wait(UNRESOLVED_WAIT_MINUTES, 'current text scanned, not clean');
-    if (scan === 'pending') return wait(SCAN_PENDING_WAIT_MINUTES, 'current text not scanned yet');
-    if (!row.authorInStanding) return wait(STANDING_WAIT_MINUTES, 'author banned or muted');
+    const gate = await visibleGate(row);
+    if (gate) return wait(gate.minutes, gate.why);
   }
 
   const sendText = async () => {
@@ -995,6 +988,24 @@ async function readDecidingVerdict(
 }
 
 /**
+ * Why the row may not be shown yet, and how long to wait, or null when it may. Nothing is shown until
+ * a finished scan of its current text found nothing, or a moderator lifted the scan's hide of that
+ * text, and only while its author is in standing.
+ */
+async function visibleGate(row: FpMirrorFactsRow) {
+  if ((await getTextScanMode('CommentV3', row.commentId)) !== 'active')
+    return { minutes: SCAN_INACTIVE_WAIT_MINUTES, why: 'text scan not active' };
+  const scan = await currentTextScan(row.commentId);
+  if (scan === 'not clean' && row.liftGrantedVersion !== row.version)
+    return { minutes: UNRESOLVED_WAIT_MINUTES, why: 'current text scanned, not clean' };
+  if (scan === 'pending')
+    return { minutes: SCAN_PENDING_WAIT_MINUTES, why: 'current text not scanned yet' };
+  if (!row.authorInStanding)
+    return { minutes: STANDING_WAIT_MINUTES, why: 'author banned or muted' };
+  return null;
+}
+
+/**
  * Why the platform's deciding verdict for this row is not confirmed as the moderator hide sent from
  * here, or null when it is.
  */
@@ -1027,6 +1038,11 @@ async function sendModeratorLift(commentId: number, item: PlatformCommentItem) {
       })
     )
       return 'held' as const;
+    const gate = await visibleGate(row);
+    if (gate) {
+      log('warning', 'moderator lift gated', { commentId, reason: gate.why });
+      return 'skipped' as const;
+    }
     // Confirmed again just before the send, as the page may be minutes old: only while the platform's
     // deciding verdict is still the moderator hide sent from here. Anything else sends nothing.
     const unconfirmed = await unconfirmedLift(row);
