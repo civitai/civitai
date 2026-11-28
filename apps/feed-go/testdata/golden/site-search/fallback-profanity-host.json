@@ -1,6 +1,6 @@
 {
   "name": "fallback-profanity-host",
-  "description": "Any text on the SFW host: Node checks it for profanity, which feed-go does not port (here the check passes and Node answers 200).",
+  "description": "Text on the SFW host with no profanity lists to read (the harness configures none): feed-go cannot prove the check passes, so it hands back (here Node's check passes and it answers 200). The check itself: apps/feed-go/testdata/profanity/parity.json.",
   "request": {
     "path": "/api/search/indexes/tools_v2/search",
     "body": "{\"q\":\"cat\"}",

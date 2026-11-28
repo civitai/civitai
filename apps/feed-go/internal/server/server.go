@@ -35,6 +35,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/feedsvc"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 	"github.com/civitai/civitai/apps/feed-go/internal/modelfeed"
+	"github.com/civitai/civitai/apps/feed-go/internal/profanity"
 	"github.com/civitai/civitai/apps/feed-go/internal/safe"
 	"github.com/civitai/civitai/apps/feed-go/internal/shadow"
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
@@ -223,6 +224,9 @@ type Server struct {
 	// Search serves the public `POST /api/search/*` route (sitesearch.go): the search backend and the
 	// rate-limit store. The shadow needs neither (it reshapes the backend response Node recorded).
 	Search *SearchDeps
+	// SearchProfanity is civitai.com's site-search profanity check (internal/profanity), run on the
+	// public route and on shadow samples alike; nil hands back every query with text on the SFW site.
+	SearchProfanity *profanity.Checker
 	// ServeSearch is FEED_GO_SERVE_SEARCH (default off); off, every request on the public
 	// `/api/search/*` route is the search-off fallback.
 	ServeSearch bool

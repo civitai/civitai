@@ -3856,7 +3856,7 @@ the CPU goes in Node, and it is the reason for the port.
 | Route | the three paths, `POST` | another path, `/api/search/token` included (`search-path`), an escaped segment (`search-path`), another method (`method`) |
 | Body | the three zod schemas, key by key (generated into `inputschema/schemas.json`, held by `TestInputKeyLedger`), the windows clamped to 1000 | a value zod refuses or one not proven accepted (`search-input-invalid`), a key the schema lacks (`input-unknown-key`, after the refusals), a duplicate key (`search-input-duplicate`), not JSON or not UTF-8 (`search-input`), not `application/json` UTF-8 (`search-content-type`), past 1 MiB (`search-body-size`) |
 | Viewer | signed out; session cookies (§4) with the session user's saved `browsingLevel` / `showNsfw`; moderators | any API credential, header or `?token=` (`bearer-token`); a banned session, Node's 403 (`search-banned`); preferences of a kind not read as JavaScript reads them (`search-session-shape`) |
-| Host | the colours, the domain cap, region restriction | public route only: **any non-empty `q` on the SFW site** (`search-profanity`: the profanity check is not ported; a shadow sample is computed, Node samples only after its own check passed) |
+| Host | the colours, the domain cap, region restriction; on the SFW site the profanity check (`internal/profanity`, below), ASCII text only | public route only, SFW site: a query the check refuses, or any query it cannot prove clean (`search-profanity`; the conservative rules below). A shadow sample is checked and counted, never handed back: Node samples only after its own check passed |
 | Indexes | the seven searchable ones | a retired or unknown index (`search-index`) |
 | Answer | a 200 reshaped exactly as `shapeHits` does, per index | a non-200 (`search-upstream-status`; Node answers it), no answer (`search-upstream-unavailable`), invalid JSON, invalid UTF-8, a hit that is not an object on an index that reshapes, a duplicate key, a rating or id that is not a plain number (`search-upstream-shape`: each a case where JavaScript's coercion is not reproduced) |
 | Public route only | the rate limit, counted first and refunded on a hand-back (18.6) | a window at its ceiling (`search-rate-limited`: Node answers the 429 and counts it), a signed-out caller without a usable `cf-connecting-ip` (`search-rate-limit-ip`: Node keys it by another derivation), an `etag` query (`search-etag`: the wrapper may add `X-Expires`); a blocked region is ALWAYS handed back (`region-blocked`), whatever `FEED_GO_ANSWER_REGION_BLOCKED` says, because Node's 451 here carries the wrapper's headers |
@@ -3874,8 +3874,63 @@ a wrong clause leaks hidden, private or mature results.
   multi-search across every index under the PG cap, the SFW-site face, a moderator, the viewer's own
   collection level. Anything coerced in a way JavaScript does not mirror here falls back rather than
   guess (`TestShapeHitsRefusesUnreadShapes`).
-- *What Go does not port, it hands back.* Profanity, API keys, banned sessions, the rate-limit edge
-  cases, a blocked region: each is a fallback the public route proxies to Node with the body intact.
+- *What Go does not port, it hands back.* API keys, banned sessions, the rate-limit edge cases, a
+  blocked region, and every profanity answer the port has not proven: each is a fallback the public
+  route proxies to Node with the body intact.
+
+**The profanity check** (`internal/profanity`; Node: `profaneSearchCheck` in
+`src/server/services/profanity-list.service.ts`, over `src/libs/profanity-simple` and obscenity 0.4.5).
+The invariant: Go never serves a query Node refuses. A hand-back is always safe; a false refusal only
+costs serving share. What is ported:
+
+- *The lists, from Node's sources, read as Node reads them.* The flag `profanity-managed-list`
+  (boolean, no context; a `flipt.Switch`) picks the lists. Off: the shipped block list plus obscenity's
+  English dataset, allowing the `ProfanityBenignWord` row's words (its `data` when the row has an
+  `id`, else the shipped allow list; an emptied row is honoured). On: the `ProfanityWord` row's usable
+  entries (`managedProfanityEntries`, the floor of `MIN_MANAGED_PROFANITY_ENTRIES` distinct ones) or,
+  below the floor or with no row, the shipped block list; allowing the benign row likewise. Each row is
+  read from the cache-cluster key Node reads, `system:blocklist:<type>` with Node's cache prefix (the
+  Node app, the moderator spoke and the auth hub write it for 5 minutes and delete it on every write),
+  shared for 5 s as Node shares its read (`READ_SHARE_MS`). The shipped lists, the English dataset,
+  `LIBRARY_OVERMATCH_TOKENS` and the word-rules constants are a copy (`internal/profanity/data.json`)
+  that the Node test holds to the live values.
+- *The matcher, exactly, on ASCII text.* obscenity's pattern grammar (literal, `[optional]`, `?`,
+  boundary `|` at either end) compiled as `compilePatternToRegExp` does; the blacklist chain
+  (confusables, which on ASCII map only `|` to `l`; the custom leetspeak; ASCII lower-case; collapse
+  with the custom thresholds) and the whitelist chain (lower-case; collapse spaces) with obscenity's
+  index mapping; whitelisted terms as non-overlapping `indexOf` intervals that must contain a match;
+  `createWhitelistMappings`, the allow set with `LIBRARY_OVERMATCH_TOKENS` minus the block words, and
+  `extractFullWord`. Go's regexp agrees with that JavaScript regexp on ASCII: `\b` is the ASCII word
+  boundary in both, `(?s).` one character, and leftmost-first matching picks what a backtracking engine
+  picks. The any-term prefilter changes no answer by construction and is not ported.
+
+The conservative rules, each `unproven` (handed back on the public route, counted in the shadow):
+
+| Rule | Why |
+|---|---|
+| a query with any byte outside ASCII (`text`) | obscenity iterates code points, maps Unicode confusables and indexes UTF-16; JavaScript's `trim`, `toLowerCase` and `\s` are Unicode-aware. None of that is ported |
+| a query past 4096 bytes (`text-length`) | one regexp scan per term; Node scans it, this hands it back |
+| the flag's state not known (`flag`): never read, or unread past `flipt.DefaultMaxStale`; no `FLIPT_URL` (`unconfigured`) | the flag picks the lists |
+| a row's key absent or empty (`list-miss`), the cache read failing (`list-read`) | Node then reads the database row, which this service does not read |
+| a cached value that is not a plain `BlocklistDTO` of strings (`list-shape`) | not read the way `JSON.parse` and the list service read it |
+| a block list that does not build, or a managed entry outside ASCII (`list-build`) | Node's pattern parser and floor count are not proven on it |
+| an ALLOW entry outside ASCII is dropped, not handed back | an allow entry only excuses a match, so dropping one only refuses more (JavaScript lower-cases the Kelvin sign to `k`, so such an entry can excuse an ASCII word in Node) |
+
+Not reproduced, by design: Node's own failure paths (its last good list while its read fails, the
+shipped list when its check throws), which follow Node's reads, not this service's. Between Node pods
+and this service the lists can differ for up to the 5 s share after a moderator's edit or a flag flip,
+as they can between Node pods.
+
+Parity: `testdata/profanity/parity.json`, shared by `internal/profanity/parity_test.go` and
+`src/server/__tests__/feed-go-site-search-profanity.test.ts`. Its literal cases (clean, profane,
+leetspeak, repeats, separators, case, the `|` confusable, boundaries, whitelisted terms, the benign row
+missing / emptied / replacing, the `fu` overmatch token, whitespace-only and multi-query requests, the
+managed list at and below the floor, non-ASCII text, and the Go-only unread-list cases) carry Node's
+verdict, which the Node test gets from the real `profaneSearchCheck`, and Go's, which may be a
+hand-back but never clean where Node's is profane. A generated corpus (each list word, dataset word and
+whitelisted term in ten spellings, about 9,400 inputs, built alike in both runtimes and pinned by its
+sha256) records the real filter's verdict under three list configurations, and Go must match each
+exactly.
 - *A schema key the app adds.* Generated allow-list plus ledger test (§5.1): a Go build never answers
   as though a key it does not know were absent.
 
@@ -3926,12 +3981,17 @@ sum by (result) (rate(feed_go_shadow_compare_total{feed_endpoint="site-search"}[
 
 # What blocks serving: fallback reasons. search-profanity is public-route only (mode="serve").
 topk(10, sum by (reason) (rate(feed_go_fallback_total{feed_endpoint="site-search",mode="shadow"}[1h])))
+
+# The profanity check on shadow samples (every one Node's own check passed): verdict="profane" is a
+# disagreement (Go would refuse what Node served), "unproven" by reason the share it hands back.
+sum by (verdict, reason) (rate(feed_go_search_profanity_total{mode="shadow"}[1h]))
 ```
 
 Node's side: the route's CPU in the same profile window. The shadow compares SFW-site typed queries
-too (that is where the PG cap applies, so where a missed clause would leak), but the public route hands
-every one back until the profanity check is ported: the go/no-go needs that share of the route's
-traffic first, since the serving saving applies to the rest only.
+too (that is where the PG cap applies, so where a missed clause would leak). The public route serves
+the ones the profanity check proves clean; the shadow's `feed_go_search_profanity_total` says what
+share that is before serving is turned on: `clean` over all shadow checks is the SFW-site share the
+check lets through, and any `profane` there is a parity defect to fix before trusting the check.
 
 ### 18.6 Serving (`FEED_GO_SERVE_SEARCH`, default off)
 
@@ -3967,7 +4027,8 @@ written in `JSON.stringify`'s form, so there the bytes are equal.
 | `FEED_GO_SERVE_SEARCH` | the public route computes (default off) |
 | `FEED_GO_SEARCH_FALLBACK_URL` | the Node app answering `/api/search`; mounts the route |
 | `NEXT_PUBLIC_SEARCH_HOST`, `SEARCH_TOKEN_API_KEY` (else `SEARCH_API_KEY`) | the backend and key, the Node app's own values; public route only |
-| `CACHE_KEY_NAMESPACE` | the rate-limit keys' prefix (already read, §3) |
+| `CACHE_KEY_NAMESPACE` | the rate-limit and blocklist keys' prefix (already read, §3) |
+| `FLIPT_URL`, `FLIPT_FETCHER_SECRET`, `FLIPT_ENVIRONMENT` | the profanity check's flag (already read, §3); without `FLIPT_URL` every SFW-site query with text is handed back |
 | Node: `FEED_GO_SHADOW_URL`, `FEED_GO_SHADOW_SAMPLE_RATE`, flag `feed-go-shadow-site-search` | the sampler (default off); shares the rate, in-flight cap and per-second bucket size with the other routes |
 
 ### 18.8 Parity evidence

@@ -33,6 +33,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/flipt"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 	"github.com/civitai/civitai/apps/feed-go/internal/modelfeed"
+	"github.com/civitai/civitai/apps/feed-go/internal/profanity"
 	"github.com/civitai/civitai/apps/feed-go/internal/server"
 	"github.com/civitai/civitai/apps/feed-go/internal/sitesearch"
 	"github.com/civitai/civitai/apps/feed-go/internal/sysredis"
@@ -166,6 +167,45 @@ func dedicatedMetricsReader(cfg *config.Config, tracer chread.Tracer) (hydrate.C
 	if err != nil {
 		return nil, errDedicatedReader{err}
 	}
+	return c, nil
+}
+
+// searchProfanityFlag is the Flipt flag profaneSearchCheck reads (FLIPT_FEATURE_FLAGS
+// .PROFANITY_MANAGED_LIST): on, the moderators' managed block list; off, the shipped one.
+const searchProfanityFlag = "profanity-managed-list"
+
+// searchProfanityChecker is the site-search profanity check (internal/profanity): the lists Node
+// reads, from the same cache-cluster keys, and the flag read in the background like the other
+// switches. Without FLIPT_URL there is no flag to read, and every SFW-site query with text is handed
+// back (`unproven`/`unconfigured`), as before the check was ported.
+func searchProfanityChecker(ctx context.Context, cfg *config.Config, cache redis.UniversalClient, reg prometheus.Registerer, log *slog.Logger) (*profanity.Checker, error) {
+	data, err := profanity.Shipped()
+	if err != nil {
+		return nil, err
+	}
+	c := &profanity.Checker{Data: data, Redis: cache, Prefix: cfg.CacheKeyPrefix, Verdicts: profanity.NewMetrics(reg)}
+	if cfg.FliptURL == "" {
+		log.Info("site-search profanity check: no FLIPT_URL, every SFW-site query with text is handed back")
+		return c, nil
+	}
+	fc, err := flipt.New(flipt.Config{URL: cfg.FliptURL, ClientToken: cfg.FliptClientToken, Environment: cfg.FliptEnvironment})
+	if err != nil {
+		return nil, err
+	}
+	sw := flipt.NewSwitch(func(ctx context.Context) (bool, error) { return fc.Boolean(ctx, searchProfanityFlag) })
+	var lastLog time.Time
+	sw.OnError = func(err error) {
+		if now := time.Now(); now.Sub(lastLog) >= time.Minute {
+			lastLog = now
+			log.Warn("flag read failed; the last good value holds", "flag", searchProfanityFlag, "err", err)
+		}
+	}
+	sw.OnStale = func(age time.Duration) {
+		log.Error("flag unread past its staleness bound; SFW-site search text is handed back", "flag", searchProfanityFlag,
+			"since_last_good", age.Round(time.Second).String())
+	}
+	sw.Start(ctx)
+	c.Flag = sw
 	return c, nil
 }
 
@@ -619,6 +659,10 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	searchDeps := &server.SearchDeps{Rate: cache, KeyPrefix: cfg.CacheKeyPrefix}
+	searchProfanity, err := searchProfanityChecker(ctx, cfg, cache, reg, log)
+	if err != nil {
+		return err
+	}
 	if sc.Host != "" {
 		cl, err := sitesearch.NewClient(sc.Host, sc.APIKey)
 		if err != nil {
@@ -664,18 +708,19 @@ func run(log *slog.Logger) error {
 		AnswerInfiniteFeedUnavailable: cfg.InfiniteAnswerFeedUnavailable,
 
 		// The Go-first probes get as many slots as the comparisons, in their own queue.
-		ProbeQueue:     make(chan struct{}, max(cfg.ShadowWorkers, 1)),
-		AllowedOrigins: cfg.AllowedOriginHosts,
-		V1:             v1,
-		Infinite:       infinite,
-		V1Models:       v1Models,
-		ServeV1Models:  mc.Serve,
-		ServeV1Images:  mc.ServeImages,
-		V1BearerAuth:   mc.BearerAuth,
-		Associated:     associated,
-		Search:         searchDeps,
-		ServeSearch:    sc.Serve,
-		RequestBudget:  cfg.RequestBudget,
+		ProbeQueue:      make(chan struct{}, max(cfg.ShadowWorkers, 1)),
+		AllowedOrigins:  cfg.AllowedOriginHosts,
+		V1:              v1,
+		Infinite:        infinite,
+		V1Models:        v1Models,
+		ServeV1Models:   mc.Serve,
+		ServeV1Images:   mc.ServeImages,
+		V1BearerAuth:    mc.BearerAuth,
+		Associated:      associated,
+		Search:          searchDeps,
+		SearchProfanity: searchProfanity,
+		ServeSearch:     sc.Serve,
+		RequestBudget:   cfg.RequestBudget,
 		// The pool's resolved ceiling (FEED_GO_DB_MAX_CONNS, the URL's pool_max_conns, or the default).
 		MaxInFlight: server.ResolveMaxInFlight(log, cfg.MaxInFlight, int(poolCfg.MaxConns)),
 		Events:      &server.EventLog{Log: log, FallbackPerMinute: cfg.FallbackLogPerMinute, ErrorPerMinute: cfg.ErrorLogPerMinute},

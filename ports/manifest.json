@@ -192,7 +192,7 @@
         "apps/feed-go/internal/server/sitesearch.go",
         "apps/feed-go/internal/sitesearch/serve.go"
       ],
-      "goRoots": ["apps/feed-go/internal/sitesearch"],
+      "goRoots": ["apps/feed-go/internal/sitesearch", "apps/feed-go/internal/profanity"],
       "flags": {
         "shadow": "feed-go-shadow-site-search",
         "transport": null,
