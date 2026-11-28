@@ -102,13 +102,12 @@
        lead finding's PK, which changes whenever the card is actually about a different row. -->
   {#key lead.id}
     <ProseDisclosure label="Full detector reason — read before ruling">
-      <!-- 🔴 `whitespace-normal` IS AN OPT-IN THIS TEXT CANNOT DO WITHOUT. A finding's reason is a
-           multi-sentence paragraph from the producer; in any container that does not wrap it renders on
-           one line and paints over whatever is beside it. That is what the table cell it used to live
-           in did. Pinned by `apps/moderator/src/routes/abuse/__tests__/prose-wrapping.test.ts`, which
-           resolves the tag from this interpolation — so the text stays HERE rather than becoming a
-           string prop on the disclosure. -->
-      <p class="break-words whitespace-normal">{lead.reason}</p>
+      <!-- 🔴 Must wrap (a non-wrapping container paints the paragraph over its neighbours) and keep the
+           producer's `\n`, so a closing `Proposed action: …` line stays on its own line — hence
+           `whitespace-pre-line`. Pinned by `apps/moderator/src/routes/abuse/__tests__/prose-wrapping.test.ts`,
+           which resolves this tag from the interpolation, so keep the text HERE rather than a string
+           prop on the disclosure. -->
+      <p class="break-words whitespace-pre-line">{lead.reason}</p>
     </ProseDisclosure>
   {/key}
 
