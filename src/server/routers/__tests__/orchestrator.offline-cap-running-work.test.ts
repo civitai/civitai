@@ -150,7 +150,8 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
-const boost = (c = caller()) => c.boostWorkflow({ workflowId: 'w1', expectedCost: 10 });
+const boost = (c = caller(), expectedCost = 10) =>
+  c.boostWorkflow({ workflowId: 'w1', expectedCost });
 const unlock = (c = caller()) => c.updateWorkflow({ workflowId: 'w1', allowMatureContent: true });
 
 describe('an offline app whose cap is spent', () => {
@@ -196,6 +197,23 @@ describe('an offline app with Buzz left under its cap', () => {
     await caught(unlock());
     // The unlock goes on to the orchestrator: it reads the workflow it would release.
     expect(clientGetWorkflow).toHaveBeenCalled();
+  });
+});
+
+describe('an offline app with 50 Buzz left under its cap', () => {
+  beforeEach(() => answerWith(() => snapshot(50)));
+
+  it('cannot boost for more than it has left', async () => {
+    expect(await caught(boost(caller(), 300))).toMatchObject({
+      code: 'FORBIDDEN',
+      message: OFFLINE_BUZZ_CAP_REACHED,
+    });
+    expect(boostWrites()).toEqual([]);
+  });
+
+  it('can boost for less than it has left', async () => {
+    await caught(boost(caller(), 40));
+    expect(boostWrites().length).toBeGreaterThan(0);
   });
 });
 

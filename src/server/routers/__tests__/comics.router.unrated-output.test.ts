@@ -513,15 +513,27 @@ describe('comics.unlockPanelGeneration - a multi-image panel with a selection', 
   it('refuses an app at its offline Buzz cap before claiming or charging', async () => {
     selectedPanel();
     givenWorkflow(bothRated, { allowMatureContent: true });
-    mocks.assertCanSpendOnRunningWork.mockRejectedValueOnce(
-      new TRPCError({ code: 'FORBIDDEN', message: OFFLINE_BUZZ_CAP_REACHED })
-    );
+    // The real check is covered by orchestrator.offline-cap-running-work.test.ts; here, that the
+    // unlock asks it with the request, before it claims the panel.
+    let claimAtCheck: unknown = 'not checked';
+    mocks.assertCanSpendOnRunningWork.mockImplementationOnce(async () => {
+      claimAtCheck = await storedClaim();
+      throw new TRPCError({ code: 'FORBIDDEN', message: OFFLINE_BUZZ_CAP_REACHED });
+    });
 
-    await expect(caller().unlockPanelGeneration({ panelId: PANEL_ID })).rejects.toThrow(
+    const withRequest = comicsRouter.createCaller({
+      ...fakeCtx(),
+      req: { headers: { authorization: 'Bearer app-token' } },
+    } as never);
+    await expect(withRequest.unlockPanelGeneration({ panelId: PANEL_ID })).rejects.toThrow(
       OFFLINE_BUZZ_CAP_REACHED
     );
+    expect(mocks.assertCanSpendOnRunningWork).toHaveBeenCalledWith(
+      expect.any(Number),
+      expect.objectContaining({ headers: expect.anything() })
+    );
+    expect(claimAtCheck).toBeUndefined();
     expect(mocks.updateWorkflow).not.toHaveBeenCalled();
-    expect(await storedClaim()).toBeUndefined();
   });
 
   it('takes over a claim left more than 10 minutes ago, and refuses a fresh one', async () => {

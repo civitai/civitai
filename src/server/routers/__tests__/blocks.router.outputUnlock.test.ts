@@ -363,10 +363,16 @@ describe('blocks.unlockOutput — the seam', () => {
   });
 
   it('an app at its offline Buzz cap is refused before the lift, counting nothing', async () => {
+    // The real check is covered by orchestrator.offline-cap-running-work.test.ts; here, that the
+    // unlock asks it with the request, before the lift.
     h.assertCanSpendOnRunningWork.mockRejectedValueOnce(
       new TRPCError({ code: 'FORBIDDEN', message: OFFLINE_BUZZ_CAP_REACHED })
     );
     await expect(unlock()).rejects.toMatchObject({ message: OFFLINE_BUZZ_CAP_REACHED });
+    expect(h.assertCanSpendOnRunningWork).toHaveBeenCalledWith(
+      expect.any(Number),
+      expect.objectContaining({ headers: expect.anything() })
+    );
     expect(h.lift).not.toHaveBeenCalled();
     expect(store.get(consentKey())).toBe('400');
     expect(keysWith(LOCK_PREFIX)).toEqual([]);

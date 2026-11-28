@@ -372,7 +372,7 @@ export const orchestratorRouter = router({
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(z.object({ workflowId: z.string(), expectedCost: z.number().int().min(0) }))
     .mutation(async ({ ctx, input }) => {
-      await assertCallerCanSpendOnRunningWork(ctx.user.id, ctx.req);
+      await assertCallerCanSpendOnRunningWork(ctx.user.id, ctx.req, input.expectedCost);
       const result = await boostWorkflow({
         token: ctx.token,
         workflowId: input.workflowId,

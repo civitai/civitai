@@ -212,10 +212,12 @@ export function callerOwnOrchestratorToken(
  */
 export async function assertCallerCanSpendOnRunningWork(
   userId: number,
-  req: NextApiRequest | undefined
+  req: NextApiRequest | undefined,
+  /** The spend's price when known (a boost's expected cost). */
+  cost?: number
 ) {
   if (!req || env.ORCHESTRATOR_MODE === 'dev') return;
-  await offlineCapLeftForRunningWork(userId, req);
+  await offlineCapLeftForRunningWork(userId, req, cost);
 }
 
 type RequestSessionUser = { id?: number; meta?: unknown };
