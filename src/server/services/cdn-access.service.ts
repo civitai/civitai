@@ -593,6 +593,11 @@ async function loadState(urls: string[]) {
   return new Map(rows.map((r) => [r.url, r]));
 }
 
+/** The urls among `urls` the image server has been told to deny or retract. */
+export async function cdnStateUrls(urls: string[]) {
+  return new Set((await loadState(urls)).keys());
+}
+
 /** The `CsamReport.details` key written once a sent report's evidence copy has been verified. */
 export const EVIDENCE_VERIFIED_KEY = VERIFIED_KEY;
 

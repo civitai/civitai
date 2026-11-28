@@ -21,11 +21,13 @@ const db = pgliteKysely(() => pg);
 
 /** Failing images per article; the fake scanner keeps `retryArticleErrorImages`' budget contract. */
 let failing: Record<number, number>;
+/** Images per article the fake retry finds gone and sets NotFound. */
+let goneImages: Record<number, number>;
 const retryImages = vi.fn<ErrorRetryDeps['retryImages']>(
   async ({ article, budget, fullBudget }) => {
     const n = failing[article.id] ?? 0;
-    if (n > budget && !fullBudget) return { sent: 0, deferred: true };
-    return { sent: Math.min(n, budget), deferred: false };
+    if (n > budget && !fullBudget) return { sent: 0, deferred: true, gone: 0 };
+    return { sent: Math.min(n, budget), deferred: false, gone: goneImages[article.id] ?? 0 };
   }
 );
 const resendText = vi.fn<ErrorRetryDeps['resendText']>(async () => undefined);
@@ -41,8 +43,10 @@ const deps: ErrorRetryDeps = {
         [limit]
       )
     ).rows,
-  recomputeAndRead: async (id) =>
-    (await pg.query<never>(`SELECT * FROM "Article" WHERE id = $1`, [id])).rows[0] ?? null,
+  recomputeAndRead: vi.fn(
+    async (id: number) =>
+      (await pg.query<never>(`SELECT * FROM "Article" WHERE id = $1`, [id])).rows[0] ?? null
+  ),
   readTextCheck: async (id) =>
     (
       await pg.query<never>(
@@ -69,6 +73,7 @@ afterAll(() => pg.close());
 beforeEach(async () => {
   vi.clearAllMocks();
   failing = {};
+  goneImages = {};
   await pg.exec(`TRUNCATE "Article", "EntityModeration"`);
 });
 
@@ -117,6 +122,21 @@ describe('the Error retry pass', () => {
       lastRoundAt: now,
       checkedAt: now,
     });
+  });
+
+  // Kills: leaving an article hidden for a day after its last problem image is set NotFound.
+  it('recomputes an article at once when its round set an image NotFound', async () => {
+    await seed(1, { enteredAt: ENTERED, rounds: 0 });
+    await seed(2, { enteredAt: ENTERED, rounds: 0 });
+    goneImages[1] = 2;
+    failing[2] = 1;
+
+    await retryErrorArticles(new Date(ENTERED + DAY), deps);
+
+    const recomputes = (id: number) =>
+      vi.mocked(deps.recomputeAndRead).mock.calls.filter(([x]) => x === id).length;
+    expect(recomputes(1)).toBe(2);
+    expect(recomputes(2)).toBe(1);
   });
 
   it('shares one image budget across a tick, deferring an article that does not fit', async () => {
