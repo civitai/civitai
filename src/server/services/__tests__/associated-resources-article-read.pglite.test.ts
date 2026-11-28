@@ -88,6 +88,12 @@ const ARTICLES = {
   },
 } as const;
 
+// Live, public articles by OWNER, one per browsing-level case, linked from LEVEL_MODEL.
+const LEVEL_MODEL = 300;
+const LEVEL_ARTICLES = { pg: [21, 1], r: [22, 4], x: [23, 8], unrated: [24, 0] } as const;
+const PG = 1;
+const MATURE = 31;
+
 const VIEWERS: Record<string, ArticleReader> = {
   anon: undefined,
   stranger: { id: 8 },
@@ -116,8 +122,18 @@ beforeAll(async () => {
     );
     INSERT INTO "User" (id, username) VALUES (${OWNER}, 'owner');
     CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);
-    INSERT INTO "Model" VALUES (${MODEL}, ${OWNER}), (${OTHER_MODEL}, ${MODEL_OWNER});
+    INSERT INTO "Model" VALUES (${MODEL}, ${OWNER}), (${OTHER_MODEL}, ${MODEL_OWNER}), (${LEVEL_MODEL}, ${MODEL_OWNER});
   `);
+  for (const [key, [id, nsfwLevel]] of Object.entries(LEVEL_ARTICLES)) {
+    await h.pg.query(
+      `INSERT INTO "Article" VALUES ($1, $2, $3, $4, '2026-01-01', 'Published', 'Scanned', 'Public')`,
+      [id, key, nsfwLevel, OWNER]
+    );
+    await h.pg.query(
+      `INSERT INTO "ModelAssociations" (id, "fromModelId", "toArticleId", type, index) VALUES ($1, $2, $1, 'Suggested', $1)`,
+      [id, LEVEL_MODEL]
+    );
+  }
   for (const [key, a] of Object.entries(ARTICLES)) {
     await h.pg.query(
       `INSERT INTO "Article" VALUES ($1, $2, 1, $3, $4, $5::"ArticleStatus", $6::"ArticleIngestionStatus", $7::"Availability")`,
@@ -180,6 +196,31 @@ describe('getAssociatedResourcesSimple article side', () => {
   });
 });
 
+// Linked articles follow the article listing's browsing-level rule (articleWithinBrowsingLevel).
+describe('getAssociatedResourcesSimple article browsing level', () => {
+  const listed = async (viewer: ArticleReader, browsingLevel: number) =>
+    (
+      await getAssociatedResourcesSimple(
+        { fromId: LEVEL_MODEL, type: 'Suggested', browsingLevel },
+        viewer
+      )
+    ).map((x) => ('title' in x.item ? x.item.title : null));
+
+  it('hides R and X articles at PG from anyone, and unrated ones from all but author and mods', async () => {
+    expect(await listed(VIEWERS.anon, PG)).toEqual(['pg']);
+    expect(await listed(VIEWERS.stranger, PG)).toEqual(['pg']);
+    expect(await listed(VIEWERS.owner, PG)).toEqual(['pg', 'unrated']);
+    expect(await listed(VIEWERS.moderator, PG)).toEqual(['pg', 'unrated']);
+  });
+
+  it('shows R and X articles at a mature level, still keeping unrated ones to author and mods', async () => {
+    expect(await listed(VIEWERS.anon, MATURE)).toEqual(['pg', 'r', 'x']);
+    expect(await listed(VIEWERS.stranger, MATURE)).toEqual(['pg', 'r', 'x']);
+    expect(await listed(VIEWERS.owner, MATURE)).toEqual(['pg', 'r', 'x', 'unrated']);
+    expect(await listed(VIEWERS.moderator, MATURE)).toEqual(['pg', 'r', 'x', 'unrated']);
+  });
+});
+
 describe('setAssociatedResources and articles the editor cannot list', () => {
   const ids = async () =>
     (
@@ -204,6 +245,34 @@ describe('setAssociatedResources and articles the editor cannot list', () => {
     );
     expect(await ids()).toEqual([ARTICLES.draft.id]);
   });
+
+  // Drops every link: deletes LEVEL_MODEL's rows, so the browsing-level reads above must run before
+  // these, and the two calls in the first test run in order. OWNER wrote the articles.
+  const savedLevelLinks = async (fromId: number, editor: number, browsingLevel: number) => {
+    await setAssociatedResources({ fromId, type: 'Suggested', associations: [], browsingLevel }, {
+      id: editor,
+    } as SessionUser);
+    const rows = await h.prisma.modelAssociations.findMany({
+      where: { fromModelId: fromId },
+      select: { toArticleId: true },
+      orderBy: { id: 'asc' },
+    });
+    return rows.map((x) => x.toArticleId);
+  };
+
+  it('keeps links the editor could not see at its level, and removes the ones it showed', async () => {
+    const { r, x, unrated } = LEVEL_ARTICLES;
+    expect(await savedLevelLinks(LEVEL_MODEL, MODEL_OWNER, PG)).toEqual([r[0], x[0], unrated[0]]);
+    expect(await savedLevelLinks(LEVEL_MODEL, MODEL_OWNER, MATURE)).toEqual([unrated[0]]);
+  });
+
+  it("removes the author's own unrated link, which their editor showed", async () => {
+    await h.pg.query(
+      `INSERT INTO "ModelAssociations" (id, "fromModelId", "toArticleId", type, index)
+       VALUES (401, ${MODEL}, ${LEVEL_ARTICLES.unrated[0]}, 'Suggested', 0)`
+    );
+    expect(await savedLevelLinks(MODEL, OWNER, PG)).not.toContain(LEVEL_ARTICLES.unrated[0]);
+  });
 });
 
 describe('the article read rule for each viewer', () => {
@@ -224,14 +293,19 @@ describe('the article read rule for each viewer', () => {
   };
 
   const ids = async (where: Prisma.ArticleWhereInput) =>
-    (await h.prisma.article.findMany({ where, select: { id: true }, orderBy: { id: 'asc' } })).map(
-      (x) => x.id
-    );
+    (
+      await h.prisma.article.findMany({
+        where: { AND: [where, { id: { in: ALL } }] },
+        select: { id: true },
+        orderBy: { id: 'asc' },
+      })
+    ).map((x) => x.id);
 
   it.each(Object.entries(VIEWERS))('for %s', async (name, viewer) => {
     expect(await ids(articleReadableWhere(viewer))).toEqual(READABLE[name].where);
 
     const rows = await h.prisma.article.findMany({
+      where: { id: { in: ALL } },
       orderBy: { id: 'asc' },
       select: { id: true, ...articleReadSelect },
     });

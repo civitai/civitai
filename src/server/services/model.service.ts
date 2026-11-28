@@ -9,7 +9,11 @@ import { minorContentBrowsingLevelsFlag } from '@civitai/shared/minor-content-ga
 import { queueModelCollectionsReindex } from '~/server/services/collection-index-sync';
 import { queueModelArticlesReindex } from '~/server/services/article-cover-reindex';
 import type { ArticleReader } from '~/server/services/article-read';
-import { articleReadSelect, canReadArticle } from '~/server/services/article-read';
+import {
+  articleReadSelect,
+  articleWithinBrowsingLevel,
+  canReadArticle,
+} from '~/server/services/article-read';
 import type { EventViewer } from '~/server/events/event-access';
 import { onStorySparkPostsHidden, onStorySparkPostsRestored } from '~/server/events/points/hooks';
 import {
@@ -6293,7 +6297,6 @@ export const getAssociatedResourcesSimple = async (
         select: {
           id: true,
           title: true,
-          nsfwLevel: true,
           user: { select: simpleUserSelect },
           ...articleReadSelect,
         },
@@ -6305,7 +6308,12 @@ export const getAssociatedResourcesSimple = async (
     .map(({ id, toModel, toArticle }) => {
       if (toModel)
         return associatedModelItem(id, toModel, modelViewer, browsingLevel, disableMinor);
-      if (!toArticle || !canReadArticle(toArticle, viewer)) return null;
+      if (
+        !toArticle ||
+        !canReadArticle(toArticle, viewer) ||
+        !articleWithinBrowsingLevel(toArticle, viewer, browsingLevel)
+      )
+        return null;
       const { userId, publishedAt, status, ingestion, availability, ...item } = toArticle;
       return { id, item, resourceType: 'article' as const };
     })
@@ -6365,7 +6373,12 @@ export const setAssociatedResources = async (
   // The editor never lists a link the caller cannot see (an unreadable article, a model withheld
   // from them), so its absence from the payload is not a removal.
   const existingAssociations = fromModel.associations
-    .filter((x) => !x.toArticle || canReadArticle(x.toArticle, user))
+    .filter(
+      (x) =>
+        !x.toArticle ||
+        (canReadArticle(x.toArticle, user) &&
+          articleWithinBrowsingLevel(x.toArticle, user, browsingLevel))
+    )
     .filter(
       (x) =>
         !x.toModel || canListAssociatedModel(x.toModel, modelViewer, browsingLevel, disableMinor)

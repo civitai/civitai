@@ -41,6 +41,24 @@ const linkedModel = (id: number, nsfwLevel: number, availability = 'Public', min
   },
 });
 
+const PG_ARTICLE = 31;
+const X_ARTICLE = 32;
+const linkedArticle = (id: number, nsfwLevel: number) => ({
+  id,
+  toModel: null,
+  toArticle: {
+    id,
+    title: `article ${id}`,
+    nsfwLevel,
+    user: { id: ITEM_OWNER, username: 'item-owner' },
+    userId: ITEM_OWNER,
+    publishedAt: new Date('2026-01-01'),
+    status: 'Published',
+    ingestion: 'Scanned',
+    availability: 'Public',
+  },
+});
+
 const signedIn = (id: number) => ({
   id,
   onboarding: OnboardingSteps.Buzz,
@@ -103,6 +121,14 @@ describe('model.getAssociatedResourcesSimple browsing level', () => {
   // Signed-out answers are edge-cached by URL, so the result cannot vary with the requested level.
   it('a signed-out request asking for every level gets PG only', async () => {
     expect(await listedIds(undefined, true)).toEqual([PG_MODEL]);
+  });
+
+  it('a signed-out request asking for every level gets no mature article', async () => {
+    dbMock.dbWrite.modelAssociations.findMany.mockResolvedValue([
+      linkedArticle(PG_ARTICLE, NsfwLevel.PG),
+      linkedArticle(X_ARTICLE, NsfwLevel.X),
+    ] as never);
+    expect(await listedIds(undefined, true)).toEqual([PG_ARTICLE]);
   });
 
   it('a signed-in request on the SFW domain gets no mature model', async () => {
