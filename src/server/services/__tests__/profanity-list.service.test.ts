@@ -300,6 +300,14 @@ describe('isProfaneSearch', () => {
     expect(moved.flat()).not.toContain(profanityEntryId(typed));
   });
 
+  it('labels a flag-off refusal with the matched shipped entry id, never the query', async () => {
+    h.flagOn = false;
+    const typed = `zqvunique${SHIPPED_WORD}zqv`;
+    const moved = await labelsMovedBy('shipped', `left ${typed} right`);
+    expect(moved).toEqual([[profanityEntryId(SHIPPED_WORD), 1]]);
+    expect(moved.flat()).not.toContain(profanityEntryId(typed));
+  });
+
   it('labels a fallback refusal with the matched list entry id, never the query', async () => {
     setProfanityListReaderForTests({ read: () => Promise.reject(new Error('list down')) });
     const typed = `zqvunique${SHIPPED_WORD}zqv`;
