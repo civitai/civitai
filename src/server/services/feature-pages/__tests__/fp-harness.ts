@@ -285,8 +285,16 @@ export async function platformReply(url: URL, init: RequestInit): Promise<Respon
           stale: true,
         });
       if (!subjectKnown(body.subject)) return json(404, { code: 'unknown_subject' });
-      if (/^\d*$/.test(String(body.authorName ?? '')))
-        return json(400, { code: 'bad_request', message: 'authorName' });
+      // As the platform: a display name of 1 to 60 characters, digits included.
+      if (
+        typeof body.authorName !== 'string' ||
+        body.authorName.length < 1 ||
+        body.authorName.length > 60
+      )
+        return json(400, {
+          code: 'bad_request',
+          message: 'authorName is required: a display name of 1 to 60 characters',
+        });
       if (body.text !== null && !(body.text.length >= 1 && body.text.length <= 4000))
         return json(400, { code: 'bad_request', message: 'text' });
       if (platform.erasedUids.has(body.uid)) return json(409, { code: 'erased' });

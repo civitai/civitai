@@ -1,4 +1,5 @@
 import { useComputedColorScheme } from '@mantine/core';
+import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useEffect, useMemo, useRef } from 'react';
 import { openLoginHere } from '~/components/Login/requireLogin';
@@ -13,7 +14,12 @@ import type {
   FeaturePageMineInput,
 } from '~/server/schema/feature-pages.schema';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
+import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import {
+  FEATURE_PAGES_SET_USERNAME_HREF,
+  FEATURE_PAGES_SET_USERNAME_MESSAGE,
+} from '~/shared/constants/feature-pages.constants';
 import type { FeaturePageHostDeps } from './featurePageHostLogic';
 import { createFeaturePageHost, FEATURE_PAGE_SANDBOX } from './featurePageHostLogic';
 
@@ -54,7 +60,24 @@ export function FeaturePageHost({
       viewerAuthor,
       openLogin: () => openLoginHere('perform-action'),
       vote: (input) => vote(input as FeaturePageVoteInput),
-      comment: (input) => comment(input as FeaturePageCommentInput),
+      // The frame learns only that it was refused; the way to a username is shown here.
+      comment: (input) =>
+        comment(input as FeaturePageCommentInput).catch((e: unknown) => {
+          if ((e as { message?: string })?.message === FEATURE_PAGES_SET_USERNAME_MESSAGE)
+            showErrorNotification({
+              title: 'Username needed',
+              error: { message: FEATURE_PAGES_SET_USERNAME_MESSAGE },
+              reason: (
+                <>
+                  {FEATURE_PAGES_SET_USERNAME_MESSAGE}{' '}
+                  <Link href={FEATURE_PAGES_SET_USERNAME_HREF} className="underline">
+                    Set your username
+                  </Link>
+                </>
+              ),
+            });
+          throw e;
+        }),
       editComment: (input) => editComment(input as FeaturePageCommentEditInput),
       retractComment: (input) => retractComment(input as FeaturePageCommentRetractInput),
       reportComment: (input) => reportComment(input as FeaturePageCommentReportInput),

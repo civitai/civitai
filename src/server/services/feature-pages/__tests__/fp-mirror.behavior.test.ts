@@ -824,7 +824,7 @@ describe('the platform ends on what civitai decided', () => {
     );
     if (!unscanned) await scanClean(id);
   };
-  const rename = (userId: number, username: string) =>
+  const rename = (userId: number, username: string | null) =>
     q(`UPDATE "User" SET username = $2 WHERE id = $1`, [userId, username]);
   /** Seeded with the first post's reply lost: the platform holds it, civitai has no urn. */
   const seedLost = async (text: string, opts?: { userId?: number }) => {
@@ -1064,12 +1064,10 @@ describe('the platform ends on what civitai decided', () => {
     expect(posts().at(-1)?.text).toBe('short again');
   });
 
-  it('a retract by an author with an all-digit name still takes the text down', async () => {
-    await rename(AUTHOR, '12345');
+  it('a retract by an author with no name still takes the text down', async () => {
     const id = (await seed('then deleted')).comment.sourceId;
-    await q(`UPDATE "User" SET username = 'author' WHERE id = $1`, [AUTHOR]);
     await runMirror(mirror);
-    await rename(AUTHOR, '12345');
+    await rename(AUTHOR, null);
     await q(`UPDATE "CommentV3" SET "deletedAt" = now() WHERE id = $1`, [id]);
     await q(
       `UPDATE "FeaturePageCommentMirror" SET "goneCause" = 'author', "goneAt" = now() WHERE "commentId" = $1`,
@@ -1205,7 +1203,7 @@ describe('the platform ends on what civitai decided', () => {
 
   it('a name taken down, then renamed back to the name last posted: posted and shown again at once', async () => {
     const id = (await seed('named')).comment.sourceId;
-    await rename(AUTHOR, '12345');
+    await rename(AUTHOR, null);
     await runMirror(mirror);
     expect(decided(id)).toBe('hidden');
     await rename(AUTHOR, 'author');
@@ -1727,8 +1725,17 @@ describe('the hide state', () => {
     expect(decided(id)).toBe('hidden');
   });
 
-  it('a post by an author whose name the platform refuses is held back, counted, and posted once renamed', async () => {
+  it('an all-digit username is posted as it is, never as the account id', async () => {
     await q(`UPDATE "User" SET username = '12345' WHERE id = $1`, [AUTHOR]);
+    const id = (await seed('numbered')).comment.sourceId;
+    await runMirror(mirror);
+    expect(posts().map((p) => [p.sourceId, p.authorName])).toEqual([[id, '12345']]);
+    expect(decided(id)).toBe('visible');
+    for (const p of platform.posts) expect(p.authorName).not.toBe(String(p.uid));
+  });
+
+  it('a post by an author with no name is held back, counted, and posted once named', async () => {
+    await q(`UPDATE "User" SET username = NULL WHERE id = $1`, [AUTHOR]);
     platform.down = true;
     const id = (await seed('numbered')).comment.sourceId;
     platform.down = false;

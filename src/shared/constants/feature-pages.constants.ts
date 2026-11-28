@@ -34,3 +34,8 @@ export const FeaturePageFrameMessage = {
 } as const;
 
 export type FeaturePageFrameError = 'sign_in' | 'try_again' | 'refused' | 'blocked';
+
+/** A Feature Pages comment is posted under its author's username, so an account without one is told to set it. */
+export const FEATURE_PAGES_SET_USERNAME_MESSAGE = 'Set a username on your account to comment.';
+/** Where a username is set. */
+export const FEATURE_PAGES_SET_USERNAME_HREF = '/user/account/profile';
