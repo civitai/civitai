@@ -67,7 +67,7 @@ func (n *searchNode) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if n.status != 0 {
 		w.WriteHeader(n.status)
 	}
-	_, _ = io.WriteString(w, n.body)
+	_, _ = io.WriteString(w, n.body) //nolint:gosec // G705: a test fixture's literal body, not reflected input
 }
 
 func (n *searchNode) calls() int {
