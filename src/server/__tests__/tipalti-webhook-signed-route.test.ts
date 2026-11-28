@@ -295,6 +295,22 @@ describe('POST /api/webhooks/tipalti delivered more than once', () => {
     }
   });
 
+  it('treats a copy Tipalti signs again after the signature lifetime as a duplicate', async () => {
+    const start = Date.now();
+    const now = vi.spyOn(Date, 'now').mockReturnValue(start);
+    try {
+      await post(sign(body));
+      now.mockReturnValue(start + 60 * 60 * 1000);
+      const resent = await post(sign(body, Math.floor((start + 60 * 60 * 1000) / 1000)));
+
+      expect(resent.status).toBe(200);
+      expect(await resent.json()).toMatchObject({ duplicate: true });
+      expect(updateByTipaltiAccount).toHaveBeenCalledTimes(1);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
   it('processes events with different ids', async () => {
     await post(sign(withId('evt-a')), withId('evt-a'));
     await post(sign(withId('evt-b')), withId('evt-b'));

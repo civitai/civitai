@@ -52,11 +52,12 @@ const SCOPES = {
     resultSeconds: 30 * 24 * 60 * 60,
     marker: true,
   },
-  // A Tipalti event id, held for as long as one of its signatures is still accepted.
+  // A Tipalti event id. In flight for as long as a signature stays accepted; once handled, kept a
+  // week so a retry Tipalti signs again later is still a repeat, well past common retry windows.
   'tipalti-event': {
     sysPrefix: REDIS_SYS_KEYS.WEBHOOKS.TIPALTI_EVENT,
     pendingSeconds: TIPALTI_SIGNATURE_LIFETIME_SECONDS,
-    resultSeconds: TIPALTI_SIGNATURE_LIFETIME_SECONDS,
+    resultSeconds: 7 * 24 * 60 * 60,
     marker: false,
   },
 } as const;
