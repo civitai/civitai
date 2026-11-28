@@ -44,7 +44,7 @@ const EXACT = new RegExp(
 const ALLOWED: Record<string, number> = {
   // A retention hold, kept exact: a hold is not widened.
   'src/server/jobs/image-ingestion.ts': 4,
-  // Twin of feed-go's training_data_listing.sql; moves with it.
+  // An owner-level leg (any image of the owner), left exact by ruling in slice F: not widened.
   'src/server/services/training-data-restricted.service.ts': 1,
   // A retention hold, kept exact: a hold is not widened; image-appeal-flag's clear moves with the case.
   'packages/civitai-db-queries/src/child-safety-case.db.ts': 3,
