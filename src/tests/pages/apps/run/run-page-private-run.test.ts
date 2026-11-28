@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { ReactNode } from 'react';
 import type * as ServerDomain from '~/server/utils/server-domain';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 // Module scope, not a test body: from a body this transform is charged to one test's
@@ -533,7 +534,9 @@ describe('private run of an UNPUBLISHED app — a notice, not a blank frame [REG
   it('🔴 a confirmed takedown sets privateRunUnpublished, and the page does not frame the app', async () => {
     marker('confirmed');
     allowed();
-    const res = await resolver()(ctx());
+    // The URL slug differs from the block's id on purpose: the marker is keyed by the BLOCK id,
+    // the same id the takedown path writes it under.
+    const res = await resolver()(ctx({ slug: 'a-different-url-slug' }));
     expect(res.props).toMatchObject({ audience: 'moderator', privateRunUnpublished: true });
     const { framesApp } = await import('~/pages/apps/run/[slug]/[[...path]]');
     expect(framesApp(res.props)).toBe(false);
@@ -578,6 +581,30 @@ describe('private run of an UNPUBLISHED app — a notice, not a blank frame [REG
     expect(redisMock.sysRedis.get.mock.calls.slice(reads).map((c) => c[0])).not.toContain(MARKER);
     const { framesApp } = await import('~/pages/apps/run/[slug]/[[...path]]');
     expect(framesApp(res.props)).toBe(true);
+  });
+
+  it('🔴 the frame slot shows the notice INSTEAD of the frame when unpublished, the frame otherwise', async () => {
+    const { FrameOrUnpublishedNotice, PRIVATE_RUN_UNPUBLISHED_NOTICE } = await import(
+      '~/pages/apps/run/[slug]/[[...path]]'
+    );
+    const { Alert } = await import('@mantine/core');
+    const frame = { stands: 'for the PageBlockHost element' } as unknown as ReactNode;
+    const notice = FrameOrUnpublishedNotice({ framed: false, children: frame });
+    expect(notice.type).toBe(Alert);
+    expect(notice.props['data-testid']).toBe('apps-run-private-run-unpublished');
+    expect(notice.props.children).toBe(PRIVATE_RUN_UNPUBLISHED_NOTICE);
+    const framed = FrameOrUnpublishedNotice({ framed: true, children: frame });
+    expect(framed.type).not.toBe(Alert);
+    expect(framed.props.children).toBe(frame);
+  });
+
+  it('🔴 the chrome notice above does not claim a build is being served when unpublished', async () => {
+    const { privateRunNotice } = await import('~/pages/apps/run/[slug]/[[...path]]');
+    for (const status of ['suspended', 'pending']) {
+      expect(privateRunNotice({ audience: 'moderator', status, unpublished: true })).toBe(
+        'You are viewing this app as a moderator. It is not publicly listed, and its live files have been unpublished.'
+      );
+    }
   });
 
   it('the notice says the files were unpublished and where new versions are reviewed', async () => {

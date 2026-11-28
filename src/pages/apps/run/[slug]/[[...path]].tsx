@@ -1,6 +1,7 @@
 import { Alert, Box, useComputedColorScheme } from '@mantine/core';
 import dynamic from 'next/dynamic';
 import Head from 'next/head';
+import type { ReactNode } from 'react';
 import { useEffect, useMemo } from 'react';
 import { blockPreconnectHint } from '~/components/AppBlocks/blockPreconnect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -535,7 +536,12 @@ export function recentsEntryFor(args: {
  * reads, rather than re-deriving it — a test that rebuilds the sentence from the same
  * inputs passes whatever the sentence says.
  */
-export function privateRunNotice(args: { audience: PrivateRunAudience; status: string }): string {
+export function privateRunNotice(args: {
+  audience: PrivateRunAudience;
+  status: string;
+  /** The app's live files were unpublished: nothing is served, so no build is named. */
+  unpublished?: boolean;
+}): string {
   const why =
     args.audience === 'moderator'
       ? 'You are viewing this app as a moderator.'
@@ -546,10 +552,11 @@ export function privateRunNotice(args: { audience: PrivateRunAudience; status: s
   // means the owner has re-submitted; what is DEPLOYED — and therefore what is running
   // here — is still the last APPROVED build. A reviewer who assumes otherwise reviews
   // the wrong bytes and either clears or rejects a submission they never saw.
-  const which =
-    args.status === 'pending'
-      ? 'This app has been re-submitted for review, and this page is serving the last approved build — not the submitted one.'
-      : 'It is not publicly listed or publicly runnable, and this page is serving its last approved build.';
+  const which = args.unpublished
+    ? 'It is not publicly listed, and its live files have been unpublished.'
+    : args.status === 'pending'
+    ? 'This app has been re-submitted for review, and this page is serving the last approved build — not the submitted one.'
+    : 'It is not publicly listed or publicly runnable, and this page is serving its last approved build.';
   return `${why} ${which}`;
 }
 
@@ -567,6 +574,32 @@ export function framesApp(args: {
   privateRunUnpublished: boolean;
 }): boolean {
   return !(args.audience != null && args.privateRunUnpublished);
+}
+
+/**
+ * The run page's frame slot: the app's frame (`children`) when {@link framesApp} says so, else
+ * the unpublished notice in its place. A component of its own so the branch is testable without
+ * rendering the page.
+ */
+export function FrameOrUnpublishedNotice({
+  framed,
+  children,
+}: {
+  framed: boolean;
+  children: ReactNode;
+}) {
+  if (framed) return <>{children}</>;
+  return (
+    <Alert
+      variant="light"
+      color="gray"
+      icon={<IconEyeOff size={16} />}
+      m="md"
+      data-testid="apps-run-private-run-unpublished"
+    >
+      {PRIVATE_RUN_UNPUBLISHED_NOTICE}
+    </Alert>
+  );
 }
 
 function RunPage(props: PageProps) {
@@ -770,7 +803,11 @@ function AppPage(props: AppRunProps) {
           py="xs"
           data-testid="apps-run-private-run-notice"
         >
-          {privateRunNotice({ audience, status: privateRunStatus ?? '' })}
+          {privateRunNotice({
+            audience,
+            status: privateRunStatus ?? '',
+            unpublished: privateRunUnpublished,
+          })}
         </Alert>
       )}
       {isBeta && (
@@ -816,7 +853,7 @@ function AppPage(props: AppRunProps) {
           width: '100%',
         }}
       >
-        {framesApp({ audience, privateRunUnpublished }) ? (
+        <FrameOrUnpublishedNotice framed={framesApp({ audience, privateRunUnpublished })}>
           <PageBlockHost
             appBlockId={appBlockId}
             blockId={blockId}
@@ -893,17 +930,7 @@ function AppPage(props: AppRunProps) {
             canOpenPage={!!(features.appBlocks && features.appBlocksPages)}
             launchOrigin={launchOrigin}
           />
-        ) : (
-          <Alert
-            variant="light"
-            color="gray"
-            icon={<IconEyeOff size={16} />}
-            m="md"
-            data-testid="apps-run-private-run-unpublished"
-          >
-            {PRIVATE_RUN_UNPUBLISHED_NOTICE}
-          </Alert>
-        )}
+        </FrameOrUnpublishedNotice>
       </Box>
     </>
   );
