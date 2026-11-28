@@ -51,6 +51,7 @@ export function servedSchemas({ listings = false }: { listings?: boolean } = {})
 
 export const RUNTIME_URN = registryUrn({ kind: 'runtime', name: 'iframe', major: 1 });
 export const APP_SEARCH_URN = registryUrn({ kind: 'service', name: 'app-search', major: 1 });
+export const APP_DATA_URN = registryUrn({ kind: 'service', name: 'app-data', major: 1 });
 
 /** One listed app, as the catalog read found it. */
 export type CatalogApp = {
@@ -121,7 +122,8 @@ export type EntitySets = Map<string, Entity[]> & { unavailable?: ReadonlySet<str
  * audience (`audience.ts` describes how). The schema stream ({@link JSON_SCHEMA_DIALECT}) is one:
  * beside the fixed entity schemas it holds every collection schema,
  * whose URN names its app and whose body is that app's declared schema. The one schema left out,
- * `service`, holds the runtime record and the app search service, which belong to no app.
+ * `service`, holds the runtime record and the app search and app data services, which belong to
+ * no app.
  */
 export const RATED_SCHEMAS: ReadonlySet<string> = new Set([
   APP_SCHEMA,
@@ -294,32 +296,73 @@ export function appSearchEntity(endpoint: string): Entity {
 }
 
 /**
- * `REGISTRY_ADAPTER_APP_SEARCH_URL`: the app search endpoint to publish, normalized (the URL
- * parser's `href`: surrounding whitespace dropped, host lower-cased), or undefined when it is
- * unset or empty (nothing is published). Anything else must be an absolute `https:` URL with no
- * credentials, query or fragment (a consumer appends its own query to the endpoint); otherwise
- * this throws, so a misconfigured adapter refuses to start rather than advertise an endpoint a
- * browser app cannot call.
+ * The app data service: app-data-go's REST surface over the records of an app's declared storage
+ * collections, under `{endpoint}/apps/{slug}/...`. Like {@link appSearchEntity}, the text describes
+ * what that service does (its routes in `apps/app-data-go/internal/api` and `internal/writes`), so
+ * a change to its routes, parameters or auth changes this body too. No `reads`: its records are
+ * each of an app's own collection schemas, not one schema's entities.
  */
-export function parseAppSearchUrl(raw: string | undefined): string | undefined {
+export function appDataEntity(endpoint: string): Entity {
+  return entity(APP_DATA_URN, SERVICE_SCHEMA, {
+    name: 'App data',
+    kind: 'data',
+    description:
+      "Reads and writes the records of a Civitai app's declared storage collections. Authorization: Bearer, an App Block token or a Civitai OAuth access token for the app (reads need its AppDataRead scope). Paths are under the endpoint: GET /apps/{slug}/collections/{collection}/records lists records, answering JSON { source, items: [{ key, rev, version, data }] } (a shared collection's list also nextCursor); GET .../records/{key} gets one, as { item }; POST .../records creates one; PUT .../records/{key} writes one; DELETE .../records/{key} deletes one; PUT and DELETE .../records/@me or .../records/@me/{parent} write or delete the viewer's own record of a viewer-keyed collection, and GET reads it in a shared one; GET /apps/{slug}/info answers the viewer's storage usage and limits. A POST or PUT body is a JSON object.",
+    endpoint,
+    parameters: {
+      slug: 'Path: the app whose collection is read or written.',
+      collection: "Path: a storage collection declared in the app's manifest.",
+      key: 'Path: a record key, 1 to 128 of A-Z a-z 0-9 . _ : -',
+      parent: 'Path, @me/{parent} only: 1 to 96 of A-Z a-z 0-9 . _ -',
+      major:
+        "The collection schema major to read or write. The collection's current major unless given.",
+      keyPrefix: 'List only the records whose key starts with this.',
+      minSeq:
+        'Read only: the highest seq a write of the app answered; the read reflects at least that write, or answers 503 floor_not_met with Retry-After.',
+      ifVersion: 'DELETE only: delete only while the record is at this version.',
+      limit: "Shared collection's list only: records per page, 1 to 100. 25 unless given.",
+      cursor: "Shared collection's list only: the previous page's nextCursor.",
+      sort: "Shared collection's list only: key or -key. key unless given.",
+      author: "Shared collection's list only: me, for the viewer's own records only.",
+    },
+  });
+}
+
+/**
+ * A service endpoint read from the environment variable `variable` (`raw` is its value), to
+ * publish: normalized (the URL parser's `href`: surrounding whitespace dropped, host lower-cased),
+ * or undefined when it is unset or empty (nothing is published). Anything else must be an absolute
+ * `https:` URL with no credentials, query or fragment (a consumer appends its own path or query to
+ * the endpoint); otherwise this throws, naming `variable`, so a misconfigured adapter refuses to
+ * start rather than advertise an endpoint a browser app cannot call.
+ */
+export function parseServiceUrl(variable: string, raw: string | undefined): string | undefined {
   if (raw === undefined || raw === '') return undefined;
   let url: URL;
   try {
     url = new URL(raw);
   } catch {
-    throw new Error(`REGISTRY_ADAPTER_APP_SEARCH_URL is not a URL: ${JSON.stringify(raw)}`);
+    throw new Error(`${variable} is not a URL: ${JSON.stringify(raw)}`);
   }
   if (url.protocol !== 'https:') {
-    throw new Error(`REGISTRY_ADAPTER_APP_SEARCH_URL must be an https: URL, got ${url.protocol}`);
+    throw new Error(`${variable} must be an https: URL, got ${url.protocol}`);
   }
   if (url.username !== '' || url.password !== '') {
-    throw new Error('REGISTRY_ADAPTER_APP_SEARCH_URL must not carry credentials');
+    throw new Error(`${variable} must not carry credentials`);
   }
   if (url.search !== '' || url.hash !== '' || /[?#]/.test(url.href)) {
-    throw new Error('REGISTRY_ADAPTER_APP_SEARCH_URL must not carry a query string or fragment');
+    throw new Error(`${variable} must not carry a query string or fragment`);
   }
   return url.href;
 }
+
+/** `REGISTRY_ADAPTER_APP_SEARCH_URL`, the app search endpoint ({@link parseServiceUrl}). */
+export const parseAppSearchUrl = (raw: string | undefined): string | undefined =>
+  parseServiceUrl('REGISTRY_ADAPTER_APP_SEARCH_URL', raw);
+
+/** `REGISTRY_ADAPTER_APP_DATA_URL`, the app data endpoint ({@link parseServiceUrl}). */
+export const parseAppDataUrl = (raw: string | undefined): string | undefined =>
+  parseServiceUrl('REGISTRY_ADAPTER_APP_DATA_URL', raw);
 
 /**
  * The URN, or null when a segment is out of bounds (the store does not bound every name the
@@ -340,7 +383,8 @@ function urnOrSkip(ref: UrnRef, onSkip: (reason: string) => void): string | null
  * the rule the document streams use). With `registryExport` off, no collection schema is.
  *
  * `appSearchUrl` is the public app search endpoint; the app search service entity is published
- * only when it is set ({@link appSearchEntity}).
+ * only when it is set ({@link appSearchEntity}). `appDataUrl` likewise, for the app data service
+ * ({@link appDataEntity}).
  *
  * `listings` switches the listing stream on: the listing schema's document, and a listing entity
  * for each app entity whose catalog row carries its store fields ({@link listingBody}).
@@ -350,6 +394,7 @@ export function buildEntities(
   opts: {
     baseUrl: string;
     appSearchUrl?: string;
+    appDataUrl?: string;
     onSkip?: (reason: string) => void;
     features?: Readonly<Record<AppStorageFeature, boolean>>;
     listings?: boolean;
@@ -371,6 +416,7 @@ export function buildEntities(
   if (listings) addSchema(STORE_LISTING_SCHEMA, STORE_LISTING_SCHEMA_DOCUMENT);
   add(SERVICE_SCHEMA, runtimeEntity(opts.baseUrl));
   if (opts.appSearchUrl) add(SERVICE_SCHEMA, appSearchEntity(opts.appSearchUrl));
+  if (opts.appDataUrl) add(SERVICE_SCHEMA, appDataEntity(opts.appDataUrl));
 
   for (const app of apps) {
     const { listing, block } = app;

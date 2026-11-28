@@ -163,11 +163,12 @@ describe('the schemas of our own entities', () => {
     ['on', SWITCH_ON],
     ['off', APP_STORAGE_ENABLED_FEATURES],
   ])(
-    '🔴 every app, release, runtime and app search entity validates against the schema it claims (switch %s)',
+    '🔴 every app, release, runtime, app search and app data entity validates against the schema it claims (switch %s)',
     (_name, features) => {
       const sets = buildEntities(CATALOG, {
         baseUrl: 'https://site.example',
         appSearchUrl: 'https://search.invalid/search',
+        appDataUrl: 'https://data.invalid/data/v1',
         features,
       });
       const schemaOf = compiled(sets);
@@ -190,6 +191,7 @@ describe('the schemas of our own entities', () => {
         'urn:apps.civitai.com:app/orbit-notes@1.1.0',
         'urn:apps.civitai.com:runtime/iframe@1',
         'urn:apps.civitai.com:service/app-search@1',
+        'urn:apps.civitai.com:service/app-data@1',
       ]);
     }
   );

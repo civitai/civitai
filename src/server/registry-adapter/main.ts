@@ -18,6 +18,11 @@
  *                                  app search service entity is published on the `service`
  *                                  stream. Unset or empty publishes none; any other value refuses
  *                                  to start (`parseAppSearchUrl` in `entities.ts`)
+ *   REGISTRY_ADAPTER_APP_DATA_URL  the public app data API endpoint (app-data-go's `/v1`, e.g.
+ *                                  https://apps.civitai.com/data/v1); when set (an https: URL),
+ *                                  the app data service entity is published on the `service`
+ *                                  stream. Unset or empty publishes none; any other value refuses
+ *                                  to start (`parseAppDataUrl` in `entities.ts`)
  *   REGISTRY_ADAPTER_RESOURCE_URL  this source's public URL, its OAuth resource identifier; when
  *                                  set (with AUTH_JWT_ISSUER, the issuer whose tokens it
  *                                  accepts), protected resource metadata is served and named by
@@ -133,8 +138,10 @@ import {
 import { STATES_KEPT_PER_STREAM } from '~/server/registry-adapter/cursor';
 import { isSharedDocLevelsOn } from '~/server/services/apps/doc-levels';
 import {
+  APP_DATA_URN,
   APP_SEARCH_URN,
   buildEntitiesPerRead,
+  parseAppDataUrl,
   parseAppSearchUrl,
   servedSchemas,
 } from '~/server/registry-adapter/entities';
@@ -181,6 +188,12 @@ function main() {
     appSearchUrl
       ? `registry-adapter: service ${APP_SEARCH_URN} at ${appSearchUrl}`
       : 'registry-adapter: app search not published (REGISTRY_ADAPTER_APP_SEARCH_URL unset)'
+  );
+  const appDataUrl = parseAppDataUrl(process.env.REGISTRY_ADAPTER_APP_DATA_URL);
+  console.log(
+    appDataUrl
+      ? `registry-adapter: service ${APP_DATA_URN} at ${appDataUrl}`
+      : 'registry-adapter: app data not published (REGISTRY_ADAPTER_APP_DATA_URL unset)'
   );
   const resourceUrl = process.env.REGISTRY_ADAPTER_RESOURCE_URL;
   const issuer = process.env.AUTH_JWT_ISSUER;
@@ -290,6 +303,7 @@ function main() {
     read: buildEntitiesPerRead(readApps, {
       baseUrl,
       appSearchUrl,
+      appDataUrl,
       listings,
       onSkip: (reason) => console.warn('registry-adapter:', reason),
     }),
