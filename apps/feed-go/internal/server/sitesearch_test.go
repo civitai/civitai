@@ -15,12 +15,14 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/auth"
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
 	"github.com/civitai/civitai/apps/feed-go/internal/config"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
+	"github.com/civitai/civitai/apps/feed-go/internal/profanity"
 	"github.com/civitai/civitai/apps/feed-go/internal/sitesearch"
 )
 
@@ -293,7 +295,7 @@ func TestServeSearchFallbacks(t *testing.T) {
 		host                     string
 	}{
 		{name: "the SFW host with text", path: searchToolsPath, body: `{"q":"cat"}`, reason: "search-profanity", host: "green.example.test"},
-		{name: "the SFW host, any query's text", path: "/api/search/multi-search", body: `{"queries":[{"indexUid":"tools_v2"},{"indexUid":"tools_v2","q":" "}]}`, reason: "search-profanity", host: "green.example.test"},
+		{name: "the SFW host, any query's text", path: "/api/search/multi-search", body: `{"queries":[{"indexUid":"tools_v2","q":" "},{"indexUid":"tools_v2","q":"cat"}]}`, reason: "search-profanity", host: "green.example.test"},
 		{name: "an API key", path: searchToolsPath, body: searchToolsBody, reason: "bearer-token", headers: map[string]string{"Authorization": "Bearer k"}},
 		{name: "a query token", path: searchToolsPath + "?token=k", body: searchToolsBody, reason: "bearer-token"},
 		{name: "an etag query", path: searchToolsPath + "?etag=1", body: searchToolsBody, reason: "search-etag"},
@@ -343,6 +345,95 @@ func TestSearchShadowComputesTextOnTheSFWSite(t *testing.T) {
 	}
 	if _, err := s.searchCompute(true)(context.Background(), r); fallback.Reason(err) != "search-profanity" {
 		t.Fatalf("serving, SFW site, text: %v, want search-profanity", err)
+	}
+}
+
+type searchFlag struct{ on, off bool }
+
+func (f searchFlag) On() bool  { return f.on }
+func (f searchFlag) Off() bool { return f.off }
+
+type searchRows map[string]string
+
+func (c searchRows) Get(_ context.Context, key string) *redis.StringCmd {
+	if v, ok := c[key]; ok {
+		return redis.NewStringResult(v, nil)
+	}
+	return redis.NewStringResult("", redis.Nil)
+}
+
+// The public route on the SFW site serves a query the profanity check proves clean, and hands back
+// one it refuses or cannot prove (non-ASCII text; the list unread): each counted under its verdict.
+// A query of whitespace only is no text, as Node trims it, so it is served even with no checker.
+func TestServeSearchProfanityCheck(t *testing.T) {
+	data, err := profanity.Shipped()
+	if err != nil {
+		t.Fatal(err)
+	}
+	noRow := searchRows{profanity.KeyPrefix + profanity.TypeBenign: `{"type":"ProfanityBenignWord","data":[]}`}
+	for _, c := range []struct {
+		name, body, reason string // reason "": served
+		rows               searchRows
+		flag               searchFlag
+		nilChecker         bool
+		verdict, why       string
+	}{
+		{name: "clean", body: `{"q":"cat"}`, rows: noRow, flag: searchFlag{off: true}, verdict: "clean"},
+		{name: "clean, multi-search", body: `{"queries":[{"indexUid":"tools_v2","q":"cat"},{"indexUid":"tools_v2","q":"dog"}]}`, rows: noRow, flag: searchFlag{off: true}, verdict: "clean"},
+		{name: "profane", body: `{"q":"ass"}`, reason: "search-profanity", rows: noRow, flag: searchFlag{off: true}, verdict: "profane"},
+		{name: "profane in one query of two", body: `{"queries":[{"indexUid":"tools_v2","q":"cat"},{"indexUid":"tools_v2","q":"ass"}]}`, reason: "search-profanity", rows: noRow, flag: searchFlag{off: true}, verdict: "profane"},
+		{name: "non-ASCII", body: `{"q":"café"}`, reason: "search-profanity", rows: noRow, flag: searchFlag{off: true}, verdict: "unproven", why: profanity.ReasonText},
+		{name: "list not cached", body: `{"q":"cat"}`, reason: "search-profanity", rows: searchRows{}, flag: searchFlag{off: true}, verdict: "unproven", why: profanity.ReasonListMiss},
+		{name: "flag unknown", body: `{"q":"cat"}`, reason: "search-profanity", rows: noRow, verdict: "unproven", why: profanity.ReasonFlag},
+		{name: "whitespace only, no checker", body: `{"q":" \t"}`, nilChecker: true, verdict: "clean"},
+		{name: "text, no checker", body: `{"q":"cat"}`, reason: "search-profanity", nilChecker: true, verdict: "unproven", why: profanity.ReasonUnconfigured},
+	} {
+		reg := prometheus.NewRegistry()
+		s, up, _, node := searchServer(t, reg, true)
+		counts := profanity.NewMetrics(reg)
+		if c.nilChecker {
+			s.SearchProfanity = nil
+		} else {
+			s.SearchProfanity = &profanity.Checker{Data: data, Redis: c.rows, Flag: c.flag, Verdicts: counts}
+		}
+		r := searchRequest(searchToolsPath, c.body, nil)
+		if strings.Contains(c.body, "queries") {
+			r = searchRequest("/api/search/multi-search", c.body, nil)
+		}
+		r.Host = "green.example.test"
+		w := httptest.NewRecorder()
+		PublicMux(s).ServeHTTP(w, r)
+		if c.reason == "" {
+			if w.Code != http.StatusOK || node.calls != 0 || len(up.calls) != 1 {
+				t.Errorf("%s: code %d node %d backend %d, want served", c.name, w.Code, node.calls, len(up.calls))
+			}
+		} else if w.Code != http.StatusTeapot || node.calls != 1 || fallbackCount(t, reg, c.reason) != 1 || len(up.calls) != 0 {
+			t.Errorf("%s: code %d node %d backend %d, want handed back under %s", c.name, w.Code, node.calls, len(up.calls), c.reason)
+		}
+		if !c.nilChecker {
+			if got := testutil.ToFloat64(counts.WithLabelValues("serve", c.verdict, c.why)); got != 1 {
+				t.Errorf("%s: serve/%s/%s = %v, want 1", c.name, c.verdict, c.why, got)
+			}
+		}
+	}
+}
+
+// On a red-host request the check does not run: nothing is read and nothing counted.
+func TestSearchProfanityOnlyOnTheSFWSite(t *testing.T) {
+	counts := profanity.NewMetrics(nil)
+	s := &Server{SearchProfanity: &profanity.Checker{Verdicts: counts}}
+	req, err := sitesearch.ParseBody(sitesearch.RouteSearch, "tools_v2", []byte(`{"q":"ass"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.searchProfane(context.Background(), true, "red", req) {
+		t.Fatal("red host: refused")
+	}
+	if !s.searchProfane(context.Background(), true, "green", req) {
+		t.Fatal("green host, no lists: not refused")
+	}
+	if got := testutil.ToFloat64(counts.WithLabelValues("serve", "unproven", profanity.ReasonUnconfigured)); got != 1 {
+		t.Fatalf("counted %v, want only the green check", got)
 	}
 }
 

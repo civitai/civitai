@@ -19,6 +19,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/auth"
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
+	"github.com/civitai/civitai/apps/feed-go/internal/profanity"
 	"github.com/civitai/civitai/apps/feed-go/internal/shadow"
 	"github.com/civitai/civitai/apps/feed-go/internal/sitesearch"
 	"github.com/civitai/civitai/apps/feed-go/internal/tracing"
@@ -210,7 +211,7 @@ func searchJSONBody(r *http.Request) error {
 // apart). In order: the method, the path, any API credential (`bearer-token`), on the public route an
 // `etag` query (`search-etag`: MixedAuthEndpoint may add X-Expires from its database), the body, the
 // session (a banned one is Node's 403: `search-banned`), the profanity refusal civitai.com applies
-// (`search-profanity`: not ported), the viewer, the rate limit (public route only), then the port.
+// (`search-profanity`, searchProfane), the viewer, the rate limit (public route only), then the port.
 func (s *Server) searchCompute(serving bool) func(context.Context, *http.Request) (*computed, error) {
 	return func(ctx context.Context, r *http.Request) (*computed, error) {
 		if r.Method != http.MethodPost {
@@ -257,15 +258,11 @@ func (s *Server) searchCompute(serving bool) func(context.Context, *http.Request
 			return nil, fallback.New("search-session-shape")
 		}
 		color := s.Hosts.ColorOf(r.Host)
-		// civitai.com refuses a profane search (isProfaneSearch: the managed list, the shipped one, the
-		// moderators' benign words). Not ported: serving, any text there is handed back. A shadow sample
-		// is computed: Node samples a request only after its own check has passed it.
-		if serving && color == "green" {
-			for _, q := range req.QueryTexts() {
-				if q != "" {
-					return nil, fallback.New("search-profanity")
-				}
-			}
+		// civitai.com refuses a profane search (searchProfane). Serving, a refusal or an unproven answer
+		// is handed back; a shadow sample is checked, counted and computed regardless (Node samples a
+		// request only after its own check has passed it).
+		if s.searchProfane(ctx, serving, color, req) && serving {
+			return nil, fallback.New("search-profanity")
 		}
 		restricted := regionMatches(s.RegionRules, r)
 		sess := sitesearch.Session{}
@@ -312,6 +309,24 @@ func (s *Server) searchCompute(serving bool) func(context.Context, *http.Request
 		}
 		return c, nil
 	}
+}
+
+// searchProfane is civitai.com's profanity refusal (profaneSearchCheck, over isProfaneSearch's
+// queries) on the SFW site: true when the request is not proven clean, because the check refuses it
+// (`profane`) or cannot prove Node's answer (`unproven`: non-ASCII text, an unread flag or list; see
+// internal/profanity). Counted per mode in feed_go_search_profanity_total: a shadow sample is one Node
+// passed, so `profane` there is a disagreement and `unproven` the share the check hands back.
+func (s *Server) searchProfane(ctx context.Context, serving bool, color string, req *sitesearch.Request) bool {
+	if color != "green" {
+		return false
+	}
+	res := s.SearchProfanity.Check(ctx, req.QueryTexts())
+	mode := "shadow"
+	if serving {
+		mode = "serve"
+	}
+	s.SearchProfanity.Observe(mode, res)
+	return res.Verdict != profanity.Clean
 }
 
 // searchRateKey is checkSiteSearchRateLimit's key and ceiling: the signed-in user's bucket, else the
