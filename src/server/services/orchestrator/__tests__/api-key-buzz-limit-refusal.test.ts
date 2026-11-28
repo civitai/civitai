@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -33,6 +35,7 @@ import {
 } from '@civitai/orchestration-client';
 import {
   API_KEY_BUZZ_LIMIT_REACHED,
+  OAUTH_ACCESS_TOKEN_PREFIX,
   OFFLINE_BUZZ_CAP_REACHED,
   isBuzzLimitRefusal,
 } from '~/server/orchestrator/api-key-buzz-limit-refusal';
@@ -67,7 +70,7 @@ const SCOPE = {
 };
 
 const PERSONAL_KEY = 'personal-key';
-const OAUTH_TOKEN = 'civitai_app-token';
+const OAUTH_TOKEN = `${OAUTH_ACCESS_TOKEN_PREFIX}app-token`;
 
 const failed = (body: { status: number }) =>
   ({
@@ -82,6 +85,19 @@ const caught = (p: Promise<unknown>) =>
   );
 
 beforeEach(() => vi.clearAllMocks());
+
+describe('the OAuth token prefix', () => {
+  // The main app cannot import apps/auth, so the hub's prefix is read from its source.
+  it('is the one the auth hub mints access tokens with', () => {
+    const source = readFileSync(
+      path.resolve(__dirname, '../../../../../apps/auth/src/lib/server/oauth/constants.ts'),
+      'utf8'
+    );
+    const hub = /export const OAUTH_TOKEN_PREFIX = '([^']+)';/.exec(source)?.[1];
+    expect(hub).toBeDefined();
+    expect(OAUTH_ACCESS_TOKEN_PREFIX).toBe(hub);
+  });
+});
 
 describe('the matcher', () => {
   it('matches the over-limit reply, flat or nested under error', () => {

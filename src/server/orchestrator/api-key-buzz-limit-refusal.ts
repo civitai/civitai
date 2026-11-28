@@ -13,10 +13,10 @@ export const OFFLINE_BUZZ_CAP_REACHED =
 export const BUDGET_EXCEEDED_DETAIL = 'budgetExceeded';
 
 /**
- * Every OAuth access token the auth hub issues starts with this (apps/auth `OAUTH_TOKEN_PREFIX`);
- * a personal API key is bare hex.
+ * Every OAuth access token the auth hub issues starts with this (apps/auth `OAUTH_TOKEN_PREFIX`,
+ * which a test keeps equal); a personal API key is bare hex.
  */
-const OAUTH_ACCESS_TOKEN_PREFIX = 'civitai_';
+export const OAUTH_ACCESS_TOKEN_PREFIX = 'civitai_';
 
 type ProblemDetails = { detail?: unknown; error?: { detail?: unknown } | null };
 
