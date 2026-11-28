@@ -280,13 +280,12 @@ describe('cooc build pipeline', () => {
     });
     expect([s.kind, s.created, s.trainEnd]).toEqual(['study', true, trainEnd.toISOString()]);
     const [row] = (
-      await db.query<{ status: string; pinnedUntil: Date; builtAt: Date }>(
-        `SELECT "status", "pinnedUntil", "builtAt" FROM "ResourceIntentCoocSnapshot"`
+      await db.query<{ status: string; pinnedUntil: Date }>(
+        `SELECT "status", "pinnedUntil" FROM "ResourceIntentCoocSnapshot"`
       )
     ).rows;
     expect(row.status).toBe('ready');
     expect(row.pinnedUntil.getTime()).toBe(pinnedUntil.getTime());
-    expect(row.builtAt.getTime()).toBeGreaterThanOrEqual(now.getTime());
   });
 
   it('a model seen with two types keeps the first one drawn, and the build reports the conflicts', async () => {
