@@ -492,11 +492,13 @@ export function measureSharedValue(
 //
 // `data` is an OPTIONAL, app-owned structured payload stored alongside the moderated
 // text. It is NOT run through the title/body content-safety belt: it is app-structured
-// state (e.g. an app's own saved-config JSON), rendered ONLY inside the app's
-// opaque-origin iframe sandbox — the SAME trust boundary as the rest of shared storage
-// (an app declaring a shared scope never gets `allow-same-origin` at the `unverified`
-// tier, flag or not — `mayGrantSameOrigin` in src/components/AppBlocks/sandbox.ts — so
-// even hostile bytes in `data` run in an opaque origin and persist nothing). Apps can and do render
+// state (e.g. an app's own saved-config JSON), rendered ONLY inside the app's iframe
+// sandbox — the SAME trust boundary as the rest of shared storage. At the `unverified`
+// tier an app declaring a shared scope never gets `allow-same-origin`, flag or not
+// (`mayGrantSameOrigin` in src/components/AppBlocks/sandbox.ts), so hostile bytes in
+// `data` run in an opaque origin and persist nothing. A `verified`/`internal` app DOES
+// run at a real origin, which is why GATE-2 (`shared-content-safety.ts`) forbids
+// granting those tiers a shared scope. Apps can and do render
 // strings from it to other users, so its string values and object keys get the LOCAL
 // leaf moderation in `shared-data-moderation.ts` — default OFF, ramped per app by two
 // flags (shadow, then enforce). 🔴 Apps should still place user-VISIBLE TEXT in

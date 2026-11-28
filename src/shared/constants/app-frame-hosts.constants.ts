@@ -4,6 +4,9 @@
  * (`isAppFrameHost`, `~/components/AppBlocks/sandbox`) read one definition.
  */
 
+/** The label prefix of moderator review hosts, `review-<sha16>`, under `APPS_DOMAIN`. */
+export const REVIEW_HOST_LABEL_PREFIX = 'review-';
+
 /** A dev tunnel host label, `dev-<16 hex>`, under `APPS_DOMAIN`. */
 export const DEV_HOST_LABEL_REGEX = /^dev-[a-f0-9]{16}$/;
 

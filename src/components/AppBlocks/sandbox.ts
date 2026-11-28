@@ -1,6 +1,7 @@
 import {
   DEV_HOST_LABEL_REGEX,
   PREVIEW_LABEL_SHAPE,
+  REVIEW_HOST_LABEL_PREFIX,
 } from '~/shared/constants/app-frame-hosts.constants';
 
 // Client-side iframe sandbox derivation for App Blocks. Kept in its own
@@ -20,10 +21,8 @@ export const ALLOWED_SANDBOX_TOKENS: ReadonlySet<string> = new Set([
   'allow-downloads',
 ]);
 
-// Tiers that get `allow-same-origin` without the viewer flag. Their frames run at a
-// real origin so the host's explicit-targetOrigin postMessage and its origin
-// allowlist work as designed. Every other tier gets a real origin only through
-// `mayGrantSameOrigin` with the `appBlocksSameOriginFrames` flag on.
+// Tiers whose frames `mayGrantSameOrigin` may give a real origin without the viewer
+// flag (on their own frame host).
 export const TRUSTED_TIERS: ReadonlySet<string> = new Set(['internal', 'verified']);
 
 /**
@@ -41,9 +40,6 @@ export type AppFrameOriginPolicy = {
   /** The viewer's `appBlocksSameOriginFrames` flag. Unverified frames need it. */
   unverifiedEnabled: boolean;
 };
-
-/** The DNS label prefix of moderator review hosts (`review-<sha16>.<apps domain>`). */
-export const REVIEW_HOST_LABEL_PREFIX = 'review-';
 
 /** A shared-storage scope: cross-user content the app renders (see GATE-2, `shared-content-safety.ts`). */
 const SHARED_STORAGE_SCOPE_PREFIX = 'apps:storage:shared:';

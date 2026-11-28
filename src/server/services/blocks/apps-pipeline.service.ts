@@ -31,6 +31,7 @@
  */
 
 import { createHmac } from 'crypto';
+import { REVIEW_HOST_LABEL_PREFIX } from '~/shared/constants/app-frame-hosts.constants';
 import * as nodeHttp from 'node:http';
 import * as nodeHttps from 'node:https';
 import { readFile } from 'node:fs/promises';
@@ -196,7 +197,7 @@ export function reviewHostSha(sha: string): string {
  *  Pure + exported so the previewRequest mutation, the UI iframe src, and the
  *  apply Job all derive the SAME host from the same sha. */
 export function reviewHost(sha: string, appsDomain: string): string {
-  return `review-${reviewHostSha(sha)}.${appsDomain}`;
+  return `${REVIEW_HOST_LABEL_PREFIX}${reviewHostSha(sha)}.${appsDomain}`;
 }
 
 /**

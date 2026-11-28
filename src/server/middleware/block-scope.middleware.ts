@@ -654,7 +654,9 @@ export interface WithBlockScopeOpts {
    * the viewer's `appBlocksSameOriginFrames` flag is on (see
    * `src/components/AppBlocks/sandbox.ts`), so for every other viewer the iframe
    * runs at an OPAQUE origin and every `fetch` it makes sends `Origin: null`.
-   * (With the flag on it sends its real origin, which the allowlist below covers.) `null` can never be in the OauthClient.allowedOrigins
+   * (With the flag on it sends its real origin instead, which is allowed only if
+   * the app's OauthClient.allowedOrigins lists it, as publish stamps, or it is a
+   * live preview session host.) `null` can never be in the OauthClient.allowedOrigins
    * allowlist, so a direct (non-bridge) fetch's CORS preflight falls through to
    * the handler and 405s — the in-block resource browser (or collections / tip /
    * shared-storage rail) then can't load. (First hit by the catalog
