@@ -96,10 +96,10 @@ type GalleryHoldSource interface {
 // holdComputingGallery is the gallery the hold gates read with a gallery-settings miss served
 // (image.getInfinite's InfinitePorts.GallerySettingsMiss, GET /api/v1/images'
 // FEED_GO_V1_IMAGES_SERVE_GALLERY_SETTINGS_MISS): its SettingsMany answers an absent key from the
-// model's own row (GalleryHoldSource; with the gallery settings written back, the entry Node would
-// write, which it also writes), as getShowcaseHeldLevels' getGallerySettingsByModelId rebuild does,
-// holding only what the hold reads (`sfwHeld` and `level`: heldLevels is its one reader here). A model
-// the rebuild finds no row for is no settings (nil), as Node's null. Every other read is the store's.
+// model's own row via GalleryHoldSource (which, with gallery-settings write-back on, also writes the
+// whole entry Node would), as getShowcaseHeldLevels' getGallerySettingsByModelId rebuild does,
+// keeping only `sfwHeld` and `level`. A model with no row is no settings (nil), as Node's null. Every
+// other read is the store's.
 type holdComputingGallery struct {
 	*GalleryStore
 	holds GalleryHoldSource
