@@ -147,6 +147,18 @@ export function PostImageDropzone({
   }
   // #endregion
 
+  // react-query runs a `mutate` call's own callbacks only for the latest call, and only while
+  // mounted. A create those callbacks will never answer is settled here instead, so what waits on
+  // it (preparing tiles, the import notification) does not wait forever.
+  const unansweredCreatesRef = useRef(new Set<() => void>());
+  useEffect(() => {
+    const unanswered = unansweredCreatesRef.current;
+    return () => {
+      for (const settle of unanswered) settle();
+    };
+  }, []);
+  // #endregion
+
   // #region [handlers]
   /** Settles once the files are queued for upload, or the post they need could not be made. */
   function handleUpload(
@@ -154,7 +166,14 @@ export function PostImageDropzone({
   ): Promise<unknown> {
     if (currentUser?.muted) return Promise.resolve();
     if (post) return upload(fileData);
-    return new Promise<void>((settle) =>
+    return new Promise<void>((resolve) => {
+      const unanswered = unansweredCreatesRef.current;
+      for (const superseded of unanswered) superseded();
+      const settle = () => {
+        unanswered.delete(settle);
+        resolve();
+      };
+      unanswered.add(settle);
       createPostMutation.mutate(
         {
           modelVersionId,
@@ -187,8 +206,8 @@ export function PostImageDropzone({
             settle();
           },
         }
-      )
-    );
+      );
+    });
   }
 
   const handleDrop = (args: { file: File; meta?: Record<string, unknown> }[]) => {

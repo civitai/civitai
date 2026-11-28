@@ -3,17 +3,18 @@ import { renderWithProviders } from '../../../../test/component-setup';
 import type * as TrpcMod from '~/utils/trpc';
 import type * as PostEditProviderMod from '~/components/Post/EditV2/PostEditProvider';
 import type * as ShowCreatePostErrorMod from '~/components/Post/showCreatePostError';
-import type { TrackedFile } from '~/components/FileUpload/FileUploadProvider';
+import type * as Notifications from '~/utils/notifications';
 
 /**
- * The dropzone shows each item on its way to the post: generator media from its source url while
- * it downloads, and a file being uploaded from a local URL. Only the upload itself and the post
- * store are replaced.
+ * Generator media shows in the dropzone from its source url from the moment it is handed over
+ * until it is queued for upload, and not after. The real dropzone, transmitter and upload hook run;
+ * the network, the S3 upload and the post store are replaced, as in the sibling dropzone tests.
  */
 
 const mocks = vi.hoisted(() => ({
-  files: [] as TrackedFile[],
   params: {} as Record<string, unknown>,
+  uploadToS3: vi.fn(),
+  showErrorNotification: vi.fn(),
 }));
 
 vi.mock('~/utils/trpc', async (importOriginal) => {
@@ -33,10 +34,15 @@ vi.mock('~/components/Post/showCreatePostError', async (orig) => ({
   useShowCreatePostError: () => vi.fn(),
 }));
 
+vi.mock('~/utils/notifications', async (orig) => ({
+  ...(await orig<typeof Notifications>()),
+  showErrorNotification: mocks.showErrorNotification,
+}));
+
 vi.mock('~/hooks/useS3Upload', () => ({
   useS3Upload: () => ({
-    files: mocks.files,
-    uploadToS3: () => new Promise(() => undefined),
+    files: [],
+    uploadToS3: mocks.uploadToS3,
     resetFiles: vi.fn(),
     removeFile: vi.fn(),
   }),
@@ -57,8 +63,9 @@ function renderDropzone() {
 
 describe('PostImageDropzone — items on their way to the post', () => {
   beforeEach(() => {
-    mocks.files = [];
     mocks.params = {};
+    mocks.uploadToS3.mockReset().mockImplementation(() => new Promise(() => undefined));
+    mocks.showErrorNotification.mockReset();
   });
   afterEach(() => vi.restoreAllMocks());
 
@@ -76,27 +83,32 @@ describe('PostImageDropzone — items on their way to the post', () => {
     expect(document.querySelector('[aria-label="Uploading"]')?.textContent).toContain('Preparing…');
   });
 
-  test('a file being uploaded shows from a local URL', async () => {
-    const file = new File([new Uint8Array([1, 2, 3])], 'photo.jpg', { type: 'image/jpeg' });
-    mocks.files = [
-      {
-        file,
-        progress: 30,
-        uploaded: 1,
-        size: file.size,
-        speed: 0,
-        timeRemaining: 0,
-        status: 'uploading',
-        abort: () => undefined,
-        url: '',
-        name: file.name,
-      },
-    ];
+  test('a downloaded item stays preparing until it is queued for upload, then its tile goes', async () => {
+    const png = await (await fetch(SOURCE_URL)).blob();
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(png));
+    // Whether the preparing tile was still up when the upload began.
+    let preparingAtUpload: boolean | undefined;
+    mocks.uploadToS3.mockImplementation(() => {
+      preparingAtUpload = !!document.body.textContent?.includes('Preparing…');
+      return new Promise(() => undefined);
+    });
+    orchestratorMediaTransmitter.setUrls('generator', [{ url: SOURCE_URL }]);
+    mocks.params = { src: 'generator' };
     renderDropzone();
 
-    await vi.waitFor(() => {
-      const img = document.querySelector<HTMLImageElement>('[aria-label="Uploading"] img');
-      expect(img?.getAttribute('src')).toMatch(/^blob:/);
-    });
+    await vi.waitFor(() => expect(mocks.uploadToS3).toHaveBeenCalledTimes(1));
+    expect(preparingAtUpload).toBe(true);
+    await vi.waitFor(() => expect(document.body.textContent).not.toContain('Preparing…'));
+  });
+
+  test('an item whose download fails does not stay preparing', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('Failed to fetch'));
+    orchestratorMediaTransmitter.setUrls('generator', [{ url: SOURCE_URL }]);
+    mocks.params = { src: 'generator' };
+    renderDropzone();
+
+    await vi.waitFor(() => expect(mocks.showErrorNotification).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(document.body.textContent).not.toContain('Preparing…'));
+    expect(mocks.uploadToS3).not.toHaveBeenCalled();
   });
 });
