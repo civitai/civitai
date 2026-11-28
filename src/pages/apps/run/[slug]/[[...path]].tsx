@@ -81,6 +81,12 @@ interface AppRunProps {
   appName: string;
   pageTitle: string;
   iframeSrc: string;
+  /**
+   * `AppBlock.currentVersionSha` (or null): with the viewer's `appBlocksVersionedFramePath`
+   * flag on, `PageBlockHost` frames the app at `<iframeSrc>v/<sha>/`. `iframeSrc` itself
+   * stays the published root.
+   */
+  versionSha: string | null;
   /** manifest.bootSkeleton — the app paints its own boot state; the host stands back. */
   bootSkeleton: boolean;
   sandbox: string;
@@ -308,6 +314,7 @@ export const getServerSideProps = createServerSideProps<PageProps>({
           appName: block.name,
           pageTitle: block.pageTitle,
           iframeSrc: block.iframeSrc,
+          versionSha: block.currentVersionSha ?? null,
           bootSkeleton: block.bootSkeleton,
           sandbox: block.sandbox,
           trustTier: block.trustTier,
@@ -383,6 +390,7 @@ export const getServerSideProps = createServerSideProps<PageProps>({
         appName: page.name,
         pageTitle: page.pageTitle,
         iframeSrc: page.iframeSrc,
+        versionSha: page.currentVersionSha ?? null,
         bootSkeleton: page.bootSkeleton,
         sandbox: page.sandbox,
         trustTier: page.trustTier,
@@ -553,6 +561,7 @@ function AppPage(props: AppRunProps) {
     appId,
     appName,
     iframeSrc,
+    versionSha,
     bootSkeleton,
     sandbox,
     trustTier,
@@ -792,6 +801,7 @@ function AppPage(props: AppRunProps) {
           blockInstanceId={blockInstanceId}
           appName={appName}
           iframeSrc={iframeSrc}
+          versionSha={versionSha}
           bootSkeleton={bootSkeleton}
           // The full-page run surface — public, or `private-run` on the delisted fallback.
           //

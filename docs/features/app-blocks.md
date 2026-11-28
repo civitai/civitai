@@ -335,15 +335,34 @@ its REAL origin, `https://<slug>.<APPS_DOMAIN>` for a published app,
   frame is cross-site to civitai.com).
 - **Previews lose it:** a dev tunnel or App Assistant preview host is minted per
   session, so its storage is gone when the session ends.
-- **Service workers:** allowed. An app with a real origin may register a service
-  worker scoped to its own app origin, partitioned per app under civitai.com like
-  its storage. The platform cannot guarantee that a takedown or a new version
-  evicts an installed worker: a worker that serves fully from its cache keeps
-  running at its own origin until it updates itself. The intent is that Civitai
-  stops framing a taken-down app, so its worker is no longer reached from
-  civitai.com.
+- **Service workers:** allowed, scoped to ONE VERSION of the app. The app host
+  serves a published app's current version both at `/` and at its version path,
+  `https://<slug>.<APPS_DOMAIN>/v/<sha>/`, and serves a service worker script ONLY
+  under the current version's path (a worker script requested at `/`, under
+  `/assets/` or under another version's path is a 404). It never sends
+  `Service-Worker-Allowed`, so a worker's scope is at most `/v/<sha>/`. With the
+  `appBlocksVersionedFramePath` flag (Flipt `app-blocks-versioned-frame-path`,
+  created off) the run page frames the app at `/v/<sha>/` (sha:
+  `AppBlock.currentVersionSha`); off, it frames `/`, where no worker can register.
+  - **Register with a RELATIVE URL**: `navigator.serviceWorker.register('./sw.js')`.
+    An absolute `'/sw.js'` resolves to the root and gets a 404 (the app keeps
+    working, without a worker). Asset URLs need no change: absolute `/assets/…`
+    keeps resolving at `/`, which serves the current version.
+  - **A stale worker cannot follow a new version.** The new version is framed at
+    its own `/v/<new sha>/`, outside the old worker's scope. The old worker is not
+    removed (a browser keeps a worker whose update check fails); it lingers,
+    controlling only its old path, which the run page no longer frames and which
+    the app host redirects to the current version for any request that reaches it.
+  - **Takedown stops framing.** Civitai does not frame a taken-down app publicly,
+    and the app host answers every path of it with a 404 and
+    `Clear-Site-Data: "storage"`. That clears the origin only when a request from
+    the page reaches the app host: a worker that serves fully from its cache keeps
+    running at its own origin if something still loads it.
+  - **Not versioned (yet):** a model-slot frame and the dev tunnel, App Assistant
+    preview and moderator review hosts keep their own URLs. The published root
+    serves no worker script, so a model-slot frame has no worker.
 - **Fixed per mount:** the host decides once when it mounts (a sandbox change
-  applies only when the frame navigates), so a flag change takes effect on the
+  applies only when the frame navigates), and reads the version-path flag once too, so a flag change takes effect on the
   next mount, not in a frame already loaded.
 
 ## Threat model highlights
