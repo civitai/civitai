@@ -25,9 +25,15 @@ describe('L1 cache byte budget', () => {
   it('the worst case (every switched cache at its larger tier) stays under the hard ceiling', () => {
     expect(worstCaseL1Bytes()).toBeLessThanOrEqual(L1_TOTAL_BYTE_CEILING);
     // Literal, so a switched tier added or enlarged without re-checking the ceiling shows up here:
-    // 4 + 12 + 16 + 96 (tag-ids-for-images, switched) + 20 + 2 + 10 (home blocks) MB: AT the
-    // ceiling, so the next L1 added or enlarged has to raise it first.
-    expect(worstCaseL1Bytes()).toBe(160 * 1024 * 1024);
+    // 4 + 12 + 16 + 96 (tag-ids-for-images, switched) + 20 + 2 + 10 (home blocks) + 2 (home
+    // block rows) MB: AT the ceiling, so the next L1 added or enlarged has to raise it first.
+    expect(worstCaseL1Bytes()).toBe(162 * 1024 * 1024);
+    expect(L1_TOTAL_BYTE_CEILING).toBe(162 * 1024 * 1024);
+  });
+
+  it('the home block caches keep their sizes: 10MB of blocks, 2MB of rows', () => {
+    expect(L1_CACHE_BYTE_BUDGETS.homeBlocks).toBe(10 * 1024 * 1024);
+    expect(L1_CACHE_BYTE_BUDGETS.homeBlockRows).toBe(2 * 1024 * 1024);
   });
 
   it('every switched tier names an existing cache and is larger than its base budget', () => {
