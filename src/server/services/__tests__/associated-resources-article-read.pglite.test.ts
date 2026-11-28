@@ -185,7 +185,8 @@ const list = (
     {
       isRestricted: () => restricted,
       viewer: viewer ?? {},
-    }
+    },
+    viewer
   );
 const save = (
   fromId: number,
@@ -193,10 +194,12 @@ const save = (
   associations: Parameters<typeof setAssociatedResources>[0]['associations'] = [],
   { restricted = false, browsingLevel = 31 } = {}
 ) =>
-  setAssociatedResources({ fromId, type: 'Suggested', associations, browsingLevel }, user, {
-    isRestricted: () => restricted,
-    viewer: user,
-  });
+  setAssociatedResources(
+    { fromId, type: 'Suggested', associations, browsingLevel },
+    user,
+    { isRestricted: () => restricted, viewer: user },
+    user
+  );
 const listed = async (viewer: ArticleReader) =>
   (await list(viewer)).items.map((x) => ('title' in x.item ? x.item.title : null));
 
@@ -334,7 +337,8 @@ describe("a moderator editing another user's model", () => {
       {
         isRestricted: () => false,
         viewer,
-      }
+      },
+      viewer
     );
   const rows = () => h.prisma.modelAssociations.count({ where: { fromModelId: M } });
 

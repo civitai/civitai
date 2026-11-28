@@ -141,9 +141,18 @@ function hide({
   } as never);
 }
 
+// Users who blocked the caller, as the per-user cache hash holds them.
+function blockedBy(ids: number[]) {
+  redisMock.redis.packed.hGet.mockImplementation((async (_key: string, field: string) =>
+    field === 'blocked-by-users-2'
+      ? ids.map((id) => ({ id, username: `user ${id}` }))
+      : null) as never);
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   redisMock.redis.packed.get.mockResolvedValue([] as never);
+  redisMock.redis.packed.hGet.mockResolvedValue(null as never);
   hide();
   dbMock.dbWrite.modelAssociations.findMany.mockResolvedValue([
     linkedModel(PG_MODEL, NsfwLevel.PG),
@@ -212,6 +221,19 @@ describe('model.getAssociatedResourcesSimple article owner view', () => {
         tokenScope: TokenScope.ModelsRead,
       })
     ).toEqual([PG_ARTICLE]);
+  });
+});
+
+describe('model.getAssociatedResourcesSimple blocked authors', () => {
+  it('hides an article whose author blocked the caller, on a session and on a scoped key', async () => {
+    dbMock.dbWrite.modelAssociations.findMany.mockResolvedValue([
+      linkedArticle(PG_ARTICLE, NsfwLevel.PG),
+    ] as never);
+    blockedBy([ITEM_OWNER]);
+    expect(await listedIds(signedIn(5), true)).toEqual([]);
+    expect(
+      await listedIds(signedIn(5), true, { ...scopedKey, tokenScope: TokenScope.ModelsRead })
+    ).toEqual([]);
   });
 });
 
@@ -337,6 +359,14 @@ describe('model.setAssociatedResources', () => {
     redisMock.redis.packed.get.mockResolvedValue([] as never);
     hide({ models: [PG_MODEL] });
     expect(await removedIds(true, linkedModel(PG_MODEL, NsfwLevel.PG))).toEqual([]);
+  });
+
+  it('a save on a scoped key keeps a link to an article whose author blocked the caller', async () => {
+    blockedBy([ITEM_OWNER]);
+    const scopedWrite = { ...scopedKey, tokenScope: TokenScope.ModelsWrite };
+    expect(await removedIds(true, linkedArticle(PG_ARTICLE, NsfwLevel.PG), scopedWrite)).toEqual(
+      []
+    );
   });
 
   it("a save on a scoped key keeps a link to the caller's own draft article", async () => {

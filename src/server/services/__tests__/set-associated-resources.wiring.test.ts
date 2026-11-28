@@ -151,7 +151,8 @@ const save = (
     {
       isRestricted: () => false,
       viewer: user,
-    }
+    },
+    user
   );
 
 const createdRows = () =>

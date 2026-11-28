@@ -145,7 +145,8 @@ const listed = async (
   (
     await getAssociatedResourcesSimple(
       { fromId: FROM, type: 'Suggested', browsingLevel, ...addons },
-      readerOf(viewer)
+      readerOf(viewer),
+      viewer
     )
   ).items.map(({ item }) => item.id);
 
@@ -211,7 +212,8 @@ describe('getAssociatedResourcesSimple model side', () => {
     const nameAt = async (browsingLevel: number) => {
       const { items } = await getAssociatedResourcesSimple(
         { fromId: FROM, type: 'Suggested', browsingLevel },
-        readerOf(stranger)
+        readerOf(stranger),
+        stranger
       );
       const item = items.find(
         (x) => x.resourceType === 'model' && x.item.id === MODELS.faced.id
@@ -239,7 +241,8 @@ describe('setAssociatedResources model side', () => {
     await setAssociatedResources(
       { fromId: 101, type: 'Suggested', associations: [], browsingLevel: PG },
       fromOwner,
-      readerOf(fromOwner)
+      readerOf(fromOwner),
+      fromOwner
     );
     expect((await remaining(101)).sort()).toEqual([MODELS.mature.id, MODELS.private.id]);
   });
@@ -249,7 +252,8 @@ describe('setAssociatedResources model side', () => {
     await setAssociatedResources(
       { fromId: 102, type: 'Suggested', associations: [], browsingLevel: ALL },
       fromOwner,
-      readerOf(fromOwner)
+      readerOf(fromOwner),
+      fromOwner
     );
     expect(await remaining(102)).toEqual([]);
   });
@@ -259,7 +263,8 @@ describe('setAssociatedResources model side', () => {
       setAssociatedResources(
         { fromId, type: 'Suggested', associations: [], browsingLevel: ALL, disableMinor },
         fromOwner,
-        readerOf(fromOwner)
+        readerOf(fromOwner),
+        fromOwner
       );
     await link(103, [MODELS.minor.id]);
     await save(103, true);
@@ -275,7 +280,8 @@ describe('setAssociatedResources model side', () => {
       setAssociatedResources(
         { fromId, type: 'Suggested', associations: [], browsingLevel: ALL, excludedTagIds },
         fromOwner,
-        readerOf(fromOwner)
+        readerOf(fromOwner),
+        fromOwner
       );
     await link(105, [MODELS.tagged.id]);
     await save(105, [EXCLUDED_TAG]);
@@ -298,7 +304,8 @@ describe('setAssociatedResources model side', () => {
           browsingLevel,
         },
         fromOwner,
-        readerOf(fromOwner)
+        readerOf(fromOwner),
+        fromOwner
       );
 
     it('refuses an owner browsing at PG a mature target, and links it at a mature level', async () => {

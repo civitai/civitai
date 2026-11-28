@@ -165,12 +165,14 @@ const modelByIdVisible = modelVisibleToViewer((input) => input.id);
 const associationSourceVisible = modelVisibleToViewer((input) => input.fromId);
 
 /**
- * Linked models and articles share one viewer, as the editor lists both: the owner's view only on
- * a session or a full-access key, and moderator rights only as the region reader grants them.
+ * The caller, as the region reader reads them (blocks apply on any key), and the viewer linked
+ * models and articles are shown to: the owner's view only on a session or a full-access key, and
+ * moderator rights only as the region reader grants them.
  */
-const associatedResourcesReaderOf = (ctx: Context) => {
+const associatedResourcesReadersOf = (ctx: Context) => {
   const reader = articleRegionReaderOf(ctx);
-  return { ...reader, viewer: { ...reader.viewer, id: ownerOrModeratorViewer(ctx)?.id } };
+  const viewer = { ...reader.viewer, id: ownerOrModeratorViewer(ctx)?.id };
+  return [reader, viewer] as const;
 };
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
@@ -528,7 +530,7 @@ export const modelRouter = router({
     .query(async ({ input, ctx }) => {
       const { items, regionDependent } = await getAssociatedResourcesSimple(
         { ...input, ...(await resolveAssociatedModelAddons(ctx)) },
-        associatedResourcesReaderOf(ctx)
+        ...associatedResourcesReadersOf(ctx)
       );
       if (regionDependent) keepAnswerOutOfEdgeCache(ctx);
       return items;
@@ -540,7 +542,7 @@ export const modelRouter = router({
       setAssociatedResources(
         { ...input, ...(await resolveAssociatedModelAddons(ctx)) },
         ctx.user,
-        associatedResourcesReaderOf(ctx)
+        ...associatedResourcesReadersOf(ctx)
       )
     ),
   rescan: moderatorProcedure.input(getByIdSchema).mutation(({ input }) => rescanModel(input)),
