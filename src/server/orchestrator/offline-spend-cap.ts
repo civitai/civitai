@@ -1,5 +1,4 @@
 import { sql } from 'kysely';
-import { TRPCError } from '@trpc/server';
 import type { NextApiRequest } from 'next';
 import type { kyselyWrite } from '~/server/db/kyselyDb';
 
@@ -7,13 +6,14 @@ type KyselyWrite = typeof kyselyWrite;
 import { readRequestBearerToken } from '~/server/auth/request-bearer-token';
 import { getRequestCredential, type RequestCredential } from '~/server/auth/request-credential';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import type { BuzzLimit } from '~/server/schema/api-key.schema';
+import { TRPCError } from '@trpc/server';
 import {
   getBuzzLimitForSubject,
   type BuzzSpendEntry,
   type Subject,
 } from '~/server/http/orchestrator/api-key-spend';
 import { OFFLINE_BUZZ_CAP_REACHED } from '~/server/orchestrator/api-key-buzz-limit-refusal';
-import type { BuzzLimit } from '~/server/schema/api-key.schema';
 
 // THE CALLER'S OWN KEY, sent to the orchestrator in place of the user's System token, so the
 // orchestrator meters the work under that key's subject and holds it to that key's Buzz limit. Two
@@ -50,8 +50,6 @@ export interface OwnKeyReads {
   offlineGrantFlagOn: () => Promise<boolean>;
   userKeyFlagOn: () => Promise<boolean>;
   mintOrigin: (apiKeyId: number) => Promise<string | null>;
-  /** The orchestrator's spend snapshot for the subject; null when it has none or cannot answer. */
-  spend: (userId: number, subject: Subject) => Promise<BuzzSpendEntry | null>;
 }
 
 /**
@@ -75,13 +73,62 @@ export async function resolveOwnKeyToken(
 
   if (userKey) return (await reads.userKeyFlagOn()) ? bearerToken : null;
   if (!(await reads.offlineGrantFlagOn())) return null;
-  if ((await reads.mintOrigin(apiKeyId)) !== 'refresh') return null;
+  return (await reads.mintOrigin(apiKeyId)) === 'refresh' ? bearerToken : null;
+}
 
-  const snapshot = await reads.spend(input.userId, subject).catch(() => null);
-  if (snapshot?.rules.some((rule) => rule.limit > 0 && rule.remaining <= 0)) {
+/** The orchestrator's spend snapshot for a subject; null when it tracks none. */
+export type SpendRead = (userId: number, subject: Subject) => Promise<BuzzSpendEntry | null>;
+
+/**
+ * Refuses a spend on work already running (a boost, an unlock) for a capped offline OAuth token whose
+ * cap is spent, or has less left than the spend's price when that is known. The orchestrator does not hold such a spend to the cap, so it is checked here. A
+ * snapshot that cannot be read refuses too. Every other request, including a personal key, passes.
+ */
+export async function assertOfflineCapLeftForRunningWork(
+  input: OwnKeyRequest,
+  reads: OwnKeyReads & { spend: SpendRead },
+  /** The spend's price when the caller knows it (a boost): refused when it is more than is left. */
+  cost?: number
+) {
+  const { subject } = input.credential;
+  if (subject?.type !== 'oauth') return;
+  if (!(await resolveOwnKeyToken(input, reads))) return;
+  const snapshot = await reads.spend(input.userId, subject).then(
+    (entry) => ({ entry }),
+    () => null
+  );
+  const remaining = (snapshot?.entry?.rules ?? [])
+    .filter((rule) => rule.limit > 0)
+    .map((rule) => rule.remaining);
+  const left = remaining.length ? Math.min(...remaining) : Infinity;
+  if (!snapshot || left <= 0 || (cost != null && cost > left))
     throw new TRPCError({ code: 'FORBIDDEN', message: OFFLINE_BUZZ_CAP_REACHED });
-  }
-  return bearerToken;
+}
+
+function ownKeyRequest(userId: number, req: NextApiRequest): OwnKeyRequest {
+  const context = (req as NextApiRequest & { context?: RequestContext }).context;
+  return {
+    userId,
+    credential: getRequestCredential(req),
+    sessionUserId: context?.session?.user?.id,
+    buzzLimit: (context?.buzzLimit ?? null) as BuzzLimit | null,
+    bearerToken: () => readRequestBearerToken(req),
+  };
+}
+
+const ownKeyReads: OwnKeyReads = {
+  offlineGrantFlagOn: () => isFlipt(FLIPT_FEATURE_FLAGS.OAUTH_OFFLINE_GRANT),
+  userKeyFlagOn: () => isFlipt(FLIPT_FEATURE_FLAGS.USER_KEY_BUZZ_LIMIT_PROXY),
+  mintOrigin: (id) => readMintOrigin(id),
+};
+
+/** `assertOfflineCapLeftForRunningWork` for this request. */
+export function offlineCapLeftForRunningWork(userId: number, req: NextApiRequest, cost?: number) {
+  return assertOfflineCapLeftForRunningWork(
+    ownKeyRequest(userId, req),
+    { ...ownKeyReads, spend: (id, subject) => getBuzzLimitForSubject({ userId: id, subject }) },
+    cost
+  );
 }
 
 /** The token to send the orchestrator for this request when it is the caller's own limited key; null otherwise. */
@@ -89,22 +136,7 @@ export function ownKeyOrchestratorToken(
   userId: number,
   req: NextApiRequest
 ): Promise<string | null> {
-  const context = (req as NextApiRequest & { context?: RequestContext }).context;
-  return resolveOwnKeyToken(
-    {
-      userId,
-      credential: getRequestCredential(req),
-      sessionUserId: context?.session?.user?.id,
-      buzzLimit: (context?.buzzLimit ?? null) as BuzzLimit | null,
-      bearerToken: () => readRequestBearerToken(req),
-    },
-    {
-      offlineGrantFlagOn: () => isFlipt(FLIPT_FEATURE_FLAGS.OAUTH_OFFLINE_GRANT),
-      userKeyFlagOn: () => isFlipt(FLIPT_FEATURE_FLAGS.USER_KEY_BUZZ_LIMIT_PROXY),
-      mintOrigin: readMintOrigin,
-      spend: (id, subject) => getBuzzLimitForSubject({ userId: id, subject }),
-    }
-  );
+  return resolveOwnKeyToken(ownKeyRequest(userId, req), ownKeyReads);
 }
 
 /** Postgres `undefined_column`: the migration adding `ApiKey.mintOrigin` has not been applied. */

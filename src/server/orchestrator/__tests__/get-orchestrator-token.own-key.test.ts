@@ -152,9 +152,27 @@ it('in ORCHESTRATOR_MODE=dev a limited key gets the dev token, as before', async
 
 // The predicate a path that queues work asks (comics smartCreateChapter): each case follows its own flag.
 describe('callerOwnOrchestratorToken', () => {
-  // The OAuth case reads the orchestrator's spend snapshot first; it has none for this subject.
+  // The orchestrator would report every limit spent; nothing here should ask it.
+  const spentSnapshot = () =>
+    Response.json({
+      rules: [{ type: 'Sliding', limit: 500, spend: 500, remaining: 0, window: 'Day' }],
+    });
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
   beforeEach(() => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('null', { status: 404 }));
+    fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => spentSnapshot());
+  });
+
+  it('sends an OAuth token with its budget spent as itself, reading no spend', async () => {
+    h.flags = { userKey: false, offlineGrant: true };
+    // Configured, so a spend read would reach fetch rather than fail before it.
+    envMock.set({
+      ORCHESTRATOR_ENDPOINT: 'https://orchestration.test',
+      ORCHESTRATOR_ACCESS_TOKEN: 't',
+    });
+    await expect(
+      callerOwnOrchestratorToken(USER, keyCaller({ credential: 'oauth' }).req)
+    ).resolves.toBe(KEY);
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it.each([

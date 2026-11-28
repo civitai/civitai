@@ -76,7 +76,10 @@ import {
   router,
 } from '~/server/trpc';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
-import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
+import {
+  assertCallerCanSpendOnRunningWork,
+  getOrchestratorToken,
+} from '~/server/orchestrator/get-orchestrator-token';
 import { regionProxyMiddleware } from '~/server/orchestrator/region-proxy.middleware';
 import { rewriteProxyUrlToOrchestrator } from '~/server/orchestrator/region-proxy';
 import { isCivitaiMediaUrl } from '~/server/services/orchestrator/trusted-blob-url';
@@ -343,6 +346,8 @@ export const orchestratorRouter = router({
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(workflowUpdateSchema)
     .mutation(async ({ ctx, input }) => {
+      if (input.allowMatureContent === true)
+        await assertCallerCanSpendOnRunningWork(ctx.user.id, ctx.req);
       const result = await updateWorkflow({
         ...input,
         token: ctx.token,
@@ -367,6 +372,7 @@ export const orchestratorRouter = router({
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(z.object({ workflowId: z.string(), expectedCost: z.number().int().min(0) }))
     .mutation(async ({ ctx, input }) => {
+      await assertCallerCanSpendOnRunningWork(ctx.user.id, ctx.req, input.expectedCost);
       const result = await boostWorkflow({
         token: ctx.token,
         workflowId: input.workflowId,

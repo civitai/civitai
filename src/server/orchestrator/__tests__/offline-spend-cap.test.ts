@@ -1,6 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import type { BuzzSpendEntry } from '~/server/http/orchestrator/api-key-spend';
-import { OFFLINE_BUZZ_CAP_REACHED } from '~/server/orchestrator/api-key-buzz-limit-refusal';
 import {
   readMintOrigin,
   resolveOwnKeyToken,
@@ -12,8 +10,8 @@ import { ApiKeyType } from '~/shared/utils/prisma/enums';
 // Which requests reach the orchestrator as their own limited key: a refresh-minted OAuth token whose
 // consent has a cap (flag `oauth-offline-grant`), or a personal API key with a Buzz limit used by its
 // own user (flag `user-key-buzz-limit-proxy`). Everything else gets null, which leaves
-// getOrchestratorToken on the System token. The OAuth case is refused here once the orchestrator's
-// snapshot shows its cap spent; a personal key is never checked here (the orchestrator enforces it).
+// getOrchestratorToken on the System token. Neither case reads its spend here: the orchestrator holds
+// the key to its limit and answers an over-limit call itself.
 
 const USER = 4242;
 const LIMIT = [{ type: 'sliding' as const, limit: 500, window: 'day' as const, unit: 1 }];
@@ -41,27 +39,14 @@ function request(over: Partial<OwnKeyRequest> = {}): OwnKeyRequest {
   };
 }
 
-function spendEntry(remaining: number): BuzzSpendEntry {
-  return {
-    type: 'oauth',
-    id: 'offline-app',
-    spend: 500 - remaining,
-    rules: [
-      { type: 'sliding', limit: 500, spend: 500 - remaining, remaining, window: 'day', unit: 1 },
-    ],
-    buckets: [],
-  };
-}
-
 function reads(
   over: {
     offlineGrant?: boolean;
     userKey?: boolean;
     origin?: string | null;
-    spend?: () => Promise<BuzzSpendEntry | null>;
   } = {}
 ) {
-  const calls = { offlineGrantFlag: 0, userKeyFlag: 0, origin: [] as number[], spend: 0 };
+  const calls = { offlineGrantFlag: 0, userKeyFlag: 0, origin: [] as number[] };
   const r: OwnKeyReads = {
     offlineGrantFlagOn: async () => {
       calls.offlineGrantFlag++;
@@ -75,33 +60,15 @@ function reads(
       calls.origin.push(id);
       return 'origin' in over ? over.origin ?? null : 'refresh';
     },
-    spend: async () => {
-      calls.spend++;
-      return over.spend ? over.spend() : spendEntry(120);
-    },
   };
   return { r, calls };
 }
 
 describe('a refresh-minted OAuth token with a cap', () => {
-  it('is sent as itself, with budget left', async () => {
+  it('is sent as itself, without reading its spend', async () => {
     const { r, calls } = reads();
     await expect(resolveOwnKeyToken(request(), r)).resolves.toBe(BEARER);
-    expect(calls.origin).toEqual([9]);
-    expect(calls.spend).toBe(1);
-  });
-
-  it('is refused with a clear error once the orchestrator reports the cap spent', async () => {
-    const { r } = reads({ spend: async () => spendEntry(0) });
-    await expect(resolveOwnKeyToken(request(), r)).rejects.toMatchObject({
-      code: 'FORBIDDEN',
-      message: OFFLINE_BUZZ_CAP_REACHED,
-    });
-  });
-
-  it('is still sent when the snapshot cannot be read (the orchestrator enforces the cap itself)', async () => {
-    const { r } = reads({ spend: () => Promise.reject(new Error('orchestrator down')) });
-    await expect(resolveOwnKeyToken(request(), r)).resolves.toBe(BEARER);
+    expect(calls).toEqual({ offlineGrantFlag: 1, userKeyFlag: 0, origin: [9] });
   });
 
   it.each(['auth_code', 'app_token', 'device_code', null])(
@@ -112,22 +79,18 @@ describe('a refresh-minted OAuth token with a cap', () => {
     }
   );
 
-  it('is left alone with its flag off, even with the personal-key flag on and its cap spent', async () => {
-    const { r, calls } = reads({
-      offlineGrant: false,
-      userKey: true,
-      spend: async () => spendEntry(0),
-    });
+  it('is left alone with its flag off, even with the personal-key flag on', async () => {
+    const { r, calls } = reads({ offlineGrant: false, userKey: true });
     await expect(resolveOwnKeyToken(request(), r)).resolves.toBeNull();
-    expect(calls).toMatchObject({ origin: [], spend: 0, userKeyFlag: 0 });
+    expect(calls).toMatchObject({ origin: [], userKeyFlag: 0 });
   });
 });
 
 describe('a personal API key with a Buzz limit', () => {
-  it('is sent as itself even with its budget spent, reading neither the spend nor the mint origin', async () => {
-    const { r, calls } = reads({ spend: async () => spendEntry(0) });
+  it('is sent as itself without reading the mint origin', async () => {
+    const { r, calls } = reads();
     await expect(resolveOwnKeyToken(request({ credential: personal }), r)).resolves.toBe(BEARER);
-    expect(calls).toEqual({ offlineGrantFlag: 0, userKeyFlag: 1, origin: [], spend: 0 });
+    expect(calls).toEqual({ offlineGrantFlag: 0, userKeyFlag: 1, origin: [] });
   });
 
   it('is left alone with its flag off, even with the offline-grant flag on', async () => {
@@ -154,7 +117,7 @@ describe.each([
   ])('%s', async (_, over) => {
     const { r, calls } = reads();
     await expect(resolveOwnKeyToken(request({ credential, ...over }), r)).resolves.toBeNull();
-    expect(calls).toEqual({ offlineGrantFlag: 0, userKeyFlag: 0, origin: [], spend: 0 });
+    expect(calls).toEqual({ offlineGrantFlag: 0, userKeyFlag: 0, origin: [] });
   });
 });
 

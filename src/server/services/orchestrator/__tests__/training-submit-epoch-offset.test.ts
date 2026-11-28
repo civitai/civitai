@@ -30,6 +30,10 @@ vi.mock('~/utils/s3-utils', () => ({
 import { TRPCError } from '@trpc/server';
 import { createTrainingWorkflow } from '~/server/services/orchestrator/training/training.orch';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
+import {
+  API_KEY_BUZZ_LIMIT_REACHED,
+  throwIfApiKeyBuzzLimitRefusal,
+} from '~/server/orchestrator/api-key-buzz-limit-refusal';
 import { getTrainingServiceStatus } from '~/server/services/training.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
@@ -249,6 +253,24 @@ describe('createTrainingWorkflow single submission per version', () => {
     );
 
     await expect(submit()).rejects.toThrow('insufficient buzz');
+    expect(dbMock.dbWrite.modelVersion.updateMany).toHaveBeenLastCalledWith({
+      where: { id: MODEL_VERSION_ID, trainingStatus: 'Submitted' },
+      data: { trainingStatus: 'Pending' },
+    });
+  });
+
+  it("releases the claim when the orchestrator refuses the caller's key as over its Buzz limit", async () => {
+    dbMock.dbWrite.modelVersion.updateMany.mockResolvedValue({ count: 1 });
+    vi.mocked(submitWorkflow).mockImplementation(
+      async () =>
+        throwIfApiKeyBuzzLimitRefusal(
+          402,
+          { status: 402, detail: 'budgetExceeded' },
+          'key'
+        ) as never
+    );
+
+    await expect(submit()).rejects.toThrow(API_KEY_BUZZ_LIMIT_REACHED);
     expect(dbMock.dbWrite.modelVersion.updateMany).toHaveBeenLastCalledWith({
       where: { id: MODEL_VERSION_ID, trainingStatus: 'Submitted' },
       data: { trainingStatus: 'Pending' },

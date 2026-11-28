@@ -365,6 +365,8 @@ const createTrainingStep = (
 const ORCHESTRATOR_REJECTED_CODES = new Set<TRPCError['code']>([
   'BAD_REQUEST',
   'UNAUTHORIZED',
+  // An over-limit refusal for the caller's own key (api-key-buzz-limit-refusal.ts).
+  'FORBIDDEN',
   'TOO_MANY_REQUESTS',
 ]);
 

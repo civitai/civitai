@@ -3,7 +3,6 @@ import {
   handleError,
   type ConsumerBlobPresignResponse,
 } from '@civitai/orchestration-client';
-import { throwIfApiKeyBuzzLimitRefusal } from '~/server/orchestrator/api-key-buzz-limit-refusal';
 import { createOrchestratorClient } from '~/server/services/orchestrator/client';
 import { throwOrchestratorFailure } from '~/server/services/orchestrator/workflows';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
@@ -24,10 +23,9 @@ export async function getConsumerBlobUploadUrlService({
   if (!data) {
     // A throttle or proxy error may carry no problem-details body.
     const message = error ? handleError(error) : undefined;
-    throwIfApiKeyBuzzLimitRefusal(response?.status, error);
     // A presign 403 is a denial, not the insufficient-funds meaning it has on paid calls.
     if (response?.status === 403) throw throwAuthorizationError(message);
-    throwOrchestratorFailure({ error, response, message });
+    throwOrchestratorFailure({ error, response, message, token });
   }
 
   return data;

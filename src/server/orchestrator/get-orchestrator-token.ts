@@ -7,7 +7,10 @@ import { credentialLogFields, getRequestCredential } from '~/server/auth/request
 import { dbWrite } from '~/server/db/client';
 import { observeTokenIdentityMismatch } from '~/server/orchestrator/orchestrator-identity-metrics';
 import { getOrMintCachedToken } from '~/server/orchestrator/orchestrator-token-cache';
-import { ownKeyOrchestratorToken } from '~/server/orchestrator/offline-spend-cap';
+import {
+  offlineCapLeftForRunningWork,
+  ownKeyOrchestratorToken,
+} from '~/server/orchestrator/offline-spend-cap';
 import {
   decodeOwnedToken,
   encodeOwnedToken,
@@ -199,6 +202,22 @@ export function callerOwnOrchestratorToken(
 ): Promise<string | null> {
   if (env.ORCHESTRATOR_MODE === 'dev') return Promise.resolve(null);
   return ownKeyOrchestratorToken(userId, req);
+}
+
+/**
+ * Call before a boost or unlock of a workflow already running, with the request whose token pays
+ * for it: refuses when that token is a capped offline OAuth token whose cap is spent
+ * (offline-spend-cap.ts). Passes for every other caller, for a call with no request, and in
+ * ORCHESTRATOR_MODE=dev, where no caller's own key is sent.
+ */
+export async function assertCallerCanSpendOnRunningWork(
+  userId: number,
+  req: NextApiRequest | undefined,
+  /** The spend's price when known (a boost's expected cost). */
+  cost?: number
+) {
+  if (!req || env.ORCHESTRATOR_MODE === 'dev') return;
+  await offlineCapLeftForRunningWork(userId, req, cost);
 }
 
 type RequestSessionUser = { id?: number; meta?: unknown };

@@ -16,6 +16,7 @@ vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
 }));
 vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
   getOrchestratorToken: async () => 'token',
+  assertCallerCanSpendOnRunningWork: async () => undefined,
 }));
 vi.mock('~/server/services/orchestrator/workflows', async (importOriginal) => ({
   ...(await importOriginal<typeof Workflows>()),

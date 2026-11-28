@@ -1,52 +1,62 @@
 import { TRPCError } from '@trpc/server';
 
 // The orchestrator's refusal of a call that would spend past the Buzz limit on the key that made it:
-// a personal API key's own limit, or the cap a user set for an app's offline access. Recognised by the
-// response body, never by status alone, so it stays apart from a real insufficient-funds 403 and
-// from a scope 403.
+// a personal API key's own limit, or the cap a user set for an app's offline access. The reply is the
+// same for both, so whose limit it was comes from the token the call was sent with.
 
 export const API_KEY_BUZZ_LIMIT_REACHED =
   'This API key has used its daily Buzz limit. You can change it in Settings > API keys.';
 export const OFFLINE_BUZZ_CAP_REACHED =
   "This app has used the Buzz limit you set for it while you're away. You can raise it in Connected apps.";
 
-export type BuzzLimitRefusalSubject = 'apiKey' | 'oauth';
-
-export interface BuzzLimitRefusalPattern {
-  status: number;
-  subject: BuzzLimitRefusalSubject;
-  matches: (body: unknown) => boolean;
-}
+/** The ProblemDetails `detail` of the orchestrator's over-limit 402, at submit and at whatif. */
+export const BUDGET_EXCEEDED_DETAIL = 'budgetExceeded';
 
 /**
- * The orchestrator's over-limit responses. Add a pattern only from a captured reply (status, body): a
- * guessed one would turn a real insufficient-funds 403 into a limit message.
+ * Every OAuth access token the auth hub issues starts with this (apps/auth `OAUTH_TOKEN_PREFIX`,
+ * which a test keeps equal); a personal API key is bare hex.
  */
-export const BUZZ_LIMIT_REFUSALS: BuzzLimitRefusalPattern[] = [];
+export const OAUTH_ACCESS_TOKEN_PREFIX = 'civitai_';
 
-/** Whose limit refused the call, or null when the response is not a Buzz-limit refusal. */
-export function isApiKeyBuzzLimitRefusal(
-  status: number | null | undefined,
-  body: unknown,
-  patterns: readonly BuzzLimitRefusalPattern[] = BUZZ_LIMIT_REFUSALS
-): BuzzLimitRefusalSubject | null {
-  if (status == null) return null;
-  return patterns.find((p) => p.status === status && p.matches(body))?.subject ?? null;
+type ProblemDetails = { detail?: unknown; error?: { detail?: unknown } | null };
+
+function problemDetail(body: unknown) {
+  if (!body || typeof body !== 'object') return undefined;
+  const problem = body as ProblemDetails;
+  return problem.detail ?? problem.error?.detail;
 }
 
 /**
- * Throws FORBIDDEN with a message naming the limit when the response is a Buzz-limit refusal. FORBIDDEN,
- * not TOO_MANY_REQUESTS, even for a 429: waiting does not help until the limit's window rolls over.
+ * Whether the response is the orchestrator's over-limit refusal. Keyed on status AND detail: a real
+ * insufficient-funds reply is a 400 `insufficientBuzz`, and a scope refusal a 403.
+ */
+export function isBuzzLimitRefusal(status: number | null | undefined, body: unknown) {
+  return status === 402 && problemDetail(body) === BUDGET_EXCEEDED_DETAIL;
+}
+
+/**
+ * Throws FORBIDDEN naming the limit (an app's for an OAuth token, else the key's) when the response
+ * is the over-limit refusal; returns otherwise.
  */
 export function throwIfApiKeyBuzzLimitRefusal(
   status: number | null | undefined,
   body: unknown,
-  patterns: readonly BuzzLimitRefusalPattern[] = BUZZ_LIMIT_REFUSALS
+  token: string
 ) {
-  const subject = isApiKeyBuzzLimitRefusal(status, body, patterns);
-  if (!subject) return;
+  if (!isBuzzLimitRefusal(status, body)) return;
   throw new TRPCError({
     code: 'FORBIDDEN',
-    message: subject === 'oauth' ? OFFLINE_BUZZ_CAP_REACHED : API_KEY_BUZZ_LIMIT_REACHED,
+    message: token.startsWith(OAUTH_ACCESS_TOKEN_PREFIX)
+      ? OFFLINE_BUZZ_CAP_REACHED
+      : API_KEY_BUZZ_LIMIT_REACHED,
   });
+}
+
+/** Whether `error` is the FORBIDDEN `throwIfApiKeyBuzzLimitRefusal` threw, so a caller can pass it on as is. */
+export function isBuzzLimitRefusalError(error: unknown): error is TRPCError {
+  return (
+    error instanceof TRPCError &&
+    error.code === 'FORBIDDEN' &&
+    (error.message === API_KEY_BUZZ_LIMIT_REACHED || error.message === OFFLINE_BUZZ_CAP_REACHED)
+  );
 }
