@@ -14,6 +14,7 @@ import { getBuzz } from './buzz';
 import { bustCacheTag, bustCachedObject } from './cache';
 import { getClickhouse } from './clickhouse';
 import { getNotifications } from './notifications';
+import { songNoticeSubject, songTosNoticeDetails } from '@civitai/db-queries/profile-picture-clear';
 import { getSysRedis } from './redis';
 import { evictHomeBlocks } from './home-blocks';
 import { syncSearchIndex, syncSearchIndexBulk } from './search-index';
@@ -570,15 +571,22 @@ export async function notifyImageTosViolation(image: {
 }): Promise<boolean> {
   if (isFeedbackCaptureOwner(image.ownerId)) return false;
   try {
+    // A song or its cover names the song (the template's "song" / "song cover" wording) and links to
+    // it; a lookup that fails sends the image wording rather than no notice.
+    const song = await songNoticeSubject(dbRead, image.imageId).catch(() => null);
     await getNotifications().createNotification({
       userId: image.ownerId,
       type: 'tos-violation',
       category: NotificationCategory.System,
       key: `tos-violation:image:${randomUUID()}`,
       details: {
-        modelName: image.postId ? `post #${image.postId}` : 'a post',
-        entity: 'image',
-        url: `/images/${image.imageId}`,
+        ...(song
+          ? songTosNoticeDetails(song)
+          : {
+              modelName: image.postId ? `post #${image.postId}` : 'a post',
+              entity: 'image',
+              url: `/images/${image.imageId}`,
+            }),
         ...(image.reason ? { reason: image.reason } : {}),
       },
     });

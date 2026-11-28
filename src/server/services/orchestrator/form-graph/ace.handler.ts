@@ -94,10 +94,18 @@ export const createAceAudioInput = defineHandler<EcosystemData<'Ace'>, StepInput
     steps.push(chatStep);
   }
 
-  const cover = coverRef
+  // With a `cover` input ACE muxes the song into an MP4 over the image. A `music` flag holder gets
+  // no `cover`: the song stays an MP3 the song scan can read, and posting links the cover as its own
+  // image (the generated one from the imageGen step, an uploaded one from this step's metadata).
+  // Anyone else can't post a song, so they get the MP4, which posts as a video.
+  const muxCover = !ctx.canUseMusic;
+  const uploadedCover = !coverRef && data.images?.length ? data.images[0] : undefined;
+  const cover = !muxCover
+    ? undefined
+    : coverRef
     ? { imageUrl: { $ref: coverRef, path: 'output.images[0].url' } as unknown as string }
-    : data.images?.length
-    ? { imageUrl: data.images[0].url }
+    : uploadedCover
+    ? { imageUrl: uploadedCover.url }
     : undefined;
 
   const aceInput = removeEmpty({
@@ -126,6 +134,16 @@ export const createAceAudioInput = defineHandler<EcosystemData<'Ace'>, StepInput
   steps.push({
     $type: 'aceStepAudio',
     input: aceInput as AceStepAudioInput,
+    ...(uploadedCover &&
+      !muxCover && {
+        metadata: {
+          coverImage: {
+            url: uploadedCover.url,
+            width: uploadedCover.width,
+            height: uploadedCover.height,
+          },
+        },
+      }),
   } as AceStepAudioStepTemplate as unknown as StepInput);
   return steps;
 });

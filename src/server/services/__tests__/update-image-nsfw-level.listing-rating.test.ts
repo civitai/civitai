@@ -73,6 +73,7 @@ vi.mock('~/server/games/new-order/utils', async (importOriginal) => {
 });
 
 const { updateImageNsfwLevel } = await import('../image.service');
+const { setSongReRater } = await import('../audio-scan/song-rating');
 
 const IMAGE_ID = 7301;
 const MOD = 9001;
@@ -187,6 +188,55 @@ describe('updateImageNsfwLevel → version showcase cache', () => {
     } as never);
 
     expect(bustCachesForPosts).not.toHaveBeenCalled();
+  });
+});
+
+// A song's level includes its own cover's (docs/features/music.md "A song's rating").
+describe('updateImageNsfwLevel → the song a cover belongs to', () => {
+  const rerate = vi.fn<(songId: number) => Promise<void>>(async () => undefined);
+  const SONG = 7302;
+
+  beforeEach(() => {
+    setSongReRater(rerate);
+    dbMock.dbWrite.track.findUnique.mockResolvedValue({ imageId: SONG } as never);
+  });
+
+  it.each([
+    ['a moderator', undefined],
+    ['a Knights consensus', 'setNsfwLevelKono'],
+  ])('re-rates the song when %s rates its own cover', async (_, activity) => {
+    await updateImageNsfwLevel({
+      csamReview: true,
+      id: IMAGE_ID,
+      nsfwLevel: NsfwLevel.X,
+      userId: MOD,
+      isModerator: true,
+      activity,
+    } as never);
+
+    expect(dbMock.dbWrite.track.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { coverImageId: IMAGE_ID } })
+    );
+    expect(rerate).toHaveBeenCalledTimes(1);
+    expect(rerate).toHaveBeenCalledWith(SONG);
+  });
+
+  it('leaves songs alone for an image in a post, which is no song cover', async () => {
+    dbMock.dbWrite.image.findUnique.mockResolvedValue({
+      metadata: {},
+      postId: 55,
+      nsfwLevel: NsfwLevel.PG,
+    } as never);
+
+    await updateImageNsfwLevel({
+      csamReview: true,
+      id: IMAGE_ID,
+      nsfwLevel: NsfwLevel.X,
+      userId: MOD,
+      isModerator: true,
+    } as never);
+
+    expect(rerate).not.toHaveBeenCalled();
   });
 });
 

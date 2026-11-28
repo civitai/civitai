@@ -249,6 +249,7 @@ export const toggleReactionHandler = async ({
         id: input.entityId,
         userId: ctx.user.id,
         isModerator: ctx.user.isModerator,
+        music: !!ctx.features?.music,
       };
       await assertImageVisibleToViewer(viewer).catch(async (error: unknown) => {
         const hidden = error instanceof TRPCError && error.code === 'NOT_FOUND';

@@ -302,6 +302,7 @@ export const commentSurfaces: Record<CommentEntityType, CommentSurface> = {
         id: imageId,
         userId: ctx.user?.id,
         isModerator: ctx.user?.isModerator,
+        music: !!ctx.features?.music,
         ownerSeesHeld: view?.ownerSeesHeld ?? false,
       })),
     onCreated: (comment, ctx) => {

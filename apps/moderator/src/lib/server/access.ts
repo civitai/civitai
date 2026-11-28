@@ -142,6 +142,16 @@ export const NAVIGATION: NavLink[] = [
       { path: '/images/ingestion-errors', label: 'Ingestion Errors', countKey: 'ingestionErrors' },
     ],
   },
+  // Audio items (songs now, sound effects next) are their own section, not image queues: a song is
+  // decided with its cover, lyrics and rating together. The path is the group's grant key only.
+  {
+    label: 'Audio',
+    path: '/audio',
+    children: [
+      // Songs and their covers: reports, appeals and holds. The song reports Image Reports no longer lists.
+      { path: '/audio-review', label: 'Audio review', countKey: 'audioReview' },
+    ],
+  },
   // Models gets its own group beside Images and Articles rather than a single top-level entry — the
   // model-side queues are a section, not a page, and the next one added should have somewhere to go.
   {

@@ -41,11 +41,12 @@ beforeAll(async () => {
   await db.exec(`
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
     CREATE TYPE "Availability" AS ENUM ('Public', 'Unsearchable', 'Private', 'EarlyAccess');
+    CREATE TYPE "MediaType" AS ENUM ('image', 'video', 'audio');
     CREATE TYPE "CollectionContributorPermission" AS ENUM ('VIEW', 'ADD', 'ADD_REVIEW', 'MANAGE');
     CREATE TABLE "ServiceDealReviewImage" ("reviewId" int NOT NULL, "imageId" int NOT NULL);
     CREATE TABLE "Image" (
       id int PRIMARY KEY, "userId" int NOT NULL DEFAULT ${OWNER}, "postId" int, url text NOT NULL,
-      type text NOT NULL DEFAULT 'image', "nsfwLevel" int NOT NULL DEFAULT 1,
+      type "MediaType" NOT NULL DEFAULT 'image', "nsfwLevel" int NOT NULL DEFAULT 1,
       ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned', "needsReview" text,
       "nsfwLevelLocked" boolean NOT NULL DEFAULT false, metadata jsonb, "blockedFor" text,
       minor boolean NOT NULL DEFAULT false, "modelRestricted" boolean NOT NULL DEFAULT false,

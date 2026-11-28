@@ -1,5 +1,10 @@
 import { Prisma } from '@prisma/client';
+import { browsingLevels } from '~/shared/constants/browsingLevel.constants';
 import { JUDGE_RATING_METADATA_KEY } from '~/shared/utils/block-provenance-metadata';
+
+/** The single browsing levels a rating can be, PG to XXX: a combined or Blocked level is not one. */
+export const RATING_LEVELS: readonly number[] = browsingLevels;
+const RATING_LEVEL_TEXTS = Prisma.raw(RATING_LEVELS.map((level) => `'${level}'`).join(', '));
 
 /**
  * Whether `Image` aliased `alias` carries a scan workflow, i.e. was ever scanned. A row without one
@@ -16,7 +21,7 @@ export const hasScanWorkflowSql = (alias: string) =>
 export const legacyJudgeRatingSeedSql = (alias: string, collectionId: Prisma.Sql) => {
   const i = Prisma.raw(`"${alias}"`);
   return Prisma.sql`(CASE
-    WHEN ${i}."nsfwLevel" IN (1, 2, 4, 8, 16)
+    WHEN ${i}."nsfwLevel" IN (${Prisma.raw(RATING_LEVELS.join(', '))})
       AND NOT COALESCE(${i}."metadata" ? ${JUDGE_RATING_METADATA_KEY}::text, false)
     THEN COALESCE(${i}."metadata", '{}'::jsonb) || jsonb_build_object(
       ${JUDGE_RATING_METADATA_KEY}::text,
@@ -42,8 +47,16 @@ export const judgeRatingFloorSql = (column = '"metadata"') => {
     column
   )} -> ${JUDGE_RATING_METADATA_KEY}::text -> 'nsfwLevel')`;
   return Prisma.sql`(CASE
-    WHEN jsonb_typeof(${level}) = 'number' AND ${level}::text IN ('1', '2', '4', '8', '16')
+    WHEN jsonb_typeof(${level}) = 'number' AND ${level}::text IN (${RATING_LEVEL_TEXTS})
     THEN ${level}::text::int
     ELSE 0
   END)`;
 };
+
+/** `judgeRatingFloorSql` over an `Image.metadata` value already read. */
+export function judgeRatingFloor(metadata: unknown): number {
+  const level = (metadata as Record<string, { nsfwLevel?: unknown } | undefined> | null)?.[
+    JUDGE_RATING_METADATA_KEY
+  ]?.nsfwLevel;
+  return typeof level === 'number' && RATING_LEVELS.includes(level) ? level : 0;
+}

@@ -1,3 +1,4 @@
+import { TEXT_SCAN_HOLD_TABLE_SQL } from '../../../test/held-image-tables';
 import type { PGlite } from '@electric-sql/pglite';
 import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
@@ -43,6 +44,7 @@ CREATE TYPE "EntityType" AS ENUM ('Image', 'Post', 'Model');
 CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected');
 CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "deletedAt" TIMESTAMP(3));
 CREATE DOMAIN "ImageIngestionStatus" AS TEXT;
+${TEXT_SCAN_HOLD_TABLE_SQL}
 CREATE TABLE "Image" (
   "id" INTEGER PRIMARY KEY,
   "needsReview" TEXT,

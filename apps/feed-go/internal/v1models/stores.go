@@ -451,7 +451,13 @@ func (d *Deps) versionParts(ctx context.Context, raws []*rawItem, in RawInput, n
 	// The showcase images: getImagesForModelVersionCache, read as model.getAll reads it
 	// (hydrate.Sources.VersionImages: the appendFn's minor and selectable-level filter and each
 	// image's tag ids; with FEED_GO_COMPUTE_MISSES a miss computed and a stale entry revalidated).
-	g.Go(func(ctx context.Context) (err error) { images, err = d.Sources.VersionImages(ctx, versionIDs); return })
+	g.Go(func(ctx context.Context) (err error) {
+		if images, err = d.Sources.VersionImages(ctx, versionIDs); err == nil {
+			// getImagesForModelVersionCache(ids, undefined): the viewer here is signed out.
+			images = hydrate.WithoutHiddenSongs(images, 0, false)
+		}
+		return
+	})
 	g.Go(func(ctx context.Context) (err error) { held, err = d.heldLevels(ctx, flagged); return })
 	g.Go(func(ctx context.Context) (err error) { stats, err = d.versionStats(ctx, modelIDs, versionIDs); return })
 	if err := g.Wait(); err != nil {

@@ -1,9 +1,11 @@
+import type { PoolClient } from 'pg';
 import { dbWrite } from '~/server/db/client';
 import { evictHomeBlocksForImages } from '~/server/services/home-block-cache.service';
 import { tagIdsForImagesCache, refreshThumbnailCache, imageTagsCache } from '~/server/redis/caches';
 import type { TagSource } from '~/shared/utils/prisma/enums';
 import { pgDbWrite } from '~/server/db/pgDb';
 import { Limiter } from '~/server/utils/concurrency-helpers';
+import type { TagRule } from '~/server/services/system-cache';
 import { getModeratedTags, getTagRules } from '~/server/services/system-cache';
 import { createImageTagsForReview } from '~/server/services/image-review.service';
 import { NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
@@ -23,10 +25,49 @@ type TagsOnImageNewArgs = {
   needsReview?: boolean;
 };
 
-export async function insertTagsOnImageNew(args: TagsOnImageNewArgs[]) {
+/**
+ * A caller's open transaction: rows go on `client` with `tagRules` read before it began. Cache
+ * busts, the rating recount and the search queue are pushed onto `afterCommit` for the caller to
+ * run after it commits.
+ */
+export type TagWriteTransaction = {
+  client: Pick<PoolClient, 'query'>;
+  tagRules: TagRule[];
+  afterCommit: (() => Promise<void>)[];
+};
+
+/** Busts the caches of the images whose tags were written. */
+async function bustImageTagCaches(items: { imageId: number }[]) {
+  const imageIds = [...new Set(items.map((x) => x.imageId))];
+  await tagIdsForImagesCache.bust(imageIds);
+  await imageTagsCache.bust(imageIds);
+}
+
+async function afterTagWrite(
+  written: { imageId: number; tagId: number }[],
+  imageIds: number[],
+  tx: TagWriteTransaction | undefined
+) {
+  const ratings = async () => {
+    const levelImageIds = await updateImageNsfwLevels(written);
+    await queueDocumentsForImageMinorChanges({ levelImageIds });
+  };
+  const searchQueue = async () => {
+    await (
+      await imageService()
+    ).queueImageSearchIndexUpdate({ ids: imageIds, action: SearchIndexUpdateQueueAction.Update });
+  };
+  if (tx) tx.afterCommit.push(() => bustImageTagCaches(written), ratings, searchQueue);
+  else {
+    await ratings();
+    await searchQueue();
+  }
+}
+
+export async function insertTagsOnImageNew(args: TagsOnImageNewArgs[], tx?: TagWriteTransaction) {
   if (!args.length) return;
 
-  const withTagRules = await applyTagRules(args);
+  const withTagRules = await applyTagRules(args, tx?.tagRules);
 
   await Limiter().process(withTagRules, async (items) => {
     const values = items
@@ -40,24 +81,20 @@ export async function insertTagsOnImageNew(args: TagsOnImageNewArgs[]) {
       })
       .join(', ');
 
-    await pgDbWrite.query(`
+    await (tx?.client ?? pgDbWrite).query(`
       SELECT insert_tag_on_image(t."imageId", t."tagId", t."source"::"TagSource", t."confidence"::integer, t."automated"::boolean, t."disabled"::boolean, t."needsReview"::boolean)
       FROM (VALUES ${values}) AS t("imageId", "tagId", "source", "confidence", "automated", "disabled", "needsReview");
     `);
 
-    const imageIds = [...new Set(items.map((x) => x.imageId))];
-    await tagIdsForImagesCache.bust(imageIds);
-    await imageTagsCache.bust(imageIds);
+    // Before the commit, a bust lets a reader cache the old tags again; a transaction busts after.
+    if (!tx) await bustImageTagCaches(items);
   });
 
-  const levelImageIds = await updateImageNsfwLevels(withTagRules);
-  await queueDocumentsForImageMinorChanges({ levelImageIds });
-  await (
-    await imageService()
-  ).queueImageSearchIndexUpdate({
-    ids: args.map((x) => x.imageId),
-    action: SearchIndexUpdateQueueAction.Update,
-  });
+  await afterTagWrite(
+    withTagRules,
+    args.map((x) => x.imageId),
+    tx
+  );
 }
 
 export async function upsertTagsOnImageNew(args: TagsOnImageNewArgs[]) {
@@ -97,28 +134,26 @@ export async function upsertTagsOnImageNew(args: TagsOnImageNewArgs[]) {
   });
 }
 
-export async function deleteTagsOnImageNew(args: { imageId: number; tagId: number }[]) {
+export async function deleteTagsOnImageNew(
+  args: { imageId: number; tagId: number }[],
+  tx?: TagWriteTransaction
+) {
   await Limiter().process(args, async (items) => {
     const values = items.map((item) => `(${item.imageId}, ${item.tagId})`).join(', ');
 
-    await pgDbWrite.query(`
+    await (tx?.client ?? pgDbWrite).query(`
       DELETE FROM "TagsOnImageNew"
       WHERE ("imageId", "tagId") IN (SELECT * FROM (VALUES ${values}) AS t("imageId", "tagId"));
     `);
 
-    const imageIds = [...new Set(items.map((x) => x.imageId))];
-    await tagIdsForImagesCache.bust(imageIds);
-    await imageTagsCache.bust(imageIds);
+    if (!tx) await bustImageTagCaches(items);
   });
 
-  const levelImageIds = await updateImageNsfwLevels(args);
-  await queueDocumentsForImageMinorChanges({ levelImageIds });
-  await (
-    await imageService()
-  ).queueImageSearchIndexUpdate({
-    ids: args.map((x) => x.imageId),
-    action: SearchIndexUpdateQueueAction.Update,
-  });
+  await afterTagWrite(
+    args,
+    args.map((x) => x.imageId),
+    tx
+  );
 }
 
 async function updateImageNsfwLevels(args: { imageId: number; tagId: number }[]) {
@@ -187,8 +222,9 @@ async function queueBlockedTagReviews(args: { imageId: number; tagId: number }[]
   }
 }
 
-export async function applyTagRules(args: TagsOnImageNewArgs[]) {
-  const tagRules = await getTagRules();
+/** `tagRules`: rules already read, for a caller inside a transaction. */
+export async function applyTagRules(args: TagsOnImageNewArgs[], tagRules?: TagRule[]) {
+  tagRules ??= await getTagRules();
 
   const keyOf = (imageId: number, tagId: number) => `${imageId}|${tagId}`;
 

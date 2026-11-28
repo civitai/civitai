@@ -1,3 +1,4 @@
+import dynamic from 'next/dynamic';
 import { imageStatsToReactionMetrics } from '~/components/Reaction/image-reaction-metrics';
 import { Alert, Anchor, Badge, Loader, Text, ThemeIcon } from '@mantine/core';
 import { Tooltip } from '~/components/MantineOverlays';
@@ -57,6 +58,9 @@ import {
 import { isImageShownBlocked } from '~/shared/utils/image-blocked';
 import classes from './ImagesCard.module.scss';
 
+// Only feeds with songs, behind the music flag, load the Song Card and the player store it uses.
+const SongCard = dynamic(() => import('~/components/Music/SongCard').then((m) => m.SongCard));
+
 function getDialogState<T extends { id?: number }>(imageId: number, images: T[] = []) {
   const index = images.findIndex((x) => x.id === imageId);
   if (index === -1) return [];
@@ -73,6 +77,9 @@ export function ImagesCard({
   height: number;
   width?: number;
 }) {
+  const features = useFeatureFlags();
+  if (features.music && data.type === MediaType.audio)
+    return <SongCard data={data} height={height} />;
   return (
     <HatTurfCardProvider>
       <ImagesCardContent data={data} height={height} width={width} />

@@ -19,6 +19,8 @@ type ImageRow = {
   blockedFor?: string | null;
   nsfwLevelLocked?: boolean;
   modelRestricted?: boolean;
+  type?: 'image' | 'audio';
+  needsReview?: string;
 };
 
 const images: Record<string, ImageRow> = {
@@ -43,8 +45,28 @@ const images: Record<string, ImageRow> = {
     ingestion: 'Scanned',
     modelRestricted: true,
   },
+  // A song held for csam by its lyrics or cover (PR #10162). Other media under a review keep
+  // their image, as before.
+  'song held for csam review': {
+    nsfwLevel: NsfwLevel.PG,
+    ingestion: 'Scanned',
+    type: 'audio',
+    needsReview: 'csam',
+  },
+  'scanned song': { nsfwLevel: NsfwLevel.PG, ingestion: 'Scanned', type: 'audio' },
+  'picture under csam review': {
+    nsfwLevel: NsfwLevel.PG,
+    ingestion: 'Scanned',
+    needsReview: 'csam',
+  },
 };
-const shown = ['scanned', 'pending with a moderator rating', 'SFW level under a restricting model'];
+const shown = [
+  'scanned',
+  'pending with a moderator rating',
+  'SFW level under a restricting model',
+  'scanned song',
+  'picture under csam review',
+];
 const names = Object.keys(images);
 
 beforeAll(async () => {
@@ -54,7 +76,8 @@ beforeAll(async () => {
       ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
     CREATE TABLE "User" (id int PRIMARY KEY, username text);
     CREATE TABLE "Image" (
-      id int PRIMARY KEY, url text NOT NULL, hash text, "nsfwLevel" int NOT NULL,
+      id int PRIMARY KEY, type text NOT NULL DEFAULT 'image', "needsReview" text,
+      url text NOT NULL, hash text, "nsfwLevel" int NOT NULL,
       ingestion "ImageIngestionStatus" NOT NULL, "blockedFor" text,
       "nsfwLevelLocked" boolean NOT NULL DEFAULT false, metadata jsonb, "scanJobs" jsonb,
       "userId" int, "modelRestricted" boolean NOT NULL DEFAULT false
@@ -72,8 +95,8 @@ beforeAll(async () => {
     const img = images[name];
     await pg.db.query(`INSERT INTO "User" VALUES ($1, $2)`, [id, `user${id}`]);
     await pg.db.query(
-      `INSERT INTO "Image" (id, url, hash, "nsfwLevel", ingestion, "blockedFor", "nsfwLevelLocked", "userId", "modelRestricted")
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      `INSERT INTO "Image" (id, url, hash, "nsfwLevel", ingestion, "blockedFor", "nsfwLevelLocked", "userId", "modelRestricted", type, "needsReview")
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
       [
         100 + id,
         `url-${id}`,
@@ -84,6 +107,8 @@ beforeAll(async () => {
         img.nsfwLevelLocked ?? false,
         id,
         img.modelRestricted ?? false,
+        img.type ?? 'image',
+        img.needsReview ?? null,
       ]
     );
     await pg.db.query(`INSERT INTO "ChallengeWinner" VALUES ($1, $2, $1, $3, $1, 0, 0, NULL)`, [

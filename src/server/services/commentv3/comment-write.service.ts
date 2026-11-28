@@ -32,6 +32,7 @@ export async function writeNewComment({
   section,
   parent,
   content,
+  metadata,
   track,
   afterInsert,
 }: {
@@ -39,6 +40,8 @@ export async function writeNewComment({
   section: Section | ((db: SqlRunner) => Promise<Section>);
   parent?: StoredCommentV3;
   content: string;
+  /** Server-built; never a client's object. */
+  metadata?: Record<string, unknown>;
   track?: Track;
   afterInsert?: (db: SqlRunner, row: StoredCommentV3) => Promise<void>;
 }) {
@@ -54,6 +57,7 @@ export async function writeNewComment({
       entityId,
       parentId: parent?.id,
       content,
+      metadata,
     });
     await afterInsert?.(db, row);
     return { row, charged };

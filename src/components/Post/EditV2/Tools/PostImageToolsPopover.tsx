@@ -3,6 +3,7 @@ import React, { useMemo, useState } from 'react';
 import { AlwaysOpenCombobox } from '~/components/Combobox/AlwaysOpenComboBox';
 import type { ComboboxOption } from '~/components/Combobox/combobox.types';
 import { usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
+import { addToAllLabel } from '~/components/Post/EditV2/Tools/add-to-all.utils';
 import { useQueryTools } from '~/components/Tool/tools.utils';
 import type { PostEditImageDetail } from '~/server/services/post.service';
 import { getDisplayName } from '~/utils/string-helpers';
@@ -17,9 +18,10 @@ export function ImageToolsPopover({
   onSuccess?: () => void;
 }) {
   const { tools, loading: loadingTools } = useQueryTools({ filters: { include: ['unlisted'] } });
-  const [updateImage, imageCount, imageIds] = usePostEditStore((state) => [
+  const [updateImage, imageCount, addToAll, imageIds] = usePostEditStore((state) => [
     state.updateImage,
     state.images.length,
+    addToAllLabel(state.images),
     state.images.map((x) => (x.type === 'added' ? x.data.id : undefined)).filter(isDefined),
   ]);
   const [showSelected, setShowSelected] = useState(false);
@@ -142,7 +144,7 @@ export function ImageToolsPopover({
                 disabled={isLoading}
                 onClick={() => handleAddTools(true)}
               >
-                Add to all images ({imageCount})
+                {addToAll}
               </Button>
             )}
           </div>

@@ -271,6 +271,12 @@ beforeAll(async () => {
     INSERT INTO "Post" (id, "modelVersionId", "publishedAt") VALUES
       (1621, 1611, now() - interval '1 day'), (1622, 1612, now() - interval '1 day');
     INSERT INTO "Image" (id, "postId") VALUES (1631, 1621), (1632, 1622);
+
+    -- Songs: post 3901's song is held for csam review (by its lyrics or cover), post 3902's is not.
+    INSERT INTO "Post" (id, "publishedAt") VALUES
+      (3901, now() - interval '1 day'), (3902, now() - interval '1 day');
+    INSERT INTO "Image" (id, "postId", type, "needsReview") VALUES
+      (3911, 3901, 'audio', 'csam'), (3912, 3902, 'audio', NULL);
     -- Held models, each leading its owner post with an image above its gallery level:
     -- 2001 minor (PG stored), 2101 SFW-only with PG stored, so its PG-13 lead is above it too.
     INSERT INTO "Model" (id, status, minor, "sfwOnly", "gallerySettings") VALUES
@@ -345,8 +351,12 @@ beforeAll(async () => {
 });
 
 type Viewer = (typeof viewers)[keyof typeof viewers];
-const coverOf = async (entityType: string, entityId: number, viewer: Viewer) => {
-  const covers = await getEntityCoverImage({ entities: [{ entityType, entityId }], viewer });
+const coverOf = async (entityType: string, entityId: number, viewer: Viewer, music = false) => {
+  const covers = await getEntityCoverImage({
+    entities: [{ entityType, entityId }],
+    viewer,
+    music,
+  });
   return covers[0]?.id ?? null;
 };
 
@@ -532,6 +542,27 @@ describe('getEntityCoverImage respects the parent entity visibility', () => {
       expect(await coverOf('ModelVersion', 1612, viewers[who])).toBe(1632);
       expect(await coverOf('Image', 1632, viewers[who])).toBe(1632);
       expect(await coverOf('Post', 1622, viewers[who])).toBe(1632);
+    }
+  );
+
+  it.each(Object.keys(viewers) as (keyof typeof viewers)[])(
+    'gives a post no cover from a song held for csam review, for a %s viewer with the music flag',
+    async (who) => {
+      expect(await coverOf('Post', 3901, viewers[who], true)).toBeNull();
+      expect(await coverOf('Post', 3902, viewers[who], true)).toBe(3912);
+    }
+  );
+
+  it.each([
+    ['anonymous', null],
+    ['stranger', null],
+    ['owner', 3912],
+    ['moderator', 3912],
+  ] as const)(
+    'gives a post a song cover without the music flag only for its owner and moderators: %s',
+    async (who, cover) => {
+      expect(await coverOf('Post', 3902, viewers[who])).toBe(cover);
+      expect(await coverOf('Image', 3912, viewers[who])).toBe(cover);
     }
   );
 

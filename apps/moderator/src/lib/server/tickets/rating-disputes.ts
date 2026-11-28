@@ -1,7 +1,7 @@
 import { sql } from '@civitai/db/kysely';
 import type { RatingReviewRow } from '../rating-reviews.service';
 import { RATING_DISPUTE_ROWS } from '$lib/tickets/rating-disputes';
-import { ReportStatus } from '$lib/rating-review';
+import { ReportStatus, SONG_ENTITY_TYPE } from '$lib/rating-review';
 
 export type TicketRatingDispute = {
   id: number;
@@ -43,6 +43,8 @@ const liveReads: RatingDisputeReads = {
     return hydrateRatingReviews(
       await ratingReviewRowQuery()
         .where('rr.userId', '=', userId)
+        // Song disputes are decided on the Audio review page, which plays the song.
+        .where('rr.entityType', '<>', SONG_ENTITY_TYPE)
         // Pending first, so the bounded read never drops one behind a run of decided disputes.
         .orderBy(sql`(rr."status" = 'Pending') desc`)
         .orderBy('rr.createdAt', 'desc')

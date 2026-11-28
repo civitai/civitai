@@ -35,6 +35,7 @@ vi.mock('../thumbnail-cache', async (importOriginal) => ({
 
 const { resolveIngestionError } = await import('../ingestion.service');
 const { queueDocumentsForImageMinorChanges } = await import('../image-models-reindex');
+const { recordModActivity } = await import('../mod-activity');
 
 const SCHEMA = `
 CREATE TABLE "User" (
@@ -47,6 +48,7 @@ CREATE TABLE "Image" (
   "userId" INTEGER NOT NULL,
   "postId" INTEGER,
   "url" TEXT NOT NULL,
+  "type" TEXT NOT NULL DEFAULT 'image',
   "needsReview" TEXT,
   "blockedFor" TEXT,
   "ingestion" TEXT NOT NULL,
@@ -98,11 +100,13 @@ async function seed({
   needsReview = null,
   bannedAt = null,
   deletedAt = null,
+  type = 'image',
 }: {
   blockedFor?: string | null;
   needsReview?: string | null;
   bannedAt?: string | null;
   deletedAt?: string | null;
+  type?: string;
 }) {
   await db.query(`INSERT INTO "User" ("id", "bannedAt", "deletedAt") VALUES ($1, $2, $3)`, [
     OWNER,
@@ -110,9 +114,9 @@ async function seed({
     deletedAt,
   ]);
   await db.query(
-    `INSERT INTO "Image" ("id", "userId", "url", "needsReview", "blockedFor", "ingestion", "metadata")
-     VALUES ($1, $2, $3, $4, $5, 'Error', '{}')`,
-    [IMAGE_ID, OWNER, URL, needsReview, blockedFor]
+    `INSERT INTO "Image" ("id", "userId", "url", "needsReview", "blockedFor", "ingestion", "metadata", "type")
+     VALUES ($1, $2, $3, $4, $5, 'Error', '{}', $6)`,
+    [IMAGE_ID, OWNER, URL, needsReview, blockedFor, type]
   );
   await db.query(
     `INSERT INTO "JobQueue" ("type", "entityType", "entityId") VALUES ('BlockedImageDelete', 'Image', $1)`,
@@ -144,6 +148,7 @@ describe('spoke resolveIngestionError refusals', () => {
     ['a csam review hold', { needsReview: 'csam' }, /moderation block/],
     ['a banned owner', { bannedAt: '2026-01-01' }, /banned or deleted/],
     ['a deleted owner', { deletedAt: '2026-01-01' }, /banned or deleted/],
+    ['a song, which only its own scan may publish', { type: 'audio' }, /song/],
   ])(
     'refuses an image with %s, leaving the row and its purge row as they were',
     async (_, seedWith, message) => {
@@ -192,6 +197,14 @@ describe('spoke resolveIngestionError publishing', () => {
     const row = await imageRow();
     expect(row).toMatchObject({ ingestion: 'Scanned', blockedFor: null, nsfwLevel: 1 });
     expect(await purgeRows()).toBe(0);
+  });
+
+  it('records the level it replaced and the one it set', async () => {
+    await seed({});
+    await resolve();
+    expect(recordModActivity).toHaveBeenCalledWith(
+      expect.objectContaining({ activity: 'setNsfwLevel', details: { from: 0, to: 1 } })
+    );
   });
 
   it('leaves the purge queue alone when there was no block to clear', async () => {

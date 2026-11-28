@@ -404,6 +404,7 @@ const ImageCollection = ({
                 filters={filters}
                 disableStoreFilters
                 collectionId={collection.id}
+                songListName={collection.name}
                 hideHatTurf={collectionHidesHatTurf(collection)}
               />
             </FlagRowProviders>
@@ -1073,9 +1074,12 @@ export function Collection({
                     {collection && collectionType === CollectionType.Model && (
                       <ModelCollection collection={collection} permissions={permissions} />
                     )}
-                    {collection && collectionType === CollectionType.Image && (
-                      <ImageCollection collection={collection} permissions={permissions} />
-                    )}
+                    {/* A playlist's songs are images: the same feed, which plays them as a list. */}
+                    {collection &&
+                      (collectionType === CollectionType.Image ||
+                        collectionType === CollectionType.Music) && (
+                        <ImageCollection collection={collection} permissions={permissions} />
+                      )}
                     {collection && collectionType === CollectionType.Post && (
                       <PostCollection collection={collection} />
                     )}

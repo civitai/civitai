@@ -349,7 +349,8 @@ beforeAll(async () => {
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
     CREATE TABLE "Image" (id serial PRIMARY KEY, url text, poi boolean NOT NULL DEFAULT false, minor boolean NOT NULL DEFAULT false, ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Pending',
       "needsReview" text, "blockedFor" text, "nsfwLevel" int NOT NULL DEFAULT 0,
-      "tosViolation" boolean NOT NULL DEFAULT false);
+      "tosViolation" boolean NOT NULL DEFAULT false, metadata jsonb, type text, "userId" int, "postId" int);
+    CREATE TABLE "Track" ("imageId" int PRIMARY KEY, "coverImageId" int UNIQUE, genre text);
     -- The held-Final check reads reports and child-safety cases.
     CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, images jsonb NOT NULL DEFAULT '[]',
       details jsonb NOT NULL DEFAULT '{}', "reportSentAt" timestamp, "archivedAt" timestamp);

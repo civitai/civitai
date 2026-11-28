@@ -70,6 +70,35 @@ describe('orchestratorMediaTransmitter.getFiles', () => {
     });
     expect(h.pushError.mock.calls[0][1].context.errorName).toBe('NoBlob');
   });
+
+  it('carries a song flag and its details through, and types an unmapped audio blob by extension', async () => {
+    h.fetchBlob.mockResolvedValue(new Blob(['x'], { type: 'audio/x-wav' }));
+    const audioMetadata = { title: 'Night Drive', bpm: 128 };
+    orchestratorMediaTransmitter.setUrls('k', [
+      { url: 'https://orchestration.example.com/abc/song.wav', mediaType: 'audio', audioMetadata },
+    ]);
+
+    const { files } = await orchestratorMediaTransmitter.getFiles('k');
+
+    expect(files[0]).toMatchObject({ mediaType: 'audio', audioMetadata });
+    expect(files[0].file.type).toBe('audio/vnd.wave');
+  });
+
+  it('keeps the mime of an audio blob the preprocessor already knows, and retypes nothing else', async () => {
+    h.fetchBlob.mockResolvedValue(new Blob(['x'], { type: 'audio/mpeg' }));
+    orchestratorMediaTransmitter.setUrls('k', [
+      { url: 'https://orchestration.example.com/abc/song.wav', mediaType: 'audio' },
+    ]);
+    expect((await orchestratorMediaTransmitter.getFiles('k')).files[0].file.type).toBe(
+      'audio/mpeg'
+    );
+
+    h.fetchBlob.mockResolvedValue(new Blob(['x'], { type: 'image/gif' }));
+    orchestratorMediaTransmitter.setUrls('k', [
+      { url: 'https://orchestration.example.com/abc/a.wav' },
+    ]);
+    expect((await orchestratorMediaTransmitter.getFiles('k')).files[0].file.type).toBe('image/gif');
+  });
 });
 
 // Drag-and-drop calls getData without a catch, so a failed import must resolve, not reject.

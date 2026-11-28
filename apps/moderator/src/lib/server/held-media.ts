@@ -25,7 +25,7 @@ export async function getHeldMedia(imageId: number): Promise<HeldMedia | null> {
 }
 
 /** The grid's summary row, once per page view; the images themselves are audited as they are
- *  served. ModActivity has no details column, so `entityId` carries the count. */
+ *  served. `entityId` carries the count, as these rows have since before ModActivity had `details`. */
 export function recordHeldGridView(moderatorId: number, count: number) {
   void recordModActivity({
     userId: moderatorId,

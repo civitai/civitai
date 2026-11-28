@@ -20,6 +20,7 @@ import { showcaseQueries } from '~/__tests__/mocks/showcase-queries';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { NsfwLevel } from '~/server/common/enums';
 import { raiseOwnImageNsfwLevel } from '~/server/services/image.service';
+import { setSongReRater } from '~/server/services/audio-scan/song-rating';
 
 const IMAGE_ID = 7001;
 const OWNER = 42;
@@ -78,5 +79,21 @@ describe('raiseOwnImageNsfwLevel', () => {
       await raiseOwnImageNsfwLevel({ id: IMAGE_ID, nsfwLevel: NsfwLevel.Blocked, userId: OWNER })
     ).toBe(false);
     expect(raiseUpdate()).toBeUndefined();
+  });
+
+  // A song's level includes its own cover's (docs/features/music.md "A song's rating").
+  it('re-rates the song when the owner raises its own cover, a postless image', async () => {
+    const rerate = vi.fn<(songId: number) => Promise<void>>(async () => undefined);
+    setSongReRater(rerate);
+    vi.mocked(dbMock.dbWrite.$queryRaw).mockResolvedValue([{ postId: null }] as never);
+    dbMock.dbWrite.track.findUnique.mockResolvedValue({ imageId: 7002 } as never);
+
+    await raiseOwnImageNsfwLevel({ id: IMAGE_ID, nsfwLevel: NsfwLevel.X, userId: OWNER });
+
+    expect(dbMock.dbWrite.track.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { coverImageId: IMAGE_ID } })
+    );
+    expect(rerate).toHaveBeenCalledTimes(1);
+    expect(rerate).toHaveBeenCalledWith(7002);
   });
 });

@@ -18,6 +18,7 @@ import { pendingDeleteQueued } from '@civitai/db-queries/pending-deletes';
 import type { MediaType } from '$lib/media/edge-url';
 import { FLAG_KEPT_THROUGH_BLOCK, type ImageReviewType } from '$lib/image-review';
 import { DEFAULT_REPORT_REASONS } from '$lib/reports';
+import { onHeldTabText, songAppealImages } from './audio-review-count';
 import {
   FEEDBACK_CAPTURE_METADATA_KEY,
   FEEDBACK_CAPTURE_OWNER_ID,
@@ -174,6 +175,10 @@ export async function getImageReviewQueue({
     .$if(userId != null, (qb) => qb.where('i.userId', '=', userId!))
     .$if(!!capturesOnly, (qb) => qb.where('i.userId', '=', FEEDBACK_CAPTURE_OWNER_ID))
     .$if(setAside != null, (qb) => qb.where(sql<boolean>`not ${setAsideCounts('i', setAside!)}`))
+    // Audio review's Held tab decides these; the CSAM flag is not one it decides.
+    .$if(needsReview !== FLAG_KEPT_THROUGH_BLOCK, (qb) =>
+      qb.where(sql<boolean>`NOT ${sql.raw(onHeldTabText('i'))}`)
+    )
     .$if(cursor != null, (qb) => qb.where('i.id', '<', cursor!))
     .orderBy('i.id', 'desc')
     .limit(limit + 1)
@@ -409,6 +414,12 @@ export async function getImageReviewCounts(): Promise<Record<string, number>> {
     )
     .where('needsReview', 'is not', null)
     .where('needsReview', '!=', 'appeal')
+    // Counted as their queues list them: songs and own covers are Audio review's Held tab's.
+    .where(
+      sql<boolean>`("needsReview" = ${FLAG_KEPT_THROUGH_BLOCK} OR NOT ${sql.raw(
+        onHeldTabText('"Image"')
+      )})`
+    )
     .where((eb) =>
       eb.or([
         eb('ingestion', '=', 'Scanned'),
@@ -454,6 +465,17 @@ export type ReportedImageItem = {
   };
 };
 
+/** Image `alias` was blocked by an automated moderation rule (one that blocks, or is gone), which a
+ *  report verdict may still lift. Not for a row the account deletion parked. */
+export const ruleBlockedSql = (alias: string) =>
+  sql<boolean>`(${sql.ref(
+    `${alias}.metadata`
+  )} -> 'ruleId') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "ModerationRule" mr WHERE mr.id::text = ${sql.ref(
+    `${alias}.metadata`
+  )}->>'ruleId' AND mr.action <> 'Block' AND NOT EXISTS (SELECT 1 FROM "ModerationRuleVersion" v WHERE v."ruleId" = mr.id AND v.action = 'Block')) AND (${sql.ref(
+    `${alias}.metadata`
+  )} -> 'accountDeletionPriorIngestion') IS NULL`;
+
 // One row PER report (an image with N pending reports appears N times). Ordered by report.id ASC needs the
 // `Report_pending_id_idx` partial index, or it seq-scans ~400k pending rows.
 export async function getReportedImageQueue({
@@ -493,9 +515,7 @@ export async function getReportedImageQueue({
         'i.modelRestricted',
         'i.ingestion',
         'i.blockedFor',
-        sql<boolean>`(i."metadata" -> 'ruleId') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "ModerationRule" mr WHERE mr.id::text = i."metadata"->>'ruleId' AND mr.action <> 'Block' AND NOT EXISTS (SELECT 1 FROM "ModerationRuleVersion" v WHERE v."ruleId" = mr.id AND v.action = 'Block')) AND (i."metadata" -> 'accountDeletionPriorIngestion') IS NULL`.as(
-          'ruleBlocked'
-        ),
+        ruleBlockedSql('i').as('ruleBlocked'),
         'i.userId',
         'u.username',
         'r.id as reportId',
@@ -516,6 +536,9 @@ export async function getReportedImageQueue({
           // The reasons the Reports badge counts (`report:image`), so the badge and this grid are one
           // number. Today it removes nothing: Automated reports are filed for other entity types.
           .where('r.reason', 'in', DEFAULT_REPORT_REASONS)
+          // Songs are judged in Audio review (`/audio-review`). Before the limit, so the cursor holds.
+          // A `?report=` deep link is not narrowed: it opens the one report it names, a song's too.
+          .where('i.type', '<>', 'audio')
       )
       .$if(agents != null, (qb) =>
         qb.where('r.userId', agents!.mode === 'only' ? 'in' : 'not in', agents!.ids)
@@ -608,11 +631,17 @@ export async function getAppealImageQueue({
   cursor,
   limit,
   csamReview,
+  songs,
 }: {
   browsingLevel: number;
   cursor?: number;
   limit: number;
   csamReview: boolean;
+  /** Pending appeals of songs and their own covers (`songAppealImages`) are decided on Audio
+   *  review's Appeals tab: `exclude` leaves them out (the image Appeals queue), `only` lists just
+   *  those. A song or cover left flagged with no Pending appeal stays in the image queue, whose
+   *  resolve clears the flag. */
+  songs?: 'only' | 'exclude';
 }): Promise<{ items: AppealImageItem[]; nextCursor?: number }> {
   const fetched = await dbRead
     .selectFrom('Image as i')
@@ -677,6 +706,8 @@ export async function getAppealImageQueue({
     ])
     .where(sql<boolean>`(i."nsfwLevel" = 0 OR (i."nsfwLevel" & ${browsingLevel}) != 0)`)
     .where('i.needsReview', '=', 'appeal')
+    .$if(songs === 'exclude', (qb) => qb.where('i.id', 'not in', songAppealImages().select('i.id')))
+    .$if(songs === 'only', (qb) => qb.where('i.id', 'in', songAppealImages().select('i.id')))
     // Oldest appeal first, by appeal id: ordering by image id served the newest uploads first whatever
     // the appeal's age. Appeal ids follow `createdAt` (1 inversion of 1ms in 21,864 on 2026-10-07).
     .$if(cursor != null, (qb) => qb.where('appeal.id', '>', cursor!))

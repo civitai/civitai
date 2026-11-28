@@ -1,0 +1,13 @@
+# Findings gitleaks reports that are not credentials, one fingerprint per line
+# (<commit>:<file>:<rule>:<line>). Prefer an obvious placeholder value or an
+# allowlist in .gitleaks.toml for new code; this file only clears findings that
+# live in branch history and cannot be edited away.
+
+# Hand-written UUID fixtures used as fake media storage keys in music tests.
+6a16a3e60dcad902f2afb42399c4f2e71d08e0a6:src/components/Post/EditV2/PostImageCards/SongCover.browser.test.tsx:generic-api-key:17
+6a16a3e60dcad902f2afb42399c4f2e71d08e0a6:src/server/services/__tests__/song-cover.test.ts:generic-api-key:65
+58a6f9f5c37dbb1704419c3fcfe814b4eb417583:src/server/services/__tests__/add-post-image-audio.test.ts:generic-api-key:12
+58a6f9f5c37dbb1704419c3fcfe814b4eb417583:src/server/services/__tests__/image-audio-create-and-ingest.test.ts:generic-api-key:24
+
+# The music section's Pencil design file: encrypted, so high-entropy throughout.
+7fdf3aa4487b2f6226da151052e69776d1309336:designs/civitai-audio.pen:generic-api-key:90312

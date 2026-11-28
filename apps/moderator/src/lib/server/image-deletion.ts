@@ -1,7 +1,9 @@
 import { sql } from '@civitai/db/kysely';
 import {
+  coversOfDeletedSongs,
   deleteImageRows as deleteRows,
   moderatorPurge,
+  readSongCovers,
   queuePostNsfwLevelUpdates,
   type DeleteActor,
   type HiddenImage,
@@ -143,12 +145,38 @@ async function finishImageDeletes({
 }
 
 /**
+ * The rows of `ids`, then the covers of the songs among them that went: the song's delete cascades
+ * its `Track` row, the only link to its cover, so the covers are read first. A cover goes through
+ * the same delete, so a hold on it keeps it as it would any image.
+ */
+async function deleteImagesAndSongCovers(
+  trx: Kysely<DB>,
+  ids: number[],
+  actor: DeleteActor
+): Promise<DeletedImageRows> {
+  const covers = await readSongCovers(trx, ids);
+  const removal = await deleteImageRows(trx, ids, actor);
+  const coverIds = coversOfDeletedSongs(covers, removal.deleted, ids);
+  if (!coverIds.length) return removal;
+  const coverRemoval = await deleteImageRows(trx, coverIds, actor);
+  return {
+    deleted: [...removal.deleted, ...coverRemoval.deleted],
+    notReturned: [...removal.notReturned, ...coverRemoval.notReturned],
+    hidden: [...removal.hidden, ...coverRemoval.hidden],
+    avatarUserIds: [...removal.avatarUserIds, ...coverRemoval.avatarUserIds],
+    refused: [...removal.refused, ...coverRemoval.refused],
+  };
+}
+
+/**
  * The only image delete in this app: the rows go, then everything that could still hand a client a
  * deleted image is invalidated. Returns the images a child-safety case kept.
  */
 export async function deleteImages(ids: number[], actor: DeleteActor): Promise<KeptImage[]> {
   if (!ids.length) return [];
-  const removal = await dbWrite.transaction().execute((trx) => deleteImageRows(trx, ids, actor));
+  const removal = await dbWrite
+    .transaction()
+    .execute((trx) => deleteImagesAndSongCovers(trx, ids, actor));
   await finishImageDeletes(removal);
   return removal.refused;
 }

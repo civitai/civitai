@@ -72,19 +72,22 @@ export const ownContentPickerFilters = (userId: number | undefined) =>
 export const useImageQueryParams = () => useZodRouteParams(imagesQueryParamSchema);
 
 // The media-type scope a feed falls back to when its filters are cleared.
-// `/images` shows images, `/videos` shows videos; model-image feeds stay
+// `/images` shows images, `/videos` videos, `/music` songs; model-image feeds stay
 // unscoped (all media types). Returning `undefined` here would let `removeEmpty`
 // drop `types` from the payload, so the feed would serve every media type.
 export const getDefaultMediaTypes = (
-  filterType: FilterKeys<'images' | 'videos' | 'modelImages'>
+  filterType: FilterKeys<'images' | 'videos' | 'music' | 'modelImages'>
 ): MediaType[] | undefined => {
   if (filterType === 'images') return [MediaType.image];
   if (filterType === 'videos') return [MediaType.video];
+  if (filterType === 'music') return [MediaType.audio];
   return undefined;
 };
 
 // could have userImages and userVideo
-export const useImageFilters = (type: FilterKeys<'images' | 'videos' | 'modelImages'>) => {
+export const useImageFilters = (
+  type: FilterKeys<'images' | 'videos' | 'music' | 'modelImages'>
+) => {
   const storeFilters = useFiltersContext((state) => state[type]);
   const { query } = useImageQueryParams(); // router params are the overrides
   const availability = useSortAvailability();
@@ -111,6 +114,41 @@ export function isViewingOwnImages(
   filters: { username?: string; userId?: number }
 ) {
   return isViewerUsername(currentUser, filters.username) || isViewer(currentUser, filters.userId);
+}
+
+type FeedAddonFilterInput = {
+  username?: string;
+  userId?: number;
+  excludedTagIds?: number[];
+  disablePoi?: boolean;
+  disableMinor?: boolean;
+};
+
+/**
+ * The viewer's browsing addons as image feed filters, OR-merged with the caller's own. The viewer's
+ * own images skip their excluded tags.
+ */
+export function feedAddonFilters(
+  currentUser: Parameters<typeof isViewingOwnImages>[0],
+  settings: { excludedTagIds?: number[]; disablePoi?: boolean; disableMinor?: boolean },
+  filters: FeedAddonFilterInput
+) {
+  const isOwnImages = isViewingOwnImages(currentUser, filters);
+  return {
+    excludedTagIds: [
+      ...(filters.excludedTagIds ?? []),
+      ...(isOwnImages ? [] : settings.excludedTagIds ?? []),
+    ].filter(isDefined),
+    // Mods always have addon = false (BrowsingSettingsAddonsProvider), so the chip controls them.
+    disablePoi: !!filters.disablePoi || settings.disablePoi,
+    disableMinor: !!filters.disableMinor || settings.disableMinor,
+  };
+}
+
+export function useFeedAddonFilters(filters: FeedAddonFilterInput) {
+  const currentUser = useCurrentUser();
+  const { settings } = useBrowsingSettingsAddons();
+  return feedAddonFilters(currentUser, settings, filters);
 }
 
 /**
@@ -153,10 +191,9 @@ export const useQueryImages = (
     withRevealable?: boolean;
   }
 ) => {
-  const currentUser = useCurrentUser();
   const { applyHiddenPreferences = true, withRevealable, ...queryOptions } = options ?? {};
   filters ??= {};
-  const browsingSettingsAddons = useBrowsingSettingsAddons();
+  const addonFilters = useFeedAddonFilters(filters);
   // Only the domains that cap browsing (green) get `browsingLevel` backfilled by
   // `applyDomainFeature`; on red/blue an absent level reaches the query as NULL and
   // `(nsfwLevel & NULL)` drops every row. Default from context so a caller that omits
@@ -164,23 +201,11 @@ export const useQueryImages = (
   // this is the forced level, which is what those queries should be asking for.
   const contextBrowsingLevel = useBrowsingLevelDebounced();
 
-  const isOwnImages = isViewingOwnImages(currentUser, filters);
-  const excludedTagIds = [
-    ...(filters.excludedTagIds ?? []),
-    ...(isOwnImages ? [] : browsingSettingsAddons.settings.excludedTagIds ?? []),
-  ].filter(isDefined);
-
   const { data, isLoading, ...rest } = trpc.image.getInfinite.useInfiniteQuery(
     {
       ...filters,
       browsingLevel: filters.browsingLevel ?? contextBrowsingLevel,
-      excludedTagIds,
-      // OR-merge with the addon so either source can flag the filter.
-      // Mods always have addon = false (BrowsingSettingsAddonsProvider), so
-      // the chip controls them. Non-mods don't see the chip; the addon
-      // value flows through untouched.
-      disablePoi: !!filters.disablePoi || browsingSettingsAddons.settings.disablePoi,
-      disableMinor: !!filters.disableMinor || browsingSettingsAddons.settings.disableMinor,
+      ...addonFilters,
     },
     {
       getNextPageParam: (lastPage) => lastPage.nextCursor,

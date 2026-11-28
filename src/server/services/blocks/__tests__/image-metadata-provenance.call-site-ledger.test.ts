@@ -543,6 +543,11 @@ const STORED_METADATA_SOURCES = ['image.metadata', 'item.metadata'];
 type UpdateDecision =
   /** `data` spreads caller input, then forces `metadata` from the row read before the write. */
   | 'stored-row-override'
+  /**
+   * `data` spreads caller input, then sets `metadata: undefined` as its last property: Prisma omits
+   * the column, so the input cannot write it and keys saved meanwhile are not overwritten.
+   */
+  | 'spread-metadata-omitted'
   /** `metadata: { ...<stored row metadata>, <server keys> }`, directly or via a local const. */
   | 'stored-merge-server-keys'
   /** Raw SET building `metadata` from SQL literals, fixed keys and scalar-cast parameters. */
@@ -560,6 +565,12 @@ type UpdateDecision =
    * string under a fixed key cannot add or replace any other key.
    */
   | 'raw-literal-key-text-value'
+  /**
+   * Raw SET merging one `jsonb_build_object` of literal, non-provenance keys whose values are each a
+   * `::text` or `::boolean` parameter: fixed keys with scalar values cannot add or replace any other
+   * key.
+   */
+  | 'raw-literal-keys-scalar-values'
   /** Raw SET from the moderation-rule result, which merges the stored row with rule keys. */
   | 'raw-mod-rule-metadata'
   /**
@@ -576,9 +587,27 @@ type UpdateDecision =
 
 /** Every update site that can write `metadata`, keyed by enclosing function. */
 const UPDATE_SITE_LEDGER: Record<string, { decision: UpdateDecision; sites: number }> = {
-  'src/server/services/post.service.ts#updatePostImage': {
-    decision: 'stored-row-override',
+  'src/server/services/csam-image-review.ts#flagImagesForCsamReview': {
+    decision: 'raw-server-keys',
     sites: 1,
+  },
+  'src/server/services/csam-image-review.ts#holdSongForCsam': {
+    decision: 'raw-server-keys',
+    sites: 1,
+  },
+  'src/server/services/post.service.ts#updatePostImage': {
+    decision: 'spread-metadata-omitted',
+    sites: 1,
+  },
+  // A song's own keys, merged by the UPDATE so a cover link saved meanwhile stays.
+  'src/server/services/post.service.ts#writeSongTitle': {
+    decision: 'raw-literal-key-text-value',
+    sites: 1,
+  },
+  'src/server/services/post.service.ts#clearSongTitle': { decision: 'raw-server-keys', sites: 1 },
+  'src/server/services/post.service.ts#writeSongAllowRemix': {
+    decision: 'raw-server-keys',
+    sites: 2,
   },
   'src/pages/api/webhooks/youtube-upload.ts#handler': {
     decision: 'raw-literal-key-text-value',
@@ -697,6 +726,13 @@ function checkUpdateDecision(decision: UpdateDecision, site: Site): string | nul
         return 'metadata after the input spread is no longer the stored row';
       return null;
     }
+    case 'spread-metadata-omitted': {
+      // `metadata: undefined` must be the LAST property, so no spread or key after it can set it.
+      const data = propertyValue(region, 'data') ?? '';
+      if (!/[{,]\s*metadata:\s*undefined,?\s*\}$/.test(stripComments(data)))
+        return 'metadata is no longer omitted after the input spread';
+      return null;
+    }
     case 'stored-merge-server-keys': {
       const value = propertyValue(propertyValue(region, 'data') ?? '', 'metadata');
       if (!value) return 'no longer writes metadata as a property';
@@ -754,6 +790,25 @@ function checkUpdateDecision(decision: UpdateDecision, site: Site): string | nul
       ];
       if (serverOwned.includes(match[1]) || PROVENANCE_TOKEN.test(match[1]))
         return 'names a server-owned key';
+      return null;
+    }
+    case 'raw-literal-keys-scalar-values': {
+      const expr = (rawMetadataAssignment(region) ?? '').replace(/\s+/g, ' ');
+      const args = /^COALESCE\("metadata", '\{\}'::jsonb\) \|\| jsonb_build_object\((.*)\)$/.exec(
+        expr
+      )?.[1];
+      if (!args) return 'metadata is no longer one jsonb_build_object merge';
+      const pairs = [...args.matchAll(/'(\w+)', \$\{[\w.]+\}::(text|boolean)(?:, |$)/g)];
+      if (!pairs.length || pairs.map((p) => p[0]).join('') !== args)
+        return 'metadata is no longer literal keys with text or boolean values';
+      const serverOwned: readonly string[] = [
+        ...BLOCK_PROVENANCE_METADATA_KEYS,
+        ...OTHER_SERVER_OWNED_IMAGE_METADATA_KEYS,
+      ];
+      const key = pairs
+        .map((p) => p[1])
+        .find((k) => serverOwned.includes(k) || PROVENANCE_TOKEN.test(k));
+      if (key) return `names a server-owned key (${key})`;
       return null;
     }
     case 'raw-mod-rule-metadata': {

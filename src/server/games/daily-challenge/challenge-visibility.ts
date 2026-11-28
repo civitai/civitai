@@ -97,11 +97,12 @@ export function isChallengeHiddenByCoverScan(
   );
 }
 
-// The image state `winnerImageFields` needs, as columns over `"Image" i`.
+// The image state `winnerImageFields` needs, as columns over `"Image" i`. A song under any
+// needsReview counts as unreviewed, so its image is withheld.
 export const winnerImageStateSql = Prisma.sql`
   i.ingestion AS "imageIngestion",
   i."blockedFor" AS "imageBlockedFor",
-  ${imageReviewedSql()} AS "imageReviewed",
+  (${imageReviewedSql()} AND (i.type <> 'audio' OR i."needsReview" IS NULL)) AS "imageReviewed",
   ${imageNotRestrictedSql()} AS "imageNotRestricted"`;
 
 // A winner's image as any site may serve it: a blocked, unscanned, unrated or model-restricted image

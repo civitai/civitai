@@ -6,6 +6,7 @@ import React, { useMemo } from 'react';
 import { LineClamp } from '~/components/LineClamp/LineClamp';
 import { CopyButton } from '~/components/CopyButton/CopyButton';
 import { useMetadataCopy } from '~/hooks/useMetadataCopy';
+import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
 import { trpc } from '~/utils/trpc';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
@@ -80,6 +81,8 @@ export function ImageMeta({ imageId }: { imageId: number }) {
   }, [data]);
 
   if (!meta || !simpleMeta) return null;
+  if (data?.type === 'audio')
+    return <SongMeta meta={meta} model={data.resources[0]} onSite={onSite} />;
 
   const software = meta.software ?? (onSite ? 'Civitai Generator' : 'External Generator');
   const { prompt, negativePrompt } = meta;
@@ -165,6 +168,101 @@ export function ImageMeta({ imageId }: { imageId: number }) {
               ))}
             </div>
           </div>
+        </>
+      )}
+    </>
+  );
+}
+
+/**
+ * A song's generation data: its style prompt and the settings that tell it apart. Lyrics show in
+ * the player, and the generator's duration is a cap rather than the song's length, so neither is
+ * listed; nor are the workflow and ecosystem keys, which the model name already says.
+ */
+export function SongMeta({
+  meta,
+  model,
+  onSite,
+}: {
+  meta: Record<string, unknown>;
+  model?: { modelName?: string | null; versionName?: string | null };
+  onSite?: boolean;
+}) {
+  const { copy: copyAll, copied: copiedAll } = useMetadataCopy(meta);
+  const style = typeof meta.musicDescription === 'string' ? meta.musicDescription : undefined;
+  const details = [
+    {
+      label: 'Model',
+      // A song made on-site often has no resource row; its ecosystem names the model.
+      value:
+        [model?.modelName, model?.versionName].filter(Boolean).join(' ') ||
+        (typeof meta.ecosystem === 'string'
+          ? ecosystemByKey.get(meta.ecosystem)?.displayName
+          : undefined),
+    },
+    {
+      label: 'Seed',
+      value:
+        typeof meta.seed === 'number' || typeof meta.seed === 'string'
+          ? String(meta.seed)
+          : undefined,
+    },
+  ].filter((detail): detail is { label: string; value: string } => !!detail.value);
+
+  return (
+    <>
+      <div className="flex flex-col">
+        <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center gap-1">
+            <Text className="text-lg font-semibold">Style</Text>
+            <Badge size="xs" radius="sm">
+              {typeof meta.software === 'string'
+                ? meta.software
+                : onSite
+                ? 'Civitai Generator'
+                : 'External Generator'}
+            </Badge>
+          </div>
+          <div className="flex items-center gap-1">
+            {style && (
+              <CopyButton value={style}>
+                {({ copy, copied, Icon, color }) => (
+                  <Tooltip label={copied ? 'Copied' : 'Copy style'}>
+                    <LegacyActionIcon onClick={copy} color={color}>
+                      <Icon size={16} />
+                    </LegacyActionIcon>
+                  </Tooltip>
+                )}
+              </CopyButton>
+            )}
+            <Tooltip label={copiedAll ? 'Copied' : 'Copy all metadata'}>
+              <LegacyActionIcon onClick={copyAll} color={copiedAll ? 'teal' : undefined}>
+                {copiedAll ? <IconCheck size={16} /> : <IconCopy size={16} />}
+              </LegacyActionIcon>
+            </Tooltip>
+          </div>
+        </div>
+        {style ? (
+          <LineClamp c="dimmed" className="text-sm">
+            {style}
+          </LineClamp>
+        ) : (
+          <Text c="dimmed" className="text-sm">
+            No style prompt
+          </Text>
+        )}
+      </div>
+      {!!details.length && (
+        <>
+          <Divider />
+          <dl className="m-0 flex flex-col gap-1 text-sm">
+            {details.map(({ label, value }) => (
+              <div key={label} className="flex justify-between gap-3">
+                <dt className="text-dimmed">{label}</dt>
+                <dd className="m-0 text-right">{value}</dd>
+              </div>
+            ))}
+          </dl>
         </>
       )}
     </>

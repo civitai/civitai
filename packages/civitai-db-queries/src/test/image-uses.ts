@@ -67,6 +67,8 @@ export const imageUseTablesSql = [
   ...Object.values(DEAL_FILE_IMAGE_USES).map(
     ([table]) => `ALTER TABLE "${table}" ADD COLUMN IF NOT EXISTS "scanKey" text`
   ),
+  // A song delete reads its cover through the song's own Track row.
+  `ALTER TABLE "Track" ADD COLUMN IF NOT EXISTS "imageId" int`,
   `ALTER TABLE "ServiceDealReviewImage" ADD COLUMN IF NOT EXISTS "reviewId" int`,
   `CREATE TABLE IF NOT EXISTS "ServiceDealReviewReport" ("reportId" int NOT NULL)`,
   `ALTER TABLE "ServiceDealReviewReport" ADD COLUMN IF NOT EXISTS "serviceDealReviewId" int`,

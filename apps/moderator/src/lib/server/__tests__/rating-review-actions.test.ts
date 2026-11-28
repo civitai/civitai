@@ -76,6 +76,26 @@ describe('resolveRatingReviewAction', () => {
     expect(bust).not.toHaveBeenCalled();
   });
 
+  it("notifies a song's owner with a link to the song, and re-indexes nothing itself", async () => {
+    resolve.mockResolvedValue(result({ entityType: 'Song', title: 'Night drive' }));
+    await resolveRatingReviewAction({ reviewId: 11, appliedLevel: 4, userId: 7 });
+    await flush();
+    expect(notify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 3,
+        type: 'rating-review-approved',
+        details: expect.objectContaining({
+          entityType: 'Song',
+          title: 'Night drive',
+          url: '/images/5',
+          appliedLevel: 'R',
+        }),
+      })
+    );
+    // The rating writer the ruling went through already refreshed the song's caches and documents.
+    expect(sync).not.toHaveBeenCalled();
+  });
+
   it('writes BountyEntry activity in the lower-camel form the activity readers use', async () => {
     resolve.mockResolvedValue(result({ entityType: 'BountyEntry' }));
     await resolveRatingReviewAction({ reviewId: 11, appliedLevel: 2, userId: 7 });

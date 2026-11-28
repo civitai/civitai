@@ -47,7 +47,10 @@ CREATE TABLE "Appeal" (
   "buzzTransactionId" TEXT,
   "entityRemovedAt" TIMESTAMP(3)
 );
-CREATE TABLE "Image" ("id" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL, "blockedFor" TEXT);
+CREATE TABLE "Image" (
+  "id" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL, "blockedFor" TEXT,
+  "type" TEXT NOT NULL DEFAULT 'image', "url" TEXT NOT NULL DEFAULT 'key'
+);
 CREATE TABLE "Report" ("id" INTEGER PRIMARY KEY, "reason" TEXT NOT NULL);
 CREATE TABLE "UserReport" ("userId" INTEGER NOT NULL, "reportId" INTEGER NOT NULL);
 CREATE TABLE "CsamReport" ("id" INTEGER PRIMARY KEY, "userId" INTEGER, "images" JSONB NOT NULL DEFAULT '[]');
@@ -108,9 +111,12 @@ const appeal = async (id: number) =>
 
 const notices = () => createNotification.mock.calls.map((c) => c[0]);
 
+/** A moderator from whom nothing is withheld. */
+const none = async (_ids: number[]) => [] as number[];
+
 describe('getRemovedAppeals', () => {
   it('lists only Pending appeals whose content was removed, longest-waiting first', async () => {
-    const { items, hasMore } = await getRemovedAppeals({ limit: 10 });
+    const { items, hasMore } = await getRemovedAppeals({ limit: 10, withheld: none });
 
     expect(items.map((i) => i.id)).toEqual([12, 11]);
     expect(hasMore).toBe(false);
@@ -126,7 +132,7 @@ describe('getRemovedAppeals', () => {
   });
 
   it("carries each entity's moderation record, matched on type as well as id", async () => {
-    const { items } = await getRemovedAppeals({ limit: 10 });
+    const { items } = await getRemovedAppeals({ limit: 10, withheld: none });
 
     const image = items.find((i) => i.id === 11)!;
     expect(image.history.map((h) => h.activity)).toEqual(['review']);
@@ -135,7 +141,7 @@ describe('getRemovedAppeals', () => {
   });
 
   it('says when there are more than the page shows', async () => {
-    const { items, hasMore } = await getRemovedAppeals({ limit: 1 });
+    const { items, hasMore } = await getRemovedAppeals({ limit: 1, withheld: none });
 
     expect(items.map((i) => i.id)).toEqual([12]);
     expect(hasMore).toBe(true);
@@ -164,10 +170,50 @@ describe('getRemovedAppeals', () => {
         (28, 28, 'Model', 504, '2026-09-21');
     `);
 
-    const { items } = await getRemovedAppeals({ limit: 20 });
+    const { items } = await getRemovedAppeals({ limit: 20, withheld: none });
 
     expect(items.map((i) => i.id)).toEqual([12, 11, 26, 28]);
     expect(await countRemovedAppeals()).toBe(4);
+  });
+
+  // Music T10 (docs/features/music.md "Moderating songs"): the page plays a song still on file.
+  it('carries the song of an appeal on a song still on file, and no media for anything else', async () => {
+    await db.exec(`
+      INSERT INTO "Image" ("id", "userId", "blockedFor", "type", "url") VALUES
+        (601, 31, 'moderated', 'audio', 'song-key'), (602, 32, 'moderated', 'image', 'picture-key');
+      INSERT INTO "Appeal" ("id", "userId", "entityType", "entityId", "entityRemovedAt") VALUES
+        (31, 31, 'Image', 601, '2026-09-21'), (32, 32, 'Image', 602, '2026-09-21'),
+        (33, 31, 'Model', 601, '2026-09-21');
+    `);
+
+    const { items } = await getRemovedAppeals({ limit: 20, withheld: none });
+
+    expect(items.map((i) => [i.id, i.song])).toEqual([
+      [12, null],
+      [11, null],
+      [31, { id: 601, url: 'song-key' }],
+      [32, null],
+      [33, null],
+    ]);
+  });
+
+  it('carries no song a moderator without the CSAM grant is withheld, only the refusal', async () => {
+    await db.exec(`
+      INSERT INTO "Image" ("id", "userId", "blockedFor", "type", "url") VALUES
+        (601, 31, 'moderated', 'audio', 'song-key'), (603, 33, 'moderated', 'audio', 'open-key');
+      INSERT INTO "Appeal" ("id", "userId", "entityType", "entityId", "entityRemovedAt") VALUES
+        (31, 31, 'Image', 601, '2026-09-21'), (34, 33, 'Image', 603, '2026-09-21');
+    `);
+    // What `withheldImageIds` answers for this moderator: 601 is CSAM-restricted.
+    const withheld = vi.fn(async (ids: number[]) => ids.filter((id) => id === 601));
+
+    const { items } = await getRemovedAppeals({ limit: 20, withheld });
+
+    expect(withheld).toHaveBeenCalledWith([601, 603]);
+    expect(items.filter((i) => i.id >= 31).map((i) => [i.id, i.song, i.songWithheld])).toEqual([
+      [31, null, true],
+      [34, { id: 603, url: 'open-key' }, false],
+    ]);
   });
 
   it("leaves out an appeal on a restricted image itself, and serves no row's media", async () => {
@@ -177,11 +223,13 @@ describe('getRemovedAppeals', () => {
         (29, 29, 'Image', 910, '2026-09-21');
     `);
 
-    const { items } = await getRemovedAppeals({ limit: 20 });
+    const { items } = await getRemovedAppeals({ limit: 20, withheld: none });
 
     expect(items.map((i) => i.id)).toEqual([12, 11]);
-    // The page draws text only: no field a tile or a link could load the image from.
-    for (const item of items)
+    // The page draws text, and a player for a song only: no field a tile or a link could load an
+    // image from.
+    for (const item of items) {
+      expect(item.song).toBeNull();
       expect(Object.keys(item).sort()).toEqual(
         [
           'appealMessage',
@@ -192,10 +240,13 @@ describe('getRemovedAppeals', () => {
           'hasFee',
           'history',
           'id',
+          'song',
+          'songWithheld',
           'userId',
           'username',
         ].sort()
       );
+    }
   });
 });
 

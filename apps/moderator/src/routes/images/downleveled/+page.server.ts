@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { parseQuery } from '$lib/server/query';
 import { getDownleveledImages } from '$lib/server/downleveled-review.service';
-import { updateImageNsfwLevel } from '$lib/server/image-nsfw-level';
+import { SongRatingRefusedError, updateImageNsfwLevel } from '$lib/server/image-nsfw-level';
 import { holdsCsamReview } from '$lib/server/held-media';
 import { WithheldImageError } from '$lib/server/withheld-write';
 import { isRatingLevel } from '$lib/nsfw-levels';
@@ -50,6 +50,7 @@ export const actions: Actions = {
       });
     } catch (e) {
       if (e instanceof WithheldImageError) return fail(403, { error: e.message, id });
+      if (e instanceof SongRatingRefusedError) return fail(409, { error: e.message, id });
       throw e;
     }
     return { success: true, id, nsfwLevel };

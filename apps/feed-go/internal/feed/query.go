@@ -37,6 +37,8 @@ type ImagesQuery struct {
 	ExcludedUsers  []int
 	ViewerID       int
 	IsModerator    bool
+	// CanSeeSongs is Viewer.CanSeeSongs: other users' songs are served (songsHiddenSql).
+	CanSeeSongs bool
 	// IDs is the feed-service hydrate (feedHydrateQuery): exactly these images, whatever their order.
 	IDs []int
 	// PostIDs is the gallery's post completion, or image.getInfinite's own `postIds`: only these
@@ -187,6 +189,14 @@ func (q *ImagesQuery) Build() Built {
 	}
 	if len(q.Types) > 0 {
 		and = append(and, `i.type = ANY(`+a.add(q.Types)+`::text[]::"MediaType"[])`)
+	}
+	// songsHiddenSql: a viewer who cannot see songs (Viewer.CanSeeSongs) gets none but their own.
+	if !q.IsModerator && !q.CanSeeSongs {
+		if q.ViewerID != 0 {
+			and = append(and, `(i."type" != 'audio' OR i."userId" = `+a.add(q.ViewerID)+`)`)
+		} else {
+			and = append(and, `i."type" != 'audio'`)
+		}
 	}
 	if q.WithMeta {
 		and = append(and, `NOT (i.meta IS NULL OR jsonb_typeof(i.meta) = 'null' OR i."hideMeta" = TRUE)`)

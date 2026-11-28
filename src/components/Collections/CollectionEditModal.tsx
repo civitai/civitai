@@ -1,3 +1,4 @@
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   Alert,
   Button,
@@ -99,6 +100,7 @@ function CollectionEditForm({ collectionId }: { collectionId?: number }) {
   const dialog = useDialogContext();
   const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const isMember = !!currentUser?.tier && currentUser.tier !== 'free';
 
   const {
@@ -233,10 +235,13 @@ function CollectionEditForm({ collectionId }: { collectionId?: number }) {
                 name="type"
                 label="Collection Type"
                 data={[
-                  ...Object.values(CollectionType).map((value) => ({
-                    value,
-                    label: collectionTypeData[value].label,
-                  })),
+                  // Playlists exist once the music flag is on (the enum migration is applied first).
+                  ...Object.values(CollectionType)
+                    .filter((value) => value !== CollectionType.Music || features.music)
+                    .map((value) => ({
+                      value,
+                      label: collectionTypeData[value].label,
+                    })),
                 ]}
                 clearable
               />

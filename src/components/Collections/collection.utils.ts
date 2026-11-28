@@ -8,6 +8,7 @@ import {
   IconLayoutList,
   IconLock,
   IconPhoto,
+  IconPlaylist,
   IconWorld,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
@@ -265,6 +266,12 @@ export const collectionTypeData: Record<CollectionType, TypeData> = {
     value: CollectionType.Model3D,
     color: 'teal',
   },
+  [CollectionType.Music]: {
+    icon: IconPlaylist,
+    label: 'Playlist',
+    value: CollectionType.Music,
+    color: 'pink',
+  },
 };
 
 export const isCollectionSubsmissionPeriod = (collection?: CollectionByIdModel) => {
@@ -432,7 +439,7 @@ export const useMutateCollection = () => {
         await queryUtils.model.getAll.invalidate();
       }
 
-      if (res.type === CollectionType.Image) {
+      if (res.type === CollectionType.Image || res.type === CollectionType.Music) {
         await queryUtils.image.getInfinite.invalidate();
       }
 

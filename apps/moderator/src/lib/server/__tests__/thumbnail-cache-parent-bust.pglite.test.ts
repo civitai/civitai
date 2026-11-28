@@ -4,6 +4,7 @@ import { freshPglite } from '../../../test/pglite';
 import {
   DEFERRED_BLOCK_EFFECT_TABLE_SQL,
   SET_ASIDE_TABLE_SQL,
+  TEXT_SCAN_HOLD_TABLE_SQL,
 } from '../../../test/held-image-tables';
 import { Kysely } from 'kysely';
 import { REDIS_KEYS } from '@civitai/redis';
@@ -89,6 +90,7 @@ CREATE TABLE "Image" (
   "nsfwLevelLocked" BOOLEAN NOT NULL DEFAULT FALSE
 );
 ${SET_ASIDE_TABLE_SQL}
+${TEXT_SCAN_HOLD_TABLE_SQL}
 ${DEFERRED_BLOCK_EFFECT_TABLE_SQL}
 CREATE TABLE "CollectionItem" ("imageId" INTEGER);
 CREATE TABLE "CsamReport" (

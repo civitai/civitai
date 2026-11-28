@@ -21,10 +21,12 @@ import {
   notServerCopySql,
   shownReviewImageSql,
 } from '~/server/services/creator-service-review-image-sql';
+import { canSeeSongs, songsHiddenSql } from '~/server/services/song-visibility-sql';
 import { BlockedByUsers, getBlockedPairIds } from '~/server/services/user-preferences.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import type { SessionUser } from '~/types/session';
 
 /**
  * The reviewed-only part of `getImagesForModelVersion`'s filter (its non-pending branch): not held
@@ -130,10 +132,16 @@ export function imageVisibilityConditions({
   ownerSeesHeld = false,
   shownReviewImageLevels,
   judgingCrucibleIds,
+  music,
   ownerKeepsBlockedRow = false,
 }: {
   userId?: number;
   isModerator?: boolean;
+  /**
+   * The viewer's `music` flag: `false` hides songs other than the viewer's own (`songsHiddenSql`).
+   * Unset leaves songs to the caller, as for a by-id action a song procedure already gated.
+   */
+  music?: boolean;
   /**
    * The owner keeps a blocked image's row, for a read whose handler serves it without its media
    * (`viewerCanSeeImageMedia`) or returns no media at all. Never for a read that returns a url.
@@ -240,7 +248,22 @@ export function imageVisibilityConditions({
     shownReviewImageLevels === undefined
       ? notServerCopySql
       : Prisma.sql`(${notHeldReviewCopySql} AND ${notDealFileCopySql})`,
+    ...(music === false ? [songsHiddenSql({ music, ownerId: userId })!] : []),
   ];
+}
+
+export { canSeeSongs, songsHiddenSql };
+
+/**
+ * `songsHiddenSql` over rows already read, for a cache filled for every viewer: `rows` without the
+ * songs `viewer` may not see (signed out when undefined).
+ */
+export function withoutHiddenSongs<T extends { type?: string | null; userId?: number | null }>(
+  rows: T[],
+  viewer: SessionUser | undefined
+) {
+  if (canSeeSongs(viewer)) return rows;
+  return rows.filter((row) => row.type !== 'audio' || (!!viewer && row.userId === viewer.id));
 }
 
 /**
@@ -255,10 +278,16 @@ export async function assertImageVisibleToViewer({
   withSignedOutVerdict = false,
   ownerSeesHeld = false,
   judgingCrucibleIds,
+  music = false,
 }: {
   id: number;
   userId?: number;
   isModerator?: boolean;
+  /**
+   * The viewer's `music` flag (`ctx.features.music`, or `canSeeSongs`). Left out, a song is not
+   * found except by its owner and moderators.
+   */
+  music?: boolean;
   /** `imageVisibilityConditions`' `ownerSeesHeld`. */
   ownerSeesHeld?: boolean;
   /** `imageVisibilityConditions`' `judgingCrucibleIds`. */
@@ -275,7 +304,11 @@ export async function assertImageVisibleToViewer({
   withSignedOutVerdict?: boolean;
 }) {
   const signedOutVerdict = withSignedOutVerdict
-    ? Prisma.sql`(${Prisma.join([Prisma.sql`TRUE`, ...imageVisibilityConditions({})], ' AND ')})`
+    ? Prisma.sql`(${Prisma.join(
+        // Signed out holds no `music` flag.
+        [Prisma.sql`TRUE`, ...imageVisibilityConditions({ music: false })],
+        ' AND '
+      )})`
     : Prisma.sql`NULL::boolean`;
   // Through Kysely over the pg pools, not Prisma's `$queryRaw`: one of the hottest single-image
   // reads, and the same statement and parameters either way (`queryPrismaSql`). Every column is
@@ -306,6 +339,7 @@ export async function assertImageVisibleToViewer({
           isModerator,
           ownerSeesHeld,
           judgingCrucibleIds,
+          music,
           ownerKeepsBlockedRow: true,
         }),
       ],
@@ -444,6 +478,30 @@ export async function getImageIdsVisibleToViewer({
   return new Set(
     rows.filter((r) => r.userId === userId || !optedOut.has(r.userId)).map((r) => r.id)
   );
+}
+
+type SongViewer = {
+  user?: { id: number; isModerator?: boolean | null };
+  features: { music?: boolean };
+};
+
+/**
+ * The ids in `ids` the viewer may open; the one read every by-id song procedure goes through. Null
+ * when the music flag is off.
+ */
+export async function getVisibleSongIds({
+  ids,
+  viewer,
+}: {
+  ids: number[];
+  viewer: SongViewer;
+}): Promise<Set<number> | null> {
+  if (!viewer.features.music) return null;
+  return getImageIdsVisibleToViewer({
+    ids,
+    userId: viewer.user?.id,
+    isModerator: viewer.user?.isModerator ?? undefined,
+  });
 }
 
 /** NOT_FOUND unless the viewer may open every image in `ids` (see getImageIdsVisibleToViewer). */

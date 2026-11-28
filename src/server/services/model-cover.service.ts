@@ -132,9 +132,11 @@ export async function getCoverImages({
   });
   if (!located.length) return withCommunityCovers(found, pending, false);
 
-  const byVersion = await getImagesForModelVersionCache([
-    ...new Set(located.map((cover) => cover.versionId)),
-  ]);
+  // Covers are shown to everyone, so no song is one.
+  const byVersion = await getImagesForModelVersionCache(
+    [...new Set(located.map((cover) => cover.versionId))],
+    undefined
+  );
   for (const cover of located) {
     const image = byVersion[cover.versionId]?.images.find(
       (candidate) => candidate.id === cover.coverId
@@ -184,7 +186,10 @@ export async function getCoverCandidates({ modelId }: { modelId: number }) {
     orderBy: { index: 'asc' },
   });
   if (!versions.length) return [];
-  const byVersion = await getImagesForModelVersionCache(versions.map((version) => version.id));
+  const byVersion = await getImagesForModelVersionCache(
+    versions.map((version) => version.id),
+    undefined
+  );
   return versions.flatMap((version) =>
     (byVersion[version.id]?.images ?? []).map(({ id, url, type, metadata, nsfwLevel }) => ({
       id,

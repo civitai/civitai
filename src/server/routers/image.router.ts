@@ -1,4 +1,5 @@
 import { isSessionOrFullUserKey } from '~/server/auth/full-user-credential';
+import { canSeeSongs } from '~/server/services/image-visibility.service';
 import * as z from 'zod';
 import { CacheTTL } from '~/server/common/constants';
 import {
@@ -7,10 +8,13 @@ import {
   handleUpdateImageNsfwLevel,
   moderateImageHandler,
   setTosViolationHandler,
+  removeSongCoverHandler,
   setVideoThumbnailController,
   updateImageAcceptableMinorHandler,
 } from '~/server/controllers/image.controller';
 import { dbRead } from '~/server/db/client';
+import { kyselyRead } from '~/server/db/kyselyDb';
+import { getSongCoverForRemoval } from '~/server/services/song-cover-removal.service';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   addImageTechniques,
@@ -20,6 +24,7 @@ import {
   getImageGenerationData,
   getImagesByUserIdForModeration,
   getMyImages,
+  getSongPlayCounts,
   removeImageResource,
   removeImageTechniques,
   removeImageTools,
@@ -29,9 +34,15 @@ import {
   updateImageTools,
   refreshImageResources,
 } from '~/server/services/image.service';
+import { getSongCoversForPlayer, setSongCover } from '~/server/services/post.service';
+import { rerateSong } from '~/server/services/image-scan-pipeline';
+import { getSongGenreTagIds } from '~/server/services/song-genre.service';
+import { getRisingSongIds } from '~/server/services/song-rising.service';
+import { getSongLyrics } from '~/server/services/track-lyrics.service';
 import { rescanImageById } from '~/server/services/image-rescan.service';
 import {
   middleware,
+  guardedProcedure,
   heavyProcedure,
   moderatorProcedure,
   protectedProcedure,
@@ -40,7 +51,7 @@ import {
   verifiedProcedure,
 } from '~/server/trpc';
 import { requestServableLevels } from '~/server/utils/browsing-level';
-import { throwAuthorizationError } from '~/server/utils/errorHandling';
+import { handleLogError, throwAuthorizationError } from '~/server/utils/errorHandling';
 import { getApprovedImageAppeal } from '~/server/services/image-removal-hold.service';
 import { canAppealOwnImage } from '~/server/services/report.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -71,6 +82,8 @@ import {
   imageModerationSchema,
   removeImageResourceSchema,
   reportCsamImagesSchema,
+  getSongCoversSchema,
+  setSongCoverSchema,
   setTosViolationSchema,
   setVideoThumbnailSchema,
   toggleImageFlagSchema,
@@ -115,6 +128,12 @@ export const imageRouter = router({
     .use(isOwnerOrModerator)
     .mutation(deleteImageHandler),
   setTosViolation: moderatorProcedure.input(setTosViolationSchema).mutation(setTosViolationHandler),
+  /** "Remove cover" on a song: `id` is the song's; only its own cover is removed. */
+  removeSongCover: moderatorProcedure.input(setTosViolationSchema).mutation(removeSongCoverHandler),
+  /** The song's own cover, while there is one to remove, and whether it is held (refused). */
+  getSongCoverRemoval: moderatorProcedure
+    .input(getByIdSchema)
+    .query(({ input }) => getSongCoverForRemoval(kyselyRead, input.id)),
   getApprovedAppeal: moderatorProcedure
     .input(getByIdSchema)
     .query(({ input }) => getApprovedImageAppeal(input.id)),
@@ -127,6 +146,7 @@ export const imageRouter = router({
         userId: ctx.user?.id,
         isModerator: ctx.user?.isModerator,
         ownerSeesHeld: isSessionOrFullUserKey(ctx),
+        music: canSeeSongs(ctx.user ?? undefined),
       })
     ),
   /**
@@ -274,6 +294,47 @@ export const imageRouter = router({
     .input(setVideoThumbnailSchema)
     .mutation(setVideoThumbnailController),
   // #endregion
+
+  setSongCover: guardedProcedure
+    .meta({ requiredScope: TokenScope.MediaWrite })
+    .input(setSongCoverSchema)
+    .use(isOwnerOrModerator)
+    .mutation(async ({ input, ctx }) => {
+      const result = await setSongCover({ ...input, user: ctx.user });
+      // A reused cover row that was already scanned gets no new scan verdict to re-rate the song.
+      await rerateSong(input.id).catch(handleLogError);
+      return result;
+    }),
+  // Per viewer (visibility, domain level and the music flag), so no `edgeCacheIt`.
+  getSongCovers: publicProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(getSongCoversSchema)
+    // Chunks of 100 ids: one read per chunk plus one per player song.
+    .use(rateLimit({ limit: 120, period: CacheTTL.xs }))
+    .query(({ input, ctx }) => getSongCoversForPlayer({ ...input, ctx })),
+  // Per viewer (visibility and the music flag), so no edgeCacheIt.
+  getSongPlays: publicProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(getSongCoversSchema)
+    .use(rateLimit({ limit: 120, period: CacheTTL.xs }))
+    .query(({ input, ctx }) =>
+      getSongPlayCounts({ ids: input.ids, features: ctx.features, user: ctx.user })
+    ),
+  // Per viewer (visibility and the music flag), so no edgeCacheIt.
+  getRisingSongs: publicProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .use(rateLimit({ limit: 120, period: CacheTTL.xs }))
+    .query(({ ctx }) => getRisingSongIds({ features: ctx.features, user: ctx.user })),
+  // Per viewer (the music flag), so no `edgeCacheIt`.
+  getSongGenreTags: publicProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .query(({ ctx }) => getSongGenreTagIds(ctx)),
+  // Per viewer (visibility and the music flag), so no `edgeCacheIt`.
+  getSongLyrics: publicProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(getByIdSchema)
+    .use(rateLimit({ limit: 120, period: CacheTTL.xs }))
+    .query(({ input, ctx }) => getSongLyrics({ id: input.id, ctx })),
 
   updateAccetableMinor: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaWrite })

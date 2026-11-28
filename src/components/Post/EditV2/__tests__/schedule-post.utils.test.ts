@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   formatScheduleTime,
   getDefaultScheduleDate,
+  scheduleDescription,
   withScheduleDay,
   withScheduleTime,
 } from '~/components/Post/EditV2/schedule-post.utils';
@@ -98,5 +99,21 @@ describe('formatScheduleTime', () => {
   it('formats the local time as the 24-hour HH:mm a time input expects', () => {
     expect(formatScheduleTime(new Date('2026-10-06T11:03:00.000Z'))).toBe('07:03');
     expect(formatScheduleTime(new Date('2026-10-07T01:15:00.000Z'))).toBe('21:15');
+  });
+});
+
+describe('scheduleDescription', () => {
+  it('does not mention songs for a post without songs', () => {
+    expect(scheduleDescription('post', 0)).not.toMatch(/song/i);
+  });
+
+  it('names one song in the singular', () => {
+    const sentence = scheduleDescription('post', 1);
+    expect(sentence).toContain('1 song');
+    expect(sentence).not.toContain('1 songs');
+  });
+
+  it('counts several songs', () => {
+    expect(scheduleDescription('post', 2)).toContain('2 songs');
   });
 });

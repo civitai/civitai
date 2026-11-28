@@ -17,9 +17,8 @@ import { imageIngestCronCounter, imageIngestCronQueueDepth } from '~/server/prom
 import { limitConcurrency, sleep } from '~/server/utils/concurrency-helpers';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 import {
-  classifyImageScanFailure,
+  effectiveScanFailureClass,
   getImageScanRetryDelayMinutes,
-  ImageScanFailureClass,
   getImageScanRetryLimit,
   IMAGE_RESCAN_RETRY_LIMIT as IMAGE_SCANNING_RETRY_LIMIT,
 } from '~/server/services/image-scan-failure';
@@ -184,7 +183,7 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
   // should scan via the low-priority orchestrator lane. EXISTS uses the
   // ImageConnection composite PK (imageId, entityType, entityId) for an
   // index-only seek per image.
-  const images =
+  const loadedImages =
     (await dbWrite.$queryRaw<IngestImageRow[]>`
     SELECT i.id, i.url, i.type, i.width, i.height, i.meta->>'prompt' as prompt,
            i."scanRequestedAt", i."createdAt", i.ingestion,
@@ -206,14 +205,11 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
     WHERE i.id = ANY(${imageIds})
   `) ?? [];
 
+  const images = loadedImages;
   // A row stamped Unknown before its reason was recognised retries as what it is now.
-  for (const img of images) {
-    if (
-      img.failureReason &&
-      (!img.failureClass || img.failureClass === ImageScanFailureClass.Unknown)
-    )
-      img.failureClass = classifyImageScanFailure({ reason: img.failureReason });
-  }
+  // A song's rating dispute reads the class the same way (`songNeverReviewable`).
+  for (const img of images)
+    img.failureClass = effectiveScanFailureClass(img.failureClass, img.failureReason);
 
   // `id = ANY(...)` returns rows in no set order; queue order (oldest first) decides which rows
   // the per-run send cap reaches, so the ones it defers lead the next run's pull.
@@ -294,6 +290,8 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
         img.ingestion === 'Pending' &&
         !img.isBackfill &&
         !isRateLimitExempt(img) &&
+        // A song never sent (no scan requested) has had no scan to lose: it is sent, not failed unsent.
+        !(img.type === 'audio' && !img.scanRequestedAt) &&
         img.createdAt <= pendingTimeoutDate
     )
     .map((img) => img.id);

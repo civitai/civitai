@@ -201,6 +201,8 @@ __pycache__/
 # one task's artifacts ride a merge into main and seed every later worktree.
 .foreman/
 
+# Pencil (.pen) image assets: generated covers, emoji fills and exports. Local only.
+designs/images/
 # scripts/lib/ts7.mjs install lock (left behind only by a killed install)
 tools/ts7/.install.lock
 

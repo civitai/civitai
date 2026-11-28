@@ -120,6 +120,7 @@ describe('createTextScanAdapter', () => {
       'Collection:shadow',
       'Storyline:shadow',
       'ImageCaption:shadow',
+      'TrackLyrics:shadow',
       'ServiceOffering:shadow',
       'PostText:shadow',
       'ModelRules:shadow',

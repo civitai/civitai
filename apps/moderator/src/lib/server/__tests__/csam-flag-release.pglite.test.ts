@@ -4,6 +4,7 @@ import { freshPglite } from '../../../test/pglite';
 import {
   DEFERRED_BLOCK_EFFECT_TABLE_SQL,
   SET_ASIDE_TABLE_SQL,
+  TEXT_SCAN_HOLD_TABLE_SQL,
 } from '../../../test/held-image-tables';
 import { Kysely } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -36,6 +37,7 @@ const { releaseHeldUserCsamFlags, clearRemovedFlagsUnlessHeld, RELEASABLE_LEGS, 
   await import('../csam-flag-clear');
 
 const SCHEMA = `
+${TEXT_SCAN_HOLD_TABLE_SQL}
 CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'PendingManualAssignment');
 CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "bannedAt" TIMESTAMP(3), "meta" JSONB);
 CREATE TABLE "Image" (

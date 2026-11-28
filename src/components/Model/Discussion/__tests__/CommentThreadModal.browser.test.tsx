@@ -76,6 +76,7 @@ vi.mock('~/components/Dialog/DialogProvider', async (importOriginal) => ({
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => api.viewer }));
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ canWrite: true }),
+  useOptionalFeatureFlags: () => ({ canWrite: true }),
 }));
 vi.mock('~/components/CommentsV3/CommentComposer', () => ({
   CommentComposer: ({ parent }: { parent?: { id: number } }) => (

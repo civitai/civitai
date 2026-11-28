@@ -197,14 +197,20 @@ export const reportModalTitle = ({
   entityType,
   selected,
   placementTarget,
+  song,
 }: {
   entityType: ReportEntity;
   selected: { key: string; label: string } | null;
   placementTarget?: ReportModalProps['placementTarget'];
+  song?: ReportModalProps['song'];
 }) =>
   selected?.key === 'sticker-placement' && placementTarget === 'comment'
     ? 'Report this note'
-    : selected?.label ?? `Report ${reportEntityLabels[entityType]}`;
+    : selected?.label ?? `Report ${reportedThingLabel(entityType, song)}`;
+
+/** A song is an Image row, but the person reporting it is reporting a song. */
+const reportedThingLabel = (entityType: ReportEntity, song?: ReportModalProps['song']) =>
+  song ? 'Song' : reportEntityLabels[entityType];
 
 /** The reasons offered for an entity, in display order. */
 export const reportOptionsFor = (entityType: ReportEntity) =>
@@ -228,6 +234,8 @@ export type ReportModalProps = {
   placementId?: number;
   /** Which half of that placement the flag was on. */
   placementTarget?: 'sticker' | 'comment';
+  /** Set when the image is a song; `durationSec` is its stored length, null when unknown. */
+  song?: { durationSec: number | null };
 };
 
 export default function ReportModal({
@@ -236,6 +244,7 @@ export default function ReportModal({
   reportKey: initialReportKey,
   placementId,
   placementTarget,
+  song,
 }: ReportModalProps) {
   const dialog = useDialogContext();
 
@@ -258,7 +267,7 @@ export default function ReportModal({
   );
   const reason = selected?.reason;
   const ReportForm = selected?.Element ?? null;
-  const title = reportModalTitle({ entityType, selected, placementTarget });
+  const title = reportModalTitle({ entityType, selected, placementTarget, song });
   const applyTagVotes = useApplyTagVotes({
     entityType: entityType as 'image' | 'model',
     entityId,
@@ -281,7 +290,7 @@ export default function ReportModal({
     },
     async onSuccess(_, variables) {
       showSuccessNotification({
-        title: `${reportEntityLabels[entityType]} reported`,
+        title: `${reportedThingLabel(entityType, song)} reported`,
         message: 'Your request has been received',
       });
       dialog.onClose();
@@ -440,7 +449,9 @@ export default function ReportModal({
           )
         )}
         {ReportForm && (
-          <ReportTargetProvider value={{ entityType, entityId, placementId, placementTarget }}>
+          <ReportTargetProvider
+            value={{ entityType, entityId, placementId, placementTarget, song }}
+          >
             <ReportForm onSubmit={handleSubmit} setUploading={setUploading}>
               <Group grow>
                 <Button variant="default" onClick={dialog.onClose}>

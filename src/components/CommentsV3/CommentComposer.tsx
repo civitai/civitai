@@ -5,6 +5,11 @@ import clsx from 'clsx';
 import { useRouter } from 'next/router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSectionMute } from '~/components/CommentsV3/useSectionMute';
+import {
+  useSongComments,
+  useSongTimeChoice,
+} from '~/components/Music/TimedComments/SongCommentsContext';
+import { SongTimeChip } from '~/components/Music/TimedComments/TimedCommentChips';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import type { EditorCommandsRef } from '~/components/RichTextEditor/RichTextEditorComponent';
 import { StickerPicker } from '~/components/Sticker/StickerPicker';
@@ -37,6 +42,10 @@ export function CommentEditor({
 }) {
   const { byId, borderless } = useCommentSection();
   const mutations = useCommentMutations();
+  // A new top-level comment on a song may sit at a time in it; replies and edits never do.
+  const song = useSongComments();
+  const timed = song && !parent && !editing ? song : null;
+  const timeChoice = useSongTimeChoice(timed);
   const editorRef = useRef<EditorCommandsRef | null>(null);
   const [focused, setFocused] = useState(!!autoFocus);
   const form = useForm({
@@ -69,7 +78,12 @@ export function CommentEditor({
   const submit = async ({ content }: { content: string }) => {
     try {
       if (editing) await mutations.edit(editing, content);
-      else await mutations.create(content, parent ? { id: parent.id, depth: parent.depth } : null);
+      else
+        await mutations.create(
+          content,
+          parent ? { id: parent.id, depth: parent.depth } : null,
+          timed ? timeChoice.timestampSec() : undefined
+        );
       saved.current = true;
     } catch {
       // The adapter has already shown the error.
@@ -107,13 +121,16 @@ export function CommentEditor({
       />
       {focused && (
         <div className="flex items-center justify-between gap-4">
-          <StickerPicker
-            position="top-start"
-            onSelect={(sticker) => {
-              editorRef.current?.insertSticker({ id: sticker.id, slug: sticker.slug });
-              void form.trigger('content');
-            }}
-          />
+          <div className="flex items-center gap-2">
+            <StickerPicker
+              position="top-start"
+              onSelect={(sticker) => {
+                editorRef.current?.insertSticker({ id: sticker.id, slug: sticker.slug });
+                void form.trigger('content');
+              }}
+            />
+            {timed && timed.durationSec > 0 && <SongTimeChip choice={timeChoice} />}
+          </div>
           <div className="flex items-center gap-2.5">
             <Button variant="default" size="xs" onClick={close}>
               Cancel

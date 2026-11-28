@@ -298,11 +298,13 @@ describe('production catalog snapshot (2026-10-20)', () => {
     //     `20271125130000_service_deal_buyer_disclosure`
     //   the three `ServiceOffering` request-form columns and the three `ServiceDeal` form columns:
     //     `20271128130000_service_request_form` — drop these at the next catalog recapture.
+    //   `ModActivity.details`: `20271128140000_mod_activity_details`
     //   `OauthConsent.offlineBuzzLimit` / `.offlineBuzzPeriod`: `20271204120000_recipe_runner_ledger`
     //   the five redesign `UserProfile` columns (`about`, `backgroundImageId`, `sfwBackgroundImageId`,
     //     `pageTheme`, `pinnedItems`): `20271125120000_profile_redesign_customization`
     //   `ScanLabelClaim.releasedAt`: `20271208120000_scan_label_claim_released`
     const inFlightColumns = new Set([
+      'ModActivity.details',
       'ScanLabelClaim.releasedAt',
       'UserProfile.about',
       'UserProfile.backgroundImageId',

@@ -195,3 +195,38 @@ describe('the reported image queue under ?agents=', () => {
     expect(items.filter((i) => i.report.agentFiled).map((i) => i.report.id)).toEqual([11, 13, 15]);
   });
 });
+
+describe('the reported image queue and songs', () => {
+  // Songs 106, 108 and 109 among the images 100-105 and a video. Songs are judged in Audio review,
+  // so a one-item page that dropped them after the limit would come back empty.
+  beforeEach(async () => {
+    await db.exec(`
+      INSERT INTO "Image" ("id", "type") VALUES (106, 'audio'), (107, 'video'), (108, 'audio'), (109, 'audio');
+      INSERT INTO "Report" ("id", "userId") VALUES
+        (16, ${HUMAN}), (17, ${HUMAN}), (18, ${HUMAN}), (19, ${HUMAN});
+      INSERT INTO "ImageReport" ("imageId", "reportId") VALUES (106, 16), (107, 17), (108, 18), (109, 19);
+    `);
+  });
+
+  it('pages through images and videos only, one a page, ending where they end', async () => {
+    const seen: number[] = [];
+    let cursor: number | undefined;
+    for (let i = 0; i < 20; i++) {
+      const { items, nextCursor } = await getReportedImageQueue({
+        browsingLevel: 31,
+        cursor,
+        limit: 1,
+      });
+      expect(items).toHaveLength(1);
+      seen.push(...items.map((it) => it.id));
+      if (!nextCursor) break;
+      cursor = nextCursor;
+    }
+    expect(seen).toEqual([100, 101, 102, 103, 104, 105, 107]);
+  });
+
+  it('still opens a song report a ?report= link names', async () => {
+    const { items } = await getReportedImageQueue({ browsingLevel: 31, limit: 10, reportId: 16 });
+    expect(items.map((i) => [i.id, i.report.id])).toEqual([[106, 16]]);
+  });
+});

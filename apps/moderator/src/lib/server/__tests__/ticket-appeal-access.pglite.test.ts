@@ -61,6 +61,7 @@ beforeEach(async () => {
   db = await freshPglite();
   await db.exec(APPEAL_MEDIA_SCHEMA);
   await db.exec(`
+    CREATE TABLE "Track" ("imageId" INTEGER PRIMARY KEY, "coverImageId" INTEGER UNIQUE);
     INSERT INTO "User" (id, username) VALUES (${OWNER}, 'owner');
     INSERT INTO "Image" (id, url, ingestion, "needsReview", "blockedFor", "userId") VALUES
       (${WITHHELD}, 'withheld-key', 'Blocked', 'appeal', 'CSAM', ${OWNER}),

@@ -13,6 +13,7 @@ import {
 } from '~/server/common/constants';
 import { PostSort } from '~/server/common/enums';
 import { usageLimits } from '~/shared/constants/usage-limits';
+import { SONG_GENRES, SONG_TAG_MAX_LENGTH } from '~/shared/constants/song-genres';
 import { baseQuerySchema, periodModeSchema } from '~/server/schema/base.schema';
 import { jumpToMonthSchema } from '~/shared/utils/jump-to-month';
 import {
@@ -188,6 +189,36 @@ export const updatePostImageSchema = z.object({
     return val;
   }),
   hideMeta: z.boolean().optional(),
+  /** Songs only. An empty title clears it. */
+  title: z.string().trim().max(POST_TITLE_MAX_LENGTH).optional(),
+  /** Songs only. */
+  allowRemix: z.boolean().optional(),
+});
+
+export type SetSongGenreInput = z.infer<typeof setSongGenreSchema>;
+export const setSongGenreSchema = z.object({
+  /** The song. */
+  id: z.number().int().positive(),
+  genre: z.enum(SONG_GENRES),
+});
+
+export type AddSongTagInput = z.infer<typeof addSongTagSchema>;
+export const addSongTagSchema = z.object({
+  /** The song. */
+  id: z.number().int().positive(),
+  name: z.string().trim().toLowerCase().min(1).max(SONG_TAG_MAX_LENGTH),
+});
+
+export type SearchSongTagsInput = z.infer<typeof searchSongTagsSchema>;
+export const searchSongTagsSchema = z.object({
+  query: z.string().trim().toLowerCase().min(1).max(SONG_TAG_MAX_LENGTH),
+});
+
+export type RemoveSongTagInput = z.infer<typeof removeSongTagSchema>;
+export const removeSongTagSchema = z.object({
+  /** The song. */
+  id: z.number().int().positive(),
+  tagId: z.number().int().positive(),
 });
 
 export type AddResourceToPostImageInput = z.infer<typeof addResourceToPostImageInput>;

@@ -37,6 +37,16 @@ export const dateTime = (value: Date | string | null) => {
   return `${local} (${utc} UTC)`;
 };
 
+/** A day, as "Nov 3, 2026": for a date whose time of day says nothing (when something was posted). */
+export const shortDate = (value: Date | string | null) =>
+  value
+    ? new Date(value).toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+      })
+    : '—';
+
 export const num = (value: number) => value.toLocaleString();
 
 export const ordinal = (n: number): string => {
@@ -71,6 +81,14 @@ export const plural = (count: number, one: string, many = `${one}s`): string =>
 export const utcMs = (value: string): number =>
   Date.parse(value.includes('T') ? value : `${value.replace(' ', 'T')}Z`);
 
+const TIME_UNITS: [Intl.RelativeTimeFormatUnit, number][] = [
+  ['year', 31_536_000],
+  ['month', 2_592_000],
+  ['day', 86_400],
+  ['hour', 3_600],
+  ['minute', 60],
+];
+
 /**
  * "3 hours ago" / "11 months ago". An absolute timestamp is precise and says nothing about whether a
  * value is fresh: a resume point reading "Sep 8, 2025" is a year stale, and no one reads that off the
@@ -81,17 +99,20 @@ export const relativeTime = (value: Date | string | null): string => {
   const then = new Date(value).getTime();
   if (Number.isNaN(then)) return '—';
   const seconds = Math.round((then - Date.now()) / 1000);
-  const units: [Intl.RelativeTimeFormatUnit, number][] = [
-    ['year', 31_536_000],
-    ['month', 2_592_000],
-    ['day', 86_400],
-    ['hour', 3_600],
-    ['minute', 60],
-  ];
   const fmt = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
-  for (const [unit, size] of units)
+  for (const [unit, size] of TIME_UNITS)
     if (Math.abs(seconds) >= size) return fmt.format(Math.round(seconds / size), unit);
   return fmt.format(seconds, 'second');
+};
+
+/** "4 years" / "5 months" / "12 days": how long ago, as a length (an account's age), in whole units. */
+export const timeSince = (value: Date | string | null, now = Date.now()): string => {
+  const then = value ? new Date(value).getTime() : NaN;
+  if (Number.isNaN(then)) return 'unknown';
+  const seconds = (now - then) / 1000;
+  for (const [unit, size] of TIME_UNITS.slice(0, 3))
+    if (seconds >= size) return plural(Math.floor(seconds / size), unit);
+  return 'less than a day';
 };
 
 /** "12m" / "5h" / "3d": for a badge or caption, where `relativeTime`'s phrasing is too long. */
@@ -102,6 +123,16 @@ export const shortAge = (value: Date | string, now = Date.now()): string => {
   if (hours < 48) return `${hours}h`;
   return `${Math.floor(hours / 24)}d`;
 };
+
+export const DAY_MS = 86_400_000;
+
+/** A queue row's wait, in amber once it has waited a day, as the triage queues mark someone waiting. */
+export function waitingMeta(since: Date | string, word = 'waiting', now = Date.now()) {
+  const age = shortAge(since, now);
+  return now - new Date(since).getTime() >= DAY_MS
+    ? { meta: `${word} ${age}`, metaClass: 'text-amber-300' }
+    : { meta: age, metaClass: 'text-dark-2' };
+}
 
 /**
  * User-authored rich text (review `details`, comment bodies) is stored as HTML. Svelte escapes it, so

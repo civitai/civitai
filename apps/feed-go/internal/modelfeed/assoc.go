@@ -252,9 +252,9 @@ type assocCard struct {
 // assocCards is getModelsRaw over the associated ids, the shown versions' images and the completed
 // cards by model id; loaded reports whether the page query returned a row.
 func assocCards(ctx context.Context, d *AssocDeps, ids []int, level int, viewer *Viewer) (map[int]*assocCard, bool, error) {
-	viewerID, isMod := 0, false
+	viewerID, isMod, canSeeSongs := 0, false, false
 	if viewer != nil {
-		viewerID, isMod = viewer.ID, viewer.IsModerator
+		viewerID, isMod, canSeeSongs = viewer.ID, viewer.IsModerator, viewer.CanSeeSongs
 	}
 	// getAllModelsSchema.parse({ browsingLevel, ids, period: AllTime }): the default sort, no take, no
 	// cursor, nothing else; enforceBlockedBrowsingTagsForModels then resolves the addons onto it (no
@@ -322,7 +322,8 @@ func assocCards(ctx context.Context, d *AssocDeps, ids []int, level int, viewer 
 		versionIDs[i] = it.versionID
 	}
 	images, err := assocImages(ctx, d.DB, assocImageQuery{
-		VersionIDs: versionIDs, ViewerID: viewerID, IsModerator: isMod, Level: level, ExcludedTagIDs: raw.excluded,
+		VersionIDs: versionIDs, ViewerID: viewerID, IsModerator: isMod, CanSeeSongs: canSeeSongs, Level: level,
+		ExcludedTagIDs: raw.excluded,
 	})
 	if err != nil {
 		return nil, true, err

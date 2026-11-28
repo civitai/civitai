@@ -212,3 +212,23 @@ describe('canReusePrompt', () => {
     expect(canReusePrompt(image())).toBe(false);
   });
 });
+
+describe('a song whose owner turned remixing off', () => {
+  const song = (metadata?: Record<string, unknown>) => ({
+    ...image({ type: MediaType.audio, hasPositivePrompt: true }),
+    metadata: { duration: 120, ...metadata },
+  });
+
+  it('hides the remix menu', () => {
+    expect(isRemixMenuVisible(song({ allowRemix: false }))).toBe(false);
+  });
+
+  it('keeps the menu for a song that never set it', () => {
+    expect(isRemixMenuVisible(song())).toBe(true);
+  });
+
+  it('leaves an image with the same metadata alone', () => {
+    const remixable = { ...image({ hasPositivePrompt: true }), metadata: { allowRemix: false } };
+    expect(isRemixMenuVisible(remixable)).toBe(true);
+  });
+});

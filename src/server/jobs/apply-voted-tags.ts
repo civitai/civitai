@@ -9,6 +9,7 @@ import {
   insertTagsOnImageNew,
   upsertTagsOnImageNew,
 } from '~/server/services/tagsOnImageNew.service';
+import { notSongGenreTagVote } from '~/shared/constants/song-genres';
 
 const UPVOTE_TAG_THRESHOLD = constants.tagVoting.upvoteThreshold;
 const DOWNVOTE_TAG_THRESHOLD = 0;
@@ -34,6 +35,11 @@ async function applyUpvotes() {
           vote.vote > 0
         AND vote."createdAt" > ${lastApplied}
         AND applied."tagId" IS NULL
+        AND ${notSongGenreTagVote(
+          Prisma.sql,
+          Prisma.raw('vote."imageId"'),
+          Prisma.raw('vote."tagId"')
+        )}
     ), over_threshold AS (
       SELECT
         a."imageId",

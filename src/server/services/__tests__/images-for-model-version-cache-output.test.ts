@@ -58,7 +58,7 @@ describe('getImagesForModelVersionCache output (flag off)', () => {
       .spyOn(tagIdsForImagesCache, 'fetch')
       .mockResolvedValue({ '202': { imageId: 202, tags: [77, 88] } });
 
-    const result = await getImagesForModelVersionCache([303, 101, 202]);
+    const result = await getImagesForModelVersionCache([303, 101, 202], undefined);
 
     expect(flag).toHaveBeenCalledWith(FLIPT_FEATURE_FLAGS.MODEL_VERSION_IMAGES_SKIP_TAGS);
     expect(tagFetch).toHaveBeenCalledWith([101, 202, 303]);
@@ -83,7 +83,7 @@ describe('getImagesForModelVersionCache output (flag off)', () => {
     vi.spyOn(imagesForModelVersionsCache, 'fetch').mockResolvedValue({});
     vi.spyOn(tagIdsForImagesCache, 'fetch').mockResolvedValue({});
 
-    expect(await getImagesForModelVersionCache([404])).toStrictEqual({});
+    expect(await getImagesForModelVersionCache([404], undefined)).toStrictEqual({});
   });
 });
 
@@ -104,7 +104,7 @@ describe('getImagesForModelVersionCache output (model-version-images-skip-tags o
       .spyOn(tagIdsForImagesCache, 'fetch')
       .mockResolvedValue({ '202': { imageId: 202, tags: [77, 88] } });
 
-    const result = await getImagesForModelVersionCache([303, 101, 202]);
+    const result = await getImagesForModelVersionCache([303, 101, 202], undefined);
 
     expect(flag).toHaveBeenCalledWith('model-version-images-skip-tags');
     expect(tagFetch).not.toHaveBeenCalled();

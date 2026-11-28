@@ -4,6 +4,7 @@
   import RulingForm, { emptyRulingDraft, type RulingDraft } from '$lib/components/RulingForm.svelte';
   import { appealRulingChoices } from '$lib/ruling-choices';
   import type { ResolutionVerdict } from '@civitai/shared/resolution-reasons';
+  import { offersImageFlags } from '$lib/music/song-card';
   import ImageCardModTools from './ImageCardModTools.svelte';
   import VerdictBadge from './VerdictBadge.svelte';
 
@@ -15,7 +16,7 @@
     drafts,
     submit,
   }: {
-    item: { id: number; minor: boolean; poi: boolean };
+    item: { id: number; minor: boolean; poi: boolean; type?: string | null };
     verdict: string | undefined;
     selected: SvelteSet<string | number>;
     /** imageId → resolution message. Held by the page so it survives this card re-rendering. */
@@ -42,6 +43,7 @@
       rating={false}
       minor={item.minor}
       poi={item.poi}
+      flags={offersImageFlags(item)}
     />
     <!-- A selected card loses its own verdict buttons: pressing Approve there resolved the one appeal
          while the moderator believed it applied to the batch. -->

@@ -9,7 +9,13 @@ import { useHiddenPreferencesData, useToggleHiddenPreferences } from '~/hooks/hi
 import { showImageHiddenNotification } from '~/components/HideImageButton/showImageHiddenNotification';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 
-export function HideImageButton({ imageId, as = 'button', onToggleHide, ...props }: Props) {
+export function HideImageButton({
+  imageId,
+  as = 'button',
+  onToggleHide,
+  noun = 'image',
+  ...props
+}: Props) {
   const images = useHiddenPreferencesData().hiddenImages;
   const hiddenImages = images.filter((x) => x.hidden);
   const alreadyHiding = hiddenImages.some((x) => x.id === imageId);
@@ -20,16 +26,18 @@ export function HideImageButton({ imageId, as = 'button', onToggleHide, ...props
     e.preventDefault();
     e.stopPropagation();
     const data = [{ id: imageId }];
+    const Noun = `${noun[0].toUpperCase()}${noun.slice(1)}`;
     toggleHiddenMutation.mutateAsync({ kind: 'image', data }).then(() => {
       if (alreadyHiding) {
         showSuccessNotification({
-          title: 'Image unhidden',
-          message: 'This image will show up in your feed',
+          title: `${Noun} unhidden`,
+          message: `This ${noun} will show up in your feed`,
         });
         return;
       }
       showImageHiddenNotification({
         imageId,
+        noun,
         onUndo: () =>
           toggleHiddenMutation
             .mutateAsync({ kind: 'image', data, hidden: false })
@@ -63,7 +71,7 @@ export function HideImageButton({ imageId, as = 'button', onToggleHide, ...props
           alreadyHiding ? <IconEye size={16} stroke={1.5} /> : <IconEyeOff size={16} stroke={1.5} />
         }
       >
-        {alreadyHiding ? 'Unhide ' : 'Hide '}this image
+        {alreadyHiding ? 'Unhide ' : 'Hide '}this {noun}
       </Menu.Item>
     </LoginRedirect>
   );
@@ -73,4 +81,6 @@ type Props = Omit<ButtonProps, 'onClick'> & {
   imageId: number;
   as?: 'menu-item' | 'button';
   onToggleHide?: () => void;
+  /** What the menu item and its notification call the item: "Hide this song". */
+  noun?: string;
 };

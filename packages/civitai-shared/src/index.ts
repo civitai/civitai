@@ -8,3 +8,4 @@ export * from './model-version-flags.constants';
 export * from './comic-views.constants';
 export * from './model3d-views.constants';
 export * from './missing-media';
+export * from './song-time';

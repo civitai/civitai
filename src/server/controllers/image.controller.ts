@@ -16,7 +16,10 @@ import { dbRead } from '~/server/db/client';
 import { getUserFollows, imageTagsCache } from '~/server/redis/caches';
 import { reportAcceptedReward } from '~/server/rewards';
 import type { GetByIdInput } from '~/server/schema/base.schema';
-import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
+import {
+  assertImageVisibleToViewer,
+  canSeeSongs,
+} from '~/server/services/image-visibility.service';
 import {
   getUserCollectionPermissionsById,
   removeEntityFromAllCollections,
@@ -84,9 +87,18 @@ import { bustCachesForPosts } from '~/server/services/post.service';
 import { amIBlockedByUser, refreshProfilePicturesForImages } from '~/server/services/user.service';
 import {
   throwAuthorizationError,
+  throwBadRequestError,
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { songNoticeSubject, songTosNoticeDetails } from '@civitai/db-queries/profile-picture-clear';
+import { kyselyRead, kyselyWrite } from '~/server/db/kyselyDb';
+import {
+  getSongCoverForRemoval,
+  HELD_SONG_COVER_MESSAGE,
+  NO_SONG_COVER_MESSAGE,
+} from '~/server/services/song-cover-removal.service';
+import { MediaType } from '~/shared/utils/prisma/enums';
 import { getRequestBoardDomainColor } from '~/server/utils/server-domain';
 import {
   actsAsModerator,
@@ -257,6 +269,7 @@ export const setTosViolationHandler = async ({
         nsfwLevel: true,
         userId: true,
         postId: true,
+        type: true,
         pHash: true,
         post: {
           select: {
@@ -314,20 +327,31 @@ export const setTosViolationHandler = async ({
         )
       );
 
-      if (!isFeedbackCaptureOwner(image.userId))
+      if (!isFeedbackCaptureOwner(image.userId)) {
+        // A song, or a postless image that may be a song's own cover, names the song; a lookup that
+        // fails sends the image wording rather than no notice.
+        const song =
+          image.type === MediaType.audio || (image.type === MediaType.image && !image.postId)
+            ? await songNoticeSubject(kyselyRead, id).catch(() => null)
+            : null;
         await createNotification({
           userId: image.userId,
           type: 'tos-violation',
           category: NotificationCategory.System,
           key: `tos-violation:image:${crypto.randomUUID()}`,
           details: {
-            modelName: image.post?.title ?? `post #${image.postId as number}`,
-            entity: 'image',
-            url: `/images/${id}`,
+            ...(song
+              ? songTosNoticeDetails(song)
+              : {
+                  modelName: image.post?.title ?? `post #${image.postId as number}`,
+                  entity: 'image',
+                  url: `/images/${id}`,
+                }),
             // Only the moderator's explicit pick; the inferred fallback below is for analytics, not the user.
             ...(violationType ? { reason: tosReasonUserMessage(violationType) } : {}),
           },
         }).catch();
+      }
     }
 
     await clearReviewFlagsOnBlock([id]);
@@ -399,6 +423,26 @@ const galleryOwnerId = (ctx: Context) =>
 const isGalleryWithheldFrom = (ctx: Context, input: Parameters<typeof isModelGalleryWithheld>[0]) =>
   actsAsModerator(ctx) ? false : isModelGalleryWithheld(input, galleryOwnerId(ctx));
 
+/**
+ * "Remove cover" on a song: the ToS removal of the song's own cover alone, with its own violation
+ * type and owner notice; the song stays public with the placeholder. Read on the primary, so a cover
+ * held moments ago is refused. A held cover is refused for every moderator: the main app has no
+ * CSAM-review grant.
+ */
+export const removeSongCoverHandler = async ({
+  input,
+  ctx,
+}: {
+  input: SetTosViolationSchema;
+  ctx: ProtectedContext;
+}) => {
+  if (!ctx.user.isModerator) throw throwAuthorizationError('Only moderators can remove a cover');
+  const cover = await getSongCoverForRemoval(kyselyWrite, input.id);
+  if (!cover) throw throwBadRequestError(NO_SONG_COVER_MESSAGE);
+  if (cover.held) throw throwBadRequestError(HELD_SONG_COVER_MESSAGE);
+  return setTosViolationHandler({ input: { ...input, id: cover.coverId }, ctx });
+};
+
 export const getImagesForModelVersionHandler = async ({
   input,
   ctx,
@@ -408,7 +452,7 @@ export const getImagesForModelVersionHandler = async ({
 }) => {
   if (await isGalleryWithheldFrom(ctx, { modelVersionId: input.id })) return {};
   const [byVersion, version] = await Promise.all([
-    getImagesForModelVersionCache([input.id]),
+    getImagesForModelVersionCache([input.id], ctx.user ?? undefined),
     dbRead.modelVersion.findUnique({
       where: { id: input.id },
       select: { modelId: true, model: { select: { userId: true, minor: true, sfwOnly: true } } },
@@ -1200,6 +1244,7 @@ export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ct
         isModerator: ctx.user?.isModerator,
         ownerSeesHeld: isSessionOrFullUserKey(ctx),
         shownReviewImageLevels: shownReviewImageLevelsFor(ctx),
+        music: !!ctx.features?.music,
         ownerReviewedBlocks: ownerBlockedMedia,
       }),
       // The hat the image detail draws when it is opened on its own, with no feed to seed it.
@@ -1351,6 +1396,7 @@ export const getEntitiesCoverImageHandler = async ({
       ...input,
       include: ['tags'],
       viewer: isSessionOrFullUserKey(ctx) ? ctx.user : undefined,
+      music: canSeeSongs(ctx.user ?? undefined),
       seesReportListed: seesReportListed(ctx),
       // Only signed-out responses are edge-cached (createContext), so a viewer's hats stay theirs.
       // The route must not gain edgeCacheIt/cacheIt: entities-cover-image-viewer.test.ts pins it.
@@ -1384,6 +1430,7 @@ export const getImageContestCollectionDetailsHandler = async ({
       id: input.id,
       userId,
       isModerator,
+      music: canSeeSongs(ctx.user ?? undefined),
       ownerSeesHeld: isSessionOrFullUserKey(ctx),
     }).catch((error) => {
       if (error instanceof TRPCError && error.code === 'NOT_FOUND') return null;

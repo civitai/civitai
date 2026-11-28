@@ -1,5 +1,12 @@
 import { shortAge } from '$lib/format';
-import { chatAuditChatUrl, commentUrl, entityUrl, userLookupUrl, userUrl } from '$lib/entity-url';
+import {
+  chatAuditChatUrl,
+  commentUrl,
+  entityUrl,
+  imageLookupUrl,
+  userLookupUrl,
+  userUrl,
+} from '$lib/entity-url';
 
 export const NOTE_MAX_LENGTH = 500;
 
@@ -15,6 +22,7 @@ export const CSAM_HOLD_ENTITY_TYPES = [
   'PostText',
   'ServiceDealReview',
   'ServiceDealReviewReply',
+  'TrackLyrics',
 ] as const;
 
 export type CsamHoldEntityType = (typeof CSAM_HOLD_ENTITY_TYPES)[number];
@@ -30,6 +38,7 @@ export const CSAM_HOLD_ENTITY_LABELS: Record<CsamHoldEntityType, string> = {
   PostText: 'Storyline text',
   ServiceDealReview: 'Service review',
   ServiceDealReviewReply: 'Service review reply',
+  TrackLyrics: 'Song lyrics',
 };
 
 /** What a moderator can do with a pending hold, in the order the actions are offered. */
@@ -85,6 +94,8 @@ const REMOVABLE_ENTITY_TYPES: readonly string[] = [
   'PostText',
   'ServiceDealReview',
   'ServiceDealReviewReply',
+  // Removed by unpublishing the post the song is in.
+  'TrackLyrics',
 ];
 export const canRemoveHeld = (entityType: string) => REMOVABLE_ENTITY_TYPES.includes(entityType);
 
@@ -218,6 +229,9 @@ export function holdEntityHref(civitaiUrl: string, hold: HoldRef): string | null
     case 'UserProfile':
       if (hold.username) return userUrl(civitaiUrl, hold.username);
       return hold.userId ? userLookupUrl(hold.userId) : null;
+    // The entity id is the song's Image id; Image lookup plays it, held or not.
+    case 'TrackLyrics':
+      return imageLookupUrl(hold.entityId);
     default:
       return entityUrl(civitaiUrl, hold.entityType, hold.entityId);
   }

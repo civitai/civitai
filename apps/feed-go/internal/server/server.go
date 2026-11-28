@@ -186,6 +186,9 @@ type Server struct {
 	// UserHubs reads the `user-hubs` flag per viewer (hubs.go) for an image.getInfinite `hubId`; nil =
 	// every such request is the infinite-hub-flag-unknown fallback.
 	UserHubs UserFlagReader
+	// Music reads the `music` flag per viewer (music.go): which viewers the image reads serve other
+	// users' songs to. nil = only moderators, as Node answers when Flipt cannot.
+	Music UserFlagReader
 	// FliptDeploymentID is FLIPT_DEPLOYMENT_ID: the `deploymentId` targeting property Node's
 	// buildFliptContext adds when it is set.
 	FliptDeploymentID string
@@ -426,7 +429,7 @@ func (s *Server) prepareViewer(ctx context.Context, r *http.Request) (feed.Reque
 
 	req := feed.Request{Input: in, Cap: cap, BannedSession: user != nil && user.Banned, BoardColor: s.Hosts.BoardColorOf(r.Host, s.HostPrimaries)}
 	if authorized {
-		req.Viewer = &feed.Viewer{ID: user.ID, IsModerator: isModerator}
+		req.Viewer = &feed.Viewer{ID: user.ID, IsModerator: isModerator, CanSeeSongs: s.canSeeSongs(ctx, user, isModerator)}
 	}
 	return req, user, nil
 }
@@ -500,7 +503,7 @@ func (s *Server) prepareInfiniteViewer(ctx context.Context, r *http.Request) (fe
 		BoardColor: s.Hosts.BoardColorOf(r.Host, s.HostPrimaries),
 	}
 	if authorized {
-		req.Viewer = &feed.Viewer{ID: user.ID, IsModerator: isModerator}
+		req.Viewer = &feed.Viewer{ID: user.ID, IsModerator: isModerator, CanSeeSongs: s.canSeeSongs(ctx, user, isModerator)}
 		req.ViewerUsername = user.Username
 	}
 	return req, user, crawler, nil
@@ -573,7 +576,8 @@ func (s *Server) prepareModelGetAllViewer(ctx context.Context, r *http.Request) 
 		BoardColor: s.Hosts.BoardColorOf(r.Host, s.HostPrimaries),
 	}
 	if authorized {
-		req.Viewer = &modelfeed.Viewer{ID: user.ID, Username: user.Username, IsModerator: isModerator}
+		req.Viewer = &modelfeed.Viewer{ID: user.ID, Username: user.Username, IsModerator: isModerator,
+			CanSeeSongs: s.canSeeSongs(ctx, user, isModerator)}
 	}
 	return req, user, nil
 }
@@ -620,7 +624,7 @@ func (s *Server) computeV1For(ctx context.Context, r *http.Request, serving bool
 	var viewer *feed.Viewer
 	viewerUsername := ""
 	if user != nil && !user.Banned {
-		viewer = &feed.Viewer{ID: user.ID, IsModerator: user.IsModerator}
+		viewer = &feed.Viewer{ID: user.ID, IsModerator: user.IsModerator, CanSeeSongs: s.canSeeSongs(ctx, user, user.IsModerator)}
 		viewerUsername = user.Username
 	}
 	restricted := regionMatches(s.RegionRules, r)

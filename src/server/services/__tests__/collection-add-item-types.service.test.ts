@@ -1,6 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { PGlite } from '@electric-sql/pglite';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TRPCError } from '@trpc/server';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { pgliteKysely } from '~/__tests__/pglite-kysely';
+import { NOTHING_WITHHELD_SQL } from '../../../../packages/civitai-shared/src/__tests__/csam-restriction-cases';
+import { SONGS_UNAVAILABLE_MESSAGE } from '~/shared/form-graph/generation/audio/song-metadata';
 import type * as ItemVisibility from '~/server/services/collection-item-visibility';
 import type * as SearchIndex from '~/server/search-index';
 import type * as HomeBlockCache from '~/server/services/home-block-cache.service';
@@ -25,6 +29,17 @@ vi.mock('~/server/services/collection-item-visibility', async (importOriginal) =
   ...(await importOriginal<typeof ItemVisibility>()),
   assertCollectionItemsVisibleToViewer: assertVisible,
 }));
+// A moderator's save re-reads the withheld rule on its own database, where nothing is withheld.
+const withheld = vi.hoisted(() => ({ db: null as unknown as PGlite }));
+vi.mock('~/server/db/kyselyDb', () => {
+  const db = pgliteKysely(() => withheld.db);
+  return { kyselyRead: db, kyselyWrite: db };
+});
+beforeAll(async () => {
+  withheld.db = new PGlite();
+  await withheld.db.exec(NOTHING_WITHHELD_SQL);
+}, 60_000);
+afterAll(() => withheld.db.close());
 vi.mock('~/server/search-index', async (importOriginal) => ({
   ...(await importOriginal<typeof SearchIndex>()),
   collectionsSearchIndex: { queueUpdate: vi.fn() },
@@ -35,9 +50,8 @@ vi.mock('~/server/services/home-block-cache.service', async (importOriginal) => 
   homeBlockCacheBust: vi.fn(),
 }));
 
-const { saveItemInCollections, bulkSaveItems, upsertCollection } = await import(
-  '~/server/services/collection.service'
-);
+const { saveItemInCollections, bulkSaveItems, upsertCollection, updateCollectionCoverImage } =
+  await import('~/server/services/collection.service');
 
 const COLLECTION_ID = 10;
 const OWNER_ID = 999;
@@ -221,4 +235,229 @@ it('does not check an item already in the collection that writes nothing new', a
     })
   ).resolves.toBeDefined();
   expect(assertVisible).not.toHaveBeenCalled();
+});
+
+describe('songs and playlists', () => {
+  const SONG = 21;
+  const PICTURE = 22;
+  beforeEach(() => {
+    mockDbRead.image.findUnique.mockImplementation((async ({
+      where,
+    }: {
+      where: { id: number };
+    }) => ({ type: where.id === SONG ? 'audio' : 'image' })) as never);
+  });
+  const save = (imageId: number, canUseMusic = true) =>
+    saveItemInCollections({
+      input: {
+        imageId,
+        userId: SUBMITTER_ID,
+        canUseMusic,
+        collections: [{ collectionId: COLLECTION_ID }],
+        removeFromCollectionIds: [],
+      } as never,
+    });
+
+  it('saves a song to a playlist', async () => {
+    arrange('Music');
+    await expect(save(SONG)).resolves.toBe('added');
+  });
+
+  it('refuses a song in an image collection, and a picture in a playlist', async () => {
+    arrange('Image');
+    await expect(save(SONG)).rejects.toThrow('Collection type mismatch');
+    arrange('Music');
+    await expect(save(PICTURE)).rejects.toThrow('Collection type mismatch');
+    expect(mockDbWrite.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('keeps a picture going to an image collection', async () => {
+    arrange('Image');
+    await expect(save(PICTURE)).resolves.toBe('added');
+  });
+
+  it('bulk-adds only the songs to a playlist', async () => {
+    arrange('Music');
+    mockDbRead.image.findMany.mockResolvedValue([{ id: SONG }] as never);
+    mockDbWrite.collectionItem.createMany.mockResolvedValue({ count: 1 } as never);
+    await bulkSaveItems({
+      input: {
+        collectionId: COLLECTION_ID,
+        imageIds: [SONG, PICTURE],
+        userId: SUBMITTER_ID,
+        canUseMusic: true,
+      },
+      permissions: { write: true, isContributor: true, isOwner: false } as never,
+    } as never);
+    const rows = mockDbWrite.collectionItem.createMany.mock.calls[0]?.[0]?.data as {
+      imageId: number;
+    }[];
+    expect(rows.map((r) => r.imageId)).toEqual([SONG]);
+  });
+
+  it('starts a playlist only with a song, and never as a contest', async () => {
+    await expect(
+      upsertCollection({
+        input: {
+          name: 'Mine',
+          type: 'Music',
+          read: 'Public',
+          imageId: PICTURE,
+          userId: 1,
+          canUseMusic: true,
+        },
+      } as never)
+    ).rejects.toThrow('Collection type mismatch');
+    await expect(
+      upsertCollection({
+        input: {
+          name: 'Mine',
+          type: 'Music',
+          mode: 'Contest',
+          read: 'Public',
+          userId: 1,
+          canUseMusic: true,
+        },
+      } as never)
+    ).rejects.toThrow('Playlists cannot be contests');
+    expect(mockDbWrite.collection.create).not.toHaveBeenCalled();
+  });
+
+  describe('without the music flag', () => {
+    it('refuses a song as the new cover of an edited collection, and keeps an existing one', async () => {
+      arrange('Image');
+      mockDbRead.image.findFirst.mockResolvedValue({ id: SONG } as never);
+      const edit = (imageId: number, current: number | null) => {
+        mockDbWrite.collection.findUnique.mockResolvedValue({
+          ...collectionRow('Image'),
+          image: current ? { id: current } : null,
+        } as never);
+        return upsertCollection({
+          input: { id: COLLECTION_ID, name: 'Renamed', read: 'Public', imageId, userId: OWNER_ID },
+        } as never);
+      };
+      await expect(edit(SONG, null)).rejects.toMatchObject({
+        code: 'UNAUTHORIZED',
+        message: SONGS_UNAVAILABLE_MESSAGE,
+      });
+      expect(mockDbWrite.$transaction).not.toHaveBeenCalled();
+      // The kept cover is not re-judged: whatever the edit does next, it is not refused for the song.
+      const kept = await edit(SONG, SONG).catch((error: Error) => error);
+      expect((kept as Error | undefined)?.message).not.toBe(SONGS_UNAVAILABLE_MESSAGE);
+    });
+
+    it('refuses bulk-adding a song to an image or untyped collection', async () => {
+      for (const type of ['Image', null]) {
+        arrange(type as never);
+        mockDbRead.image.findFirst.mockResolvedValue({ id: SONG } as never);
+        await expect(
+          bulkSaveItems({
+            input: { collectionId: COLLECTION_ID, imageIds: [PICTURE, SONG], userId: SUBMITTER_ID },
+            permissions: { write: true, isContributor: true, isOwner: false } as never,
+          } as never)
+        ).rejects.toMatchObject({ code: 'UNAUTHORIZED', message: SONGS_UNAVAILABLE_MESSAGE });
+      }
+      expect(mockDbWrite.collectionItem.createMany).not.toHaveBeenCalled();
+    });
+
+    it('still bulk-adds pictures to an image collection', async () => {
+      arrange('Image');
+      mockDbRead.image.findFirst.mockResolvedValue(null);
+      mockDbWrite.collectionItem.createMany.mockResolvedValue({ count: 1 } as never);
+      await bulkSaveItems({
+        input: { collectionId: COLLECTION_ID, imageIds: [PICTURE], userId: SUBMITTER_ID },
+        permissions: { write: true, isContributor: true, isOwner: false } as never,
+      } as never);
+      expect(mockDbWrite.collectionItem.createMany).toHaveBeenCalled();
+    });
+
+    it('refuses a song as the first item of an untyped collection', async () => {
+      mockDbRead.image.findFirst.mockResolvedValue({ id: SONG } as never);
+      await expect(
+        upsertCollection({
+          input: { name: 'Mine', read: 'Public', imageId: SONG, userId: 1 },
+        } as never)
+      ).rejects.toMatchObject({ code: 'UNAUTHORIZED', message: SONGS_UNAVAILABLE_MESSAGE });
+      expect(mockDbWrite.collection.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses a song as a cover, and any cover for a playlist', async () => {
+      arrange('Image');
+      mockDbRead.image.findFirst.mockResolvedValue({ id: SONG } as never);
+      const setCover = (imageId: number) =>
+        updateCollectionCoverImage({
+          input: { id: COLLECTION_ID, imageId, userId: OWNER_ID },
+        });
+      await expect(setCover(SONG)).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+      arrange('Music');
+      mockDbRead.image.findFirst.mockResolvedValue(null);
+      await expect(setCover(PICTURE)).rejects.toMatchObject({
+        code: 'UNAUTHORIZED',
+        message: SONGS_UNAVAILABLE_MESSAGE,
+      });
+      expect(mockDbWrite.collection.update).not.toHaveBeenCalled();
+    });
+
+    it('lets a moderator save a song and edit a playlist', async () => {
+      arrange('Music');
+      await expect(
+        saveItemInCollections({
+          input: {
+            imageId: SONG,
+            userId: SUBMITTER_ID,
+            isModerator: true,
+            collections: [{ collectionId: COLLECTION_ID }],
+            removeFromCollectionIds: [],
+          } as never,
+        })
+      ).resolves.toBe('added');
+    });
+
+    it('refuses saving a song, and saving into a playlist', async () => {
+      arrange('Music');
+      await expect(save(SONG, false)).rejects.toMatchObject({
+        code: 'UNAUTHORIZED',
+        message: SONGS_UNAVAILABLE_MESSAGE,
+      });
+      arrange('Image');
+      await expect(save(SONG, false)).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+      expect(mockDbWrite.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('still saves a picture to an image collection', async () => {
+      arrange('Image');
+      await expect(save(PICTURE, false)).resolves.toBe('added');
+    });
+
+    it('refuses bulk-adding to a playlist', async () => {
+      arrange('Music');
+      await expect(
+        bulkSaveItems({
+          input: { collectionId: COLLECTION_ID, imageIds: [SONG], userId: SUBMITTER_ID },
+          permissions: { write: true, isContributor: true, isOwner: false } as never,
+        } as never)
+      ).rejects.toMatchObject({ code: 'UNAUTHORIZED', message: SONGS_UNAVAILABLE_MESSAGE });
+      expect(mockDbWrite.collectionItem.createMany).not.toHaveBeenCalled();
+    });
+
+    it('refuses creating a playlist', async () => {
+      await expect(
+        upsertCollection({
+          input: { name: 'Mine', type: 'Music', read: 'Public', imageId: SONG, userId: 1 },
+        } as never)
+      ).rejects.toMatchObject({ code: 'UNAUTHORIZED', message: SONGS_UNAVAILABLE_MESSAGE });
+      expect(mockDbWrite.collection.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses editing a playlist', async () => {
+      arrange('Music');
+      mockDbWrite.collection.findUnique.mockResolvedValue(collectionRow('Music') as never);
+      await expect(
+        upsertCollection({
+          input: { id: COLLECTION_ID, name: 'Renamed', read: 'Public', userId: OWNER_ID },
+        } as never)
+      ).rejects.toMatchObject({ code: 'UNAUTHORIZED', message: SONGS_UNAVAILABLE_MESSAGE });
+      expect(mockDbWrite.collection.update).not.toHaveBeenCalled();
+    });
+  });
 });

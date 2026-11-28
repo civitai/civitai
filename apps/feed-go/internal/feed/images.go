@@ -227,6 +227,8 @@ type Page struct {
 type Viewer struct {
 	ID          int
 	IsModerator bool // moderatorView: a moderator on a cookie session
+	// CanSeeSongs is Node's canSeeSongs: a moderator, or the `music` flag is on for the viewer.
+	CanSeeSongs bool
 }
 
 // Hydrator is the hydration surface FetchImages needs (implemented by *hydrate.Sources).

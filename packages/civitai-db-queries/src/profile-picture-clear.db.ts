@@ -1,7 +1,9 @@
 import { CompiledQuery, sql, type Kysely, type RawBuilder } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
+import { browsingLevels } from '@civitai/shared/browsing-levels';
 import { KNIGHTS_VOTE_NSFW_LEVEL_REASON } from '@civitai/shared/new-order';
 import { OWNER_HIDDEN_REVIEWS } from '@civitai/shared/owner-hidden-reviews';
+import { NSFW_LEVEL_BLOCKED } from './pending-deletes.db';
 
 const userIdsParameter = (userIds: number[]) => [...new Set(userIds)].filter(Number.isInteger);
 
@@ -57,6 +59,123 @@ export const ownImageNamedByUserImage = (alias: string, user = 'u') =>
 /** The main app's `hasBlockMarkerSql` over `Image` aliased `alias`: Blocked ingestion, the Blocked level, or a block reason. */
 export const blockMarkerText = (alias: string) =>
   `(${alias}.ingestion::text = 'Blocked' OR ${alias}."nsfwLevel" = 32 OR ${alias}."blockedFor" IS NOT NULL)`;
+
+/** The cover a song's public player shows: one rule in two forms. Keep in step with the main app's
+ *  isSongsOwnCover/isPlayerSongCover and the moderator's songsOwnCoverText/playerSongCoverText. */
+export const isSongsOwnCover = (
+  cover: { userId: number; postId: number | null } | null | undefined,
+  song: { userId: number }
+) => !!cover && cover.userId === song.userId && cover.postId == null;
+
+/** `EntityModeration.entityType` of a song's lyrics and title text scan. */
+export const TRACK_LYRICS_ENTITY_TYPE = 'TrackLyrics';
+/** A song's lyrics profanity verdict: its own row, as EntityModeration is one row per entity. */
+export const TRACK_LYRICS_LANGUAGE_ENTITY_TYPE = 'TrackLyricsLanguage';
+
+const asSongRating = (level: unknown) =>
+  typeof level === 'number' && (browsingLevels as readonly number[]).includes(level) ? level : 1;
+
+/**
+ * A song's level from its own scans (docs/features/music.md "A song's rating"): the highest of PG,
+ * its lyrics and title text scan, its lyrics profanity, and its own cover's rating. Only a text-scan
+ * verdict rates, not an XGuard one (no result version); a cover rates once scanned, and not while it
+ * carries a block. The main app's `songLevel` and the moderator's dispute card both read this.
+ */
+export function songScanLevel(
+  song: { userId: number },
+  verdicts: { entityType: string; nsfwLevel: number | null; result: unknown }[],
+  cover:
+    | {
+        userId: number;
+        postId: number | null;
+        ingestion: string;
+        nsfwLevel: number;
+        blockedFor: string | null;
+      }
+    | null
+    | undefined
+) {
+  const levels = verdicts.map(({ entityType, nsfwLevel, result }) =>
+    entityType === TRACK_LYRICS_LANGUAGE_ENTITY_TYPE ||
+    (result as { version?: unknown } | null)?.version != null
+      ? asSongRating(nsfwLevel)
+      : 1
+  );
+  if (
+    cover &&
+    isSongsOwnCover(cover, song) &&
+    cover.ingestion === 'Scanned' &&
+    cover.nsfwLevel !== NSFW_LEVEL_BLOCKED &&
+    cover.blockedFor == null
+  )
+    levels.push(asSongRating(cover.nsfwLevel));
+  return Math.max(1, ...levels);
+}
+
+/** `isSongsOwnCover` over `Image` aliased `cover`, for the song aliased `song`. */
+export const songsOwnCoverText = (cover: string, song: string) =>
+  `(${cover}."userId" = ${song}."userId" AND ${cover}."postId" IS NULL)`;
+
+/** Scanned, with no block marker (`blockMarkerText`'s three), not held, not flagged as a minor. */
+export const isPlayerSongCover = (cover: {
+  ingestion: string;
+  nsfwLevel: number;
+  blockedFor: string | null;
+  needsReview: string | null;
+  acceptableMinor: boolean;
+}) =>
+  cover.ingestion === 'Scanned' &&
+  // The rest of the block marker: Scanned already rules out Blocked ingestion.
+  cover.nsfwLevel !== NSFW_LEVEL_BLOCKED &&
+  cover.blockedFor == null &&
+  cover.needsReview == null &&
+  cover.acceptableMinor === false;
+
+/** `isPlayerSongCover` over `Image` aliased `cover`. */
+export const playerSongCoverText = (cover: string) =>
+  `(${cover}.ingestion::text = 'Scanned' AND NOT ${blockMarkerText(
+    cover
+  )} AND ${cover}."needsReview" IS NULL AND ${cover}."acceptableMinor" = false)`;
+
+/** What a ToS removal notice names when the removed image is a song or that song's own cover. */
+export type SongNoticeSubject = { kind: 'song' | 'cover'; songId: number; title: string };
+
+/** The song a removal notice names when `imageId` is a song or its own cover (`songsOwnCoverText`):
+ *  the notice links to the song, the only page a cover has. Null for any other image. */
+export async function songNoticeSubject(
+  db: Kysely<DB>,
+  imageId: number
+): Promise<SongNoticeSubject | null> {
+  const row = await db
+    .selectFrom('Track as t')
+    .innerJoin('Image as s', 's.id', 't.imageId')
+    .leftJoin('Image as c', 'c.id', 't.coverImageId')
+    .select(['t.imageId as songId', sql<string | null>`s.metadata->>'title'`.as('title')])
+    .where((eb) =>
+      eb.or([
+        eb('t.imageId', '=', imageId),
+        eb.and([
+          eb('t.coverImageId', '=', imageId),
+          sql<boolean>`${sql.raw(songsOwnCoverText('c', 's'))}`,
+        ]),
+      ])
+    )
+    .executeTakeFirst();
+  if (!row) return null;
+  return {
+    kind: row.songId === imageId ? 'song' : 'cover',
+    songId: row.songId,
+    title: row.title ?? '',
+  };
+}
+
+/** The `tos-violation` notice details for a removed song or cover: the template's "song" / "song
+ *  cover" wording, the song's title, and a link to the song. */
+export const songTosNoticeDetails = (song: SongNoticeSubject) => ({
+  modelName: song.title,
+  entity: song.kind === 'song' ? 'song' : 'song cover',
+  url: `/images/${song.songId}`,
+});
 
 const CLEAR_HELD_USER_IMAGES_SQL = `
   WITH held AS (

@@ -6,6 +6,7 @@ import { ownerIngestionSignalData } from '~/server/common/image-block-marker';
 import type { TagType } from '~/shared/utils/prisma/enums';
 import {
   ImageIngestionStatus,
+  MediaType,
   ModerationRuleAction,
   NewOrderRankType,
   TagSource,
@@ -19,6 +20,7 @@ import {
   SignalMessages,
 } from '~/server/common/enums';
 import { stripBenignPhrases } from '~/server/services/blocklist.service';
+import { rateSong, songOfCover } from '~/server/services/audio-scan/song-rating';
 import {
   auditPostImageMeta,
   getTagsFromPrompt,
@@ -37,6 +39,8 @@ import { normalizeText } from '~/utils/normalize-text';
 import { styleTags, tagsNeedingReview } from '~/libs/tags';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { createImageTagsForReview } from '~/server/services/image-review.service';
+import { holdSongsOfCovers } from '~/server/services/csam-image-review';
+import { withRetries } from '~/utils/errorHandling';
 import {
   queueArticlesAndComicsForImages,
   queueDocumentsForBlockedImages,
@@ -636,6 +640,15 @@ async function logScanAfterReview(image: ScanImage, toUpdate: Prisma.ImageUpdate
   }
 }
 
+/** Never throws: the block has landed, and a failure leaves the song as it was. */
+async function holdSongOfCsamBlockedCover(imageId: number) {
+  // One immediate retry before logging.
+  await withRetries(() => dbWrite.$transaction((tx) => holdSongsOfCovers(tx, [imageId])), 1).catch(
+    (error: Error) =>
+      logToAxiom({ type: 'error', name: 'song-csam-hold', imageId, message: error.message })
+  );
+}
+
 /**
  * Resolve and persist the final state of the image row, returning the bits the
  * post-update side effects need. Three terminal shapes:
@@ -656,6 +669,7 @@ export async function resolveScanOutcome({
   workflowId,
   prompt,
   negativePrompt,
+  fixed,
   axes,
   log = LEGACY_SCAN_LOG,
 }: {
@@ -665,6 +679,18 @@ export async function resolveScanOutcome({
   workflowId: string;
   prompt?: string;
   negativePrompt?: string;
+  /**
+   * For media with nothing to audit (a song has no tags): the level to store, and the reason when the
+   * scan blocked it, and the metadata to store with the verdict. Replaces the tag audit; every guard
+   * below still runs.
+   */
+  fixed?: {
+    nsfwLevel: number;
+    blockedFor?: string;
+    metadata?: Record<string, unknown>;
+    /** The scan found a minor involved, which the image row records as `minor`. */
+    minor?: boolean;
+  };
   /** Rating axes, written with the verdict while `image-axis-shadow-write` is on. */
   axes?: RatingAxes;
   log?: ScanLog;
@@ -697,25 +723,27 @@ export async function resolveScanOutcome({
       ([row]) => row?.blockedFor ?? null,
       () => image.blockedFor
     );
-    return {
-      ingestion: ImageIngestionStatus.Blocked,
-      blockedFor: stored && blockedForNamesCsam(stored) ? stored : blocked.reason,
-      reviewKey: null,
-    };
+    const blockedFor = stored && blockedForNamesCsam(stored) ? stored : blocked.reason;
+    if (blockedForNamesCsam(blockedFor)) await holdSongOfCsamBlockedCover(image.id);
+    return { ingestion: ImageIngestionStatus.Blocked, blockedFor, reviewKey: null };
   }
 
   // A collection judge's floor, read before the audit so its checks run at the level the image
   // will be written at, not only the level its tags carry.
-  const [floorRow] = await dbWrite.$queryRaw<{ judgeFloor: number }[]>`
-    SELECT ${judgeRatingFloorSql()} AS "judgeFloor" FROM "Image" WHERE id = ${image.id}
-  `;
-  const audit = await auditScanResults({
-    imageId: image.id,
-    userId: image.userId,
-    prompt,
-    negativePrompt,
-    floorLevel: typeof floorRow?.judgeFloor === 'number' ? floorRow.judgeFloor : 0,
-  });
+  const floorLevel = fixed
+    ? 0
+    : await dbWrite.$queryRaw<{ judgeFloor: number }[]>`
+        SELECT ${judgeRatingFloorSql()} AS "judgeFloor" FROM "Image" WHERE id = ${image.id}
+      `.then(([row]) => (typeof row?.judgeFloor === 'number' ? row.judgeFloor : 0));
+  const audit = fixed
+    ? fixedAudit(fixed)
+    : await auditScanResults({
+        imageId: image.id,
+        userId: image.userId,
+        prompt,
+        negativePrompt,
+        floorLevel,
+      });
   let reviewKey = audit.reviewKey ?? null;
 
   const toUpdate: Prisma.ImageUpdateInput = { updatedAt, pHash };
@@ -753,7 +781,7 @@ export async function resolveScanOutcome({
   // takes precedence over the audit's own decision.
   const modRule = await evaluateImageModRules(image, audit.tags);
   let ruleBlocked = false;
-  let metadataUpdate: Record<string, any> | undefined;
+  let metadataUpdate: Record<string, any> | undefined = fixed?.metadata;
   if (modRule) {
     metadataUpdate = modRule.metadata;
     if (modRule.ingestion) toUpdate.ingestion = modRule.ingestion;
@@ -958,6 +986,7 @@ export async function resolveScanOutcome({
       userId: image.userId,
       reason: modRule?.ruleReason,
       log,
+      type: image.type,
     });
 
   // A collection judge's rating is a floor under an unlocked, unblocked level. Read from the row
@@ -1041,6 +1070,8 @@ export async function resolveScanOutcome({
     }
   }
 
+  if (blockedForNamesCsam(toUpdate.blockedFor as string | null | undefined))
+    await holdSongOfCsamBlockedCover(image.id);
   return {
     ingestion,
     nsfwLevel,
@@ -1082,6 +1113,35 @@ async function withPromptKeywordTags(tags: AuditTag[], prompt?: string): Promise
         source,
       })),
   ];
+}
+
+/** The audit of media that has nothing to audit: no tags, no review, the level it was given. */
+function fixedAudit({
+  nsfwLevel,
+  blockedFor,
+  minor = false,
+}: {
+  nsfwLevel: number;
+  blockedFor?: string;
+  minor?: boolean;
+}): Awaited<ReturnType<typeof auditScanResults>> {
+  return {
+    tags: [],
+    nsfwLevel,
+    checkedLevel: nsfwLevel,
+    nsfw: false,
+    minorTags: [],
+    poiTags: [],
+    reviewTags: [],
+    tagReview: false,
+    poiReview: false,
+    minorReview: false,
+    newUserReview: false,
+    minor,
+    poi: false,
+    reviewKey: undefined,
+    blockedFor,
+  };
 }
 
 async function auditScanResults(args: {
@@ -1315,11 +1375,13 @@ async function notifyImageAutoBlocked({
   userId,
   reason,
   log,
+  type,
 }: {
   imageId: number;
   userId: number;
   reason?: string | null;
   log: ScanLog;
+  type?: string;
 }) {
   if (isFeedbackCaptureOwner(userId)) return;
   await createNotification({
@@ -1328,7 +1390,9 @@ async function notifyImageAutoBlocked({
     type: 'system-message',
     userId,
     details: {
-      message: `One of your images has been blocked due to a moderation rule violation${
+      message: `One of your ${
+        type === 'audio' ? 'songs' : 'images'
+      } has been blocked due to a moderation rule violation${
         reason ? ` by the following reason: ${reason}` : ''
       }. If you believe this is a mistake, you can appeal this decision.`,
       url: `/images/${imageId}`,
@@ -1350,6 +1414,47 @@ async function notifyImageAutoBlocked({
 
 // Post-update side effects
 // --------------------------------------------------
+const SONG_RATING_LOG: ScanLog = { name: 'song-rating', source: 'image-scan-pipeline' };
+
+/**
+ * Re-rates a decided song after one of its inputs changed (its cover, a lyrics verdict), with the
+ * effects a scan verdict's level has.
+ */
+export async function rerateSong(songId: number) {
+  await rateSong(songId, async (nsfwLevel) => {
+    const image = await loadImageForScan(songId);
+    const outcome: ScanOutcome = {
+      ingestion: ImageIngestionStatus.Scanned,
+      nsfwLevel,
+      blockedFor: null,
+      reviewKey: image.needsReview,
+    };
+    await sendIngestionSignal({
+      imageId: songId,
+      userId: image.userId,
+      ingestion: outcome.ingestion,
+      nsfwLevel,
+      log: SONG_RATING_LOG,
+    });
+    await applyIngestionSideEffects({ image, outcome });
+  });
+}
+
+/** Never throws: the cover's own verdict has landed. */
+async function rerateSongOfCover(coverId: number) {
+  try {
+    const songId = await songOfCover(coverId);
+    if (songId !== null) await rerateSong(songId);
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: SONG_RATING_LOG.name,
+      message: (error as Error).message,
+      payload: { coverId },
+    });
+  }
+}
+
 export async function applyIngestionSideEffects({
   image,
   outcome,
@@ -1357,6 +1462,8 @@ export async function applyIngestionSideEffects({
   image: ScanImage;
   outcome: ScanOutcome;
 }) {
+  if (image.type === MediaType.image && image.postId == null) await rerateSongOfCover(image.id);
+
   // handle blocked image updates
   if (outcome.ingestion === ImageIngestionStatus.Blocked) {
     await queueImageSearchIndexUpdate({

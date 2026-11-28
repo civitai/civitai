@@ -128,6 +128,7 @@ export const getVotableTagsHandler = async ({
       userId: ctx.user?.id,
       isModerator: ctx.user?.isModerator,
       ownerSeesHeld: isSessionOrFullUserKey(ctx),
+      music: !!ctx.features?.music,
     });
 
     return results;

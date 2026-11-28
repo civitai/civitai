@@ -19,6 +19,7 @@
     IconShield,
     IconTicket,
     IconCircle,
+    IconMusic,
     IconChevronRight,
     IconLogout,
   } from '@tabler/icons-svelte';
@@ -82,6 +83,7 @@
     '/': IconLayoutDashboard,
     '/reports': IconFlag,
     '/images': IconPhoto,
+    '/audio': IconMusic,
     '/articles': IconArticle,
     '/models': IconBox,
     '/audit': IconListSearch,

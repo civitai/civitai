@@ -14,6 +14,8 @@ export const RATING_REVIEW_ENTITY_TYPES = [
   'Challenge',
   'Crucible',
   'Collection',
+  // A song is an `Image` row of type audio; its own value keeps a plain image from being disputable.
+  'Song',
 ] as const;
 export type RatingReviewEntityType = (typeof RATING_REVIEW_ENTITY_TYPES)[number];
 
@@ -33,6 +35,7 @@ export const ratingReviewEntityLabels: Record<RatingReviewEntityType, string> = 
   Challenge: 'Challenge',
   Crucible: 'Crucible',
   Collection: 'Collection',
+  Song: 'Song',
 };
 
 // A Model's rating override is its `nsfw` flag, not a level, so it is represented as PG (off) / R (on).
@@ -101,6 +104,183 @@ export function ratingReviewEntityPath(
       return `/crucibles/${entityId}`;
     case 'Collection':
       return `/collections/${entityId}`;
+    case 'Song':
+      return `/images/${entityId}`;
+  }
+}
+
+// How the ingest cron classifies a failed image scan (the main app's `image-scan-failure.ts`
+// exports these as its own; that module's header explains the classes).
+export const ImageScanFailureClass = {
+  /** Infra churn that recovers on its own (container-create, 5xx, timeout, expiry). Keep retrying. */
+  Transient: 'transient',
+  /** The media itself can't be downloaded/decoded — it will never scan. Stop almost immediately. */
+  Permanent: 'permanent',
+  /** Unclassifiable reason. Retry conservatively under the historical cap. */
+  Unknown: 'unknown',
+} as const;
+export type ImageScanFailureClass =
+  (typeof ImageScanFailureClass)[keyof typeof ImageScanFailureClass];
+
+// Reason substrings that mark infra-transient failures. Matched case-insensitively.
+const TRANSIENT_REASON_PATTERNS = [
+  'failed to create container',
+  'giving up after', // "…Giving up after 10 attempts"
+  'does not indicate success: 5', // 5xx surfaced by a worker, e.g. "500 (Internal Server Error)"
+  'internal server error',
+  'bad gateway',
+  'service unavailable',
+  'gateway timeout',
+  'timed out',
+  'timeout',
+  'connection reset',
+  'connection refused',
+  'temporarily unavailable',
+  // A flapping worker pool: a fresh re-submit mostly lands on a worker that serves the job.
+  'no provider supports this job',
+  'retracted support',
+];
+
+// Orchestrator middleware / step markers that are infra-transient regardless of message.
+// Aspirational: the v2 job event doesn't expose `current_middleware` today, so in
+// practice container failures classify via the reason text ("Failed to create
+// container…") below. Kept so classification improves for free if middleware ever
+// arrives (via the passed `middleware` or a failing step named after it).
+const TRANSIENT_MIDDLEWARE_PATTERNS = ['preparemanagedcontainer', 'preparecontainer'];
+
+// Reason substrings that mark a permanently-bad input (the media can't be fetched/decoded).
+const PERMANENT_REASON_PATTERNS = [
+  'download',
+  'decode',
+  'corrupt',
+  'invalid image',
+  'invalid media',
+  'not a valid',
+  // Not a bare 'too large' — that would also match our own oversized request body.
+  'image is too large',
+  'unsupported',
+  'unscannable',
+];
+
+/**
+ * Classify a scan failure. Transient checks run first so a 5xx *while downloading*
+ * (which is recoverable) isn't mislabeled permanent by the `download` marker.
+ * Robust to empty/unknown reasons — falls back to `Unknown` (conservative retry).
+ */
+export function classifyImageScanFailure(input: {
+  reason?: string | null;
+  failureType?: string | null;
+  middleware?: string | null;
+  failedSteps?: string[] | null;
+}): ImageScanFailureClass {
+  const { reason, failureType, middleware, failedSteps } = input;
+
+  // Workflow expiry (the orchestrator's 10-min cap) is always a transient timeout:
+  // the work never ran to completion, so a re-scan can still succeed.
+  if (failureType === 'expired') return ImageScanFailureClass.Transient;
+
+  const haystack = [reason, middleware, ...(failedSteps ?? [])]
+    .filter((x): x is string => !!x)
+    .join(' ')
+    .toLowerCase();
+
+  if (!haystack) return ImageScanFailureClass.Unknown;
+
+  if (TRANSIENT_MIDDLEWARE_PATTERNS.some((p) => haystack.includes(p)))
+    return ImageScanFailureClass.Transient;
+  if (TRANSIENT_REASON_PATTERNS.some((p) => haystack.includes(p)))
+    return ImageScanFailureClass.Transient;
+  if (PERMANENT_REASON_PATTERNS.some((p) => haystack.includes(p)))
+    return ImageScanFailureClass.Permanent;
+
+  return ImageScanFailureClass.Unknown;
+}
+
+/** The class the ingest cron retries a row under: a row stamped Unknown (or not at all) before its
+ *  reason was recognised retries as what its reason reads as now. */
+export function effectiveScanFailureClass(
+  failureClass: string | null | undefined,
+  reason: string | null | undefined
+): string | null {
+  if (reason && (!failureClass || failureClass === ImageScanFailureClass.Unknown))
+    return classifyImageScanFailure({ reason });
+  return failureClass ?? null;
+}
+
+// The ingest cron's scan retry ceilings, by stored failure class; the main app's
+// `image-scan-failure.ts` exports these as its own. Here because a song's rating dispute also
+// reads them: past its ceiling a song's scan is never re-sent, so it can never be reviewed.
+export const IMAGE_SCAN_TRANSIENT_RETRY_LIMIT = 30;
+export const IMAGE_SCAN_UNKNOWN_RETRY_LIMIT = 9; // historical flood-protection cap
+// Give up on the first failure: markImageScanError already bumped retryCount to 1, so
+// `retryCount < 1` is false on the next cron pass and the image is never re-queued.
+export const IMAGE_SCAN_PERMANENT_RETRY_LIMIT = 1;
+/** A `Rescan` image is re-sent only while its retryCount is below this. */
+export const IMAGE_RESCAN_RETRY_LIMIT = 9;
+
+/** Absolute retry ceiling for a stored failure class (defaults to the conservative cap). */
+export function imageScanRetryLimit(failureClass?: string | null): number {
+  switch (failureClass) {
+    case 'transient':
+      return IMAGE_SCAN_TRANSIENT_RETRY_LIMIT;
+    case 'permanent':
+      return IMAGE_SCAN_PERMANENT_RETRY_LIMIT;
+    default:
+      return IMAGE_SCAN_UNKNOWN_RETRY_LIMIT;
+  }
+}
+
+/** A song's ingestion, with `scanJobs.retryCount` and the stored class and reason of its last failed
+ *  scan, read as the ingest cron reads them. */
+export type SongScanState = {
+  ingestion: string;
+  retryCount: number | null;
+  failureClass: string | null;
+  failureReason: string | null;
+};
+
+/** A song's `SongScanState` from its `scanJobs`, as the ingest cron reads them: the current error's
+ *  class and reason, else the last failure's. */
+export function songScanStateOf(ingestion: string, scanJobs: unknown): SongScanState {
+  const jobs = (scanJobs ?? {}) as {
+    retryCount?: unknown;
+    error?: { failureClass?: unknown; reason?: unknown };
+    lastFailure?: { failureClass?: unknown; reason?: unknown };
+  };
+  const failure = jobs.error ?? jobs.lastFailure;
+  const text = (v: unknown) => (typeof v === 'string' ? v : null);
+  return {
+    ingestion,
+    retryCount: typeof jobs.retryCount === 'number' ? jobs.retryCount : null,
+    failureClass: text(failure?.failureClass),
+    failureReason: text(failure?.reason),
+  };
+}
+
+/** Whether the owner may dispute a song's rating: only once its own scans reviewed it, the rating a
+ *  moderator may rule on. The main app's song menu and its dispute writer both ask this. */
+export function songDisputable(ingestion: string): boolean {
+  return ingestion === 'Scanned';
+}
+
+/** A removed song, a lost file, or a scan past its retry ceiling: its own scans will never review it. */
+export function songNeverReviewable({
+  ingestion,
+  retryCount,
+  failureClass,
+  failureReason,
+}: SongScanState): boolean {
+  const retries = retryCount ?? 0;
+  switch (ingestion) {
+    case 'Blocked':
+    case 'NotFound':
+      return true;
+    case 'Error':
+      return retries >= imageScanRetryLimit(effectiveScanFailureClass(failureClass, failureReason));
+    case 'Rescan':
+      return retries >= IMAGE_RESCAN_RETRY_LIMIT;
+    default:
+      return false;
   }
 }
 

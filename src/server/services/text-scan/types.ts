@@ -38,6 +38,7 @@ export type TextScanEntityType =
   | 'Collection'
   | 'Storyline'
   | 'ImageCaption'
+  | 'TrackLyrics'
   | 'ServiceOffering'
   | 'PostText'
   | 'ModelRules'

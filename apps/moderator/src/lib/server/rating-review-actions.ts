@@ -16,6 +16,10 @@ export async function resolveRatingReviewAction(input: {
   appliedLevel: number;
   modComment?: string;
   userId: number;
+  /** The moderator's own grant, from `holdsCsamReview`: see `resolveRatingReview`. */
+  csamReview?: boolean;
+  /** Audio review's Disputes tab: see `resolveRatingReview`. */
+  songs?: boolean;
 }): Promise<{ ok: true; status: ReportStatus } | { ok: false; error: string }> {
   let result: ResolveResult;
   try {
@@ -24,6 +28,8 @@ export async function resolveRatingReviewAction(input: {
       appliedLevel: input.appliedLevel,
       modComment: input.modComment,
       moderatorId: input.userId,
+      csamReview: input.csamReview,
+      songs: input.songs,
     });
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };

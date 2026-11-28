@@ -78,6 +78,7 @@ beforeAll(async () => {
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Blocked', 'Error', 'NotFound', 'Rescan');
     CREATE TABLE "Image" (
       "id" integer PRIMARY KEY,
+      "type" text NOT NULL DEFAULT 'image',
       "postId" integer,
       "metadata" jsonb NOT NULL DEFAULT '{}',
       "nsfwLevel" integer NOT NULL DEFAULT 0,
@@ -240,6 +241,17 @@ describe('setImageNsfwLevelFromKnights', () => {
     expect(await write(8)).toMatchObject({ applied: false, reason: 'blocked' });
     expect(await stored()).toMatchObject({ nsfwLevelLocked: false });
     expect((await stored()).nsfwLevel).toBe('nsfwLevel' in marker ? marker.nsfwLevel : 4);
+    expect(refreshThumbnailCache).not.toHaveBeenCalled();
+  });
+
+  // A song is published only by its own scan; a lock would stand in for that scan.
+  it('refuses a song as locked and writes nothing', async () => {
+    await seed();
+    await pg.query(`UPDATE "Image" SET type = 'audio' WHERE id = $1`, [IMAGE]);
+
+    expect(await write(8)).toEqual({ applied: false, reason: 'locked', currentLevel: 4 });
+
+    expect(await stored()).toMatchObject({ nsfwLevel: 4, nsfwLevelLocked: false, metadata: {} });
     expect(refreshThumbnailCache).not.toHaveBeenCalled();
   });
 

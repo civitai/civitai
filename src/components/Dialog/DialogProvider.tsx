@@ -32,6 +32,14 @@ type DialogState = {
   'aria-hidden'?: true;
 };
 
+/** Dialogs stack from here, one level per open dialog. */
+export const DIALOG_Z_INDEX = 300;
+/**
+ * Over every open dialog (far more than ever stack) and under Mantine's notifications (400), for a
+ * surface a dialog must never dim: the music player.
+ */
+export const ABOVE_DIALOGS_Z_INDEX = DIALOG_Z_INDEX + 50;
+
 /** How long a closing dialog that never reports the end of its exit transition stays mounted. */
 const exitFallbackMs = 1000;
 
@@ -55,8 +63,8 @@ const DialogProviderInner = memo(function DialogProviderInner({
   const opened = mounted && !closing;
   const isTopDialog = useIsTopDialog(dialog.id) && !closing;
   // A closing dialog keeps the layer it had while open, so it doesn't drop behind its exit.
-  const zIndexRef = useRef(300 + index);
-  if (!closing) zIndexRef.current = 300 + index;
+  const zIndexRef = useRef(DIALOG_Z_INDEX + index);
+  if (!closing) zIndexRef.current = DIALOG_Z_INDEX + index;
 
   const Dialog = dialog.component;
 

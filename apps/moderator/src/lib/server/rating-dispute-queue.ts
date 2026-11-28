@@ -33,7 +33,8 @@ import {
   type DisputeTab,
   type OtherKind,
 } from '$lib/rating-dispute';
-import type { RatingReviewStatusFilter } from '$lib/rating-review';
+import { SONG_ENTITY_TYPE, type RatingReviewStatusFilter } from '$lib/rating-review';
+import { holdsCsamReview } from './held-media';
 
 const PAGE_SIZE = 50;
 
@@ -287,7 +288,11 @@ export async function ratingDisputeTriageLoad(url: URL, user: App.Locals['user']
   let selectedMissing: number | null = null;
   if (selected && !pageRows.some((r) => r.id === selected)) {
     pinnedRows = await hydrateRatingReviews(
-      await ratingReviewRowQuery().where('rr.id', '=', selected).execute()
+      await ratingReviewRowQuery()
+        .where('rr.id', '=', selected)
+        // Song disputes are decided on the Audio review page; no tab lists them here either.
+        .where('rr.entityType', '<>', SONG_ENTITY_TYPE)
+        .execute()
     );
     if (!pinnedRows.length) selectedMissing = selected;
   }
@@ -327,7 +332,11 @@ const resolveSchema = z.object({
 export const resolveRatingDisputeAction: Action = async ({ request, locals }) => {
   const parsed = resolveSchema.safeParse(Object.fromEntries(await request.formData()));
   if (!parsed.success) return fail(400, { error: 'Invalid resolution' });
-  const result = await resolveRatingReviewAction({ ...parsed.data, userId: locals.user.id });
+  const result = await resolveRatingReviewAction({
+    ...parsed.data,
+    userId: locals.user.id,
+    csamReview: holdsCsamReview(locals.user),
+  });
   if (!result.ok)
     return fail(409, {
       error: result.error,

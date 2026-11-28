@@ -18,12 +18,32 @@ function TagChip({
   label,
   active,
   onClick,
+  variant,
 }: {
   label: string;
   active: boolean;
   onClick: () => void;
+  variant: TagChipVariant;
 }) {
   const colorScheme = useComputedColorScheme('dark');
+  // Pencil `m52ee` (the music surfaces). Its height matches the default chip's, so the row
+  // reservation holds for both.
+  if (variant === 'outline')
+    return (
+      <button
+        type="button"
+        data-active={active || undefined}
+        onClick={onClick}
+        className={clsx(
+          'h-[26px] shrink-0 whitespace-nowrap rounded-full border border-solid px-3 text-[13px] font-medium leading-4',
+          active
+            ? 'border-transparent bg-blue-1 text-blue-7 dark:bg-blue-8/20 dark:text-blue-3'
+            : 'border-gray-3 text-black hover:bg-gray-1 dark:border-dark-4 dark:text-dark-0 dark:hover:bg-dark-5'
+        )}
+      >
+        {label}
+      </button>
+    );
 
   // In dark mode every chip is `filled`, so colour is the only thing separating active
   // from inactive there.
@@ -48,6 +68,7 @@ function TagChip({
 }
 
 export type TagChipRowItem = { id: number | string; label: string };
+export type TagChipVariant = 'default' | 'outline';
 
 /**
  * The chip row every tag filter bar is made of — the scroller, the height reservation,
@@ -65,6 +86,7 @@ export function TagChipRow({
   includeAll = true,
   loading = false,
   placeholder = null,
+  variant = 'default',
 }: {
   items: TagChipRowItem[];
   /** `undefined` means nothing is selected, which is what fills the All chip. */
@@ -86,6 +108,7 @@ export function TagChipRow({
    * prevent, arriving by the other door.
    */
   placeholder?: ReactNode;
+  variant?: TagChipVariant;
 }) {
   // The reservation sits on ONE wrapper both branches share, rather than on the
   // placeholder and the scroller separately. Two elements holding the same height is a
@@ -100,14 +123,22 @@ export function TagChipRow({
       {loading ? (
         placeholder
       ) : (
-        <TwScrollX className="flex gap-1">
-          {includeAll && <TagChip label="All" active={activeId === undefined} onClick={onClear} />}
+        <TwScrollX className={clsx('flex', variant === 'outline' ? 'gap-2' : 'gap-1')}>
+          {includeAll && (
+            <TagChip
+              label="All"
+              active={activeId === undefined}
+              onClick={onClear}
+              variant={variant}
+            />
+          )}
           {items.map((item) => (
             <TagChip
               key={item.id}
               label={item.label}
               active={activeId === item.id}
               onClick={() => onSelect(item)}
+              variant={variant}
             />
           ))}
         </TwScrollX>

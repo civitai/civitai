@@ -466,6 +466,7 @@ export const COMMENT_V3_MIGRATIONS = [
   '20261210120000_comment_v3_mirror_changed_columns',
   '20270101120000_comment_v3_old_table_triggers_off',
   '20270102120000_comment_v3_teardown',
+  '20271114120000_comment_v3_metadata',
   '20271125130000_comment_v3_hidden_at',
 ];
 

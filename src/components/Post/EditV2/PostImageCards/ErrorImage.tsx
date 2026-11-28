@@ -2,6 +2,7 @@ import { Alert, Button, Text } from '@mantine/core';
 import type { PostEditMediaDetail } from '~/components/Post/EditV2/PostEditProvider';
 import { usePostEditStore, usePostPreviewContext } from '~/components/Post/EditV2/PostEditProvider';
 import { CustomCard } from '~/components/Post/EditV2/PostImageCards/CustomCard';
+import { SongGlyphTile } from '~/components/Post/EditV2/PostImageCards/SongCover';
 
 export function ErrorImage({ image }: { image: PostEditMediaDetail }) {
   const { showPreview } = usePostPreviewContext();
@@ -10,30 +11,28 @@ export function ErrorImage({ image }: { image: PostEditMediaDetail }) {
       {showPreview ? <Preview image={image} /> : <EditDetail image={image} />}
     </div>
   );
-
-  // return (
-  //   <Alert color="red" className="p-3 rounded-lg " classNames={{ message: 'flex flex-col gap-3' }}>
-  //     <Text align="center">Failed to upload image</Text>
-  //     <Button color="red" onClick={handleRemoveClick}>
-  //       Remove
-  //     </Button>
-  //   </Alert>
-  // );
 }
+
+const failedCopy = (image: PostEditMediaDetail) =>
+  image.type === 'audio' ? 'Failed to upload song' : 'Failed to upload image';
 
 function Preview({ image }: { image: PostEditMediaDetail }) {
   const handleRemoveClick = useRemoveImage(image.url);
   return (
     <div className="w-full">
       <div className="relative overflow-hidden rounded-lg">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={image.url} alt={image.name} />
+        {image.type === 'audio' ? (
+          <SongGlyphTile className="mx-auto my-3 size-[168px]" />
+        ) : (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={image.url} alt={image.name} />
+        )}
         <Alert
           color="red"
           className="rounded-none"
           classNames={{ message: 'flex flex-col gap-3 items-center' }}
         >
-          <Text className="text-2xl font-semibold leading-none ">Failed to upload image</Text>
+          <Text className="text-2xl font-semibold leading-none ">{failedCopy(image)}</Text>
           <Button color="red" onClick={handleRemoveClick}>
             Remove
           </Button>
@@ -52,12 +51,16 @@ function EditDetail({ image }: { image: PostEditMediaDetail }) {
       classNames={{ message: 'flex flex-row-reverse flex-wrap @sm:flex-nowrap gap-3' }}
     >
       <div className="w-full @sm:w-4/12">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={image.url} alt={image.name} className="rounded-lg" />
+        {image.type === 'audio' ? (
+          <SongGlyphTile className="aspect-square w-full max-w-[168px]" />
+        ) : (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={image.url} alt={image.name} className="rounded-lg" />
+        )}
       </div>
       <CustomCard className="flex flex-1 flex-col items-center justify-center gap-3 overflow-hidden">
         <Text className="text-center text-2xl font-semibold leading-none">
-          Failed to upload image
+          {failedCopy(image)}
         </Text>
         <Button color="red" onClick={handleRemoveClick}>
           Remove

@@ -9,6 +9,7 @@ import {
   IconCube,
   IconId,
   IconLayoutList,
+  IconMusic,
   IconPencilMinus,
   IconPhoto,
   IconSettings,
@@ -101,6 +102,12 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
       icon: (props) => <IconVideo {...props} />,
       count: userOverview?.videoCount ?? 0,
       disabled: !!user?.bannedAt,
+    },
+    music: {
+      url: `${baseUrl}/music`,
+      icon: (props) => <IconMusic {...props} />,
+      count: userOverview?.audioCount ?? 0,
+      disabled: !features.music || !!user?.bannedAt,
     },
     '3d-models': {
       url: `${baseUrl}/3d-models`,

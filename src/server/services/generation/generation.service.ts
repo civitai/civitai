@@ -45,6 +45,7 @@ import type {
 import { generationStatusSchema } from '~/server/schema/generation.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
+import { canSeeSongs } from '~/server/services/song-visibility-sql';
 import {
   type MediaViewer,
   viewerCanSeeImageMedia,
@@ -540,6 +541,7 @@ async function getMediaGenerationData({
     id,
     userId: user?.id,
     isModerator: user?.isModerator,
+    music: canSeeSongs(user),
   });
   const showMedia = await viewerCanSeeImageMedia(mediaViewer, visible);
 

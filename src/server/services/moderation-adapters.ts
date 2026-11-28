@@ -1,3 +1,5 @@
+import { setTextScanVerdictApplier } from '~/server/services/text-scan/verdict-applier';
+import { setSongReRater } from '~/server/services/audio-scan/song-rating';
 import '~/server/services/text-scan/profiles/index';
 import { articleModerationAdapter } from '~/server/services/article-moderation.adapter';
 import { bountyModerationAdapter } from '~/server/services/bounty-moderation.adapter';
@@ -25,6 +27,8 @@ import {
   storylineTextScanAdapter,
 } from '~/server/services/text-scan/adapters';
 import { scamModerationAdapters } from '~/server/services/text-scan/scam.adapter';
+import { trackLyricsLanguageModerationAdapter } from '~/server/services/track-lyrics-language-moderation.adapter';
+import { trackLyricsModerationAdapter } from '~/server/services/track-lyrics-moderation.adapter';
 import { wildcardCategoryModerationAdapter } from '~/server/services/wildcard-category-audit.service';
 
 // Central registry of `ModerationAdapter`s keyed by entityType. Adding a new
@@ -47,6 +51,8 @@ const moderationAdapters: Record<string, ModerationAdapter> = {
   Post: postTextScanAdapter,
   Storyline: storylineTextScanAdapter,
   ImageCaption: imageCaptionTextScanAdapter,
+  TrackLyrics: trackLyricsModerationAdapter,
+  TrackLyricsLanguage: trackLyricsLanguageModerationAdapter,
   ServiceOffering: serviceOfferingModerationAdapter,
   ServiceDealReview: serviceDealReviewModerationAdapter,
   ServiceDealReviewReply: serviceDealReviewReplyModerationAdapter,
@@ -66,3 +72,15 @@ export function getModerationAdapter(entityType: string): ModerationAdapter | un
 export function getSupportedModerationEntityTypes(): string[] {
   return Object.keys(moderationAdapters);
 }
+
+// Text scan applies verdicts through this without importing the registry (verdict-applier.ts).
+setTextScanVerdictApplier(async (entityType, args) => {
+  await getModerationAdapter(entityType)?.applyTextScan?.(args);
+});
+
+// The image service re-rates a song through this when its cover is rated (`rerateSongOfRatedCover`),
+// without importing the scan pipeline, which would join the image service's import cycle.
+setSongReRater(async (songId) => {
+  const { rerateSong } = await import('~/server/services/image-scan-pipeline');
+  await rerateSong(songId);
+});

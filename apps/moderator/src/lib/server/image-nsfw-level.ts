@@ -1,4 +1,6 @@
+import type { Kysely, Transaction } from 'kysely';
 import { sql } from '@civitai/db/kysely';
+import type { DB } from '@civitai/db-schema/kysely';
 import { REDIS_KEYS } from '@civitai/redis';
 import { dbWrite } from './db';
 import { bustCachedObject } from './cache';
@@ -13,16 +15,28 @@ import { assertNotWithheld, notWithheldTarget } from './withheld-write';
 
 type ReportStatus = 'Pending' | 'Processing' | 'Actioned' | 'Unactioned';
 
-// Don't mirror the main app's single-image Meilisearch update: that index locks specially on a single-image
-// change.
-export async function updateImageNsfwLevel({
-  id,
-  nsfwLevel,
-  status,
-  reason,
-  userId,
-  csamReview,
-}: {
+const SONG_RATING_REFUSALS = {
+  unreviewed:
+    'This song has not been reviewed yet: its own scans decide it first, and are retried automatically. Rate it once they have.',
+  removed: "This song was removed, so it can't be rated.",
+  changed: 'This song changed while it was being rated. Reload.',
+} as const;
+
+/** Ingestion states of a song with no media to rate: removed, or its file gone. */
+const REMOVED_SONG_STATES = ['Blocked', 'NotFound'];
+
+/** A rating refused because the image is a song its own scans have not reviewed, or a removed one.
+ *  Its message is the moderator-facing copy. */
+export class SongRatingRefusedError extends Error {
+  constructor(readonly imageId: number, readonly reason: keyof typeof SONG_RATING_REFUSALS) {
+    super(SONG_RATING_REFUSALS[reason]);
+  }
+}
+
+/** One piece of the work that follows a committed rating, named for its log line. */
+export type AfterCommitStep = { name: string; run: () => Promise<unknown> };
+
+type ImageNsfwLevelInput = {
   id: number;
   nsfwLevel: number;
   status?: ReportStatus;
@@ -31,13 +45,54 @@ export async function updateImageNsfwLevel({
   /** The moderator's CSAM grant: an image withheld from them is left as it is, and this throws
    *  `WithheldImageError`. */
   csamReview: boolean;
-}): Promise<void> {
-  const image = await dbWrite
+};
+
+// Don't mirror the main app's single-image Meilisearch update: that index locks specially on a single-image
+// change.
+export async function updateImageNsfwLevel(input: ImageNsfwLevelInput): Promise<void> {
+  const steps = await dbWrite.transaction().execute((trx) => writeImageNsfwLevel(trx, input));
+  for (const step of steps) await step.run();
+}
+
+/**
+ * `updateImageNsfwLevel`'s writes, on `db`: pass a transaction to commit the rating with the caller's
+ * own writes. Returns the cache, activity and search work, in order, for the caller to run once that
+ * commits. An image withheld from a moderator without the grant (`csamReview`) is refused.
+ */
+export async function writeImageNsfwLevel(
+  db: Kysely<DB> | Transaction<DB>,
+  {
+    id,
+    nsfwLevel,
+    status,
+    reason,
+    userId,
+    csamReview,
+  }: ImageNsfwLevelInput
+): Promise<AfterCommitStep[]> {
+  const image = await db
     .selectFrom('Image')
-    .select(['metadata', 'postId', thumbnailParentId.as('parentId')])
+    .select([
+      'type',
+      'ingestion',
+      'metadata',
+      'postId',
+      'nsfwLevel',
+      thumbnailParentId.as('parentId'),
+    ])
     .where('id', '=', id)
+    // The level this write replaces is recorded with it, so no other write may land in between.
+    .forUpdate()
     .executeTakeFirst();
   if (!image) throw new Error('Image not found');
+  // A locked level counts as a review (imageReviewedSql has no song exception) and only a song's own
+  // scans may review it, so rate a song only once Scanned. A path that changes a song's audio or
+  // lyrics must clear nsfwLevelLocked.
+  if (image.type === 'audio' && image.ingestion !== 'Scanned')
+    throw new SongRatingRefusedError(
+      id,
+      REMOVED_SONG_STATES.includes(image.ingestion) ? 'removed' : 'unreviewed'
+    );
 
   const stored = (image.metadata as Record<string, unknown> | null) ?? {};
   const metadata = {
@@ -46,7 +101,7 @@ export async function updateImageNsfwLevel({
     ...ratingRecordedUnderGrace(stored, nsfwLevel),
   };
 
-  const written = await dbWrite
+  const updated = await db
     .updateTable('Image')
     .set({
       nsfwLevel,
@@ -54,19 +109,24 @@ export async function updateImageNsfwLevel({
       metadata: sql`${JSON.stringify(metadata)}::jsonb`,
     })
     .where('id', '=', id)
+    // Re-checked in the write: a rescan that started since the read leaves the song unreviewed.
+    .where((eb) => eb.or([eb('type', '<>', 'audio'), eb('ingestion', '=', 'Scanned')]))
     .where(notWithheldTarget(csamReview))
     .executeTakeFirst();
-  if (Number(written.numUpdatedRows) === 0) await assertNotWithheld([id], csamReview);
+  if (Number(updated.numUpdatedRows) === 0) {
+    await assertNotWithheld([id], csamReview);
+    if (image.type === 'audio') throw new SongRatingRefusedError(id, 'changed');
+    throw new Error('Image not found');
+  }
+
   if (status) {
-    await dbWrite
+    await db
       .updateTable('ImageRatingRequest')
       .set({ status })
       .where('imageId', '=', id)
       .where('status', '=', 'Pending')
       .execute();
   }
-  await invalidateThumbnails(id, [image.parentId]);
-  await bustProfilePictures({ imageIds: [id] });
 
   // Thumbnails are never posted, so a non-null postId means this image can't be a Model3D thumbnail.
   if (image.postId == null) {
@@ -88,18 +148,45 @@ export async function updateImageNsfwLevel({
       SET "nsfwLevel" = level."nsfwLevel"
       FROM level
       WHERE mm."model3dId" = level.id AND mm."nsfwLevel" != level."nsfwLevel"
-    `.execute(dbWrite);
+    `.execute(db);
   }
 
-  await recordModActivity({ userId, entityType: 'image', entityId: id, activity: 'setNsfwLevel' });
-
-  await bustAfterWrite('image-nsfw-level-cache-bust', () =>
-    Promise.all([
-      bustCachedObject(REDIS_KEYS.CACHES.IMAGE_METADATA, id),
-      // The version showcase is cached for a day and filtered by level when it is built.
-      bustPostGalleryCaches(image.postId != null ? [image.postId] : []),
-    ])
-  );
-
-  if (image.postId != null) await queueDocumentsForImageMinorChanges({ levelImageIds: [id] });
+  const postId = image.postId;
+  return [
+    { name: 'image-nsfw-level-thumbnails', run: () => invalidateThumbnails(id, [image.parentId]) },
+    {
+      name: 'image-nsfw-level-profile-pictures',
+      run: () => bustProfilePictures({ imageIds: [id] }),
+    },
+    {
+      name: 'image-nsfw-level-activity',
+      run: () =>
+        recordModActivity({
+          userId,
+          entityType: 'image',
+          entityId: id,
+          activity: 'setNsfwLevel',
+          details: { from: image.nsfwLevel, to: nsfwLevel },
+        }),
+    },
+    {
+      name: 'image-nsfw-level-cache-bust',
+      run: () =>
+        bustAfterWrite('image-nsfw-level-cache-bust', () =>
+          Promise.all([
+            bustCachedObject(REDIS_KEYS.CACHES.IMAGE_METADATA, id),
+            // The version showcase is cached for a day and filtered by level when it is built.
+            bustPostGalleryCaches(postId != null ? [postId] : []),
+          ])
+        ),
+    },
+    ...(postId != null
+      ? [
+          {
+            name: 'image-nsfw-level-search',
+            run: () => queueDocumentsForImageMinorChanges({ levelImageIds: [id] }),
+          },
+        ]
+      : []),
+  ];
 }

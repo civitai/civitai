@@ -48,6 +48,11 @@ Storyline's (title → a rating and a takedown or restriction on the storyline) 
 ImageCaption's (an author's caption on one image of a storyline chapter, keyed by `imageId` → a
 rating, and a refusal that hides the caption) is applied by `text-scan/actions/image-caption.ts`. It
 has no Clavata counterpart.
+TrackLyrics's (a song's lyrics, keyed by the song's `imageId` → `nsfw`, `csam`) verdict is what the
+song waits on before going public (`audio-scan/apply-song-scan.ts`). The `nsfw` verdict is recorded
+and never rates or blocks the song. Off or in shadow, the lyrics fall back to XGuard like other
+entities: its verdict decides the song too, and lyrics it blocks block the song. Only the text scan
+holds lyrics for `csam`.
 ServiceOffering's (a Creator Services offering's title and description → `nsfw`) feeds the
 offering's rating, which is the highest of the seller's pick, this verdict and its cover image's
 level. The offering is shown once its content checks complete. Off or in shadow, XGuard runs, as for
@@ -59,7 +64,7 @@ of this verdict and its referenced images' levels (`src/server/services/apps/doc
 The `app-doc-rater` job submits it for apps whose `app-blocks-shared-doc-levels` flag is on; until
 `AppDoc` is active, those documents stay hidden from everyone but their author.
 
-ChatMessage, CommentV3, UserProfile, Post, Model and Article also list `csam`, asked only while its
+ChatMessage, CommentV3, UserProfile, Post, Model, Article and TrackLyrics also list `csam`, asked only while its
 gate is `review` (see Modes). A chat window is scanned only for senders a scam verdict could act on;
 in `review` every sender's window is scanned, and the others are asked for `csam` alone, still one
 workflow per window.

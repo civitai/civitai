@@ -18,6 +18,7 @@ export type CutoverEntityType = Exclude<
   | 'Crucible'
   | 'Storyline'
   | 'ImageCaption'
+  | 'TrackLyrics'
   | 'ServiceOffering'
   | 'PostText'
   | 'ModelRules'

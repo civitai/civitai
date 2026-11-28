@@ -21,15 +21,18 @@ import {
 } from '~/server/common/enums';
 
 import { dbRead, dbWrite } from '~/server/db/client';
+import { getVisibleSongIds } from '~/server/services/image-visibility.service';
+import { readSong } from '~/server/services/song-read.service';
 import { reviewPublic } from '~/server/services/creator-service-deal-review-publish';
 import { reportAcceptedReward } from '~/server/rewards';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import { constants } from '~/server/common/constants';
 import { TransactionType, type BuzzSpendType } from '~/shared/constants/buzz.constants';
-import type {
-  CreateEntityAppealInput,
-  CreateReportInput,
-  ResolveAppealInput,
+import {
+  MINOR_VIOLATION,
+  type CreateEntityAppealInput,
+  type CreateReportInput,
+  type ResolveAppealInput,
 } from '~/server/schema/report.schema';
 import { withAdditionalReport } from '~/server/services/report-details';
 import { ReportEntity } from '~/shared/utils/report-helpers';
@@ -397,6 +400,42 @@ type CreateReportProps = CreateReportInput & {
   /** Fold only into a report still waiting for a moderator, never one already closed. */
   foldIntoPendingOnly?: boolean;
 };
+/**
+ * Song reports carry a time within the stored length (any time when there is none: refusing would
+ * leave the song unreportable). The song rules apply only to a reporter who can open the song; any
+ * other image gets the image answer, so a refusal never tells a hidden song from a hidden image. For
+ * user-filed reports only: scanners and Knights file timeless image reports that must keep landing on
+ * a song.
+ */
+export async function assertSongReportTime(
+  input: CreateReportInput,
+  viewer: { user: { id: number; isModerator?: boolean | null }; features?: { music?: boolean } }
+) {
+  const details: { timestampSec?: number; violation?: string } = input.details ?? {};
+  const visible =
+    input.type === ReportEntity.Image && input.reason !== ReportReason.StickerPlacement
+      ? await getVisibleSongIds({
+          ids: [input.id],
+          viewer: { user: viewer.user, features: { music: !!viewer.features?.music } },
+        })
+      : null;
+  // getVisibleSongIds is the reporter-can-open rule; the read itself adds none on top.
+  const song = visible?.has(input.id)
+    ? await readSong(input.id, { visibility: 'unchecked' })
+    : null;
+  if (!song) {
+    if (details.timestampSec !== undefined)
+      throw throwBadRequestError('Only a report on a song can carry a time.');
+    return;
+  }
+  if (details.timestampSec === undefined)
+    throw throwBadRequestError('Say when in the song this happens.');
+  if (song.durationSec !== null && details.timestampSec > song.durationSec)
+    throw throwBadRequestError('That time is past the end of the song.');
+  if (input.reason === ReportReason.TOSViolation && details.violation === MINOR_VIOLATION)
+    throw throwBadRequestError('A song cannot be reported as a depiction of a minor.');
+}
+
 /**
  * A sticker report names the placement it is about, and the placement has to be
  * on the thing being reported.

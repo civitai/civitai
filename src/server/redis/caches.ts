@@ -1005,7 +1005,13 @@ export const userModel3DCountPublicCache = createUserContentCountCache<UserModel
   `
 );
 
-type UserImageVideoCount = { id: number; imageCount: number; videoCount: number };
+type UserImageVideoCount = {
+  id: number;
+  imageCount: number;
+  videoCount: number;
+  /** Absent on an entry cached before songs were counted. */
+  audioCount?: number;
+};
 export const userImageVideoCountCache = createUserContentCountCache<UserImageVideoCount>(
   'imageVideoCount',
   async (userIds, fromWrite) =>
@@ -1285,6 +1291,7 @@ type UserContentOverview = {
   modelCount: number;
   imageCount: number;
   videoCount: number;
+  audioCount: number;
   postCount: number;
   articleCount: number;
   bountyCount: number;
@@ -1317,6 +1324,7 @@ function mergeOverviewResults(
         postCount: postCounts[id]?.postCount ?? 0,
         imageCount: imageVideoCounts[id]?.imageCount ?? 0,
         videoCount: imageVideoCounts[id]?.videoCount ?? 0,
+        audioCount: imageVideoCounts[id]?.audioCount ?? 0,
         articleCount: articleCounts[id]?.articleCount ?? 0,
         bountyCount: bountyCounts[id]?.bountyCount ?? 0,
         bountyEntryCount: bountyEntryCounts[id]?.bountyEntryCount ?? 0,

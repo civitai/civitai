@@ -303,6 +303,9 @@ describe('/csam/text-holds media', () => {
             images: [tile(WITHHELD, KEY)],
             imageTotal: 1,
           },
+          song: null,
+          songWithheld: false,
+          songUnavailable: false,
         },
       ],
       viewer

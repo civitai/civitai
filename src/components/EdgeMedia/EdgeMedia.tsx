@@ -5,10 +5,11 @@ import type { EdgeUrlProps } from '~/client-utils/cf-images-utils';
 import { getInferredMediaType } from '~/client-utils/cf-images-utils';
 import { edgeMediaOptions } from '~/client-utils/edge-url';
 import { shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
+import { EdgeAudio } from '~/components/EdgeMedia/EdgeAudio';
 import type { EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
 import { EdgeVideo } from '~/components/EdgeMedia/EdgeVideo';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
-import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
+import type { AudioMetadata, ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import clsx from 'clsx';
 import styles from './EdgeMedia.module.scss';
@@ -24,7 +25,7 @@ export type EdgeMediaProps = EdgeUrlProps &
     html5Controls?: boolean;
     onMutedChange?: (muted: boolean) => void;
     videoRef?: React.ForwardedRef<EdgeVideoRef>;
-    metadata?: ImageMetadata | VideoMetadata | null;
+    metadata?: ImageMetadata | VideoMetadata | AudioMetadata | null;
     youtubeVideoId?: string;
     vimeoVideoId?: string;
     thumbnailUrl?: string | null;
@@ -36,6 +37,7 @@ export type EdgeMediaProps = EdgeUrlProps &
         keepPlaying?: boolean;
         standby?: boolean;
       };
+    audioProps?: React.AudioHTMLAttributes<HTMLAudioElement>;
     imageProps?: React.HTMLAttributes<HTMLImageElement>;
     /** Database image ID — forwarded to EdgeImage for drag-and-drop metadata lookup */
     imageId?: number;
@@ -76,6 +78,7 @@ export function EdgeMedia({
   disablePoster,
   videoProps,
   imageProps,
+  audioProps,
   optimized,
   imageId,
   hiDpi,
@@ -149,6 +152,18 @@ export function EdgeMedia({
           disablePoster={disablePoster}
           imageId={imageId}
           {...videoProps}
+        />
+      );
+    case 'audio':
+      return (
+        <EdgeAudio
+          src={src}
+          options={options}
+          className={className}
+          style={style}
+          controls={controls ?? true}
+          muted={muted}
+          {...audioProps}
         />
       );
     default:

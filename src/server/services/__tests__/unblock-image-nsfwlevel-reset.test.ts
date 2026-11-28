@@ -709,6 +709,7 @@ describe('handleUnblockImages — minor queue Accept truth table', () => {
     const pg = new PGlite();
     await pg.exec(`CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Rescan', 'Error', 'Blocked');
       CREATE TABLE "User" (id int PRIMARY KEY, "deletedAt" timestamp);
+      CREATE TABLE "TextScanHold" ("entityType" text, "entityId" int, label text, status text);
       CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int, "nsfwLevel" int NOT NULL,
       minor boolean NOT NULL, "needsReview" text, "blockedFor" text, metadata jsonb,
       "scannedAt" timestamp, ingestion "ImageIngestionStatus", "scanJobs" jsonb);

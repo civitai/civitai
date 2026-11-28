@@ -136,7 +136,7 @@ export type CollectionWriteConfiguration = "Private" | "Public" | "Review";
 
 export type CollectionReadConfiguration = "Private" | "Public" | "Unlisted";
 
-export type CollectionType = "Model" | "Article" | "Post" | "Image" | "Model3D";
+export type CollectionType = "Model" | "Article" | "Post" | "Image" | "Model3D" | "Music";
 
 export type CollectionMode = "Contest" | "Bookmark";
 
@@ -200,6 +200,8 @@ export type AppealStatus = "Pending" | "Approved" | "Rejected" | "Void";
 
 export type AppealCategory = "Account" | "Article" | "Model" | "Other";
 
+export type TrackLyricsSource = "generator" | "user" | "aligned" | "transcribed";
+
 export type AuctionType = "Model" | "Image" | "Collection" | "Article";
 
 export type ModerationRuleAction = "Approve" | "Block" | "Hold";
@@ -224,7 +226,7 @@ export type ChallengeEngagementType = "Notify";
 
 export type EntityMetric_EntityType_Type = "Image";
 
-export type EntityMetric_MetricType_Type = "ReactionLike" | "ReactionHeart" | "ReactionLaugh" | "ReactionCry" | "Comment" | "Collection" | "Buzz";
+export type EntityMetric_MetricType_Type = "ReactionLike" | "ReactionHeart" | "ReactionLaugh" | "ReactionCry" | "Comment" | "Collection" | "Buzz" | "Play";
 
 export type ComicProjectStatus = "Active" | "Deleted";
 
@@ -1422,6 +1424,7 @@ export interface ModActivity {
   reviewBatchId: string | null;
   reviewTier: string | null;
   declaredSuspect: boolean | null;
+  details: JsonValue | null;
 }
 
 export interface ModThreadClaim {
@@ -1801,6 +1804,9 @@ export interface Image {
   storylineSparks?: Storyline[];
   storylineCoverUploads?: StorylineCoverUpload[];
   caption?: ImageCaption | null;
+  trackLyrics?: TrackLyrics | null;
+  track?: Track | null;
+  trackCover?: Track | null;
 }
 
 export interface ImageTagForReview {
@@ -3277,6 +3283,7 @@ export interface CommentV3 {
   pinnedAt: Date | null;
   reactionCount: number;
   legacyV1Id: number | null;
+  metadata: JsonValue | null;
   reactions?: CommentV3Reaction[];
   reports?: CommentV3Report[];
   mutes?: CommentMute[];
@@ -5055,6 +5062,25 @@ export interface ImageAudioScan {
   error: string | null;
   createdAt: Date;
   completedAt: Date | null;
+}
+
+export interface TrackLyrics {
+  imageId: number;
+  image?: Image;
+  text: string;
+  lines: JsonValue;
+  source: TrackLyricsSource;
+  language: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface Track {
+  imageId: number;
+  image?: Image;
+  coverImageId: number | null;
+  coverImage?: Image | null;
+  genre: string | null;
 }
 
 export interface ScanLabelVote {

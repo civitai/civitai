@@ -338,6 +338,8 @@ export type GenerationHandlerCtx = {
    * what-if cost estimation, where refs aren't resolved).
    */
   baseStepIndex: number;
+  /** The requester holds the `music` flag, so a song may stay audio instead of becoming a video. */
+  canUseMusic: boolean;
 };
 
 // =============================================================================
@@ -1304,6 +1306,7 @@ export async function createWorkflowStepsFromGraph({
   isGreen,
   orchestratorToken,
   acceptBoostRequired = false,
+  canUseMusic = false,
 }: {
   data: GenerationData;
   /**
@@ -1339,6 +1342,8 @@ export async function createWorkflowStepsFromGraph({
   orchestratorToken?: string;
   /** The generator's opt-in to boost-to-load. See `coverageAudience`. */
   acceptBoostRequired?: boolean;
+  /** The requester's `music` flag (`GenerationHandlerCtx.canUseMusic`). */
+  canUseMusic?: boolean;
 }): Promise<{
   steps: WorkflowStepTemplate[];
   workflowMetadata?: Record<string, unknown>;
@@ -1416,6 +1421,7 @@ export async function createWorkflowStepsFromGraph({
     user: { id: user?.id ?? 0, isModerator: !!user?.isModerator },
     // Updated per variant inside the snippets-overlay loop below.
     baseStepIndex: 0,
+    canUseMusic,
   };
 
   // Resolve seed before creating step input and metadata so both use the same value.
@@ -1683,6 +1689,7 @@ export async function createWorkflowStepsFromGraphInput({
     isWhatIf,
     sourceImageIds,
     isGreen,
+    canUseMusic: !!externalCtx.flags?.music,
   });
   return { steps, workflowMetadata, capOutput };
 }
@@ -2060,6 +2067,7 @@ export async function generateFromGraph({
     isGreen,
     orchestratorToken: token,
     acceptBoostRequired,
+    canUseMusic: !!externalCtx.flags?.music,
   });
   if (boostRequired && downloadPriority !== 'high')
     throw throwBadRequestError(BOOST_REQUIRED_MESSAGE);
@@ -2281,6 +2289,7 @@ export async function whatIfFromGraph({
     user: userId ? { id: userId, isModerator, tier: externalCtx.user.tier } : undefined,
     orchestratorToken: token,
     acceptBoostRequired,
+    canUseMusic: !!externalCtx.flags?.music,
   });
 
   // Submit what-if request to orchestrator

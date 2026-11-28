@@ -2,6 +2,9 @@ import { ReportStatus } from '@civitai/db-schema/enums';
 
 export { ReportStatus };
 
+/** The type whose disputes are decided on the Audio review page, never in /ratings or a ticket. */
+export const SONG_ENTITY_TYPE = 'Song';
+
 // Actioned = the owner's suggested level was granted; Unactioned = a moderator overrode with a different level.
 export type RatingReviewStatusFilter = 'Pending' | 'Actioned' | 'Unactioned';
 

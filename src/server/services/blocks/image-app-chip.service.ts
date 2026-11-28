@@ -48,6 +48,7 @@ import type { PostAppChip } from '~/server/services/blocks/post-app-chip.logic';
 import { readAppIdMarker } from '~/server/services/blocks/post-app-chip.logic';
 import { readAppChip } from '~/server/services/blocks/post-app-chip.service';
 import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
+import { canSeeSongs } from '~/server/services/song-visibility-sql';
 import { viewerCanSeeImageMedia, type MediaViewer } from '~/server/utils/image-media-visibility';
 
 /**
@@ -80,6 +81,7 @@ export async function readImageAppChip({
           id: imageId,
           userId: ctx.user?.id,
           isModerator: ctx.user?.isModerator,
+          music: canSeeSongs(ctx.user ?? undefined),
           ownerSeesHeld: isSessionOrFullUserKey(ctx),
         });
       } catch (err) {

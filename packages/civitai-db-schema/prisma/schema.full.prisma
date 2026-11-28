@@ -1766,6 +1766,9 @@ model ModActivity {
   reviewTier String?
   /// Whether that batch was declared suspect at mint. NULL on every other row.
   declaredSuspect Boolean?
+  /// What the action decided, per activity: `setNsfwLevel` stores `{ from, to }`, an Audio review Held
+  /// decision `{ decision, flag, songId, coverId }`. NULL on rows written before it and on every other activity.
+  details    Json?
 
   @@index([entityType, entityId, createdAt])
   @@index([userId, createdAt])
@@ -2315,6 +2318,9 @@ model Image {
   storylineSparks        Storyline[]            @relation("StorylineSparkImage")
   storylineCoverUploads  StorylineCoverUpload[]
   caption                ImageCaption?
+  trackLyrics            TrackLyrics?
+  track                  Track?                 @relation("TrackSong")
+  trackCover             Track?                 @relation("TrackCover")
 
   @@index([featuredAt])
   @@index([postId], type: Hash)
@@ -5903,6 +5909,8 @@ model CommentV3 {
   pinnedAt      DateTime? @db.Timestamptz(6)
   reactionCount Int       @default(0)
   legacyV1Id    Int?
+  /// Server-built only. A song's timed comment holds `{ timestampSec }`.
+  metadata      Json?
 
   reactions CommentV3Reaction[]
   reports   CommentV3Report[]
@@ -7032,6 +7040,8 @@ enum CollectionType {
   Post
   Image
   Model3D
+  /// A playlist: songs only (Image rows of type audio, saved as imageId items).
+  Music
 }
 
 enum CollectionMode {
@@ -8591,6 +8601,37 @@ model ImageAudioScan {
   completedAt   DateTime? @db.Timestamptz(3)
 
   @@index([flagged, createdAt])
+}
+
+enum TrackLyricsSource {
+  generator
+  user
+  aligned
+  transcribed
+}
+
+/// The lyrics of a song (an audio Image). No row means no lyrics: an instrumental.
+model TrackLyrics {
+  imageId   Int               @id
+  image     Image             @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  text      String
+  /// `[{ t, text }]`: `t` is the line's offset in milliseconds, or null until a timed source exists.
+  lines     Json
+  source    TrackLyricsSource
+  language  String?
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+}
+
+/// A song's (an audio Image's) cover and genre. No row means no cover and no genre.
+model Track {
+  imageId      Int     @id
+  image        Image   @relation("TrackSong", fields: [imageId], references: [id], onDelete: Cascade)
+  /// The song's cover: its owner's own image, outside any post.
+  coverImageId Int?    @unique
+  coverImage   Image?  @relation("TrackCover", fields: [coverImageId], references: [id], onDelete: SetNull)
+  /// One of `SONG_GENRES` (src/shared/constants/song-genres.ts), checked in code.
+  genre        String?
 }
 
 model ScanLabelVote {
@@ -10393,6 +10434,7 @@ enum EntityMetric_MetricType_Type {
   Comment
   Collection
   Buzz
+  Play
 }
 
 model EntityMetric {

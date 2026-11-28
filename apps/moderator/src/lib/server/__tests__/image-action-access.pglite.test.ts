@@ -6,6 +6,7 @@ import { freshPglite } from '../../../test/pglite';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
 import { applyGrants } from '../access';
 import { IMAGE_PAGES_SCHEMA } from './appeal-media-schema';
+import { TEXT_SCAN_HOLD_TABLE_SQL } from '../../../test/held-image-tables';
 
 /**
  * Pins the media access rule (`restrictedImageIds` in retracted-media.ts, civitai/civitai#10170). Image actions refuse a batch with an image the media access rule withholds from this moderator,
@@ -77,7 +78,10 @@ vi.mock('../image-moderation.service', async (importOriginal) => ({
   resolveImageAppeal,
   sendBulkAppealEmails: vi.fn(async () => undefined),
 }));
-vi.mock('../image-nsfw-level', () => ({ updateImageNsfwLevel }));
+vi.mock('../image-nsfw-level', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../image-nsfw-level')>()),
+  updateImageNsfwLevel,
+}));
 const { resolveIngestionError, ruleOnInquisitorItem } = vi.hoisted(() => ({
   resolveIngestionError: vi.fn(async (_input: unknown) => undefined),
   ruleOnInquisitorItem: vi.fn(async (..._args: unknown[]) => ({ ok: true as const })),
@@ -130,6 +134,7 @@ const userLookupPage = await import('../../../routes/retool/user-lookup/[section
 const ingestionPage = await import('../../../routes/images/ingestion-errors/+page.server');
 const inquisitorPage = await import('../../../routes/knights-of-new-order/inquisitor/+page.server');
 const { getImageLookup } = await import('../image-lookup.service');
+const { SongRatingRefusedError } = await import('../image-nsfw-level');
 const reRemovalsPage = await import('../../../routes/images/re-removals/+page.server');
 
 // A routine block reason, kept by the other row on its url, which is in the CSAM queue.
@@ -442,6 +447,33 @@ describe("the image queues' flag and rating actions", () => {
       event(WITH_GRANT, { imageIds: String(WITHHELD), nsfwLevel: '1' })
     );
     expect(updateImageNsfwLevel).toHaveBeenCalledOnce();
+  });
+});
+
+describe("the image queues' rating action on a song (Music T10)", () => {
+  type Refusal = { status?: number; data?: { error: string; ratedImageId?: number } };
+
+  it('names the one card it refused, so the card shows the refusal, not the page', async () => {
+    updateImageNsfwLevel.mockRejectedValueOnce(new SongRatingRefusedError(504, 'unreviewed'));
+    const result = (await queuePage.actions.setRating(
+      event(WITH_GRANT, { imageIds: '504', nsfwLevel: '1' })
+    )) as Refusal;
+    expect(result.status).toBe(409);
+    expect(result.data).toEqual({
+      error: new SongRatingRefusedError(504, 'unreviewed').message,
+      ratedImageId: 504,
+    });
+  });
+
+  it('names no card for a refused batch, which the page reports', async () => {
+    updateImageNsfwLevel
+      .mockRejectedValueOnce(new SongRatingRefusedError(504, 'unreviewed'))
+      .mockRejectedValueOnce(new SongRatingRefusedError(502, 'unreviewed'));
+    const result = (await queuePage.actions.setRating(
+      event(WITH_GRANT, { imageIds: '504,502', nsfwLevel: '1' })
+    )) as Refusal;
+    expect(result.status).toBe(409);
+    expect(result.data?.ratedImageId).toBeUndefined();
   });
 });
 
@@ -1070,6 +1102,7 @@ describe('the reported and review queues, without the grant', () => {
       CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
       CREATE TABLE IF NOT EXISTS "JobQueue" ("type" TEXT, "entityType" "EntityType", "entityId" INTEGER, "data" JSONB);
       CREATE TABLE IF NOT EXISTS "TagsOnImageDetails" ("imageId" INTEGER, "tagId" INTEGER, "disabled" BOOLEAN);
+      CREATE TABLE IF NOT EXISTS "Track" ("imageId" INTEGER PRIMARY KEY, "coverImageId" INTEGER UNIQUE);
       INSERT INTO "Image" (id, url, ingestion, "blockedFor", "userId", "needsReview") VALUES
         (${KEPT}, 'queue-key', 'Scanned', NULL, 9, 'minor'),
         (990000081, 'queue-key', 'Blocked', 'CSAM', 8, NULL),
@@ -1180,6 +1213,48 @@ describe('the reported and review queues, without the grant', () => {
     });
     expect((await reported(WITH_GRANT)).get(KEPT)).toMatchObject({
       report: { reason: 'TOSViolation', details: {} },
+    });
+  });
+
+  // Song links name another image than the card's own, so each is checked for this moderator too.
+  describe('song links', () => {
+    const SONG = 990000083;
+    const WITHHELD_SONG = 990000084;
+    beforeEach(() =>
+      db.exec(`
+        INSERT INTO "Image" (id, url, type, ingestion, "userId", "needsReview", metadata) VALUES
+          (${SONG}, 'song-key', 'audio', 'Scanned', 9, 'minor', '{"title": "Night drive"}'),
+          (${WITHHELD_SONG}, 'queue-key', 'audio', 'Scanned', 9, NULL, '{"title": "Hidden"}');
+        INSERT INTO "Track" ("imageId", "coverImageId") VALUES (${SONG}, ${KEPT}), (${WITHHELD_SONG}, ${CLEAN});
+        ${TEXT_SCAN_HOLD_TABLE_SQL}
+        -- Under a Pending lyrics hold, a flagged song and its flagged own cover stay in the generic
+        -- queues (the Held tab shows the song only as its hold).
+        INSERT INTO "TextScanHold" ("entityType", "entityId", label, status) VALUES
+          ('TrackLyrics', ${SONG}, 'csam', 'Pending'), ('TrackLyrics', ${WITHHELD_SONG}, 'csam', 'Pending');`)
+    );
+
+    it('offers no "Remove cover" for a cover withheld from the moderator, and offers it to a grant holder', async () => {
+      expect((await minor(WITHOUT_GRANT)).get(SONG)).toMatchObject({ songCoverId: null });
+      expect((await minor(WITH_GRANT)).get(SONG)).toMatchObject({ songCoverId: KEPT });
+    });
+
+    it("drops a visible cover's link to a song withheld from the moderator, and keeps it for a grant holder", async () => {
+      expect((await minor(WITHOUT_GRANT)).get(CLEAN)).toMatchObject({ coverOf: null });
+      expect((await minor(WITH_GRANT)).get(CLEAN)).toMatchObject({
+        coverOf: { songId: WITHHELD_SONG, title: 'Hidden' },
+      });
+    });
+
+    // The minor queue's own SQL reads "Track" (its Held-tab exclusion), so only the reported queue
+    // can lose the song links alone.
+    it('still loads the reported queue when the song links cannot be read, with none on its cards', async () => {
+      await db.exec(`DROP TABLE "Track"`);
+      const cards = await reported(WITH_GRANT);
+      expect(cards.get(CLEAN)).toMatchObject({
+        restricted: false,
+        songCoverId: null,
+        coverOf: null,
+      });
     });
   });
 

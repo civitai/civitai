@@ -160,6 +160,14 @@
   --safe-area-inset-bottom-page: 0px;
 }
 
+/* The global music player's bar (src/components/MusicPlayer/MusicPlayerBar.tsx) is the last row of
+   `#__next` while it shows, and the ad bar stands down meanwhile. It pays the inset itself, so it
+   settles both questions, as the ad bar does. */
+#__next:has([data-music-player-bar]) {
+  --safe-area-inset-bottom-unpaid: 0px;
+  --safe-area-inset-bottom-page: 0px;
+}
+
 /* The footer bar answers the page's question only. Deliberately NOT
    `--safe-area-inset-bottom-unpaid` as well: that property is what tells the
    footer whether to pay, and zeroing it here would make the footer's own
@@ -469,6 +477,13 @@ textarea {
      override is simply not applied and the modal pays, i.e. the cosmetic gap
      comes back and nothing lands under the home indicator. */
   .mantine-Modal-content[data-full-screen]:has([data-adhesive-ad]) {
+    --safe-area-inset-bottom-modal: 0px;
+  }
+
+  /* A full-screen modal inside `#main` (the image detail view) ends at `#main`'s bottom, so with the
+     music player's bar below it the bar is the bottom edge and pays the inset: the modal must not
+     pay it again. Portalled modals still reach the viewport's bottom and keep paying. */
+  #__next:has([data-music-player-bar]) #main .mantine-Modal-content[data-full-screen] {
     --safe-area-inset-bottom-modal: 0px;
   }
 

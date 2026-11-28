@@ -48,4 +48,17 @@ describe('imageDetail route', () => {
     expect(result.query).toEqual({ imageId: 3 });
     expect(result.asPath).toBe('/images/3');
   });
+
+  it('names a comment to highlight in the URL, where the comment section reads it', () => {
+    const result = resolve({ dialog: 'imageDetail', imageId: 5 }, { imageId: 3, highlight: 777 });
+    expect(result.query).toEqual({ dialog: 'imageDetail', imageId: 3, highlight: 777 });
+    expect(result.asPath).toBe('/images/3?highlight=777');
+    expect(result.state).toEqual({});
+  });
+
+  it("drops the opener's highlighted comment when the new image names none", () => {
+    const result = resolve({ imageId: 5, highlight: '12' }, { imageId: 3 });
+    expect(result.query).toEqual({ imageId: 3 });
+    expect(result.asPath).toBe('/images/3');
+  });
 });

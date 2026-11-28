@@ -1,3 +1,4 @@
+import { blockedForNamesCsam } from '@civitai/shared/csam-blocked-for';
 import type { PromptHighlightCategory } from '@civitai/mod-utils/prompt-audit';
 import {
   CSAM_REVIEW_FLAG,
@@ -58,4 +59,41 @@ export const FLAG_KEPT_THROUGH_BLOCK = CSAM_REVIEW_FLAG;
  */
 export function isFlagOnlyRemaining(image: { needsReview: string | null; ingestion: string }) {
   return image.needsReview === FLAG_KEPT_THROUGH_BLOCK && image.ingestion === 'Blocked';
+}
+
+/** What a removed image's report verdicts can still do, from how it was removed. */
+export type RemovedKind = 'csamReview' | 'csam' | 'rule' | 'moderator' | 'other';
+
+export type RemovedState = {
+  needsReview: string | null;
+  blockedFor: string | null;
+  /** Blocked by an automated moderation rule, which a report verdict may still lift. */
+  ruleBlocked: boolean;
+};
+
+export function removedKind(item: RemovedState): RemovedKind {
+  if (item.needsReview === FLAG_KEPT_THROUGH_BLOCK) return 'csamReview';
+  if (blockedForNamesCsam(item.blockedFor)) return 'csam';
+  if (item.blockedFor === 'moderated') return item.ruleBlocked ? 'rule' : 'moderator';
+  return 'other';
+}
+
+/** The Removed badge's tooltip on a reported item: what each verdict does to it. `restore` and
+ *  `remove` name the page's own two verdicts (Image reports: Unaction and Remove). */
+export function removedTitle(
+  item: RemovedState,
+  verbs: { restore: string; remove: string } = { restore: 'Unaction', remove: 'Remove' }
+): string {
+  switch (removedKind(item)) {
+    case 'csamReview':
+      return 'Under CSAM review: that queue decides it, and neither verdict acts on it here.';
+    case 'csam':
+      return `Removed for CSAM: ${verbs.restore} is refused.`;
+    case 'rule':
+      return `Blocked by an automated rule: ${verbs.restore} restores it, ${verbs.remove} makes it a moderator removal.`;
+    case 'moderator':
+      return `Already removed: ${verbs.restore} will not restore it, and either verdict closes this report.`;
+    default:
+      return `Removed (${item.blockedFor ?? 'blocked'}): ${verbs.restore} restores it.`;
+  }
 }

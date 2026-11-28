@@ -1146,6 +1146,7 @@ func ServeInfinite(ctx context.Context, d *InfiniteDeps, req InfiniteRequest) (*
 		ExcludedUsers:  in.ExcludedUserIDs,
 		ViewerID:       viewer.ID,
 		IsModerator:    viewer.IsModerator,
+		CanSeeSongs:    viewer.CanSeeSongs,
 		PostID:         in.PostID,
 		PostIDs:        in.PostIDs,
 		TargetUserID:   userID,

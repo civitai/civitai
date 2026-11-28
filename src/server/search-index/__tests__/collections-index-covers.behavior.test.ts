@@ -311,6 +311,15 @@ beforeAll(async () => {
       (952, ${ARTICLE_PENDING_COVER}, 85), (953, ${ARTICLE_SERVABLE_COVER}, 86);
     ${serverCopyTablesSql};
     ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS url text;
+    -- Songs: collection 9001's cover is a song with a picture as its item; 9002's only item is a song.
+    INSERT INTO "Post" (id, "userId", "publishedAt", availability) VALUES
+      (9010, ${STRANGER}, now() - interval '1 day', 'Public');
+    INSERT INTO "Image" (id, "userId", "postId", type) VALUES
+      (9011, ${STRANGER}, 9010, 'audio'), (9012, ${STRANGER}, 9010, 'image');
+    INSERT INTO "Collection" (id, "userId", "imageId") VALUES
+      (9001, ${OWNER}, 9011), (9002, ${OWNER}, NULL);
+    INSERT INTO "CollectionItem" (id, "collectionId", "imageId") VALUES
+      (9021, 9001, 9012), (9022, 9002, 9011);
   `);
 });
 afterAll(() => pg.close());
@@ -523,5 +532,16 @@ describe('collections search index covers from a banner-only Article item', () =
 
   it("uses the Article item's cover over its banner", async () => {
     expect((await pull(COVER_AND_BANNER)).itemCovers).toEqual([133]);
+  });
+});
+
+// The index is read by everyone, and no one without the music flag sees a song.
+describe('collections search index songs', () => {
+  it('drops a song cover, falling through to the item covers', async () => {
+    expect(await pull(9001)).toMatchObject({ cover: null, itemCovers: [9012] });
+  });
+
+  it('takes no song item as a cover', async () => {
+    expect(await pull(9002)).toMatchObject({ cover: null, itemCovers: [] });
   });
 });

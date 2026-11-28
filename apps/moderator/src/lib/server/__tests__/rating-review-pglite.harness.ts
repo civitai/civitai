@@ -27,7 +27,7 @@ CREATE TYPE "JobQueueType" AS ENUM ('CleanUp', 'UpdateMetrics', 'UpdateNsfwLevel
 CREATE TYPE "EntityType" AS ENUM ('Image', 'Post', 'Article', 'Bounty', 'BountyEntry', 'ModelVersion', 'Model', 'Collection', 'Comment', 'CommentV2', 'User', 'UserProfile', 'ResourceReview', 'ChatMessage', 'Model3D');
 
 CREATE TABLE "User" ("id" SERIAL PRIMARY KEY, "username" TEXT, "image" TEXT);
-CREATE TABLE "ModActivity" ("id" SERIAL PRIMARY KEY, "userId" INTEGER, "entityType" TEXT, "entityId" INTEGER, "activity" TEXT, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE "ModActivity" ("id" SERIAL PRIMARY KEY, "userId" INTEGER, "entityType" TEXT, "entityId" INTEGER, "activity" TEXT, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "details" JSONB);
 CREATE TABLE "AppPageAccess" ("app" TEXT NOT NULL, "path" TEXT NOT NULL, "roles" TEXT[] NOT NULL, "updatedById" INTEGER, "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY ("app", "path"));
 CREATE TABLE "JobQueue" ("type" "JobQueueType" NOT NULL, "entityType" "EntityType" NOT NULL, "entityId" INTEGER NOT NULL, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY ("entityType", "entityId", "type"));
 CREATE TABLE "EntityModeration" ("id" SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL, "status" "EntityModerationStatus" NOT NULL DEFAULT 'Pending', "blocked" BOOLEAN, "triggeredLabels" TEXT[] NOT NULL DEFAULT '{}', "nsfwLevel" INTEGER, "result" JSONB, "contentHash" TEXT, UNIQUE ("entityType", "entityId"));

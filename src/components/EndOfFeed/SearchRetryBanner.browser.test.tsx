@@ -105,6 +105,22 @@ describe('SearchRetryBanner copy', () => {
     );
   });
 
+  test('a music feed names songs, not images', async () => {
+    renderWithProviders(
+      <SearchRetryBanner
+        delayMs={600_000}
+        attempt={1}
+        maxAttempts={3}
+        onRetry={() => undefined}
+        isInitialLoad
+        slow
+        noun="songs"
+      />
+    );
+
+    await expect.element(page.getByText('Songs are taking longer than usual')).toBeInTheDocument();
+  });
+
   // Absorbing: nothing in the test flips `countdownActive` back on.
   test('retrying-now state: neutral copy', async () => {
     renderWithProviders(

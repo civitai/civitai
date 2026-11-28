@@ -36,6 +36,8 @@ export default function ImageDetailModal({
   /** Consumed by the route, which puts them in the URL; storyline mode reads them from there. */
   storylineChapterId?: number;
   storylineVia?: number[] | string;
+  /** The comment to highlight, as a comment notification's `?highlight=` does. */
+  highlight?: number;
 }) {
   const dialog = useDialogContext();
   const { query } = useBrowserRouter();

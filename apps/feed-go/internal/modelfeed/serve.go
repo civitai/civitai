@@ -109,6 +109,8 @@ type Viewer struct {
 	ID          int
 	Username    string
 	IsModerator bool
+	// CanSeeSongs is Node's canSeeSongs: a moderator, or the `music` flag is on for the viewer.
+	CanSeeSongs bool
 }
 
 // Request is one call.
@@ -799,9 +801,9 @@ func hidden(p metaPrivacy, defaults hydrate.PrivacyDefaults, ownerOrMod, member 
 // finishItems is the rest of getModelsWithImagesAndModelVersions: the showcase images (held for
 // the viewer), the covers, the per-viewer image filters, metric privacy, canGenerate and the wire.
 func finishItems(ctx context.Context, d *Deps, in *Input, level int, raw rawInput, items []*feedItem, hy *hydrate.ModelPage, viewer *Viewer, showSfwFace bool) ([]any, error) {
-	viewerID, isMod := 0, false
+	viewerID, isMod, canSeeSongs := 0, false, false
 	if viewer != nil {
-		viewerID, isMod = viewer.ID, viewer.IsModerator
+		viewerID, isMod, canSeeSongs = viewer.ID, viewer.IsModerator, viewer.CanSeeSongs
 	}
 	var versionIDs []int
 	for _, it := range items {
@@ -816,6 +818,8 @@ func finishItems(ctx context.Context, d *Deps, in *Input, level int, raw rawInpu
 		if images, err = d.Sources.VersionImages(ctx, versionIDs); err != nil {
 			return nil, err
 		}
+		// getImagesForModelVersionCache(ids, user): the cache holds songs; this viewer's are dropped.
+		images = hydrate.WithoutHiddenSongs(images, viewerID, canSeeSongs)
 		if !isMod {
 			if levels, err = showcaseHeldLevels(ctx, d.Gallery, items); err != nil {
 				return nil, err
@@ -1165,6 +1169,8 @@ func ownerCovers(ctx context.Context, d *Deps, items []*feedItem, byVersion map[
 	if err != nil {
 		return nil, nil, err
 	}
+	// Covers are shown to everyone (model-cover.service.ts): no song is one.
+	others = hydrate.WithoutHiddenSongs(others, 0, false)
 	for _, h := range hits {
 		for _, img := range others[h.versionID] {
 			if n, _ := hydrate.Int(recField(img, "id")); n == h.coverID {

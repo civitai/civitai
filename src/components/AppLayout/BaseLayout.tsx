@@ -8,6 +8,7 @@ import {
   useGenerationSidebarState,
 } from '~/components/ImageGeneration/GenerationSidebar';
 import { MetaPWA } from '~/components/Meta/MetaPWA';
+import { MusicPlayerSlot } from '~/components/MusicPlayer/MusicPlayerSlot';
 import { OfflineFallbackRegistration } from '~/components/Notifications/OfflineFallbackRegistration';
 import { PushOptInPrompt } from '~/components/Notifications/PushOptInPrompt';
 import { PushRegistrationManager } from '~/components/Notifications/PushRegistrationManager';
@@ -74,6 +75,8 @@ export function BaseLayout({ children }: { children: React.ReactNode }) {
           )}
         </ContainerProvider>
       </div>
+      {/* The bar is the last row of the column: it pushes the page up instead of covering it. */}
+      <MusicPlayerSlot enabled={showSidebar && !!features?.music} />
     </>
   );
 }

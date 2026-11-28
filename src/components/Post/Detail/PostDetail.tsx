@@ -543,6 +543,7 @@ export function PostDetailContent({ postId, deferredSsr }: Props) {
                   )}
                 <PostImages
                   postId={post.id}
+                  postTitle={post.title}
                   images={images}
                   texts={postTexts}
                   authorId={post.user.id}

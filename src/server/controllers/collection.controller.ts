@@ -154,6 +154,7 @@ export const getAllCollectionsInfiniteHandler = async ({
       imagesPerCollection: 10, // Some fallbacks
       browsingLevel,
       showsImage,
+      viewer: ctx.user && { ...ctx.user, isModerator: credentialViews(ctx).asModerator },
     });
 
     // Get Item Counts
@@ -331,6 +332,7 @@ export const saveItemHandler = async ({
         isModerator: user.isModerator,
         csamReview: !!ctx.features?.csamReports,
         canAccessUserChallenges: ctx.features.userChallenges,
+        canUseMusic: ctx.features?.music,
       },
     });
 
@@ -414,6 +416,7 @@ export const bulkSaveItemsHandler = async ({
         isModerator,
         csamReview: !!ctx.features?.csamReports,
         canAccessUserChallenges: ctx.features.userChallenges,
+        canUseMusic: ctx.features?.music,
       },
       permissions,
     });
@@ -452,6 +455,7 @@ export const upsertCollectionHandler = async ({
         isModerator: user.isModerator,
         asModerator: actsAsModerator(ctx),
         isMember: !!user.tier && user.tier !== 'free',
+        canUseMusic: ctx.features?.music,
       },
       // Read without the owner's view, the editor saw a hidden cover as none; an image: null keeps it.
       coverViewer: credentialViews(ctx).asOwner ? undefined : {},
@@ -503,6 +507,7 @@ export const updateCollectionCoverImageHandler = async ({
         userId: user.id,
         isModerator: user.isModerator,
         asModerator: actsAsModerator(ctx),
+        canUseMusic: ctx.features?.music,
       },
     });
 
@@ -778,6 +783,7 @@ export const addSimpleImagePostHandler = async ({
         isModerator,
         csamReview: !!ctx.features?.csamReports,
         canAccessUserChallenges: ctx.features.userChallenges,
+        canUseMusic: ctx.features?.music,
       },
       permissions,
     });

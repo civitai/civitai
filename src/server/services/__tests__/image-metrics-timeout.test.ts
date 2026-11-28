@@ -83,7 +83,7 @@ describe('getImageMetricsObject ClickHouse timeout fail-soft', () => {
 
   it('happy path: maps metrics when the metric service resolves quickly', async () => {
     fetchMock.mockResolvedValue({
-      1: { Like: 5, Heart: 2, Laugh: 0, Cry: 1, commentCount: 3, Collection: 4, tippedAmount: 100 },
+      1: { Like: 5, Heart: 2, Laugh: 0, Cry: 1, commentCount: 3, Collection: 4, tippedAmount: 100, Play: 0 },
     });
 
     const result = await getImageMetricsObject([{ id: 1 }]);
@@ -97,6 +97,7 @@ describe('getImageMetricsObject ClickHouse timeout fail-soft', () => {
       comment: 3,
       collection: 4,
       buzz: 100,
+      play: null,
     });
     expect(counterIncMock).not.toHaveBeenCalled();
     // The happy path must not touch the cache: reading it unconditionally would add N round
@@ -158,6 +159,7 @@ describe('getImageMetricsObject ClickHouse timeout fail-soft', () => {
         comment: null,
         collection: null,
         buzz: null,
+        play: null,
       });
     }
   });
@@ -180,6 +182,7 @@ describe('getImageMetricsObject serves STALE cached counts when ClickHouse is un
       commentCount: '7',
       Collection: '11',
       tippedAmount: '500',
+      Play: '13',
     },
     'metrics:Image:3': { Like: '8' },
   } as Record<string, Record<string, string>>;
@@ -203,6 +206,7 @@ describe('getImageMetricsObject serves STALE cached counts when ClickHouse is un
       comment: 7,
       collection: 11,
       buzz: 500,
+      play: 13,
     });
     expect(result[3]).toEqual({
       imageId: 3,
@@ -213,6 +217,7 @@ describe('getImageMetricsObject serves STALE cached counts when ClickHouse is un
       comment: null,
       collection: null,
       buzz: null,
+      play: undefined, // cached before plays were read: unknown, not 0
     });
     expect(result[2]).toBeUndefined();
   });
@@ -252,6 +257,7 @@ describe('getImageMetricsObject serves STALE cached counts when ClickHouse is un
       comment: null,
       collection: null,
       buzz: null,
+      play: null,
     });
   });
 

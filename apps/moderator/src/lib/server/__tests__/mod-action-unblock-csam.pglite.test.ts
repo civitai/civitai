@@ -1,3 +1,4 @@
+import { TEXT_SCAN_HOLD_TABLE_SQL } from '../../../test/held-image-tables';
 import type { PGlite } from '@electric-sql/pglite';
 import { MOD_ACTION } from '@civitai/moderation';
 import { Kysely } from 'kysely';
@@ -55,6 +56,7 @@ const { modActions } = await import('../mod-actions/registry');
 const { trackImageRestore } = await import('../image-moderation-effects');
 
 const SCHEMA = `
+${TEXT_SCAN_HOLD_TABLE_SQL}
 CREATE TYPE "EntityType" AS ENUM ('Image', 'Post', 'Model');
 CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected');
 CREATE DOMAIN "ImageIngestionStatus" AS TEXT;

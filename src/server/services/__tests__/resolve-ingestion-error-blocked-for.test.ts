@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { resolveIngestionError } from '~/server/services/image.service';
+import { setSongReRater } from '~/server/services/audio-scan/song-rating';
 
 const IMAGE_ID = 4242;
 // Not a bare-uuid key, so the missing-media probe is skipped and never reaches storage.
@@ -14,10 +15,12 @@ function armImage(columns: {
   blockedFor?: string | null;
   needsReview?: string | null;
   user?: { bannedAt: Date | null; deletedAt: Date | null };
+  type?: string;
   scannedAt?: Date | null;
 }) {
   dbMock.dbRead.image.findUnique.mockResolvedValue({
     ingestion: 'Error',
+    type: 'image',
     postId: null,
     userId: 99,
     metadata: {},
@@ -102,6 +105,14 @@ describe('resolveIngestionError and blockedFor', () => {
     expect(purgeRowDrops()).toHaveLength(0);
   });
 
+  it('refuses a song and writes nothing: only its own scan publishes it, and the cron retries that', async () => {
+    armImage({ type: 'audio' });
+
+    await expect(resolve()).rejects.toMatchObject({ code: 'BAD_REQUEST', message: /song/ });
+
+    expect(dbMock.dbWrite.image.updateMany).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['banned', { bannedAt: new Date(), deletedAt: null }],
     ['deleted', { bannedAt: null, deletedAt: new Date() }],
@@ -124,6 +135,19 @@ describe('resolveIngestionError and blockedFor', () => {
     await expect(resolve()).rejects.toMatchObject({ code: 'BAD_REQUEST' });
 
     expect(purgeRowDrops()).toHaveLength(0);
+  });
+
+  // A song's level includes its own cover's (docs/features/music.md "A song's rating").
+  it('re-rates the song whose own cover, a postless image, it publishes', async () => {
+    const rerate = vi.fn<(songId: number) => Promise<void>>(async () => undefined);
+    setSongReRater(rerate);
+    armImage({});
+    dbMock.dbWrite.track.findUnique.mockResolvedValue({ imageId: 4243 } as never);
+
+    await resolve();
+
+    expect(rerate).toHaveBeenCalledTimes(1);
+    expect(rerate).toHaveBeenCalledWith(4243);
   });
 
   // sortAt reads scannedAt uncapped, so stamping now() would list the image as new.

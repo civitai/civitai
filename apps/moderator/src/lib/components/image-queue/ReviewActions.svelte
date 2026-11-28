@@ -2,10 +2,13 @@
   import { enhance } from '$app/forms';
   import type { SubmitFunction } from '@sveltejs/kit';
   import type { SvelteSet } from 'svelte/reactivity';
+  import { offersImageFlags } from '$lib/music/song-card';
   import ImageCardModTools from './ImageCardModTools.svelte';
   import TosDeleteButton from './TosDeleteButton.svelte';
   import VerdictBadge from './VerdictBadge.svelte';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { cardRemovals } from '$lib/music/song-tos';
+  import { removedCovers } from '$lib/music/removed-covers';
 
   let {
     item,
@@ -24,8 +27,11 @@
       nsfwLevel: number;
       minor: boolean;
       poi: boolean;
+      type?: string | null;
       version?: string;
       needsReview?: string | null;
+      /** A song's cover, while there is one to remove: "Remove cover" beside "Remove song". */
+      songCoverId?: number | null;
     };
     /** Couples the report's status to the verdict: accept → Unactioned, block → Actioned. It is also
      *  the card's selection key on the reported queue, where cards key by report rather than image. */
@@ -47,6 +53,23 @@
   const button = 'rounded border px-2 py-0.5 text-xs font-semibold transition';
 
   const acceptLabel = $derived(reported ? 'Unaction' : 'Accept');
+
+  const removals = $derived(cardRemovals(item, reportId));
+
+  // "Remove cover" marks this card, not the card the page's `submit` would key by the cover's id
+  // (on Image reports that is a report id, which could be another card's). A held removal is not a
+  // removal: the page shows the hold, and the button stays. A removed cover drops to the placeholder
+  // on every song card showing it (`removedCovers`).
+  let coverRemoved = $state(false);
+  const coverSubmit: SubmitFunction = ({ formData }) => {
+    coverRemoved = true;
+    const coverId = Number(formData.get('imageId'));
+    return async ({ result, update }) => {
+      coverRemoved = result.type === 'success' && !result.data?.held;
+      if (coverRemoved) removedCovers.add(coverId);
+      await update({ invalidateAll: false });
+    };
+  };
 </script>
 
 {#if verdict}
@@ -58,6 +81,7 @@
     minor={item.minor}
     poi={item.poi}
     rating={!dismissFlag}
+    flags={offersImageFlags(item)}
   />
   <!-- Dismiss is per card only, so it stays on the card even while the card is selected. -->
   {#if dismissFlag}
@@ -100,11 +124,20 @@
           </button>
         </form>
       {/if}
-      <TosDeleteButton
-        action="?/block"
-        {submit}
-        hidden={reportId ? { imageId: item.id, reportId } : { imageId: item.id }}
-      />
+      {#each removals as removal (removal.kind)}
+        {#if removal.kind !== 'cover'}
+          <TosDeleteButton action="?/block" {submit} hidden={removal.hidden} label={removal.label} />
+        {:else if coverRemoved}
+          <span class="self-center text-xs text-dark-2">Cover removed</span>
+        {:else}
+          <TosDeleteButton
+            action="?/block"
+            submit={coverSubmit}
+            hidden={removal.hidden}
+            label={removal.label}
+          />
+        {/if}
+      {/each}
     </div>
   {/if}
 {/if}

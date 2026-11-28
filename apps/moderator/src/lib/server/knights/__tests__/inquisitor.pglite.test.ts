@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
 import { Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { SONG_RATING_REFUSED } from '$lib/knights/inquisitor-ruling';
 import { freshPglite } from '../../../../test/pglite';
 import { pgliteDialect } from '../../__tests__/abuse-detection-pglite.harness';
 import { INQUISITOR_IMAGE_SCHEMA } from './inquisitor-schema';
@@ -464,6 +465,21 @@ describe('ruleOnInquisitorItem', () => {
     });
     expect((await ruleOnInquisitorItem(1, { level: 8 }, MOD, { csamReview: true })).ok).toBe(false);
     expect(setLevel).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes a song item without rating it, so no moderator is served it again', async () => {
+    await db.query(`UPDATE "Image" SET type='audio' WHERE id=1`);
+    await insertItem(1, 1, 'Inquisitor');
+    await insertVote(1, 11, '8', 1);
+
+    expect(await ruleOnInquisitorItem(1, { level: 8 }, MOD, { csamReview: true })).toEqual({
+      ok: false,
+      error: SONG_RATING_REFUSED,
+    });
+
+    expect(setLevel).not.toHaveBeenCalled();
+    expect(await item(1)).toMatchObject({ status: 'Closed', reason: 'song', resolvedValue: null });
+    expect((await verdicts(1))[0].verdict).toBe('pending');
   });
 
   it('leaves the item with the Inquisitors and votes pending when the rating cannot be set', async () => {

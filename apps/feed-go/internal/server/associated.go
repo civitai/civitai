@@ -106,7 +106,8 @@ func (s *Server) prepareAssociated(ctx context.Context, r *http.Request) (modelf
 		Cap:    browsing.DomainCap(authorized, browsing.CanViewNsfw(color, restricted, isModerator)),
 	}
 	if authorized {
-		req.Viewer = &modelfeed.Viewer{ID: user.ID, Username: user.Username, IsModerator: isModerator}
+		req.Viewer = &modelfeed.Viewer{ID: user.ID, Username: user.Username, IsModerator: isModerator,
+			CanSeeSongs: s.canSeeSongs(ctx, user, isModerator)}
 	}
 	return req, user == nil, nil
 }

@@ -5,16 +5,10 @@ import {
   IconVolume,
   IconVolumeOff,
 } from '@tabler/icons-react';
-import { useRef, useState } from 'react';
 
-import type { AudioBlob, VideoBlob } from '~/shared/orchestrator/workflow-data';
-
-function formatTime(seconds: number) {
-  if (!isFinite(seconds) || seconds < 0) return '0:00';
-  const mins = Math.floor(seconds / 60);
-  const secs = Math.floor(seconds % 60);
-  return `${mins}:${secs.toString().padStart(2, '0')}`;
-}
+import { useMediaPlayback } from '~/components/Audio/useMediaPlayback';
+import type { AudioBlob, ImageBlob, VideoBlob } from '~/shared/orchestrator/workflow-data';
+import { formatPlaybackTime } from '~/utils/audio-player';
 
 export function GeneratedAudioOutput({
   image,
@@ -25,60 +19,25 @@ export function GeneratedAudioOutput({
   isLightbox?: boolean;
   onClick?: () => void;
 }) {
-  const mediaRef = useRef<HTMLMediaElement>(null);
-  const [playing, setPlaying] = useState(false);
-  const [muted, setMuted] = useState(false);
-  const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(('duration' in image ? image.duration : 0) ?? 0);
+  const {
+    mediaRef,
+    playing,
+    muted,
+    currentTime,
+    duration,
+    progress,
+    togglePlay,
+    toggleMute,
+    scrubHandlers,
+    mediaEvents,
+  } = useMediaPlayback(('duration' in image ? image.duration : 0) ?? 0);
 
+  // A song made since the cover stopped being muxed is an MP3, its cover the imageGen step's image
+  // (generated) or the form's image (uploaded); an older one is a video over its cover.
   const hasCover = image.type === 'video';
+  const coverUrl = hasCover ? undefined : songCoverUrl(image);
   const titleParam = image.workflow.metadata?.params?.title;
   const title = typeof titleParam === 'string' && titleParam ? titleParam : undefined;
-  const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
-
-  const togglePlay = () => {
-    const media = mediaRef.current;
-    if (!media) return;
-    if (media.paused) media.play().catch(() => undefined);
-    else media.pause();
-  };
-
-  const toggleMute = () => {
-    const media = mediaRef.current;
-    if (!media) return;
-    media.muted = !media.muted;
-    setMuted(media.muted);
-  };
-
-  const seekFromPointer = (clientX: number, rect: DOMRect) => {
-    const media = mediaRef.current;
-    if (!media || duration <= 0) return;
-    const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-    const newTime = ratio * duration;
-    media.currentTime = newTime;
-    setCurrentTime(newTime);
-  };
-
-  const handleScrubStart = (e: React.PointerEvent<HTMLDivElement>) => {
-    e.currentTarget.setPointerCapture(e.pointerId);
-    seekFromPointer(e.clientX, e.currentTarget.getBoundingClientRect());
-  };
-
-  const handleScrubMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (e.buttons !== 1) return;
-    seekFromPointer(e.clientX, e.currentTarget.getBoundingClientRect());
-  };
-
-  const mediaEventHandlers = {
-    onPlay: () => setPlaying(true),
-    onPause: () => setPlaying(false),
-    onEnded: () => setPlaying(false),
-    onTimeUpdate: (e: React.SyntheticEvent<HTMLMediaElement>) =>
-      setCurrentTime(e.currentTarget.currentTime),
-    onLoadedMetadata: (e: React.SyntheticEvent<HTMLMediaElement>) => {
-      if (!isNaN(e.currentTarget.duration)) setDuration(e.currentTarget.duration);
-    },
-  };
 
   return (
     <div
@@ -87,7 +46,7 @@ export function GeneratedAudioOutput({
       }`}
       onClick={!isLightbox ? onClick : undefined}
       style={
-        hasCover
+        hasCover || coverUrl
           ? { background: '#1a1b1e' }
           : { background: 'linear-gradient(135deg, #7950f2 0%, #f06595 40%, #ff922b 100%)' }
       }
@@ -99,22 +58,32 @@ export function GeneratedAudioOutput({
           preload="metadata"
           playsInline
           className="pointer-events-none absolute inset-0 size-full object-cover"
-          {...mediaEventHandlers}
+          {...mediaEvents}
         />
       ) : (
         <>
+          {coverUrl && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={coverUrl}
+              alt=""
+              className="pointer-events-none absolute inset-0 size-full object-cover"
+            />
+          )}
           {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
           <audio
             ref={mediaRef as React.Ref<HTMLAudioElement>}
             src={image.url}
             preload="metadata"
             className="hidden"
-            {...mediaEventHandlers}
+            {...mediaEvents}
           />
-          <IconMusic
-            size={180}
-            className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-white/[0.08]"
-          />
+          {!coverUrl && (
+            <IconMusic
+              size={180}
+              className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-white/[0.08]"
+            />
+          )}
         </>
       )}
 
@@ -127,8 +96,7 @@ export function GeneratedAudioOutput({
       >
         <div
           className="group -my-2 cursor-pointer touch-none py-2"
-          onPointerDown={handleScrubStart}
-          onPointerMove={handleScrubMove}
+          {...scrubHandlers}
           role="slider"
           tabIndex={0}
           aria-label="Audio progress"
@@ -137,7 +105,7 @@ export function GeneratedAudioOutput({
           aria-valuenow={currentTime}
         >
           <div className="h-0.5 w-full overflow-hidden rounded-full bg-white/20 transition-[height] group-hover:h-1">
-            <div className="h-full bg-blue-5" style={{ width: `${progress}%` }} />
+            <div className="h-full bg-blue-5" style={{ width: `${progress * 100}%` }} />
           </div>
         </div>
 
@@ -157,7 +125,7 @@ export function GeneratedAudioOutput({
                 {title}
               </div>
             )}
-            <div className="text-xs font-medium text-white/70">{formatTime(duration)}</div>
+            <div className="text-xs font-medium text-white/70">{formatPlaybackTime(duration)}</div>
           </div>
 
           <button
@@ -172,4 +140,17 @@ export function GeneratedAudioOutput({
       </div>
     </div>
   );
+}
+
+/** The song's cover: the generated one from the imageGen step, else the one uploaded with it. */
+function songCoverUrl(song: AudioBlob | VideoBlob) {
+  const generated = song.workflow.steps
+    ?.find((step) => step.$type === 'imageGen')
+    ?.output.find((b): b is ImageBlob => b?.type === 'image' && b.available && !b.blockedReason);
+  if (generated) return generated.url;
+  const images = song.workflow.metadata?.params?.images;
+  const uploaded = Array.isArray(images)
+    ? (images[0] as { url?: unknown } | undefined)?.url
+    : undefined;
+  return typeof uploaded === 'string' ? uploaded : undefined;
 }

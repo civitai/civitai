@@ -1,3 +1,8 @@
+import {
+  SONGS_UNAVAILABLE_MESSAGE,
+  songAllowsRemix,
+} from '~/shared/form-graph/generation/audio/song-metadata';
+import { rerateSongOfRatedCover } from '~/server/services/audio-scan/song-rating';
 import { fallbackUserImageColumn } from '~/server/services/profile-picture-fallback.sql';
 import {
   assertMayLoosenImages,
@@ -113,9 +118,13 @@ import {
 } from '~/server/utils/image-removal-mode';
 import {
   assertImageVisibleToViewer,
+  canSeeSongs,
   entityImageVisibilityConditions,
+  getVisibleSongIds,
+  songsHiddenSql,
   imageBlockedForConditions,
   reportListedImageSql,
+  withoutHiddenSongs,
   reviewedGalleryImageConditions,
   imageVisibilityConditions,
   isReviewImageBlockedForViewer,
@@ -152,6 +161,7 @@ import { poolCounters } from '~/server/games/new-order/utils';
 import { isV1KnightsLive } from '~/server/games/new-order/v1-gate';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { flagImagesForCsamReview } from '~/server/services/csam-image-review';
+import { csamHeldImageSql } from '@civitai/shared/csam-held';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 import { isStatementTimeout } from '~/server/utils/statement-timeout';
@@ -382,7 +392,9 @@ import { FLIPT_FEATURE_FLAGS, isFlipt } from '../flipt/client';
 import { getExplainSql, queryWithTimeout } from '~/server/db/db-helpers';
 import { getImageGenerationFields, listImageReactionsMany } from '@civitai/db-queries/image';
 import {
+  coversOfDeletedSongs,
   deleteImageRows,
+  readSongCovers,
   moderatorDecides,
   moderatorPurge,
   queueImageStorageDelete as queueStorageDelete,
@@ -1127,6 +1139,13 @@ const withDeleteTransaction = <T>(
     ? dbWrite.$transaction((tx) => run(kyselyOver(tx)), { maxWait: 10_000, timeout: 120_000 })
     : run(kyselyOver(dbWrite));
 
+type ImageDeleteWithOutcomeOptions = PurgeResizeCacheRetraction &
+  ImageDeleteOptions & {
+    /** Once set (by a 429 or a timeout here or earlier in the caller's run), no retraction is
+     *  sent; those rows come back `busy` so the caller can queue them. */
+    retractionGate?: RetractionGate;
+  };
+
 /**
  * The system deletes that may remove a deal file's scan copy, besides any moderator delete: the deal
  * pipeline's own and an account deletion's drain (`ACCOUNT_DELETION_DRAIN`), whose deal holds on
@@ -1143,8 +1162,27 @@ const DEAL_FILE_IMAGE_DELETERS = new Set([
 /** In the DELETE's own WHERE, so an entry written after a check still keeps its image. */
 const notDealFileImage = sql<boolean>`NOT ${dealFileImageSql(sql.ref('Image.id'))}`;
 
-/** `deleteImages`, with the images it left for their child-safety case. */
+/**
+ * `deleteImages`, with the images it left for their child-safety case. A deleted song's cover is
+ * deleted after it, with the same options, so a hold on the cover keeps it as it would any image.
+ */
 export async function deleteImagesWithOutcome(
+  ids: number[],
+  options: ImageDeleteWithOutcomeOptions
+): Promise<{ deleted: DeletedImage[]; kept: number[] }> {
+  const retractionGate = options.retractionGate ?? newRetractionGate();
+  const coverIds: number[] = [];
+  const outcome = await deleteListedImages(ids, { ...options, retractionGate }, coverIds);
+  if (!coverIds.length) return outcome;
+  const covers = await deleteListedImages(coverIds, { ...options, retractionGate }, []);
+  return {
+    deleted: [...outcome.deleted, ...covers.deleted],
+    kept: [...outcome.kept, ...covers.kept],
+  };
+}
+
+/** Deletes `ids`, adding to `coverIds` the covers of the songs it deleted. */
+async function deleteListedImages(
   ids: number[],
   {
     actor,
@@ -1156,12 +1194,8 @@ export async function deleteImagesWithOutcome(
     onDeleted,
     retractPublicBlobs = false,
     retractionGate = newRetractionGate(),
-  }: PurgeResizeCacheRetraction &
-    ImageDeleteOptions & {
-      /** Once set (by a 429 or a timeout here or earlier in the caller's run), no retraction is
-       *  sent; those rows come back `busy` so the caller can queue them. */
-      retractionGate?: RetractionGate;
-    }
+  }: ImageDeleteWithOutcomeOptions,
+  coverIds: number[]
 ): Promise<{ deleted: DeletedImage[]; kept: number[] }> {
   const deletedById = 'id' in actor ? actor.id : undefined;
   const keepsDealFileImages =
@@ -1178,7 +1212,9 @@ export async function deleteImagesWithOutcome(
   const deleted = await Limiter({ batchSize: 100 }).process(uniq(ids), async (ids) => {
     // Read before the DELETE, which cascades `CollectionItem` and the report links and nulls
     // `User.profilePictureId`. Neither read throws.
-    const [collections, profilePictureUserIds, reported] = await Promise.all([
+    // The song's delete cascades its `Track` row, the only link to its cover.
+    const [covers, collections, profilePictureUserIds, reported] = await Promise.all([
+      readSongCovers(kyselyOver(dbWrite), ids),
       getCollectionIdsForImages({ imageIds: ids, source: 'image-delete' }),
       getProfilePictureUserIds(ids).catch(() => [] as number[]),
       // Only an owner delete can keep an object. A failed read counts as reported, so it purges.
@@ -1233,6 +1269,7 @@ export async function deleteImagesWithOutcome(
     );
 
     keptForCase.push(...caseKept);
+    coverIds.push(...coversOfDeletedSongs(covers, rows, ids));
     const kept = hidden.map(({ id, userId, postId }) => ({ imageId: id, userId, postId }));
     await invalidateDeletedImages({
       rows,
@@ -1575,9 +1612,7 @@ export async function handleUnblockImages({
  * of a held image sends no owner notice and actions no report: for one under review they wait in
  * `ImageDeferredBlockEffect` for the review to close.
  */
-const heldImageSql = Prisma.sql`(${csamBlockedSql()} OR ("needsReview" = 'csam' AND NOT EXISTS (
-  SELECT 1 FROM "CsamQueueSetAside" s WHERE s."imageId" = "Image".id AND s.outcome = 'Dismissed'
-)))`;
+const heldImageSql = Prisma.raw(csamHeldImageSql('"Image"'));
 
 /**
  * Returns the ids the block left held, and those under the moderator-only review flag, read on the
@@ -2145,9 +2180,16 @@ export const getImageDetail = async ({
   userId,
   isModerator,
   ownerSeesHeld = false,
-}: GetByIdInput & { userId?: number; isModerator?: boolean; ownerSeesHeld?: boolean }) => {
+  music,
+}: GetByIdInput & {
+  userId?: number;
+  isModerator?: boolean;
+  ownerSeesHeld?: boolean;
+  /** `assertImageVisibleToViewer`'s `music`. */
+  music?: boolean;
+}) => {
   // The resource and tag caches are keyed by image id alone, so the viewer check runs first.
-  await assertImageVisibleToViewer({ id, userId, isModerator, ownerSeesHeld });
+  await assertImageVisibleToViewer({ id, userId, isModerator, ownerSeesHeld, music });
   const [resourcesData, tagsData] = await Promise.all([
     imageResourcesCache.fetch([id]),
     imageTagsCache.fetch([id]),
@@ -2364,6 +2406,17 @@ export const ingestImage = async ({
     type,
     callbackUrl,
     priority: lowPriority ? 'low' : undefined,
+  }).catch((error: unknown) => {
+    // A song's submit also reads and writes the database. A throw must still stamp the attempt, or the
+    // cron sees a song that was never sent and re-sends it every run without limit.
+    if (type !== MediaType.audio) throw error;
+    return {
+      data: undefined,
+      error,
+      status: undefined,
+      retryAfter: undefined,
+      useImageScanning: false,
+    };
   });
   const lane = useImageScanning ? 'imageScanning' : 'new';
   if (!workflowResponse) {
@@ -3006,6 +3059,10 @@ const getAllImagesUncaptured = async (
   if (types && types.length > 0) {
     AND.push(Prisma.sql`i.type = ANY(ARRAY[${Prisma.join(types)}]::"MediaType"[])`);
   }
+  // The owner view, as the availability clause below: a narrow-scope key gets no owner carve-out,
+  // and that clause already binds the same id, so a cached model gallery stays keyed as it was.
+  const songsHidden = songsHiddenSql({ music: canSeeSongs(user, isModerator), ownerId });
+  if (songsHidden) AND.push(songsHidden);
 
   // [x]
   if (include.includes('meta')) {
@@ -4335,6 +4392,8 @@ type ImageMetricsObject = Record<
     comment: number | null;
     collection: number | null;
     buzz: number | null;
+    /** Undefined when the source predates plays (a hash cached before `Play` was read). */
+    play: number | null | undefined;
   }
 >;
 
@@ -4375,6 +4434,8 @@ const shapeCachedMetricHash = (
     commentCount: count(hash.commentCount),
     Collection: count(hash.Collection),
     tippedAmount: count(hash.tippedAmount),
+    // Absent (not 0) when the hash was cached before `Play` was read; a `notFound` hash is a known 0.
+    Play: hash.Play === undefined && hash.notFound === undefined ? undefined : count(hash.Play),
   });
 };
 
@@ -4535,6 +4596,7 @@ const shapeImageMetrics = (
   comment: m?.commentCount || null,
   collection: m?.Collection || null,
   buzz: m?.tippedAmount || null,
+  play: m && m.Play === undefined ? undefined : m?.Play || null,
 });
 
 /**
@@ -4661,6 +4723,27 @@ export const getImageMetricsObjectDirect = async (
   }
 };
 
+/** Play counts by song id, for the songs the viewer can open; an id the reader could not answer is left out. */
+export async function getSongPlayCounts({
+  ids,
+  features,
+  user,
+}: {
+  ids: number[];
+  features: { music?: boolean };
+  user?: { id: number; isModerator?: boolean | null };
+}): Promise<Record<number, number>> {
+  if (!ids.length) return {};
+  const visible = await getVisibleSongIds({ ids, viewer: { features, user } });
+  if (!visible?.size) return {};
+  const metrics = await getImageMetricsObject([...visible].map((id) => ({ id })));
+  return Object.fromEntries(
+    Object.values(metrics).flatMap((entry) =>
+      entry.play === undefined ? [] : [[entry.imageId, entry.play ?? 0]]
+    )
+  );
+}
+
 export async function getTagNamesForImages(imageIds: number[]) {
   const tagIds = await tagIdsForImagesCache.fetch(imageIds);
   const tags = await tagCache.fetch(Object.values(tagIds).flatMap((x) => x.tags));
@@ -4725,6 +4808,7 @@ export const getImage = async ({
   isModerator,
   ownerSeesHeld = false,
   shownReviewImageLevels,
+  music,
   ownerReviewedBlocks = false,
 }: GetImageInput & {
   userId?: number;
@@ -4733,6 +4817,8 @@ export const getImage = async ({
   ownerSeesHeld?: boolean;
   /** `imageVisibilityConditions`' `shownReviewImageLevels`: the image page's read only. */
   shownReviewImageLevels?: number;
+  /** `imageVisibilityConditions`' `music`: the viewer's flag, for a read that should hide songs. */
+  music?: boolean;
   /** Read `ownerCsamMarked` for `ownerMediaAllowed`'s `reviewedBlocks` (the `ownerBlockedMedia` flag). */
   ownerReviewedBlocks?: boolean;
 }) => {
@@ -4743,6 +4829,7 @@ export const getImage = async ({
       isModerator,
       ownerSeesHeld,
       shownReviewImageLevels,
+      music,
       ownerKeepsBlockedRow: true,
     }),
   ];
@@ -5068,6 +5155,10 @@ export const getImagesForModelVersion = async ({
     imageWhere.push(...reviewedGalleryImageConditions(browsingLevel || allBrowsingLevelsFlag));
   }
   imageWhere.push(minorMatureImageVisibleSql({ userId, isModerator }));
+  // A read without a viewer fills the shared cache, which every viewer reads: it holds no song (the
+  // model-version carousel never shows one; owners see theirs in the gallery).
+  const songsHidden = songsHiddenSql({ music: !!user && canSeeSongs(user), ownerId: userId });
+  if (songsHidden) imageWhere.push(songsHidden);
 
   const query = Prisma.sql`
      WITH targets AS (
@@ -5245,8 +5336,18 @@ export const imagesForModelVersionsCache = createCachedObject<CachedImagesForMod
   },
 });
 
-export async function getImagesForModelVersionCache(modelVersionIds: number[]) {
-  const images = await imagesForModelVersionsCache.fetch(modelVersionIds);
+/** The shared showcase cache, without the songs `viewer` may not see (signed out when undefined). */
+export async function getImagesForModelVersionCache(
+  modelVersionIds: number[],
+  viewer: SessionUser | undefined
+) {
+  const cached = await imagesForModelVersionsCache.fetch(modelVersionIds);
+  const images: typeof cached = {};
+  for (const versionId of Object.keys(cached))
+    images[versionId] = {
+      ...cached[versionId],
+      images: withoutHiddenSongs(cached[versionId].images, viewer),
+    };
   // `images` is keyed by model version id, so this lookup treats version ids as image ids and the
   // entry-level `tags` it attaches belong to an unrelated image; no consumer reads them. Each
   // image's own `tags` come from the cache's appendFn and are unaffected.
@@ -5346,6 +5447,8 @@ export const getImagesForPosts = async ({
     );
   }
   imageWhere.push(minorMatureImageVisibleSql({ userId, isModerator }));
+  const songsHidden = songsHiddenSql({ music: canSeeSongs(user), ownerId: userId });
+  if (songsHidden) imageWhere.push(songsHidden);
 
   if (isModerator) {
     if (poiOnly) {
@@ -5711,10 +5814,16 @@ export async function createImage({
   feedbackCapture,
   assertPostOwnedBy = createPostOwnerCheck(),
   clientUrl,
+  allowAudio,
   ...image
 }: ImageSchema & {
   userId: number;
   skipIngestion?: boolean;
+  /**
+   * The caller has checked the owner may store a song (the `music` flag). Without it audio is
+   * refused here, because `imageSchema` accepts `type: 'audio'` on every route that creates an image.
+   */
+  allowAudio?: boolean;
   /**
    * Derivation the caller proved (see remix-provenance.ts). Nothing else can put
    * `meta.extra.sourceImageIds` on a row — every other caller's claim is stripped
@@ -5747,6 +5856,8 @@ export async function createImage({
   if (blockProvenance && !blockProvenance.appId) {
     throw new Error('createImage: blockProvenance requires an appId');
   }
+  if (image.type === MediaType.audio && !allowAudio)
+    throw throwAuthorizationError(SONGS_UNAVAILABLE_MESSAGE);
   if (image.postId != null) await assertPostOwnedBy({ postId: image.postId, userId: image.userId });
 
   /**
@@ -6038,6 +6149,12 @@ export async function checkEntityImageKeys({
   return urls;
 }
 
+/** Entity writes insert rows without `createImage`, so they refuse songs themselves. */
+function assertNoAudio(images: ImageReferenceInput[]) {
+  if (images.some((i) => i.type === MediaType.audio))
+    throw throwAuthorizationError(SONGS_UNAVAILABLE_MESSAGE);
+}
+
 export const createEntityImages = async ({
   tx,
   entityId,
@@ -6060,6 +6177,8 @@ export const createEntityImages = async ({
     return [];
   }
 
+  // Every entry is inserted (an `id` is dropped by pickClientImageColumns), so none may be a song.
+  assertNoAudio(images);
   await assertClientImageUrlsUsable({ urls: images.map((i) => i.url), userId, db: dbClient });
   await assertClientKeysIssuedToCaller({
     urls: uncheckedUrls(images, keysCheckedFor),
@@ -6151,10 +6270,13 @@ export const getEntityCoverImage = async ({
   viewer,
   eventDecorationViewer,
   seesReportListed = false,
+  music = false,
 }: GetEntitiesCoverImage & {
   include?: ['tags'];
   // Covers follow the parent entity's visibility for this viewer; undefined is signed out.
   viewer: CoverImageViewer;
+  /** The viewer may see songs (`canSeeSongs`); otherwise no song but their own is a cover. */
+  music?: boolean;
   // Bounty, entry and article covers follow the bounty search index's exclusions (their uploader
   // keeps theirs) unless this is set.
   seesReportListed?: boolean;
@@ -6178,6 +6300,7 @@ export const getEntityCoverImage = async ({
       ...imageVisibilityConditions({
         userId: signedIn ? viewerId ?? undefined : undefined,
         isModerator,
+        music,
       }),
     ],
     ' AND '
@@ -6189,7 +6312,11 @@ export const getEntityCoverImage = async ({
   ) AND ${minorMatureImageVisibleSql({
     userId: signedIn ? viewerId ?? undefined : undefined,
     isModerator,
-  })}`;
+  })} AND ${
+    (!isModerator &&
+      songsHiddenSql({ music, ownerId: signedIn ? viewerId ?? undefined : undefined })) ||
+    Prisma.sql`TRUE`
+  }`;
 
   // An unrated image is never a cover for anyone but moderators, owner included.
   const coverRated = Prisma.sql`(i."nsfwLevel" NOT IN (0, ${NsfwLevel.Blocked}) OR ${isModerator}::boolean)`;
@@ -6611,6 +6738,8 @@ export const updateEntityImages = async ({
   maxLinked?: number;
 }) => {
   const dbClient = tx ?? dbWrite;
+  // An entry with an `id` is linked, not inserted.
+  assertNoAudio(images.filter((i) => !i.id));
   const connections = await dbClient.imageConnection.findMany({
     select: { imageId: true },
     where: {
@@ -6877,6 +7006,8 @@ async function afterImageNsfwLevelSet({
   ]);
   await queueDocumentsForImageMinorChanges({ levelImageIds: [id] });
   await updateModel3DNsfwLevelForThumbnailImage({ imageId: id, postId });
+  // A song's own cover is a postless image, and its level counts toward the song's.
+  if (postId == null) await rerateSongOfRatedCover(id);
   await trackModActivity(userId, { entityType: 'image', entityId: id, activity });
 }
 
@@ -6902,9 +7033,14 @@ export async function updateImageNsfwLevel({
     // decides whether a rating may come down from it — a lagging replica would misreport it.
     const image = await dbWrite.image.findUnique({
       where: { id },
-      select: { metadata: true, postId: true, nsfwLevel: true },
+      select: { type: true, metadata: true, postId: true, nsfwLevel: true },
     });
     if (!image) throw throwNotFoundError('Image not found');
+    // The lock would count as the song's review, which only its own scan may give.
+    if (image.type === MediaType.audio)
+      throw throwBadRequestError(
+        'A song is published only by its own scan, which is retried automatically; it cannot be rated here.'
+      );
     // A Knights consensus is a vote, not a moderator's decision, and has no grant to check.
     if (activity !== 'setNsfwLevelKono' && loosensImageLevel(image.nsfwLevel, nsfwLevel))
       await assertMayLoosenImages([id], { csamReview });
@@ -7052,7 +7188,8 @@ export type KnightsNsfwLevelResult =
  * is not withheld from a moderator without the grant when the vote would loosen it
  * (`loosensImageLevel`; a vote holds no grant). The conditions sit in the UPDATE itself, so a moderator ruling or block landing between a
  * read and the write cannot be overwritten. A withheld loosening answers `locked`, which the Knights
- * app routes to a moderator at the current level.
+ * app routes to a moderator at the current level. A song is never rated here (only its own scan
+ * rates it); the miss is reported `locked`, or `blocked` if it carries a block marker.
  */
 export async function setImageNsfwLevelFromKnights({
   id,
@@ -7072,6 +7209,7 @@ export async function setImageNsfwLevelFromKnights({
         "updatedAt" = NOW()
     WHERE i."id" = ${id}
       AND NOT ${hasBlockMarkerSql('i')}
+      AND i."type" <> 'audio'
       AND (
         NOT i."nsfwLevelLocked"
         OR COALESCE(i."metadata"->>'nsfwLevelReason', '') = ${KNIGHTS_VOTE_NSFW_LEVEL_REASON}
@@ -7145,6 +7283,7 @@ export async function raiseOwnImageNsfwLevel({
   await queueDocumentsForImageMinorChanges({ levelImageIds: [id] });
   await updateModel3DNsfwLevelForThumbnailImage({ imageId: id, postId: raised.postId });
   await queueImageSearchIndexUpdate({ ids: [id], action: SearchIndexUpdateQueueAction.Update });
+  if (raised.postId == null) await rerateSongOfRatedCover(id);
   return true;
 }
 
@@ -7232,6 +7371,7 @@ export async function resolveIngestionError({
     where: { id },
     select: {
       ingestion: true,
+      type: true,
       postId: true,
       userId: true,
       metadata: true,
@@ -7244,6 +7384,11 @@ export async function resolveIngestionError({
     },
   });
   if (!image) throw new Error('Image not found');
+  // A song is published only by its own scan; the ingest cron retries it, so no rating here can.
+  if (image.type === MediaType.audio)
+    throw throwBadRequestError(
+      'A song is published only by its own scan, which is retried automatically; it cannot be rated here.'
+    );
   const refusal = ingestionResolveRefusal({
     blockedFor: image.blockedFor,
     needsReview: image.needsReview,
@@ -7348,6 +7493,7 @@ export async function resolveIngestionError({
     action: SearchIndexUpdateQueueAction.Update,
   });
   await queueDocumentsForImageMinorChanges({ levelImageIds: [id] });
+  if (image.postId == null) await rerateSongOfRatedCover(id);
 
   await trackModActivity(userId, {
     entityType: 'image',
@@ -7548,6 +7694,7 @@ export async function getImageGenerationData({ id, viewer }: { id: number; viewe
     id,
     userId: viewer.user?.id,
     isModerator: viewer.user?.isModerator,
+    music: canSeeSongs(viewer.user ?? undefined),
     ownerSeesHeld: isSessionOrFullUserKey(viewer),
   });
   const showMedia = await viewerCanSeeImageMedia(viewer, visible);
@@ -7632,6 +7779,10 @@ export async function getImageGenerationData({ id, viewer }: { id: number; viewe
       getGenerationDisplayKeys(meta as Record<string, unknown>, graphResources) ?? undefined;
   }
 
+  const songRefusesRemix =
+    image.type === 'audio' &&
+    !songAllowsRemix((await imageMetadataCache.fetch([id]))[id]?.metadata);
+
   return {
     type: image.type,
     onSite,
@@ -7648,7 +7799,7 @@ export async function getImageGenerationData({ id, viewer }: { id: number; viewe
     tools,
     techniques,
     external,
-    canRemix: !image.hideMeta && !!meta?.prompt,
+    canRemix: !image.hideMeta && !!meta?.prompt && !songRefusesRemix,
     remixOfId: meta?.extra?.remixOfId,
     remixOfIds: getRemixSourceIds(id, meta),
   };

@@ -7,7 +7,8 @@ const { appealsSectionFor } = await import('../tickets/appeals');
 const appealsOf = vi.fn();
 const imagesOfPosts = vi.fn();
 const imagesFlaggedForAppeal = vi.fn();
-const reads = { appealsOf, imagesOfPosts, imagesFlaggedForAppeal };
+const songImages = vi.fn();
+const reads = { appealsOf, imagesOfPosts, imagesFlaggedForAppeal, songImages };
 const all = () => true;
 
 const base = {
@@ -35,6 +36,7 @@ beforeEach(() => {
   appealsOf.mockReset().mockResolvedValue([]);
   imagesOfPosts.mockReset().mockResolvedValue([]);
   imagesFlaggedForAppeal.mockReset().mockImplementation(async (ids: number[]) => ids);
+  songImages.mockReset().mockResolvedValue([]);
 });
 
 describe('appealsSectionFor', () => {
@@ -219,5 +221,30 @@ describe('appealsSectionFor', () => {
     const res = await appealsSectionFor(ticket({ canRead }), reads);
     expect(res.status === 'ok' && res.appeals).toHaveLength(0);
     expect(res).toMatchObject({ truncated: true });
+  });
+
+  it('lists a song or cover appeal as Audio review’s, under its grant, with no ruling here', async () => {
+    appealsOf.mockResolvedValue([
+      { ...base, id: 3, entityId: 300 },
+      { ...base, id: 2 },
+    ]);
+    songImages.mockResolvedValue([300]);
+    const res = await appealsSectionFor(ticket(), reads);
+    expect(res.appeals.map((a) => [a.id, a.kind, a.rulable])).toEqual([
+      [3, 'song', false],
+      [2, 'image', true],
+    ]);
+    const onlyImages = await appealsSectionFor(
+      ticket({ canRead: (path: string) => path === '/images/appeals' }),
+      reads
+    );
+    expect(onlyImages.appeals.map((a) => a.id)).toEqual([2]);
+  });
+
+  it('offers no image ruling when it cannot tell which images are songs', async () => {
+    appealsOf.mockResolvedValue([{ ...base, id: 2 }]);
+    songImages.mockRejectedValue(new Error('down'));
+    const res = await appealsSectionFor(ticket(), reads);
+    expect(res.appeals.map((a) => [a.id, a.rulable])).toEqual([[2, false]]);
   });
 });

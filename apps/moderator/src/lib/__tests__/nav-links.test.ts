@@ -306,6 +306,36 @@ describe('Image Reports under Images', () => {
   });
 });
 
+describe('Audio review under Audio', () => {
+  const group = (label: string) => navForUser(reviewer).find((l) => l.label === label);
+
+  it('is listed under Audio, not Images, for whoever holds its existing grant', () => {
+    applyGrants({
+      '/audio-review': ['moderator:reviewer'],
+      '/images/minor': ['moderator:reviewer'],
+    });
+    expect(group('Audio')?.children?.map((c) => c.path)).toEqual(['/audio-review']);
+    expect(group('Images')?.children?.map((c) => c.path)).not.toContain('/audio-review');
+    expect(canAccess(reviewer, '/audio-review')).toBe(true);
+  });
+
+  it('counts toward the Audio badge, not the Images badge', () => {
+    applyGrants({
+      '/audio-review': ['moderator:reviewer'],
+      '/images/minor': ['moderator:reviewer'],
+    });
+    const counts: Record<string, number> = { minor: 2, audioReview: 5 };
+    const count = (k?: string) => (k ? counts[k] ?? null : null);
+    expect(navCount(group('Audio')!, count)).toBe(5);
+    expect(navCount(group('Images')!, count)).toBe(2);
+  });
+
+  it('is granted as a page of Audio', () => {
+    const audio = pageAccessState().tree.find((n) => n.key === '/audio');
+    expect(audio?.children.map((c) => c.key)).toEqual(['/audio-review']);
+  });
+});
+
 describe('/admin grantable pages', () => {
   const tree = pageAccessState().tree;
   const keys = (node: { children: { key: string }[] } | undefined) =>

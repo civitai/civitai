@@ -21,7 +21,7 @@ import { internalOrchestratorClient } from '~/server/services/orchestrator/clien
 import { isTrustedOrchestratorUrl } from '~/server/services/orchestrator/trusted-blob-url';
 import { submitWorkflowWithRetry } from '~/server/services/orchestrator/workflows';
 import { getRetryAfterSeconds } from '~/server/services/orchestrator/retry-after';
-import { submitVideoAudioScan } from '~/server/services/video-audio-scan.service';
+import { submitSongScan, submitVideoAudioScan } from '~/server/services/video-audio-scan.service';
 import { hashContent } from '~/server/services/entity-moderation.service';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import type { MediaType, ModelType } from '~/shared/utils/prisma/enums';
@@ -173,6 +173,33 @@ export async function createImageIngestionRequest({
   // ledger is asserted by `media-fetch-funnel-ledger.test.ts`, which fails when a new
   // funnel appears un-gated, so do not maintain that list by hand here.
   if (!isAllowedImageScanUrl(url)) throw new ImageIngestionUrlBlockedError(url);
+  if (type === 'audio') {
+    // A song has no frames to extract or tags to read: its own workflow, with its own callback.
+    const result = await submitSongScan({
+      imageId,
+      mediaUrl: getEdgeUrl(normalizeImageScanUrl(url), { type }),
+      priority,
+    });
+    const response = 'response' in result ? result.response : undefined;
+    if (!result.data)
+      logToAxiom({
+        type: 'error',
+        name: imageIngestionLogName(false),
+        imageId,
+        url,
+        attempts: result.attempts,
+        responseStatus: response?.status,
+        error: safeError('error' in result ? result.error : undefined),
+      });
+    return {
+      data: result.data,
+      body: 'body' in result ? result.body : undefined,
+      error: 'error' in result ? result.error : undefined,
+      status: response?.status,
+      retryAfter: getRetryAfterSeconds(response),
+      useImageScanning: false,
+    };
+  }
 
   const metadata = { imageId };
   // Submit the NORMALIZED form: an absolute url goes out as its parsed `href`, so the host
@@ -504,6 +531,8 @@ type XGuardModerationArgs = {
   rearmRetries?: boolean;
 } & (
   | { mode: 'text'; content: string }
+  /** Rates `content`'s language 0-2 (`languageLevel`); never blocks, and asks no labels. */
+  | { mode: 'profanity'; content: string }
   | {
       mode: 'prompt';
       positivePrompt: string;
@@ -562,6 +591,8 @@ export async function createXGuardModerationRequest(args: XGuardModerationArgs) 
   const contentHash =
     args.mode === 'text'
       ? hashContent(args.content + labelOverrideHashSuffix(labelOverrides))
+      : args.mode === 'profanity'
+      ? hashContent(args.content)
       : undefined;
   if (!args.forceRescan && entityType && entityId !== undefined && contentHash) {
     const existing = await dbRead.entityModeration.findUnique({
@@ -585,7 +616,14 @@ export async function createXGuardModerationRequest(args: XGuardModerationArgs) 
   // side; per-label policyHash comes back on each result and is what we record
   // as the per-label `version` column in the audit log.
   const input =
-    args.mode === 'text'
+    args.mode === 'profanity'
+      ? {
+          mode: 'profanity' as const,
+          text: args.content,
+          storeFullResponse: false,
+          includeReasoning: false,
+        }
+      : args.mode === 'text'
       ? {
           mode: 'text' as const,
           text: args.content,
@@ -626,7 +664,7 @@ export async function createXGuardModerationRequest(args: XGuardModerationArgs) 
         steps: [
           {
             $type: 'xGuardModeration',
-            name: args.mode === 'text' ? 'textModeration' : 'promptModeration',
+            name: `${args.mode}Moderation`,
             metadata,
             priority,
             input,

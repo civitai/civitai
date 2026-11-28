@@ -523,6 +523,7 @@ export const updatePostHandler = async ({
               isModerator: ctx.user.isModerator,
               csamReview: !!ctx.features?.csamReports,
               canAccessUserChallenges: ctx.features.userChallenges,
+              canUseMusic: ctx.features.music,
             },
             permissions,
           });

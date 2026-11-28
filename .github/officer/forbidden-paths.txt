@@ -110,6 +110,7 @@ event-engine-common
 .editorconfig
 .eslintignore
 .gitleaks.toml
+.gitleaksignore
 .prettierignore
 .prettierrc
 CONTRIBUTING.md

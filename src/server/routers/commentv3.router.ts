@@ -3,6 +3,7 @@ import {
   getCommentRepliesHandler,
   getCommentSectionHandler,
   getCommentThreadHandler,
+  getTimedCommentsHandler,
   setTosViolationV3Handler,
   toggleCommentLockV3Handler,
   toggleHideCommentV3Handler,
@@ -24,6 +25,7 @@ import {
   getCommentRepliesSchema,
   getCommentSectionSchema,
   getCommentThreadSchema,
+  getTimedCommentsSchema,
   createCommentV3Schema,
   updateCommentV3Schema,
   commentMuteSchema,
@@ -44,6 +46,8 @@ export const commentv3Router = router({
   getSection: publicProcedure.input(getCommentSectionSchema).query(getCommentSectionHandler),
   getReplies: publicProcedure.input(getCommentRepliesSchema).query(getCommentRepliesHandler),
   getThread: publicProcedure.input(getCommentThreadSchema).query(getCommentThreadHandler),
+  /** A song's timed comments, for the global player's waveform. */
+  getTimed: publicProcedure.input(getTimedCommentsSchema).query(getTimedCommentsHandler),
   create: guardedProcedure
     .meta({ requiredScope: TokenScope.SocialWrite })
     .input(createCommentV3Schema)

@@ -1,3 +1,4 @@
+import { TEXT_SCAN_HOLD_TABLE_SQL } from '../../../test/held-image-tables';
 import type { PGlite } from '@electric-sql/pglite';
 import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
@@ -65,6 +66,7 @@ const SCHEMA = `
 CREATE TYPE "EntityType" AS ENUM ('Image', 'Post', 'Model');
 CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected');
 CREATE DOMAIN "ImageIngestionStatus" AS TEXT;
+${TEXT_SCAN_HOLD_TABLE_SQL}
 CREATE TABLE "ModerationRule" ("id" INTEGER PRIMARY KEY, "action" TEXT NOT NULL);
 CREATE TABLE "ModerationRuleVersion" ("ruleId" INTEGER, "action" TEXT);
 CREATE TABLE "Image" (

@@ -3,6 +3,7 @@ import { freshPglite } from '../../../test/pglite';
 import {
   DEFERRED_BLOCK_EFFECT_TABLE_SQL,
   SET_ASIDE_TABLE_SQL,
+  TEXT_SCAN_HOLD_TABLE_SQL,
 } from '../../../test/held-image-tables';
 import type { DB } from '@civitai/db-schema/kysely';
 import { Kysely } from 'kysely';
@@ -94,6 +95,7 @@ CREATE TABLE "Image" (
   "scanJobs" JSONB
 );
 ${SET_ASIDE_TABLE_SQL}
+${TEXT_SCAN_HOLD_TABLE_SQL}
 ${DEFERRED_BLOCK_EFFECT_TABLE_SQL}
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
 CREATE TABLE "TagsOnImageDetails" ("imageId" INTEGER, "tagId" INTEGER, "disabled" BOOLEAN);
@@ -582,13 +584,15 @@ describe('a write that races the image becoming withheld', () => {
   beforeEach(async () => {
     race.nth = 0;
     race.seen = 0;
+    // The withheld fixture brings its own, wider "TextScanHold" than the base schema's.
     await db.exec(
-      `${CSAM_LINK_TABLES_SQL}
+      `DROP TABLE "TextScanHold";
+       ${CSAM_LINK_TABLES_SQL}
        ${WITHHELD_TABLES_SQL.replace(/^CREATE TABLE "(User|TagsOnImageDetails)".*$/gm, '')}
        ALTER TABLE "User" ADD COLUMN "meta" JSONB, ADD COLUMN "bannedAt" TIMESTAMP(3);
        ALTER TABLE "Image" ADD COLUMN "url" TEXT, ADD COLUMN "createdAt" TIMESTAMP(3) DEFAULT now(),
          ADD COLUMN "minor" BOOLEAN NOT NULL DEFAULT FALSE, ADD COLUMN "poi" BOOLEAN NOT NULL DEFAULT FALSE,
-         ADD COLUMN "scannedAt" TIMESTAMP(3);
+         ADD COLUMN "scannedAt" TIMESTAMP(3), ADD COLUMN "type" TEXT NOT NULL DEFAULT 'image';
        UPDATE "Image" SET "url" = 'shared', "userId" = 7;
        INSERT INTO "User" ("id") VALUES (7);`
     );

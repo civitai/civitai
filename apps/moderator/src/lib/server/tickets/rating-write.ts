@@ -1,7 +1,7 @@
 import { fail, type RequestEvent } from '@sveltejs/kit';
 import { z } from 'zod';
 import { int4Id, parseForm } from '../query';
-import { ReportStatus } from '$lib/rating-review';
+import { ReportStatus, SONG_ENTITY_TYPE } from '$lib/rating-review';
 import { RATINGS_PATH } from '$lib/tickets/rating-disputes';
 import { DECIDED } from './appeal-write';
 import {
@@ -63,6 +63,10 @@ export function createTicketRatingActions(deps: RatingWriteDeps) {
           error: 'That dispute belongs to another account — nothing was changed.',
         });
       if (review.status !== ReportStatus.Pending) return fail(409, { error: DECIDED });
+      if (review.entityType === SONG_ENTITY_TYPE)
+        return fail(409, {
+          error: 'Song disputes are decided on the Audio review page — nothing was changed.',
+        });
 
       const result = await deps.resolve({
         reviewId: review.id,

@@ -58,8 +58,9 @@ vi.mock('../db', () => ({
         () => undefined,
         () => {
           expect(table).toBe('Image');
-          // An unblocked image with an active owner; the refusal cases live in the PGlite suite.
-          return imageRow && { blockedFor: null, needsReview: null, ...imageRow };
+          // An unblocked, unrated image with an active owner; the refusal cases live in the PGlite
+          // suite.
+          return imageRow && { blockedFor: null, needsReview: null, nsfwLevel: 0, ...imageRow };
         }
       ),
     updateTable: (table: string) =>
@@ -166,6 +167,7 @@ describe('spoke resolveIngestionError — missing-media guard', () => {
       entityType: 'image',
       entityId: 4242,
       activity: 'setNsfwLevel',
+      details: { from: 0, to: 1 },
     });
     expect(syncSearchIndex).toHaveBeenCalledTimes(1);
     expect(bustCachedObject).toHaveBeenCalledTimes(2);

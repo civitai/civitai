@@ -38,6 +38,7 @@ import { getEntityOwnerId } from '~/server/services/entity-owner.service';
 import { logToAxiom } from '~/server/logging/client';
 import { queueCollectionMembershipUpdate } from '~/server/services/collection-index-sync';
 import { UserHubSourceType } from '~/shared/utils/prisma/enums';
+import { SONGS_UNAVAILABLE_MESSAGE } from '~/shared/form-graph/generation/audio/song-metadata';
 import { isRestrictedImage, RESTRICTED_IMAGE_REASON } from '~/shared/utils/restricted-image';
 import {
   collectionItemLagId,
@@ -128,7 +129,8 @@ import {
   DETAIL_BACKED_REASONS,
   resolveRejectionCopy,
 } from '~/shared/constants/collection-rejection.constants';
-import type { CollectionItemRejectionReason, MediaType } from '~/shared/utils/prisma/enums';
+import type { CollectionItemRejectionReason } from '~/shared/utils/prisma/enums';
+import { MediaType } from '~/shared/utils/prisma/enums';
 import {
   ArticleStatus,
   ChallengeSource,
@@ -161,7 +163,11 @@ import {
   getServableCoverCollectionIds,
   isCoverWithinBrowsingLevel,
 } from '~/server/services/collection-cover-visibility';
-import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
+import {
+  assertImageVisibleToViewer,
+  canSeeSongs,
+  songsHiddenSql,
+} from '~/server/services/image-visibility.service';
 import { assertNotDealFileImages } from '~/server/services/deal-file-image';
 import {
   JUDGE_RATING_METADATA_KEY,
@@ -947,6 +953,34 @@ const inputToCollectionType = {
   model3dId: CollectionType.Model3D,
 } as const;
 
+/** The collection type an image item belongs in: a song only in a playlist, a picture or video not. */
+async function imageCollectionType(imageId: number) {
+  const image = await dbRead.image.findUnique({ where: { id: imageId }, select: { type: true } });
+  return image?.type === MediaType.audio ? CollectionType.Music : CollectionType.Image;
+}
+
+/** Playlists and the songs in them are for `music` flag holders and moderators only. */
+function assertCanUseMusicCollections(
+  canUseMusic: boolean | undefined,
+  isModerator: boolean | undefined
+) {
+  if (!canUseMusic && !isModerator) throw throwAuthorizationError(SONGS_UNAVAILABLE_MESSAGE);
+}
+
+/** `assertCanUseMusicCollections` when any of `imageIds` is a song. */
+async function assertCanSaveSongs(
+  imageIds: number[],
+  canUseMusic: boolean | undefined,
+  isModerator: boolean | undefined
+) {
+  if (canUseMusic || isModerator || !imageIds.length) return;
+  const song = await dbRead.image.findFirst({
+    where: { id: { in: imageIds }, type: MediaType.audio },
+    select: { id: true },
+  });
+  if (song) assertCanUseMusicCollections(canUseMusic, isModerator);
+}
+
 /**
  * Apply a collection's configured `metadata.autoTagId` to the images just added to it.
  *
@@ -1089,6 +1123,7 @@ export const saveItemInCollections = async ({
     csamReview = false,
     removeFromCollectionIds,
     canAccessUserChallenges,
+    canUseMusic,
     ...input
   },
 }: {
@@ -1097,6 +1132,7 @@ export const saveItemInCollections = async ({
     isModerator?: boolean;
     csamReview?: boolean;
     canAccessUserChallenges?: boolean;
+    canUseMusic?: boolean;
   };
 }) => {
   // By value, not key presence: `{ modelId: undefined, imageId: 5 }` passes the schema refine.
@@ -1116,7 +1152,11 @@ export const saveItemInCollections = async ({
   });
 
   if (itemKey && inputToCollectionType.hasOwnProperty(itemKey)) {
-    const type = inputToCollectionType[itemKey];
+    const type =
+      itemKey === 'imageId'
+        ? await imageCollectionType(input.imageId as number)
+        : inputToCollectionType[itemKey];
+    if (type === CollectionType.Music) assertCanUseMusicCollections(canUseMusic, isModerator);
     // check if all collections match the Model type
     const filteredCollections = collections.filter((c) => c.type === type || c.type == null);
 
@@ -1128,6 +1168,14 @@ export const saveItemInCollections = async ({
   // validateContestCollectionEntry has no model3dIds leg, so an entry would skip every contest gate.
   if (itemKey === 'model3dId' && collections.some((c) => c.mode === CollectionMode.Contest)) {
     throw throwBadRequestError('3D models cannot be entered into contest collections');
+  }
+  if (collections.some((c) => c.type === CollectionType.Music))
+    assertCanUseMusicCollections(canUseMusic, isModerator);
+  // Playlists are plain lists of songs: no contest gates cover them.
+  if (
+    collections.some((c) => c.type === CollectionType.Music && c.mode === CollectionMode.Contest)
+  ) {
+    throw throwBadRequestError('Playlists cannot be contests');
   }
 
   // Every collection this request touches, in one lookup — the adds need it to spot no-op re-submissions
@@ -1577,6 +1625,7 @@ export const upsertCollection = async ({
     userId: number;
     isModerator?: boolean;
     isMember?: boolean;
+    canUseMusic?: boolean;
     /** A moderator on a session or a full-access key (`actsAsModerator`). */
     asModerator?: boolean;
   };
@@ -1588,6 +1637,7 @@ export const upsertCollection = async ({
     isModerator,
     asModerator = false,
     isMember,
+    canUseMusic,
     id,
     name,
     description,
@@ -1651,10 +1701,13 @@ export const upsertCollection = async ({
         mode: true,
         metadata: true,
         userId: true,
+        type: true,
         image: { select: { id: true } },
       },
     });
     if (!currentCollection) throw throwNotFoundError(`No collection with id ${id}`);
+    if (currentCollection.type === CollectionType.Music)
+      assertCanUseMusicCollections(canUseMusic, isModerator);
 
     // An editor shown no cover because it is hidden from them sends `image: null`; that leaves the
     // stored cover as it is rather than removing it.
@@ -1704,6 +1757,10 @@ export const upsertCollection = async ({
 
     const newCoverUrl = !imageId && image && image.id == null ? image.url : undefined;
     if (newCoverUrl) await assertClientKeysIssuedToCaller({ urls: [newCoverUrl], userId });
+    // A new cover that is a song needs the music flag; a cover kept as it was is not re-judged.
+    const nextCoverId = imageId ?? image?.id;
+    if (nextCoverId != null && nextCoverId !== currentCollection.image?.id)
+      await assertCanSaveSongs([nextCoverId], canUseMusic, isModerator);
 
     const updated = await dbWrite.$transaction(async (tx) => {
       // Decided in the transaction: a cover row deleted after this read fails the `connect`
@@ -1990,6 +2047,16 @@ export const upsertCollection = async ({
   if (type === CollectionType.Model3D && mode === CollectionMode.Contest) {
     throw throwBadRequestError('3D model collections cannot be contests');
   }
+  if (type === CollectionType.Music) assertCanUseMusicCollections(canUseMusic, isModerator);
+  if (type === CollectionType.Music && mode === CollectionMode.Contest) {
+    throw throwBadRequestError('Playlists cannot be contests');
+  }
+  // A playlist starts with a song, and an image collection with no song.
+  if (imageId && type && (type === CollectionType.Music || type === CollectionType.Image)) {
+    if ((await imageCollectionType(imageId)) !== type)
+      throw throwBadRequestError('Collection type mismatch');
+  }
+  if (imageId) await assertCanSaveSongs([imageId], canUseMusic, isModerator);
 
   for (const [itemKey, itemId] of [
     ['imageId', imageId],
@@ -2110,11 +2177,12 @@ export const updateCollectionCoverImage = async ({
   input: UpdateCollectionCoverImageInput & {
     userId: number;
     isModerator?: boolean;
+    canUseMusic?: boolean;
     /** A moderator on a session or a full-access key (`actsAsModerator`). */
     asModerator?: boolean;
   };
 }) => {
-  const { id, imageId, userId, isModerator, asModerator = false } = input;
+  const { id, imageId, userId, isModerator, canUseMusic, asModerator = false } = input;
   const permission = await getUserCollectionPermissionsById({
     id,
     userId,
@@ -2124,11 +2192,21 @@ export const updateCollectionCoverImage = async ({
   if (!permission.manage) {
     throw throwAuthorizationError('You do not have permission to manage this collection');
   }
+  if (!canUseMusic && !isModerator) {
+    const collection = await dbRead.collection.findUnique({
+      where: { id },
+      select: { type: true },
+    });
+    if (collection?.type === CollectionType.Music)
+      assertCanUseMusicCollections(canUseMusic, isModerator);
+    await assertCanSaveSongs([imageId], canUseMusic, isModerator);
+  }
 
   await assertImageVisibleToViewer({
     id: imageId,
     userId,
     isModerator,
+    music: !!canUseMusic || !!isModerator,
     confirmBlockOnPrimary: true,
   });
   await assertCollectionCoverAllowed(imageId, asModerator);
@@ -2331,7 +2409,7 @@ export const getCollectionItemsByCollectionId = async ({
       ? Prisma.sql`AND ci."tagId" = ${collectionTagId}`
       : Prisma.sql``;
     const imageIngestionCondition =
-      collection.type === CollectionType.Image
+      collection.type === CollectionType.Image || collection.type === CollectionType.Music
         ? Prisma.sql`AND (i."ingestion" = 'Scanned' OR i.id IS NULL)`
         : Prisma.sql``;
 
@@ -2402,7 +2480,8 @@ export const getCollectionItemsByCollectionId = async ({
       ? Prisma.sql`AND ci."tagId" = ${collectionTagId}`
       : Prisma.sql``;
     const imageIngestionCondition =
-      collection.type === CollectionType.Image && !forReview
+      (collection.type === CollectionType.Image || collection.type === CollectionType.Music) &&
+      !forReview
         ? Prisma.sql`AND i."ingestion" = 'Scanned'`
         : Prisma.sql``;
     // Hydration would drop these rows anyway; filtering here keeps a page of dead rows from
@@ -2469,7 +2548,7 @@ export const getCollectionItemsByCollectionId = async ({
         ci."createdAt"
       FROM "CollectionItem" ci
       ${
-        collection.type === CollectionType.Image
+        collection.type === CollectionType.Image || collection.type === CollectionType.Music
           ? Prisma.sql`LEFT JOIN "Image" i ON ci."imageId" = i.id`
           : Prisma.sql``
       }
@@ -3875,6 +3954,7 @@ export const bulkSaveItems = async ({
     isModerator,
     csamReview = false,
     canAccessUserChallenges,
+    canUseMusic,
   },
   permissions,
 }: {
@@ -3883,6 +3963,7 @@ export const bulkSaveItems = async ({
     isModerator?: boolean;
     csamReview?: boolean;
     canAccessUserChallenges?: boolean;
+    canUseMusic?: boolean;
   };
   permissions: CollectionContributorPermissionFlags;
 }) => {
@@ -3892,6 +3973,8 @@ export const bulkSaveItems = async ({
   });
 
   if (!collection) throw throwNotFoundError('No collection with id ' + collectionId);
+  if (collection.type === CollectionType.Music)
+    assertCanUseMusicCollections(canUseMusic, isModerator);
   if (
     isModerator &&
     submissionStatus(permissions) === CollectionItemStatus.ACCEPTED &&
@@ -4023,7 +4106,9 @@ export const bulkSaveItems = async ({
   }
   if (
     imageIds.length > 0 &&
-    (collection.type === CollectionType.Image || collection.type === null)
+    (collection.type === CollectionType.Image ||
+      collection.type === CollectionType.Music ||
+      collection.type === null)
   ) {
     const existingImageIds = (
       await dbRead.collectionItem.findMany({
@@ -4031,9 +4116,23 @@ export const bulkSaveItems = async ({
         where: { imageId: { in: imageIds }, collectionId },
       })
     ).map((item) => item.imageId);
+    await assertCanSaveSongs(imageIds, canUseMusic, isModerator);
+    // A playlist takes only the songs among them.
+    const songIds =
+      collection.type === CollectionType.Music
+        ? new Set(
+            (
+              await dbRead.image.findMany({
+                where: { id: { in: imageIds }, type: MediaType.audio },
+                select: { id: true },
+              })
+            ).map((image) => image.id)
+          )
+        : null;
 
     data = imageIds
       .filter((id) => !existingImageIds.includes(id))
+      .filter((id) => !songIds || songIds.has(id))
       .map((imageId) => ({
         imageId,
         ...baseData,
@@ -4193,10 +4292,13 @@ export const getCollectionCoverImages = async ({
   imagesPerCollection,
   browsingLevel,
   showsImage,
+  viewer,
 }: {
   collectionIds: number[];
   imagesPerCollection: number;
   browsingLevel: number;
+  /** Who the covers are for: songs only for `canSeeSongs`, or their owner. */
+  viewer: SessionUser | undefined;
   /** The viewer's browsing-tag filter, from `getShowcaseImageFilter`. */
   showsImage: (image: {
     userId?: number;
@@ -4236,6 +4338,7 @@ export const getCollectionCoverImages = async ({
           imageSql,
           // The string is dropped below with an image above the viewer's level.
           srcImageLevels: allBrowsingLevelsFlag,
+          songsHidden: songsHiddenSql({ music: canSeeSongs(viewer), ownerId: viewer?.id }),
         })}`
       : [];
   const withinLevel = itemImages.filter(
@@ -4331,7 +4434,7 @@ export const removeCollectionItem = async ({
       ? 'Model'
       : collectionType === CollectionType.Article
       ? 'Article'
-      : collectionType === CollectionType.Image
+      : collectionType === CollectionType.Image || collectionType === CollectionType.Music
       ? 'Image'
       : collectionType === CollectionType.Post
       ? 'Post'

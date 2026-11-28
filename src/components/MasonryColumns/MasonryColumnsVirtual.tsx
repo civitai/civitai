@@ -38,6 +38,11 @@ type Props<TData> = {
   spanLandscapeMaxHeight?: number;
   /** More pages are coming, so a wide item waits for the items that could fill beside it. */
   hasMore?: boolean;
+  /**
+   * A change lays the items out again while there is one column, which is drawn as wide as the
+   * container allows (up to 450) rather than at `columnWidth`.
+   */
+  singleColumnRelayoutKey?: string | number;
 };
 
 export function MasonryColumnsVirtual<TData>({
@@ -51,6 +56,7 @@ export function MasonryColumnsVirtual<TData>({
   overscan,
   spanLandscapeMaxHeight,
   hasMore,
+  singleColumnRelayoutKey,
 }: Props<TData>) {
   const { columnCount, columnWidth } = useMasonryContext();
 
@@ -64,7 +70,8 @@ export function MasonryColumnsVirtual<TData>({
     withAds,
     spanLandscapeMaxHeight
       ? { minRatio: MASONRY_SPAN_MIN_RATIO, maxHeight: spanLandscapeMaxHeight, holdTail: hasMore }
-      : undefined
+      : undefined,
+    columnCount === 1 ? singleColumnRelayoutKey : undefined
   );
 
   // Measured here rather than per column: the columns are flush with this wrapper, and

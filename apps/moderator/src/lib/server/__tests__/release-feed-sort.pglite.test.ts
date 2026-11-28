@@ -96,6 +96,7 @@ CREATE TABLE "Image" (
   "firstVisibleAt" TIMESTAMP(3)
 );
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
+CREATE TABLE "TextScanHold" ("entityType" TEXT, "entityId" INTEGER, "label" TEXT, "status" TEXT);
 CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER, "data" JSONB,
   PRIMARY KEY ("entityType", "entityId", "type"));
 CREATE TABLE "TagsOnImageDetails" ("imageId" INTEGER, "disabled" BOOLEAN);

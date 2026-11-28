@@ -1,5 +1,5 @@
 import { sql, type RawBuilder } from '@civitai/db/kysely';
-import type { Kysely } from 'kysely';
+import type { Kysely, Transaction } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { dbRead, dbWrite } from './db';
 import { insertModActivityBatch } from './mod-activity';
@@ -9,8 +9,9 @@ import {
   fireDeferredBlockEffects,
   type DeferredBlockEffect,
 } from './deferred-block-effects';
-import { keepPendingAppealFlags } from './image-moderation.service';
+import { keepPendingAppealFlags, releaseSongsOfClearedCovers } from './image-moderation.service';
 import { BAN_REASONS_ALWAYS_REMOVING_MEDIA } from '$lib/enforcement';
+import { confirmedLyricsHoldSql } from '@civitai/shared/song-csam-hold';
 
 /** Each reason a user's review flags may not be cleared in bulk, as a boolean over `userId`. */
 export function flagClearHoldLegs(userId: RawBuilder<number>) {
@@ -80,19 +81,31 @@ export async function getFlagClearHolds(
 
 /** Clears the review flag from every one of `userId`'s removed, flagged images, unless the user is
  *  held by a leg other than `overriding`. The hold is repeated in the
- *  UPDATE so the check and the write are one statement. Returns the cleared image ids. */
+ *  UPDATE so the check and the write are one statement. Returns the cleared image ids. Runs in the
+ *  caller's transaction: the rows are locked by a statement of their own first, so the UPDATE reads
+ *  a song's lyrics hold as committed by whoever held the row. */
 export async function clearRemovedFlagsUnlessHeld(
-  db: Kysely<DB>,
+  trx: Transaction<DB>,
   userId: number,
   overriding: readonly FlagClearHoldLeg[] = []
 ): Promise<number[]> {
-  const rows = await db
+  await trx
+    .selectFrom('Image')
+    .select('id')
+    .where('userId', '=', userId)
+    .where('needsReview', '=', FLAG_KEPT_THROUGH_BLOCK)
+    .where('ingestion', '=', 'Blocked')
+    .orderBy('id')
+    .forUpdate()
+    .execute();
+  const rows = await trx
     .updateTable('Image')
     .set({ needsReview: null })
     .where('userId', '=', userId)
     .where('needsReview', '=', FLAG_KEPT_THROUGH_BLOCK)
     .where('ingestion', '=', 'Blocked')
     .where(sql<boolean>`NOT ${anyHold(sql<number>`${userId}::int`, overriding)}`)
+    .where(sql<boolean>`NOT ${sql.raw(confirmedLyricsHoldSql('"Image"'))}`)
     .returning('id')
     .execute();
   return rows.map((r) => r.id);
@@ -129,6 +142,7 @@ export async function clearUserCsamFlags({
   moderatorId: number;
 }): Promise<ClearUserFlagsResult> {
   let claimed: DeferredBlockEffect[] = [];
+  let clearedIds: number[] = [];
   try {
     const result = await dbWrite.transaction().execute(async (trx) => {
       const held = (await getFlagClearHolds([userId], trx)).get(userId);
@@ -146,10 +160,12 @@ export async function clearUserCsamFlags({
       });
       claimed = await claimDeferredBlockEffects(trx, cleared);
       await keepPendingAppealFlags(trx, cleared);
+      clearedIds = cleared;
       const remaining = await flaggedCount(trx, userId);
       return { ok: true, cleared: cleared.length, remaining } as const;
     });
     await fireDeferredBlockEffects(claimed, { moderatorId });
+    await releaseSongsOfClearedCovers(clearedIds);
     return result;
   } catch (e) {
     if (e instanceof QueueChanged) return { ok: false, reason: 'changed' };
@@ -199,6 +215,7 @@ export async function releaseHeldUserCsamFlags(
   if (!reason) throw new Error('A release needs a reason.');
   let legs: FlagClearHoldLeg[] = [];
   let claimed: DeferredBlockEffect[] = [];
+  let releasedIds: number[] = [];
   try {
     const result = await dbWrite.transaction().execute(async (trx) => {
       const { rows } = await sql<{ present: unknown }>`
@@ -236,9 +253,11 @@ export async function releaseHeldUserCsamFlags(
       });
       claimed = await claimDeferredBlockEffects(trx, released);
       await keepPendingAppealFlags(trx, released);
+      releasedIds = released;
       return { ok: true, dryRun: false, count: released.length, remaining, legs } as const;
     });
     await fireDeferredBlockEffects(claimed, { moderatorId });
+    await releaseSongsOfClearedCovers(releasedIds);
     return result;
   } catch (e) {
     if (e instanceof DryRun)

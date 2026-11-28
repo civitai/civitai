@@ -84,6 +84,9 @@ const EXEMPT: Record<string, string> = {
   // A caller-supplied card replaces ImagesCard; today only the challenge and
   // collection submission pickers pass one.
   'components/Image/Infinite/ImagesInfinite.tsx:MasonryItem': 'picker modals only',
+  // `listItem.render` is the caller's row; the one caller, /music's list view, passes SongRow,
+  // which tracks.
+  'components/Image/Infinite/ImagesInfinite.tsx:<inline>': 'SongRow tracks itself',
   'pages/collections/[collectionId]/review.tsx:CollectionItemGridItem': 'moderation review queue',
   'pages/moderator/research/rater-sanity.tsx:ImageGridItem': 'moderator tool',
 };
@@ -312,6 +315,8 @@ describe('feed cards report impressions', () => {
     ['components/CardTemplates/AspectRatioImageCard.tsx', 'AspectRatioImageCard'],
     ['components/CardTemplates/AspectRatioCard.tsx', 'AspectRatioCard'],
     ['components/Cards/FeedCard.tsx', 'FeedCard'],
+    // The ImagesInfinite `<inline>` exemption rests on this.
+    ['components/Music/SongRow.tsx', 'SongRow'],
   ])('%s %s reports impressions itself', (path, name) => {
     expect(isTracked({ file: join(SRC, path), name }, new Map(), 0)).toBe(true);
   });

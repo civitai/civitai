@@ -1,6 +1,5 @@
 <script lang="ts">
   import AgentBadge from '$lib/components/AgentBadge.svelte';
-  import { blockedForNamesCsam } from '@civitai/shared/csam-blocked-for';
   import { enhance } from '$app/forms';
   import { SvelteMap, SvelteSet } from 'svelte/reactivity';
   import { untrack } from 'svelte';
@@ -22,10 +21,11 @@
   import PromptHighlight from '$lib/components/PromptHighlight.svelte';
   import { page } from '$app/state';
   import { clearPaging } from '$lib/paging';
-  import { csamCaptureReportUrl, csamReportUrl, userLookupUrl } from '$lib/entity-url';
+  import { csamCaptureReportUrl, csamReportUrl, imageLookupUrl, userLookupUrl } from '$lib/entity-url';
+  import { coverOfSongLabel } from '$lib/music/song-tos';
   import type { FeedbackCaptureStamp } from '$lib/server/image-review.service';
   import CsamQueueTabs from './CsamQueueTabs.svelte';
-  import { FLAG_KEPT_THROUGH_BLOCK, isFlagOnlyRemaining } from '$lib/image-review';
+  import { isFlagOnlyRemaining, removedTitle } from '$lib/image-review';
   import { ReportEntity, reportDetailEntries, reportedPlacementId } from '$lib/reports';
   import LastWorked from '$lib/components/report-queue/LastWorked.svelte';
   import StickerPlacementRemove from '$lib/components/report-queue/StickerPlacementRemove.svelte';
@@ -50,6 +50,8 @@
       alreadyRemoved?: string;
       closedReportIds?: number[];
       notMoved?: string;
+      /** A refusal one card shows itself (a song's rating), so the page does not repeat it. */
+      ratedImageId?: number;
     } | null;
   } = $props();
 
@@ -76,17 +78,6 @@
     for (const item of untrack(() => data.items))
       if (held.has(item.id)) acted.set(keyOfItem(item), 'Held for confirmation');
   });
-  // What a verdict does to a removed image, for the card's Removed badge.
-  const removedTitle = (item: { needsReview: string | null; blockedFor: string | null; ruleBlocked: boolean }) =>
-    item.needsReview === FLAG_KEPT_THROUGH_BLOCK
-      ? 'Under CSAM review: that queue decides it, and neither verdict acts on it here.'
-      : blockedForNamesCsam(item.blockedFor)
-        ? 'Removed for CSAM: Unaction is refused.'
-        : item.blockedFor === 'moderated' && item.ruleBlocked
-          ? 'Blocked by an automated rule: Unaction restores it, Remove makes it a moderator removal.'
-          : item.blockedFor === 'moderated'
-            ? 'Already removed: Unaction will not restore it, and either verdict closes this report.'
-            : `Removed (${item.blockedFor ?? 'blocked'}): Unaction restores it.`;
   // A report on an image a moderator already removed is closed, not ruled on: its card says so.
   $effect(() => {
     for (const id of form?.closedReportIds ?? []) acted.set(id, 'Closed: already removed');
@@ -231,7 +222,7 @@
   </div>
 {/if}
 
-{#if form?.error}
+{#if form?.error && form.ratedImageId == null}
   <div
     class="mb-3 rounded-md border border-red-500/40 bg-red-500/10 px-4 py-2 text-sm text-red-200"
     role="alert"
@@ -293,7 +284,12 @@
   profilePicture?: boolean | null;
   capture?: FeedbackCaptureStamp | null;
   modelRestricted: boolean;
+  coverOf?: { songId: number; title: string | null } | null;
 })}
+  {#if item.coverOf}
+    <!-- A song's cover reviewed on its own: the song it belongs to is one click away. -->
+    <a href={imageLookupUrl(item.coverOf.songId)} class="link w-fit text-xs">{coverOfSongLabel(item.coverOf)}</a>
+  {/if}
   {#if item.capture}
     <!-- A capture's owner is a system account and its reporter is not its subject: never a profile. -->
     <div class="truncate text-xs text-muted-foreground">

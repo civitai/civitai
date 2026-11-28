@@ -11,6 +11,7 @@
     minor,
     poi,
     rating = true,
+    flags = true,
   }: {
     /** Comma-separated — the same value the bulk forms post, so one component serves card and bar. */
     imageIds: string;
@@ -22,6 +23,8 @@
     /** Off on the appeal queue: those images are `Blocked`, and setting a level writes
      *  `nsfwLevelLocked` over a state the appeal decision is about to replace. */
     rating?: boolean;
+    /** Off on a song (`offersImageFlags`): Minor and POI do not apply to it. */
+    flags?: boolean;
   } = $props();
 
   // Neither write reloads the page (a queue of a hundred cards would refetch on every rating), so what
@@ -49,13 +52,24 @@
       };
     };
 
-  const rate = untilSettled(
-    optimisticEnhancer(({ formData }) => {
-      const previous = levelSet;
-      levelSet = Number(formData.get('nsfwLevel'));
-      return () => (levelSet = previous);
-    })
-  );
+  // A refusal the action names this card for (`ratedImageId`: a song not yet reviewed) shows here,
+  // under the chips, rather than in the page banner.
+  let refusal = $state<string | null>(null);
+  const optimisticRate = optimisticEnhancer(({ formData }) => {
+    const previous = levelSet;
+    levelSet = Number(formData.get('nsfwLevel'));
+    return () => (levelSet = previous);
+  });
+  const rate = untilSettled(async (input) => {
+    refusal = null;
+    const callback = await optimisticRate(input);
+    return async (opts) => {
+      const { result } = opts;
+      if (result.type === 'failure' && result.data?.ratedImageId != null)
+        refusal = String(result.data.error ?? '');
+      await callback?.(opts);
+    };
+  });
 
   const flag = untilSettled(
     optimisticEnhancer(({ formData }) => {
@@ -97,36 +111,41 @@
       {/each}
     </form>
   {/if}
+  {#if refusal}
+    <p class="basis-full text-xs text-red-400" role="alert">{refusal}</p>
+  {/if}
 
-  <form method="POST" action="?/setFlag" use:enhance={flag} class="flex flex-wrap gap-1">
-    <input type="hidden" name="imageIds" value={imageIds} />
-    {#each FLAGS as f (f.name)}
-      {@const on = flagState[f.name]}
-      {#if on === null}
-        {#each [true, false] as value (value)}
+  {#if flags}
+    <form method="POST" action="?/setFlag" use:enhance={flag} class="flex flex-wrap gap-1">
+      <input type="hidden" name="imageIds" value={imageIds} />
+      {#each FLAGS as f (f.name)}
+        {@const on = flagState[f.name]}
+        {#if on === null}
+          {#each [true, false] as value (value)}
+            <button
+              type="submit"
+              name="flagValue"
+              value={imageFlagValue(f.name, value)}
+              disabled={busy}
+              class="{chip} {off}"
+            >
+              {value ? 'Set' : 'Clear'}
+              {f.label}
+            </button>
+          {/each}
+        {:else}
           <button
             type="submit"
             name="flagValue"
-            value={imageFlagValue(f.name, value)}
+            value={imageFlagValue(f.name, !on)}
             disabled={busy}
-            class="{chip} {off}"
+            title={on ? `Clear ${f.label}` : `Set ${f.label}`}
+            class="{chip} {on ? f.active : off}"
           >
-            {value ? 'Set' : 'Clear'}
-            {f.label}
+            {f.label}{on ? ' ✓' : ''}
           </button>
-        {/each}
-      {:else}
-        <button
-          type="submit"
-          name="flagValue"
-          value={imageFlagValue(f.name, !on)}
-          disabled={busy}
-          title={on ? `Clear ${f.label}` : `Set ${f.label}`}
-          class="{chip} {on ? f.active : off}"
-        >
-          {f.label}{on ? ' ✓' : ''}
-        </button>
-      {/if}
-    {/each}
-  </form>
+        {/if}
+      {/each}
+    </form>
+  {/if}
 </div>
