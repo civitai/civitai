@@ -377,13 +377,15 @@ export type ReconcileSummary = {
  * Job failed gets retried without waiting for the next takedown, relist or deploy of that app.
  *
  * Does nothing with the flag off. Approved apps are never listed, so a restore is never started
- * here; a relist restores the app through its own path. At most `batch` apps per run (oldest
- * change first), `RECONCILE_CONCURRENCY` at a time. `shouldStop` is checked before each app is
- * started, so a cancelled run starts nothing new; an app already started runs to its end under
- * its own lock. Never throws for one app; a failed flag read or listing throws (the job reports it).
+ * here; a relist restores the app through its own path. At most `batch` apps per run: apps never
+ * attempted first (oldest change first), then the retries, rotated each hour so apps that fail
+ * every time cannot hold the batch; `RECONCILE_CONCURRENCY` at a time. `shouldStop` is checked
+ * before each app is started, so a cancelled run starts nothing new; an app already started runs
+ * to its end under its own lock. Never throws for one app; a failed flag read or listing throws
+ * (the job reports it).
  */
 export async function reconcileSuspendedLiveApps(
-  opts: Opts & { batch?: number; shouldStop?: () => boolean } = {}
+  opts: Opts & { batch?: number; shouldStop?: () => boolean; now?: () => number } = {}
 ): Promise<ReconcileSummary> {
   const d = { ...defaultDeps, ...opts.deps };
   const summary: ReconcileSummary = {
@@ -412,7 +414,9 @@ export async function reconcileSuspendedLiveApps(
     warn('sweep: readiness list unreadable', err);
   }
 
-  const candidates: string[] = [];
+  // Never attempted first (the backfill), then the ones whose earlier unpublish did not confirm.
+  const fresh: string[] = [];
+  const retries: string[] = [];
   for (const slug of slugs) {
     if (readinessSlugs.includes(slug)) {
       summary.readiness++;
@@ -430,8 +434,15 @@ export async function reconcileSuspendedLiveApps(
       summary.confirmed++;
       continue;
     }
-    candidates.push(slug);
+    (takedown === 'none' ? fresh : retries).push(slug);
   }
+  // An app whose unpublish fails every time stays `attempted` and keeps its place in the listing,
+  // so the retries ROTATE by the hour of the run: a fixed order would let enough repeat failures
+  // take the whole batch every run and starve every app behind them.
+  const shift = retries.length
+    ? Math.floor((opts.now ?? Date.now)() / 3_600_000) % retries.length
+    : 0;
+  const candidates = [...fresh, ...retries.slice(shift), ...retries.slice(0, shift)];
 
   const batch = candidates.slice(0, Math.max(0, opts.batch ?? RECONCILE_BATCH));
   summary.deferred = candidates.length - batch.length;

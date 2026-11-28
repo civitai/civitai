@@ -7,8 +7,9 @@ import { createJob } from './job';
  * catches an app taken down before the flag was on and a takedown whose Job failed.
  *
  * Each app goes through the same per-app lock and markers as a takedown, so a later relist
- * restores it as usual. The lock covers the longest run: a batch of apps, a few at a time, each
- * with its own Job budget.
+ * restores it as usual. The lock is an hour, about one full batch at one Job per app; a run that
+ * outlasts it can overlap the next one, which the per-app lock makes harmless (the second run finds
+ * the app held and leaves it to the holder).
  */
 export const reconcileLiveUnpublishJob = createJob(
   'reconcile-live-unpublish',

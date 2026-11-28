@@ -733,6 +733,31 @@ describe('reconcileSuspendedLiveApps (the scheduled sweep)', () => {
     expect(summary).toMatchObject({ suspended: 12, confirmed: 7, selected: 3, deferred: 2 });
   });
 
+  // An app whose unpublish fails every time stays `attempted` and keeps its place in the listing.
+  // A fixed order would hand it the same batch slot every run; the retries rotate by the hour.
+  it('never-attempted apps go first, and the retries rotate so repeat failures cannot hold the batch', async () => {
+    const apps: Record<string, { status: string; takedown?: 'attempted' }> = {
+      'retry-0': { status: 'suspended', takedown: 'attempted' },
+      'retry-1': { status: 'suspended', takedown: 'attempted' },
+      'retry-2': { status: 'suspended', takedown: 'attempted' },
+      fresh: { status: 'suspended' },
+    };
+    const HOUR = 3_600_000;
+    const picked: string[][] = [];
+    for (const hour of [0, 1, 2, 3]) {
+      const { deps, jobs } = fleet(apps);
+      deps.waitForJob.mockResolvedValue('failed');
+      await reconcileSuspendedLiveApps({ deps, batch: 2, now: () => hour * HOUR + 1 });
+      picked.push(jobs.map((j) => j.slug));
+    }
+    expect(picked).toEqual([
+      ['fresh', 'retry-0'],
+      ['fresh', 'retry-1'],
+      ['fresh', 'retry-2'],
+      ['fresh', 'retry-0'],
+    ]);
+  });
+
   it('a cancelled run starts no further app', async () => {
     const { deps, jobs } = fleet({ a: { status: 'suspended' }, b: { status: 'suspended' } });
     const summary = await reconcileSuspendedLiveApps({ deps, shouldStop: () => true });
