@@ -2,20 +2,18 @@ import type { FpUnhideHeld } from '@civitai/db-queries/feature-page-comments';
 import type { FpCommentState } from '$lib/fp-comment';
 import { dbRead } from './db';
 import { getFpCommentStates } from './fp-comment-state';
+import { FP_LIFT_HELD } from './fp-lift-held';
 import { callModEndpoint } from './user-actions.service';
 
 const HELD: Record<FpUnhideHeld, string> = {
+  ...FP_LIFT_HELD,
   gone: 'That comment no longer exists. Reload.',
   changed: 'This comment changed since you looked. Reload.',
   scan: 'The text scan hid this comment. Set its scan report to Unactioned to show it again.',
   tos: 'This comment is removed as a ToS violation, so it stays hidden.',
-  foreign: 'It was hidden by another action on the platform first, so it stays hidden.',
-  held: 'This comment is held for a child-safety check, so it stays hidden.',
   flagged: 'The text scan flagged this comment, so it stays hidden.',
   scanning: 'The text scan has not cleared this text yet. Try again once it has.',
-  author: "The comment's author is banned or muted, so it stays hidden.",
   reported: 'Someone else has an open report on this comment. Rule on it first.',
-  pushing: 'This comment is being sent to the platform. Try again in a minute.',
 };
 
 /**

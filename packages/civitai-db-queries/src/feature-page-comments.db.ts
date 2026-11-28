@@ -573,6 +573,40 @@ export async function hasOpenPersonFpReport(
 export const FP_AUTO_HIDE_REPORT_COMMENT = 'auto-hidden by scan';
 
 /**
+ * Takes, in the order an edit takes them, the hold decision's lock, the comment and its mirror row,
+ * each in a statement of its own, so what is read after sees what any writer it waited on committed.
+ */
+async function lockFpCommentForLift(trx: Kysely<DB>, commentId: number) {
+  await rows(trx, `SELECT pg_advisory_xact_lock(hashtext($2), $1::int)`, [
+    commentId,
+    csamHoldLockKey('CommentV3'),
+  ]);
+  await rows(trx, `SELECT id FROM "CommentV3" WHERE id = $1 FOR UPDATE`, [commentId]);
+  await rows(trx, `SELECT 1 FROM "FeaturePageCommentMirror" WHERE "commentId" = $1 FOR UPDATE`, [
+    commentId,
+  ]);
+}
+
+/**
+ * SQL select columns: what holds any lift of a hide on mirror row `m` (comment author `u`) now. The
+ * system user is `system`; an open report `except` does not hold it.
+ */
+const fpLiftHolds = (system: string, except = 'NULL') => `
+  COALESCE(m."modHideOrigin" = 'foreign', false) AS foreign,
+  ${openPersonReport('m."commentId"', system, except)} AS reported,
+  COALESCE(m."leaseUntil" > now(), false) AS pushing,
+  NOT ${fpAuthorInStanding('u')} AS author,
+  ${csamQueueHeldText('CommentV3', 'm."commentId"')} AS held`;
+
+/** The order lift holds are named in when several apply. */
+const FP_LIFT_HOLDS = ['foreign', 'reported', 'pushing', 'author', 'held'] as const;
+
+/** SQL SET: a lift granted at `at` by `by` for text version `version`, due for a push now. */
+const fpLiftGrantSet = (at: string, by: string, version: string) =>
+  `"liftGrantedAt" = ${at}, "liftGrantedBy" = ${by}, "liftGrantedVersion" = ${version},
+   "nextPushAt" = now(), "pushAttempts" = 0, "pendingDigest" = NULL, "updatedAt" = now()`;
+
+/**
  * A moderator sets one report Unactioned. When it is the report the scan filed with its current hide
  * and it moves from open to Unactioned here, it also lifts that hide, in the same transaction.
  * `changed`: the status moved; `lifted`: the comment shown again, or null. `held`: that report is
@@ -590,21 +624,8 @@ export async function unactionReportLiftingScanHide(
       [reportId]
     );
     const commentId = link?.commentId;
-    if (commentId !== undefined) {
-      // In the order an edit takes them: the hold decision's lock, the comment, its mirror row, then
-      // the report. Each in a statement of its own, so what is read after sees what any writer it
-      // waited on committed.
-      await rows(trx, `SELECT pg_advisory_xact_lock(hashtext($2), $1::int)`, [
-        commentId,
-        csamHoldLockKey('CommentV3'),
-      ]);
-      await rows(trx, `SELECT id FROM "CommentV3" WHERE id = $1 FOR UPDATE`, [commentId]);
-      await rows(
-        trx,
-        `SELECT 1 FROM "FeaturePageCommentMirror" WHERE "commentId" = $1 FOR UPDATE`,
-        [commentId]
-      );
-    }
+    // The report after the comment's locks, as an edit takes them.
+    if (commentId !== undefined) await lockFpCommentForLift(trx, commentId);
     const [prior] = await rows<{ status: string }>(
       trx,
       `SELECT status::text AS status FROM "Report" WHERE id = $1 FOR UPDATE`,
@@ -626,11 +647,7 @@ export async function unactionReportLiftingScanHide(
         version: boolean;
       }>(
         trx,
-        `SELECT COALESCE(m."modHideOrigin" = 'foreign', false) AS foreign,
-           ${openPersonReport('m."commentId"', '$2')} AS reported,
-           COALESCE(m."leaseUntil" > now(), false) AS pushing,
-           NOT ${fpAuthorInStanding('u')} AS author,
-           ${csamQueueHeldText('CommentV3', 'm."commentId"')} AS held,
+        `SELECT ${fpLiftHolds('$2')},
            m."scanHiddenVersion" IS DISTINCT FROM m.version AS version
          FROM "FeaturePageCommentMirror" m
          JOIN "CommentV3" c ON c.id = m."commentId"
@@ -643,9 +660,7 @@ export async function unactionReportLiftingScanHide(
            AND m."removeWantedAt" IS NULL`,
         [commentId, systemUserId, reportId, FP_AUTO_HIDE_REPORT_COMMENT]
       );
-      const held = (['foreign', 'reported', 'pushing', 'author', 'held', 'version'] as const).find(
-        (why) => wait?.[why]
-      );
+      const held = ([...FP_LIFT_HOLDS, 'version'] as const).find((why) => wait?.[why]);
       if (held) return { changed: false, lifted: null, held };
       if (!wait) {
         const [bound] = await rows<{ removed: boolean }>(
@@ -695,9 +710,11 @@ export async function unactionReportLiftingScanHide(
          WHERE id = (SELECT "commentId" FROM ok)
          RETURNING id
        )
-       UPDATE "FeaturePageCommentMirror" m SET "liftGrantedAt" = clock_timestamp(),
-         "liftGrantedBy" = $2, "liftGrantedVersion" = ok.version, "nextPushAt" = now(),
-         "pushAttempts" = 0, "pendingDigest" = NULL, "updatedAt" = now()
+       UPDATE "FeaturePageCommentMirror" m SET ${fpLiftGrantSet(
+         'clock_timestamp()',
+         '$2',
+         'ok.version'
+       )}
        FROM ok, shown WHERE m."commentId" = ok."commentId" AND shown.id = ok."commentId"
        RETURNING m."commentId", m."liftGrantedVersion" AS version`,
       [commentId, actorId, systemUserId, reportId, FP_AUTO_HIDE_REPORT_COMMENT]
@@ -768,31 +785,22 @@ export async function liftModeratorFpHide(
   }
 ): Promise<{ lifted: { commentId: number; version: number } } | { held: FpUnhideHeld }> {
   return db.transaction().execute(async (trx) => {
-    await rows(trx, `SELECT pg_advisory_xact_lock(hashtext($2), $1::int)`, [
-      commentId,
-      csamHoldLockKey('CommentV3'),
-    ]);
-    await rows(trx, `SELECT id FROM "CommentV3" WHERE id = $1 FOR UPDATE`, [commentId]);
-    await rows(trx, `SELECT 1 FROM "FeaturePageCommentMirror" WHERE "commentId" = $1 FOR UPDATE`, [
-      commentId,
-    ]);
-    const [f] = await rows<Record<Exclude<FpUnhideHeld, 'gone'>, boolean> & { at: string }>(
+    await lockFpCommentForLift(trx, commentId);
+    const [f] = await rows<
+      Record<Exclude<FpUnhideHeld, 'gone'> | 'sentLater', boolean> & { at: string }
+    >(
       trx,
       `SELECT n.t::text AS at,
          (NOT c.hidden OR c."hiddenAt" IS DISTINCT FROM NULLIF($3, '')::timestamptz OR m.version <> $4
            OR n.t <= c."hiddenAt") AS changed,
          ${FP_SCAN_HIDE} AS scan,
          c."tosViolation" AS tos,
-         COALESCE(m."modHideOrigin" = 'foreign', false) AS foreign,
-         ${csamQueueHeldText('CommentV3', 'm."commentId"')} AS held,
          COALESCE(em.status::text = 'Failed'
            OR (em.status::text = 'Succeeded' AND coalesce(cardinality(em."triggeredLabels"), 0) > 0),
            false) AS flagged,
          em.status IS NULL OR em.status::text NOT IN ('Succeeded', 'Failed') AS scanning,
-         NOT ${fpAuthorInStanding('u')} AS author,
-         ${openPersonReport('m."commentId"', '$2', '$5::int')} AS reported,
-         (COALESCE(m."leaseUntil" > now(), false)
-           OR COALESCE(n.t <= m."modHideSentAt", false)) AS pushing
+         ${fpLiftHolds('$2', '$5::int')},
+         COALESCE(n.t <= m."modHideSentAt", false) AS "sentLater"
        FROM (SELECT clock_timestamp() AS t) n, "FeaturePageCommentMirror" m
        JOIN "CommentV3" c ON c.id = m."commentId"
        LEFT JOIN "User" u ON u.id = c."userId"
@@ -804,20 +812,10 @@ export async function liftModeratorFpHide(
     );
     if (!f) return { held: 'gone' as const };
     const held = (
-      [
-        'changed',
-        'scan',
-        'tos',
-        'foreign',
-        'held',
-        'flagged',
-        'scanning',
-        'author',
-        'reported',
-        'pushing',
-      ] as const
+      ['changed', 'scan', 'tos', 'flagged', 'scanning', ...FP_LIFT_HOLDS, 'sentLater'] as const
     ).find((why) => f[why]);
-    if (held) return { held };
+    // A hide sent at or after now: the lift would not be strictly after it, as while pushing.
+    if (held) return { held: held === 'sentLater' ? 'pushing' : held };
     await rows(
       trx,
       `UPDATE "CommentV3" SET hidden = false, "hiddenAt" = NULL, "updatedAt" = now() WHERE id = $1`,
@@ -825,9 +823,7 @@ export async function liftModeratorFpHide(
     );
     const [lifted] = await rows<{ commentId: number; version: number }>(
       trx,
-      `UPDATE "FeaturePageCommentMirror" SET "liftGrantedAt" = $3::timestamptz,
-         "liftGrantedBy" = $2, "liftGrantedVersion" = version, "nextPushAt" = now(),
-         "pushAttempts" = 0, "pendingDigest" = NULL, "updatedAt" = now()
+      `UPDATE "FeaturePageCommentMirror" SET ${fpLiftGrantSet('$3::timestamptz', '$2', 'version')}
        WHERE "commentId" = $1
        RETURNING "commentId", version`,
       [commentId, actorId, f.at]
