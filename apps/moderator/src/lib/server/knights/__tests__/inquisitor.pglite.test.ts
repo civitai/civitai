@@ -6,6 +6,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { freshPglite } from '../../../../test/pglite';
 import { pgliteDialect } from '../../__tests__/abuse-detection-pglite.harness';
 import { INQUISITOR_IMAGE_SCHEMA } from './inquisitor-schema';
+import { BLOCKED_RATING_REFUSED } from '$lib/knights/inquisitor-ruling';
 
 vi.setConfig({ hookTimeout: 60_000 });
 
@@ -335,6 +336,28 @@ describe('getInquisitorQueue block markers', () => {
       [2, true, 'csam'],
       [3, false, null],
     ]);
+  });
+});
+
+// An image whose only marker is the Blocked level is blocked too (the shared marker counts all three).
+describe('an image whose only block marker is the Blocked level', () => {
+  beforeEach(async () => {
+    await db.query(`UPDATE "Image" SET "nsfwLevel"=32, "nsfwLevelLocked"=TRUE WHERE id=1`);
+    await insertItem(1, 1, 'Inquisitor');
+  });
+
+  it('is marked in the queue', async () => {
+    const queue = await getInquisitorQueue();
+
+    expect(queue.find((i) => i.id === 1)?.hasBlockMarker).toBe(true);
+  });
+
+  it('refuses a rating below Blocked with the lift-first refusal, and leaves it with the Inquisitors', async () => {
+    const outcome = await ruleOnInquisitorItem(1, { level: 4 }, MOD, { csamReview: true });
+
+    expect(outcome).toEqual({ ok: false, error: BLOCKED_RATING_REFUSED });
+    expect(setLevel).not.toHaveBeenCalled();
+    expect(await item(1)).toMatchObject({ status: 'Inquisitor', resolvedBy: null });
   });
 });
 

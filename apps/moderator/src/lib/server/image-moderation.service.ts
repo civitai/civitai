@@ -144,10 +144,9 @@ const LIFTED_BLOCKED_FOR = sql<
 const LIFTED_INGESTION = sql<
   'Blocked' | 'Scanned'
 >`(CASE WHEN ${OWNER_DELETED} THEN ${KEPT.ingestion} ELSE ${RECORDED.ingestion} END)::"ImageIngestionStatus"`;
-// The lift takes a restored row off the Blocked level in its own statement, so a later step that
-// throws can't leave it half-lifted. Unlocked too: update_nsfw_levels_new skips a locked row, and the
-// caller recomputes.
+// In the lift statement itself, so a later step that throws can't leave the row half-lifted.
 const LIFTED_NSFW_LEVEL = sql<number>`(CASE WHEN ${OWNER_DELETED} THEN ${KEPT.nsfwLevel}::int WHEN "nsfwLevel" = ${NsfwLevel.Blocked} THEN 0 ELSE "nsfwLevel" END)`;
+// update_nsfw_levels_new skips a locked row; the caller recomputes.
 const LIFTED_NSFW_LEVEL_LOCKED = sql<boolean>`(CASE WHEN NOT ${OWNER_DELETED} AND "nsfwLevel" = ${NsfwLevel.Blocked} THEN FALSE ELSE "nsfwLevelLocked" END)`;
 const LIFT_KEPT_BLOCKED = sql<boolean>`(ingestion = ${KEPT.ingestion}::"ImageIngestionStatus")`;
 /** A recorded rating other than Blocked outlives a lift, so a restore still puts back a moderator's lock. */

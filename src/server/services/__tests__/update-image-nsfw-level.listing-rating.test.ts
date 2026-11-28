@@ -80,7 +80,7 @@ vi.mock('~/server/games/new-order/utils', async (importOriginal) => {
   };
 });
 
-const { updateImageNsfwLevel } = await import('../image.service');
+const { updateImageNsfwLevel, setImagesNsfwLevel } = await import('../image.service');
 
 const IMAGE_ID = 7301;
 const MOD = 9001;
@@ -289,6 +289,52 @@ describe("policy: a rating write doesn't move a blocked row's level; re-blocking
       seed(CLEAN);
 
       await expect(rate(NsfwLevel.PG13)).resolves.toBe(NsfwLevel.PG13);
+    });
+  });
+
+  describe('a batch of moderator ratings (the image.setNsfwLevel endpoint)', () => {
+    const BLOCKED_ID = IMAGE_ID + 1;
+    const rows = [
+      { id: IMAGE_ID, ...CLEAN },
+      { id: BLOCKED_ID, ...MARKED[1][1] },
+      { id: IMAGE_ID + 2, ...CLEAN },
+    ];
+    beforeEach(() => {
+      dbMock.dbWrite.image.findMany.mockResolvedValue(rows as never);
+    });
+    const rateAll = (nsfwLevel: number) =>
+      setImagesNsfwLevel({
+        items: rows.map((row) => ({ imageId: row.id, nsfwLevel })),
+        userId: MOD,
+        csamReview: true,
+      });
+
+    it('refuses the whole batch before any write, naming the blocked image', async () => {
+      await expect(rateAll(NsfwLevel.PG13)).rejects.toThrow(`Nothing was changed: ${BLOCKED_ID}.`);
+      expect(dbMock.dbWrite.image.update).not.toHaveBeenCalled();
+      expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+    });
+
+    // A block that lands after the batch's check: the write's own guard refuses that item.
+    it('a block landing mid-batch names the refused image and the ones already written', async () => {
+      dbMock.dbWrite.image.findMany.mockResolvedValue(
+        rows.map((row) => ({ ...row, ...CLEAN })) as never
+      );
+      dbMock.dbWrite.image.update.mockResolvedValueOnce({} as never).mockRejectedValueOnce(
+        new Prisma.PrismaClientKnownRequestError('No record was found for an update.', {
+          code: 'P2025',
+          clientVersion: 'test',
+        })
+      );
+
+      await expect(rateAll(NsfwLevel.PG13)).rejects.toThrow(
+        `Image ${BLOCKED_ID} is blocked: lift the block before rating it. Already rated: ${IMAGE_ID}.`
+      );
+      expect(dbMock.dbWrite.image.update).toHaveBeenCalledTimes(2);
+    });
+
+    it('re-blocking the batch to 32 is not refused', async () => {
+      await expect(rateAll(NsfwLevel.Blocked)).resolves.toEqual(rows.map((row) => row.id));
     });
   });
 
