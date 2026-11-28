@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"regexp"
 	"strconv"
@@ -1132,6 +1133,112 @@ func TestServeV1LegacyImageIDAndModelOnly(t *testing.T) {
 	}
 	if q := f.hq[4]; q.BrowsingLevel != browsing.PG|browsing.PG13|browsing.R|browsing.X|browsing.XXX || q.ImageID != 12 {
 		t.Fatalf("imageId query = %+v, want the requested level", q)
+	}
+}
+
+// inlineBinds is b's SQL with every `$n` replaced by its bound value, so a test reads the clauses
+// as they run.
+func inlineBinds(b Built) string {
+	return regexp.MustCompile(`\$(\d+)\b`).ReplaceAllStringFunc(b.SQL, func(m string) string {
+		n, _ := strconv.Atoi(m[1:])
+		if n < 1 || n > len(b.Args) {
+			return m
+		}
+		return fmt.Sprint(b.Args[n-1])
+	})
+}
+
+// A model without a version is read per version (DESIGN.md §13.2.1, Cost): each of the model's
+// versions contributes its first skip+limit+1 rows past the cursor, newest first (oldest first for
+// Oldest), and the merge keeps that order, the page's offset and its limit. The model is the
+// lateral's outer table, never joined again inside it.
+func TestServeV1ModelOnlyReadsPerVersion(t *testing.T) {
+	f := newV1Fixture(nil)
+	f.deps.Rows = func(_ context.Context, q ImagesQuery) ([]RawImage, error) {
+		f.hq = append(f.hq, q)
+		return nil, nil
+	}
+	f.deps.Ports = V1Ports{ModelOnly: true}
+	const head = `
+    SELECT t.* FROM "ModelVersion" mv
+    CROSS JOIN LATERAL (
+    SELECT
+`
+	for _, c := range []struct {
+		query, cursor, tail string
+	}{
+		{"modelId=9&page=3&limit=2&sort=Oldest", "", `
+    ORDER BY irr."imageId" ASC
+    LIMIT 7
+    ) t
+    WHERE mv."modelId" = 9
+    ORDER BY t."cursorId" ASC
+    OFFSET 4
+    LIMIT 3`},
+		{"modelId=9&cursor=12&limit=4", `((irr."imageId" <= 12))`, `
+    ORDER BY irr."imageId" DESC
+    LIMIT 5
+    ) t
+    WHERE mv."modelId" = 9
+    ORDER BY t."cursorId" DESC
+    LIMIT 5`},
+		{"modelId=9&sort=Oldest&cursor=12&limit=2", `((irr."imageId" >= 12))`, `
+    ORDER BY irr."imageId" ASC
+    LIMIT 3
+    ) t
+    WHERE mv."modelId" = 9
+    ORDER BY t."cursorId" ASC
+    LIMIT 3`},
+	} {
+		n := len(f.hq)
+		if _, err := serveV1(t, f, c.query, nil); err != nil {
+			t.Fatalf("%s: %v", c.query, err)
+		}
+		if len(f.hq) != n+1 {
+			t.Fatalf("%s: %d queries", c.query, len(f.hq)-n)
+		}
+		sql := inlineBinds(f.hq[n].Build())
+		if !strings.HasPrefix(sql, head) || !strings.HasSuffix(sql, c.tail) {
+			t.Errorf("%s: not read per version:\n%s", c.query, sql)
+		}
+		if !strings.Contains(sql, ` AND irr."modelVersionId" = mv.id AND `) || strings.Contains(sql, `JOIN "ModelVersion"`) ||
+			strings.Count(sql, `mv."modelId"`) != 1 {
+			t.Errorf("%s: the lateral is not scoped to the outer version:\n%s", c.query, sql)
+		}
+		if c.cursor != "" && !strings.Contains(sql, c.cursor) {
+			t.Errorf("%s: no %s:\n%s", c.query, c.cursor, sql)
+		}
+	}
+}
+
+// PerVersionTopN changes only a model scope's read: without it, or with a version, a post's own
+// media, a collection or the prioritized branch, Build writes getAllImages' own query. It keeps the
+// model scope's cache policy, and an image clause beside it stays inside the lateral (uncached).
+func TestImagesQueryPerVersionModelScope(t *testing.T) {
+	join := (&ImagesQuery{Limit: 5, ModelID: 3}).Build()
+	if !strings.Contains(join.SQL, `JOIN "ModelVersion" mv ON mv.id = irr."modelVersionId"`) || strings.Contains(join.SQL, "LATERAL") {
+		t.Fatalf("the model scope without PerVersionTopN is not getAllImages' join: %s", join.SQL)
+	}
+	for name, q := range map[string]ImagesQuery{
+		"a version":    {Limit: 5, ModelID: 3, ModelVersionID: 4, PerVersionTopN: true},
+		"post media":   {Limit: 5, ModelID: 3, PostID: 6, IndexOrder: true, PerVersionTopN: true},
+		"collection":   {Limit: 5, ModelID: 3, CollectionID: 7, PerVersionTopN: true},
+		"prioritized":  {Limit: 5, ModelID: 3, PrioritizedUserIDs: []int{8}, PerVersionTopN: true},
+		"no model":     {Limit: 5, PerVersionTopN: true},
+		"switched off": {Limit: 5, ModelID: 3},
+	} {
+		if b := q.Build(); strings.Contains(b.SQL, "LATERAL") {
+			t.Errorf("%s: read per version: %s", name, b.SQL)
+		}
+	}
+	on := (&ImagesQuery{Limit: 5, ModelID: 3, PerVersionTopN: true}).Build()
+	if !strings.Contains(on.SQL, "CROSS JOIN LATERAL") || on.CacheTTL != 10*time.Minute || !reflect.DeepEqual(on.CacheTags, []string{"images-model:3"}) {
+		t.Fatalf("per version: cache %v %v: %s", on.CacheTTL, on.CacheTags, on.SQL)
+	}
+	img := (&ImagesQuery{Limit: 5, ModelID: 3, ImageID: 11, PerVersionTopN: true}).Build()
+	sql := inlineBinds(img)
+	if i, end := strings.Index(sql, `i.id = 11`), strings.Index(sql, `) t`); i < 0 || end < 0 || i > end || img.CacheTTL != 0 || img.CacheTags != nil {
+		t.Fatalf("image clause beside a per-version model scope (cache %v %v): %s", img.CacheTTL, img.CacheTags, sql)
 	}
 }
 

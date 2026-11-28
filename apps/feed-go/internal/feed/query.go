@@ -122,6 +122,9 @@ type ImagesQuery struct {
 	// RandomCursor pages a Random collection page inside the CTE: `"sortKey" < <sortKey> OR ("sortKey"
 	// = <sortKey> AND "imageId" < <id>)`; nil = the first page. Its Seed is not read here (RandomSeed).
 	RandomCursor *RandomCursor
+	// PerVersionTopN reads a model scope (ModelID without a ModelVersionID) one version at a time.
+	// Declared ahead of its implementation (the tests-first commit): Build does not read it yet.
+	PerVersionTopN bool
 }
 
 // random is a collection page in the Random order.
