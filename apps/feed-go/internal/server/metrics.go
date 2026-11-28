@@ -294,7 +294,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		}, []string{"why"}),
 		ShadowServable: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_shadow_servable_total",
-			Help: "Site-search shadow samples by what the public route would have done with the same request: servable (answered by this service), else the reason it would hand it back to the app (the shadow's own fallback reason, or a check only the public route makes: search-body-size, region-blocked, search-etag, search-profanity). Not counted: the rate-limit ceiling and the client-address case, which a sample does not show, and requests the app never samples (API credentials, its own 429 and 422).",
+			Help: "Site-search shadow samples by what the public route would have done with the same request: servable (answered by this service), else the reason it would hand it back to the app (the shadow's own fallback reason, or a check only the public route makes: region-blocked (a drift signal: the app answers a blocked region before sampling), search-etag, search-profanity). Not counted: the rate-limit ceiling, the client-address case and the body size, which a sample does not show, and requests the app never samples (API credentials, every answer but a 200).",
 		}, []string{EndpointLabel, "reason"}),
 		Errors: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_errors_total",

@@ -111,7 +111,9 @@ const SearchServable = "servable"
 
 // SearchServeOnlyReasons are the hand-backs only the public route takes, so only the servable probe
 // can count them on a shadow sample (searchShadowCompute), in the order serving checks them.
-var SearchServeOnlyReasons = []string{"search-body-size", "region-blocked", "search-etag", "search-profanity"}
+// region-blocked is a drift signal there: Node answers a blocked region's 451 before it samples, so a
+// sample counts it only when this service's region rules and Node's disagree.
+var SearchServeOnlyReasons = []string{"region-blocked", "search-etag", "search-profanity"}
 
 // searchServeProbe is the public route's decision on a shadow sample: the first serve-only hand-back
 // the compute passed (searchCompute notes it where serving would have stopped).
@@ -127,24 +129,23 @@ func (p *searchServeProbe) note(reason string) {
 
 // searchShadowCompute is the shadow's compute (searchCompute(false)), which also counts what the
 // public route would have done with the same request (feed_go_shadow_servable_total): SearchServable,
-// else the reason it would hand the request back, in serving's order (bufferSearchBody's size, the
-// region block, then the compute's checks). The shadow still computes and compares every sample it
-// can, whatever the verdict: the profanity hand-back on civitai.com is where the PG cap applies.
+// else the reason it would hand the request back, in serving's order (searchPreCompute, then the
+// compute's checks). The shadow still computes and compares every sample it can, whatever the
+// verdict: the profanity hand-back on civitai.com is where the PG cap applies.
 //
 // Not visible from a sample, so never counted: the rate-limit ceiling (Node samples only after its own
-// limit passed the request; this route's count is Node's, each request counted once) and a signed-out
-// caller without a usable `cf-connecting-ip` (the sampler does not forward the header). Nor is what
-// Node never samples: a request with an API credential, and Node's own refusals (the 429, the 422).
+// limit passed the request; this route's count is Node's, each request counted once), a signed-out
+// caller without a usable `cf-connecting-ip` (the sampler does not forward the header), and the body
+// size (Next refuses a body past 1 MiB, 413, before the handler). Nor is what Node never samples: a
+// request with an API credential, and every answer but a 200 (its own 451, 429 and 422, a 4xx or 5xx
+// from the backend). A shadow-only failure (search-no-upstream, the shadow budget's deadline) is
+// counted under its reason.
 func (s *Server) searchShadowCompute() func(context.Context, *http.Request) (*computed, error) {
 	inner := s.searchCompute(false)
 	return func(ctx context.Context, r *http.Request) (*computed, error) {
 		probe := &searchServeProbe{}
-		body, _ := r.Context().Value(searchBodyKey{}).([]byte)
-		if len(body) > maxSearchBody {
-			probe.note("search-body-size")
-		}
-		if regionMatches(s.RegionBlockRules, r) {
-			probe.note(fallback.Reason(errRegionBlocked))
+		if err := s.searchPreCompute(r); err != nil {
+			probe.note(fallback.Reason(err))
 		}
 		r = r.WithContext(context.WithValue(r.Context(), searchServeProbeKey{}, probe))
 		c, err := inner(ctx, r)
@@ -155,9 +156,19 @@ func (s *Server) searchShadowCompute() func(context.Context, *http.Request) (*co
 	}
 }
 
+// searchPreCompute is the public route's check between buffering the body and the compute: a blocked
+// region is always handed back, whatever AnswerRegionBlocked says (the handler applies the policy
+// after MixedAuthEndpoint, so Node's 451 here carries the wrapper's Vary, CORS and Cache-Control
+// headers, and a method other than POST is its 405 first). The servable probe runs it too.
+func (s *Server) searchPreCompute(r *http.Request) error {
+	if regionMatches(s.RegionBlockRules, r) {
+		return errRegionBlocked
+	}
+	return nil
+}
+
 // searchServeVerdict is the servable probe's reason: a serve-only hand-back noted before the compute
-// failed wins (serving stops at the first check it fails, and the body size and the region come
-// first); one noted inside the compute was passed before any failure there (noted only once reached);
+// failed wins (serving stops at the first check it fails, and searchPreCompute's come first); one noted inside the compute was passed before any failure there (noted only once reached);
 // then the compute's own fallback reason ("error" for a compute error); else SearchServable.
 func searchServeVerdict(probe *searchServeProbe, err error) string {
 	if probe.reason != "" {
@@ -542,12 +553,8 @@ func (s *Server) serveSearchLabelled(w http.ResponseWriter, r *http.Request) {
 	} else if r, err = bufferSearchBody(r); err == nil {
 		// The API request policy's region block only: this path is not bot-aware, so the app removes
 		// any verified-crawler header rather than deciding one (the crawler user agent does not matter).
-		// A blocked region is always handed back, whatever AnswerRegionBlocked says: the handler applies
-		// the policy after MixedAuthEndpoint, so Node's 451 here carries the wrapper's Vary, CORS and
-		// Cache-Control headers, and a method other than POST is its 405 first.
-		if regionMatches(s.RegionBlockRules, r) {
-			err = errRegionBlocked
-		} else {
+		// searchPreCompute: a blocked region is always handed back.
+		if err = s.searchPreCompute(r); err == nil {
 			r = r.WithContext(withSearchCharge(r.Context(), charge)) //nolint:contextcheck // derived from the request's own context (which carries the span when tracing is on)
 			c, err = s.computeServe(r, EndpointSearch, s.searchCompute(true))
 		}

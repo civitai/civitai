@@ -467,14 +467,14 @@ func TestSearchShadowCompares(t *testing.T) {
 
 // Every shadow sample is counted once in feed_go_shadow_servable_total under what the public route
 // would have done with it: servable, else the first hand-back serving reaches, in serving's order (the
-// body size and the region before the compute; in the compute, a credential before the etag query,
-// the etag query before the body, the profanity refusal after it). The sample is computed either way.
+// region before the compute; in the compute, a credential before the etag query, the etag query before
+// the body, the profanity refusal after it). The sample is computed either way. (A blocked region
+// reaches a sample only when the two runtimes' region rules disagree: Node answers it before sampling.)
 func TestSearchShadowCountsServable(t *testing.T) {
 	rules, err := config.RegionBlockRules("")
 	if err != nil {
 		t.Fatal(err)
 	}
-	big := `{"q":"` + strings.Repeat("a", maxSearchBody) + `"}`
 	for _, c := range []struct {
 		name, path, input, host, country, reason string
 		computed                                 bool
@@ -490,7 +490,6 @@ func TestSearchShadowCountsServable(t *testing.T) {
 		{name: "the SFW site's text after an unknown key", path: searchToolsPath, input: `{"q":"cat","vector":[1]}`, host: "green.example.test", reason: "input-unknown-key"},
 		{name: "a blocked region", path: searchToolsPath, input: `{"q":"cat"}`, host: "red.example.test", country: "GB", reason: "region-blocked", computed: true},
 		{name: "a blocked region before an unknown key", path: searchToolsPath, input: `{"q":"cat","vector":[1]}`, host: "red.example.test", country: "GB", reason: "region-blocked"},
-		{name: "a body past the limit before the region", path: searchToolsPath, input: big, host: "red.example.test", country: "GB", reason: "search-body-size"},
 	} {
 		reg := prometheus.NewRegistry()
 		s, up, _, _ := searchServer(t, reg, false)
@@ -506,7 +505,7 @@ func TestSearchShadowCountsServable(t *testing.T) {
 			Upstream: json.RawMessage(searchToolsHits),
 		})
 		total := 0.0
-		for _, r := range []string{"servable", "search-profanity", "search-etag", "region-blocked", "search-body-size", "bearer-token", "input-unknown-key"} {
+		for _, r := range []string{"servable", "search-profanity", "search-etag", "region-blocked", "bearer-token", "input-unknown-key"} {
 			v, _ := metricValue(t, reg, "feed_go_shadow_servable_total", map[string]string{"feed_endpoint": EndpointSearch, "reason": r})
 			total += v
 			if want := map[bool]float64{true: 1}[r == c.reason]; v != want {
@@ -531,7 +530,7 @@ func TestSearchShadowCountsServable(t *testing.T) {
 func TestShadowServableIsSeeded(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	NewMetrics(reg)
-	for _, r := range []string{"servable", "search-body-size", "region-blocked", "search-etag", "search-profanity"} {
+	for _, r := range []string{"servable", "region-blocked", "search-etag", "search-profanity"} {
 		v, found := metricValue(t, reg, "feed_go_shadow_servable_total", map[string]string{"feed_endpoint": EndpointSearch, "reason": r})
 		if !found || v != 0 {
 			t.Errorf("servable{reason=%q} = %v (found %v), want an exported 0", r, v, found)
