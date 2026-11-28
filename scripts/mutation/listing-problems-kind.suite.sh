@@ -15,7 +15,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 OUT="${1:?usage: $0 <output-log-path>}"
 cd "$ROOT" || exit 9
 
-pnpm vitest run --project unit \
+pnpm vitest run --project 'unit*' \
   src/server/services/blocks/__tests__/listing-problems.test.ts \
   src/server/services/blocks/__tests__/listing-problems.kind.test.ts \
   src/server/services/blocks/__tests__/app-access.my-app-listings-kind-problems.test.ts \

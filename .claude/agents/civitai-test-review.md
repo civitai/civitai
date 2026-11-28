@@ -181,11 +181,11 @@ If the diff adds or moves a test file, **confirm the file collects a nonzero cou
 
 ### Project selection 🔴
 
-The unit suite is **two** vitest projects, `unit` and `unit-native`. Select it as **`--project 'unit*'`**,
-never `--project unit`.
+The unit suite is **three** vitest projects, `unit`, `unit-shared` and `unit-native`. Select it as
+**`--project 'unit*'`**, never `--project unit`.
 
-`--project unit` silently runs 1059 of 1065 files and exits 0 — the six `unit-native` files are
-`exclude`d rather than routed elsewhere. **A selector matching one project and not the other is a green
+`--project unit` silently skips the `unit-shared` and `unit-native` files and exits 0: they are
+`exclude`d from `unit` rather than routed elsewhere. **A selector matching one project and not the other is a green
 run over a suite you did not run.** If the diff touches a vitest config, a project glob, or a test
 script, check this specifically.
 

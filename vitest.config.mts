@@ -4,6 +4,7 @@ import path from 'path';
 
 import { mode as testCacheMode } from './scripts/test-cache/core.mjs';
 import TestCacheSequencer from './scripts/test-cache/sequencer.mjs';
+import { unitSharedFiles } from './test/unit-shared-files.mjs';
 
 // CI runs in UTC, and date assertions are written against it. Set before any worker starts, so
 // every worker inherits it on any machine.
@@ -304,7 +305,13 @@ const prebundledDeps = [
 // with "No QueryClient set").
 const clientPrebundledDeps = ['lodash-es', ...mantineFamily];
 
-// Shared by `unit` and `unit-native`, which differ ONLY in pool and in which files they claim.
+const unitInclude = ['src/**/*.test.ts', 'scripts/**/*.test.ts'];
+const unitSharedTestFiles = unitSharedFiles(unitInclude, [
+  '**/node_modules/**',
+  ...sharpExecutingTestFiles,
+]).map((file) => file.replace(/[[\]{}()*?!]/g, '\\$&'));
+
+// Shared by the unit projects, which differ ONLY in pool, isolation and which files they claim.
 // Every other setting has to stay identical or the split changes behaviour as well as scheduling.
 const unitTestConfig = {
   globals: true,
@@ -318,6 +325,7 @@ const unitTestConfig = {
   // Tracker FIRST, so reads made while the main setup file loads are recorded too.
   setupFiles: [
     ...(testCacheMode() !== 'off' ? ['scripts/test-cache/fs-tracker.mjs'] : []),
+    'test/async-local-storage-global.ts',
     'src/__tests__/network-guard.ts',
     'src/__tests__/setup.ts',
   ],
@@ -626,12 +634,25 @@ export default defineConfig({
           // classifier (scripts/typecheck.mjs) is covered — it is the thing that
           // decides whether a run counts as a pass, so it needs a suite of its
           // own rather than a one-off manual check.
-          include: ['src/**/*.test.ts', 'scripts/**/*.test.ts'],
+          include: unitInclude,
           // The sharp files are excluded rather than merely routed elsewhere, so that
           // `--project unit <a sharp file>` reports "No test files found" instead of running it
           // on `threads` and segfaulting. A legible empty run beats an exit code with no failing
           // test — which is what the crash looks like from the outside.
-          exclude: [...unitTestConfig.exclude, ...sharpExecutingTestFiles],
+          exclude: [...unitTestConfig.exclude, ...sharpExecutingTestFiles, ...unitSharedTestFiles],
+        },
+      },
+      {
+        resolve: { alias: unitAlias },
+        plugins: [optimizerCacheKeyPlugin],
+        test: {
+          ...unitTestConfig,
+          name: 'unit-shared',
+          // Files that change no state a later file would see (test/unit-shared-files.mjs) load each
+          // module once per worker instead of once per file. No `maxWorkers` of its own, for the
+          // reason given above `COMPONENT_GROUP_ORDER`.
+          include: unitSharedTestFiles,
+          isolate: false,
         },
       },
       {

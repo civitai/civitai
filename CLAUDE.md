@@ -74,8 +74,8 @@ pnpm test                  # Playwright e2e (pnpm run test:ui for the UI)
 - A test earns its place only if it can catch a bug a caller would notice, and mocks only what crosses the
   process boundary, never this repo's own modules: `.claude/rules/testing.md` → What earns a test.
 - The suites cover disjoint directories; `test:unit:run` runs nothing under `packages/` or `apps/`.
-- Select the unit suite as **`--project 'unit*'`** — `--project unit` silently skips the `unit-native`
-  files and exits 0.
+- Select the unit suite as **`--project 'unit*'`** — `--project unit` silently skips the `unit-shared`
+  and `unit-native` files and exits 0.
 - Run the suites covering your change while iterating (find them with
   `grep -rln '<symbol>' src --include=*.test.ts`); the full suite runs in CI (`full-ci` label).
   `vitest related` does **not** narrow this codebase.
