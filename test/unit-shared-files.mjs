@@ -8,7 +8,7 @@ const leaksIntoLaterFiles = [
   /process\.env(\.\w+|\[[^\]]+\])\s*(=(?!=)|\?\?=|\|\|=)/,
   /delete\s+process\.env|Object\.assign\(\s*process\.env/,
   /(globalThis|global)\.\w+\s*=(?!=)/,
-  /\bregister\.clear\(/,
+  /\bregister\.(clear|resetMetrics|removeSingleMetric)\(/,
   // A closed PGlite still holds its WASM memory while a shared worker keeps its module (#10662).
   /pglite/i,
   /worker_threads|child_process|createServer\(|\.listen\(/,
@@ -24,6 +24,13 @@ const orderDependent = [
   'src/server/services/__tests__/base-model-attestation.service.test.ts',
   'src/server/utils/__tests__/client-ip-trusted.test.ts',
   'src/server/services/__tests__/profile-picture-refresh-alert.test.ts',
+  'src/server/trpc/__tests__/superjson-fast-serialize.test.ts',
+  'src/server/__tests__/trpc-feed-go-shadow.test.ts',
+  'src/components/Chat/__tests__/util.test.ts',
+  'src/components/Model/ModelVersions/base-model-license.test.ts',
+  'src/components/Events/ScoredEvent/__tests__/hat-stats.render.test.ts',
+  'src/server/redis/__tests__/sys-read-breaker.test.ts',
+  'scripts/__tests__/assert-apps-paths-filter.test.ts',
 ];
 
 const importSpecifier = /(?:from|import\(|import)\s*['"]([^'"]+)['"]/g;
