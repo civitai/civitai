@@ -574,6 +574,7 @@ async function processImageRating({
       isModerator,
       csamReview,
       status: 'Actioned',
+      skipBlocked: true,
     });
     await updatePendingImageRatings({ imageId, rating });
     await removeImageFromQueue({ imageId, valueInQueue });

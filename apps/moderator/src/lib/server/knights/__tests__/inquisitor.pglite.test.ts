@@ -6,6 +6,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { freshPglite } from '../../../../test/pglite';
 import { pgliteDialect } from '../../__tests__/abuse-detection-pglite.harness';
 import { INQUISITOR_IMAGE_SCHEMA } from './inquisitor-schema';
+import { BLOCKED_RATING_REFUSED } from '$lib/knights/inquisitor-ruling';
 
 vi.setConfig({ hookTimeout: 60_000 });
 
@@ -27,7 +28,10 @@ vi.mock('../../db', () => ({
     return dbHandle.current;
   },
 }));
-vi.mock('../../image-nsfw-level', () => ({ updateImageNsfwLevel: setLevel }));
+vi.mock('../../image-nsfw-level', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  updateImageNsfwLevel: setLevel,
+}));
 
 const {
   countInquisitorQueue,
@@ -335,6 +339,42 @@ describe('getInquisitorQueue block markers', () => {
       [2, true, 'csam'],
       [3, false, null],
     ]);
+  });
+});
+
+// An image whose only marker is the Blocked level is blocked too (the shared marker counts all three).
+describe('a block that lands during a ruling', () => {
+  // A block that lands after the ruling's check: the write refuses it, and so does the ruling.
+  it('a block landing after the check gets the same refusal, and leaves it with the Inquisitors', async () => {
+    await insertItem(1, 1, 'Inquisitor');
+    const { BlockedImageRatingError } = await import('../../image-nsfw-level');
+    setLevel.mockRejectedValueOnce(new BlockedImageRatingError(1));
+
+    const outcome = await ruleOnInquisitorItem(1, { level: 8 }, MOD, { csamReview: true });
+
+    expect(outcome).toEqual({ ok: false, error: BLOCKED_RATING_REFUSED });
+    expect(await item(1)).toMatchObject({ status: 'Inquisitor', resolvedBy: null });
+  });
+});
+
+describe('an image whose only block marker is the Blocked level', () => {
+  beforeEach(async () => {
+    await db.query(`UPDATE "Image" SET "nsfwLevel"=32, "nsfwLevelLocked"=TRUE WHERE id=1`);
+    await insertItem(1, 1, 'Inquisitor');
+  });
+
+  it('is marked in the queue', async () => {
+    const queue = await getInquisitorQueue();
+
+    expect(queue.find((i) => i.id === 1)?.hasBlockMarker).toBe(true);
+  });
+
+  it('refuses a rating below Blocked with the lift-first refusal, and leaves it with the Inquisitors', async () => {
+    const outcome = await ruleOnInquisitorItem(1, { level: 4 }, MOD, { csamReview: true });
+
+    expect(outcome).toEqual({ ok: false, error: BLOCKED_RATING_REFUSED });
+    expect(setLevel).not.toHaveBeenCalled();
+    expect(await item(1)).toMatchObject({ status: 'Inquisitor', resolvedBy: null });
   });
 });
 
