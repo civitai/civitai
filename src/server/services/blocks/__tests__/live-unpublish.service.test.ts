@@ -783,9 +783,11 @@ describe('reconcileSuspendedLiveApps (the scheduled sweep)', () => {
 
   it('an unreadable marker skips that app only', async () => {
     const { deps, jobs } = fleet({ bad: { status: 'suspended' }, good: { status: 'suspended' } });
-    vi.mocked(deps.store.readTakedown).mockImplementation(async (s: string) => {
+    const readTakedown = vi.mocked(deps.store.readTakedown);
+    const fake = readTakedown.getMockImplementation()!;
+    readTakedown.mockImplementation(async (s: string) => {
       if (s === 'bad') throw new Error('redis down');
-      return 'none';
+      return fake(s);
     });
     const summary = await reconcileSuspendedLiveApps({ deps });
     expect(jobs).toEqual([{ slug: 'good', action: 'unpublish' }]);
