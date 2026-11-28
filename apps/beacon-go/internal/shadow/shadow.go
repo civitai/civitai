@@ -45,6 +45,11 @@ type NodeSide struct {
 	Headers map[string]string
 	Body    string
 	Writes  []NodeWrite
+	// HattedViews is how many hatted entities the /api/track/batch handler passed to awardViewPoints
+	// (hattedImpressionEntities' length; absent, as on the other beacons, is 0). Those views earn event
+	// points through Redis and a ClickHouse ledger, which this service never writes, so a batch with
+	// any must be one this service falls back on.
+	HattedViews int
 }
 
 // NodeWrite is one row the Node Tracker sent: the table and JSON.stringify(row), the exact bytes it
@@ -121,6 +126,12 @@ func Decode(b []byte) (*Sample, error) {
 			return nil, ErrInvalidSample
 		}
 		n.Writes = append(n.Writes, NodeWrite{Table: table, Body: body})
+	}
+	if hv, has := nv.O.Get("hattedViews"); has {
+		if hv.Kind != jsvalue.Number || hv.N < 0 || hv.N != float64(int(hv.N)) {
+			return nil, ErrInvalidSample
+		}
+		n.HattedViews = int(hv.N)
 	}
 	s.Node = n
 	return s, nil
@@ -210,8 +221,18 @@ type Verdict struct {
 	Diffs  []string
 }
 
+// DiffPointsViews is the diff of an answered batch for which Node awarded hatted view points.
+const DiffPointsViews = "points:views"
+
 // Compare compares this service's outcome (or its error) with Node's. The first category that
 // differs is the result, in order: status, headers, body, writes. Diffs lists every difference.
+//
+// Writes are compared table by table, in order within each table: the Node handler dispatches every
+// sink without awaiting it, so rows of different tables (a search row, an impression insert, a feed
+// row) reach the sampler in whatever order their promises settle, while one table's rows keep the
+// order of the events. This service never writes a `feedEvents` row (it answers unsampled feed
+// sessions only), so any feed row Node recorded for an answered batch is a mismatch. So is an
+// answered batch for which Node awarded view points (HattedViews).
 func Compare(out beacon.Outcome, err error, node *NodeSide) Verdict {
 	if err != nil {
 		if reason := fallback.Reason(err); reason != "" {
@@ -239,26 +260,70 @@ func Compare(out beacon.Outcome, err error, node *NodeSide) Verdict {
 	if out.Response.Body != node.Body {
 		mark(ResultMismatchBody, "body")
 	}
+	got, want := byTable(out.Writes), byTableNode(node.Writes)
 	if len(out.Writes) != len(node.Writes) {
 		mark(ResultMismatchWrites, "writes:count")
 	} else {
-		for i, w := range out.Writes {
-			nw := node.Writes[i]
-			if w.Table != nw.Table {
-				mark(ResultMismatchWrites, "write:"+nw.Table+":table")
+		for _, table := range tablesOf(got, want) {
+			g, w := got[table], want[table]
+			if len(g) != len(w) {
+				// Same total, different tables: each side has rows the other does not.
+				mark(ResultMismatchWrites, "write:"+table+":table")
 				continue
 			}
-			if !bytes.Equal(w.Body, []byte(nw.Body)) {
-				for _, k := range rowDiff(w.Body, nw.Body) {
-					mark(ResultMismatchWrites, "write:"+nw.Table+":"+k)
+			for i := range g {
+				if !bytes.Equal(g[i], []byte(w[i])) {
+					for _, k := range rowDiff(g[i], w[i]) {
+						mark(ResultMismatchWrites, "write:"+table+":"+k)
+					}
 				}
 			}
 		}
+	}
+	if node.HattedViews > 0 {
+		mark(ResultMismatchWrites, DiffPointsViews)
 	}
 	if v.Result == "" {
 		v.Result = ResultMatch
 	}
 	return v
+}
+
+// byTable groups this service's rows by table, in order.
+func byTable(writes []beacon.Write) map[string][][]byte {
+	m := map[string][][]byte{}
+	for _, w := range writes {
+		m[w.Table] = append(m[w.Table], w.Body)
+	}
+	return m
+}
+
+func byTableNode(writes []NodeWrite) map[string][]string {
+	m := map[string][]string{}
+	for _, w := range writes {
+		m[w.Table] = append(m[w.Table], w.Body)
+	}
+	return m
+}
+
+// tablesOf is every table either side wrote, sorted.
+func tablesOf(got map[string][][]byte, want map[string][]string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for t := range got {
+		if !seen[t] {
+			seen[t] = true
+			out = append(out, t)
+		}
+	}
+	for t := range want {
+		if !seen[t] {
+			seen[t] = true
+			out = append(out, t)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // rowDiff names the top-level keys whose serialized values differ between two rows, `order` when

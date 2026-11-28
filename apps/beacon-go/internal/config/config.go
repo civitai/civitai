@@ -28,6 +28,33 @@ type Config struct {
 	// TrackBatchServe is BEACON_GO_TRACK_BATCH_SERVE (default false): serve mode answers
 	// /api/track/batch itself only when true; otherwise every such request is proxied to the Node app.
 	TrackBatchServe bool
+	// TrackBatchServeImpressions is BEACON_GO_TRACK_BATCH_SERVE_IMPRESSIONS (default false): with the
+	// route on, also answer batches carrying `impression` events (their rows inserted into ClickHouse
+	// directly, as Tracker.impressions does). Off, such a batch is proxied whole (`track-impression`).
+	TrackBatchServeImpressions bool
+	// TrackBatchServeFeed is BEACON_GO_TRACK_BATCH_SERVE_FEED (default false): with the route on, also
+	// answer batches whose `feed` events are all of unsampled sessions (they record nothing). Off, a
+	// batch with a feed event is proxied whole (`track-feed`).
+	TrackBatchServeFeed bool
+
+	// ClickHouseHost, ClickHouseUsername, ClickHousePassword are CLICKHOUSE_HOST / _USERNAME /
+	// _PASSWORD, the Node app's direct ClickHouse client (required in serve mode with
+	// TrackBatchServeImpressions; never read otherwise).
+	ClickHouseHost     string
+	ClickHouseUsername string
+	ClickHousePassword string
+	// ClickHouseWorkers and ClickHouseQueue size the impression insert queue
+	// (BEACON_GO_CLICKHOUSE_WORKERS default 8, BEACON_GO_CLICKHOUSE_QUEUE default 2000 inserts).
+	ClickHouseWorkers int
+	ClickHouseQueue   int
+
+	// FliptURL, FliptToken, FliptEnvironment are FLIPT_URL / FLIPT_FETCHER_SECRET / FLIPT_ENVIRONMENT:
+	// where the feed events sample rate is read (internal/flipt). Required in serve mode with
+	// TrackBatchServeFeed; optional in shadow mode, where without them every batch with a feed event
+	// is counted as falling back (`track-feed-sample-rate`).
+	FliptURL         string
+	FliptToken       string
+	FliptEnvironment string
 
 	// TrackerURL is CLICKHOUSE_TRACKER_URL (required in serve mode).
 	TrackerURL string
@@ -79,11 +106,21 @@ func Load(getenv func(string) string) (*Config, error) {
 		InternalAddr: env("BEACON_GO_INTERNAL_ADDR", ":9090"),
 		FallbackURL:  getenv("BEACON_GO_FALLBACK_URL"),
 		// Exactly "true" turns it on, so a typo leaves the route on Node.
-		TrackBatchServe: strings.TrimSpace(getenv("BEACON_GO_TRACK_BATCH_SERVE")) == "true",
-		TrackerURL:      getenv("CLICKHOUSE_TRACKER_URL"),
-		OutwardTraffic:  OutwardTrafficAllowed(getenv("NEXT_PUBLIC_CIVITAI_LINK"), getenv("NEXT_PUBLIC_LOCAL_TRACKER_ENABLED")),
-		TrackerWorkers:  positiveInt(getenv("BEACON_GO_TRACKER_WORKERS"), 16),
-		TrackerQueue:    positiveInt(getenv("BEACON_GO_TRACKER_QUEUE"), 10000),
+		TrackBatchServe:            strings.TrimSpace(getenv("BEACON_GO_TRACK_BATCH_SERVE")) == "true",
+		TrackBatchServeImpressions: strings.TrimSpace(getenv("BEACON_GO_TRACK_BATCH_SERVE_IMPRESSIONS")) == "true",
+		TrackBatchServeFeed:        strings.TrimSpace(getenv("BEACON_GO_TRACK_BATCH_SERVE_FEED")) == "true",
+		ClickHouseHost:             getenv("CLICKHOUSE_HOST"),
+		ClickHouseUsername:         getenv("CLICKHOUSE_USERNAME"),
+		ClickHousePassword:         getenv("CLICKHOUSE_PASSWORD"),
+		ClickHouseWorkers:          positiveInt(getenv("BEACON_GO_CLICKHOUSE_WORKERS"), 8),
+		ClickHouseQueue:            positiveInt(getenv("BEACON_GO_CLICKHOUSE_QUEUE"), 2000),
+		FliptURL:                   getenv("FLIPT_URL"),
+		FliptToken:                 getenv("FLIPT_FETCHER_SECRET"),
+		FliptEnvironment:           getenv("FLIPT_ENVIRONMENT"),
+		TrackerURL:                 getenv("CLICKHOUSE_TRACKER_URL"),
+		OutwardTraffic:             OutwardTrafficAllowed(getenv("NEXT_PUBLIC_CIVITAI_LINK"), getenv("NEXT_PUBLIC_LOCAL_TRACKER_ENABLED")),
+		TrackerWorkers:             positiveInt(getenv("BEACON_GO_TRACKER_WORKERS"), 16),
+		TrackerQueue:               positiveInt(getenv("BEACON_GO_TRACKER_QUEUE"), 10000),
 
 		RedisURL:                 getenv("REDIS_URL"),
 		RedisCluster:             boolValue(getenv("REDIS_CLUSTER"), true),
@@ -134,13 +171,33 @@ func Load(getenv func(string) string) (*Config, error) {
 		if c.TrackerURL == "" {
 			return nil, errors.New("serve mode requires CLICKHOUSE_TRACKER_URL")
 		}
-		for _, u := range []string{c.FallbackURL, c.TrackerURL} {
+		urls := []string{c.FallbackURL, c.TrackerURL}
+		// A sink switch on with nothing to write through fails here, at start, rather than as a
+		// fallback on every batch.
+		if c.TrackBatchServe && c.TrackBatchServeImpressions {
+			if c.ClickHouseHost == "" || c.ClickHouseUsername == "" {
+				return nil, errors.New("BEACON_GO_TRACK_BATCH_SERVE_IMPRESSIONS requires CLICKHOUSE_HOST and CLICKHOUSE_USERNAME")
+			}
+			urls = append(urls, c.ClickHouseHost)
+		}
+		if c.TrackBatchServe && c.TrackBatchServeFeed {
+			if c.FliptURL == "" {
+				return nil, errors.New("BEACON_GO_TRACK_BATCH_SERVE_FEED requires FLIPT_URL")
+			}
+			urls = append(urls, c.FliptURL)
+		}
+		for _, u := range urls {
 			if p, err := url.Parse(u); err != nil || (p.Scheme != "http" && p.Scheme != "https") || p.Host == "" {
 				return nil, fmt.Errorf("not an http(s) URL: %q", u)
 			}
 		}
 	}
 	return c, nil
+}
+
+// ServeSinks are the optional /api/track/batch sinks serve mode answers: each needs the route on too.
+func (c *Config) ServeSinks() (impressions, feed bool) {
+	return c.TrackBatchServe && c.TrackBatchServeImpressions, c.TrackBatchServe && c.TrackBatchServeFeed
 }
 
 // CookieNames are the session cookie names to read on a request to reqHost, in the order the main app

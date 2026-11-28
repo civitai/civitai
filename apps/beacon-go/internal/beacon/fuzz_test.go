@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/civitai/civitai/apps/beacon-go/internal/auth"
 	"github.com/civitai/civitai/apps/beacon-go/internal/fallback"
@@ -101,14 +102,18 @@ func FuzzURLHost(f *testing.F) {
 }
 
 // FuzzTrackBatch: /api/track/batch never panics on any body, and every answer is one the Node handler
-// can give: 200 with one row per event (at most TRACK_BATCH_MAX, each to `search` or `actions`), a
-// 400 with one of its bodies and no row, or a fallback with a reason (the whole batch left to Node).
+// can give: 200 with one row per tracker event (each to `search` or `actions`) and, with the sinks on,
+// one `impressions` row per impression entity; a 400 with one of its bodies and no row; or a fallback
+// with a reason (the whole batch left to Node). Run with the sinks off (step 1) and on.
 func FuzzTrackBatch(f *testing.F) {
 	f.Add("application/json", `[{"kind":"search","data":{"query":" q ","index":"i","filters":{"a":1}}}]`)
 	f.Add("application/json", `[{"kind":"action","data":{"type":"LoginRedirect","reason":"image-gen"}},{"kind":"impression","data":{}}]`)
 	f.Add("", `[{"kind":"action","data":{"type":"App_Session","details":{"appBlockId":"a","host":"page","durationMs":1,"submits":2,"messagesToHost":3}}}]`)
 	f.Add("application/json", `"[{\"kind\":\"action\",\"data\":{\"type\":\"AwardBounty_Click\"}}]"`)
 	f.Add("text/plain", `[{"kind":"action","data":{"type":"Membership_Cancel","details":{"__proto__":1,"reason":"r","from":"f","9":0}}}]`)
+	f.Add("application/json", `[{"kind":"impression","data":{"sessionKey":"s","surface":"x","entities":[{"entityType":"Post","entityId":1},{"entityType":"User","entityId":2}]}},{"kind":"search","data":{"query":"q","index":"i"}}]`)
+	f.Add("application/json", `[{"kind":"feed","data":{"event":"seen","sessionKey":"k1","feed":"images","page":"/","filters":{"__proto__":1,"a":"b"},"seenIds":[1]}}]`)
+	f.Add("application/json", `[{"kind":"feed","data":{"event":"load","sessionKey":"tab-0","feed":"images","page":"/"}},{"kind":"impression","data":{"sessionKey":"s","entities":[{"entityType":"Image","entityId":1}]}}]`)
 	f.Fuzz(func(t *testing.T, contentType, body string) {
 		headers := map[string]string{"host": "a.test", "origin": "https://a.test", "cf-connecting-ip": "192.0.2.1"}
 		if contentType != "" {
@@ -121,41 +126,61 @@ func FuzzTrackBatch(f *testing.F) {
 			HTTP:    httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/", nil),
 		}
 		e := &Engine{Sessions: fixedUser{u: &auth.SessionUser{ID: 3}}, TrackerEnabled: true}
-		out, err := e.Compute(context.Background(), EndpointTrackBatch, r)
-		if err != nil {
-			if fallback.Reason(err) == "" {
-				t.Fatalf("a non-fallback error: %v", err)
-			}
-			if len(out.Writes) != 0 {
-				t.Fatal("a fallback wrote")
-			}
-			return
-		}
-		switch out.Response.Status {
-		case 200:
-			if out.Response.Body != "" || len(out.Writes) == 0 || len(out.Writes) > TrackBatchMax {
-				t.Fatalf("200 with body %q and %d writes", out.Response.Body, len(out.Writes))
-			}
-			for _, w := range out.Writes {
-				v, err := jsvalue.Parse(string(w.Body))
-				if (w.Table != TableSearch && w.Table != TableActions) || err != nil || !v.IsPlainObject() {
-					t.Fatalf("row %s %q: %v", w.Table, w.Body, err)
-				}
-				if id, ok := v.O.Get("userId"); !ok || id.N != 3 {
-					t.Fatalf("row %s without the session's userId", w.Body)
-				}
-			}
-		case 400:
-			switch out.Response.Body {
-			case "invalid request", "invalid body", "invalid input", "Invalid JSON":
-			default:
-				t.Fatalf("400 body %q", out.Response.Body)
-			}
-			if len(out.Writes) != 0 {
-				t.Fatal("a 400 wrote")
-			}
-		default:
-			t.Fatalf("status %d", out.Response.Status)
-		}
+		checkTrackBatchAnswer(t, e, r, false)
+		// Every sink on, outside any event-points window, half the feed sessions sampled.
+		all := &Engine{Sessions: fixedUser{u: &auth.SessionUser{ID: 3}}, TrackerEnabled: true, TrackBatchSinks: AllSinks,
+			FeedSampleRate: func() (float64, bool) { return 0.5, true }, Now: func() time.Time { return closedWindow }}
+		checkTrackBatchAnswer(t, all, r, true)
 	})
+}
+
+// checkTrackBatchAnswer is FuzzTrackBatch's invariant for one engine (sinks: its impression and feed
+// sinks are on, so a row may also be an `impressions` insert row, and a 200 may write nothing when
+// the batch is unsampled feed events only).
+func checkTrackBatchAnswer(t *testing.T, e *Engine, r *Request, sinks bool) {
+	t.Helper()
+	out, err := e.Compute(context.Background(), EndpointTrackBatch, r)
+	if err != nil {
+		if fallback.Reason(err) == "" {
+			t.Fatalf("a non-fallback error: %v", err)
+		}
+		if len(out.Writes) != 0 {
+			t.Fatal("a fallback wrote")
+		}
+		return
+	}
+	switch out.Response.Status {
+	case 200:
+		limit := TrackBatchMax
+		if sinks {
+			limit *= impressionEntitiesMax
+		}
+		if out.Response.Body != "" || (len(out.Writes) == 0 && !out.Sinks.Feed) || len(out.Writes) > limit {
+			t.Fatalf("200 with body %q and %d writes", out.Response.Body, len(out.Writes))
+		}
+		if !sinks && out.Sinks != (Sinks{}) {
+			t.Fatalf("sinks off, answered with %+v", out.Sinks)
+		}
+		for _, w := range out.Writes {
+			v, err := jsvalue.Parse(string(w.Body))
+			tableOK := w.Table == TableSearch || w.Table == TableActions || (sinks && w.Table == TableImpressions && w.Sink == SinkClickHouse)
+			if !tableOK || err != nil || !v.IsPlainObject() {
+				t.Fatalf("row %s %q: %v", w.Table, w.Body, err)
+			}
+			if id, ok := v.O.Get("userId"); !ok || id.N != 3 {
+				t.Fatalf("row %s without the session's userId", w.Body)
+			}
+		}
+	case 400:
+		switch out.Response.Body {
+		case "invalid request", "invalid body", "invalid input", "Invalid JSON":
+		default:
+			t.Fatalf("400 body %q", out.Response.Body)
+		}
+		if len(out.Writes) != 0 {
+			t.Fatal("a 400 wrote")
+		}
+	default:
+		t.Fatalf("status %d", out.Response.Status)
+	}
 }

@@ -57,11 +57,20 @@ type Client struct {
 	Observe func(table string, d time.Duration)
 	// Sleep waits between attempts (tests replace it).
 	Sleep func(ctx context.Context, d time.Duration)
+	// URL, when set, is where a row is POSTed instead of `${BaseURL}/track/${table}` (the direct
+	// ClickHouse insert, NewClickHouse).
+	URL func(w beacon.Write) string
+	// Attempts, when above 0, replaces MaxAttempts.
+	Attempts int
+	// Prepare, when set, finishes each request (credentials, content type).
+	Prepare func(r *http.Request)
 
 	queue  chan beacon.Write
 	wg     sync.WaitGroup
 	mu     sync.RWMutex
 	closed bool
+	// reserved is the queue room held by Reservations not yet committed or cancelled (under mu).
+	reserved int
 	// flights holds, per worker, the row it is sending (nil when idle); abandoned is set once Close
 	// has given up, after which a worker sends nothing more.
 	flights   []atomic.Pointer[flight]
@@ -153,7 +162,8 @@ func (c *Client) record(table, result string) {
 func (c *Client) Enqueue(w beacon.Write) bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	if c.closed {
+	// Room held by a Reservation is not this row's to take.
+	if c.closed || len(c.queue)+c.reserved >= cap(c.queue) {
 		c.record(w.Table, ResultDropped)
 		return false
 	}
@@ -174,13 +184,74 @@ func (c *Client) Enqueue(w beacon.Write) bool {
 func (c *Client) EnqueueAll(ws []beacon.Write) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.closed || cap(c.queue)-len(c.queue) < len(ws) {
+	if c.closed || cap(c.queue)-len(c.queue)-c.reserved < len(ws) {
 		return false
 	}
 	for _, w := range ws {
 		c.queue <- w
 	}
 	return true
+}
+
+// Reservation is queue room held for a number of rows (Reserve): Commit queues them, Cancel gives the
+// room back. Exactly one of the two is called.
+type Reservation interface {
+	Commit(ws []beacon.Write)
+	Cancel()
+}
+
+// Reserve holds room for n rows without queuing anything, so a caller writing to several clients can
+// queue to all of them or to none: false (nothing held, nothing counted) when the client is closed or
+// the queue has room for fewer than n rows beside what is already held. Enqueue and EnqueueAll leave
+// held room alone.
+func (c *Client) Reserve(n int) (Reservation, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed || cap(c.queue)-len(c.queue)-c.reserved < n {
+		return nil, false
+	}
+	c.reserved += n
+	return &reservation{c: c, n: n}, true
+}
+
+type reservation struct {
+	c    *Client
+	n    int
+	done bool
+}
+
+// Commit queues the reserved rows (at most n: any beyond are dropped and counted). The room was held,
+// so it queues without dropping; it can wait for a worker only in the narrow case of two concurrent
+// Enqueue calls both passing their room check into held room. If the client closed after Reserve, the
+// rows are counted as dropped, as Enqueue counts a row after Close.
+func (r *reservation) Commit(ws []beacon.Write) {
+	c := r.c
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if r.done {
+		return
+	}
+	r.done = true
+	c.reserved -= r.n
+	for i, w := range ws {
+		if c.closed || i >= r.n {
+			c.record(w.Table, ResultDropped)
+			continue
+		}
+		c.queue <- w
+	}
+}
+
+// Cancel gives the held room back.
+func (r *reservation) Cancel() {
+	c := r.c
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if r.done {
+		return
+	}
+	r.done = true
+	c.reserved -= r.n
 }
 
 // Depth is the number of rows waiting in the queue (not counting the ones being sent).
@@ -260,11 +331,18 @@ func Delay(attempt int, jitter float64) time.Duration {
 // starts no further attempt and returns failed.
 func (c *Client) Send(ctx context.Context, w beacon.Write) string {
 	url := strings.TrimRight(c.BaseURL, "/") + "/track/" + w.Table
+	if c.URL != nil {
+		url = c.URL(w)
+	}
 	client := c.HTTP
 	if client == nil {
 		client = http.DefaultClient
 	}
-	for attempt := 1; attempt <= MaxAttempts; attempt++ {
+	attempts := MaxAttempts
+	if c.Attempts > 0 {
+		attempts = c.Attempts
+	}
+	for attempt := 1; attempt <= attempts; attempt++ {
 		if attempt > 1 {
 			c.sleep(ctx, Delay(attempt, rand.Float64())) //nolint:gosec // G404: retry jitter, not a secret
 		}
@@ -291,6 +369,9 @@ func (c *Client) post(ctx context.Context, client *http.Client, url string, body
 		return 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if c.Prepare != nil {
+		c.Prepare(req)
+	}
 	res, err := client.Do(req)
 	if err != nil {
 		return 0, err

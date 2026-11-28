@@ -1212,5 +1212,1444 @@
       "appSessionMaxDurationMs": 86400000,
       "appSessionMaxCount": 1000000
     }
+  },
+  "trackBatchSinks": {
+    "impressionEntityTypes": [
+      "Image",
+      "Model",
+      "Post",
+      "Article",
+      "Collection",
+      "Bounty",
+      "BountyEntry",
+      "User",
+      "Announcement"
+    ],
+    "impressionSurfaces": [
+      "home",
+      "images",
+      "videos",
+      "posts",
+      "models",
+      "articles",
+      "collections",
+      "bounties",
+      "search",
+      "user",
+      "hubs",
+      "challenges",
+      "3d-models",
+      "ecosystems",
+      "tag",
+      "tools",
+      "comics",
+      "crucibles",
+      "events",
+      "other"
+    ],
+    "impressionEntitiesMax": 250,
+    "feedEventTypes": [
+      "load",
+      "seen",
+      "click"
+    ],
+    "feedEventFeeds": [
+      "models",
+      "images",
+      "posts",
+      "articles",
+      "search"
+    ],
+    "feedEventIndexMax": 10000,
+    "pointEntityTypes": [
+      "Image",
+      "Model",
+      "Article"
+    ],
+    "scoredEvents": [
+      {
+        "name": "birthday2026",
+        "from": 1791504000000,
+        "to": 1796169600000
+      }
+    ],
+    "feedEventsSampleRateFlag": "feed-events-sample-rate",
+    "hashToUnit": [
+      {
+        "in": "",
+        "out": 0.5043428998906165
+      },
+      {
+        "in": "a",
+        "out": 0.8908105595037341
+      },
+      {
+        "in": "k1",
+        "out": 0.594688460463658
+      },
+      {
+        "in": "session-key-0123456789abcdef",
+        "out": 0.9334802580997348
+      },
+      {
+        "in": "é",
+        "out": 0.422049299813807
+      },
+      {
+        "in": "😀",
+        "out": 0.7937281560152769
+      },
+      {
+        "in": "\ud800",
+        "out": 0.01760608679614961
+      },
+      {
+        "in": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "out": 0.41606499371118844
+      }
+    ],
+    "parseSampleRate": [
+      {
+        "in": "",
+        "out": 0
+      },
+      {
+        "in": "0",
+        "out": 0
+      },
+      {
+        "in": "0.1",
+        "out": 0.1
+      },
+      {
+        "in": "1",
+        "out": 1
+      },
+      {
+        "in": "2",
+        "out": 1
+      },
+      {
+        "in": "-0.5",
+        "out": 0
+      },
+      {
+        "in": "abc",
+        "out": 0
+      },
+      {
+        "in": "1e-3",
+        "out": 0.001
+      },
+      {
+        "in": " 0.25 ",
+        "out": 0.25
+      },
+      {
+        "in": "Infinity",
+        "out": 0
+      },
+      {
+        "in": "0x1",
+        "out": 1
+      }
+    ],
+    "schemas": {
+      "search": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string"
+          },
+          "index": {
+            "type": "string"
+          },
+          "filters": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "query",
+          "index"
+        ]
+      },
+      "action": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "AddToBounty_Click"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "AddToBounty_Confirm"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "AwardBounty_Click"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "AwardBounty_Confirm"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "Tip_Click"
+              },
+              "details": {
+                "type": "object",
+                "properties": {
+                  "toUserId": {
+                    "type": "number"
+                  },
+                  "entityId": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "entityType": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "toUserId"
+                ]
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "Tip_Confirm"
+              },
+              "details": {
+                "type": "object",
+                "properties": {
+                  "toUserId": {
+                    "type": "number"
+                  },
+                  "entityId": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "entityType": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "amount": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "toUserId",
+                  "amount"
+                ]
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "TipInteractive_Click"
+              },
+              "details": {
+                "type": "object",
+                "properties": {
+                  "toUserId": {
+                    "type": "number"
+                  },
+                  "entityId": {
+                    "type": "number"
+                  },
+                  "entityType": {
+                    "type": "string"
+                  },
+                  "amount": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "toUserId",
+                  "entityId",
+                  "entityType",
+                  "amount"
+                ]
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "TipInteractive_Cancel"
+              },
+              "details": {
+                "type": "object",
+                "properties": {
+                  "toUserId": {
+                    "type": "number"
+                  },
+                  "entityId": {
+                    "type": "number"
+                  },
+                  "entityType": {
+                    "type": "string"
+                  },
+                  "amount": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "toUserId",
+                  "entityId",
+                  "entityType",
+                  "amount"
+                ]
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "NotEnoughFunds"
+              },
+              "details": {
+                "type": "object",
+                "properties": {
+                  "amount": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "amount"
+                ]
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "PurchaseFunds_Cancel"
+              },
+              "details": {
+                "type": "object",
+                "properties": {
+                  "step": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "step"
+                ]
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "PurchaseFunds_Confirm"
+              },
+              "details": {
+                "type": "object",
+                "properties": {
+                  "priceId": {
+                    "type": "string"
+                  },
+                  "buzzAmount": {
+                    "type": "number"
+                  },
+                  "unitAmount": {
+                    "type": "number"
+                  },
+                  "method": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "buzzAmount",
+                  "unitAmount",
+                  "method"
+                ]
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "LoginRedirect"
+              },
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "image-gen",
+                  "train-model",
+                  "blur-toggle"
+                ]
+              }
+            },
+            "required": [
+              "type",
+              "reason"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "Membership_Cancel"
+              },
+              "details": {
+                "type": "object",
+                "properties": {
+                  "reason": {
+                    "type": "string"
+                  },
+                  "from": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "reason",
+                  "from"
+                ],
+                "additionalProperties": {}
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "Membership_Downgrade"
+              },
+              "details": {
+                "type": "object",
+                "properties": {
+                  "reason": {
+                    "type": "string"
+                  },
+                  "from": {
+                    "type": "string"
+                  },
+                  "to": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "reason"
+                ],
+                "additionalProperties": {}
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "CSAM_Help_Triggered"
+              },
+              "details": {
+                "type": "object",
+                "properties": {
+                  "query": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": {}
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "ProfanitySearch"
+              },
+              "details": {
+                "type": "object",
+                "properties": {
+                  "query": {
+                    "type": "string"
+                  },
+                  "matches": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "additionalProperties": {}
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "Model_Create_Click"
+              },
+              "details": {
+                "type": "object",
+                "properties": {
+                  "modelId": {
+                    "type": "number"
+                  },
+                  "modelVersionId": {
+                    "type": "number"
+                  },
+                  "source": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "Image_Remix_Click"
+              },
+              "details": {
+                "type": "object",
+                "properties": {
+                  "imageId": {
+                    "type": "number"
+                  },
+                  "imageType": {
+                    "type": "string",
+                    "enum": [
+                      "image",
+                      "video",
+                      "audio"
+                    ]
+                  },
+                  "sourceModelVersionId": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "source": {
+                    "type": "string"
+                  },
+                  "remixKind": {
+                    "type": "string",
+                    "enum": [
+                      "edit",
+                      "video",
+                      "reuse"
+                    ]
+                  }
+                },
+                "required": [
+                  "imageId"
+                ]
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "Generator_Submit"
+              },
+              "details": {
+                "type": "object",
+                "properties": {
+                  "modelVersionId": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "fromAction": {
+                    "type": "string",
+                    "enum": [
+                      "create",
+                      "remix",
+                      "replay",
+                      "direct"
+                    ]
+                  },
+                  "hasRemixOfId": {
+                    "type": "boolean"
+                  },
+                  "formVersion": {
+                    "type": "string",
+                    "enum": [
+                      "legacy",
+                      "new",
+                      "video",
+                      "form-graph"
+                    ]
+                  },
+                  "isValid": {
+                    "type": "boolean"
+                  },
+                  "isRateLimited": {
+                    "type": "boolean"
+                  },
+                  "externalId": {
+                    "type": "string",
+                    "maxLength": 128,
+                    "pattern": "^[A-Za-z0-9_-]+$"
+                  }
+                },
+                "required": [
+                  "fromAction"
+                ]
+              }
+            },
+            "required": [
+              "type",
+              "details"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "Feed_TagBar_Click"
+              },
+              "details": {
+                "type": "object",
+                "properties": {
+                  "feed": {
+                    "type": "string",
+                    "enum": [
+                      "images",
+                      "videos"
+                    ]
+                  },
+                  "tag": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 64
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "tagId": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "select",
+                      "clear"
+                    ]
+                  }
+                },
+                "required": [
+                  "feed",
+                  "tag",
+                  "tagId",
+                  "action"
+                ]
+              }
+            },
+            "required": [
+              "type",
+              "details"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "Announcement_Click"
+              },
+              "details": {
+                "type": "object",
+                "properties": {
+                  "announcementId": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "creatorId": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "announcementId",
+                  "creatorId"
+                ]
+              }
+            },
+            "required": [
+              "type",
+              "details"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "AppsBuild_Action"
+              },
+              "details": {
+                "type": "object",
+                "properties": {
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "view",
+                      "request_access",
+                      "agent_prompt_copy",
+                      "create_entry"
+                    ]
+                  },
+                  "state": {
+                    "type": "string",
+                    "enum": [
+                      "pitch",
+                      "first-app",
+                      "workbench"
+                    ]
+                  }
+                },
+                "required": [
+                  "action",
+                  "state"
+                ]
+              }
+            },
+            "required": [
+              "type",
+              "details"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "UserMenu_Click"
+              },
+              "details": {
+                "type": "object",
+                "properties": {
+                  "item": {
+                    "type": "string",
+                    "enum": [
+                      "profile",
+                      "inventory",
+                      "prizes",
+                      "my-shop",
+                      "service-requests",
+                      "browse-services",
+                      "placements",
+                      "training",
+                      "collections",
+                      "liked-models",
+                      "bookmarked-articles",
+                      "bounties",
+                      "challenges",
+                      "browse-challenges",
+                      "crucibles",
+                      "buzz-dashboard",
+                      "creator-studio",
+                      "creator-journey",
+                      "vault",
+                      "referrals",
+                      "apps",
+                      "leaderboard",
+                      "auctions",
+                      "knights-of-new",
+                      "link-app",
+                      "following",
+                      "downloads",
+                      "getting-started",
+                      "civitai-link",
+                      "sign-in",
+                      "support-report-bug",
+                      "support-education",
+                      "support-faq",
+                      "support-discord",
+                      "support-assistant",
+                      "support-portal",
+                      "create-generate",
+                      "create-post-images",
+                      "create-post-videos",
+                      "create-model",
+                      "create-model3d",
+                      "create-train",
+                      "create-article",
+                      "create-comic",
+                      "create-bounty",
+                      "create-challenge"
+                    ]
+                  },
+                  "group": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "create",
+                          "your-stuff",
+                          "creator-tools",
+                          "rewards",
+                          "help",
+                          "header"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "pinned": {
+                    "type": "boolean"
+                  },
+                  "surface": {
+                    "type": "string",
+                    "enum": [
+                      "desktop",
+                      "mobile"
+                    ]
+                  }
+                },
+                "required": [
+                  "item",
+                  "group",
+                  "pinned",
+                  "surface"
+                ]
+              }
+            },
+            "required": [
+              "type",
+              "details"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "Push_Prompt"
+              },
+              "details": {
+                "type": "object",
+                "properties": {
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "shown",
+                      "enable_click",
+                      "not_now",
+                      "granted",
+                      "native_dismissed",
+                      "denied",
+                      "subscribed",
+                      "failed"
+                    ]
+                  },
+                  "surface": {
+                    "type": "string",
+                    "enum": [
+                      "visit-prompt",
+                      "settings-card",
+                      "deal-flow"
+                    ]
+                  },
+                  "variant": {
+                    "type": "string",
+                    "enum": [
+                      "new",
+                      "finish",
+                      "another-device"
+                    ]
+                  },
+                  "platform": {
+                    "type": "string",
+                    "enum": [
+                      "desktop",
+                      "mobile"
+                    ]
+                  }
+                },
+                "required": [
+                  "action",
+                  "surface",
+                  "variant",
+                  "platform"
+                ]
+              }
+            },
+            "required": [
+              "type",
+              "details"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "Experiment_Exposure"
+              },
+              "details": {
+                "type": "object",
+                "properties": {
+                  "exp": {
+                    "type": "string",
+                    "enum": [
+                      "hatTurfFeedCard"
+                    ]
+                  },
+                  "variant": {
+                    "type": "string",
+                    "maxLength": 64
+                  },
+                  "assignment": {
+                    "type": "string",
+                    "enum": [
+                      "rule",
+                      "pinned",
+                      "override",
+                      "unavailable",
+                      "off",
+                      "invalid"
+                    ]
+                  },
+                  "surface": {
+                    "type": "string",
+                    "enum": [
+                      "image-detail",
+                      "feed-card"
+                    ]
+                  }
+                },
+                "required": [
+                  "exp",
+                  "variant",
+                  "assignment",
+                  "surface"
+                ]
+              }
+            },
+            "required": [
+              "type",
+              "details"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "HatTurf_Action"
+              },
+              "details": {
+                "type": "object",
+                "properties": {
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "invite_view",
+                      "invite_dismiss",
+                      "hat_count_open",
+                      "feed_place_start",
+                      "feed_place_save",
+                      "hide_all_hats_on",
+                      "hide_all_hats_off"
+                    ]
+                  },
+                  "event": {
+                    "type": "string",
+                    "enum": [
+                      "birthday2026"
+                    ]
+                  },
+                  "surface": {
+                    "type": "string",
+                    "enum": [
+                      "image-detail",
+                      "feed-card"
+                    ]
+                  }
+                },
+                "required": [
+                  "action",
+                  "event"
+                ]
+              }
+            },
+            "required": [
+              "type",
+              "details"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "AppStore_Action"
+              },
+              "details": {
+                "type": "object",
+                "properties": {
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "impression",
+                      "card_click",
+                      "detail_view",
+                      "cta_click"
+                    ]
+                  },
+                  "listingId": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{1,64}$"
+                  },
+                  "surface": {
+                    "type": "string",
+                    "enum": [
+                      "store_card",
+                      "detail",
+                      "sub_listing",
+                      "made_with",
+                      "related",
+                      "direct"
+                    ]
+                  },
+                  "position": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 10000
+                  },
+                  "sort": {
+                    "type": "string",
+                    "enum": [
+                      "top-rated",
+                      "popular",
+                      "newest",
+                      "name"
+                    ]
+                  },
+                  "category": {
+                    "type": "string",
+                    "enum": [
+                      "generation",
+                      "games",
+                      "utility",
+                      "discovery",
+                      "moderation",
+                      "analytics",
+                      "other"
+                    ]
+                  },
+                  "hasQuery": {
+                    "type": "boolean"
+                  },
+                  "queryLength": {
+                    "type": "string",
+                    "enum": [
+                      "0",
+                      "1-3",
+                      "4-10",
+                      "11-30",
+                      "31+"
+                    ]
+                  }
+                },
+                "required": [
+                  "action",
+                  "listingId",
+                  "surface"
+                ]
+              }
+            },
+            "required": [
+              "type",
+              "details"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "App_Error"
+              },
+              "details": {
+                "type": "object",
+                "properties": {
+                  "appBlockId": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_]{1,64}$"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "enum": [
+                      "validation",
+                      "prompt_refused",
+                      "ecosystem_unavailable",
+                      "insufficient_buzz",
+                      "rate_limited",
+                      "server_error",
+                      "other"
+                    ]
+                  },
+                  "stage": {
+                    "type": "string",
+                    "enum": [
+                      "submit",
+                      "training_submit",
+                      "confirmed_step_submit"
+                    ]
+                  }
+                },
+                "required": [
+                  "appBlockId",
+                  "reason",
+                  "stage"
+                ]
+              }
+            },
+            "required": [
+              "type",
+              "details"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "App_Session"
+              },
+              "details": {
+                "type": "object",
+                "properties": {
+                  "appBlockId": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_]{1,64}$"
+                  },
+                  "host": {
+                    "type": "string",
+                    "enum": [
+                      "page",
+                      "iframe"
+                    ]
+                  },
+                  "durationMs": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 86400000
+                  },
+                  "submits": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 1000000
+                  },
+                  "messagesToHost": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 1000000
+                  }
+                },
+                "required": [
+                  "appBlockId",
+                  "host",
+                  "durationMs",
+                  "submits",
+                  "messagesToHost"
+                ]
+              }
+            },
+            "required": [
+              "type",
+              "details"
+            ]
+          }
+        ]
+      },
+      "impression": {
+        "type": "object",
+        "properties": {
+          "sessionKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 32
+          },
+          "surface": {
+            "default": "other",
+            "type": "string",
+            "enum": [
+              "home",
+              "images",
+              "videos",
+              "posts",
+              "models",
+              "articles",
+              "collections",
+              "bounties",
+              "search",
+              "user",
+              "hubs",
+              "challenges",
+              "3d-models",
+              "ecosystems",
+              "tag",
+              "tools",
+              "comics",
+              "crucibles",
+              "events",
+              "other"
+            ]
+          },
+          "entities": {
+            "minItems": 1,
+            "maxItems": 250,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "entityType": {
+                  "type": "string",
+                  "enum": [
+                    "Image",
+                    "Model",
+                    "Post",
+                    "Article",
+                    "Collection",
+                    "Bounty",
+                    "BountyEntry",
+                    "User",
+                    "Announcement"
+                  ]
+                },
+                "entityId": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "entityType",
+                "entityId"
+              ]
+            }
+          }
+        },
+        "required": [
+          "sessionKey",
+          "surface",
+          "entities"
+        ]
+      },
+      "feed": {
+        "type": "object",
+        "properties": {
+          "event": {
+            "type": "string",
+            "enum": [
+              "load",
+              "seen",
+              "click"
+            ]
+          },
+          "sessionKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 32
+          },
+          "feed": {
+            "type": "string",
+            "enum": [
+              "models",
+              "images",
+              "posts",
+              "articles",
+              "search"
+            ]
+          },
+          "page": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "sort": {
+            "default": "",
+            "type": "string",
+            "maxLength": 64
+          },
+          "pageIndex": {
+            "default": 0,
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10000
+          },
+          "filters": {
+            "default": {},
+            "type": "object",
+            "propertyNames": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "entityType": {
+            "type": "string",
+            "enum": [
+              "Image",
+              "Model",
+              "Post",
+              "Article",
+              "Collection",
+              "Bounty",
+              "BountyEntry",
+              "User",
+              "Announcement"
+            ]
+          },
+          "entityId": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 2147483647
+          },
+          "position": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10000
+          },
+          "seenIds": {
+            "maxItems": 250,
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 2147483647
+            }
+          }
+        },
+        "required": [
+          "event",
+          "sessionKey",
+          "feed",
+          "page"
+        ]
+      }
+    }
   }
 }

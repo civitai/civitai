@@ -532,7 +532,8 @@ export class Tracker {
   }
 
   /**
-   * Called with every row `send` dispatches, as it is about to be POSTed. Set only by the beacon-go
+   * Called with every row `send` dispatches, as it is about to be POSTed, and every row `sendMany`
+   * inserts, as it is about to be inserted. Set only by the beacon-go
    * shadow sampler on a sampled beacon request (`~/server/beacon/beacon-go-shadow`), so the rows Node
    * wrote can be compared with beacon-go's. Must not throw; the sampler's capture never does.
    */
@@ -679,6 +680,8 @@ export class Tracker {
     await this.resolveSession();
     const values =
       typeof data === 'function' ? data({ session: this.session, actor: this.actor }) : data;
+    // The beacon-go shadow sampler compares these rows too (Tracker.impressions), one by one.
+    if (this.onSend) for (const row of values) this.onSend(table, row);
 
     try {
       await clickhouse.insert({

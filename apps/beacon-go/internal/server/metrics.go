@@ -16,8 +16,9 @@ const EndpointLabel = "beacon_endpoint"
 // Endpoints are the label values: one per beacon.
 var Endpoints = []string{beacon.EndpointPing, beacon.EndpointPulse, beacon.EndpointTrackBatch}
 
-// Tables are the tracker tables the beacons write.
-var Tables = []string{beacon.TablePageViews, beacon.TableViews, beacon.TableSearch, beacon.TableActions}
+// Tables are the tables the beacons write: the tracker tables, and `impressions`, inserted directly
+// (its beacon_go_tracker_writes_total counts inserts, one per impression event, not rows).
+var Tables = []string{beacon.TablePageViews, beacon.TableViews, beacon.TableSearch, beacon.TableActions, beacon.TableImpressions}
 
 // Metrics are the beacon_go_* series. Every label takes values from a fixed set.
 type Metrics struct {
@@ -42,7 +43,16 @@ type Metrics struct {
 	JWKSStale            prometheus.Counter
 	// SessionCookieSlot counts resolved sessions by the cookie slot they were read from (auth.CookieSlot).
 	SessionCookieSlot *prometheus.CounterVec
+	// TrackBatchAnswered counts the /api/track/batch batches this service answers, by path, the
+	// optional sinks each one needs (beacon.SinkLabels) and result: `served` (serve), `match` |
+	// `mismatch` (shadow, computed with every sink). With beacon_go_shadow_compare_total it gives the
+	// served share a serve configuration would have: the batches whose sinks it switches on, over all
+	// compared batches. A match ratio alone cannot say how much traffic it covers.
+	TrackBatchAnswered *prometheus.CounterVec
 }
+
+// TrackBatchAnsweredResults are TrackBatchAnswered's results per path.
+var TrackBatchAnsweredResults = map[string][]string{"serve": {"served"}, "shadow": {"match", "mismatch"}}
 
 // NewMetrics registers the series on reg and seeds every fixed label combination at 0, so "none"
 // reads as 0 rather than as an absent series.
@@ -93,9 +103,20 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "beacon_go_session_cookie_slot_total",
 			Help: "Sessions resolved from a session cookie, by the cookie slot they were read from (host | shared).",
 		}, []string{"slot"}),
+		TrackBatchAnswered: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "beacon_go_track_batch_answered_total",
+			Help: "/api/track/batch batches this service answers, by path (serve | shadow), the optional sinks the batch needs (core | impressions | feed | impressions-feed) and result (serve: served; shadow: match | mismatch).",
+		}, []string{"path", "sinks", "result"}),
 	}
 	reg.MustRegister(m.Requests, m.Fallbacks, m.ShadowCompare, m.ShadowDiffs, m.TrackerWrites, m.TrackerSendSeconds, m.Panics,
-		m.RevocationReadErrors, m.JWKSRefresh, m.JWKSStale, m.SessionCookieSlot)
+		m.RevocationReadErrors, m.JWKSRefresh, m.JWKSStale, m.SessionCookieSlot, m.TrackBatchAnswered)
+	for path, results := range TrackBatchAnsweredResults {
+		for _, sinks := range beacon.SinkLabels {
+			for _, r := range results {
+				m.TrackBatchAnswered.WithLabelValues(path, sinks, r)
+			}
+		}
+	}
 	for _, s := range []string{"host", "shared"} {
 		m.SessionCookieSlot.WithLabelValues(s)
 	}
@@ -137,15 +158,18 @@ func TrackerQueueDepth(depth func() int) prometheus.GaugeFunc {
 
 // diffFields is the fixed set a diff is counted under; anything else is `other`.
 var diffFields = func() map[string]bool {
-	m := map[string]bool{"status": true, "body": true, "writes:count": true}
+	m := map[string]bool{"status": true, "body": true, "writes:count": true, shadow.DiffPointsViews: true}
 	for _, h := range beacon.ComparedHeaders {
 		m["header:"+h] = true
 	}
 	rows := map[string][]string{
-		beacon.TablePageViews: {"userId", "memberType", "ip", "pageId", "path", "host", "country", "ads", "duration", "windowWidth", "windowHeight"},
-		beacon.TableViews:     {"userId", "ip", "userAgent", "type", "entityType", "entityId", "ads", "nsfw", "details", "nsfwLevel", "browsingLevel"},
-		beacon.TableSearch:    {"userId", "ip", "userAgent", "query", "index", "filters"},
-		beacon.TableActions:   {"userId", "ip", "userAgent", "type", "reason", "details"},
+		beacon.TablePageViews:   {"userId", "memberType", "ip", "pageId", "path", "host", "country", "ads", "duration", "windowWidth", "windowHeight"},
+		beacon.TableViews:       {"userId", "ip", "userAgent", "type", "entityType", "entityId", "ads", "nsfw", "details", "nsfwLevel", "browsingLevel"},
+		beacon.TableSearch:      {"userId", "ip", "userAgent", "query", "index", "filters"},
+		beacon.TableActions:     {"userId", "ip", "userAgent", "type", "reason", "details"},
+		beacon.TableImpressions: {"userId", "entityType", "entityId", "sessionKey", "surface"},
+		// Only `table`: a feed row on the Node side is a session this service took for unsampled.
+		beacon.TableFeedEvents: {},
 	}
 	for table, keys := range rows {
 		for _, k := range append(keys, "table", "order", "unparsed") {

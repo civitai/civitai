@@ -2,7 +2,8 @@
 
 A Go service for the browser beacons `POST /api/internal/ping` (page views),
 `POST /api/internal/pulse` (entity views) and `POST /api/track/batch` (search and action telemetry,
-behind `BEACON_GO_TRACK_BATCH_SERVE`; other batches fall back whole): the same responses and the same
+behind `BEACON_GO_TRACK_BATCH_SERVE`; impressions and unsampled feed events each behind their own
+switch, `BEACON_GO_TRACK_BATCH_SERVE_IMPRESSIONS` / `_FEED`; other batches fall back whole): the same responses and the same
 tracker rows as the Node handlers, without the Node framework overhead per request. **Read [DESIGN.md](DESIGN.md) first** — it
 is the contract (what each endpoint answers and writes), what is reproduced and what falls back, the
 two modes and the shadow comparison.

@@ -2,7 +2,10 @@ import type * as KyselyDb from '~/server/db/kyselyDb';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as Award from '~/server/events/points/award';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import type { TrackBatchInput } from '~/server/schema/track.schema';
+import { IMPRESSION_ENTITY_TYPES } from '~/server/schema/track.schema';
 
 const { awardEventPoints, removeEventPoints, hatted } = vi.hoisted(() => ({
   awardEventPoints: vi.fn(async (..._a: unknown[]) => undefined),
@@ -467,5 +470,32 @@ describe('round 4', () => {
     );
     const [[[action]]] = awardEventPoints.mock.calls as unknown as [[[{ actor: unknown }]]];
     expect(action.actor).toStrictEqual({ createdAt: new Date(createdAt), bannedAt: null });
+  });
+});
+
+// beacon-go falls back on any impression of these types while an event-points window is open
+// (apps/beacon-go/internal/beacon/trackbatch_sinks.go pointEntityTypes, recorded in vectors.json by
+// gen.ts): they must be exactly the types this hook can pick, whatever wears a hat.
+describe('beacon-go copy of the point entity types', () => {
+  it('is what hattedImpressionEntities picks from every impression entity type', () => {
+    const vectors = JSON.parse(
+      readFileSync(
+        resolve(__dirname, '../../../../../apps/beacon-go/testdata/golden/vectors.json'),
+        'utf8'
+      )
+    ) as { trackBatchSinks: { pointEntityTypes: string[] } };
+    for (const type of IMPRESSION_ENTITY_TYPES) hatted.add(`${type}:1`);
+    const picked = hattedImpressionEntities([
+      {
+        kind: 'impression',
+        data: {
+          sessionKey: 'k',
+          surface: 'home',
+          entities: IMPRESSION_ENTITY_TYPES.map((entityType) => ({ entityType, entityId: 1 })),
+        },
+      },
+    ] as unknown as TrackBatchInput).map((e) => e.entityType);
+    expect(picked).toEqual(vectors.trackBatchSinks.pointEntityTypes);
+    expect(picked).toEqual(['Image', 'Model', 'Article']);
   });
 });

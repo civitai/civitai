@@ -265,9 +265,14 @@
       },
       "goHandler": [
         "apps/beacon-go/internal/server/server.go",
-        "apps/beacon-go/internal/beacon/trackbatch.go"
+        "apps/beacon-go/internal/beacon/trackbatch.go",
+        "apps/beacon-go/internal/beacon/trackbatch_sinks.go"
       ],
-      "goRoots": ["apps/beacon-go/internal/beacon", "apps/beacon-go/internal/tracker"],
+      "goRoots": [
+        "apps/beacon-go/internal/beacon",
+        "apps/beacon-go/internal/tracker",
+        "apps/beacon-go/internal/flipt"
+      ],
       "flags": {
         "shadow": "beacon-go-shadow",
         "transport": null,

@@ -30,17 +30,34 @@ const (
 	TableViews     = "views"
 )
 
-// Write is one tracker insert: the Node Tracker POSTs Body (JSON.stringify of the row) to
-// `${CLICKHOUSE_TRACKER_URL}/track/${Table}`.
+// Write is one row. Through the tracker service (SinkTracker, the zero value) the Node Tracker POSTs
+// Body (JSON.stringify of the row) to `${CLICKHOUSE_TRACKER_URL}/track/${Table}`. A SinkClickHouse
+// row is inserted into Table directly (JSONEachRow), and the rows sharing an Insert number go in one
+// insert, as the Node code makes one insert per event.
 type Write struct {
-	Table string
-	Body  []byte
+	Table  string
+	Body   []byte
+	Sink   WriteSink
+	Insert int
 }
+
+// WriteSink is where a row goes.
+type WriteSink uint8
+
+const (
+	// SinkTracker is the ClickHouse tracker service (internal/tracker).
+	SinkTracker WriteSink = iota
+	// SinkClickHouse is a direct ClickHouse insert (the Node `clickhouse` client's insert).
+	SinkClickHouse
+)
 
 // Outcome is the response and the writes for one request.
 type Outcome struct {
 	Response Response
 	Writes   []Write
+	// Sinks are the optional /api/track/batch sinks an answered batch used (an impression or a feed
+	// event in it): what it needs switched on to be served. Zero for every other answer.
+	Sinks Sinks
 }
 
 // SessionResolver resolves the viewer (auth.Resolver). A nil user is signed out; an error is always a
@@ -63,6 +80,13 @@ type Engine struct {
 	// AUTH_SESSION_COOKIE_MODE_BY_SITE, else AUTH_SESSION_COOKIE_MODE and AUTH_LEGACY_READ.
 	ModeFor func(host string) (mode string, legacyRead bool)
 	Now     func() time.Time
+	// TrackBatchSinks are the optional /api/track/batch sinks Compute answers (serve mode:
+	// BEACON_GO_TRACK_BATCH_SERVE_IMPRESSIONS / _FEED, both default off). A batch carrying an event
+	// of a sink that is off falls back whole. The shadow comparison uses AllSinks (ComputeShadow).
+	TrackBatchSinks Sinks
+	// FeedSampleRate is the `feed-events-sample-rate` Flipt variant read as parseSampleRate does, and
+	// whether a current reading exists. Nil, or no reading: a batch with a feed event falls back.
+	FeedSampleRate func() (rate float64, ok bool)
 }
 
 func (e *Engine) now() time.Time {
@@ -80,9 +104,19 @@ func (e *Engine) Compute(ctx context.Context, endpoint string, r *Request) (Outc
 	case EndpointPulse:
 		return e.Pulse(ctx, r)
 	case EndpointTrackBatch:
-		return e.TrackBatch(ctx, r)
+		return e.TrackBatch(ctx, r, e.TrackBatchSinks)
 	}
 	return Outcome{}, fallback.New("unknown-endpoint")
+}
+
+// ComputeShadow is Compute for the shadow comparison: /api/track/batch is computed with every sink
+// this service has ported (AllSinks), whatever the serve switches say, so the comparison measures the
+// whole port and Outcome.Sinks says which switches a batch would need. It never writes either way.
+func (e *Engine) ComputeShadow(ctx context.Context, endpoint string, r *Request) (Outcome, error) {
+	if endpoint == EndpointTrackBatch {
+		return e.TrackBatch(ctx, r, AllSinks)
+	}
+	return e.Compute(ctx, endpoint, r)
 }
 
 // prologue is what runs before either handler body: the rare request shapes left to the Node app (a

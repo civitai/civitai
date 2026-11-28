@@ -19,9 +19,13 @@ import { mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { isIP } from 'node:net';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
+import * as z from 'zod';
 import { getMatchingPathname } from '~/shared/constants/pathname.constants';
 import {
   addViewSchema,
+  IMPRESSION_ENTITIES_MAX,
+  IMPRESSION_ENTITY_TYPES,
+  IMPRESSION_SURFACES,
   pageViewBeaconSchema,
   parseTrackBatch,
   PUSH_PROMPT_ACTIONS,
@@ -30,7 +34,16 @@ import {
   TRACK_BATCH_MAX,
   TRACK_FREEFORM_MAX_CHARS,
   trackActionSchema,
+  trackFeedSchema,
+  trackImpressionSchema,
+  trackSearchSchema,
 } from '~/server/schema/track.schema';
+import {
+  FEED_EVENT_FEEDS,
+  FEED_EVENT_INDEX_MAX,
+  FEED_EVENT_TYPES,
+} from '~/shared/constants/feed-events.constants';
+import { hashToUnit } from '~/server/clickhouse/sampled-row-buffer';
 import { trackedReasons } from '~/utils/login-helpers';
 import { USER_MENU_ITEM_IDS } from '~/shared/constants/user-menu.constants';
 import {
@@ -94,7 +107,19 @@ type Fixture = {
   trackerEnabled?: boolean;
   /** beacon-go must fall back with this reason (Node's answer is then not reproduced). */
   fallback?: string;
+  /** track-batch: the optional sinks beacon-go answers (default both on). */
+  sinks?: { impressions: boolean; feed: boolean };
+  /** track-batch: the feed events sample rate (default 0); null is no reading on the beacon-go side. */
+  feedSampleRate?: number | null;
+  /** The clock, epoch ms (default GOLDEN_NOW_MS). */
+  now?: number;
+  /** track-batch: the entities wearing a hat (`Type:id`), for the event-points window fixtures. */
+  hats?: string[];
 };
+
+// beacon-go's golden clock (internal/golden GoldenNow): an hour after SIGNED_IN.iat.
+const GOLDEN_NOW_MS = (1_780_000_000 + 3600) * 1000;
+const SINKS_OFF = { impressions: false, feed: false };
 
 // ---- Next 16 (the real modules) ------------------------------------------------------------
 async function nextModules() {
@@ -254,9 +279,49 @@ class MirrorTracker {
       ACTOR_META_FREE_ACTION_TYPES.has(values.type)
     );
   }
-  // Tracker.impressions inserts into ClickHouse directly (sendMany), not through send, so the shadow
-  // sampler never sees its rows: nothing is recorded here either.
+  // Tracker.impressions: trackMany with skipActorMeta, one row per entity (`{userId, ...custom}`),
+  // inserted into ClickHouse directly (sendMany, which the sampler sees through onSend too). Not gated
+  // on the tracker: sendMany only needs the ClickHouse client, which every fixture has.
+  async impressions(values: {
+    sessionKey: string;
+    surface: string;
+    entities: { entityType: string; entityId: number }[];
+  }) {
+    this.resolve();
+    const { sessionKey, surface, entities } = values;
+    for (const { entityType, entityId } of entities)
+      this.writes.push({
+        table: 'impressions',
+        body: JSON.stringify({
+          userId: this.actor.userId,
+          ...{ entityType, entityId, sessionKey, surface },
+        }),
+      });
+  }
 }
+
+// The scored events (src/server/events with `scoring`) and their eventPointsWindow, in epoch ms:
+// `previewFrom ?? startDate` to `endDate + scoring.finalizeAfterMs`. Transcribed (the registry does
+// not import outside the app); beacon-go-track-batch-vectors.test.ts pins it against the live events.
+const SCORED_EVENTS = [
+  {
+    name: 'birthday2026',
+    from: Date.parse('2026-10-09T00:00:00.000Z'),
+    to: Date.parse('2026-12-01T00:00:00.000Z') + 24 * 60 * 60 * 1000,
+  },
+];
+// hooks.ts POINT_ENTITY_TYPES (pinned in src/server/events/points/__tests__/hooks.test.ts).
+const POINT_ENTITY_TYPES = ['Image', 'Model', 'Article'];
+// feed-events.service.ts FEED_EVENTS_SAMPLE_RATE_FLAG and parseSampleRate (pinned in
+// beacon-go-track-batch-vectors.test.ts against the live module, which does not import here).
+const FEED_EVENTS_SAMPLE_RATE_FLAG = 'feed-events-sample-rate';
+function parseSampleRate(variantKey: string | undefined): number {
+  const rate = Number(variantKey);
+  return Number.isFinite(rate) && rate > 0 ? Math.min(rate, 1) : 0;
+}
+// The engine holds an event while its window is open (the engine's loaded events): only then can
+// hattedImpressionEntities return anything. The kill switch reads on here.
+const scoredWindowOpen = (now: number) => SCORED_EVENTS.some((e) => now >= e.from && now <= e.to);
 
 // tracker.ts ACTOR_META_FREE_ACTION_TYPES (pinned against the exported set by
 // src/server/beacon/__tests__/beacon-go-track-batch-vectors.test.ts through vectors.json).
@@ -333,7 +398,16 @@ async function pulse(req: any, res: MiniRes, tracker: MirrorTracker) {
 // src/pages/api/track/batch.ts (isDev false) for the parts the fixtures reach: feed events go to the
 // feed events recorder and hatted impressions to the event points, neither of which is a tracker row
 // (beacon-go falls back on both kinds, so their fixtures pin only the fallback reason).
-async function trackBatch(req: any, res: MiniRes, tracker: MirrorTracker) {
+// What the feed events recorder and the event-points hook did for a track-batch fixture.
+type BatchSide = { feedRecorded: number; hattedViews: number };
+
+async function trackBatch(
+  req: any,
+  res: MiniRes,
+  tracker: MirrorTracker,
+  fx: Fixture,
+  side: BatchSide
+) {
   const source = req.headers.origin ?? req.headers.referer;
   const sourceHost = source
     ? (() => {
@@ -354,9 +428,30 @@ async function trackBatch(req: any, res: MiniRes, tracker: MirrorTracker) {
   }
   const events = parseTrackBatch(parsed);
   if (!events) return res.status(400).send('invalid input');
+  const rate = fx.feedSampleRate ?? 0;
   for (const event of events) {
     if (event.kind === 'search') await tracker.search(event.data);
     else if (event.kind === 'action') await tracker.action(event.data);
+    else if (event.kind === 'impression') await tracker.impressions(event.data);
+    // The recorder's keeps(sessionKey) (createSampledRowBuffer, the real hashToUnit): a kept session
+    // records a row, which beacon-go never writes, so such a fixture must declare its fallback. The
+    // row itself (viewer, page label, buffer time) is not reproduced here.
+    else if (rate > 0 && hashToUnit(event.data.sessionKey) < rate) side.feedRecorded++;
+  }
+  // hattedImpressionEntities: the distinct hatted Image / Model / Article entities, while an event is
+  // loaded (at most MAX_HATTED_VIEWS_PER_BATCH, which no fixture reaches).
+  if (scoredWindowOpen(fx.now ?? GOLDEN_NOW_MS)) {
+    const hats = new Set(fx.hats ?? []);
+    const seen = new Set<string>();
+    for (const event of events) {
+      if (event.kind !== 'impression') continue;
+      for (const { entityType, entityId } of event.data.entities) {
+        const key = `${entityType}:${entityId}`;
+        if (!POINT_ENTITY_TYPES.includes(entityType) || !hats.has(key) || seen.has(key)) continue;
+        seen.add(key);
+      }
+    }
+    side.hattedViews = seen.size;
   }
   return res.status(200).end();
 }
@@ -406,7 +501,13 @@ async function outcome(fx: Fixture, next: Awaited<ReturnType<typeof nextModules>
     res.setHeader('Cache-Control', 'max-age=0, private, no-cache');
   else res.setHeader('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=150');
   const tracker = new MirrorTracker(req, fx.session ?? null, fx.trackerEnabled ?? true);
-  await { ping, pulse, 'track-batch': trackBatch }[fx.endpoint](req, res, tracker);
+  const side: BatchSide = { feedRecorded: 0, hattedViews: 0 };
+  if (fx.endpoint === 'track-batch') await trackBatch(req, res, tracker, fx, side);
+  else await { ping, pulse }[fx.endpoint](req, res, tracker);
+  if ((side.feedRecorded > 0 || side.hattedViews > 0) && !fx.fallback)
+    throw new Error(
+      `${fx.name}: Node records a feed row or awards view points; declare the fallback`
+    );
   const expect = {
     status: res.statusCode,
     headers: res.headers,
@@ -424,6 +525,7 @@ async function outcome(fx: Fixture, next: Awaited<ReturnType<typeof nextModules>
     responseHeaders: pickBeaconResponseHeaders(res),
     responseBody: res.body,
     writes: tracker.writes,
+    hattedViews: side.hattedViews,
   });
   return { expect, shadow };
 }
@@ -1336,14 +1438,29 @@ function trackBatchFixtures(): Fixture[] {
       batch(Array.from({ length: 101 }, () => action({ type: 'AwardBounty_Click' })))
     ),
     // -- fallbacks (Node's answer is recorded; beacon-go hands the whole request back)
-    fx('impression-only', batch([impression]), { fallback: 'track-impression' }),
+    // The sinks switched off (step 1's answer, and serve mode's default).
+    fx('impression-only', batch([impression]), { fallback: 'track-impression', sinks: SINKS_OFF }),
     fx('impression-with-search', batch([search({ query: 'q', index: 'i' }), impression]), {
       fallback: 'track-impression',
+      sinks: SINKS_OFF,
     }),
     fx('feed-event', batch([feed, action({ type: 'AwardBounty_Click' })]), {
       fallback: 'track-feed',
+      sinks: SINKS_OFF,
     }),
-    fx('impression-beats-feed', batch([feed, impression]), { fallback: 'track-impression' }),
+    fx('impression-beats-feed', batch([feed, impression]), {
+      fallback: 'track-impression',
+      sinks: SINKS_OFF,
+    }),
+    fx('feed-sink-off-impressions-on', batch([impression, feed]), {
+      fallback: 'track-feed',
+      sinks: { impressions: true, feed: false },
+    }),
+    fx('impression-sink-off-feed-on', batch([feed, impression]), {
+      fallback: 'track-impression',
+      sinks: { impressions: false, feed: true },
+    }),
+    ...impressionAndFeedFixtures(fx, { search, action, impression, feed, baseBatch }),
     fx(
       'experiment-exposure',
       batch([
@@ -1391,6 +1508,257 @@ function trackBatchFixtures(): Fixture[] {
     fx('query-string', batch([search({ query: 'q', index: 'i' })]), {
       target: '/api/track/batch?x=1',
       fallback: 'query-string',
+    }),
+  ];
+}
+
+// ---- impression and feed fixtures (both sinks on unless named) -------------------------------------
+// The session keys' hashToUnit values, for the sampling cases: `k1` 0.5947, `tab-0` 0.1103.
+function impressionAndFeedFixtures(
+  fx: (name: string, body: string, extra?: Partial<Fixture>) => Fixture,
+  k: {
+    search: (d: object) => object;
+    action: (d: object) => object;
+    impression: object;
+    feed: object;
+    baseBatch: Headers;
+  }
+): Fixture[] {
+  const batch = (events: unknown[]) => JSON.stringify(events);
+  const imp = (data: object) => ({ kind: 'impression', data });
+  const feedEv = (data: object) => ({
+    kind: 'feed',
+    data: { event: 'seen', sessionKey: 'k1', feed: 'images', page: '/images', ...data },
+  });
+  const ents = (...e: [string, number][]) =>
+    e.map(([entityType, entityId]) => ({ entityType, entityId }));
+  const signedIn = {
+    headers: { ...k.baseBatch, cookie: '__Secure-civ-token=hdr.payload.sig' },
+    session: SIGNED_IN,
+  };
+  // During birthday2026's points window, and just past it (its end plus a margin beacon-go keeps).
+  const IN_WINDOW = Date.parse('2026-11-28T12:00:00.000Z');
+  const WINDOW_END = Date.parse('2026-12-02T00:00:00.000Z');
+  return [
+    // -- impressions
+    fx('impression-served', batch([k.impression])),
+    fx(
+      'impression-entities-in-order',
+      batch([
+        imp({
+          surface: 'home',
+          sessionKey: 'abc',
+          entities: ents(['Post', 3], ['Image', 1], ['User', 9], ['Image', 1]),
+        }),
+      ])
+    ),
+    fx('impression-signed-in', batch([k.impression]), signedIn),
+    fx(
+      'impression-surface-caught',
+      batch([
+        imp({ sessionKey: 'k', surface: 'nope', entities: ents(['Model', 2]) }),
+        imp({ sessionKey: 'k', entities: ents(['Model', 3]) }),
+        imp({ sessionKey: 'k', surface: null, entities: ents(['Model', 4]) }),
+      ])
+    ),
+    fx(
+      'impression-strips-keys',
+      batch([
+        imp({
+          extra: 1,
+          sessionKey: 'k',
+          surface: 'tag',
+          entities: [{ entityId: 7, entityType: 'Collection', score: 0.5 }],
+        }),
+      ])
+    ),
+    fx(
+      'impression-mixed-batch',
+      batch([
+        k.search({ query: 'a', index: 'i' }),
+        imp({ sessionKey: 'k', surface: 'search', entities: ents(['Article', 4]) }),
+        k.action({ type: 'AwardBounty_Click' }),
+        imp({ sessionKey: 'k', surface: 'models', entities: ents(['Model', 5], ['Bounty', 6]) }),
+      ])
+    ),
+    fx('impression-tracker-disabled', batch([k.search({ query: 'q', index: 'i' }), k.impression]), {
+      trackerEnabled: false,
+    }),
+    fx(
+      'impression-max-entities',
+      batch([
+        imp({
+          sessionKey: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+          surface: 'images',
+          entities: Array.from({ length: 250 }, (_, i) => ({
+            entityType: 'Image',
+            entityId: i + 1,
+          })),
+        }),
+      ])
+    ),
+    fx(
+      'impression-unsafe-entity-id',
+      batch([
+        imp({ sessionKey: 'k', surface: 'images', entities: ents(['Image', 9007199254740991]) }),
+      ])
+    ),
+    fx(
+      'impression-over-max-entities',
+      batch([
+        imp({
+          sessionKey: 'k',
+          surface: 'images',
+          entities: Array.from({ length: 251 }, (_, i) => ({
+            entityType: 'Image',
+            entityId: i + 1,
+          })),
+        }),
+      ]),
+      { fallback: 'track-event-invalid' }
+    ),
+    fx(
+      'impression-entity-id-zero',
+      batch([imp({ sessionKey: 'k', entities: ents(['Image', 0]) })]),
+      {
+        fallback: 'track-event-invalid',
+      }
+    ),
+    fx(
+      'impression-entity-type-unknown',
+      batch([imp({ sessionKey: 'k', entities: ents(['Comic', 1]) })]),
+      {
+        fallback: 'track-event-invalid',
+      }
+    ),
+    fx(
+      'impression-session-key-empty',
+      batch([imp({ sessionKey: '', entities: ents(['Image', 1]) })]),
+      {
+        fallback: 'track-event-invalid',
+      }
+    ),
+    fx(
+      'impression-session-key-too-long',
+      batch([imp({ sessionKey: 'x'.repeat(33), entities: ents(['Image', 1]) })]),
+      { fallback: 'track-event-invalid' }
+    ),
+    fx('impression-no-entities', batch([imp({ sessionKey: 'k', entities: [] })]), {
+      fallback: 'track-event-invalid',
+    }),
+    // -- event points: an open window keeps any batch naming an Image, Model or Article on Node
+    fx('event-points-window-hatted', batch([k.impression]), {
+      now: IN_WINDOW,
+      hats: ['Image:5'],
+      fallback: 'track-impression-event-points',
+    }),
+    fx('event-points-window-unhatted', batch([k.impression]), {
+      now: IN_WINDOW,
+      fallback: 'track-impression-event-points',
+    }),
+    fx(
+      'event-points-window-no-point-types',
+      batch([imp({ sessionKey: 'k', surface: 'user', entities: ents(['Post', 1], ['User', 2]) })]),
+      { now: IN_WINDOW, hats: ['Post:1'] }
+    ),
+    fx('event-points-within-margin', batch([k.impression]), {
+      now: WINDOW_END + 30 * 60 * 1000,
+      fallback: 'track-impression-event-points',
+    }),
+    fx('event-points-past-margin', batch([k.impression]), { now: WINDOW_END + 2 * 60 * 60 * 1000 }),
+    fx('event-points-before-preview', batch([k.impression]), {
+      now: Date.parse('2026-10-08T22:00:00.000Z'),
+    }),
+    // -- feed: answered only for sessions the recorder does not keep (they record nothing)
+    fx('feed-rate-zero', batch([k.feed, k.action({ type: 'AwardBounty_Click' })])),
+    fx(
+      'feed-unsampled',
+      batch([feedEv({ seenIds: [1, 2] }), k.search({ query: 'q', index: 'i' })]),
+      {
+        feedSampleRate: 0.25,
+      }
+    ),
+    fx('feed-only-unsampled', batch([feedEv({}), feedEv({ event: 'load' })]), {
+      feedSampleRate: 0.25,
+      ...signedIn,
+    }),
+    fx(
+      'feed-with-impression',
+      batch([
+        k.impression,
+        feedEv({ event: 'click', entityType: 'Image', entityId: 5, position: 0 }),
+      ]),
+      {
+        feedSampleRate: 0.25,
+      }
+    ),
+    fx(
+      'feed-sampled',
+      batch([feedEv({ sessionKey: 'tab-0' }), k.search({ query: 'q', index: 'i' })]),
+      {
+        feedSampleRate: 0.25,
+        fallback: 'track-feed-sampled',
+      }
+    ),
+    fx('feed-rate-one', batch([feedEv({})]), { feedSampleRate: 1, fallback: 'track-feed-sampled' }),
+    fx('feed-no-rate-reading', batch([feedEv({})]), {
+      feedSampleRate: null,
+      fallback: 'track-feed-sample-rate',
+    }),
+    fx(
+      'feed-filters-proto',
+      '[{"kind":"feed","data":{"event":"load","sessionKey":"k1","feed":"models","page":"/models","filters":{"__proto__":5,"period":"Week"}}}]'
+    ),
+    fx(
+      'feed-every-field',
+      batch([
+        feedEv({
+          event: 'click',
+          feed: 'search',
+          page: '/search/models',
+          sort: 'Newest',
+          pageIndex: 10000,
+          filters: { index: 'models', junk: 'x' },
+          entityType: 'Model',
+          entityId: 2147483647,
+          position: 0,
+          seenIds: [],
+          extra: true,
+        }),
+      ])
+    ),
+    fx('feed-invalid-event', batch([feedEv({ event: 'scroll' })]), {
+      fallback: 'track-event-invalid',
+    }),
+    fx('feed-invalid-entity-id', batch([feedEv({ entityId: 2147483648 })]), {
+      fallback: 'track-event-invalid',
+    }),
+    fx('feed-invalid-filter-value', batch([feedEv({ filters: { period: 1 } })]), {
+      fallback: 'track-event-invalid',
+    }),
+    fx('feed-invalid-page-index', batch([feedEv({ pageIndex: 10001 })]), {
+      fallback: 'track-event-invalid',
+    }),
+    fx(
+      'feed-invalid-seen-ids',
+      batch([feedEv({ seenIds: Array.from({ length: 251 }, (_, i) => i + 1) })]),
+      {
+        fallback: 'track-event-invalid',
+      }
+    ),
+    // Ranking: no rate reading outranks an unported action; a sampled session outranks an invalid event.
+    fx(
+      'feed-sampled-beats-invalid',
+      batch([
+        feedEv({ sessionKey: 'tab-0' }),
+        k.action({ type: 'Tip_Click', details: { toUserId: 'x' } }),
+      ]),
+      { feedSampleRate: 0.25, fallback: 'track-feed-sampled' }
+    ),
+    fx('event-points-beat-feed-rate', batch([feedEv({}), k.impression]), {
+      now: IN_WINDOW,
+      feedSampleRate: null,
+      fallback: 'track-impression-event-points',
     }),
   ];
 }
@@ -1670,6 +2038,51 @@ function vectors() {
     }),
     trims: trims.map((s) => ({ in: s, units: toHexUnits(s.trim()) })),
     trackBatch: trackBatchVectors(),
+    trackBatchSinks: trackBatchSinkVectors(),
+  };
+}
+
+// What beacon-go copies for the impression and feed sinks (internal/beacon/trackbatch_sinks.go,
+// pinned by TestTrackBatchSinkConstants), and the zod schemas of every event kind it parses as JSON
+// Schema (pinned field by field by TestTrackBatchSchemas), so a field added on the Node side fails a
+// Go test instead of being silently stripped or refused.
+function trackBatchSinkVectors() {
+  const schema = (s: z.ZodType) => {
+    const { $schema: _, ...rest } = z.toJSONSchema(s, {
+      io: 'input',
+      unrepresentable: 'any',
+    }) as Record<string, unknown>;
+    return rest;
+  };
+  const keys = [
+    '',
+    'a',
+    'k1',
+    'session-key-0123456789abcdef',
+    'é',
+    '😀',
+    '\ud800',
+    'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+  ];
+  const rates = ['', '0', '0.1', '1', '2', '-0.5', 'abc', '1e-3', ' 0.25 ', 'Infinity', '0x1'];
+  return {
+    impressionEntityTypes: [...IMPRESSION_ENTITY_TYPES],
+    impressionSurfaces: [...IMPRESSION_SURFACES],
+    impressionEntitiesMax: IMPRESSION_ENTITIES_MAX,
+    feedEventTypes: [...FEED_EVENT_TYPES],
+    feedEventFeeds: [...FEED_EVENT_FEEDS],
+    feedEventIndexMax: FEED_EVENT_INDEX_MAX,
+    pointEntityTypes: [...POINT_ENTITY_TYPES],
+    scoredEvents: SCORED_EVENTS,
+    feedEventsSampleRateFlag: FEED_EVENTS_SAMPLE_RATE_FLAG,
+    hashToUnit: keys.map((k) => ({ in: k, out: hashToUnit(k) })),
+    parseSampleRate: rates.map((r) => ({ in: r, out: parseSampleRate(r) })),
+    schemas: {
+      search: schema(trackSearchSchema),
+      action: schema(trackActionSchema),
+      impression: schema(trackImpressionSchema),
+      feed: schema(trackFeedSchema),
+    },
   };
 }
 
@@ -1745,6 +2158,13 @@ async function main() {
       session: fx.session ?? null,
       trackerEnabled: fx.trackerEnabled ?? true,
       fallback: fx.fallback ?? '',
+      ...(fx.endpoint === 'track-batch'
+        ? {
+            sinks: fx.sinks ?? { impressions: true, feed: true },
+            feedSampleRate: fx.feedSampleRate === undefined ? 0 : fx.feedSampleRate,
+            now: fx.now ?? GOLDEN_NOW_MS,
+          }
+        : {}),
       // A templated (long) body's rows are pinned by digest rather than spelled out.
       expect: fx.bodyTemplate
         ? {

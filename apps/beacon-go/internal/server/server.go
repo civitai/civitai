@@ -16,6 +16,7 @@ import (
 	"github.com/civitai/civitai/apps/beacon-go/internal/fallback"
 	"github.com/civitai/civitai/apps/beacon-go/internal/safe"
 	"github.com/civitai/civitai/apps/beacon-go/internal/shadow"
+	"github.com/civitai/civitai/apps/beacon-go/internal/tracker"
 )
 
 // The modes (BEACON_GO_MODE).
@@ -28,20 +29,27 @@ const (
 	ModeServe = "serve"
 )
 
-// Writer queues tracker rows (tracker.Client).
+// Writer queues rows (tracker.Client: the tracker service, or the direct ClickHouse inserts).
 type Writer interface {
 	// Enqueue queues one row; a full queue drops it (ping and pulse write one row each).
 	Enqueue(w beacon.Write) bool
-	// EnqueueAll queues every row or none, atomically: false (nothing queued) when the queue cannot
-	// take them all.
-	EnqueueAll(ws []beacon.Write) bool
+	// Reserve holds room for n rows, or reports (false, nothing held) that the queue cannot take
+	// them. A track batch reserves in every writer it uses before it queues anything.
+	Reserve(n int) (Reservation, bool)
 }
+
+// Reservation is room a Writer holds for rows (tracker.Reservation): Commit queues them, Cancel
+// gives the room back. Exactly one of the two is called.
+type Reservation = tracker.Reservation
 
 // Server holds what the handlers share.
 type Server struct {
-	Engine  *beacon.Engine
-	Mode    string
-	Writer  Writer       // serve mode: where rows go (nil in shadow mode: nothing is ever written)
+	Engine *beacon.Engine
+	Mode   string
+	Writer Writer // serve mode: where tracker rows go (nil in shadow mode: nothing is ever written)
+	// Inserts is where direct ClickHouse rows go (serve mode with the impressions sink on: the
+	// impression inserts; nil otherwise, and always nil in shadow mode).
+	Inserts Writer
 	Proxy   http.Handler // serve mode: the Node app, for every fallback
 	Metrics *Metrics
 	Log     *slog.Logger
@@ -156,21 +164,14 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, endpoint string) 
 		s.fallBack(w, r, endpoint, reason, body)
 		return
 	}
-	if s.Writer != nil {
-		if endpoint == beacon.EndpointTrackBatch {
-			// A batch's rows (up to beacon.TrackBatchMax) are queued whole or not at all: a queue that cannot
-			// take them all hands the whole request to Node, so no 200 answers a partly written batch.
-			if !s.Writer.EnqueueAll(out.Writes) {
-				s.fallBack(w, r, endpoint, ReasonTrackQueueFull, body)
-				return
-			}
-		} else {
-			for _, wr := range out.Writes {
-				s.Writer.Enqueue(wr)
-			}
-		}
+	if !s.enqueue(endpoint, out.Writes) {
+		s.fallBack(w, r, endpoint, ReasonTrackQueueFull, body)
+		return
 	}
 	s.Metrics.Requests.WithLabelValues(endpoint, "served").Inc()
+	if endpoint == beacon.EndpointTrackBatch {
+		s.Metrics.TrackBatchAnswered.WithLabelValues("serve", beacon.SinksLabel(out.Sinks), "served").Inc()
+	}
 	WriteResponse(w, out.Response)
 }
 
@@ -182,6 +183,73 @@ func (s *Server) fallBack(w http.ResponseWriter, r *http.Request, endpoint, reas
 	// The proxy reads the body from the start: what was read, then whatever is left.
 	r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(body), r.Body))
 	s.proxy(w, r)
+}
+
+// enqueue hands a served request's rows to their writers, and reports whether they took them.
+//
+// Ping and pulse write one tracker row, queued with Enqueue (a full queue drops and counts it).
+//
+// A track batch is queued whole or not at all, across BOTH writers: its tracker rows (up to
+// beacon.TrackBatchMax) and its impression inserts (one JSONEachRow insert per impression event, as
+// Tracker.impressions inserts) are first reserved in their queues, and queued only when both
+// reservations hold. If either queue cannot take its share, nothing is queued, the other reservation
+// is released, and false hands the whole request to Node, so no 200 answers a partly written batch
+// and no row is written by both services.
+func (s *Server) enqueue(endpoint string, writes []beacon.Write) bool {
+	if endpoint != beacon.EndpointTrackBatch {
+		if s.Writer != nil {
+			for _, wr := range writes {
+				s.Writer.Enqueue(wr)
+			}
+		}
+		return true
+	}
+	var rows, inserts []beacon.Write
+	for i := 0; i < len(writes); {
+		wr := writes[i]
+		if wr.Sink != beacon.SinkClickHouse {
+			rows = append(rows, wr)
+			i++
+			continue
+		}
+		j := i + 1
+		for j < len(writes) && writes[j].Sink == beacon.SinkClickHouse && writes[j].Table == wr.Table && writes[j].Insert == wr.Insert {
+			j++
+		}
+		inserts = append(inserts, InsertOf(writes[i:j]))
+		i = j
+	}
+	var tracked, inserted Reservation
+	var ok bool
+	if len(rows) > 0 && s.Writer != nil {
+		if tracked, ok = s.Writer.Reserve(len(rows)); !ok {
+			return false
+		}
+	}
+	if len(inserts) > 0 && s.Inserts != nil {
+		if inserted, ok = s.Inserts.Reserve(len(inserts)); !ok {
+			if tracked != nil {
+				tracked.Cancel()
+			}
+			return false
+		}
+	}
+	if tracked != nil {
+		tracked.Commit(rows)
+	}
+	if inserted != nil {
+		inserted.Commit(inserts)
+	}
+	return true
+}
+
+// InsertOf is one direct insert of rows (all of one table): their JSONEachRow body, one row per line.
+func InsertOf(rows []beacon.Write) beacon.Write {
+	body := make([][]byte, len(rows))
+	for i, r := range rows {
+		body[i] = r.Body
+	}
+	return beacon.Write{Table: rows[0].Table, Body: bytes.Join(body, []byte("\n")), Sink: beacon.SinkClickHouse, Insert: rows[0].Insert}
 }
 
 // ReasonDisabled is the fallback reason of a /api/track/batch request while TrackBatchServe is off.
@@ -277,12 +345,21 @@ func (s *Server) compare(ctx context.Context, endpoint string, sample *shadow.Sa
 	}
 	cctx, cancel := context.WithTimeout(ctx, s.budget())
 	defer cancel()
-	out, err := safe.Call(func() (beacon.Outcome, error) { return s.Engine.Compute(cctx, endpoint, req) })
+	// Every ported sink, whatever the serve switches: the comparison measures the whole port, and the
+	// `sinks` label says which switches each answered batch needs.
+	out, err := safe.Call(func() (beacon.Outcome, error) { return s.Engine.ComputeShadow(cctx, endpoint, req) })
 	if errors.As(err, new(*safe.PanicError)) {
 		s.panicked("shadow", err)
 	}
 	v := shadow.Compare(out, err, sample.Node)
 	s.Metrics.ShadowCompare.WithLabelValues(endpoint, v.Result).Inc()
+	if endpoint == beacon.EndpointTrackBatch && v.Result != shadow.ResultFallback && v.Result != shadow.ResultError {
+		result := "match"
+		if v.Result != shadow.ResultMatch {
+			result = "mismatch"
+		}
+		s.Metrics.TrackBatchAnswered.WithLabelValues("shadow", beacon.SinksLabel(out.Sinks), result).Inc()
+	}
 	switch v.Result {
 	case shadow.ResultFallback:
 		s.Metrics.Fallbacks.WithLabelValues(endpoint, "shadow", v.Reason).Inc()

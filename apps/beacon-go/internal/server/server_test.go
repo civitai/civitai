@@ -23,11 +23,13 @@ import (
 type recordingWriter struct {
 	mu   sync.Mutex
 	rows []beacon.Write
-	// room, when > 0, is how many rows EnqueueAll still takes (tracker.Client's free queue slots); 0
-	// means no limit.
+	// room, when not 0, is how many rows Reserve still holds room for (tracker.Client's free queue
+	// slots; negative: none); 0 means no limit.
 	room int
-	// singles and batches count the Enqueue and EnqueueAll calls.
+	// singles and batches count the Enqueue and Reserve calls.
 	singles, batches int
+	// cancelled counts released reservations.
+	cancelled int
 }
 
 func (w *recordingWriter) Enqueue(r beacon.Write) bool {
@@ -38,18 +40,43 @@ func (w *recordingWriter) Enqueue(r beacon.Write) bool {
 	return true
 }
 
-func (w *recordingWriter) EnqueueAll(rs []beacon.Write) bool {
+func (w *recordingWriter) Reserve(n int) (Reservation, bool) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.batches++
-	if w.room > 0 {
-		if len(rs) > w.room {
-			return false
+	// room 0 is no limit; a negative room takes nothing (a full queue).
+	limited := w.room != 0
+	if limited {
+		if n > w.room {
+			return nil, false
 		}
-		w.room -= len(rs)
+		w.room -= n
 	}
-	w.rows = append(w.rows, rs...)
-	return true
+	return &recordedReservation{w: w, n: n, limited: limited}, true
+}
+
+type recordedReservation struct {
+	w       *recordingWriter
+	n       int
+	limited bool // the room was counted down, so Cancel gives it back
+}
+
+func (r *recordedReservation) Commit(rs []beacon.Write) {
+	r.w.mu.Lock()
+	defer r.w.mu.Unlock()
+	if len(rs) != r.n {
+		panic("commit of a different row count than reserved")
+	}
+	r.w.rows = append(r.w.rows, rs...)
+}
+
+func (r *recordedReservation) Cancel() {
+	r.w.mu.Lock()
+	defer r.w.mu.Unlock()
+	r.w.cancelled++
+	if r.limited {
+		r.w.room += r.n
+	}
 }
 
 type nilSessions struct{}
@@ -62,9 +89,11 @@ func newServer(t *testing.T, engine *beacon.Engine, proxy http.Handler) (*Server
 	t.Helper()
 	w := &recordingWriter{}
 	return &Server{
-		Engine:      engine,
-		Mode:        ModeServe,
-		Writer:      w,
+		Engine: engine,
+		Mode:   ModeServe,
+		Writer: w,
+		// The same recorder: a test tells the two kinds apart by Write.Sink.
+		Inserts:     w,
 		Proxy:       proxy,
 		Metrics:     NewMetrics(prometheus.NewRegistry()),
 		Log:         slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -86,7 +115,7 @@ func TestServeGolden(t *testing.T) {
 		hreq, _ := fx.HTTPRequest(t)
 		rec := httptest.NewRecorder()
 		PublicMux(s).ServeHTTP(rec, hreq)
-		out := beacon.Outcome{Response: beacon.Response{Status: rec.Code, Body: rec.Body.String()}, Writes: w.rows}
+		out := beacon.Outcome{Response: beacon.Response{Status: rec.Code, Body: rec.Body.String()}, Writes: rowsOf(w.rows)}
 		for _, name := range beacon.ComparedHeaders {
 			if v := rec.Header().Get(name); v != "" {
 				out.Response.Headers = append(out.Response.Headers, beacon.Header{Name: name, Value: v})
@@ -94,20 +123,47 @@ func TestServeGolden(t *testing.T) {
 		}
 		t.Run(fx.Endpoint+"/"+fx.Name, func(t *testing.T) {
 			fx.CheckOutcome(t, out)
-			// A track batch is queued in one all-or-nothing call; ping and pulse rows one at a time.
+			// A track batch reserves once per writer it uses (the tracker rows, the impression inserts:
+			// both are this one recorder here) and queues nothing one at a time; ping and pulse rows go
+			// one at a time.
 			if fx.Endpoint == beacon.EndpointTrackBatch {
-				if w.singles != 0 || w.batches != 1 {
-					t.Errorf("track-batch: %d Enqueue, %d EnqueueAll calls; want 0 and 1", w.singles, w.batches)
+				uses := 0
+				for _, sink := range []beacon.WriteSink{beacon.SinkTracker, beacon.SinkClickHouse} {
+					for _, r := range w.rows {
+						if r.Sink == sink {
+							uses++
+							break
+						}
+					}
+				}
+				if w.singles != 0 || w.batches != uses || w.cancelled != 0 {
+					t.Errorf("track-batch: %d Enqueue, %d Reserve, %d cancelled; want 0, %d, 0", w.singles, w.batches, w.cancelled, uses)
 				}
 			} else if w.batches != 0 || w.singles != len(w.rows) {
-				t.Errorf("%s: %d Enqueue, %d EnqueueAll calls for %d rows; want %d and 0", fx.Endpoint, w.singles, w.batches, len(w.rows), len(w.rows))
+				t.Errorf("%s: %d Enqueue, %d Reserve calls for %d rows; want %d and 0", fx.Endpoint, w.singles, w.batches, len(w.rows), len(w.rows))
 			}
 		})
 		served++
 	}
-	if served < 70 {
+	if served < 150 {
 		t.Fatalf("only %d fixtures served", served)
 	}
+}
+
+// rowsOf expands each direct insert back into its rows (one per line), as the Node sampler captures
+// them.
+func rowsOf(writes []beacon.Write) []beacon.Write {
+	var out []beacon.Write
+	for _, w := range writes {
+		if w.Sink != beacon.SinkClickHouse {
+			out = append(out, w)
+			continue
+		}
+		for _, row := range bytes.Split(w.Body, []byte("\n")) {
+			out = append(out, beacon.Write{Table: w.Table, Body: row, Sink: w.Sink, Insert: w.Insert})
+		}
+	}
+	return out
 }
 
 func TestFallbackIsProxiedWithTheWholeBody(t *testing.T) {
@@ -335,8 +391,8 @@ beacon_go_tracker_queue_depth 7
 	if got := testutil.ToFloat64(TrackerQueueDepth(func() int { return depth })); got != 2 {
 		t.Fatalf("queue depth %v, want 2", got)
 	}
-	if n := testutil.CollectAndCount(m.TrackerSendSeconds); n != 4 {
-		t.Fatalf("%d send-duration series, want one per table (pageViews, views, search, actions)", n)
+	if n := testutil.CollectAndCount(m.TrackerSendSeconds); n != 5 {
+		t.Fatalf("%d send-duration series, want one per table (pageViews, views, search, actions, impressions)", n)
 	}
 	counts := map[string]uint64{}
 	mfs, err := reg.Gather()
@@ -351,9 +407,9 @@ beacon_go_tracker_queue_depth 7
 			counts[s.GetLabel()[0].GetValue()] = s.GetHistogram().GetSampleCount()
 		}
 	}
-	if len(counts) != 4 || counts[beacon.TableViews] != 1 || counts[beacon.TablePageViews] != 0 ||
-		counts[beacon.TableSearch] != 0 || counts[beacon.TableActions] != 0 {
-		t.Fatalf("send-duration sample counts %v, want views 1 and pageViews, search, actions 0", counts)
+	if len(counts) != 5 || counts[beacon.TableViews] != 1 || counts[beacon.TablePageViews] != 0 ||
+		counts[beacon.TableSearch] != 0 || counts[beacon.TableActions] != 0 || counts[beacon.TableImpressions] != 0 {
+		t.Fatalf("send-duration sample counts %v, want views 1 and pageViews, search, actions, impressions 0", counts)
 	}
 }
 
@@ -492,7 +548,7 @@ func TestTrackBatchQueueFullFallsBackWhole(t *testing.T) {
 		rec := httptest.NewRecorder()
 		PublicMux(s).ServeHTTP(rec, trackBatchRequest(t))
 		if rec.Code != c.code || proxied != c.proxied || len(w.rows) != c.rows || w.batches != 1 || w.singles != 0 {
-			t.Errorf("%s: %d, proxied %d, %d rows, %d EnqueueAll, %d Enqueue", c.name, rec.Code, proxied, len(w.rows), w.batches, w.singles)
+			t.Errorf("%s: %d, proxied %d, %d rows, %d Reserve, %d Enqueue", c.name, rec.Code, proxied, len(w.rows), w.batches, w.singles)
 		}
 		if c.proxied == 1 && proxiedBody != trackBatchBody {
 			t.Errorf("%s: proxied body %q, want the whole request", c.name, proxiedBody)
@@ -522,7 +578,8 @@ func TestTrackBatchShadowNeverWrites(t *testing.T) {
 			match = &f
 		case "action-signed-in":
 			mismatch = &f
-		case "impression-with-search":
+		case "experiment-exposure":
+			// Still a fallback in shadow, where every ported sink is on (impressions are answered now).
 			impression = &f
 		}
 	}
@@ -559,11 +616,214 @@ func TestTrackBatchShadowNeverWrites(t *testing.T) {
 		if got := testutil.ToFloat64(s.Metrics.ShadowDiffs.WithLabelValues("track-batch", "write:actions:userId")); got != 1 {
 			t.Errorf("serve %v: write:actions:userId = %v", serveOn, got)
 		}
-		if got := testutil.ToFloat64(s.Metrics.Fallbacks.WithLabelValues("track-batch", "shadow", "track-impression")); got != 1 {
-			t.Errorf("serve %v: shadow track-impression = %v", serveOn, got)
+		if got := testutil.ToFloat64(s.Metrics.Fallbacks.WithLabelValues("track-batch", "shadow", "track-action-unported")); got != 1 {
+			t.Errorf("serve %v: shadow track-action-unported = %v", serveOn, got)
 		}
 		if len(w.rows) != 0 {
 			t.Fatalf("serve %v: the shadow path wrote %d rows", serveOn, len(w.rows))
 		}
+	}
+}
+
+// trackBatchFixtures are the named track-batch golden fixtures.
+func trackBatchFixtures(t *testing.T, names ...string) map[string]golden.Fixture {
+	t.Helper()
+	want := map[string]bool{}
+	for _, n := range names {
+		want[n] = true
+	}
+	out := map[string]golden.Fixture{}
+	for _, f := range golden.LoadFixtures(t, golden.Dir) {
+		if f.Endpoint == beacon.EndpointTrackBatch && want[f.Name] {
+			out[f.Name] = f
+		}
+	}
+	if len(out) != len(names) {
+		t.Fatalf("fixtures found %d of %v", len(out), names)
+	}
+	return out
+}
+
+// The impression and feed shadow samples are computed with every sink and compared, NEVER written
+// (neither writer is touched), with the serve switches on or off; the answered ones are counted by
+// the sinks they need, and an answered batch for which Node awarded view points is a mismatch.
+func TestTrackBatchSinksShadowNeverWrites(t *testing.T) {
+	fx := trackBatchFixtures(t, "impression-mixed-batch", "feed-unsampled", "feed-with-impression",
+		"event-points-window-hatted", "feed-sampled", "search-no-filters")
+	for _, serveOn := range []bool{false, true} {
+		for _, sinks := range []beacon.Sinks{{}, beacon.AllSinks} {
+			base := fx["impression-mixed-batch"]
+			engine := base.Engine()
+			engine.TrackBatchSinks = sinks
+			// k1 unsampled, tab-0 sampled.
+			engine.FeedSampleRate = func() (float64, bool) { return 0.25, true }
+			s, w := newServer(t, engine, nil)
+			s.TrackBatchServe = serveOn
+			s.ShadowQueue = make(chan struct{}, 16)
+			mux := InternalMux(s, http.NotFoundHandler())
+			for _, name := range []string{"impression-mixed-batch", "feed-unsampled", "feed-with-impression", "event-points-window-hatted", "feed-sampled", "search-no-filters"} {
+				rec := httptest.NewRecorder()
+				mux.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodPost, ShadowPath(beacon.EndpointTrackBatch), strings.NewReader(fx[name].Shadow)))
+				if rec.Code != http.StatusAccepted {
+					t.Fatalf("%s: %d", name, rec.Code)
+				}
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			if err := s.Close(ctx); err != nil {
+				t.Fatal(err)
+			}
+			cancel()
+			label := func(path, sinks, result string) float64 {
+				return testutil.ToFloat64(s.Metrics.TrackBatchAnswered.WithLabelValues(path, sinks, result))
+			}
+			// The window fixture's clock is not this engine's: answered here, so Node's hatted view is
+			// what makes it a mismatch.
+			for k, want := range map[[2]string]float64{
+				{"core", "match"}: 1, {"impressions", "match"}: 1, {"feed", "match"}: 1,
+				{"impressions-feed", "match"}: 1, {"impressions", "mismatch"}: 1,
+			} {
+				if got := label("shadow", k[0], k[1]); got != want {
+					t.Errorf("serve %v sinks %+v: shadow %v = %v, want %v", serveOn, sinks, k, got, want)
+				}
+			}
+			for result, want := range map[string]float64{"match": 4, "mismatch_writes": 1, "fallback": 1} {
+				if got := testutil.ToFloat64(s.Metrics.ShadowCompare.WithLabelValues("track-batch", result)); got != want {
+					t.Errorf("serve %v sinks %+v: %s = %v, want %v", serveOn, sinks, result, got, want)
+				}
+			}
+			if got := testutil.ToFloat64(s.Metrics.ShadowDiffs.WithLabelValues("track-batch", "points:views")); got != 1 {
+				t.Errorf("points:views = %v", got)
+			}
+			if got := testutil.ToFloat64(s.Metrics.Fallbacks.WithLabelValues("track-batch", "shadow", "track-feed-sampled")); got != 1 {
+				t.Errorf("shadow track-feed-sampled = %v", got)
+			}
+			if len(w.rows) != 0 {
+				t.Fatalf("serve %v sinks %+v: the shadow path wrote %d rows", serveOn, sinks, len(w.rows))
+			}
+			for _, sk := range beacon.SinkLabels {
+				if got := label("serve", sk, "served"); got != 0 {
+					t.Errorf("a shadow sample counted as served (%s)", sk)
+				}
+			}
+		}
+	}
+}
+
+// Serve mode with the impressions sink on: the batch is served, its tracker rows go to the tracker
+// writer one by one and each impression event goes to the insert writer as ONE JSONEachRow insert.
+// With the sink off the same batch is proxied whole.
+func TestTrackBatchServeImpressions(t *testing.T) {
+	proxied := 0
+	backend := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { proxied++; w.WriteHeader(200) })
+	engine := &beacon.Engine{Sessions: nilSessions{}, TrackerEnabled: true, Now: func() time.Time { return golden.GoldenNow }}
+	s, _ := newServer(t, engine, backend)
+	tw, iw := &recordingWriter{}, &recordingWriter{}
+	s.Writer, s.Inserts = tw, iw
+	body := `[{"kind":"impression","data":{"sessionKey":"s","surface":"home","entities":[{"entityType":"Post","entityId":1},{"entityType":"User","entityId":2}]}},` +
+		`{"kind":"search","data":{"query":"q","index":"i"}},` +
+		`{"kind":"impression","data":{"sessionKey":"t","surface":"tag","entities":[{"entityType":"Bounty","entityId":3}]}}]`
+	req := func() *http.Request {
+		r := trackBatchRequest(t)
+		r.Body = io.NopCloser(strings.NewReader(body))
+		return r
+	}
+	rec := httptest.NewRecorder()
+	PublicMux(s).ServeHTTP(rec, req())
+	if proxied != 1 || len(tw.rows) != 0 || len(iw.rows) != 0 {
+		t.Fatalf("sink off: proxied %d, tracker %d, inserts %d", proxied, len(tw.rows), len(iw.rows))
+	}
+	if n := testutil.ToFloat64(s.Metrics.Fallbacks.WithLabelValues("track-batch", "serve", "track-impression")); n != 1 {
+		t.Fatalf("track-impression fallbacks %v", n)
+	}
+	engine.TrackBatchSinks.Impressions = true
+	rec = httptest.NewRecorder()
+	PublicMux(s).ServeHTTP(rec, req())
+	if rec.Code != 200 || proxied != 1 {
+		t.Fatalf("sink on: %d, proxied %d", rec.Code, proxied)
+	}
+	if len(tw.rows) != 1 || tw.rows[0].Table != "search" || tw.rows[0].Sink != beacon.SinkTracker {
+		t.Fatalf("tracker rows %+v", tw.rows)
+	}
+	want := []beacon.Write{
+		{Table: "impressions", Sink: beacon.SinkClickHouse, Insert: 0, Body: []byte(`{"userId":0,"entityType":"Post","entityId":1,"sessionKey":"s","surface":"home"}` + "\n" +
+			`{"userId":0,"entityType":"User","entityId":2,"sessionKey":"s","surface":"home"}`)},
+		{Table: "impressions", Sink: beacon.SinkClickHouse, Insert: 1, Body: []byte(`{"userId":0,"entityType":"Bounty","entityId":3,"sessionKey":"t","surface":"tag"}`)},
+	}
+	if len(iw.rows) != len(want) {
+		t.Fatalf("%d inserts", len(iw.rows))
+	}
+	for i := range want {
+		if iw.rows[i].Table != want[i].Table || iw.rows[i].Insert != want[i].Insert || !bytes.Equal(iw.rows[i].Body, want[i].Body) {
+			t.Errorf("insert %d: %+v %s", i, iw.rows[i], iw.rows[i].Body)
+		}
+	}
+	if n := testutil.ToFloat64(s.Metrics.TrackBatchAnswered.WithLabelValues("serve", "impressions", "served")); n != 1 {
+		t.Fatalf("served impressions %v", n)
+	}
+	// Step 1's batches are counted as `core`.
+	rec = httptest.NewRecorder()
+	PublicMux(s).ServeHTTP(rec, trackBatchRequest(t))
+	if n := testutil.ToFloat64(s.Metrics.TrackBatchAnswered.WithLabelValues("serve", "core", "served")); n != 1 || rec.Code != 200 {
+		t.Fatalf("served core %v (%d)", n, rec.Code)
+	}
+}
+
+// A batch is queued in both writers or in neither: when the insert queue cannot take the batch's
+// impression inserts, the tracker rows already reserved are released, nothing is queued, and the
+// whole request goes to Node (`track-queue-full`); the same when the tracker queue is the short one.
+func TestTrackBatchQueuedInBothWritersOrNeither(t *testing.T) {
+	body := `[{"kind":"search","data":{"query":"q","index":"i"}},` +
+		`{"kind":"impression","data":{"sessionKey":"s","entities":[{"entityType":"Post","entityId":1}]}},` +
+		`{"kind":"impression","data":{"sessionKey":"s","entities":[{"entityType":"Post","entityId":2}]}}]`
+	for _, c := range []struct {
+		name                 string
+		trackerRoom, insRoom int
+		served               bool
+		trackerReserves      int
+	}{
+		{"insert queue one short", 5, 1, false, 1},
+		{"tracker queue full", 0, 5, false, 1},
+		{"both have room", 1, 2, true, 1},
+	} {
+		proxied := 0
+		backend := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { proxied++; w.WriteHeader(299) })
+		engine := &beacon.Engine{Sessions: nilSessions{}, TrackerEnabled: true, TrackBatchSinks: beacon.Sinks{Impressions: true},
+			Now: func() time.Time { return golden.GoldenNow }}
+		s, _ := newServer(t, engine, backend)
+		tw, iw := &recordingWriter{room: c.trackerRoom}, &recordingWriter{room: c.insRoom}
+		if c.trackerRoom == 0 {
+			// room 0 is "no limit" in the recorder: a full queue is one that takes nothing.
+			tw.room = -1
+		}
+		s.Writer, s.Inserts = tw, iw
+		r := trackBatchRequest(t)
+		r.Body = io.NopCloser(strings.NewReader(body))
+		rec := httptest.NewRecorder()
+		PublicMux(s).ServeHTTP(rec, r)
+		if c.served {
+			if rec.Code != 200 || proxied != 0 || len(tw.rows) != 1 || len(iw.rows) != 2 || tw.cancelled+iw.cancelled != 0 {
+				t.Errorf("%s: %d proxied %d, %d tracker rows, %d inserts, %d cancelled", c.name, rec.Code, proxied, len(tw.rows), len(iw.rows), tw.cancelled+iw.cancelled)
+			}
+			continue
+		}
+		if rec.Code != 299 || proxied != 1 || len(tw.rows) != 0 || len(iw.rows) != 0 {
+			t.Errorf("%s: %d proxied %d, %d tracker rows, %d inserts", c.name, rec.Code, proxied, len(tw.rows), len(iw.rows))
+		}
+		if c.insRoom < 2 && tw.cancelled != 1 {
+			t.Errorf("%s: the tracker reservation was not released (%d)", c.name, tw.cancelled)
+		}
+		if tw.batches != c.trackerReserves {
+			t.Errorf("%s: %d tracker reservations", c.name, tw.batches)
+		}
+		if n := testutil.ToFloat64(s.Metrics.Fallbacks.WithLabelValues("track-batch", "serve", "track-queue-full")); n != 1 {
+			t.Errorf("%s: track-queue-full %v", c.name, n)
+		}
+	}
+}
+
+func TestInsertOf(t *testing.T) {
+	got := InsertOf([]beacon.Write{{Table: "impressions", Body: []byte(`{"a":1}`), Insert: 4}, {Table: "impressions", Body: []byte(`{"a":2}`), Insert: 4}})
+	if got.Table != "impressions" || got.Sink != beacon.SinkClickHouse || got.Insert != 4 || string(got.Body) != "{\"a\":1}\n{\"a\":2}" {
+		t.Fatalf("%+v %q", got, got.Body)
 	}
 }

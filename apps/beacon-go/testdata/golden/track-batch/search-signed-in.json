@@ -22,6 +22,12 @@
   },
   "trackerEnabled": true,
   "fallback": "",
+  "sinks": {
+    "impressions": true,
+    "feed": true
+  },
+  "feedSampleRate": 0,
+  "now": 1780003600000,
   "expect": {
     "status": 200,
     "headers": {

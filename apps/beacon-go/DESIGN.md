@@ -134,7 +134,7 @@ Row: `{...actor, ...values}`:
 
 `userAgent` is `req.headers['user-agent'] ?? 'unknown'`.
 
-### 1.4 `/api/track/batch` → tables `search` and `actions`
+### 1.4 `/api/track/batch` → tables `search`, `actions`, `impressions` (and `feedEvents`, never here)
 
 Sources: `src/pages/api/track/batch.ts`, `parseTrackBatch` / `trackBatchEventSchema` /
 `trackSearchSchema` / `trackActionSchema` (`track.schema.ts`), `Tracker.search` / `Tracker.action` /
@@ -161,26 +161,65 @@ Sources: `src/pages/api/track/batch.ts`, `parseTrackBatch` / `trackBatchEventSch
 
 `actor` is pulse's (`userId`, `ip`, `userAgent`), resolved once per batch.
 
-**What beacon-go answers**: a batch whose every element is a `search` or an `action` it parses. It
-answers every 400 of steps 1-2 itself. Everything else falls back WITH THE WHOLE REQUEST, so a batch
-is written by one writer only and is never split or written twice. A batch it answers is queued
-whole: its rows go onto the tracker queue in one all-or-nothing step (`EnqueueAll`, under the
-queue's lock, so two batches cannot both find room and then overflow it), and when the queue cannot
-take every row the request falls back to Node rather than answering 200 for a partly queued batch.
-Once queued, a row can still end `failed` or `dropped` at shutdown (§3), as a Node tracker send can
-fail:
+What the two non-tracker sinks do and write (sources: `Tracker.impressions` / `trackMany` /
+`sendMany` in `tracker.ts`; `hattedImpressionEntities` / `awardViewPoints` in
+`src/server/events/points/hooks.ts` and `awardEventPoints` in `award.ts`; `feedEventsRecorder` in
+`src/server/services/feed-events.service.ts` and `createSampledRowBuffer` in
+`src/server/clickhouse/sampled-row-buffer.ts`):
+
+- **impressions**: one ClickHouse insert per event (`clickhouse.insert`, `JSONEachRow`, the shared
+  client's `async_insert=1, wait_for_async_insert=0`), one row per entity,
+  `{userId, entityType, entityId, sessionKey, surface}` (`skipActorMeta`: no ip, no user agent).
+  Gated on the ClickHouse client existing, not on the tracker. Not retried.
+- **event points for hatted content**: `hattedImpressionEntities` picks the distinct Image / Model /
+  Article entities wearing a hat of a scored event (an in-memory hat map loaded from Redis and
+  followed through a stream), behind the `event-points-engine` Flipt switch; when any, it resolves a
+  `UserWrite`-scoped session and `awardEventPoints` writes Redis dedupe sets, per-owner caps and live
+  totals, a ClickHouse ledger row (`event_point_events`) and a live push.
+- **feed events**: sampled per browser session, `hashToUnit(sessionKey) < rate` with the rate the
+  `feed-events-sample-rate` Flipt variant (`parseSampleRate`, read for 15 s). An unsampled session
+  records nothing and reads nothing. A sampled one resolves the viewer from the session (its
+  `userId`, `memberType` = tier, and `personalHotLead`, a per-user Flipt evaluation), labels the page
+  from the build's page manifest (`pageRouteLabel`), and buffers the row, stamped with the buffer
+  time, for a batched insert into `feedEvents`.
+
+**What beacon-go answers**: a batch whose every element it parses and can write exactly: `search`
+and `action` events (always, when the route is on), `impression` events with
+`BEACON_GO_TRACK_BATCH_SERVE_IMPRESSIONS` on and no scored event's points window open (± 1 h), and
+`feed` events of unsampled sessions with `BEACON_GO_TRACK_BATCH_SERVE_FEED` on and a current reading
+of the sample rate (an unsampled feed event writes nothing, so this service writes nothing for it
+either). It answers every 400 of steps 1-2 itself. Everything else falls back WITH THE WHOLE
+REQUEST, so a batch is written by one writer only and is never split or written twice. A batch it
+answers is queued whole, across both of its writers: its tracker rows and its impression inserts
+are reserved in their queues first (`Reserve`, under each queue's lock), and queued only when both
+reservations hold; when either queue cannot take its share the other is released and the request
+falls back to Node rather than answering 200 for a partly queued batch. Once queued, a row can
+still end `failed` or `dropped` at shutdown (§3), as a Node send can fail:
 
 | reason | when |
 |---|---|
-| `track-impression` | the batch has an `impression` event (a sink this service does not hold) |
-| `track-feed` | the batch has a `feed` event |
+| `track-impression` | the batch has an `impression` event and the impressions sink is off |
+| `track-feed` | the batch has a `feed` event and the feed sink is off |
+| `track-impression-event-points` | an impression names an Image, Model or Article while a scored event's points window (`previewFrom ?? startDate` to `endDate + finalizeAfterMs`, widened by an hour each side) is open: Node may award view points for it, which depends on the hat map in Redis and writes Redis and the ledger; not reproduced |
+| `track-feed-sample-rate` | a feed event, and no current reading of the `feed-events-sample-rate` variant (Flipt not configured, or no successful read in the last minute) |
+| `track-feed-sampled` | a feed event of a sampled session: its row needs the viewer's personal-hot-lead cohort (a per-user Flipt evaluation), the build's page manifest and the recorder's buffer clock; not reproduced |
 | `track-action-unported` | an `Experiment_Exposure` action (its schema reads the experiment registry) |
 | `track-event-invalid` | an element this service's copy of the schema does not accept: Node would drop it, but a value Node has started accepting since the copy was taken would be lost, so Node decides |
 | `disabled` | serve mode with `BEACON_GO_TRACK_BATCH_SERVE` off (§3): every request |
-| `track-queue-full` | serve mode: the batch was computed, but the tracker queue has room for fewer than its rows (or the client is closing); nothing is queued |
+| `track-queue-full` | serve mode: the batch was computed, but the tracker or the insert queue has room for fewer than its rows (or a client is closing); nothing is queued |
 
-When several apply, the first in that order is counted, so the `track-impression` and `track-feed`
-rates are the share of batches carrying one: the measured size of the follow-up ports.
+When several apply, the first in that order is counted. With the two sinks off, the `track-impression`
+and `track-feed` rates are the share of batches carrying one, as before they were ported.
+
+The impression and feed sinks copy their constants too (`internal/beacon/trackbatch_sinks.go`: the
+impression entity types and surfaces, the feed enums and bounds, the point entity types, the scored
+events' windows, the sample-rate flag), pinned by `TestTrackBatchSinkConstants`; `hashToUnit` and
+`parseSampleRate` are pinned by recorded vectors. `gen.ts` also records the zod schemas of every
+event kind as JSON Schema (`z.toJSONSchema`, `io: 'input'`), and `TestTrackBatchSchemas` pins each
+action arm and the search, impression and feed parsers to them key by key (order, required, type,
+enum, bounds, pattern, passthrough), so a field added on the Node side fails a Go test instead of
+being stripped or refused in production. What JSON Schema cannot show (`.trim()`) is not pinned
+there.
 
 The action arms import constants (`USER_MENU_ITEM_IDS`, the app-store and app-telemetry enums, ...);
 `internal/beacon/trackbatch_arms.go` holds copies, pinned by `TestTrackBatchConstants` against
@@ -234,6 +273,15 @@ default off), read in serve mode only: off, the public listener proxies every `/
 request to the Node app unchanged (fallback `disabled`), whatever share of that route the ingress
 sends here. Its shadow compare endpoint runs in either mode and either way, and writes nothing.
 
+Two more switches, each default off and read in serve mode only, and only with the route on, add
+the ported sinks one at a time: `BEACON_GO_TRACK_BATCH_SERVE_IMPRESSIONS` (requires
+`CLICKHOUSE_HOST` and `CLICKHOUSE_USERNAME`, plus `CLICKHOUSE_PASSWORD`: the inserts go straight to
+ClickHouse, as Node's do) and `BEACON_GO_TRACK_BATCH_SERVE_FEED` (requires `FLIPT_URL`, plus
+`FLIPT_FETCHER_SECRET` and `FLIPT_ENVIRONMENT` as Node's client reads them: the sample rate). With
+the route on and both off, the route serves exactly what step 1 served. The shadow comparison
+ignores both switches: it computes every batch with every ported sink, so it measures the whole
+port and says per batch which switches it would need (§4).
+
 `BEACON_GO_MODE=shadow` (default): only the internal listener runs. Nothing is written. The Node
 sampler (below) posts samples; each one is computed and compared.
 
@@ -261,8 +309,13 @@ The sampler is `src/server/beacon/beacon-go-shadow.ts` (payload code in
 `beacon-go-shadow-payload.ts`), behind the Flipt flag **`beacon-go-shadow`** (default off) and
 `BEACON_GO_SHADOW_URL` + `BEACON_GO_SHADOW_SAMPLE_RATE > 0` (ping, pulse) or
 `BEACON_GO_SHADOW_TRACK_BATCH_SAMPLE_RATE > 0` (track-batch, default 0), and only where the Tracker
-would send. A track-batch sample carries the `search` and `actions` rows Node sent (an impression's
-direct insert and a feed row are not tracker sends, and such a batch falls back here anyway).
+would send. A track-batch sample carries every row Node wrote: the `search` and `actions` tracker
+rows, the `impressions` rows (`Tracker.sendMany` reports them through the same `onSend`), the
+`feedEvents` rows the recorder buffered (`capture`), and `hattedViews`, how many entities the handler
+passed to `awardViewPoints` (sent only when above 0). Rows are compared table by table (the sinks
+settle in any order; one table's rows keep the event order). A batch this service answers while Node
+wrote a feed row or awarded view points is a writes mismatch (`writes:count` /
+`write:feedEvents:table`, `points:views`).
 For a sampled request it captures, after the response has finished (and, for pulse, after the
 un-awaited view has settled):
 
@@ -273,6 +326,16 @@ un-awaited view has settled):
   `req.body` as Next left it (a string as is, else its JSON, with `bodyIsString`);
 - Node's response: status, the endpoint-decided headers (`Set-Cookie` redacted), the body;
 - Node's writes: every row `Tracker.send` dispatched, as `JSON.stringify(row)` (`Tracker.onSend`).
+
+**Coverage.** A match ratio over the batches this service answers says nothing about how many it
+answers. Each compared track batch it would answer is also counted in
+`beacon_go_track_batch_answered_total{path="shadow", sinks, result="match"|"mismatch"}`, `sinks`
+naming the optional sinks it needs (`core` = search and action only, `impressions`, `feed`,
+`impressions-feed`); the batches it would not answer are `beacon_go_fallback_total{path="shadow",
+reason}`. The served share a serve configuration would have is the answered batches whose sinks it
+switches on, over every compared batch (`beacon_go_shadow_compare_total{beacon_endpoint="track-batch",
+result!~"dropped|invalid"}`). Serve mode counts the same series with `path="serve",
+result="served"`.
 
 beacon-go rebuilds the request, computes its own response and rows, and compares status, each compared
 header, the body, and the rows byte for byte (count, table, bytes; a differing row is diffed by
@@ -296,7 +359,8 @@ would move ours to `exported_endpoint` (the reason feed-go uses `feed_endpoint`)
 | `internal/beacon` | the two handlers (`Engine.Ping`, `Engine.Pulse`) and everything they reproduce |
 | `internal/jsvalue` | JSON.parse / JSON.stringify / Number / trim / UTF-8 decode, with JS semantics |
 | `internal/shadow` | sample decoding and the comparison |
-| `internal/tracker` | the bounded fire-and-forget tracker client |
+| `internal/tracker` | the bounded fire-and-forget tracker client, and the same client as the direct ClickHouse insert (`NewClickHouse`, the impressions) |
+| `internal/flipt` | the feed events sample rate, read from Flipt in the background (`Rate`) |
 | `internal/server` | listeners, routes, metrics, the shadow intake |
 | `internal/auth`, `internal/hydrate`, `internal/sysredis`, `internal/safe`, `internal/fallback`, `internal/testkit` | copied from feed-go (session JWT verification, revocation, the session cache read, the system-redis client, panic recovery, fallback errors, the Redis fake), cut down to what the beacons need; not imported across apps |
 | `internal/golden` | the golden-fixture loader (tests only) |
@@ -315,6 +379,9 @@ the repo root with `pnpm exec tsx --tsconfig tsconfig.json apps/beacon-go/testda
 All fixture data is synthetic.
 
 ## 7. Deployment needs
+
+Outbound, beyond step 1: ClickHouse's HTTP interface (serve mode with the impressions sink only)
+and the Flipt server (whenever `FLIPT_URL` is set, shadow mode included, to read the sample rate).
 
 Ports: 8080 (public, serve mode only), 9090 (internal: `/metrics`, `/healthz`,
 `/internal/shadow/api/internal/{ping,pulse}`, `/internal/shadow/api/track/batch`). Env vars: see `.env.example`. Resource guess: CPU
