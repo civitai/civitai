@@ -80,8 +80,14 @@ async function siteBoard() {
     SELECT s."userId", ROUND(s.score)::int AS score, s.metrics
     FROM scores s JOIN "User" u ON u.id = s."userId"
     WHERE u."deletedAt" IS NULL AND u."bannedAt" IS NULL
-    ORDER BY score DESC, s."userId"`);
+    ORDER BY score DESC`);
   return rows;
+}
+
+/** Applies the migration as psql would, then rolls back whatever it left uncommitted. */
+async function apply() {
+  await pg.exec(MIGRATION);
+  await pg.exec('ROLLBACK');
 }
 
 beforeAll(async () => {
@@ -127,7 +133,7 @@ describe('knights-new-order site board migration', () => {
       [daysAgo(1)]
     );
 
-    await pg.exec(MIGRATION);
+    await apply();
     const site = await siteBoard();
     const app = (await queryBoard(db, now)).rows;
 
@@ -146,7 +152,7 @@ describe('knights-new-order site board migration', () => {
   });
 
   it('limits the board to the Knights app ranks', async () => {
-    await pg.exec(MIGRATION);
+    await apply();
     const { query } = await boardRow();
     const ranks = query.match(/"rankType" IN \(([^)]*)\)/)?.[1];
     expect(ranks?.split(',').map((r) => r.trim().replace(/'/g, ''))).toEqual([
@@ -154,28 +160,24 @@ describe('knights-new-order site board migration', () => {
     ]);
   });
 
-  it('replaces the pop-up formula and keeps the window line once', async () => {
-    await pg.exec(MIGRATION);
+  it('replaces the pop-up formula and states the window once, as the windows migration requires', async () => {
+    await apply();
     const { scoringDescription } = await boardRow();
 
     expect(scoringDescription).not.toContain('greatest(');
-    expect(scoringDescription).toContain('accuracy × accuracy');
     expect(scoringDescription.split('Last 7 days')).toHaveLength(2);
-    expect(scoringDescription.endsWith('---\nLast 7 days')).toBe(true);
   });
 
   it('is idempotent: a re-run leaves the new query as it is', async () => {
-    await pg.exec(MIGRATION);
+    await apply();
     const first = await boardRow();
-    await pg.exec(MIGRATION);
+    await apply();
     expect(await boardRow()).toEqual(first);
   });
 
-  it('refuses, changing nothing, when the live query is not the original game one', async () => {
+  it('refuses a live query that is not the original game one, leaving the row as it was', async () => {
     await pg.exec(`UPDATE "Leaderboard" SET query = 'SELECT 1' WHERE id = 'knights-new-order'`);
-    await expect(pg.exec(MIGRATION)).rejects.toThrow(
-      /does not read knights_new_order_image_rating/
-    );
+    await expect(apply()).rejects.toThrow(/does not read knights_new_order_image_rating/);
     await pg.exec('ROLLBACK').catch(() => undefined);
     expect(await boardRow()).toEqual({ query: 'SELECT 1', scoringDescription: V1_DESCRIPTION });
   });

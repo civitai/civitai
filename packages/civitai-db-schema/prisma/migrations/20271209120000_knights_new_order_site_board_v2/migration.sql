@@ -10,7 +10,7 @@
 -- the app's own board (apps/knights/src/lib/server/leaderboard.ts queryBoard): Knight rank and above, settled
 -- correct or failed votes cast in the last 7 days and after the player's startAt, fervor above 0. The job itself
 -- drops banned, deleted and excluded accounts. Accuracy below 10% counts as 10%, which makes fervor = correct.
--- c^3 * 100 / g^2 is integer division, so it floors exactly as the app does.
+-- div() of c^3 * 100 by g^2 in numeric floors exactly, as the app's BigInt division does, at any volume.
 --
 -- Fails closed: it replaces the query only when the live one still reads the original game's table, and RAISEs,
 -- changing nothing, on any other text. Idempotent: a re-run finds the new text and changes nothing.
@@ -23,7 +23,7 @@ DECLARE
   t."userId",
   CASE
     WHEN t.correct * 10 < t.graded THEN t.correct
-    ELSE (t.correct * t.correct * t.correct * 100) / (t.graded * t.graded)
+    ELSE div(t.correct::numeric * t.correct * t.correct * 100, t.graded::numeric * t.graded)
   END AS score,
   jsonb_build_object('correctJudgments', t.correct, 'allJudgments', t.graded) AS metrics
 FROM (
