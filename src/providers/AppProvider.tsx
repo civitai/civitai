@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useMemo, useState } from 'react';
+import type { AppFrameDomains } from '~/shared/constants/app-frame-hosts.constants';
 import type { UserContentSettings } from '~/server/schema/user.schema';
 import type { UserSettingsChat } from '~/server/schema/chat.schema';
 import type { TosMeta } from '~/server/services/content.service';
@@ -62,7 +63,7 @@ type AppProviderProps = {
   host: string;
   serverDomains: ServerDomains;
   /** App Block frame roots (`~/server/utils/app-frame-domains`); absent when the boot had no server props. */
-  appFrameDomains?: string[];
+  appFrameDomains?: AppFrameDomains;
   availableOAuthProviders: string[];
   verifiedBot: VerifiedBot | null;
   // Whether the request is from a logged-in user (`!!session || hasAuthCookie`,
@@ -94,7 +95,7 @@ type AppContext = {
   host: string;
   serverDomains: ServerDomains;
   /** Read only through `useAppFrameOriginPolicy`. */
-  appFrameDomains?: string[];
+  appFrameDomains?: AppFrameDomains;
   availableOAuthProviders: string[];
   verifiedBot: VerifiedBot | null;
   announcements?: AnnouncementsSeed;

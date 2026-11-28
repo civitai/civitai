@@ -1,3 +1,8 @@
+import {
+  DEV_HOST_LABEL_REGEX,
+  PREVIEW_LABEL_SHAPE,
+} from '~/shared/constants/app-frame-hosts.constants';
+
 // Client-side iframe sandbox derivation for App Blocks. Kept in its own
 // module (no React/Mantine imports) so it can be unit-tested in isolation
 // — same pattern as openBuzzPurchaseGate / sortInstallsForSlot.
@@ -27,13 +32,11 @@ export const TRUSTED_TIERS: ReadonlySet<string> = new Set(['internal', 'verified
  * transport mode cannot change under a frame that is already loaded.
  */
 export type AppFrameOriginPolicy = {
-  /**
-   * The roots whose one-label subdomains hold app frames: the apps domain (published
-   * apps and dev tunnels) and the App Assistant preview domain. A root that is not a
-   * dotted name, or that is the embedding host or one of its parents, is ignored.
-   */
-  domains: readonly string[];
-  /** The embedding page's own host. A frame on it, or under it, never gets a real origin. */
+  /** `APPS_DOMAIN`: published apps (`<blockId>.<root>`) and dev tunnels (`dev-<16 hex>.<root>`). */
+  appsDomain: string | null;
+  /** `APP_ASSISTANT_PREVIEW_DOMAIN`: App Assistant preview session hosts. */
+  previewDomain: string | null;
+  /** The embedding page's own host. No root on its site is honoured. */
   embedderHost: string;
   /** The viewer's `appBlocksSameOriginFrames` flag. Unverified frames need it. */
   unverifiedEnabled: boolean;
@@ -42,21 +45,56 @@ export type AppFrameOriginPolicy = {
 /** The DNS label prefix of moderator review hosts (`review-<sha16>.<apps domain>`). */
 export const REVIEW_HOST_LABEL_PREFIX = 'review-';
 
-function normaliseRoot(root: string): string {
-  return root
+/** A shared-storage scope: cross-user content the app renders (see GATE-2, `shared-content-safety.ts`). */
+const SHARED_STORAGE_SCOPE_PREFIX = 'apps:storage:shared:';
+
+function normaliseHost(host: string): string {
+  return host
     .trim()
     .toLowerCase()
     .replace(/^\.+|\.+$/g, '');
 }
 
 /**
- * Is `src` on an app-frame host: `https:`, no port, no credentials, and a hostname
- * that is exactly ONE label under one of `policy.domains`, not a review host, and not
- * the embedding host or a parent of it. Pure, no DOM. A root equal to the embedding
- * host or a parent of it (e.g. a misconfigured `civitai.com`) is dropped, because a
- * real-origin frame under the embedder's own site reads its domain cookies.
+ * A configured root, or `null` when it may not be honoured: not a dotted name, or on the
+ * embedding page's own site (the site is approximated as its last two labels, which holds
+ * for every Civitai site). A real-origin frame on the embedder's
+ * site would be same-site with it and read its domain cookies.
  */
-export function isAppFrameHost(src: string | undefined, policy: AppFrameOriginPolicy): boolean {
+function usableRoot(raw: string | null, embedder: string): string | null {
+  if (!raw) return null;
+  const root = normaliseHost(raw);
+  if (!root.includes('.')) return null;
+  const site = embedder.split('.').slice(-2).join('.');
+  // (A dotted parent of a two-label site cannot exist, so "a parent of it" needs no check.)
+  if (root === site || root.endsWith(`.${site}`)) return null;
+  return root;
+}
+
+/**
+ * What precedes `.<root>` in `host`, or `null` when `host` is not under it. Not checked
+ * for being ONE label: every caller compares it against a dot-free shape (a blockId, the
+ * anchored dev / preview label patterns), so a deeper or empty prefix never matches.
+ */
+function labelUnder(host: string, root: string | null): string | null {
+  if (!root || !host.endsWith(`.${root}`)) return null;
+  return host.slice(0, -(root.length + 1));
+}
+
+/**
+ * Is `src` THIS app's frame host: `https:`, no port, no credentials, and a hostname that is
+ * exactly one label under a usable root, where that label is
+ *  - under `appsDomain`: the app's own `blockId` (its published host) or a dev tunnel label;
+ *    never a review host;
+ *  - under `previewDomain`: an App Assistant preview session label.
+ * Tying the published label to the app's own id keeps one app from being framed at another
+ * app's origin and reading its storage. Pure, no DOM.
+ */
+export function isAppFrameHost(
+  src: string | undefined,
+  appLabel: string | undefined,
+  policy: AppFrameOriginPolicy
+): boolean {
   if (!src) return false;
   let url: URL;
   try {
@@ -67,23 +105,17 @@ export function isAppFrameHost(src: string | undefined, policy: AppFrameOriginPo
   if (url.protocol !== 'https:' || url.port !== '' || url.username || url.password) return false;
   // `URL` has already lowercased the hostname.
   const host = url.hostname;
-  const embedder = normaliseRoot(policy.embedderHost.split(':')[0] ?? '');
+  const embedder = normaliseHost(policy.embedderHost.split(':')[0] ?? '');
   if (!embedder) return false;
-  for (const raw of policy.domains) {
-    const root = normaliseRoot(raw);
-    if (!root.includes('.')) continue;
-    // A root that is the embedder or a parent of it is skipped. That one check is also what
-    // keeps a frame off the embedder itself and off its parents: such a host is one label
-    // under a root only if the embedder is under that root too.
-    if (embedder === root || embedder.endsWith(`.${root}`)) continue;
-    const suffix = `.${root}`;
-    if (!host.endsWith(suffix)) continue;
-    const label = host.slice(0, -suffix.length);
-    if (!label || label.includes('.')) continue;
-    if (label.startsWith(REVIEW_HOST_LABEL_PREFIX)) continue;
-    return true;
+  const appsLabel = labelUnder(host, usableRoot(policy.appsDomain, embedder));
+  if (appsLabel !== null) {
+    if (appsLabel.startsWith(REVIEW_HOST_LABEL_PREFIX)) return false;
+    return (
+      DEV_HOST_LABEL_REGEX.test(appsLabel) || (!!appLabel && appsLabel === appLabel.toLowerCase())
+    );
   }
-  return false;
+  const previewLabel = labelUnder(host, usableRoot(policy.previewDomain, embedder));
+  return previewLabel !== null && PREVIEW_LABEL_SHAPE.test(previewLabel);
 }
 
 /**
@@ -96,22 +128,39 @@ export function isAppFrameHost(src: string | undefined, policy: AppFrameOriginPo
  *    one never gets it. Nothing below applies.
  *  - A review mount (`reviewMode`) never gets it: pending code runs in a moderator's tab.
  *    (The review host also forces `unverified`, so this matters for every tier.)
- *  - `unverified`: only with the viewer flag on and `src` on an app-frame host.
- *  - `verified` / `internal`: only on an app-frame host; the flag is not read.
+ *  - `unverified`: only with the viewer flag on, `src` on the app's own frame host, and no
+ *    shared-storage scope declared (GATE-2 in `shared-content-safety.ts`: shared content
+ *    is contained by the opaque origin until a structural pin exists).
+ *  - `verified` / `internal`: only on the app's own frame host; the flag is not read.
  */
 export function mayGrantSameOrigin(args: {
   src: string | undefined;
   trustTier: string;
+  appLabel?: string;
+  scopes?: readonly string[];
   reviewMode?: boolean;
   policy: AppFrameOriginPolicy | null;
 }): boolean {
-  const { src, trustTier, reviewMode, policy } = args;
+  const { src, trustTier, appLabel, scopes, reviewMode, policy } = args;
   const trusted = TRUSTED_TIERS.has(trustTier);
   if (policy === null) return trusted;
   if (reviewMode) return false;
-  if (trusted) return isAppFrameHost(src, policy);
-  return policy.unverifiedEnabled && isAppFrameHost(src, policy);
+  if (trusted) return isAppFrameHost(src, appLabel, policy);
+  if (!policy.unverifiedEnabled) return false;
+  if ((scopes ?? []).some((scope) => scope.startsWith(SHARED_STORAGE_SCOPE_PREFIX))) return false;
+  return isAppFrameHost(src, appLabel, policy);
 }
+
+/** What a host knows about the frame it is about to render. */
+export type AppFrameDescriptor = {
+  src: string | undefined;
+  /** The app's `blockId`, whose published host is `<blockId>.<APPS_DOMAIN>`. */
+  appLabel?: string;
+  /** The scopes the manifest declares. */
+  scopes?: readonly string[];
+  reviewMode?: boolean;
+  policy: AppFrameOriginPolicy | null;
+};
 
 // Minimal safe sandbox: just enough for a block to execute its own bundle,
 // and nothing that widens its reach over the embedding page or the user
@@ -133,7 +182,7 @@ export const MINIMAL_SANDBOX: ReadonlyArray<string> = ['allow-scripts'];
 export function intersectSandbox(
   raw: string | undefined,
   trustTier: string,
-  frame?: { src: string | undefined; reviewMode?: boolean; policy: AppFrameOriginPolicy | null }
+  frame?: AppFrameDescriptor
 ): string {
   const declared = (raw ?? '').split(/\s+/).filter((t) => ALLOWED_SANDBOX_TOKENS.has(t));
   const tokens = new Set<string>(MINIMAL_SANDBOX);
@@ -141,6 +190,8 @@ export function intersectSandbox(
   const grant = mayGrantSameOrigin({
     src: frame?.src,
     trustTier,
+    appLabel: frame?.appLabel,
+    scopes: frame?.scopes,
     reviewMode: frame?.reviewMode,
     policy: frame?.policy ?? null,
   });

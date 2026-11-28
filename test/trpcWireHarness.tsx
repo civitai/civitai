@@ -102,7 +102,7 @@ export function renderWithTrpcWire(
     viewer: WireViewer;
     flags: Partial<FeatureAccess>;
     /** `_app`'s App Block frame roots; omitted, the provider carries none (as a tab with no server props). */
-    appFrameDomains?: string[];
+    appFrameDomains?: { appsDomain: string | null; previewDomain: string | null };
   }
 ) {
   const session: Session = {

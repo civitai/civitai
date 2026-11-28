@@ -1418,10 +1418,12 @@ export function PageBlockHost({
     () =>
       intersectSandbox(sandbox, trustTier, {
         src: entrySrc,
+        appLabel: blockId,
+        scopes: declaredScopes,
         reviewMode: !!reviewMode,
         policy: frameOriginPolicy,
       }),
-    [sandbox, trustTier, entrySrc, reviewMode, frameOriginPolicy]
+    [sandbox, trustTier, entrySrc, blockId, declaredScopes, reviewMode, frameOriginPolicy]
   );
   const opaqueOrigin = useMemo(
     () => effectiveSandboxIsOpaque(effectiveSandbox),

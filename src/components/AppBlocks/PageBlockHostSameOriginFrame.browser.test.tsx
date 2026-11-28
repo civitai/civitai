@@ -57,7 +57,7 @@ const props = {
 async function renderedSandbox(opts: {
   flagOn: boolean;
   reviewMode?: boolean;
-  appFrameDomains?: string[];
+  appFrameDomains?: { appsDomain: string | null; previewDomain: string | null };
 }): Promise<string> {
   wire = installTrpcWire({});
   const screen = await renderWithTrpcWire(
@@ -68,7 +68,10 @@ async function renderedSandbox(opts: {
     {
       viewer: { id: 42, username: 'tester' },
       flags: opts.flagOn ? { appBlocksSameOriginFrames: true } : {},
-      appFrameDomains: 'appFrameDomains' in opts ? opts.appFrameDomains : [APPS_ROOT],
+      appFrameDomains:
+        'appFrameDomains' in opts
+          ? opts.appFrameDomains
+          : { appsDomain: APPS_ROOT, previewDomain: null },
     }
   );
   const iframe = page.getByTestId('app-page-iframe');
@@ -192,7 +195,7 @@ async function slotSandbox(flagOn: boolean): Promise<string> {
     {
       viewer: { id: 42, username: 'tester' },
       flags: flagOn ? { appBlocksSameOriginFrames: true } : {},
-      appFrameDomains: [APPS_ROOT],
+      appFrameDomains: { appsDomain: APPS_ROOT, previewDomain: null },
     }
   );
   const iframe = page.getByTestId('block-iframe');

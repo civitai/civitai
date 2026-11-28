@@ -354,11 +354,14 @@ its REAL origin, `https://<slug>.<APPS_DOMAIN>` for a published app,
   `src/components/AppBlocks/sandbox.ts`, the one rule every host uses) for
   `verified`/`internal`, and for `unverified` only with the viewer's
   `appBlocksSameOriginFrames` flag on — and in every case only when
-  `iframe.src` is `https:`, has no port, and its host is one label under
-  `APPS_DOMAIN` or `APP_ASSISTANT_PREVIEW_DOMAIN`. Never for a review host
+  `iframe.src` is `https:`, has no port, and its host is the app's OWN frame
+  host: `<blockId>.<APPS_DOMAIN>`, a dev tunnel `dev-<16 hex>.<APPS_DOMAIN>`,
+  or an App Assistant preview session host under `APP_ASSISTANT_PREVIEW_DOMAIN`
+  (so an app is never framed at another app's origin). Never for a review host
   (`review-<sha16>`, and every review mount is refused by `reviewMode` whatever
-  its host), never for the embedding site or a host under it. See "Frame origin
-  and storage" below.
+  its host), never under a root on the embedding site. An unverified app that
+  declares an `apps:storage:shared:*` scope stays opaque even with the flag on
+  (GATE-2, `shared-content-safety.ts`). See "Frame origin and storage" below.
 - **CORS** on `/api/v1/block-tokens` is same-origin only (exact-host
   match). Block iframes never call this endpoint; the host page fetches
   and passes the token via `BLOCK_INIT`.

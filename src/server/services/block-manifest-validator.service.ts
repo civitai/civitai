@@ -370,10 +370,12 @@ const HEIGHT_MAX_CEILING = 4000;
 // A manifest still cannot DECLARE allow-same-origin below `internal`. The host adds it
 // itself (`mayGrantSameOrigin`, src/components/AppBlocks/sandbox.ts) for a trusted tier,
 // or for an unverified frame with the viewer's `appBlocksSameOriginFrames` flag on, and
-// only when `iframe.src` is https, portless and one label under the apps or App Assistant
-// preview domain (never a review host, never the embedding site). That host check is what
-// keeps the grant off a JOB_TOKEN manifest's src: that path binds `iframe.src` to the
-// client's `allowedOrigins` below rather than stamping the canonical one.
+// only when `iframe.src` is https, portless and the app's OWN frame host: `<its blockId>`
+// or a dev tunnel label under the apps domain, or a preview session label under the App
+// Assistant preview domain (never a review host, never a root on the embedding site).
+// That host check is what keeps the grant off a JOB_TOKEN manifest's src: that path binds
+// `iframe.src` to the client's `allowedOrigins` below rather than stamping the canonical
+// one, so such a src can name another app's host, which gets no grant.
 const SANDBOX_ALLOWLIST: Record<'unverified' | 'verified' | 'internal', Set<string>> = {
   // M-POPUPS (audit medium / app-exploits-user): `allow-popups` is dropped from
   // the unverified tier. With it, any approved-but-unverified block could

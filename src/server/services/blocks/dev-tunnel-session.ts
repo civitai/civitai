@@ -57,7 +57,7 @@ const ENTRY_DOMAIN_PREFIX = 'dev-tunnel-mr:v1';
  *  route iframeSrc derivation, and the gate all validate the SAME shape. The
  *  16-hex (64-bit) random makes the host itself an unguessable secret on top of
  *  the entry-token gate (defence for T1). */
-export const DEV_HOST_LABEL_REGEX = /^dev-[a-f0-9]{16}$/;
+export { DEV_HOST_LABEL_REGEX } from '~/shared/constants/app-frame-hosts.constants';
 
 /** Full-host regex `^dev-<16hex>\.<escaped-domain>$`. Server-derives + validates
  *  the iframeSrc host (T6: never reflect a client-supplied URL). */

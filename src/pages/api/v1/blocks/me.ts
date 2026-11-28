@@ -42,7 +42,8 @@ import { appRateLimitMeta, sendAppRateLimited } from '~/server/utils/app-rate-li
  *
  * CORS: handled in withBlockScope. An allowlisted origin is echoed, and so is an opaque
  * `Origin: null` (`allowOpaqueOrigin`): unverified blocks are sandboxed without
- * `allow-same-origin`, so their direct `fetch` sends `Origin: null`. That is safe here
+ * `allow-same-origin` unless the viewer's `appBlocksSameOriginFrames` flag is on, so
+ * their direct `fetch` sends `Origin: null`. That is safe here
  * because the Bearer block JWT is the only credential this route reads.
  *
  * ## THIS ROUTE AND `blocks.getMyViewer` ARE TWO FRONT DOORS TO ONE CAPABILITY

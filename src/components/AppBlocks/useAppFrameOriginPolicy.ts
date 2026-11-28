@@ -18,9 +18,10 @@ export function useAppFrameOriginPolicy(): AppFrameOriginPolicy | null {
   const app = useMaybeAppContext();
   const features = useOptionalFeatureFlags();
   const [policy] = useState<AppFrameOriginPolicy | null>(() => {
-    if (!app || !Array.isArray(app.appFrameDomains)) return null;
+    if (!app?.appFrameDomains) return null;
     return {
-      domains: app.appFrameDomains,
+      appsDomain: app.appFrameDomains.appsDomain,
+      previewDomain: app.appFrameDomains.previewDomain,
       embedderHost: app.host ?? '',
       unverifiedEnabled: features?.appBlocksSameOriginFrames === true,
     };

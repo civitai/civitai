@@ -1,5 +1,6 @@
 import { createHash, createHmac } from 'node:crypto';
 import { base32Decode, base32Encode } from '~/server/utils/base32';
+import { PREVIEW_LABEL_SHAPE } from '~/shared/constants/app-frame-hosts.constants';
 
 /**
  * App Assistant direct preview: the SESSION HOST civitai mints for one preview session, and the
@@ -27,7 +28,7 @@ const SIGNED_BYTES = 26;
 const MAC_BYTES = 12;
 /** The full DNS label: "s" + 61 base32 characters, inside the 63-character label limit. */
 export const PREVIEW_LABEL_LENGTH = 62;
-const LABEL_SHAPE = /^s[a-z2-7]{61}$/;
+const LABEL_SHAPE = PREVIEW_LABEL_SHAPE;
 export const PREVIEW_ID_REGEX = /^[0-9a-f]{32}$/;
 const MAX_USER_ID = 2 ** 40 - 1;
 

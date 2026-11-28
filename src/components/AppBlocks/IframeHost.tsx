@@ -1477,9 +1477,18 @@ export function IframeHost({
     () =>
       intersectSandbox(install.manifest.iframe?.sandbox, install.trustTier, {
         src: baseIframeSrc,
+        appLabel: install.blockId,
+        scopes: install.manifest.scopes,
         policy: frameOriginPolicy,
       }),
-    [install.manifest.iframe?.sandbox, install.trustTier, baseIframeSrc, frameOriginPolicy]
+    [
+      install.manifest.iframe?.sandbox,
+      install.trustTier,
+      baseIframeSrc,
+      install.blockId,
+      install.manifest.scopes,
+      frameOriginPolicy,
+    ]
   );
   const opaqueOrigin = useMemo(
     () => effectiveSandboxIsOpaque(effectiveSandbox),

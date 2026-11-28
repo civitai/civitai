@@ -125,6 +125,7 @@ import { applyNodeOverrides } from '~/utils/node-override';
 import type { RegionInfo } from '~/server/utils/region-blocking';
 import { getRegion } from '~/server/utils/region-blocking';
 import type { ColorDomain, ServerDomains } from '~/shared/constants/domain.constants';
+import type { AppFrameDomains } from '~/shared/constants/app-frame-hosts.constants';
 import { getSiteSchema } from '~/components/Meta/site-schema';
 import { parseVerifiedBotHeader, VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
 import type { VerifiedBot } from '~/server/utils/bot-detection/verify-bot';
@@ -185,7 +186,7 @@ type CustomAppProps = {
   domain: ColorDomain;
   host: string;
   serverDomains: ServerDomains;
-  appFrameDomains?: string[];
+  appFrameDomains?: AppFrameDomains;
   availableOAuthProviders: string[];
   verifiedBot: VerifiedBot | null;
   adsGated?: boolean;
@@ -560,7 +561,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   }
   // The App Block frame roots (`~/server/utils/app-frame-domains`): per-deployment server env,
   // read per request rather than frozen into the client bundle. Same for every viewer.
-  let appFrameDomains: string[] = [];
+  let appFrameDomains: AppFrameDomains = { appsDomain: null, previewDomain: null };
   if (typeof window === 'undefined') {
     const { getAppFrameDomains } = await import('~/server/utils/app-frame-domains');
     appFrameDomains = getAppFrameDomains();
