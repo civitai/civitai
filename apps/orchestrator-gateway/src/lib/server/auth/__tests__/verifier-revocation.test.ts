@@ -17,14 +17,17 @@ const h = await vi.hoisted(async () => {
     hGet: (async () => null) as (key: string, field: string) => Promise<string | null>,
     get: (async () => null) as (key: string) => Promise<string | null>,
   };
-  return { kp, store, degraded: [] as string[] };
+  return { kp, store, degraded: [] as string[], sysRedis: true };
 });
 
 vi.mock('../../clients/redis', () => ({
-  getSysRedis: () => ({
-    hGet: (k: string, f: string) => h.store.hGet(k, f),
-    get: (k: string) => h.store.get(k),
-  }),
+  getSysRedis: () =>
+    h.sysRedis
+      ? {
+          hGet: (k: string, f: string) => h.store.hGet(k, f),
+          get: (k: string) => h.store.get(k),
+        }
+      : null,
 }));
 vi.mock('../../metrics', () => ({
   revocationDegradedTotal: { inc: ({ verdict }: { verdict: string }) => h.degraded.push(verdict) },
@@ -53,7 +56,19 @@ afterEach(() => {
   h.store.hGet = async () => null;
   h.store.get = async () => null;
   h.degraded.length = 0;
+  h.sysRedis = true;
 });
+
+// A session token with no jti, signed with the same key: the registry answers it without a read.
+const mintWithoutJti = async (extra: Record<string, unknown>) => {
+  const { SignJWT, importPKCS8 } = await import('jose');
+  return new SignJWT({ user: { id: 7 }, signedAt: Date.now(), ...extra })
+    .setProtectedHeader({ alg: 'ES256', kid: 'k1', typ: 'JWT' })
+    .setIssuedAt()
+    .setExpirationTime(Math.floor(Date.now() / 1000) + 3600)
+    .setIssuer('https://auth.test')
+    .sign(await importPKCS8(h.kp.privateKey, 'ES256'));
+};
 
 describe('gateway verifier revocation check', () => {
   it('a session it has read as revoked stays refused when the store then fails', async () => {
@@ -91,5 +106,23 @@ describe('gateway verifier revocation check', () => {
     // The read fails: the elevated session is refused, the ordinary one keeps the fail-open policy.
     await expect(verifier.verifyToken(impersonation)).resolves.toBeNull();
     await expect(verifier.verifyToken(plain)).resolves.toMatchObject({ jti: 'jti-plain' });
+  });
+
+  it('an impersonation session without a jti is refused (nothing confirms it)', async () => {
+    const impersonation = await mintWithoutJti({ impersonatedBy: 99, impExp: Date.now() + 600_000 });
+    const plain = await mintWithoutJti({});
+    await expect(verifier.verifyToken(impersonation)).resolves.toBeNull();
+    // Control: the same jti-less shape without impersonation is accepted.
+    await expect(verifier.verifyToken(plain)).resolves.toMatchObject({ user: { id: 7 } });
+  });
+
+  it('with no sys redis configured, an impersonation session is refused and a plain one accepted', async () => {
+    const impersonation = await mint('jti-imp-noredis', { impersonatedBy: 99, impExp: Date.now() + 600_000 });
+    const plain = await mint('jti-plain-noredis');
+    h.sysRedis = false;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await expect(verifier.verifyToken(impersonation)).resolves.toBeNull();
+    await expect(verifier.verifyToken(plain)).resolves.toMatchObject({ jti: 'jti-plain-noredis' });
+    warn.mockRestore();
   });
 });
