@@ -227,6 +227,52 @@ func TestLoadGetAllServeHidePaidDefaultsOff(t *testing.T) {
 	}
 }
 
+// The `newCreators` and published-range ports of model.getAll are each their own switch, off by
+// default: no other switch (the route's, another port's) turns one on.
+func TestLoadGetAllServeNewCreatorsPublishedRangeDefaultsOff(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	switches := []struct {
+		env  string
+		read func(*Config) bool
+	}{
+		{"FEED_GO_GETALL_SERVE_INPUT_NEW_CREATORS", func(c *Config) bool { return c.GetAllServeInputNewCreators }},
+		{"FEED_GO_GETALL_SERVE_INPUT_PUBLISHED_RANGE", func(c *Config) bool { return c.GetAllServeInputPublishedRange }},
+	}
+	for _, sw := range switches {
+		for in, want := range map[string]bool{"": false, "false": false, "junk": false, "true": true, "1": true} {
+			t.Setenv(sw.env, in)
+			c, err := Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := sw.read(c); got != want {
+				t.Errorf("%s=%q -> %v, want %v", sw.env, in, got, want)
+			}
+		}
+		t.Setenv(sw.env, "")
+	}
+	// Each its own switch: the route's, the older ports' and the other's do not turn it on.
+	t.Setenv("FEED_GO_SERVE_MODEL_GETALL", "true")
+	t.Setenv("FEED_GO_GETALL_SERVE_INPUT_IDS", "true")
+	t.Setenv("FEED_GO_GETALL_SERVE_INPUT_FOLLOWED", "true")
+	t.Setenv("FEED_GO_GETALL_SERVE_HIDE_PAID", "true")
+	t.Setenv("FEED_GO_SERVE_INFINITE", "true")
+	for i, sw := range switches {
+		for j, other := range switches {
+			if j != i {
+				t.Setenv(other.env, "true")
+			} else {
+				t.Setenv(other.env, "")
+			}
+		}
+		if c, err := Load(); err != nil || sw.read(c) {
+			t.Errorf("every other switch on: %s read %v (err %v), want false", sw.env, c != nil && sw.read(c), err)
+		}
+	}
+}
+
 func TestLoadServeInfiniteDefaultsOff(t *testing.T) {
 	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
 		t.Setenv(k, "x://"+k)

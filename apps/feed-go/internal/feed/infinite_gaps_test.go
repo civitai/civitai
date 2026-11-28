@@ -488,6 +488,16 @@ func TestNewCreatorBoards(t *testing.T) {
 	}
 }
 
+// getNewCreatorBoardId('models', domain): the models boards are their own (new_creators, and
+// new_creators-red for red), never the images ones.
+func TestNewCreatorModelBoardID(t *testing.T) {
+	for color, want := range map[string]string{"red": "new_creators-red", "blue": "new_creators", "green": "new_creators", "": "new_creators"} {
+		if got := NewCreatorModelBoardID(color); got != want {
+			t.Errorf("%q: %q, want %q", color, got, want)
+		}
+	}
+}
+
 // newCreatorsFixture is newInfFixture with both boards cached fresh and the addons holding an entry
 // scoped to the boards.
 func newCreatorsFixture(t *testing.T, sfw, red []any) *infFixture {

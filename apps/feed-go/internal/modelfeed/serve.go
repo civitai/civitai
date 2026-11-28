@@ -49,6 +49,12 @@ type Sources interface {
 	OfficialModels(ctx context.Context) ([]hydrate.OfficialModel, error)
 }
 
+// NewCreatorBoards reads a "new & upcoming" board's creator ids (implemented by
+// *feed.NewCreatorBoards: a fresh cached entry, else a fallback).
+type NewCreatorBoards interface {
+	UserIDs(ctx context.Context, boardID string) ([]int, error)
+}
+
 // Gallery reads the cached gallery settings the showcase hold reads (implemented by
 // *feed.GalleryStore).
 type Gallery interface {
@@ -91,8 +97,11 @@ type Deps struct {
 	Addons func(context.Context) []browsing.Addon
 	// Blocked is the blocked browsing tag list, shared with image.getInfinite (one memo, as in Node).
 	Blocked *feed.BlockedTags
-	Config  Config
-	Now     func() time.Time
+	// NewCreators reads the "new & upcoming" boards `newCreators` filters by (nil: such a request
+	// falls back, `new-creators-unconfigured`).
+	NewCreators NewCreatorBoards
+	Config      Config
+	Now         func() time.Time
 }
 
 // Viewer is the session user; nil in a Request when signed out or banned.
@@ -108,6 +117,9 @@ type Request struct {
 	Viewer *Viewer
 	// Cap is the domain cap (browsing.DomainCap); 0 = uncapped.
 	Cap int
+	// BoardColor is the request's board color (getRequestBoardDomainColor): which "new & upcoming"
+	// board `newCreators` reads.
+	BoardColor string
 }
 
 // Answer is one computed answer.
@@ -149,8 +161,10 @@ func Serve(ctx context.Context, d *Deps, req Request) (*Answer, error) {
 	}
 	var pinned []any
 	loaded := false
+	// One board read for the whole request, made where the first page reaches it.
+	board := &newCreatorsRead{color: req.BoardColor}
 	if len(pinnedIDs) > 0 && in.Cursor == "" {
-		page, err := servePage(ctx, d, in, level, "", req.Viewer, now, pageScope{take: len(pinnedIDs), only: pinnedIDs})
+		page, err := servePage(ctx, d, in, level, "", req.Viewer, now, pageScope{take: len(pinnedIDs), only: pinnedIDs, board: board})
 		if err != nil {
 			return nil, err
 		}
@@ -161,7 +175,7 @@ func Serve(ctx context.Context, d *Deps, req Request) (*Answer, error) {
 	cursor := in.Cursor
 	var results []any
 	for loop := 0; len(results) < in.Limit && loop < maxLoops; {
-		page, err := servePage(ctx, d, in, level, cursor, req.Viewer, now, pageScope{take: in.Limit, exclude: pinnedIDs})
+		page, err := servePage(ctx, d, in, level, cursor, req.Viewer, now, pageScope{take: in.Limit, exclude: pinnedIDs, board: board})
 		if err != nil {
 			return nil, err
 		}
@@ -182,10 +196,37 @@ func Serve(ctx context.Context, d *Deps, req Request) (*Answer, error) {
 }
 
 // pageScope is what one getModelsWithImagesAndModelVersions call of getModelsFeed varies: its take
-// (`limit`), and the pin's onlyModelIds / excludeModelIds.
+// (`limit`), and the pin's onlyModelIds / excludeModelIds; board is the request's "new & upcoming"
+// board read, shared by every call.
 type pageScope struct {
 	take          int
 	only, exclude []int
+	board         *newCreatorsRead
+}
+
+// newCreatorsRead is a request's read of its "new & upcoming" board (`newCreators`): getModelsRaw
+// reads it through fetchThroughCache on every call, so every page of a request reads the same fresh
+// entry; here it is read once, on the first page that reaches getModelsRaw's read, and kept for the
+// later pages. A miss, a stale entry or a failed read is the reader's fallback.
+type newCreatorsRead struct {
+	color string // the request's board color (getRequestBoardDomainColor)
+	done  bool
+	ids   []int
+}
+
+func (b *newCreatorsRead) userIDs(ctx context.Context, d *Deps) ([]int, error) {
+	if b.done {
+		return b.ids, nil
+	}
+	if d.NewCreators == nil {
+		return nil, fallback.New("new-creators-unconfigured")
+	}
+	ids, err := d.NewCreators.UserIDs(ctx, feed.NewCreatorModelBoardID(b.color))
+	if err != nil {
+		return nil, err
+	}
+	b.done, b.ids = true, ids
+	return ids, nil
 }
 
 // resolveLevel is resolveRequestBrowsingLevels after applyDomainFeature: a signed-in caller with no
@@ -341,6 +382,19 @@ func servePage(ctx context.Context, d *Deps, in *Input, level int, cursor string
 			return nil, err
 		}
 	}
+	// `newCreators`: the board of the request's board color, after the follows and before the
+	// collection check, as getModelsRaw orders them. Global per domain, so unlike `followed` it turns
+	// neither hidePrivateModels nor the cache policy.
+	var board []int
+	if in.NewCreators {
+		if scope.board == nil {
+			return nil, fallback.New("new-creators-unconfigured")
+		}
+		var err error
+		if board, err = scope.board.userIDs(ctx, d); err != nil {
+			return nil, err
+		}
+	}
 	if in.CollectionID != 0 {
 		// Node checks the collection after the tag/creator lookups (an unknown creator stays a 404)
 		// and before parsing the cursor, on every page of its loop.
@@ -368,9 +422,15 @@ func servePage(ctx context.Context, d *Deps, in *Input, level int, cursor string
 		CollectionID: in.CollectionID, CollectionTagID: in.CollectionTagID,
 		OnlyModelIDs: scope.only, ExcludeModelIDs: scope.exclude,
 		IDs: in.IDs, Followed: followed, FollowedUserIDs: follows,
+		NewCreators: in.NewCreators, NewCreatorUserIDs: board,
 	}
 	if in.Period != "AllTime" && in.PeriodMode != "stats" {
 		q.PeriodCutoff = decreaseDate(now, in.Period)
+	}
+	// publishedRangeBounds: the start day's midnight, and the midnight after the end day (both or
+	// neither: ParseWith refuses one end).
+	if !in.PublishedFrom.IsZero() && !in.PublishedTo.IsZero() {
+		q.PublishedGte, q.PublishedLt = in.PublishedFrom, in.PublishedTo.AddDate(0, 0, 1)
 	}
 	stmt, err := q.Build()
 	if err != nil {
@@ -440,7 +500,8 @@ func servePage(ctx context.Context, d *Deps, in *Input, level int, cursor string
 }
 
 // resolveAddons is applyAddonExclusions over the level the request is served at: the poi and minor
-// switches, and the addon tag exclusions unless the request is scoped to the viewer's own name.
+// switches, and the addon tag exclusions unless the request is scoped to the viewer's own name. A
+// `newCreators` request resolves them under the `newCreators` scope (loadBlockedBrowsingContext).
 func resolveAddons(in *Input, level int, addons []browsing.Addon, viewer *Viewer) rawInput {
 	lv := level
 	if lv == 0 {
@@ -450,7 +511,11 @@ func resolveAddons(in *Input, level int, addons []browsing.Addon, viewer *Viewer
 		lv = browsing.PublicLevels
 	}
 	isMod := viewer != nil && viewer.IsModerator
-	resolved := browsing.ResolveAddons(addons, lv, isMod, "")
+	scope := ""
+	if in.NewCreators {
+		scope = "newCreators"
+	}
+	resolved := browsing.ResolveAddons(addons, lv, isMod, scope)
 	raw := rawInput{
 		disablePoi:   in.DisablePoi || resolved.DisablePoi,
 		disableMinor: in.DisableMinor || resolved.DisableMinor,

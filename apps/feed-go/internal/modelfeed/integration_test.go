@@ -446,3 +446,36 @@ func TestIntegrationModelPageIDsAndFollowed(t *testing.T) {
 	integWant(t, "followed, nobody", integIDs(integPage(t, pool, PageQuery{Take: 5, Sort: SortHighestRated, BrowsingLevel: 1,
 		ViewerID: 3101903, Followed: true})), []int{})
 }
+
+// A published range (DESIGN.md §15.2.9) against Postgres: the seed's published models (3101001 and
+// 3101002, both published 2026-06-02 00:00) are in a range that holds that day and out of one that
+// ends the day before (the end bound is the midnight after the last day, exclusive) or starts the day
+// after; the CTE's type filter, a split cursor and each base-model path keep the feed's own filters.
+// Then `newCreators` (§15.2.8): a board holding 3101902 keeps its one published public model, an
+// empty board (`1 = 0`) none.
+func TestIntegrationModelPagePublishedRangeAndNewCreators(t *testing.T) {
+	pool := integtest.Postgres(t)
+	integSeedModels(t, pool)
+	day := func(d int) time.Time { return time.Date(2026, 6, d, 0, 0, 0, 0, time.UTC) }
+	ranged := func(q PageQuery, from, to int) []int {
+		q.PublishedGte, q.PublishedLt = day(from), day(to+1)
+		return integIDs(integPage(t, pool, q))
+	}
+	base := PageQuery{Take: 10, Sort: SortHighestRated, BrowsingLevel: 1}
+	integWant(t, "the publish day", ranged(base, 2, 2), []int{3101001, 3101002})
+	integWant(t, "a month around it", ranged(base, 1, 30), []int{3101001, 3101002})
+	integWant(t, "ends the day before", ranged(base, 1, 1), []int{})
+	integWant(t, "starts the day after", ranged(base, 3, 3), []int{})
+	lora := base
+	lora.Types = []string{"LORA"}
+	integWant(t, "a type", ranged(lora, 2, 2), []int{3101002})
+	integWant(t, "a split cursor", ranged(PageQuery{Take: 10, Sort: SortHot, BrowsingLevel: 31, Cursor: "9|3101001"}, 2, 2), []int{3101001, 3101002})
+	integWant(t, "one base model", ranged(PageQuery{Take: 10, Sort: SortHighestRated, BrowsingLevel: 31, BaseModels: []string{"Pony"}}, 2, 2), []int{3101001})
+	integWant(t, "several base models, Newest", ranged(PageQuery{Take: 10, Sort: SortNewest, BrowsingLevel: 1, BaseModels: []string{"Pony", "SDXL 1.0"}}, 2, 2), []int{3101001, 3101002})
+	integWant(t, "several base models, aggregate", ranged(PageQuery{Take: 10, Sort: SortHighestRated, BrowsingLevel: 1, BaseModels: []string{"Pony", "SDXL 1.0"}}, 2, 2), []int{3101001, 3101002})
+
+	integWant(t, "a board", integIDs(integPage(t, pool, PageQuery{Take: 10, Sort: SortHighestRated, BrowsingLevel: 1,
+		NewCreators: true, NewCreatorUserIDs: []int{3101902, 3101999}})), []int{3101002})
+	integWant(t, "an empty board", integIDs(integPage(t, pool, PageQuery{Take: 10, Sort: SortHighestRated, BrowsingLevel: 1,
+		NewCreators: true})), []int{})
+}

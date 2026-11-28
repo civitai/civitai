@@ -71,8 +71,9 @@ const (
 	// CacheUserFollows is the viewer's follow list (image.getInfinite with `followed`): read before
 	// the page, and a miss on it falls back without the miss computation (hydrate.MissUserFollows).
 	CacheUserFollows = hydrate.MissUserFollows
-	// CacheNewCreators is the "new & upcoming" board (image.getInfinite with `newCreators`): read
-	// before the page; a missing or expired entry falls back (Node rebuilds or refreshes it).
+	// CacheNewCreators is the "new & upcoming" board (image.getInfinite with `newCreators`, and
+	// model.getAll with its port on): read before the page; a missing or expired entry falls back
+	// (Node rebuilds or refreshes it).
 	CacheNewCreators = "new-creators"
 )
 

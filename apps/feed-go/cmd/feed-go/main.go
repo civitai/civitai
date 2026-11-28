@@ -536,10 +536,13 @@ func run(log *slog.Logger) error {
 			CoverageNext:            cfg.CoverageNext,
 			LoadingOpenToAll:        cfg.LoadingOpenToAll,
 			VisibleDecorationEvents: cfg.DecorationEvents,
-			Ports:                   modelfeed.Ports{IDs: cfg.GetAllServeInputIDs, Followed: cfg.GetAllServeInputFollowed, HidePaid: cfg.GetAllServeHidePaid},
-			ServeUserCosmeticsMiss:  cfg.GetAllServeUserCosmeticsMiss,
-			ServeMembershipMiss:     cfg.GetAllServeMembershipMiss,
+			Ports: modelfeed.Ports{IDs: cfg.GetAllServeInputIDs, Followed: cfg.GetAllServeInputFollowed, HidePaid: cfg.GetAllServeHidePaid,
+				NewCreators: cfg.GetAllServeInputNewCreators, PublishedRange: cfg.GetAllServeInputPublishedRange},
+			ServeUserCosmeticsMiss: cfg.GetAllServeUserCosmeticsMiss,
+			ServeMembershipMiss:    cfg.GetAllServeMembershipMiss,
 		},
+		// `newCreators`: the "new & upcoming" boards' cached entries, read-only (the image feed's reader).
+		NewCreators: infinite.NewCreators,
 	}
 	// The model.getAssociatedResourcesCardData shadow shares model.getAll's deps, plus the viewer's
 	// hidden-user caches, the generation gate rules (system redis) and the creator-promotions mirror.
@@ -742,6 +745,8 @@ func run(log *slog.Logger) error {
 	log.Info("public model.getAll", "FEED_GO_SERVE_MODEL_GETALL", cfg.ServeModelGetAll,
 		"FEED_GO_GETALL_SERVE_INPUT_IDS", cfg.GetAllServeInputIDs, "FEED_GO_GETALL_SERVE_INPUT_FOLLOWED", cfg.GetAllServeInputFollowed,
 		"FEED_GO_GETALL_SERVE_HIDE_PAID", cfg.GetAllServeHidePaid,
+		"FEED_GO_GETALL_SERVE_INPUT_NEW_CREATORS", cfg.GetAllServeInputNewCreators,
+		"FEED_GO_GETALL_SERVE_INPUT_PUBLISHED_RANGE", cfg.GetAllServeInputPublishedRange,
 		"FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS", cfg.GetAllServeUserCosmeticsMiss,
 		"FEED_GO_GETALL_SERVE_MEMBERSHIP_MISS", cfg.GetAllServeMembershipMiss)
 	log.Info("public image.getInfinite", "FEED_GO_SERVE_INFINITE", cfg.ServeInfinite,

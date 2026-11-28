@@ -100,6 +100,14 @@ type Config struct {
 	// request with Hide Paid on, with the port of the free-version rule (DESIGN.md §15.2.7). Off, it
 	// is the `input-hidePaid` fallback.
 	GetAllServeHidePaid bool
+	// GetAllServeInputNewCreators is FEED_GO_GETALL_SERVE_INPUT_NEW_CREATORS (default off): compute a
+	// model.getAll request with `newCreators` (DESIGN.md §15.2.8). Off, it is the `input-newCreators`
+	// fallback.
+	GetAllServeInputNewCreators bool
+	// GetAllServeInputPublishedRange is FEED_GO_GETALL_SERVE_INPUT_PUBLISHED_RANGE (default off):
+	// compute a model.getAll request with `publishedFrom` / `publishedTo` (DESIGN.md §15.2.9). Off,
+	// they are the `input-publishedFrom` / `input-publishedTo` fallbacks.
+	GetAllServeInputPublishedRange bool
 	// GetAllServeUserCosmeticsMiss is FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS (default off): on, a
 	// model.getAll page computes its owners' user-cosmetics misses (the image pages' lookup) instead
 	// of falling back (`user-cosmetics-miss`); written back only as FEED_GO_CACHE_WRITEBACK lists
@@ -383,6 +391,8 @@ func Load() (*Config, error) {
 		GetAllServeInputIDs:             boolEnv("FEED_GO_GETALL_SERVE_INPUT_IDS", false),
 		GetAllServeInputFollowed:        boolEnv("FEED_GO_GETALL_SERVE_INPUT_FOLLOWED", false),
 		GetAllServeHidePaid:             boolEnv("FEED_GO_GETALL_SERVE_HIDE_PAID", false),
+		GetAllServeInputNewCreators:     boolEnv("FEED_GO_GETALL_SERVE_INPUT_NEW_CREATORS", false),
+		GetAllServeInputPublishedRange:  boolEnv("FEED_GO_GETALL_SERVE_INPUT_PUBLISHED_RANGE", false),
 		GetAllServeUserCosmeticsMiss:    boolEnv("FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS", false),
 		GetAllServeMembershipMiss:       boolEnv("FEED_GO_GETALL_SERVE_MEMBERSHIP_MISS", false),
 		TierMetadataKey:                 tierMetadataKey(),

@@ -93,7 +93,13 @@ modelTagCache) are held out of its cache: the mirror runs the cache's lookup ove
 the rows its queries return (`db.modelDataVersions`, `db.modelHashes`, `db.tagsOnModels`) and what
 the fetch writes (`expect.writes`); the harness runs every served fixture with write-back off (the
 cache untouched) and on (exactly those writes). Extra keys: `config` holds the model flag mirrors;
-`db` holds `paidAccess`, `coverImages`, `tags` (by name) and `creators` (by username), each `paidAccess` row with the gated model's `versionIds` (what Hide Paid drops). Raise
+`db` holds `paidAccess`, `coverImages`, `tags` (by name) and `creators` (by username), each `paidAccess` row with the gated model's `versionIds` (what Hide Paid drops). A page
+also records the `newCreators` board Node binds (`newCreatorUserIds`, or `newCreatorsNone` for an
+empty board's `1 = 0`) and a published range's bounds (`published: {gte, lt}`); the harness requires
+feed-go to bind them (the bounds in the WHERE and in the `ranged` CTE, which must lead the statement
+and be joined in every keyset branch). `spec.addons` replaces the system-redis addons
+(the `newCreators`-scoped entry), `spec.newCreatorBoards` a board's entry (null: no key), and a
+`spec.node400` fallback is checked against Node's own schema helpers or range check first. Raise
 `goldenMinModels` with the count.
 
 ## model-assoc

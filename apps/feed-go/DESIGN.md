@@ -2611,7 +2611,7 @@ read would see. Serving needs a Go-first miss measurement and Go-side miss filli
 
 | Area | Ported | Falls back (reason) |
 |---|---|---|
-| Input | every sort but Recently Added; `period` / `periodMode`; `limit`; the keyset cursor; `types`, `checkpointType`, `baseModels`, `tag` / `tagname`, `username` / `user`, `fileFormats`, `fromPlatform`, `earlyAccess`, `paidAccess`, `onSale`, `archived`, the licensing filters, `excludedTagIds`, `excludedUserIds`, `disablePoi`, `disableMinor`, `collectionId` with `collectionTagId` (§15.2.1); Hot with a base-model filter (the official-checkpoint pin, §15.2.2); `ids` and `followed`, each only behind its own switch (§15.2.4) | `query` (Meilisearch), `hidden`, `followed` and `ids` with their switches off (§15.2.4), `newCreators`, `modelVersionIds`, `status`, `needsReview`, `pending`, `supportsGeneration`, `isFeatured`, `availability`, `publishedFrom` / `publishedTo`, `poiOnly` / `minorOnly`, `page` (`input-<key>`); `hidePaid` true with its switch off, the default (`input-hidePaid`, §15.2.7); Recently Added, with or without a collection (`model-sort-recently-added`); a `collectionId` or `collectionTagId` that is not an int4 integer (`model-collection-id`; not a number, `null` included, is `input-invalid`); a cursor Node answers with a 400, or a date token not in Postgres' CONCAT form (`model-cursor`); `ids` present at all, `[]` and `""` included, with its switch off (`input-ids`); with it on, an id JS `Number` does not read as an int4 integer (`model-ids`) |
+| Input | every sort but Recently Added; `period` / `periodMode`; `limit`; the keyset cursor; `types`, `checkpointType`, `baseModels`, `tag` / `tagname`, `username` / `user`, `fileFormats`, `fromPlatform`, `earlyAccess`, `paidAccess`, `onSale`, `archived`, the licensing filters, `excludedTagIds`, `excludedUserIds`, `disablePoi`, `disableMinor`, `collectionId` with `collectionTagId` (§15.2.1); Hot with a base-model filter (the official-checkpoint pin, §15.2.2); `ids` and `followed`, each only behind its own switch (§15.2.4); `newCreators` (§15.2.8) and `publishedFrom` / `publishedTo` (§15.2.9), each only behind its own switch | `query` (Meilisearch), `hidden`, `followed` and `ids` with their switches off (§15.2.4), `newCreators` with its switch off (§15.2.8), `modelVersionIds`, `status`, `needsReview`, `pending`, `supportsGeneration`, `isFeatured`, `availability`, `publishedFrom` / `publishedTo` with their switch off (§15.2.9), `poiOnly` / `minorOnly`, `page` (`input-<key>`); with the published-range switch on, a range getModelsRaw refuses (`input-published-range`) or a day the schema refuses (`input-invalid`); with the `newCreators` switch on, a board entry Node would rebuild or refresh (`new-creators-miss`, `new-creators-stale`, `new-creators-read-failed`); `hidePaid` true with its switch off, the default (`input-hidePaid`, §15.2.7); Recently Added, with or without a collection (`model-sort-recently-added`); a `collectionId` or `collectionTagId` that is not an int4 integer (`model-collection-id`; not a number, `null` included, is `input-invalid`); a cursor Node answers with a 400, or a date token not in Postgres' CONCAT form (`model-cursor`); `ids` present at all, `[]` and `""` included, with its switch off (`input-ids`); with it on, an id JS `Number` does not read as an int4 integer (`model-ids`) |
 | Viewer | as §4 | as §4; a signed-in request with no level (`model-level-absent`: the saved level is not read); a viewer the `personal-hot-lead` flag is on for on any page of a Hot feed Node leads, or one it could not be read for (`model-getall-personal-hot-lead`, `model-getall-personal-hot-lead-unknown`; temporary, §15.2.3) |
 | Flags | the state production runs (§15.3) | any model flag mirror off (`flag-off-state`) |
 | Lookups | the tag by name and the creator by name on the replica; the blocked tag list; the collection read permission on the replica | a creator the replica does not hold (`model-username-miss`: Node reads the primary, then 404s); the blocked list absent or unreadable (`blocked-tags-miss`, `blocked-tags-stale`) |
@@ -2804,6 +2804,54 @@ statement with its `array_agg(pa."entityId")`, read on every page. The SQL arm r
 `TestIntegrationModelHidePaidFreeVersion`; the card is held to Node by the `hide-paid-*` golden
 fixtures.
 
+### 15.2.8 `newCreators` (behind a switch, default off)
+
+`FEED_GO_GETALL_SERVE_INPUT_NEW_CREATORS` (default off; `Ports.NewCreators`). Off, a truthy value is
+the `input-newCreators` fallback, as before. On:
+
+- **Input.** `booleanString().optional()`: a boolean, a `z.stringbool` word or a number (true for 1
+  only); null and any other string are the schema's 400 (`input-invalid`).
+- **The board.** `getNewCreatorUserIds({ entity: 'models', domain })`
+  (`src/server/services/new-creators.service.ts`): `domain` is `getRequestBoardDomainColor`
+  (`Request.BoardColor`, `HostColors.BoardColorOf`), the board `new_creators-red` for red and
+  `new_creators` for every other color (`feed.NewCreatorModelBoardID`), read from its
+  fetchThroughCache entry `packed:caches:new-creators:<board>` with the image feed's reader
+  (`feed.NewCreatorBoards`): only a fresh entry is answered; a missing, expired or unreadable one
+  falls back (`new-creators-miss`, `-stale`, `-read-failed`; no reader: `-unconfigured`), because
+  Node would rebuild or refresh it from `LeaderboardResult`, which is not read here. Node reads it on
+  every `getModelsRaw` call; here once per request, on the first page that reaches it, after the
+  blocked-tag check, the creator lookup and the follows and before the collection check (Node's
+  order), and every page binds it.
+- **SQL.** `mm."userId" = ANY($n::integer[])` (Node's `IN (…)`, after `followed`; the `integer[]` cast
+  keeps its text apart from `followed`'s), or `1 = 0` for an empty board (never the unfiltered feed).
+- **Addons.** `enforceBlockedBrowsingTagsForModels` resolves the browsing-settings addons under the
+  `newCreators` scope for such a request (`resolveAddons`), so a scoped entry's exclusions apply to
+  the page query and the per-row tag drop. The showcase image filter resolves its own, unscoped.
+- **Cache policy.** Unchanged: the board is global per domain, so Node marks nothing private.
+
+### 15.2.9 Published range (behind a switch, default off)
+
+`FEED_GO_GETALL_SERVE_INPUT_PUBLISHED_RANGE` (default off; `Ports.PublishedRange`). Off, a non-empty
+`publishedFrom` or `publishedTo` is `input-publishedFrom` / `input-publishedTo`, as before. On:
+
+- **Input.** Each is `publishedDateSchema.optional()` (`src/shared/utils/published-range.ts`): a string
+  `YYYY-MM-DD` (ASCII digits) naming a real UTC calendar day; anything else, null and `""` included,
+  is the schema's 400 (`input-invalid`). Then `publishedRangeError`, thrown by `getModelsRaw` before
+  any read: one end only, an end before the start, or more than 31 days between them is Node's 400
+  (`input-published-range`, seeded: the request alone decides it). A day in year 0 (Postgres has none)
+  or 0001-01-01 (this port's zero time) falls back the same way.
+- **SQL.** `publishedRangeBounds`: `[from 00:00Z, to + 1 day 00:00Z)`, as `m."publishedAt" >= $n AND
+  m."publishedAt" < $n` after the period clause and before the status one, and the `ranged` CTE that
+  leads both query shapes (the single branch and the split-cursor UNION ALL):
+  `WITH ranged AS MATERIALIZED (SELECT "id" FROM "Model" WHERE "status" = 'Published'::"ModelStatus"
+  AND "publishedAt" >= $1 AND "publishedAt" < $2 [AND "type" = ANY(…)])`, joined after the FROM of
+  every base-model path (`JOIN ranged ON ranged."id" = m."id"`). Its values are bound first, as
+  Prisma numbers them; `status` is not ported, so the CTE always holds the Published condition.
+- **Load.** Measured before the port: a plain `EXPLAIN` of the CTE body on a replica uses
+  `Model_status_publishedAt_idx` (an index scan, about 20k rows for 31 days). The text is pinned by
+  `TestBuildPublishedRange*` and run against Postgres by
+  `TestIntegrationModelPagePublishedRangeAndNewCreators`.
+
 ### 15.3 Flags
 
 Only the state each flag runs in production is ported. A `FEED_GO_*` mirror below that reads off is
@@ -2887,6 +2935,8 @@ topk(10, sum by (reason) (rate(feed_go_fallback_total{feed_endpoint="model-getal
   falls back;
 - the collection read permission: Node's read also joins the viewer's accepted invite, which feeds
   only `isCollaborator`, not `read`; it is not read here;
+- `newCreators` (§15.2.8): the board is read once per request where Node reads it on every
+  `getModelsRaw` call; a board refreshed between two of Node's pages is the one difference;
 - `ids` falls back whenever it is present, empty included, while its switch is off (§15.2.4); on,
   an element JS `Number` reads other than as a plain integer falls back (`model-ids`) where Node
   would bind it (a fraction or an id past int4 matches no row there);
