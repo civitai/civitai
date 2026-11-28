@@ -110,8 +110,10 @@ function contextFor(state: LabelState, route: string): SampleContext {
 // encoder rebuilds the top level to find nested promises) whose fields are still the procedure's
 // own objects. So a plain-object result also remembers its object-valued fields, the first
 // FIELD_LOOKUP_MAX of them. A value with no object-valued field (`{ count: 5 }`) is not found and
-// stays on `trpc:batch`, as do the stream's envelope chunks. Two procedures returning the same
-// object (a shared cached value) attribute to whichever ran last.
+// stays on `trpc:batch`, as do the stream's envelope chunks. The map is process-wide and the last
+// write wins, so an object that more than one procedure returns, at the top level or as a field
+// (a shared cached value), is attributed to whichever of them ran last, even from another request.
+// Only the profile label is affected.
 
 const FIELD_LOOKUP_MAX = 8;
 

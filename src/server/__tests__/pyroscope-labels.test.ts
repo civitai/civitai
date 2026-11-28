@@ -306,11 +306,14 @@ describe('rememberResultRoute / serializedValueRoute', () => {
 
   it('looks at no more than the first 8 fields of a plain-object value', () => {
     arm();
-    const fields = Object.fromEntries(Array.from({ length: 12 }, (_, i) => [`f${i}`, i]));
-    const late = { ...fields, items: [{ id: 1 }] };
+    const primitives = (n: number) =>
+      Object.fromEntries(Array.from({ length: n }, (_, i) => [`f${i}`, i]));
+    // The object field is the 9th field: one past the bound.
+    const late = { ...primitives(8), items: [{ id: 1 }] };
     rememberResultRoute({ ok: true, data: late }, 'trpc:a.wide');
     expect(serializedValueRoute(chunk(streamCopy(late)))).toBeUndefined();
-    const early = { f0: 0, items: [{ id: 1 }] };
+    // The object field is the 8th field: the last one inside the bound.
+    const early = { ...primitives(7), items: [{ id: 1 }] };
     rememberResultRoute({ ok: true, data: early }, 'trpc:a.narrow');
     expect(serializedValueRoute(chunk(streamCopy(early)))).toBe('trpc:a.narrow');
   });
