@@ -528,6 +528,8 @@ func run(log *slog.Logger) error {
 			SortRandom:          cfg.InfiniteServeSortRandom,
 			GallerySettingsMiss: cfg.InfiniteServeGallerySettingsMiss,
 			HubID:               cfg.InfiniteServeInputHubID,
+			JudgeScore:          cfg.InfiniteServeJudgeScore,
+			HatTurfIgnored:      cfg.InfiniteServeHatTurfIgnored,
 		},
 		// A collection's Random seed: the system redis key, read-only.
 		RandomSeed: &feed.RandomSeed{Sys: sys},
@@ -768,6 +770,8 @@ func run(log *slog.Logger) error {
 		"FEED_GO_INFINITE_SERVE_INPUT_POST_IDS", cfg.InfiniteServeInputPostIDs,
 		"FEED_GO_INFINITE_SERVE_SORT_RANDOM", cfg.InfiniteServeSortRandom,
 		"FEED_GO_INFINITE_SERVE_GALLERY_SETTINGS_MISS", cfg.InfiniteServeGallerySettingsMiss,
+		"FEED_GO_INFINITE_SERVE_JUDGE_SCORE", cfg.InfiniteServeJudgeScore,
+		"FEED_GO_INFINITE_SERVE_HAT_TURF_IGNORED", cfg.InfiniteServeHatTurfIgnored,
 		"FEED_GO_INFINITE_ANSWER_FEED_UNAVAILABLE", cfg.InfiniteAnswerFeedUnavailable,
 		"FEED_GO_INFINITE_SERVE_INPUT_HUB_ID", cfg.InfiniteServeInputHubID, "user_hubs_flag_read", userHubs != nil)
 	log.Info("public /api/v1/models", "FEED_GO_SERVE_V1_MODELS", mc.Serve, "mounted", srv.V1Fallback != nil,

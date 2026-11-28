@@ -140,11 +140,135 @@
           501,
           525
         ]
+      },
+      {
+        "id": 8203,
+        "name": "golden-8203.png",
+        "url": "00000000-0000-4000-8000-000000008203",
+        "nsfwLevel": 1,
+        "width": 832,
+        "height": 1216,
+        "hash": "UGOLDEN8203",
+        "hideMeta": false,
+        "hasMeta": true,
+        "hasPositivePrompt": true,
+        "onSite": false,
+        "remixOfId": null,
+        "createdAt": {
+          "$date": "2026-06-12T09:00:00.000Z"
+        },
+        "sortAt": {
+          "$date": "2026-06-12T10:00:00.000Z"
+        },
+        "mimeType": "image/png",
+        "type": "image",
+        "metadata": {
+          "width": 832,
+          "height": 1216,
+          "hash": "UGOLDEN8203"
+        },
+        "ingestion": "Scanned",
+        "blockedFor": null,
+        "scannedAt": {
+          "$date": "2026-06-12T09:01:00.000Z"
+        },
+        "needsReview": null,
+        "userId": 1002,
+        "postId": 7202,
+        "postTitle": "Golden post 7202",
+        "index": 0,
+        "publishedAt": {
+          "$date": "2026-06-12T10:00:00.000Z"
+        },
+        "unpublishedAt": null,
+        "modelVersionId": 6401,
+        "model3dId": null,
+        "availability": "Public",
+        "minor": false,
+        "poi": false,
+        "acceptableMinor": false,
+        "restricted": false,
+        "_resources": [
+          {
+            "modelVersionId": 6401,
+            "detected": true
+          }
+        ],
+        "_tags": [
+          502,
+          526
+        ]
+      },
+      {
+        "id": 8204,
+        "name": "golden-8204.png",
+        "url": "00000000-0000-4000-8000-000000008204",
+        "nsfwLevel": 1,
+        "width": 832,
+        "height": 1216,
+        "hash": "UGOLDEN8204",
+        "hideMeta": false,
+        "hasMeta": true,
+        "hasPositivePrompt": true,
+        "onSite": false,
+        "remixOfId": null,
+        "createdAt": {
+          "$date": "2026-06-10T09:00:00.000Z"
+        },
+        "sortAt": {
+          "$date": "2026-06-10T10:00:00.000Z"
+        },
+        "mimeType": "image/png",
+        "type": "image",
+        "metadata": {
+          "width": 832,
+          "height": 1216,
+          "hash": "UGOLDEN8204"
+        },
+        "ingestion": "Scanned",
+        "blockedFor": null,
+        "scannedAt": {
+          "$date": "2026-06-10T09:01:00.000Z"
+        },
+        "needsReview": null,
+        "userId": 1001,
+        "postId": 7203,
+        "postTitle": "Golden post 7203",
+        "index": 0,
+        "publishedAt": {
+          "$date": "2026-06-10T10:00:00.000Z"
+        },
+        "unpublishedAt": null,
+        "modelVersionId": 6401,
+        "model3dId": null,
+        "availability": "Public",
+        "minor": false,
+        "poi": false,
+        "acceptableMinor": false,
+        "restricted": false,
+        "_resources": [
+          {
+            "modelVersionId": 6401,
+            "detected": true
+          }
+        ],
+        "_tags": [
+          503,
+          520
+        ]
       }
     ],
     "posts": [
       {
         "id": 7201,
+        "modelVersionId": 6401
+      },
+      {
+        "id": 7202,
+        "modelVersionId": 6401
+      },
+      {
+        "id": 7203,
         "modelVersionId": 6401
       }
     ],
@@ -176,6 +300,10 @@
       {
         "id": 6501,
         "modelId": 5006
+      },
+      {
+        "id": 6701,
+        "modelId": 5007
       }
     ],
     "models": [
@@ -222,6 +350,14 @@
       {
         "id": 5006,
         "userId": 1001,
+        "mode": null,
+        "minor": false,
+        "sfwOnly": false,
+        "galleryLevel": null
+      },
+      {
+        "id": 5007,
+        "userId": 1002,
         "mode": null,
         "minor": false,
         "sfwOnly": false,
@@ -503,6 +639,24 @@
         "status": "ACCEPTED",
         "addedById": 1001,
         "note": "{\"score\":{\"theme\":7,\"wittiness\":5}}",
+        "tagId": null
+      },
+      {
+        "id": 95203,
+        "collectionId": 9103,
+        "imageId": 8203,
+        "status": "ACCEPTED",
+        "addedById": 1002,
+        "note": "{\"score\":{\"wittiness\":1e1,\"10\":2,\"theme\":7.50,\"2\":-3},\"summary\":\"judged\",\"judgeId\":4}",
+        "tagId": null
+      },
+      {
+        "id": 95204,
+        "collectionId": 9103,
+        "imageId": 8204,
+        "status": "ACCEPTED",
+        "addedById": 1001,
+        "note": "{\"score\":{},\"summary\":\"declined\"}",
         "tagId": null
       }
     ],

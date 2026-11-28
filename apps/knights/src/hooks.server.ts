@@ -1,5 +1,10 @@
 import type { Handle, HandleServerError, ServerInit } from '@sveltejs/kit';
-import { isNavigationRequest, spokeReauthResponse, withSetCookies } from '@civitai/auth';
+import {
+  isNavigationRequest,
+  spokeReauthResponse,
+  spokeUnavailableResponse,
+  withSetCookies,
+} from '@civitai/auth';
 import { guard } from '$lib/server/auth';
 import { accessFor } from '$lib/server/access';
 import { logToAxiom } from '$lib/server/axiom';
@@ -75,6 +80,7 @@ export const handle: Handle = async ({ event, resolve }) => {
     navigation,
   });
 
+  if (result.status === 'unavailable') return spokeUnavailableResponse();
   // A signed-in user must fall through to the checks below (ban, access); only signed-out visitors get the page.
   if (onWelcome && (result.status === 'login' || result.status === 'reauth')) {
     event.locals.signInUrl = result.status === 'login' ? result.redirect : result.authorize;

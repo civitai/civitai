@@ -1,6 +1,7 @@
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { buildHubLoginRedirect } from '~/server/auth/login-redirect';
+import { isSessionUnconfirmed } from '~/server/auth/session-client';
 import { getAllServerHosts } from '~/server/utils/server-domain';
 import { isDev } from '~/env/other';
 
@@ -50,6 +51,12 @@ export const getServerSideProps = createServerSideProps({
       if (typeof error === 'string' && error) destinationURL.searchParams.set('error', error);
       const destination = `${destinationURL.pathname}${destinationURL.search}${destinationURL.hash}`;
       return { redirect: { destination, permanent: false } };
+    }
+
+    // A moderator or impersonation session refused for this request only (its revocation read failed): the hub
+    // would send it straight back here, so go home instead.
+    if (!session?.user && !isSwitch && isSessionUnconfirmed(ctx.req)) {
+      return { redirect: { destination: '/', permanent: false } };
     }
 
     // Otherwise send to the hub login. It returns to /api/auth/post-login (which runs the side-effects the hub

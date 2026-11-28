@@ -427,7 +427,7 @@ func (s *Server) prepareViewer(ctx context.Context, r *http.Request) (feed.Reque
 	restricted := regionMatches(s.RegionRules, r)
 	cap := browsing.DomainCap(authorized, browsing.CanViewNsfw(color, restricted, isModerator))
 
-	req := feed.Request{Input: in, Cap: cap, BannedSession: user != nil && user.Banned}
+	req := feed.Request{Input: in, Cap: cap, BannedSession: user != nil && user.Banned, BoardColor: s.Hosts.BoardColorOf(r.Host, s.HostPrimaries)}
 	if authorized {
 		req.Viewer = &feed.Viewer{ID: user.ID, IsModerator: isModerator, CanSeeSongs: s.canSeeSongs(ctx, user, isModerator)}
 	}

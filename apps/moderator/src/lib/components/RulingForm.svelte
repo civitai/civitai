@@ -35,6 +35,7 @@
     type TextScanLabel,
   } from '@civitai/shared/resolution-reasons';
   import type { RulingChoice } from '$lib/ruling-choices';
+  import DecisionUnavailable from '$lib/components/triage/DecisionUnavailable.svelte';
   import ResolutionReasonFields from './ResolutionReasonFields.svelte';
 
   type Verdict = ResolutionVerdict<S>;
@@ -114,6 +115,10 @@
       await after?.(opts);
     };
   };
+
+  // The reason is text: see DecisionUnavailable.
+  const uid = $props.id();
+  const unavailableId = `${uid}-unavailable`;
 </script>
 
 <div class={cn('grid gap-2', large && 'w-full')}>
@@ -126,7 +131,7 @@
         variant={draft.verdict === c.verdict ? c.variant : 'outline'}
         aria-pressed={draft.verdict === c.verdict}
         disabled={disabled || !!unavailable}
-        title={unavailable ?? undefined}
+        aria-describedby={unavailable ? unavailableId : undefined}
         onclick={() => choose(c.verdict)}
         data-touch-target
       >
@@ -135,6 +140,7 @@
       </Button>
     {/each}
   </div>
+  <DecisionUnavailable id={unavailableId} reasons={choices.map((c) => choiceDisabled?.(c.verdict))} />
   {#if chosen}
     <form
       method="POST"

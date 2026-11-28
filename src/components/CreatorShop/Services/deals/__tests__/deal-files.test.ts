@@ -300,6 +300,9 @@ describe('buyer attachments', () => {
     expect(
       uploadRefusal('Attachment', { name: 'set.zip', type: 'application/zip', size: MB })
     ).toBeNull();
+    expect(
+      uploadRefusal('Attachment', { name: 'brief.pdf', type: 'application/pdf', size: MB })
+    ).toMatch(/PDF files can't be delivered or attached/);
   });
 });
 

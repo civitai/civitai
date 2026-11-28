@@ -1,5 +1,6 @@
 import { decodeJwt } from 'jose';
 import { createSessionClient } from './session-client';
+import type { RevocationCheck } from './revocation-check';
 import {
   createSessionTokenClient,
   type RefreshFailure,
@@ -43,16 +44,23 @@ export type SpokeGuardResult =
   /** Sign-in needed on a non-navigation request — answer 401 (`spokeReauthResponse`). */
   | { status: 'reauth'; authorize: string; reason: SpokeSignInReason }
   /** Authenticated but fails `require` (e.g. not a moderator) — 403. NOT a login redirect: re-login can't help. */
-  | { status: 'forbidden'; user: SessionUser };
+  | { status: 'forbidden'; user: SessionUser }
+  /**
+   * A moderator or impersonation session whose revocation read failed — answer 503 (`spokeUnavailableResponse`)
+   * and keep the cookies. Not a sign-in: the hub would send the browser straight back.
+   */
+  | { status: 'unavailable' };
 
 export interface SpokeGuardConfig {
   /** Extra authorization beyond "is logged in" — e.g. `(u) => u.isModerator`. Omit to allow any signed-in user. */
   require?: (user: SessionUser) => boolean;
   /**
    * Revocation check (`createRevocationCheck`). Required: without it a signed-out or banned session still
-   * resolves on a cache hit.
+   * resolves on a cache hit. Its `confirmElevated`, when present, refuses a moderator or impersonation request
+   * whose revocation read failed.
    */
-  isRevoked: (claims: SessionClaims) => boolean | Promise<boolean>;
+  isRevoked: ((claims: SessionClaims) => boolean | Promise<boolean>) &
+    Partial<Pick<RevocationCheck, 'confirmElevated'>>;
   /** Seconds after which a session is rolled (AUTH_SESSION_UPDATE_AGE, default 24h). */
   updateAgeSeconds?: number;
   sessionTokenClient?: Pick<SessionTokenClient, 'refresh'>;
@@ -93,7 +101,10 @@ export function createSpokeGuard(config: SpokeGuardConfig): SpokeGuard {
       '[@civitai/auth] createSpokeGuard requires isRevoked (see createRevocationCheck)'
     );
   }
-  const sessions = createSessionClient({ isRevoked: config.isRevoked });
+  const sessions = createSessionClient({
+    isRevoked: config.isRevoked,
+    confirmElevatedRevocation: config.isRevoked.confirmElevated,
+  });
   const updateAgeMs =
     (config.updateAgeSeconds ?? (Number(process.env.AUTH_SESSION_UPDATE_AGE) || 24 * 60 * 60)) *
     1000;
@@ -151,12 +162,19 @@ export function createSpokeGuard(config: SpokeGuardConfig): SpokeGuard {
       const own = readSessionToken(jar, { host: null, mode: 'host' });
       if (own?.slot === 'host') {
         const ownResolved = await sessions.resolveSessionUser(own.value);
-        // A host session the hub can't resolve right now is unknown, not absent: report it as such.
-        if (ownResolved.user || ownResolved.reason === 'unavailable')
+        // A host session the hub can't resolve or confirm right now is unknown, not absent: report it as such.
+        if (
+          ownResolved.user ||
+          ownResolved.reason === 'unavailable' ||
+          ownResolved.reason === 'unconfirmed'
+        )
           [read, resolved] = [own, ownResolved];
       }
     }
-    if (!resolved.user) return signIn(returnUrl, navigation, resolved.reason);
+    if (!resolved.user) {
+      if (resolved.reason === 'unconfirmed') return { status: 'unavailable' };
+      return signIn(returnUrl, navigation, resolved.reason);
+    }
     const { user } = resolved;
     try {
       config.onSessionSlot?.(read.slot);

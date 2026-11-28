@@ -208,6 +208,15 @@ describe('createSpokeGuard (cookie mode)', () => {
     });
   });
 
+  it('shared mode: an invalid shared cookie next to an unconfirmed host session answers unavailable', async () => {
+    h.resolveSessionUser.mockImplementation(async (t: string) =>
+      t === 'own' ? { user: null, reason: 'unconfirmed' } : INVALID
+    );
+    expect(await guardOf().check(`${SHARED}=dead; ${HOST}=own`, PAGE)).toEqual({
+      status: 'unavailable',
+    });
+  });
+
   it('shared mode: an invalid shared cookie with an invalid host cookie still signs in', async () => {
     h.resolveSessionUser.mockResolvedValue(INVALID);
     expect(await guardOf().check(`${SHARED}=dead; ${HOST}=also-dead`, PAGE)).toEqual({

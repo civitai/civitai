@@ -122,3 +122,60 @@ describe('a slide whose media the server withheld', () => {
     expect(slide.querySelector('img, video')).toBeNull();
   });
 });
+
+describe("an owner's blocked slide that image.get sends to the owner route", () => {
+  // The route does not exist on the test server, so the media ends on RetractedMedia's error text;
+  // every src a media element is given is read from the record, not the DOM.
+  test.each(['image', 'video'] as const)(
+    'a %s loads from the owner route and asks the CDN for nothing',
+    async (type) => {
+      await page.viewport(1200, 800);
+      const srcs: string[] = [];
+      const observer = new MutationObserver((records) => {
+        for (const r of records) {
+          const nodes = r.type === 'attributes' ? [r.target] : [...r.addedNodes];
+          for (const node of nodes) {
+            if (!(node instanceof Element)) continue;
+            for (const el of [node, ...node.querySelectorAll('[src]')])
+              if (el.hasAttribute('src')) srcs.push(el.getAttribute('src') ?? '');
+          }
+        }
+      });
+      observer.observe(document.body, {
+        subtree: true,
+        childList: true,
+        attributes: true,
+        attributeFilter: ['src'],
+      });
+      try {
+        renderWithProviders(
+          <div data-slide style={{ width: 400, height: 300, display: 'flex' }}>
+            <ImageDetailCarousel
+              images={[
+                {
+                  id: 4104,
+                  name: 'mine.png',
+                  nsfwLevel: 1,
+                  height: 600,
+                  width: 400,
+                  type,
+                  url: null,
+                  ingestion: 'Blocked',
+                  ownerRetractedMedia: true,
+                },
+              ]}
+              index={0}
+              next={noop}
+              previous={noop}
+              canNavigate={false}
+            />
+          </div>
+        );
+        await expect.element(page.getByText('Not viewable here')).toBeVisible();
+      } finally {
+        observer.disconnect();
+      }
+      expect([...new Set(srcs)]).toEqual(['/api/retracted-media/own/4104']);
+    }
+  );
+});

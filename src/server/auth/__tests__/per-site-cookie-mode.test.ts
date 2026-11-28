@@ -9,11 +9,17 @@ vi.mock('@civitai/auth', async (importOriginal) => {
   const actual = await importOriginal<typeof CivitaiAuth>();
   return {
     ...actual,
-    createSessionClient: () => ({ getSessionUser: h.getSessionUser }),
+    createSessionClient: () => ({
+      getSessionUser: h.getSessionUser,
+      resolveSessionUser: async (t: string) => {
+        const user = await h.getSessionUser(t);
+        return user ? { user } : { user: null, reason: 'invalid' };
+      },
+    }),
     createSessionTokenClient: () => ({ refresh: h.refresh, revoke: h.revoke }),
   };
 });
-vi.mock('../session-verifier', () => ({ isRevoked: vi.fn() }));
+vi.mock('../session-verifier', () => ({ isRevoked: vi.fn(), confirmElevatedRevocation: vi.fn() }));
 vi.mock('../bearer-token', () => ({ getSessionFromBearerToken: vi.fn() }));
 vi.mock('~/shared/constants/generation.constants', async (importOriginal) => ({
   ...(await importOriginal<object>()),

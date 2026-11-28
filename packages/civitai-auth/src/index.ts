@@ -43,6 +43,7 @@ export {
   spokeCallback,
   spokeAuthorizeUrl,
   spokeReauthResponse,
+  spokeUnavailableResponse,
   spokeSessionCookies,
   isNavigationRequest,
   withSetCookies,
@@ -59,9 +60,12 @@ export type { SpokeSignInEvent, SpokeSignInOptions, SpokeCallbackOptions } from 
 export {
   createRevocationCheck,
   DEFAULT_REVOCATION_READ_TIMEOUT_MS,
+  REVOCATION_RETRY_COOLDOWN_MS,
   revocationReadTimeoutMs,
 } from './revocation-check';
 export type {
+  ElevatedRevocationVerdict,
+  RevocationCheck,
   RevocationCheckCallOptions,
   RevocationCheckConfig,
   RevocationDegradedVerdict,

@@ -578,6 +578,9 @@ const featureFlags = createFeatureFlags({
   // The retracted-media route's CDN-refusal leg and its tile fallback. DARK, fails CLOSED when the
   // Flipt key is absent or Flipt is down. Only takes effect within modRetractedMedia.
   modRetractedMediaCdnLeg: { availability: [], fliptKey: 'mod-retracted-media-cdn-leg' },
+  // An owner's own moderated or tos-blocked image, with no CSAM mark, on its image page, from the
+  // owner retracted-media route. DARK, fails CLOSED when the Flipt key is absent or Flipt is down.
+  ownerBlockedMedia: { availability: [], fliptKey: 'owner-blocked-media' },
   appealReports: isDev ? ['mod'] : ['granted'],
   moderateTags: ['granted'],
   chat: {

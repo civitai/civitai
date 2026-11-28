@@ -21,7 +21,8 @@ import { observeRevocationDegraded, observeSessionLeg } from './session-metrics'
 // authenticated request, so it also goes through the read breaker: once the breaker has tripped (when
 // enabled) a hung store costs this read ~0ms instead of a deadline per request. On a timeout, an open breaker
 // or an error the package answers from the markers it has already read, and allows a session with none known —
-// a revocation-check failure must never block login.
+// a revocation-check failure must never block login. A moderator or impersonation request is the exception:
+// `confirmElevatedRevocation` refuses that request (the session is kept).
 const checkRevocation = createRevocationCheck({
   redis: () => sysRedis as unknown as SessionRegistryRedis,
   timeoutMs: () => env.REDIS_SYS_READ_TIMEOUT_MS,
@@ -44,6 +45,8 @@ export async function isRevoked(claims: SessionClaims): Promise<boolean> {
   if (!claims.jti) return false; // can't check — fail open
   return checkRevocation(claims);
 }
+
+export const confirmElevatedRevocation = checkRevocation.confirmElevated;
 
 // Singleton — caches the remote JWKS keyset across requests.
 export const sessionVerifier = createAuthVerifier({ isRevoked });

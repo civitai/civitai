@@ -48,9 +48,9 @@ const (
 	goldenDir = "../../testdata/golden"
 	// The fixture counts gen.mjs writes: a glob that matches fewer fails, so a moved directory or a
 	// renamed extension cannot pass as zero fixtures.
-	goldenMinAsPosts  = 35
+	goldenMinAsPosts  = 37
 	goldenMinV1       = 52
-	goldenMinInfinite = 155
+	goldenMinInfinite = 164
 	goldenMinModels   = 53
 	goldenIssuer      = "https://auth.example.test"
 	goldenCookieName  = "__Secure-civ-token"
@@ -134,6 +134,10 @@ type goldenFixture struct {
 		// ServeHubID is FEED_GO_INFINITE_SERVE_INPUT_HUB_ID (infinite/ fixtures; absent: off, the
 		// fixture's `hubId` falls back).
 		ServeHubID bool `json:"serveHubId"`
+		// ServeJudgeScore / ServeHatTurfIgnored are FEED_GO_INFINITE_SERVE_JUDGE_SCORE /
+		// _HAT_TURF_IGNORED (infinite/ fixtures; absent: off, a judged item / a hat key falls back).
+		ServeJudgeScore     bool `json:"serveJudgeScore"`
+		ServeHatTurfIgnored bool `json:"serveHatTurfIgnored"`
 		// ServeV1ImageID / ServeV1ModelOnly are FEED_GO_V1_IMAGES_SERVE_IMAGE_ID / _MODEL_ONLY
 		// (v1-images/ fixtures; absent: off, the fixture's `imageId` / model without a version falls back).
 		ServeV1ImageID   bool `json:"serveV1ImageId"`
@@ -1029,7 +1033,9 @@ func goldenImageRows(fx *goldenFixture, sql string, args []any) (*testkit.Rows, 
 	collection, hasCollection := goldenArg(args, goldenReCollection, sql)
 	collTag, hasCollTag := goldenArg(args, goldenReCollTag, sql)
 	collOwner, hasCollOwner := goldenArg(args, goldenReCollOwner, sql)
-	if !hasLevel {
+	// getAllImages leaves the level and reviewed gates out only for `requiringMeta` on the red domain,
+	// which then binds its blockedFor reason: any other query without a level clause is refused.
+	if !hasLevel && !goldenReBlockedReason.MatchString(sql) {
 		return nil, errors.New("golden: image query without a level clause")
 	}
 	blockedKeeps, err := goldenBlockedFor(args, sql)
@@ -1089,7 +1095,7 @@ func goldenImageRows(fx *goldenFixture, sql string, args []any) (*testkit.Rows, 
 				continue
 			}
 		}
-		if lv := goldenInt(level); img.NsfwLevel&lv == 0 || img.NsfwLevel == 0 {
+		if lv := goldenInt(level); hasLevel && (img.NsfwLevel&lv == 0 || img.NsfwLevel == 0) {
 			continue
 		}
 		if hasTarget && img.UserID != goldenInt(target) {
@@ -1891,7 +1897,7 @@ func goldenSetupMode(t testing.TB, fx *goldenFixture, writeBack bool) *goldenEnv
 		NewCreators: &feed.NewCreatorBoards{Cache: cache, Now: nowFn},
 		Ports: feed.InfinitePorts{PublishedOnly: fx.Config.ServePublishedOnly, PostIDs: fx.Config.ServePostIDs,
 			SortRandom: fx.Config.ServeSortRandom, GallerySettingsMiss: fx.Config.ServeGallerySettingsMiss,
-			HubID: fx.Config.ServeHubID},
+			HubID: fx.Config.ServeHubID, JudgeScore: fx.Config.ServeJudgeScore, HatTurfIgnored: fx.Config.ServeHatTurfIgnored},
 		RandomSeed:   &feed.RandomSeed{Sys: sys},
 		GalleryHolds: sources}
 	s := &Server{Resolver: resolver, Deps: deps, Hosts: goldenHosts, HostPrimaries: goldenPrimaries, V1: v1, Infinite: infinite}

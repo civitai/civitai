@@ -50,7 +50,10 @@ const {
     redis,
     getSessionUserById: vi.fn(async (_id: number) => null as unknown),
     verifyToken: vi.fn(async (_token: string) => null as unknown),
-    isRevoked: vi.fn(async (_claims: unknown) => false),
+    isRevoked: Object.assign(
+      vi.fn(async (_claims: unknown) => false),
+      { confirmElevated: vi.fn(async (_claims: unknown) => 'ok' as string) }
+    ),
     guardCheck: vi.fn(async (_cookie: string, _url: string, _opts?: unknown) => ({} as unknown)),
     loadPageAccessGrants: vi.fn(async () => ({})),
     applyGrants: vi.fn((_grants: unknown) => {}),
@@ -167,6 +170,7 @@ beforeEach(() => {
   verifyToken.mockResolvedValue(CLAIMS);
   getSessionUserById.mockResolvedValue({ ...MOD });
   isRevoked.mockResolvedValue(false);
+  isRevoked.confirmElevated.mockResolvedValue('ok');
 });
 afterEach(() => vi.useRealTimers());
 
@@ -450,6 +454,7 @@ describe('hook: the sheet cookie', () => {
   it.each([
     ['login', { status: 'login', redirect: 'https://hub.test/login', reason: 'unavailable' }],
     ['reauth', { status: 'reauth', authorize: 'https://hub.test/a', reason: 'unavailable' }],
+    ['unconfirmed (civitai/civitai#10695)', { status: 'unavailable' }],
   ])(
     'answers 503 when the web session cannot be resolved, without using or clearing the sheet (%s)',
     async (_n, web) => {
@@ -615,6 +620,18 @@ describe('hook: the sheet cookie', () => {
     isRevoked.mockResolvedValue(true);
     expect((await run('/api/held-media/7', `__Secure-held_sheet=${token}`)).res.status).toBe(401);
     expect(isRevoked).toHaveBeenCalledWith(WEB);
+  });
+
+  // civitai/civitai#10695: a moderator request whose revocation read failed is refused, session kept.
+  it('answers 503 and keeps the sheet cookie when the revocation read is unconfirmed', async () => {
+    const token = await signIn();
+    isRevoked.confirmElevated.mockResolvedValue('unavailable');
+    const { res, resolve } = await run('/api/held-media/7', `__Secure-held_sheet=${token}`);
+    expect(res.status).toBe(503);
+    expect(res.headers.get('set-cookie')).toBeNull();
+    expect(resolve).not.toHaveBeenCalled();
+    isRevoked.confirmElevated.mockResolvedValue('ok');
+    expect((await run('/api/held-media/7', `__Secure-held_sheet=${token}`)).res.status).toBe(299);
   });
 
   it('expires after 15 idle minutes, and each fetch restarts the clock', async () => {
