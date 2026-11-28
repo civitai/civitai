@@ -320,6 +320,11 @@ export async function editFeaturePageComment(
     throw throwNotFoundError('Comment not found');
   if (comment.userId !== ctx.user.id) throw refused();
   if (comment.tosViolation) throw throwNotFoundError('Comment not found');
+  if (!ctx.user.username?.trim())
+    throw new TRPCError({
+      code: 'PRECONDITION_FAILED',
+      message: FEATURE_PAGES_SET_USERNAME_MESSAGE,
+    });
   const answered = await Promise.all(
     [comment.parentId, comment.replyToId].map(async (id) => {
       const row = id ? await getStoredComment(prismaRunner(dbWrite), id) : undefined;
