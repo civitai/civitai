@@ -10,11 +10,13 @@ import {
   allBrowsingLevelsFlag,
   publicBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
+import type { AssociatedModelAddons } from '~/server/services/associated-model-visibility';
 import type { SessionUser } from '~/types/session';
 
 const FROM_OWNER = 7;
 const ITEM_OWNER = 20;
 const FROM = 100;
+const EXCLUDED_TAG = 500;
 
 type Seed = {
   id: number;
@@ -39,6 +41,7 @@ const MODELS = {
   faced: { id: 9, sfwName: 'Safe title' },
   minor: { id: 10, minor: true },
   unrated: { id: 11, nsfwLevel: 0 },
+  tagged: { id: 12 },
 } satisfies Record<string, Seed>;
 
 const PG = publicBrowsingLevelsFlag;
@@ -75,6 +78,7 @@ beforeAll(async () => {
       minor boolean NOT NULL DEFAULT false, "sfwName" text
     );
     CREATE TABLE "Article" (id int PRIMARY KEY);
+    CREATE TABLE "TagsOnModels" ("modelId" int NOT NULL, "tagId" int NOT NULL, PRIMARY KEY ("modelId", "tagId"));
     CREATE TABLE "ModelAssociations" (
       id int PRIMARY KEY, "fromModelId" int NOT NULL, "toModelId" int, "toArticleId" int,
       "associatedById" int, "createdAt" timestamp(3) NOT NULL DEFAULT now(),
@@ -82,7 +86,7 @@ beforeAll(async () => {
     );
     INSERT INTO "User" (id, username) VALUES (${FROM_OWNER}, 'from-owner'), (${ITEM_OWNER}, 'item-owner');
   `);
-  for (const fromId of [FROM, 101, 102, 103, 104]) {
+  for (const fromId of [FROM, 101, 102, 103, 104, 105, 106]) {
     await h.pg.query(
       `INSERT INTO "Model" (id, name, "nsfwLevel", "userId", status, availability, poi) VALUES ($1, 'from', 1, $2, 'Published', 'Public', false)`,
       [fromId, FROM_OWNER]
@@ -106,6 +110,10 @@ beforeAll(async () => {
       ]
     );
   }
+  await h.pg.query(`INSERT INTO "TagsOnModels" ("modelId", "tagId") VALUES ($1, $2)`, [
+    MODELS.tagged.id,
+    EXCLUDED_TAG,
+  ]);
   await link(
     FROM,
     Object.values(MODELS).map((m) => m.id)
@@ -127,11 +135,11 @@ afterAll(() => h?.stop());
 const listed = async (
   viewer: SessionUser | undefined,
   browsingLevel: number,
-  { disableMinor }: { disableMinor?: boolean } = {}
+  addons: AssociatedModelAddons = {}
 ) =>
   (
     await getAssociatedResourcesSimple(
-      { fromId: FROM, type: 'Suggested', browsingLevel, disableMinor },
+      { fromId: FROM, type: 'Suggested', browsingLevel, ...addons },
       viewer,
       viewer
     )
@@ -167,6 +175,15 @@ describe('getAssociatedResourcesSimple model side', () => {
     expect(await listed(itemOwner, PG, off)).toContain(MODELS.minor.id);
     expect(await listed(stranger, PG, off)).toContain(MODELS.live.id);
     expect(await listed(stranger, PG)).toContain(MODELS.minor.id);
+  });
+
+  it('with a tag excluded, hides a model carrying it from everyone but its owner', async () => {
+    const excluded = { excludedTagIds: [EXCLUDED_TAG] };
+    expect(await listed(anon, PG, excluded)).not.toContain(MODELS.tagged.id);
+    expect(await listed(stranger, PG, excluded)).not.toContain(MODELS.tagged.id);
+    expect(await listed(itemOwner, PG, excluded)).toContain(MODELS.tagged.id);
+    expect(await listed(stranger, PG, excluded)).toContain(MODELS.live.id);
+    expect(await listed(stranger, PG)).toContain(MODELS.tagged.id);
   });
 
   it.each(['deleted', 'unpublished', 'draft', 'private', 'takenDown', 'poi'] as const)(
@@ -248,5 +265,21 @@ describe('setAssociatedResources model side', () => {
     await link(104, [MODELS.minor.id]);
     await save(104);
     expect(await remaining(104)).toEqual([]);
+  });
+
+  it('with a tag excluded, keeps a link carrying it that the editor did not list', async () => {
+    const save = (fromId: number, excludedTagIds?: number[]) =>
+      setAssociatedResources(
+        { fromId, type: 'Suggested', associations: [], browsingLevel: ALL, excludedTagIds },
+        fromOwner,
+        fromOwner
+      );
+    await link(105, [MODELS.tagged.id]);
+    await save(105, [EXCLUDED_TAG]);
+    expect(await remaining(105)).toEqual([MODELS.tagged.id]);
+
+    await link(106, [MODELS.tagged.id]);
+    await save(106);
+    expect(await remaining(106)).toEqual([]);
   });
 });
