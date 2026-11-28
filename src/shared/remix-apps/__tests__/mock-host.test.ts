@@ -38,6 +38,16 @@ describe('dryRunRemixApp', () => {
     expect(upscale.request).toEqual({ kind: 'upscale', image: takes.result.images[2], scale: 2 });
     expect(outputs).toEqual(upscale.result.images);
   });
+
+  it('stops an app that runs past its step cap', async () => {
+    // Pick of four takes four steps; a cap of three stops it before the upscale.
+    await expect(
+      dryRunRemixApp(pickOfFour, source, {
+        answer: (spec) => (spec.kind === 'pick' ? 2 : 'upscale'),
+        maxSteps: 3,
+      })
+    ).rejects.toThrow('pick-of-four ran more than 3 steps');
+  });
 });
 
 describe('remixOptionEffects', () => {

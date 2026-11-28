@@ -35,7 +35,6 @@ const spec: RemixDeclarativeSpec = {
 };
 const source = { imageId: 5, url: 'https://example.com/source.png', width: 832, height: 1216 };
 
-// The real tRPC client; only the network is fake, and it records every request.
 /** `AppProvider` asks for this on mount, whatever it renders. */
 const APP_PROVIDER_QUERY = 'event.getNavBanners';
 let wire: ReturnType<typeof installTrpcWire>;
