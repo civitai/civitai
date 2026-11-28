@@ -5,7 +5,7 @@ import {
   RETRACTED_MEDIA_STREAM_MS,
 } from '@civitai/shared/retracted-media';
 import type { OwnRetractedMedia } from '~/server/services/retracted-media.service';
-import { retractedMediaQuerySchema } from '~/server/schema/retracted-media.schema';
+import { storedMediaQuerySchema } from '~/server/schema/stored-media.schema';
 import { isFullScopeSession } from '~/server/utils/require-full-scope-session';
 import { holdLeavesImage } from '~/server/utils/held-level';
 import { streamStoredMedia } from '~/server/utils/stream-stored-media';
@@ -56,7 +56,7 @@ export async function serveOwnRetractedMedia(
   if (viewer.impersonated || !viewer.fullScope)
     return void res.status(403).json({ error: 'Not available with this sign-in' });
 
-  const parsed = retractedMediaQuerySchema.safeParse(req.query);
+  const parsed = storedMediaQuerySchema.safeParse(req.query);
   if (!parsed.success) return void res.status(400).json({ error: 'Bad image id' });
   const { imageId } = parsed.data;
 

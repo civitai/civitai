@@ -12,7 +12,7 @@ import { SERVED_ACTIVITY } from '@civitai/shared/held-media';
 import { getFeatureFlagsAsync } from '~/server/services/feature-flags.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { getRetractedMedia } from '~/server/services/retracted-media.service';
-import { retractedMediaQuerySchema } from '~/server/schema/retracted-media.schema';
+import { storedMediaQuerySchema } from '~/server/schema/stored-media.schema';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 import { checkFixedWindow } from '~/server/utils/public-api-rate-limit';
 import { streamStoredMedia } from '~/server/utils/stream-stored-media';
@@ -30,7 +30,7 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
   const flags = await getFeatureFlagsAsync({ user, req });
   if (!flags.modRetractedMedia) return void res.status(403).json({ error: 'Forbidden' });
 
-  const parsed = retractedMediaQuerySchema.safeParse(req.query);
+  const parsed = storedMediaQuerySchema.safeParse(req.query);
   if (!parsed.success) return void res.status(400).json({ error: 'Bad image id' });
   const { imageId } = parsed.data;
 
