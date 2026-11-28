@@ -4,6 +4,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   __resetProfileRouteLabelsForTests,
   apiProfileRoute,
+  rememberResultRoute,
+  serializedValueRoute,
   type PprofTime,
   startWallProfilingWithAsyncContext,
   withProfileRoute,
@@ -231,5 +233,85 @@ describe('apiProfileRoute', () => {
   it('maps an unknown method to one bucket', () => {
     expect(apiProfileRoute('PROPFIND /api/v1/images')).toBe('api:OTHER /api/v1/images');
     expect(apiProfileRoute('XYZZY /api/v1/images')).toBe('api:OTHER /api/v1/images');
+  });
+});
+
+describe('rememberResultRoute / serializedValueRoute', () => {
+  const arm = () => {
+    const time = fakeTime();
+    startWallProfilingWithAsyncContext(sdkStartWall(time), time);
+  };
+  // A tRPC stream chunk carrying a resolved value: `[index, status, [[value], ...asyncs]]`.
+  const chunk = (value: unknown) => [7, 0, [[value]]];
+  // What tRPC's stream encoder sends for a plain-object value: a null-prototype shallow copy.
+  const streamCopy = (value: Record<string, unknown>) =>
+    Object.assign(Object.create(null) as Record<string, unknown>, value);
+
+  it('is dark until armed: nothing is remembered or found', () => {
+    const data = { items: [1] };
+    rememberResultRoute({ ok: true, data }, 'trpc:image.getInfinite');
+    expect(serializedValueRoute(data)).toBeUndefined();
+    arm();
+    expect(serializedValueRoute(data)).toBeUndefined();
+  });
+
+  it('finds the value itself (a non-streamed batch serializes result.data)', () => {
+    arm();
+    const data = { items: [1], nextCursor: 3 };
+    rememberResultRoute({ ok: true, data }, 'trpc:image.getInfinite');
+    expect(serializedValueRoute(data)).toBe('trpc:image.getInfinite');
+  });
+
+  it('finds an array value inside a stream chunk (the encoder keeps it as is)', () => {
+    arm();
+    const data = [{ id: 1 }, { id: 2 }];
+    rememberResultRoute({ ok: true, data }, 'trpc:tag.getAll');
+    expect(serializedValueRoute(chunk(data))).toBe('trpc:tag.getAll');
+  });
+
+  it("finds a plain-object value through the stream's shallow copy, by its first object field", () => {
+    arm();
+    const data = { nextCursor: 9, items: [{ id: 1 }] };
+    rememberResultRoute({ ok: true, data }, 'trpc:homeBlock.getHomeBlock');
+    expect(serializedValueRoute(chunk(streamCopy(data)))).toBe('trpc:homeBlock.getHomeBlock');
+  });
+
+  it('keeps two procedures of one batch apart', () => {
+    arm();
+    const a = { items: [{ id: 1 }] };
+    const b = { items: [{ id: 2 }] };
+    rememberResultRoute({ ok: true, data: a }, 'trpc:model.getAll');
+    rememberResultRoute({ ok: true, data: b }, 'trpc:user.getCreator');
+    expect(serializedValueRoute(chunk(streamCopy(b)))).toBe('trpc:user.getCreator');
+    expect(serializedValueRoute(chunk(streamCopy(a)))).toBe('trpc:model.getAll');
+  });
+
+  it('remembers nothing for a failed result or a primitive value', () => {
+    arm();
+    const data = { items: [1] };
+    rememberResultRoute({ ok: false, error: new Error('x'), data }, 'trpc:a.fail');
+    rememberResultRoute({ ok: true, data: 5 }, 'trpc:a.count');
+    expect(serializedValueRoute(data)).toBeUndefined();
+    expect(serializedValueRoute(5)).toBeUndefined();
+  });
+
+  it("does not find the stream's envelope chunks or a value with no object field", () => {
+    arm();
+    const data = { count: 5 };
+    rememberResultRoute({ ok: true, data }, 'trpc:a.count');
+    expect(serializedValueRoute(chunk(streamCopy(data)))).toBeUndefined();
+    expect(serializedValueRoute(chunk(streamCopy({ result: 0 })))).toBeUndefined();
+    expect(serializedValueRoute({ '0': [[0], [null, 0, 0]] })).toBeUndefined();
+  });
+
+  it('looks at no more than the first 8 fields of a plain-object value', () => {
+    arm();
+    const fields = Object.fromEntries(Array.from({ length: 12 }, (_, i) => [`f${i}`, i]));
+    const late = { ...fields, items: [{ id: 1 }] };
+    rememberResultRoute({ ok: true, data: late }, 'trpc:a.wide');
+    expect(serializedValueRoute(chunk(streamCopy(late)))).toBeUndefined();
+    const early = { f0: 0, items: [{ id: 1 }] };
+    rememberResultRoute({ ok: true, data: early }, 'trpc:a.narrow');
+    expect(serializedValueRoute(chunk(streamCopy(early)))).toBe('trpc:a.narrow');
   });
 });
