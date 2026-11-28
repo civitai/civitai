@@ -414,12 +414,12 @@ export async function toggleHideCommentV3Handler({
   input: CommentV3IdInput;
 }) {
   const comment = await writableComment(ctx, input.id);
+  assertNotRemovedForMember(ctx, comment);
+  await assertSectionOwnerOrModerator(ctx, comment);
   // A Feature Pages comment is hidden and shown only from the moderator app, bound to what the
   // moderator saw and recorded there.
   if (comment.entityType === 'featurePage')
     throw throwBadRequestError('Hide or unhide this comment from the moderator app.');
-  assertNotRemovedForMember(ctx, comment);
-  await assertSectionOwnerOrModerator(ctx, comment);
   // Toggled from the row read under its lock: the read above may predate a hide since.
   const hidden = await dbWrite.$transaction(async (tx) => {
     const row = await getStoredComment(prismaRunner(tx), comment.id, 'FOR UPDATE');
