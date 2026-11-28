@@ -86,11 +86,14 @@ export function isAppFrameHost(src: string | undefined, policy: AppFrameOriginPo
  * THE rule for `allow-same-origin` on an App Block frame. Every host derives its
  * sandbox through `intersectSandbox`, which asks only this.
  *
+ *  - With NO policy (no `AppProvider` above the host, or a tab that booted without
+ *    server props; in production every server-rendered boot carries one) a
+ *    `verified`/`internal` frame keeps the token exactly as before and an unverified
+ *    one never gets it. Nothing below applies.
  *  - A review mount (`reviewMode`) never gets it: pending code runs in a moderator's tab.
- *  - `unverified`: only with a policy, the viewer flag on, and `src` on an app-frame host.
- *  - `verified` / `internal`: with a policy, only on an app-frame host. With NO policy
- *    (no `AppProvider` above the host: component tests, or a tab that booted without
- *    server props) they keep the token as before; nothing else changes for them.
+ *    (The review host also forces `unverified`, so this matters for every tier.)
+ *  - `unverified`: only with the viewer flag on and `src` on an app-frame host.
+ *  - `verified` / `internal`: only on an app-frame host; the flag is not read.
  */
 export function mayGrantSameOrigin(args: {
   src: string | undefined;
@@ -99,10 +102,11 @@ export function mayGrantSameOrigin(args: {
   policy: AppFrameOriginPolicy | null;
 }): boolean {
   const { src, trustTier, reviewMode, policy } = args;
+  const trusted = TRUSTED_TIERS.has(trustTier);
+  if (policy === null) return trusted;
   if (reviewMode) return false;
-  if (TRUSTED_TIERS.has(trustTier)) return policy === null || isAppFrameHost(src, policy);
-  if (!policy || !policy.unverifiedEnabled) return false;
-  return isAppFrameHost(src, policy);
+  if (trusted) return isAppFrameHost(src, policy);
+  return policy.unverifiedEnabled && isAppFrameHost(src, policy);
 }
 
 // Minimal safe sandbox: just enough for a block to execute its own bundle,

@@ -269,7 +269,7 @@ viewer-keyed documents (above); reports go through the report API
 (`POST /api/v1/blocks/moderation/reports`).
 
 - **Routes:** the removed ones answer exactly as an unknown route: `PATCH /:c/:key` is `405
-method_not_allowed` (`Allow: GET, PUT, DELETE`), `/:c/:key/counters/:name`,
+  method_not_allowed` (`Allow: GET, PUT, DELETE`), `/:c/:key/counters/:name`,
   `/:c/:key/marks/:name`, `/_publish/:to` and `/_unpublish/:to` are `404 not_found`, except the
   `report` mark (below). A list refuses
   `markedBy` and `mark` as unknown parameters and `sort=counter:` / `sort=mark:` as an undeclared
@@ -1158,7 +1158,6 @@ same page host, so the owner sees the same confirm.
    within the per-job limit.
 
    Three things to know as an author:
-
    - **Estimate it on its own.** Only the single `ESTIMATE_WORKFLOW` stores a confirmable
      quote. A batch estimate (`ESTIMATE_WORKFLOW_BATCH`) never persists anything, so its
      cells never carry `stepQuote`; price the grid in a batch, then estimate the one body
@@ -1166,11 +1165,10 @@ same page host, so the owner sees the same confirm.
    - **Plain JSON input only.** The quote is bound to the exact body, so `input` must be
      plain JSON — objects, arrays, strings, finite numbers, booleans and `null`. A `Date`,
      `Map`, `Set` or similar is refused (`a confirmed step needs plain JSON input … —
-body.input.<path> is a Date`), at the estimate and at the submit.
+     body.input.<path> is a Date`), at the estimate and at the submit.
    - **Not for training.** A training `$type` (`training`, `imageResourceTraining`) is
      refused with `a training step type cannot run as a confirmed step — use
-kind:'training'`. Training runs have their own kind, with its own checks.
-
+     kind:'training'`. Training runs have their own kind, with its own checks.
 2. **Run** — `RUN_CONFIRMED_STEP { requestId, body: { …the same body, quoteId } }`. The host
    reads the quote back from the server (`blocks.previewQuoteGrant`), shows the price, and on
    the viewer's confirm records it through `blocks.consentQuoteGrant` (signed-in session
@@ -1208,7 +1206,7 @@ kind:'training'`. Training runs have their own kind, with its own checks.
    `/apps/activity`, revoking spending, or "Ask me each job" there turns the opt-in off.
    Raising the limit from the raise dialog keeps it; that dialog then says "Jobs up to N Buzz
    that fit within the new limit will run without asking." Each submit records `consentKind: 'click' |
-'standing'` on its audit row, and `civitai_app_block_confirmed_step_submit_total{app_block_id,consent}`
+   'standing'` on its audit row, and `civitai_app_block_confirmed_step_submit_total{app_block_id,consent}`
    counts both. The per-app aggregate cap and velocity limit still apply.
 
 A quote is single-use, bound to the viewer, app, install and exact body, expires after 15

@@ -179,9 +179,12 @@ describe('effectiveSandboxIsOpaque (transport-mode derivation)', () => {
  *
  * The first case is the REGRESSION: an unverified app on its canonical published host,
  * with the viewer flag on, must run at a real origin (before this change it was always
- * opaque, so SharedWorker / localStorage / IndexedDB failed with origin 'null'). Every
- * other case is an INVARIANT GUARD: none of these inputs ever got the token before the
- * change either, so they pin the boundary of the new grant rather than a fixed bug.
+ * opaque, so SharedWorker / localStorage / IndexedDB failed with origin 'null').
+ *
+ * The INVARIANT cases pin the boundary of the grant. For `unverified` they are guards
+ * only: no such input got the token before the change either. For `verified`/`internal`
+ * they are NEW BEHAVIOUR, red on the pre-change code: those tiers used to get the token
+ * on any src, and now get it only on an app-frame host (when a policy exists).
  */
 describe('intersectSandbox with a frame-origin policy', () => {
   // Pairwise-distinct roots, neither of them the embedder or a parent of it.
