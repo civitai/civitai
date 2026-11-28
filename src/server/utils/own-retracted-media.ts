@@ -1,16 +1,14 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import * as z from 'zod';
 import { isProbeableMediaKey } from '@civitai/shared/media-key';
 import {
   RETRACTED_MEDIA_MAX_BYTES,
   RETRACTED_MEDIA_STREAM_MS,
 } from '@civitai/shared/retracted-media';
 import type { OwnRetractedMedia } from '~/server/services/retracted-media.service';
+import { retractedMediaQuerySchema } from '~/server/schema/retracted-media.schema';
 import { isFullScopeSession } from '~/server/utils/require-full-scope-session';
 import { holdLeavesImage } from '~/server/utils/held-level';
 import { streamStoredMedia } from '~/server/utils/stream-stored-media';
-
-const query = z.object({ imageId: z.coerce.number().int().positive().max(2_147_483_647) });
 
 export type OwnRetractedMediaDeps = {
   viewer: {
@@ -47,7 +45,6 @@ export const ownRetractedMediaViewer = (
  * the key comes from the row, only for an image `readMedia` leaves this owner, and the bytes come
  * through this server, so the storage URL never leaves it. A refusal of the image itself (not
  * owned, not allowed, held) answers 404, as a missing image.
- * The page's other gate, `image.get`'s held level (`withoutHeldFromViewer`), applies here too.
  */
 export async function serveOwnRetractedMedia(
   req: NextApiRequest,
@@ -59,7 +56,7 @@ export async function serveOwnRetractedMedia(
   if (viewer.impersonated || !viewer.fullScope)
     return void res.status(403).json({ error: 'Not available with this sign-in' });
 
-  const parsed = query.safeParse(req.query);
+  const parsed = retractedMediaQuerySchema.safeParse(req.query);
   if (!parsed.success) return void res.status(400).json({ error: 'Bad image id' });
   const { imageId } = parsed.data;
 
@@ -86,7 +83,6 @@ export async function serveOwnRetractedMedia(
   await streamStoredMedia(req, res, {
     label: 'own-retracted-media',
     media: { url: media.url, type: media.type, mimeType: media.mimeType },
-    // The owner's own upload: nothing to audit.
     audit: async () => undefined,
     maxBytes: RETRACTED_MEDIA_MAX_BYTES,
     streamMs: RETRACTED_MEDIA_STREAM_MS,

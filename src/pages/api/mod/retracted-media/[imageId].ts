@@ -1,5 +1,4 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import * as z from 'zod';
 import { prefixCacheKey } from '@civitai/redis';
 import { isProbeableMediaKey } from '@civitai/shared/media-key';
 import {
@@ -13,14 +12,13 @@ import { SERVED_ACTIVITY } from '@civitai/shared/held-media';
 import { getFeatureFlagsAsync } from '~/server/services/feature-flags.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { getRetractedMedia } from '~/server/services/retracted-media.service';
+import { retractedMediaQuerySchema } from '~/server/schema/retracted-media.schema';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 import { checkFixedWindow } from '~/server/utils/public-api-rate-limit';
 import { streamStoredMedia } from '~/server/utils/stream-stored-media';
 import type { SessionUser } from '~/types/session';
 
 export const config = { api: { responseLimit: false } };
-
-const query = z.object({ imageId: z.coerce.number().int().positive().max(2_147_483_647) });
 
 /**
  * A blocked image or video for a moderator, from storage rather than the public CDN, which stops
@@ -32,7 +30,7 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
   const flags = await getFeatureFlagsAsync({ user, req });
   if (!flags.modRetractedMedia) return void res.status(403).json({ error: 'Forbidden' });
 
-  const parsed = query.safeParse(req.query);
+  const parsed = retractedMediaQuerySchema.safeParse(req.query);
   if (!parsed.success) return void res.status(400).json({ error: 'Bad image id' });
   const { imageId } = parsed.data;
 

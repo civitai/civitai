@@ -53,8 +53,8 @@ export type OwnRetractedMedia = Omit<RetractedMedia, 'held'> & {
  * under a reviewed block (`reviewedBlocks`, read again here rather than trusted from the page);
  * `null` otherwise, exactly as a missing image. The row must also pass `image.get`'s visibility
  * conditions for its owner (`imageVisibilityConditions`), so the route opens nothing the image page
- * would not. Item level only: an owner who is held keeps their own media. Read on the primary; past
- * its timeout it refuses.
+ * would not. An owner-level hold does not withhold; the route applies the model hold
+ * (`holdLeavesImage`). Read on the primary; past its timeout it refuses.
  */
 export async function getOwnRetractedMedia(
   imageId: number,
