@@ -12,6 +12,14 @@ import {
   STRIKE_REVIEW_LIMIT,
 } from '$lib/server/strike-review.service';
 import { banConfirmed, setBanned, setMuted, voidStrike } from '$lib/server/user-actions.service';
+import { addUserNote } from '$lib/server/moderation-memory.service';
+import {
+  getRepeatInfringerQueue,
+  isInRepeatInfringerReview,
+  markRepeatInfringerReviewed,
+  REPEAT_INFRINGER_THRESHOLD,
+  REPEAT_INFRINGER_WINDOW_MONTHS,
+} from '$lib/server/repeat-infringer.service';
 
 const userIdField = { userId: z.coerce.number().int().positive() };
 
@@ -21,8 +29,20 @@ const NOT_QUEUED = 'This account is no longer in the strike review queue. Reload
 
 export const load: PageServerLoad = async ({ url, locals }) => {
   requireAccess(locals.user, url.pathname);
-  const { rows, total } = await getStrikeReviewQueue();
-  return { rows, total, limit: STRIKE_REVIEW_LIMIT };
+  const [{ rows, total }, repeatInfringers] = await Promise.all([
+    getStrikeReviewQueue(),
+    getRepeatInfringerQueue(),
+  ]);
+  return {
+    rows,
+    total,
+    limit: STRIKE_REVIEW_LIMIT,
+    repeatInfringers,
+    repeatInfringerPolicy: {
+      threshold: REPEAT_INFRINGER_THRESHOLD,
+      windowMonths: REPEAT_INFRINGER_WINDOW_MONTHS,
+    },
+  };
 };
 
 export const actions: Actions = {
@@ -65,6 +85,33 @@ export const actions: Actions = {
     });
     if (!result.ok) return fail(400, { error: result.error });
     await clearStrikeReviewFlag(input.userId);
+    return { success: true };
+  },
+
+  repeatInfringerReviewed: async ({ request, locals }) => {
+    const input = parseForm(
+      z.object({
+        ...userIdField,
+        note: z.string().trim().min(1, 'A note is required.').max(2000),
+      }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return fail(400, { error: input });
+    const author = locals.user.username;
+    if (!author)
+      return fail(400, { error: 'Your account has no username to attribute the note to.' });
+    if (!(await isInRepeatInfringerReview(input.userId)))
+      return fail(409, {
+        error: 'This account is no longer in the repeat-infringer queue. Reload the page.',
+      });
+
+    // The note first: a review recorded without its reasoning cannot be told from a misclick.
+    await addUserNote({
+      userId: input.userId,
+      notes: `Repeat-infringer review: ${input.note}`,
+      author,
+    });
+    await markRepeatInfringerReviewed(input.userId, locals.user.id);
     return { success: true };
   },
 

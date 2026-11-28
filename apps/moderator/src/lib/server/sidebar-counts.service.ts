@@ -28,6 +28,7 @@ import { countRemovedAppeals } from './removed-appeals.service';
 import { countSiteAppeals } from './site-appeals.service';
 import { siteAppealCountKey } from '$lib/site-appeals';
 import { SITE_APPEAL_CATEGORIES } from '@civitai/shared/site-appeal';
+import { countRepeatInfringerReview } from './repeat-infringer.service';
 import { countStrikeReview } from './strike-review.service';
 import { countPendingScamRestrictions } from './user-restriction.service';
 import { countPendingCsamHolds } from './csam-holds.queries';
@@ -235,8 +236,15 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
       },
       3_000
     ),
-    // Bounded until `User_strikeReview_idx` exists: without it this scans every muted account.
-    bounded(countStrikeReview),
+    // Bounded until `User_strikeReview_idx` exists: without it this scans every muted account. The page
+    // holds both queues, so the badge counts both.
+    bounded(async () => {
+      const [review, repeat] = await Promise.all([
+        countStrikeReview(),
+        countRepeatInfringerReview(),
+      ]);
+      return review + repeat;
+    }),
     bounded(countPendingScamRestrictions),
     bounded(countPendingCsamHolds),
     // One grouped count over the partial queue index for all four queues; bounded so a failure drops

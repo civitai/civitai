@@ -64,6 +64,7 @@ vi.mock('../minor-hash.service', () => ({
 }));
 vi.mock('../training-moderation.service', () => ({ countTrainingDataReview: async () => 0 }));
 vi.mock('../strike-review.service', () => ({ countStrikeReview: async () => 0 }));
+vi.mock('../repeat-infringer.service', () => ({ countRepeatInfringerReview: async () => 0 }));
 vi.mock('../site-appeals.service', () => ({ countSiteAppeals: async () => 0 }));
 vi.mock('../tickets/snapshot', () => ({ ticketSnapshot: { peek } }));
 vi.mock('../csam-holds.queries', () => ({ countPendingCsamHolds }));

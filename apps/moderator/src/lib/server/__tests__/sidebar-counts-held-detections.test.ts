@@ -78,6 +78,7 @@ vi.mock('../minor-hash.service', () => ({
 
 vi.mock('../training-moderation.service', () => ({ countTrainingDataReview }));
 vi.mock('../strike-review.service', () => ({ countStrikeReview }));
+vi.mock('../repeat-infringer.service', () => ({ countRepeatInfringerReview: async () => 0 }));
 vi.mock('../restricted-nsfw-verdicts', () => ({ getRestrictedVerdictCount }));
 vi.mock('../site-appeals.service', () => ({ countSiteAppeals }));
 

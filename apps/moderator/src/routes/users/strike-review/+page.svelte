@@ -1,5 +1,6 @@
 <script lang="ts">
   import { num } from '$lib/format';
+  import RepeatInfringerRow from './RepeatInfringerRow.svelte';
   import StrikeReviewRow from './StrikeReviewRow.svelte';
   import type { PageData } from './$types';
 
@@ -34,3 +35,25 @@
     {/each}
   </div>
 {/if}
+
+<section class="mt-8 flex flex-col gap-3">
+  <header>
+    <h2 class="text-lg font-semibold">Repeat infringers</h2>
+    <p class="text-sm text-dark-2">
+      Accounts with {data.repeatInfringerPolicy.threshold} or more copyright removals in the last
+      {data.repeatInfringerPolicy.windowMonths} months (voided strikes do not count). Ban from the
+      account page if that is the decision; either way, mark it reviewed with a note. A new removal
+      after the review brings the account back.
+    </p>
+    <p class="mt-1 text-xs text-dark-2">
+      {num(data.repeatInfringers.total)} account{data.repeatInfringers.total === 1 ? '' : 's'} waiting.
+    </p>
+  </header>
+  {#if data.repeatInfringers.rows.length === 0}
+    <p class="text-sm text-dark-2">No accounts are waiting for repeat-infringer review.</p>
+  {:else}
+    {#each data.repeatInfringers.rows as row (row.userId)}
+      <RepeatInfringerRow {row} windowMonths={data.repeatInfringerPolicy.windowMonths} />
+    {/each}
+  {/if}
+</section>

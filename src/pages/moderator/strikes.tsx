@@ -706,6 +706,16 @@ function IssueStrikeModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [opened, defaultUserId]);
 
+  // A Copyright strike defaults to 0 points: it records the removal for the repeat-infringer count
+  // without escalating. The moderator can still raise it.
+  const reason = form.watch('reason');
+  useEffect(() => {
+    const points = form.getValues('points');
+    if (reason === StrikeReason.Copyright && points === 1) form.setValue('points', 0);
+    if (reason !== StrikeReason.Copyright && points === 0) form.setValue('points', 1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reason]);
+
   const createMutation = trpc.strike.create.useMutation({
     async onSuccess() {
       showSuccessNotification({ message: 'Strike has been issued' });
@@ -749,8 +759,12 @@ function IssueStrikeModal({
           <InputNumber
             name="points"
             label="Points"
-            description="1 = warning, 2 = moderate, 3 = severe"
-            min={1}
+            description={
+              reason === StrikeReason.Copyright
+                ? '0 = record the removal only (no escalation), 1 = warning, 2 = moderate, 3 = severe'
+                : '1 = warning, 2 = moderate, 3 = severe'
+            }
+            min={reason === StrikeReason.Copyright ? 0 : 1}
             max={3}
             required
           />

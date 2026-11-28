@@ -1,4 +1,6 @@
+import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
+import { strikePointsAllowed } from '~/server/schema/strike.schema';
 import { createStrike } from '~/server/services/strike.service';
 import { defineModeratorEndpoint } from '~/server/utils/moderator-endpoint';
 import { EntityType, StrikeReason } from '~/shared/utils/prisma/enums';
@@ -15,7 +17,15 @@ export default defineModeratorEndpoint('strike.create', {
   input: z.object({
     userId: z.coerce.number().int().positive().describe('The account to strike.'),
     reason: z.enum(StrikeReason).describe('Why the strike was issued.'),
-    points: z.coerce.number().int().min(1).max(3).default(1).describe('Severity, 1–3.'),
+    points: z.coerce
+      .number()
+      .int()
+      .min(0)
+      .max(3)
+      .default(1)
+      .describe(
+        'Severity, 1–3; 0 only for a Copyright strike, which records the removal without escalating.'
+      ),
     description: z
       .string()
       .trim()
@@ -35,6 +45,11 @@ export default defineModeratorEndpoint('strike.create', {
       .describe('Lifetime in days.'),
   }),
   async handler(input, ctx) {
+    if (!strikePointsAllowed(input.reason, input.points))
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'Only a Copyright strike can carry 0 points',
+      });
     const strike = await createStrike({
       userId: input.userId,
       reason: input.reason,
