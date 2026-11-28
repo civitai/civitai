@@ -191,15 +191,16 @@ func searchServeVerdict(probe *searchServeProbe, err error) string {
 	return SearchServable
 }
 
-// searchServeOnly is a check only the public route makes: serving, the request is handed back under
-// reason; in the shadow it is noted on the sample's servable probe (observeSearchServable) and the
+// searchServeOnly is a check only the public route makes: serving, the request is handed back with
+// handBack (written as a literal fallback.New at the call site, so the seeded-reason ledger sees it);
+// in the shadow its reason is noted on the sample's servable probe (observeSearchServable) and the
 // compute goes on.
-func searchServeOnly(r *http.Request, serving bool, reason string) error {
+func searchServeOnly(r *http.Request, serving bool, handBack error) error {
 	if serving {
-		return fallback.New(reason)
+		return handBack
 	}
 	if probe, ok := r.Context().Value(searchServeProbeKey{}).(*searchServeProbe); ok {
-		probe.note(reason)
+		probe.note(fallback.Reason(handBack))
 	}
 	return nil
 }
@@ -347,7 +348,7 @@ func (s *Server) searchCompute(serving bool) func(context.Context, *http.Request
 		}
 		etag := etagChecked(r)
 		if etag {
-			if err := searchServeOnly(r, serving, "search-etag"); err != nil {
+			if err := searchServeOnly(r, serving, fallback.New("search-etag")); err != nil {
 				return nil, err
 			}
 		}
@@ -379,7 +380,7 @@ func (s *Server) searchCompute(serving bool) func(context.Context, *http.Request
 		// civitai.com refuses a profane search (searchProfane). A shadow sample is computed: Node samples
 		// a request only after its own check has passed it.
 		if searchProfane(color, req) {
-			if err := searchServeOnly(r, serving, "search-profanity"); err != nil {
+			if err := searchServeOnly(r, serving, fallback.New("search-profanity")); err != nil {
 				return nil, err
 			}
 		}
