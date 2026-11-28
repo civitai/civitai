@@ -276,25 +276,37 @@ describe('isProfaneSearch', () => {
 
   // The label is how moderators find which entry drives refusals. If it ever carried the query,
   // user text would land in Prometheus and its cardinality would be unbounded.
-  it('labels a search refusal with the matched list entry id, never the query', async () => {
-    setBlocked({ id: 1, data: MANAGED });
+  // The entry sits inside a longer typed word, so the typed word and the entry differ.
+  async function labelsMovedBy(source: string, query: string) {
     const { hits } = ensureRegisterProfanityListMetrics();
     const entries = async () =>
       new Map(
         (await hits.get()).values
-          .filter((v) => v.labels.surface === 'search' && v.labels.source === 'managed')
-          .map((v) => [v.labels.entry, v.value])
+          .filter((v) => v.labels.surface === 'search' && v.labels.source === source)
+          .map((v) => [v.labels.entry as string, v.value])
       );
     const before = await entries();
-    const query = `zqvuniquequery ${MANAGED_WORD}`;
     expect(await isProfaneSearch(['hello', query])).toBe(true);
     const after = await entries();
-    const moved = [...after].filter(([entry, value]) => value !== (before.get(entry) ?? 0));
-    expect(moved).toEqual([
-      [profanityEntryId(MANAGED_WORD), (before.get(profanityEntryId(MANAGED_WORD)) ?? 0) + 1],
-    ]);
-    expect([...after.keys()]).not.toContain(profanityEntryId(query));
-    expect([...after.keys()].join(' ')).not.toContain('zqvuniquequery');
+    return [...after]
+      .filter(([entry, value]) => value !== (before.get(entry) ?? 0))
+      .map(([entry, value]) => [entry, value - (before.get(entry) ?? 0)]);
+  }
+
+  it('labels a search refusal with the matched list entry id, never the query', async () => {
+    setBlocked({ id: 1, data: MANAGED });
+    const typed = `zqvunique${MANAGED_WORD}zqv`;
+    const moved = await labelsMovedBy('managed', `left ${typed} right`);
+    expect(moved).toEqual([[profanityEntryId(MANAGED_WORD), 1]]);
+    expect(moved.flat()).not.toContain(profanityEntryId(typed));
+  });
+
+  it('labels a fallback refusal with the matched list entry id, never the query', async () => {
+    setProfanityListReaderForTests({ read: () => Promise.reject(new Error('list down')) });
+    const typed = `zqvunique${SHIPPED_WORD}zqv`;
+    const moved = await labelsMovedBy('fallback', `left ${typed} right`);
+    expect(moved).toEqual([[profanityEntryId(SHIPPED_WORD), 1]]);
+    expect(moved.flat()).not.toContain(profanityEntryId(typed));
   });
 
   it('keys an entry id on the entry without its boundary markers or case', () => {
