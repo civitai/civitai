@@ -248,6 +248,8 @@ func readParams(raw []byte, kinds map[string]int, schema *inputschema.Schema, st
 	var unknown []string
 	for _, m := range o.members {
 		kind, known := kinds[m.key]
+		// Invariant guard, unreachable while TestFacetStrippedKeysAreStrippedByZod holds: a stripped key
+		// the schema has (the deploy gap's case) is NOT dropped, so it falls back below.
 		if !known && stripped[m.key] && !schema.Has(m.key) {
 			continue
 		}
