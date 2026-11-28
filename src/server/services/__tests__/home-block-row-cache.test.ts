@@ -1,24 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
-import type * as CacheHelpers from '~/server/utils/cache-helpers';
 import { HomeBlockType } from '~/shared/utils/prisma/enums';
 
 /**
  * The per-process copy of the HomeBlock row (`readHomeBlockRowThrough`) and the L1's on-time purge
  * of expired entries, both behind `home-block-server-cache`. The real caches, a fake Redis, and the
- * flag set directly.
+ * flag set directly. The block source is handed to `getHomeBlockCached` by its caller, so the test
+ * passes its own.
  */
 
-const { getHomeBlockData } = vi.hoisted(() => ({ getHomeBlockData: vi.fn() }));
-vi.mock('~/server/services/home-block.service', () => ({
-  getHomeBlockData,
-  resolveHomeBlockMetadata: vi.fn(async () => ({})),
-}));
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
-vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
-  ...(await importOriginal<typeof CacheHelpers>()),
-  bustFetchThroughCache: vi.fn(async () => undefined),
-}));
 
 import { cacheHitCounter, cacheMissCounter } from '@civitai/telemetry/client';
 import { homeBlockL1EvictionCounter } from '~/server/prom/home-block-l1.metrics';
@@ -32,7 +23,13 @@ import {
   readHomeBlockRowThrough,
   resetHomeBlockL1ForTests,
 } from '~/server/services/home-block-cache.service';
-import * as homeBlockSource from '~/server/services/home-block.service';
+import type { HomeBlockSource } from '~/server/services/home-block-cache.service';
+
+const getHomeBlockData = vi.fn();
+const homeBlockSource = {
+  getHomeBlockData,
+  resolveHomeBlockMetadata: vi.fn(async () => ({})),
+} as unknown as HomeBlockSource;
 
 type Readable = {
   get(): Promise<{ values: { labels: Record<string, unknown>; value: number }[] }>;
@@ -103,7 +100,7 @@ describe('readHomeBlockRowThrough', () => {
 
   it('flag on: a copy is served for 10s and no longer', async () => {
     expect(HOME_BLOCK_ROW_TTL_MS).toBe(10_000);
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
     resetHomeBlockL1ForTests(() => true);
     const fn = read();
     await readHomeBlockRowThrough(41, fn);
@@ -179,7 +176,7 @@ describe('the L1 purges expired entries on time', () => {
   const evictions = () => counted(homeBlockL1EvictionCounter, 'home-block-l1');
 
   it('control: three live entries do not fit, so one is evicted', async () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
     resetHomeBlockL1ForTests(() => true);
     const before = await evictions();
     for (const sourceId of [1, 2, 3]) await fill(sourceId);
@@ -188,7 +185,7 @@ describe('the L1 purges expired entries on time', () => {
 
   it('two entries past their 10s hold no budget: a third fits with no eviction', async () => {
     expect(HOME_BLOCK_L1_TTL_MS).toBe(10_000);
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
     resetHomeBlockL1ForTests(() => true);
     const before = await evictions();
     await fill(1);
