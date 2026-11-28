@@ -30,10 +30,6 @@
 
       nodeVersion = lib.trim (builtins.readFile ./.nvmrc);
       nodeMajor = lib.head (lib.splitString "." nodeVersion);
-      # shortcut: the locked nixpkgs can lag .nvmrc's patch (a security release can
-      # land before nixpkgs carries it), and `checks.toolchain-pins` (N2) stays red
-      # until `nix flake update nixpkgs` lands a nodejs_24 equal to .nvmrc. Remove
-      # this note once the lock catches up.
       nodejs = pkgs."nodejs_${nodeMajor}";
 
       packageJson = builtins.fromJSON (builtins.readFile ./package.json);
