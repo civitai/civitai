@@ -80,6 +80,10 @@ type ServeParity struct {
 	// Upstream answers the replay: the fallback proxy to the Node app (FEED_GO_FALLBACK_URL), with
 	// its own error accounting (a replay's failure is not a fallback's).
 	Upstream http.Handler
+	// V1Upstream answers the replay of a public model route (`/api/v1/models`, `/api/v1/models/[id]`):
+	// its own proxy to the Node app those routes hand back to (FEED_GO_V1_FALLBACK_URL). nil: those
+	// routes are not replayed.
+	V1Upstream http.Handler
 	// Queue holds one slot per replay in flight (DefaultServeParityWorkers); a full queue drops the
 	// replay (dropped_queue). Never waited on.
 	Queue chan struct{}
