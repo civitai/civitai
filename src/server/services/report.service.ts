@@ -306,6 +306,15 @@ const validateReportCreation = async ({
   // if alsoReportedBy includes the userId, then do nothing
   if (alsoReportedBy.includes(userId)) return existingReport;
 
+  // A person's report is filed afresh rather than folded into a report the system filed that a moderator
+  // dismissed: a dismissal leaves previouslyReviewedCount at 0, so no fold would ever reopen it.
+  if (
+    userId !== constants.system.user.id &&
+    existingReport.userId === constants.system.user.id &&
+    existingReport.status === ReportStatus.Unactioned
+  )
+    return null;
+
   const mergedDetails = withAdditionalReport(existingReport.details, { userId, details });
 
   // if alsoReportedBy count is greater than previouslyReviewedCount * 2,

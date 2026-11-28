@@ -28,6 +28,7 @@ const WEBHOOK_ROUTES = [
   'enable-stripe-connect',
   'enable-tipalti',
   'flip-phases',
+  'image/kono-report-image',
   'image/kono-set-nsfw-level',
   'knights/notification-types',
   'knights/reset-player',
