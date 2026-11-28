@@ -244,6 +244,7 @@ import { getBaseModelGroup, getBaseModelsByGroup } from '~/shared/constants/base
 import { deriveScopeFromInstanceId } from '~/server/schema/blocks/attribution.schema';
 import { COARSE_POINTER_QUERY } from '~/utils/phone-layout';
 import { trpc } from '~/utils/trpc';
+import { useVersionedFrameSrc } from '~/components/AppBlocks/versionedFrameSrc';
 import {
   sharedStorageErrorReply,
   storageErrorMessage,
@@ -674,6 +675,14 @@ export interface PageBlockHostProps {
   /** The `<slug>.civit.ai` bundle URL (manifest.iframe.src), server-resolved. */
   iframeSrc: string;
   /**
+   * The app's current approved version (`AppBlock.currentVersionSha`), for the versioned
+   * frame path (`~/components/AppBlocks/versionedFrameSrc`): with the viewer's
+   * `appBlocksVersionedFramePath` flag on, the frame loads `<iframeSrc>v/<sha>/`. Honoured
+   * only on the `page-run` and `private-run` surfaces, whose `iframeSrc` is the published
+   * root; every other surface keeps its src whatever is passed here.
+   */
+  versionSha?: string | null;
+  /**
    * Told the terminal fallback's reason whenever it changes: a reason once the host gives up on the
    * app (it never became ready in time, its token failed, it reported a fatal error), `null` while it
    * loads or runs (so also after a Retry that recovered). App Assistant's preview offers its Restart
@@ -970,6 +979,7 @@ export function PageBlockHost({
   blockInstanceId,
   appName,
   iframeSrc,
+  versionSha = null,
   onFallbackChange,
   bootSkeleton,
   surface,
@@ -1383,7 +1393,16 @@ export function PageBlockHost({
   // The entry URL the frame loads: `iframeSrc`, or the fresh one a dev-tunnel Retry obtained
   // through `onRefreshEntryUrl` (see `performRetry`). The fresh one is tied to the `iframeSrc` it
   // replaced, so a parent that hands down a NEW `iframeSrc` always wins over it.
-  const entrySrc = freshEntry && freshEntry.base === iframeSrc ? freshEntry.src : iframeSrc;
+  //
+  // `publishedSrc` is `iframeSrc` at its version path when the versioned frame path applies
+  // (`useVersionedFrameSrc`), else `iframeSrc` itself. 🔴 The dev-tunnel comparison stays on
+  // the PROP `iframeSrc`, because `performRetry` captures `freshEntry.base` from the prop
+  // (`iframeSrcRef`); comparing it with the versioned value would drop every fresh entry.
+  const publishedSrc = useVersionedFrameSrc(
+    iframeSrc,
+    surface === 'page-run' || surface === 'private-run' ? versionSha : null
+  );
+  const entrySrc = freshEntry && freshEntry.base === iframeSrc ? freshEntry.src : publishedSrc;
 
   const expectedOrigin = useMemo(() => {
     try {

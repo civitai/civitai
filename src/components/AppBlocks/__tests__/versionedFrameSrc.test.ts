@@ -20,7 +20,15 @@ describe('versionedFrameSrc', () => {
   });
 
   test('no usable sha: unchanged', () => {
-    for (const sha of [null, undefined, '', SHA.slice(1), `${SHA}0`, SHA.toUpperCase(), 'g'.repeat(40)]) {
+    for (const sha of [
+      null,
+      undefined,
+      '',
+      SHA.slice(1),
+      `${SHA}0`,
+      SHA.toUpperCase(),
+      'g'.repeat(40),
+    ]) {
       expect(versionedFrameSrc(ROOT, sha, true), String(sha)).toBe(ROOT);
     }
   });

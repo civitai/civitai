@@ -130,7 +130,10 @@ describe('PageBlockHost: versioned frame path', () => {
   test('INVARIANT: the origin-keyed allow-same-origin grant is unchanged by the version path', async () => {
     const flags = { ...ON, appBlocksSameOriginFrames: true };
     const versioned = await renderedFrame({ flags, versionSha: SHA });
-    const root = await renderedFrame({ flags: { appBlocksSameOriginFrames: true }, versionSha: SHA });
+    const root = await renderedFrame({
+      flags: { appBlocksSameOriginFrames: true },
+      versionSha: SHA,
+    });
     expect(base(versioned.src)).toBe(`https://my-app.${APPS_ROOT}/v/${SHA}/`);
     expect(versioned.sandbox.split(/\s+/)).toContain('allow-same-origin');
     expect(versioned.sandbox).toBe(root.sandbox);
