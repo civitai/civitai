@@ -6,6 +6,13 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as FliptClient from '~/server/flipt/client';
+import {
+  BASE_V,
+  OWNER_V,
+  UPDATE_V,
+  packageJson,
+  pnpmLock,
+} from './platform-update-dependency-files.fixture';
 
 /**
  * The staff platform-update check on a version's files (`platform-update-bundle-check.ts`), with
@@ -395,6 +402,76 @@ describe('checkPlatformUpdates', () => {
         })
       ).missing
     ).toHaveLength(1);
+  });
+
+  describe('dependency files: the dependency changes the update makes, not the whole file', () => {
+    /** The source repo's base also carries the app's package.json and lockfile. */
+    async function bumpUpdate() {
+      const base = h.trees.get(`${SLUG}@${BASE_SHA}`)!;
+      h.blobs.set(`${SLUG}:blob-base-pkg`, Buffer.from(packageJson(BASE_V)));
+      h.blobs.set(`${SLUG}:blob-base-lock`, Buffer.from(pnpmLock(BASE_V)));
+      base.set('package.json', 'blob-base-pkg');
+      base.set('pnpm-lock.yaml', 'blob-base-lock');
+      const sha = staffCommit({
+        'package.json': packageJson(UPDATE_V),
+        'pnpm-lock.yaml': pnpmLock(UPDATE_V),
+      });
+      await addUpdate({
+        id: 'apu_deps',
+        commitSha: sha,
+        reason: 'Bump the platform SDKs',
+        paths: [
+          { path: 'package.json', operation: 'update' },
+          { path: 'pnpm-lock.yaml', operation: 'update' },
+        ],
+      });
+    }
+
+    it('🔴 a bundle with the update’s versions and later dev-only lockfile bumps contains it', async () => {
+      await bumpUpdate();
+      const v = version({
+        'package.json': packageJson(OWNER_V),
+        'pnpm-lock.yaml': pnpmLock(OWNER_V),
+      });
+      expect(await checkPlatformUpdates({ appBlockId: APP, readFiles: v.readFiles })).toEqual({
+        contained: ['apu_deps'],
+        missing: [],
+      });
+      await expect(
+        assertBundleHasPlatformUpdates({ appBlockId: APP, readFiles: v.readFiles, allow: false })
+      ).resolves.toEqual({ missing: [], truncated: false });
+    });
+
+    it('🔴 an older @civitai/sdk is refused, and the refusal names the package and both versions', async () => {
+      await bumpUpdate();
+      const old = { ...OWNER_V, sdk: '0.33.7' };
+      const v = version({ 'package.json': packageJson(old), 'pnpm-lock.yaml': pnpmLock(old) });
+      await expect(
+        assertBundleHasPlatformUpdates({ appBlockId: APP, readFiles: v.readFiles, allow: false })
+      ).rejects.toThrow(
+        'apu_deps by mod-jane ("Bump the platform SDKs"): package.json, pnpm-lock.yaml ' +
+          '[package.json: @civitai/sdk (dependencies) must be 0.34.0, bundle has 0.33.7; ' +
+          'pnpm-lock.yaml: @civitai/sdk must resolve to 0.34.0, bundle has 0.33.7]. Merge it into the app'
+      );
+    });
+
+    it('🔴 an unparseable lockfile is refused (fail closed)', async () => {
+      await bumpUpdate();
+      const v = version({
+        'package.json': packageJson(OWNER_V),
+        'pnpm-lock.yaml': `${pnpmLock(OWNER_V)}\n  '@civitai/sdk@0.34.0: {[unclosed\n`,
+      });
+      const check = await checkPlatformUpdates({ appBlockId: APP, readFiles: v.readFiles });
+      expect(check?.contained).toEqual([]);
+      expect(check?.missing).toEqual([
+        {
+          id: 'apu_deps',
+          reason: 'Bump the platform SDKs',
+          by: 'mod-jane',
+          paths: ['pnpm-lock.yaml'],
+        },
+      ]);
+    });
   });
 
   it('🔴 checks at most the cap, the OLDEST first; past it the check says truncated and logs', async () => {

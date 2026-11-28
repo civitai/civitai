@@ -3,7 +3,9 @@
  *
  * Every path that files a publish request asks, for each of the app's updates that NO APPROVED
  * VERSION HAS SHIPPED yet (`listUnshippedPlatformUpdates`: not superseded, author staff now),
- * whether the version's files contain it ({@link pathHoldsUpdate}, the shared predicate). A
+ * whether the version's files contain it (`updatePathGaps` in `platform-update-containment.ts`,
+ * the shared predicate; a `package.json` or `pnpm-lock.yaml` is compared by the dependency changes
+ * the update makes, and a refusal names each one missing). A
  * client's `merged` report is not read: only the files are.
  *
  *   - Bundle upload (`submitVersion`: the CLI's token route, the signed-in session route that App
@@ -47,7 +49,7 @@
 import { logToAxiom } from '~/server/logging/client';
 import { shipsNoPlatformUpdates } from '~/shared/utils/publish-request-on-behalf';
 import type { Advisory } from './submit-advisories';
-import { missingUpdatePaths } from './platform-update-containment';
+import { missingUpdateChanges } from './platform-update-containment';
 // The cap is a constant of the shipped module (its query's LIMIT); that module imports nothing
 // back from here.
 import {
@@ -67,6 +69,12 @@ export type MissingPlatformUpdate = {
   by: string | null;
   /** The update's paths the version does not hold, in the record's order. */
   paths: string[];
+  /**
+   * The dependency changes those paths lack, named (e.g. `package.json: @civitai/sdk
+   * (dependencies) must be 0.34.0, bundle has 0.33.0`), for a `package.json` or `pnpm-lock.yaml`
+   * that parsed; absent when none could be named.
+   */
+  changes?: string[];
   /**
    * The update's recorded commits could not be read from the source repo, so it was not checked:
    * reported missing (every path), and staff can withdraw it.
@@ -190,13 +198,13 @@ export async function checkPlatformUpdates(
   const missing: MissingPlatformUpdate[] = [];
   for (const update of updates) {
     const entry = { id: update.id, reason: update.reason, by: update.by };
-    let paths: string[];
+    let found: Awaited<ReturnType<typeof missingUpdateChanges>>;
     try {
       const [target, base] = await Promise.all([
         treeAt(update.slug, update.commitSha),
         treeAt(update.slug, update.baseCommitSha),
       ]);
-      paths = await missingUpdatePaths(update.paths, async (path) => {
+      found = await missingUpdateChanges(update.paths, async (path) => {
         const [want, was] = await Promise.all([
           blob(update.slug, target.get(path)),
           blob(update.slug, base.get(path)),
@@ -213,8 +221,16 @@ export async function checkPlatformUpdates(
       missing.push({ ...entry, paths: update.paths.map((p) => p.path), unreadable: true });
       continue;
     }
-    if (paths.length) missing.push({ ...entry, paths });
-    else contained.push(update.id);
+    if (!found.length) {
+      contained.push(update.id);
+      continue;
+    }
+    const changes = found.flatMap((m) => m.changes);
+    missing.push({
+      ...entry,
+      paths: found.map((m) => m.path),
+      ...(changes.length ? { changes } : {}),
+    });
   }
   return { contained, missing, ...more };
 }
@@ -229,9 +245,10 @@ const UNREADABLE_NOTE =
   ' [its files could not be read from the source repo; Civitai staff can withdraw it]';
 
 function describeUpdate(update: MissingPlatformUpdate): string {
+  const changes = update.changes?.length ? ` [${update.changes.join('; ')}]` : '';
   return `${update.id} by ${update.by ?? 'Civitai staff'} ("${update.reason}"): ${update.paths.join(
     ', '
-  )}${update.unreadable ? UNREADABLE_NOTE : ''}`;
+  )}${changes}${update.unreadable ? UNREADABLE_NOTE : ''}`;
 }
 
 const truncatedNote = (truncated: boolean | undefined) =>
