@@ -364,6 +364,36 @@ func TestLoadInfiniteGallerySettingsMissDefaultsOff(t *testing.T) {
 	}
 }
 
+// FEED_GO_V1_IMAGES_SERVE_GALLERY_SETTINGS_MISS is off unless set, and neither FEED_GO_SERVE_V1_IMAGES
+// nor the image.getInfinite switch turns it on.
+func TestLoadV1ImagesGallerySettingsMissDefaultsOff(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	t.Setenv("FEED_GO_SERVE_V1_IMAGES", "true")
+	t.Setenv("FEED_GO_INFINITE_SERVE_GALLERY_SETTINGS_MISS", "true")
+	t.Setenv("FEED_GO_CACHE_WRITEBACK", "gallery-settings")
+	t.Setenv("DATABASE_URL", "x://primary")
+	for in, want := range map[string]bool{"": false, "false": false, "junk": false, "true": true, "1": true} {
+		t.Setenv("FEED_GO_V1_IMAGES_SERVE_GALLERY_SETTINGS_MISS", in)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.V1ImagesServeGallerySettingsMiss != want {
+			t.Errorf("FEED_GO_V1_IMAGES_SERVE_GALLERY_SETTINGS_MISS=%q -> %v, want %v", in, c.V1ImagesServeGallerySettingsMiss, want)
+		}
+	}
+	// On without the gallery-settings write-back (none, or another cache only) fails startup.
+	t.Setenv("FEED_GO_V1_IMAGES_SERVE_GALLERY_SETTINGS_MISS", "true")
+	for _, wb := range []string{"", "tag-ids,metrics"} {
+		t.Setenv("FEED_GO_CACHE_WRITEBACK", wb)
+		if _, err := Load(); err == nil || !strings.Contains(err.Error(), "needs gallery-settings in FEED_GO_CACHE_WRITEBACK") {
+			t.Errorf("write-back %q: %v, want the needs-write-back error", wb, err)
+		}
+	}
+}
+
 // The model.getAll input ports' switches default off, and each turns on only its own port.
 func TestLoadGetAllInputPortsDefaultOff(t *testing.T) {
 	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
@@ -859,6 +889,7 @@ func TestLoadCacheWriteBackForms(t *testing.T) {
 		{"model-decorations", "model-decorations", true},
 		{"version-images", "version-images", true},
 		{"metrics,model-data", "metrics,model-data", true},
+		{"gallery-settings", "gallery-settings", true},
 		{all, sortedJoin(hydrate.WriteCaches), true},
 	} {
 		t.Setenv("FEED_GO_CACHE_WRITEBACK", c.raw)
@@ -891,6 +922,11 @@ func TestLoadCacheWriteBackForms(t *testing.T) {
 	t.Setenv("FEED_GO_CACHE_WRITEBACK", "metrics,version-images")
 	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "version-images") {
 		t.Fatalf("version-images without DATABASE_URL: %v, want an error naming it", err)
+	}
+	// The gallery settings' creator hidden users are a primary read (getCreatorGalleryHiddenUserIds fresh).
+	t.Setenv("FEED_GO_CACHE_WRITEBACK", "gallery-settings")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "gallery-settings") {
+		t.Fatalf("gallery-settings without DATABASE_URL: %v, want an error naming it", err)
 	}
 }
 

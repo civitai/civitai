@@ -49,7 +49,7 @@ const (
 	// The fixture counts gen.mjs writes: a glob that matches fewer fails, so a moved directory or a
 	// renamed extension cannot pass as zero fixtures.
 	goldenMinAsPosts  = 37
-	goldenMinV1       = 52
+	goldenMinV1       = 55
 	goldenMinInfinite = 164
 	goldenMinModels   = 70
 	goldenIssuer      = "https://auth.example.test"
@@ -110,8 +110,9 @@ type goldenFixture struct {
 		// ServeSortRandom is FEED_GO_INFINITE_SERVE_SORT_RANDOM (feed.InfinitePorts.SortRandom; absent:
 		// off, a collection's Random sort falls back).
 		ServeSortRandom bool `json:"serveSortRandom"`
-		// ServeGallerySettingsMiss is FEED_GO_INFINITE_SERVE_GALLERY_SETTINGS_MISS (infinite/
-		// fixtures; absent: off, a gallery-settings miss falls back).
+		// ServeGallerySettingsMiss is FEED_GO_INFINITE_SERVE_GALLERY_SETTINGS_MISS (infinite/ fixtures)
+		// or FEED_GO_V1_IMAGES_SERVE_GALLERY_SETTINGS_MISS (v1-images/ fixtures); absent: off, a
+		// gallery-settings miss falls back.
 		ServeGallerySettingsMiss bool `json:"serveGallerySettingsMiss"`
 		// ServeInputIDs / ServeInputFollowed are the model.getAll input ports' switches
 		// (FEED_GO_GETALL_SERVE_INPUT_IDS / _FOLLOWED; absent: off, the fixture's shape falls back).
@@ -178,7 +179,9 @@ type goldenFixture struct {
 // goldenWrite is one cache write Node makes on a miss.
 type goldenWrite struct {
 	Packed string `json:"packed"`
-	EX     int    `json:"ex"`
+	// Raw is a plain string value (the gallery settings' JSON, which Node SETs as text), instead of Packed.
+	Raw *string `json:"raw"`
+	EX  int     `json:"ex"`
 }
 
 type goldenFeedReply struct {
@@ -1519,6 +1522,25 @@ func newGoldenPG(fx *goldenFixture) *testkit.DB {
 			}
 			return testkit.NewRows([]string{"id", "minor", "sfwOnly", "levelType", "level"}, rows...), nil
 		}},
+		// The same rebuild with the gallery settings written back: each existing model's creator, stored
+		// settings (`{ level }`, or NULL for a null galleryLevel, as gen.mjs builds them) and flags.
+		{Match: `SELECT id, "userId", "gallerySettings"::text AS "gallerySettings", minor, "sfwOnly" FROM "Model"`, Rows: func(args []any) (*testkit.Rows, error) {
+			var rows [][]any
+			for _, m := range db.Models {
+				if goldenHas(goldenInts(args[0]), m.ID) {
+					var settings any
+					if l := strings.TrimSpace(string(m.GalleryLevel)); l != "" && l != "null" {
+						settings = `{"level": ` + l + `}`
+					}
+					rows = append(rows, []any{m.ID, m.UserID, settings, m.Minor, m.SfwOnly})
+				}
+			}
+			return testkit.NewRows([]string{"id", "userId", "gallerySettings", "minor", "sfwOnly"}, rows...), nil
+		}},
+		// getCreatorGalleryHiddenUserIds: no fixture creator hides a user.
+		{Match: `FROM "CreatorGalleryHiddenUser" h`, Rows: func(_ []any) (*testkit.Rows, error) {
+			return testkit.NewRows([]string{"creatorId", "userId"}), nil
+		}},
 		{Match: `SELECT minor, "sfwOnly"`, Rows: func(args []any) (*testkit.Rows, error) {
 			for _, m := range db.Models {
 				if m.ID == goldenInt(args[0]) {
@@ -1824,7 +1846,14 @@ func seedUncuratedShowcase(r *testkit.Redis, fx *goldenFixture) {
 
 func goldenSetup(t testing.TB, fx *goldenFixture) *goldenEnv {
 	t.Helper()
-	return goldenSetupMode(t, fx, false)
+	return goldenSetupMode(t, fx, goldenV1NeedsWriteBack(fx))
+}
+
+// goldenV1NeedsWriteBack is a v1-images fixture with FEED_GO_V1_IMAGES_SERVE_GALLERY_SETTINGS_MISS on,
+// which config.Load accepts only with the gallery settings written back: its harnesses run with
+// write-back on, as the only configuration production can have.
+func goldenV1NeedsWriteBack(fx *goldenFixture) bool {
+	return fx.Config.ServeGallerySettingsMiss && fx.Request.Path == "/api/v1/images"
 }
 
 // goldenWrites is the write-back set of a golden mode: every cache with writeBack, none without.
@@ -1907,6 +1936,10 @@ func goldenSetupMode(t testing.TB, fx *goldenFixture, writeBack bool) *goldenEnv
 		NodeProduction: true,
 		Now:            nowFn,
 		Ports:          feed.V1Ports{ImageID: fx.Config.ServeV1ImageID, ModelOnly: fx.Config.ServeV1ModelOnly},
+	}
+	if fx.Config.ServeGallerySettingsMiss {
+		// As main with FEED_GO_V1_IMAGES_SERVE_GALLERY_SETTINGS_MISS on.
+		v1.Gallery = feed.HoldComputingGallery(deps.Gallery, sources)
 	}
 	infinite := &feed.InfiniteDeps{Deps: deps, Sources: sources, Blocked: blocked,
 		NewCreators: &feed.NewCreatorBoards{Cache: cache, Now: nowFn},
@@ -2130,6 +2163,11 @@ func goldenCacheState(r *testkit.Redis) map[string]string {
 	return out
 }
 
+// goldenNeverWritten is the key prefix of the one cache Node writes on a miss that feed-go computes
+// but never writes (hydrate.MissImageMeta is not a WriteCaches name): its writes in expect.writes (a
+// v1-images withMeta fixture) are not expected of feed-go, and any write there is still a problem.
+const goldenNeverWritten = "packed:caches:image-meta:"
+
 // goldenWriteProblems compares what the computation changed in the cache with what Node writes on
 // the fixture's misses: nothing at all with write-back off, exactly expect.writes with it on. Each
 // difference is one problem.
@@ -2138,7 +2176,14 @@ func goldenWriteProblems(fx *goldenFixture, before, after map[string]string, wri
 	want := map[string]string{}
 	if writeBack {
 		for k, w := range fx.Expect.Writes {
-			want[k] = "string:" + w.Packed + " ex:" + (time.Duration(w.EX) * time.Second).String()
+			if strings.HasPrefix(k, goldenNeverWritten) {
+				continue
+			}
+			val := w.Packed
+			if w.Raw != nil {
+				val = base64.StdEncoding.EncodeToString([]byte(*w.Raw))
+			}
+			want[k] = "string:" + val + " ex:" + (time.Duration(w.EX) * time.Second).String()
 		}
 	}
 	got := map[string]string{}
@@ -2218,8 +2263,23 @@ func goldenRunAsPostsMode(t *testing.T, fx *goldenFixture, writeBack bool) {
 	env.feed.check(t, true)
 }
 
+// goldenRunV1 runs a fixture with write-back off and on, as goldenRunInfinite: the endpoint shares the
+// page hydrator and the gallery-settings miss computation, so its misses are written the same way.
 func goldenRunV1(t *testing.T, fx *goldenFixture) {
-	env := goldenSetup(t, fx)
+	modes := []bool{false, true}
+	if goldenV1NeedsWriteBack(fx) {
+		modes = []bool{true} // the switch without write-back fails config.Load
+	}
+	for _, writeBack := range modes {
+		t.Run(map[bool]string{false: "writeback-off", true: "writeback-on"}[writeBack], func(t *testing.T) {
+			goldenRunV1Mode(t, fx, writeBack)
+		})
+	}
+}
+
+func goldenRunV1Mode(t *testing.T, fx *goldenFixture, writeBack bool) {
+	env := goldenSetupMode(t, fx, writeBack)
+	before := goldenCacheState(env.cache)
 	ctx := context.Background()
 	r, err := SyntheticV1Request(ctx, ShadowRequest{Input: fx.Request.Query, Path: fx.Request.Path, Headers: env.headers})
 	if err != nil {
@@ -2245,6 +2305,9 @@ func goldenRunV1(t *testing.T, fx *goldenFixture) {
 	}
 	goldenReport(t, rep, c.payload)
 	env.feed.check(t, true)
+	for _, p := range goldenWriteProblems(fx, before, goldenCacheState(env.cache), writeBack) {
+		t.Error(p)
+	}
 }
 
 // goldenRunInfinite runs a fixture with write-back off and on, as goldenRunAsPosts: the procedure

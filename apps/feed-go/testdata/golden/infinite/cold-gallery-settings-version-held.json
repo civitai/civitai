@@ -691,6 +691,11 @@
       }
     },
     "cacheable": false,
-    "writes": {}
+    "writes": {
+      "model:gallery-settings:5002": {
+        "raw": "{\"hiddenTags\":[],\"hiddenUsers\":[],\"hiddenImages\":{},\"level\":3,\"pinnedPosts\":{},\"creatorHiddenUserIds\":[],\"sfwHeld\":true}",
+        "ex": 604800
+      }
+    }
   }
 }
