@@ -65,6 +65,7 @@ const {
   writeContentLinkHold,
 } = await import('~/server/services/article-content-link-hold');
 const { settleContentLinkHolds } = await import('~/server/jobs/article-content-link-hold');
+const { enqueueImageIngestion } = await import('~/server/services/image.service');
 
 const ARTICLE_ID = 21;
 const AUTHOR = 7;
@@ -448,8 +449,16 @@ describe('content naming an existing row by url', () => {
     );
   const connected = async () =>
     (await q<{ imageId: number }>(`SELECT "imageId" FROM "ImageConnection"`)).map((r) => r.imageId);
+  /** The ids linking sent to ingestion; every row here is Pending. */
+  const queued = () =>
+    vi
+      .mocked(enqueueImageIngestion)
+      .mock.calls.flatMap(([{ images }]) => images.map((image) => image.id));
 
-  beforeEach(() => db.exec(`TRUNCATE "ServiceDealReviewImage", "ServiceDealFile"`));
+  beforeEach(async () => {
+    vi.mocked(enqueueImageIngestion).mockClear();
+    await db.exec(`TRUNCATE "ServiceDealReviewImage", "ServiceDealFile"`);
+  });
 
   it.each(Object.entries(COPIES))('refuses %s a save adds, and links no copy', async (_, mark) => {
     const id = await givenRow(AUTHOR);
@@ -457,6 +466,7 @@ describe('content naming an existing row by url', () => {
     expect(await save(null)).toBe('FORBIDDEN');
     await link();
     expect(await connected()).toEqual([]);
+    expect(queued()).toEqual([]);
     expect(await rows()).toEqual([KEY]);
   });
 
@@ -467,6 +477,7 @@ describe('content naming an existing row by url', () => {
       expect(await save(CONTENT)).toBe('accepted');
       await link();
       expect(await connected()).toEqual([]);
+      expect(queued()).toEqual([]);
     }
   );
 
@@ -478,6 +489,7 @@ describe('content naming an existing row by url', () => {
     expect(await save(null)).toBe('accepted');
     await link();
     expect(await connected()).toEqual([id]);
+    expect(queued()).toEqual([id]);
   });
 });
 
