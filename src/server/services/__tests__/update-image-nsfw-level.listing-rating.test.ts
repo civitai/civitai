@@ -1,9 +1,17 @@
 import { globSync, readFileSync, statSync } from 'fs';
 import path from 'path';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { PGlite } from '@electric-sql/pglite';
+import { Prisma } from '@prisma/client';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
+import {
+  CSAM_LINK_TABLES_SQL,
+  WITHHELD_TABLES_SQL,
+} from '../../../../packages/civitai-shared/src/__tests__/csam-restriction-cases';
 import type * as Caches from '~/server/redis/caches';
 import type * as ReDerive from '~/server/services/blocks/app-listing-rating-rederive.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { NsfwLevel } from '~/server/common/enums';
 
 // Which writes of an image's level reach the store-listing rating re-derive: a moderator's
@@ -208,5 +216,174 @@ describe('who can move a listing rating by re-rating an image', () => {
       'src/server/services/blocks/app-listing-rating-rederive.service.ts',
       'src/server/services/image.service.ts',
     ]);
+  });
+});
+
+describe("policy: a rating write doesn't move a blocked row's level; re-blocking to 32 is allowed", () => {
+  type Row = { ingestion: string; nsfwLevel: number; blockedFor: string | null };
+  const MARKED: [string, Row][] = [
+    ['ingestion Blocked', { ingestion: 'Blocked', nsfwLevel: NsfwLevel.R, blockedFor: null }],
+    ['the Blocked level', { ingestion: 'Scanned', nsfwLevel: NsfwLevel.Blocked, blockedFor: null }],
+    ['a block reason', { ingestion: 'Error', nsfwLevel: NsfwLevel.R, blockedFor: 'moderated' }],
+  ];
+  const CLEAN: Row = { ingestion: 'Scanned', nsfwLevel: NsfwLevel.R, blockedFor: null };
+
+  describe('a moderator rating (the mod api-route and image.controller)', () => {
+    // Evaluates the Prisma where the write sends against the row, as the database would.
+    const matches = (row: Row & { id: number }, where: Record<string, unknown>): boolean =>
+      Object.entries(where).every(([key, cond]) => {
+        const value = row[key as keyof typeof row];
+        if (cond && typeof cond === 'object' && 'not' in cond)
+          return value !== (cond as { not: unknown }).not;
+        return value === cond;
+      });
+    const seed = (row: Row) => {
+      dbMock.dbWrite.image.findUnique.mockResolvedValue({
+        metadata: {},
+        postId: null,
+        nsfwLevel: row.nsfwLevel,
+      } as never);
+      dbMock.dbWrite.image.update.mockImplementation((async ({ where }: { where: never }) => {
+        if (!matches({ id: IMAGE_ID, ...row }, where))
+          throw new Prisma.PrismaClientKnownRequestError('No record was found for an update.', {
+            code: 'P2025',
+            clientVersion: 'test',
+          });
+        return {};
+      }) as never);
+    };
+    const rate = (nsfwLevel: number, skipBlocked?: boolean) =>
+      updateImageNsfwLevel({
+        csamReview: true,
+        id: IMAGE_ID,
+        nsfwLevel,
+        userId: MOD,
+        isModerator: true,
+        skipBlocked,
+      } as never);
+
+    it.each(MARKED)('is refused when the row carries %s', async (_, row) => {
+      seed(row);
+
+      await expect(rate(NsfwLevel.PG13)).rejects.toThrow('This image is blocked');
+      expect(reDerive).not.toHaveBeenCalled();
+    });
+
+    it.each(MARKED)(
+      "is skipped for a moderator's Knights vote when the row carries %s",
+      async (_, row) => {
+        seed(row);
+
+        await expect(rate(NsfwLevel.PG13, true)).resolves.toBe(row.nsfwLevel);
+        expect(reDerive).not.toHaveBeenCalled();
+      }
+    );
+
+    it('re-blocking it to 32 is written', async () => {
+      seed(MARKED[0][1]);
+
+      await expect(rate(NsfwLevel.Blocked)).resolves.toBe(NsfwLevel.Blocked);
+    });
+
+    it('control: an unmarked row takes the rating', async () => {
+      seed(CLEAN);
+
+      await expect(rate(NsfwLevel.PG13)).resolves.toBe(NsfwLevel.PG13);
+    });
+  });
+
+  // The consensus guard is raw SQL, run here on PGlite.
+  describe('a Knights consensus', () => {
+    let pg: PGlite;
+    beforeAll(async () => {
+      pg = new PGlite();
+      await pg.exec(CSAM_LINK_TABLES_SQL);
+      await pg.exec(`
+        CREATE TYPE "ImageIngestionStatus" AS ENUM
+          ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
+        CREATE TYPE "MediaType" AS ENUM ('image', 'video', 'audio');
+        CREATE TABLE "Image" (
+          id int PRIMARY KEY, url text NOT NULL DEFAULT 'key', type "MediaType" NOT NULL DEFAULT 'image',
+          "mimeType" text, ingestion "ImageIngestionStatus" NOT NULL, "needsReview" text,
+          "blockedFor" text, minor boolean NOT NULL DEFAULT false, "nsfwLevel" int NOT NULL,
+          "userId" int NOT NULL DEFAULT 7, "acceptableMinor" boolean NOT NULL DEFAULT false,
+          "pHash" bigint, "postId" int, metadata jsonb, "nsfwLevelLocked" boolean NOT NULL DEFAULT false
+        );
+        ${WITHHELD_TABLES_SQL}
+        CREATE TABLE "ModActivity" ("userId" int, "entityType" text, activity text, "entityId" int);
+      `);
+    });
+    afterAll(() => pg.close());
+    beforeEach(async () => {
+      await pg.exec(`TRUNCATE "Image"`);
+      const raw = pgliteRaw(pg);
+      dbMock.dbWrite.$executeRaw.mockImplementation(raw.executeRaw as never);
+      dbMock.dbWrite.$queryRaw.mockImplementation(raw.queryRaw as never);
+    });
+    const seed = async (row: Row) => {
+      await pg.query(
+        `INSERT INTO "Image" (id, ingestion, "nsfwLevel", "blockedFor") VALUES ($1, $2, $3, $4)`,
+        [IMAGE_ID, row.ingestion, row.nsfwLevel, row.blockedFor]
+      );
+      dbMock.dbWrite.image.findUnique.mockResolvedValue({
+        metadata: {},
+        postId: null,
+        ...row,
+      } as never);
+    };
+    const level = async () =>
+      (
+        await pg.query<{ nsfwLevel: number }>(`SELECT "nsfwLevel" FROM "Image" WHERE id = $1`, [
+          IMAGE_ID,
+        ])
+      ).rows[0].nsfwLevel;
+    const consensus = (nsfwLevel: number) =>
+      updateImageNsfwLevel({
+        id: IMAGE_ID,
+        nsfwLevel,
+        userId: MOD,
+        isModerator: true,
+        activity: 'setNsfwLevelKono',
+      } as never);
+
+    it.each(MARKED)(
+      'is skipped without throwing when the row carries %s, and returns the level it kept',
+      async (_, row) => {
+        await seed(row);
+
+        await expect(consensus(NsfwLevel.PG13)).resolves.toBe(row.nsfwLevel);
+        expect(await level()).toBe(row.nsfwLevel);
+        expect(
+          loggingMock.logToAxiom.mock.calls.filter(
+            ([e]) => (e as { name?: string })?.name === 'rating-write-skipped-blocked'
+          )
+        ).toEqual([
+          [
+            {
+              type: 'info',
+              name: 'rating-write-skipped-blocked',
+              imageId: IMAGE_ID,
+              source: 'kono-consensus',
+            },
+          ],
+        ]);
+      }
+    );
+
+    it('re-blocking it to 32 is written', async () => {
+      await seed(MARKED[0][1]);
+
+      await consensus(NsfwLevel.Blocked);
+
+      expect(await level()).toBe(NsfwLevel.Blocked);
+    });
+
+    it('control: an unmarked row takes the consensus', async () => {
+      await seed(CLEAN);
+
+      await consensus(NsfwLevel.PG13);
+
+      expect(await level()).toBe(NsfwLevel.PG13);
+    });
   });
 });

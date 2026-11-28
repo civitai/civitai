@@ -78,7 +78,7 @@ CREATE TABLE "Image" (
   "type" TEXT,
   "needsReview" TEXT,
   "blockedFor" TEXT,
-  "ingestion" TEXT,
+  "ingestion" TEXT NOT NULL DEFAULT 'Pending',
   "metadata" JSONB,
   "pHash" BIGINT,
   "postId" INTEGER,
