@@ -191,7 +191,7 @@ describe('dealEventActorId', () => {
 // The buyer must not learn the seller was banned, nor anyone the details of a failed scan.
 describe('dealVisibleReason', () => {
   it('hides a system hold reason from the parties and shows it to moderators', () => {
-    for (const reason of ['seller_unavailable', 'final_scan_failed']) {
+    for (const reason of ['seller_unavailable', 'final_scan_failed', 'final_image_gone']) {
       expect(dealVisibleReason(reason, false)).toBeNull();
       expect(dealVisibleReason(reason, true)).toBe(reason);
     }

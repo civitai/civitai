@@ -3,10 +3,12 @@ import type { DisputeEvent, DisputeRow } from '$lib/server/creator-services-disp
 const SYSTEM_LABELS: Record<string, string> = {
   seller_unavailable: 'Seller banned or deleted before payout',
   final_scan_failed: 'A final file failed scanning',
+  final_image_gone: 'An image a final file was scanned with is gone',
+  final_above_rating: "A final file is rated above the deal's maximum",
 };
 
 /**
- * Where a dispute came from. `disputeReason` is one of two system codes, `cancellation_declined`, or the
+ * Where a dispute came from. `disputeReason` is one of the system codes, `cancellation_declined`, or the
  * buyer's own free text — so anything unrecognised is the buyer's words and is shown as text, never
  * guessed into a label.
  */
