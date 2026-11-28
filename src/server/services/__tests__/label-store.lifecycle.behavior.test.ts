@@ -2,7 +2,11 @@ import { PGlite } from '@electric-sql/pglite';
 import { createHash } from 'crypto';
 import { readFileSync } from 'fs';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { bootLabelStore, LABEL_STORE_MIGRATION } from './label-store.fixture';
+import {
+  bootLabelStore,
+  CSAM_COMMA_LIST_MIGRATION,
+  LABEL_STORE_MIGRATION,
+} from './label-store.fixture';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -123,6 +127,7 @@ describe('person hashes', () => {
   it('re-applying the migration keeps the key, so hashes stay stable', async () => {
     const before = await rows(`SELECT label_store.person_hash('owner', 5) AS h`);
     await db.pg.exec(readFileSync(LABEL_STORE_MIGRATION, 'utf8'));
+    await db.pg.exec(readFileSync(CSAM_COMMA_LIST_MIGRATION, 'utf8'));
 
     expect(await rows(`SELECT label_store.person_hash('owner', 5) AS h`)).toEqual(before);
     expect(await rows(`SELECT count(*)::int AS n FROM label_store.secret`)).toEqual([{ n: 1 }]);
@@ -376,6 +381,7 @@ describe('exclusion', () => {
     [
       ['flagged for review', `UPDATE "Image" SET "needsReview" = 'csam'`],
       ['blocked', `UPDATE "Image" SET "blockedFor" = 'CSAM'`],
+      ['blocked for a list naming CSAM', `UPDATE "Image" SET "blockedFor" = 'tos,CSAM'`],
       ['named by a report', `INSERT INTO "CsamReport" ("images") VALUES ('[{"id": 501}]')`],
       ['owned by a reported user', `INSERT INTO "CsamReport" ("userId") VALUES (11)`],
       [
@@ -413,6 +419,16 @@ describe('exclusion', () => {
       'a clean image',
       `INSERT INTO "Image" ("id", "userId", "url") VALUES (502, 12, 'u-501')`,
       null,
+    ],
+    [
+      'an image blocked for reasons other than CSAM',
+      `INSERT INTO "Image" ("id", "userId", "url", "blockedFor") VALUES (502, 12, 'u-501', 'tos,moderated')`,
+      null,
+    ],
+    [
+      'an image blocked for a list naming CSAM',
+      `INSERT INTO "Image" ("id", "userId", "url", "blockedFor") VALUES (502, 12, 'u-501', 'moderated,csam')`,
+      'safety',
     ],
     [
       'a flagged image with a lower id',

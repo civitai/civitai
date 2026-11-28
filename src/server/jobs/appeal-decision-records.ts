@@ -11,6 +11,7 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { instrumentB2Client } from '~/server/prom/b2-put.metrics';
+import { csamInBlockedFor } from '~/server/common/image-visibility';
 import { immediateRemovalSql } from '~/server/utils/image-removal-mode';
 import { createJob } from './job';
 
@@ -33,18 +34,19 @@ const reportNamesImage = (imageId: Prisma.Sql) => Prisma.sql`EXISTS (
 
 /**
  * An excluded image, judged on its live row. Restated in sweepLabelStore and in
- * `label_store.image_excluded` (label store migration); edit all three together.
+ * `label_store.image_row_excluded` (migration 20271210120100_csam_comma_list_label_store); edit all
+ * three together.
  */
 export const excludedImageRow = (i: Prisma.Sql) => Prisma.sql`(
   ${i}."needsReview" = 'csam'
-  OR ${i}."blockedFor" = 'CSAM'
+  OR ${csamInBlockedFor(Prisma.sql`${i}."blockedFor"`)}
   OR ${i}."userId" IN (SELECT c."userId" FROM "CsamReport" c WHERE c."userId" IS NOT NULL)
   OR ${reportNamesImage(Prisma.sql`${i}.id`)}
 )`;
 
-/** Must match the exclusion in the `appeal_decision_record` trigger; edit both together. */
+/** Must match the exclusion in `appeal_decision_record()` (20271210120000_csam_comma_list_appeal_record); edit both together. */
 export const excludedRecord = (r: Prisma.Sql) => Prisma.sql`(
-  ${r}."blockedFor" IS NOT DISTINCT FROM 'CSAM'
+  ${csamInBlockedFor(Prisma.sql`${r}."blockedFor"`)}
   OR ${reportNamesImage(Prisma.sql`${r}."imageId"`)}
   OR EXISTS (
     SELECT 1 FROM "Image" ex WHERE ex.id = ${r}."imageId" AND ${excludedImageRow(Prisma.raw('ex'))}
@@ -184,7 +186,7 @@ export async function sweepLabelStore() {
         OR EXISTS (
           SELECT 1 FROM "Image" li
           WHERE li.id = s."imageId"
-            AND (li."needsReview" = 'csam' OR li."blockedFor" = 'CSAM'
+            AND (li."needsReview" = 'csam' OR ${csamInBlockedFor(Prisma.raw('li."blockedFor"'))}
               OR li."userId" IN (SELECT "userId" FROM reported_users))
         )
         -- Another image sharing the stored file, found by the snapshot's url once the subject's own
@@ -193,7 +195,7 @@ export async function sweepLabelStore() {
           SELECT 1 FROM "Image" so
           WHERE so.url = coalesce((SELECT li.url FROM "Image" li WHERE li.id = s."imageId"), s.url)
             AND so.id IS DISTINCT FROM s."imageId"
-            AND (so."needsReview" = 'csam' OR so."blockedFor" = 'CSAM'
+            AND (so."needsReview" = 'csam' OR ${csamInBlockedFor(Prisma.raw('so."blockedFor"'))}
               OR so."userId" IN (SELECT "userId" FROM reported_users)
               OR so.id::text IN (SELECT id FROM reported_images))
         )

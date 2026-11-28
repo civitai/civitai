@@ -229,23 +229,37 @@ describe('sweepExcludedRecords', () => {
     expect(await recordIds()).toEqual([1]);
   });
 
-  it('deletes a record whose image later carries the block marker', async () => {
-    await holder.db.exec(`UPDATE "Image" SET "blockedFor" = 'CSAM' WHERE id = 102`);
+  // "blockedFor" is a comma list of block reasons; CSAM anywhere in it is a CSAM block.
+  it.each(['CSAM', 'tos,CSAM'])(
+    'deletes a record whose image is later blocked for %s',
+    async (blockedFor) => {
+      await holder.db.query(`UPDATE "Image" SET "blockedFor" = $1 WHERE id = 102`, [blockedFor]);
 
-    expect((await sweepExcludedRecords()).swept).toBe(1);
-    expect(await recordIds()).toEqual([1]);
-  });
+      expect((await sweepExcludedRecords()).swept).toBe(1);
+      expect(await recordIds()).toEqual([1]);
+    }
+  );
 
-  it('deletes a record that snapshotted the block marker, after its image is gone', async () => {
-    await record({ appealId: 3, imageId: 103, blockedFor: 'CSAM' });
+  it.each(['CSAM', 'moderated, csam'])(
+    'deletes a record that snapshotted a block for %s, after its image is gone',
+    async (blockedFor) => {
+      await record({ appealId: 3, imageId: 103, blockedFor });
 
-    expect((await sweepExcludedRecords()).swept).toBe(1);
-    expect(await recordIds()).toEqual([1, 2]);
+      expect((await sweepExcludedRecords()).swept).toBe(1);
+      expect(await recordIds()).toEqual([1, 2]);
+    }
+  );
+
+  it('control: keeps a record that snapshotted a block for other reasons', async () => {
+    await record({ appealId: 3, imageId: 103, blockedFor: 'tos,moderated' });
+
+    expect((await sweepExcludedRecords()).swept).toBe(0);
+    expect(await recordIds()).toEqual([1, 2, 3]);
   });
 
   it('keeps everything when nothing is excluded', async () => {
     await holder.db.exec(
-      `UPDATE "Image" SET "needsReview" = 'poi', "blockedFor" = 'tos' WHERE id = 102`
+      `UPDATE "Image" SET "needsReview" = 'poi', "blockedFor" = 'tos,moderated' WHERE id = 102`
     );
 
     expect(await sweepExcludedRecords()).toEqual({ swept: 0, labels: 0, expired: 0, objects: 0 });
@@ -616,6 +630,16 @@ describe('sweepLabelStore', () => {
       true,
     ],
     ['is blocked', `UPDATE "Image" SET "blockedFor" = 'CSAM' WHERE id = 90`, true],
+    [
+      'is blocked for a list naming CSAM',
+      `UPDATE "Image" SET "blockedFor" = 'tos,CSAM' WHERE id = 90`,
+      true,
+    ],
+    [
+      'is blocked for other reasons',
+      `UPDATE "Image" SET "blockedFor" = 'tos,moderated' WHERE id = 90`,
+      false,
+    ],
     ['has a reported owner', `INSERT INTO "CsamReport" ("userId") VALUES (9)`, true],
     ['is named by a report', `INSERT INTO "CsamReport" ("images") VALUES ('[{"id": 90}]')`, true],
     [

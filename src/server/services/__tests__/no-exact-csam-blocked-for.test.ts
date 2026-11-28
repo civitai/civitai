@@ -44,8 +44,6 @@ const EXACT = new RegExp(
 const ALLOWED: Record<string, number> = {
   // A retention hold, kept exact: a hold is not widened.
   'src/server/jobs/image-ingestion.ts': 4,
-  // Restated in a label_store function and trigger; moves with them.
-  'src/server/jobs/appeal-decision-records.ts': 4,
   // Twin of feed-go's training_data_listing.sql; moves with it.
   'src/server/services/training-data-restricted.service.ts': 1,
   // Read by the Knights gate view; moves with a new view migration.

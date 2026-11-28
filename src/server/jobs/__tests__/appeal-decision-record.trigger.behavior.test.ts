@@ -12,9 +12,14 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
  * and does write one, so a zero cannot come from a trigger that writes nothing at all.
  */
 
-const MIGRATION = path.resolve(
-  __dirname,
-  '../../../../packages/civitai-db-schema/prisma/migrations/20261020120000_appeal_decision_record/migration.sql'
+const MIGRATIONS = [
+  '20261020120000_appeal_decision_record',
+  '20271210120000_csam_comma_list_appeal_record',
+].map((dir) =>
+  path.resolve(
+    __dirname,
+    `../../../../packages/civitai-db-schema/prisma/migrations/${dir}/migration.sql`
+  )
 );
 
 const db = { pg: null as unknown as PGlite };
@@ -57,7 +62,7 @@ beforeAll(async () => {
       "images" jsonb NOT NULL DEFAULT '[]'
     );
   `);
-  await db.pg.exec(readFileSync(MIGRATION, 'utf8'));
+  for (const migration of MIGRATIONS) await db.pg.exec(readFileSync(migration, 'utf8'));
 });
 
 afterAll(async () => {
@@ -250,15 +255,19 @@ describe('exclusions', () => {
     expect(await records()).toHaveLength(1);
   });
 
-  it('writes nothing for an image carrying the block marker', async () => {
-    await db.pg.exec(`UPDATE "Image" SET "blockedFor" = 'CSAM'`);
-    await decide('Rejected');
+  // "blockedFor" is a comma list of block reasons; CSAM anywhere in it is a CSAM block.
+  it.each(['CSAM', 'tos,CSAM', 'moderated, csam'])(
+    'writes nothing for an image blocked for %s',
+    async (blockedFor) => {
+      await db.pg.query(`UPDATE "Image" SET "blockedFor" = $1`, [blockedFor]);
+      await decide('Rejected');
 
-    expect(await records()).toEqual([]);
-  });
+      expect(await records()).toEqual([]);
+    }
+  );
 
-  it('control: another block reason writes a row', async () => {
-    await db.pg.exec(`UPDATE "Image" SET "blockedFor" = 'tos'`);
+  it.each(['tos', 'tos,moderated'])('control: a block for %s writes a row', async (blockedFor) => {
+    await db.pg.query(`UPDATE "Image" SET "blockedFor" = $1`, [blockedFor]);
     await decide('Rejected');
 
     expect(await records()).toHaveLength(1);
