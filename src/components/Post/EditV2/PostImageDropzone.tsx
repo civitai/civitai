@@ -132,8 +132,6 @@ export function PostImageDropzone({
   // #endregion
 
   // #region [preparing]
-  // Generator media shown from its source url from the moment it is picked until each item is a
-  // queued upload with a local preview of its own, covering the download and the read for upload.
   const [preparing, setPreparing] = useState<{ id: number; items: PreparingMedia[] }[]>([]);
   const preparingIdRef = useRef(0);
   async function whilePreparing(items: PreparingMedia[], work: () => Promise<unknown>) {
@@ -161,7 +159,10 @@ export function PostImageDropzone({
   // #endregion
 
   // #region [handlers]
-  /** Settles once the files are queued for upload, or the post they need could not be made. */
+  /**
+   * Settles once the files are queued for upload, or the post they need could not be made, or its
+   * create will go unanswered (a newer create replaced it, or the dropzone unmounted).
+   */
   function handleUpload(
     fileData: { file: File; meta?: Record<string, unknown>; generationWorkflowId?: string }[]
   ): Promise<unknown> {
