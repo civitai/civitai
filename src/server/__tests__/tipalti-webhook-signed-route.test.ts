@@ -7,8 +7,11 @@ import { apiResolver } from 'next/dist/server/api-utils/node/api-resolver';
 import '~/__tests__/mocks/logging.mock';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
-import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import type * as FliptClient from '~/server/flipt/client';
+import type * as KyselyDb from '~/server/db/kyselyDb';
+import { PGlite } from '@electric-sql/pglite';
 import type * as UserPaymentConfigurationService from '~/server/services/user-payment-configuration.service';
 import type * as CreatorProgramService from '~/server/services/creator-program.service';
 
@@ -20,7 +23,21 @@ const { updateByTipaltiAccount, updateCashWithdrawal, bust } = vi.hoisted(() => 
   bust: vi.fn(async () => undefined),
 }));
 
+const { isFlipt, h } = vi.hoisted(() => ({
+  isFlipt: vi.fn(async () => false),
+  // A Postgres without the IdempotencyKey table: the claim store is unavailable when the flag is on.
+  h: { pg: null as unknown as PGlite },
+}));
+
 vi.mock('~/server/prom/http-errors', () => ({ instrumentApiResponse: vi.fn() }));
+vi.mock('~/server/db/kyselyDb', async (importOriginal) => {
+  const { pgliteKysely } = await import('~/__tests__/pglite-kysely');
+  return { ...(await importOriginal<typeof KyselyDb>()), kyselyWrite: pgliteKysely(() => h.pg) };
+});
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof FliptClient>()),
+  isFlipt,
+}));
 vi.mock('~/server/clickhouse/client', () => ({
   trackWebhookEvent: vi.fn(() => Promise.resolve()),
 }));
@@ -85,11 +102,13 @@ let url: string;
 let tokenUrl: string;
 let rejectingApiUrl: string;
 beforeAll(async () => {
+  h.pg = new PGlite();
   url = `${await listen(route)}/api/webhooks/tipalti`;
   tokenUrl = `${await listen(tokenEndpoint)}/token`;
   rejectingApiUrl = await listen(rejectingApi);
 });
 afterAll(async () => {
+  await h.pg?.close();
   await Promise.all(
     [route, tokenEndpoint, rejectingApi].map(
       (s) => new Promise<void>((resolve) => s.close(() => resolve()))
@@ -103,7 +122,29 @@ beforeEach(() => {
   tokenRequests = 0;
   // The access token is held on the class; start each case without one.
   (TipaltiCaller as unknown as { acessToken?: unknown }).acessToken = undefined;
-  installFakeCacheRedis();
+  isFlipt.mockResolvedValue(false);
+  // The idempotency keys' sysRedis, as a key/value store whose expiry follows Date.now().
+  const sys = new Map<string, { value: string; expiresAt: number }>();
+  const live = (key: string) => {
+    const entry = sys.get(key);
+    if (entry && entry.expiresAt <= Date.now()) sys.delete(key);
+    return sys.get(key);
+  };
+  redisMock.sysRedis.set.mockReset().mockImplementation((async (
+    key: string,
+    value: string,
+    opts?: { NX?: boolean; EX?: number }
+  ) => {
+    if (opts?.NX && live(key)) return null;
+    sys.set(key, { value, expiresAt: Date.now() + (opts?.EX ?? 86_400) * 1000 });
+    return 'OK';
+  }) as never);
+  redisMock.sysRedis.get
+    .mockReset()
+    .mockImplementation((async (key: string) => live(key)?.value ?? null) as never);
+  redisMock.sysRedis.del
+    .mockReset()
+    .mockImplementation((async (key: string) => (sys.delete(key) ? 1 : 0)) as never);
   setEnv({
     TIPALTI_WEBTOKEN_SECRET: SECRET,
     TIPALTI_API_URL: 'http://127.0.0.1:9',
@@ -290,13 +331,37 @@ describe('POST /api/webhooks/tipalti delivered more than once', () => {
     expect(updateByTipaltiAccount).toHaveBeenCalledTimes(2);
   });
 
-  it('processes events while the dedupe store is unavailable', async () => {
-    redisMock.redis.set.mockRejectedValue(new Error('redis down'));
+  it('processes an event once, and logs it, while the dedupe store is unavailable', async () => {
+    redisMock.sysRedis.set.mockRejectedValue(new Error('redis down'));
 
     const res = await post(sign(body));
 
     expect(res.status).toBe(200);
     expect(updateByTipaltiAccount).toHaveBeenCalledTimes(1);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'error',
+        name: 'tipalti-webhook-dedupe-unavailable',
+        payload: { eventId: 'evt-1' },
+      }),
+      'webhooks'
+    );
+  });
+
+  it('processes an event once while the Postgres dedupe store is unavailable', async () => {
+    isFlipt.mockResolvedValue(true);
+
+    const res = await post(sign(body));
+
+    expect(res.status).toBe(200);
+    expect(updateByTipaltiAccount).toHaveBeenCalledTimes(1);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'tipalti-webhook-dedupe-unavailable',
+        message: expect.stringContaining('idempotency keys'),
+      }),
+      'webhooks'
+    );
   });
 
   it('processes a signed event after an invalid request carrying the same id', async () => {

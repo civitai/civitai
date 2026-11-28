@@ -2999,6 +2999,9 @@ export const REDIS_SYS_KEYS = {
     MODEL_FILE_SCAN_PROCESSED: 'webhooks:model-file-scan:processed',
     // Civitai AIR checkouts already sent to AIR — `webhooks:stripe:air-notified:${checkoutSessionId}`.
     STRIPE_AIR_NOTIFIED: 'webhooks:stripe:air-notified',
+    // Tipalti event ids being or already handled — `webhooks:tipalti:event:${eventId}`. Claimed
+    // through claimIdempotencyKey('tipalti-event').
+    TIPALTI_EVENT: 'webhooks:tipalti:event',
     // Per-workflow job-level failure reason, stashed from `job:failed`/`job:expired`
     // callbacks so the terminal workflow event can classify the failure. Short TTL.
     IMAGE_SCAN_JOB_REASON: 'webhooks:image-scan:job-reason',
@@ -3366,8 +3369,6 @@ const REDIS_KEYS_UNPREFIXED = {
     // Once-an-hour marker per version and per file for the orchestrator cache bust after a failed
     // scan; a lost marker costs one more bust.
     MODEL_FILE_SCAN_FAILURE_BUST: 'webhooks:model-file-scan:failure-bust',
-    // Tipalti event ids being or already handled — `webhooks:tipalti:event:${eventId}`.
-    TIPALTI_EVENT: 'webhooks:tipalti:event',
   },
   REMIX_APP: {
     // A choice ask's per-option prices, per run, segment and step, while that ask is open.

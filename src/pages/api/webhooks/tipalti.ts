@@ -4,14 +4,14 @@ import type { Readable } from 'node:stream';
 import { env } from '~/env/server';
 import { trackWebhookEvent } from '~/server/clickhouse/client';
 import { dbWrite } from '~/server/db/client';
-import tipaltiCaller, {
-  TipaltiCaller,
-  TIPALTI_SIGNATURE_LIFETIME_SECONDS,
-} from '~/server/http/tipalti/tipalti.caller';
+import tipaltiCaller, { TipaltiCaller } from '~/server/http/tipalti/tipalti.caller';
 import { Tipalti } from '~/server/http/tipalti/tipalti.schema';
 import { TipaltiStatus } from '~/server/common/enums';
 import { logToAxiom } from '~/server/logging/client';
-import { redis, REDIS_KEYS } from '~/server/redis/client';
+import {
+  claimIdempotencyKey,
+  type IdempotencyClaim,
+} from '~/server/services/idempotency-key.service';
 import { updateBuzzWithdrawalRequest } from '~/server/services/buzz-withdrawal-request.service';
 import {
   findCashWithdrawalByRefCode,
@@ -57,9 +57,6 @@ function parsePayeeStatus(status: unknown) {
   return parsed;
 }
 
-const EVENT_PROCESSING = 'processing';
-const EVENT_DONE = 'done';
-
 async function buffer(readable: Readable) {
   const chunks = [];
   for await (const chunk of readable) {
@@ -88,7 +85,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // Track to ClickHouse (fire and forget, never throws)
     trackWebhookEvent('tipalti', rawPayload).catch(() => null);
 
-    let claimKey: `${typeof REDIS_KEYS.WEBHOOKS.TIPALTI_EVENT}:${string}` | undefined;
+    let claim: IdempotencyClaim | undefined;
     try {
       if (!sig || !webhookSecret) {
         // only way this is false is if we forgot to include our secret or paddle decides to suddenly not include their signature
@@ -107,26 +104,28 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       event = JSON.parse(rawPayload) as TipaltiWebhookEventData;
 
-      // Claimed only after the signature verifies, so an unsigned request cannot take an id, and
-      // held for the signature's whole lifetime, so no still-valid copy outlives it.
+      // Claimed only after the signature verifies, so an unsigned request cannot take an id.
       if (event.id) {
-        const key = `${REDIS_KEYS.WEBHOOKS.TIPALTI_EVENT}:${event.id}` as const;
-        const claimed: string | null = await redis
-          .set(key, EVENT_PROCESSING, { EX: TIPALTI_SIGNATURE_LIFETIME_SECONDS, NX: true })
-          .catch((error: Error) => {
-            logToAxiom(
-              { type: 'error', name: 'tipalti-webhook-dedupe-unavailable', message: error.message },
-              'webhooks'
-            );
-            return 'unavailable' as const;
-          });
-        if (claimed === 'OK') claimKey = key;
-        else if (claimed !== 'unavailable') {
-          const state = await redis.get(key).catch(() => null);
-          if (state === EVENT_DONE)
-            return res.status(200).json({ received: true, duplicate: true });
+        const eventId = String(event.id);
+        // Unguarded when the claim store is down: the payout writes below refuse a second refund
+        // on their own, so a repeat costs a duplicate history row, not money.
+        const result = await claimIdempotencyKey('tipalti-event', eventId).catch((error: Error) => {
+          logToAxiom(
+            {
+              type: 'error',
+              name: 'tipalti-webhook-dedupe-unavailable',
+              message: error.message,
+              payload: { eventId },
+            },
+            'webhooks'
+          );
+          return undefined;
+        });
+        if (result?.status === 'done')
+          return res.status(200).json({ received: true, duplicate: true });
+        if (result?.status === 'pending')
           return res.status(409).send({ error: 'Event is already being processed' });
-        }
+        if (result?.status === 'claimed') claim = result;
       }
 
       switch (event.type) {
@@ -182,13 +181,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
     } catch (error: any) {
       console.log(`❌ Error message: ${error.message}`);
-      if (claimKey)
-        await redis.del(claimKey).catch((delError: Error) =>
+      if (claim)
+        await claim.release().catch((releaseError: Error) =>
           logToAxiom(
             {
               type: 'error',
               name: 'tipalti-webhook-dedupe-release-failed',
-              message: delError.message,
+              message: releaseError.message,
             },
             'webhooks'
           )
@@ -196,9 +195,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(400).send('Webhook Error');
     }
 
-    if (claimKey)
-      await redis
-        .set(claimKey, EVENT_DONE, { EX: TIPALTI_SIGNATURE_LIFETIME_SECONDS, XX: true })
+    if (claim)
+      await claim
+        .store(JSON.stringify({ received: true }))
         .catch((error: Error) =>
           logToAxiom(
             { type: 'error', name: 'tipalti-webhook-dedupe-mark-failed', message: error.message },
