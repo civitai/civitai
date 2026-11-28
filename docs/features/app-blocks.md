@@ -326,18 +326,21 @@ its REAL origin, `https://<slug>.<APPS_DOMAIN>` for a published app,
   published app behave alike for the same viewer. While the flag is off for a
   viewer the frame stays opaque, so an app must tolerate storage being
   unavailable. Use `app.storage` for anything that must persist.
-- **Partitioned:** browser storage in the frame is keyed by the app's origin AND
-  the top-level site, so it is the app's own under civitai.com and separate
-  from the same app opened directly or under another Civitai site.
+- **Partitioned:** browser storage (and any service worker) in the frame is
+  keyed by the app's origin AND the top-level site, so it is the app's own under
+  civitai.com and separate from the same app opened directly or under another
+  Civitai site.
 - **Not durable:** Safari may evict script-written storage after a period
   without a visit; third-party cookies are unreliable in every browser (the
   frame is cross-site to civitai.com).
 - **Previews lose it:** a dev tunnel or App Assistant preview host is minted per
   session, so its storage is gone when the session ends.
-- **Service workers are blocked:** the apps static server and the preview
-  gateway answer `403` to a service-worker script fetch, so a taken-down or
-  replaced app cannot keep serving a cached bundle. There is no client-side
-  check; the server answer is the control.
+- **Service workers:** an app with a real origin may register a service worker
+  scoped to its own app origin. Its scripts are served `no-cache`, and a
+  taken-down or replaced app's paths answer `404`/`410` (a takedown also sends
+  `Clear-Site-Data: "storage"`), so a takedown or a new version replaces or
+  removes the worker on the next load. Workers, like storage, are partitioned
+  per app under civitai.com.
 - **Fixed per mount:** the host decides once when it mounts (a sandbox change
   applies only when the frame navigates), so a flag change takes effect on the
   next mount, not in a frame already loaded.

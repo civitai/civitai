@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, test } from 'vitest';
 import { page } from 'vitest/browser';
+import { IframeHost } from '~/components/AppBlocks/IframeHost';
 import { PageBlockHost } from '~/components/AppBlocks/PageBlockHost';
+import type { BlockInstall, ModelSlotContext } from '~/components/AppBlocks/types';
+import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { installTrpcWire, renderWithTrpcWire } from '../../../test/trpcWireHarness';
 
 /**
@@ -135,5 +138,80 @@ describe('PageBlockHost: unverified frame on its app host', () => {
   test('INVARIANT: with no frame roots from the server, the flag alone grants nothing', async () => {
     const none = await renderedSandbox({ flagOn: true, appFrameDomains: undefined });
     expect(none.split(/\s+/)).not.toContain('allow-same-origin');
+  });
+});
+
+const slotInstall: BlockInstall = {
+  blockInstanceId: 'bi_same_origin_slot',
+  blockId: 'my-app',
+  appId: 'app_same_origin_1',
+  appBlockId: 'apb_same_origin_slot',
+  manifest: {
+    name: 'My App',
+    scopes: [],
+    iframe: {
+      src: APP_SRC,
+      minHeight: 200,
+      maxHeight: 800,
+      resizable: true,
+      sandbox: 'allow-scripts allow-forms',
+    },
+  },
+  publisherSettings: {},
+  enabled: true,
+  renderMode: 'iframe',
+  trustTier: 'unverified',
+};
+
+const slotContext: ModelSlotContext = {
+  slotId: 'model.sidebar_top',
+  entityType: 'model',
+  modelId: 123,
+  modelVersionId: 456,
+  modelName: 'Some Model',
+  modelType: 'Checkpoint',
+  modelNsfwLevel: 1,
+  creatorUserId: 7,
+  viewerUserId: 42,
+  viewerNsfwEnabled: false,
+  viewerUsername: 'tester',
+  theme: 'light',
+};
+
+async function slotSandbox(flagOn: boolean): Promise<string> {
+  wire = installTrpcWire({});
+  const screen = await renderWithTrpcWire(
+    <BrowsingLevelProvider>
+      <IframeHost
+        install={slotInstall}
+        context={slotContext}
+        token="tok_same_origin"
+        expiresAt={new Date(Date.now() + 15 * 60_000).toISOString()}
+      />
+    </BrowsingLevelProvider>,
+    {
+      viewer: { id: 42, username: 'tester' },
+      flags: flagOn ? { appBlocksSameOriginFrames: true } : {},
+      appFrameDomains: [APPS_ROOT],
+    }
+  );
+  const iframe = page.getByTestId('block-iframe');
+  await expect.element(iframe).toBeInTheDocument();
+  const value = (iframe.element() as HTMLIFrameElement).getAttribute('sandbox') ?? '';
+  await screen.unmount();
+  wire.restore();
+  wire = undefined;
+  return value;
+}
+
+describe('IframeHost (model slot): unverified frame on its app host', () => {
+  test('REGRESSION: flag on → allow-same-origin on the slot frame too', async () => {
+    expect((await slotSandbox(true)).split(/\s+/)).toContain('allow-same-origin');
+  });
+
+  test('CONTROL: flag off → the slot frame stays opaque', async () => {
+    const off = (await slotSandbox(false)).split(/\s+/);
+    expect(off).toContain('allow-scripts');
+    expect(off).not.toContain('allow-same-origin');
   });
 });

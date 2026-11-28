@@ -241,6 +241,7 @@ describe('intersectSandbox with a frame-origin policy', () => {
     ['a lookalike without the dot', `https://evil${APPS}/`],
     ['the root as a left-hand label', `https://${APPS}.evil.example/`],
     ['a trailing-dot host', `https://my-app.${APPS}./`],
+    ['an empty label (URL keeps a leading dot)', `https://.${APPS}/`],
     ['a relative src', '/apps/my-app/'],
     ['an unparseable src', 'not a url'],
     ['no src', ''],
@@ -260,6 +261,43 @@ describe('intersectSandbox with a frame-origin policy', () => {
     // row above as covering it.
     expect(new URL(`https://my-app.${APPS}:443/`).port).toBe('');
     expect(tokens(`https://my-app.${APPS}:443/`, 'unverified')).toContain('allow-same-origin');
+  });
+
+  it('INVARIANT: an unknown embedding host grants nothing, at any tier', () => {
+    for (const tier of ['unverified', 'verified', 'internal']) {
+      expect(tokens(`https://my-app.${APPS}/`, tier, policy({ embedderHost: '' }))).not.toContain(
+        'allow-same-origin'
+      );
+    }
+  });
+
+  it('INVARIANT: an embedder under a root keeps every frame there off a real origin', () => {
+    // The embedder, its parent and a sibling, all one label under the root. Without the
+    // root skip each of them would pass the one-label test.
+    const p = policy({ domains: ['example.org'], embedderHost: 'site.example.org' });
+    for (const src of [
+      'https://site.example.org/',
+      'https://other.example.org/',
+      'https://example.org/',
+    ]) {
+      for (const tier of ['unverified', 'verified', 'internal']) {
+        expect(tokens(src, tier, p), `${tier} ${src}`).not.toContain('allow-same-origin');
+      }
+    }
+  });
+
+  it('INVARIANT: the embedding host is compared without its port', () => {
+    // A dev or preview host header carries a port; the root skip must still see the site.
+    const p = policy({ domains: ['example.org'], embedderHost: 'site.example.org:8443' });
+    expect(tokens('https://other.example.org/', 'unverified', p)).not.toContain(
+      'allow-same-origin'
+    );
+  });
+
+  it('a mixed-case src is the same host (URL lowercases it)', () => {
+    expect(tokens(`https://MY-APP.${APPS.toUpperCase()}/`, 'unverified')).toContain(
+      'allow-same-origin'
+    );
   });
 
   it('INVARIANT: a review mount never gets it, whatever the host or tier', () => {

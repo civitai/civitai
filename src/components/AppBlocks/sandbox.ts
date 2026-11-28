@@ -65,12 +65,16 @@ export function isAppFrameHost(src: string | undefined, policy: AppFrameOriginPo
     return false;
   }
   if (url.protocol !== 'https:' || url.port !== '' || url.username || url.password) return false;
-  const host = url.hostname.toLowerCase();
+  // `URL` has already lowercased the hostname.
+  const host = url.hostname;
   const embedder = normaliseRoot(policy.embedderHost.split(':')[0] ?? '');
-  if (!embedder || host === embedder || embedder.endsWith(`.${host}`)) return false;
+  if (!embedder) return false;
   for (const raw of policy.domains) {
     const root = normaliseRoot(raw);
     if (!root.includes('.')) continue;
+    // A root that is the embedder or a parent of it is skipped. That one check is also what
+    // keeps a frame off the embedder itself and off its parents: such a host is one label
+    // under a root only if the embedder is under that root too.
     if (embedder === root || embedder.endsWith(`.${root}`)) continue;
     const suffix = `.${root}`;
     if (!host.endsWith(suffix)) continue;
