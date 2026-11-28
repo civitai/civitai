@@ -257,17 +257,18 @@ func (q *ImagesQuery) Build() Built {
 	if !prioritized && (q.ModelID != 0 || q.ModelVersionID != 0) {
 		from = `FROM "ImageResourceNew" irr`
 		joins = append(joins, `JOIN "Image" i ON i.id = irr."imageId"`)
-		if q.ModelVersionID != 0 {
+		switch {
+		case q.ModelVersionID != 0:
 			and = append(and, `irr."modelVersionId" = `+a.add(q.ModelVersionID))
 			cacheTTL = 10 * time.Minute // CacheTTL.md
 			tags = append(tags, "images-modelVersion:"+strconv.Itoa(q.ModelVersionID))
-		} else if perVersion {
+		case perVersion:
 			// The version is the lateral's (perVersionModelScope); the model is the outer query's.
 			and = append(and, `irr."modelVersionId" = mv.id`)
 			modelArg = a.add(q.ModelID)
 			cacheTTL = 10 * time.Minute
 			tags = append(tags, "images-model:"+strconv.Itoa(q.ModelID))
-		} else {
+		default:
 			joins = append(joins, `JOIN "ModelVersion" mv ON mv.id = irr."modelVersionId"`)
 			and = append(and, `mv."modelId" = `+a.add(q.ModelID))
 			cacheTTL = 10 * time.Minute

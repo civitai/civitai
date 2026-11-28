@@ -1212,7 +1212,9 @@ func TestServeV1ModelOnlyReadsPerVersion(t *testing.T) {
 }
 
 // PerVersionTopN changes only a model scope's read: without it, or with a version, a post's own
-// media, a collection or the prioritized branch, Build writes getAllImages' own query. It keeps the
+// media, a collection or the prioritized branch, Build writes getAllImages' own query (the last
+// three are invariant guards: the only setter, v1LegacyPage, never builds them beside a model, but
+// the per-version order would be wrong for them if one did). It keeps the
 // model scope's cache policy, and an image clause beside it stays inside the lateral (uncached).
 func TestImagesQueryPerVersionModelScope(t *testing.T) {
 	join := (&ImagesQuery{Limit: 5, ModelID: 3}).Build()
