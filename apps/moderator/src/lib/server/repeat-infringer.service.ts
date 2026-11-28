@@ -21,8 +21,12 @@ const events = sql`
   HAVING count(*) >= ${REPEAT_INFRINGER_THRESHOLD}`;
 
 // Queued until a moderator marks it reviewed; a new event after that review brings it back.
-const unreviewed = sql`(u."meta"->'repeatInfringerReview'->>'reviewedAt' IS NULL
-  OR (u."meta"->'repeatInfringerReview'->>'reviewedAt')::timestamptz < e."lastEventAt")
+// `reviewedAt` is compared as fixed-width ISO text, never cast: one malformed value must not fail the
+// whole queue and the sidebar count. Anything not in toISOString() form reads as unreviewed.
+const reviewedAt = sql`u."meta"->'repeatInfringerReview'->>'reviewedAt'`;
+const unreviewed = sql`(${reviewedAt} IS NULL
+  OR ${reviewedAt} !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$'
+  OR ${reviewedAt} < to_char(e."lastEventAt", 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))
   AND u."bannedAt" IS NULL
   AND u."deletedAt" IS NULL`;
 

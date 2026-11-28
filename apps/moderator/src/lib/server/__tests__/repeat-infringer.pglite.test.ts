@@ -191,6 +191,21 @@ describe('repeat-infringer queue', () => {
     expect(await queued()).toEqual([1]);
   });
 
+  it.each([
+    ['a non-timestamp string', 'soon'],
+    ['a number', 12345],
+    ['an object', { at: 'x' }],
+    ['a date-only string', '2099-01-01'],
+  ])('reads %s in reviewedAt as unreviewed, without failing the query', async (_label, value) => {
+    await user(1, { meta: { repeatInfringerReview: { reviewedAt: value } } });
+    await user(2);
+    await copyright(1, [30, 20, 10]);
+    await copyright(2, [30, 20, 10]);
+
+    expect(await queued()).toEqual([1, 2]);
+    expect(await countRepeatInfringerReview()).toBe(2);
+  });
+
   it('plans the per-user grouping on the migration’s partial index', async () => {
     await user(1);
     await copyright(1, [30, 20, 10]);
