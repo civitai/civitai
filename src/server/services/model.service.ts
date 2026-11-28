@@ -6292,11 +6292,11 @@ async function filterAssociatedArticles(
     userId: number;
   })[],
   reader: ArticleRegionReader,
+  viewer: ArticleReader,
   browsingLevel: number
 ) {
-  const { viewer } = reader;
   const [blockedBy, connections] = await Promise.all([
-    getUsersBlockingViewer(viewer),
+    getUsersBlockingViewer(reader.viewer),
     articles.length
       ? dbRead.imageConnection.findMany({
           where: {
@@ -6320,7 +6320,10 @@ async function filterAssociatedArticles(
       continue;
     // Every connected image, where getById counts those the reader may see: stricter, never looser.
     const contentImages = (imagesOf[article.id] ?? []).map((c) => c.image);
-    const gate = articleRegionGate({ ...article, contentImages }, reader);
+    const gate = articleRegionGate(
+      { ...article, contentImages },
+      { ...reader, viewer: viewer ?? {} }
+    );
     regionDependent ||= gate.regionDependent;
     if (!gate.withheld) shown.add(article.id);
   }
@@ -6330,7 +6333,7 @@ async function filterAssociatedArticles(
 export const getAssociatedResourcesSimple = async (
   { fromId, type, browsingLevel, ...addons }: GetAssociatedResourcesInput & AssociatedModelAddons,
   reader: ArticleRegionReader,
-  modelViewer?: ArticleReader
+  viewer: ArticleReader
 ) => {
   const associations = await dbWrite.modelAssociations.findMany({
     where: { fromModelId: fromId, type },
@@ -6354,11 +6357,12 @@ export const getAssociatedResourcesSimple = async (
   const { shown, regionDependent } = await filterAssociatedArticles(
     associations.map((x) => x.toArticle).filter(isDefined),
     reader,
+    viewer,
     browsingLevel
   );
   const items = associations
     .map(({ id, toModel, toArticle }) => {
-      if (toModel) return associatedModelItem(id, toModel, modelViewer, browsingLevel, addons);
+      if (toModel) return associatedModelItem(id, toModel, viewer, browsingLevel, addons);
       if (!toArticle || !shown.has(toArticle.id)) return null;
       const { userId, publishedAt, status, ingestion, availability, ...item } = toArticle;
       return { id, item, resourceType: 'article' as const };
@@ -6392,7 +6396,7 @@ export const setAssociatedResources = async (
   }: SetAssociatedResourcesInput & AssociatedModelAddons,
   user: SessionUser | undefined,
   reader: ArticleRegionReader,
-  modelViewer?: ArticleReader
+  viewer: ArticleReader
 ) => {
   const fromModel = await dbWrite.model.findUnique({
     where: { id: fromId },
@@ -6420,13 +6424,12 @@ export const setAssociatedResources = async (
   const { shown } = await filterAssociatedArticles(
     fromModel.associations.map((x) => x.toArticle).filter(isDefined),
     reader,
+    viewer,
     browsingLevel
   );
   const existingAssociations = fromModel.associations
     .filter((x) => !x.toArticle || shown.has(x.toArticle.id))
-    .filter(
-      (x) => !x.toModel || canListAssociatedModel(x.toModel, modelViewer, browsingLevel, addons)
-    )
+    .filter((x) => !x.toModel || canListAssociatedModel(x.toModel, viewer, browsingLevel, addons))
     .map((x) => x.id);
   const ownIds = new Set(fromModel.associations.map((x) => x.id));
   const existingModelTargets = new Set(
@@ -6448,7 +6451,7 @@ export const setAssociatedResources = async (
     });
     const linkable = new Set(
       targets
-        .filter((x) => canListAssociatedModel(x, modelViewer, browsingLevel, addons))
+        .filter((x) => canListAssociatedModel(x, viewer, browsingLevel, addons))
         .map((x) => x.id)
     );
     if (newModelTargets.some((id) => !linkable.has(id))) throw throwNotFoundError();

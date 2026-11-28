@@ -1,6 +1,7 @@
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 import { eventViewerOf } from '~/server/events/event-viewer';
+import { canViewOwnerOnly } from '~/server/utils/poi-model-visibility';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 
 type ArticleLevels = {
@@ -41,6 +42,6 @@ export function articleRegionGate(
   { isRestricted, viewer }: ArticleRegionReader
 ) {
   const regionDependent = !isArticleServableWhenRestricted(article);
-  const exempt = !!viewer.isModerator || (viewer.id !== undefined && viewer.id === article.userId);
+  const exempt = canViewOwnerOnly(article.userId, viewer);
   return { withheld: regionDependent && !exempt && isRestricted(), regionDependent };
 }

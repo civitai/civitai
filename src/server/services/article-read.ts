@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+import { canViewOwnerOnly } from '~/server/utils/poi-model-visibility';
 import { Flags } from '~/shared/utils/flags';
 import { ArticleIngestionStatus, ArticleStatus, Availability } from '~/shared/utils/prisma/enums';
 
@@ -18,7 +19,7 @@ export function canViewArticle(
   viewer: ArticleReader
 ) {
   if (article.availability !== Availability.Private) return true;
-  return !!viewer?.isModerator || (viewer?.id !== undefined && article.userId === viewer.id);
+  return canViewOwnerOnly(article.userId, viewer);
 }
 
 const liveArticleWhere = {
@@ -47,13 +48,12 @@ export const articleReadSelect = {
 
 /** Whether a viewer may read an article at all: live and available, or theirs, or a moderator. */
 export function canReadArticle(article: ReadableArticle, viewer: ArticleReader) {
-  if (viewer?.isModerator) return true;
-  const isOwner = viewer?.id !== undefined && article.userId === viewer.id;
+  if (canViewOwnerOnly(article.userId, viewer)) return true;
   const isLive =
     article.publishedAt !== null &&
     article.status === ArticleStatus.Published &&
     article.ingestion === ArticleIngestionStatus.Scanned;
-  return (isOwner || isLive) && canViewArticle(article, viewer);
+  return isLive && canViewArticle(article, viewer);
 }
 
 /**
@@ -67,7 +67,5 @@ export function articleWithinBrowsingLevel(
   browsingLevel: number
 ) {
   if (Flags.intersects(article.nsfwLevel, browsingLevel)) return true;
-  const privileged =
-    !!viewer?.isModerator || (viewer?.id !== undefined && article.userId === viewer.id);
-  return article.nsfwLevel === 0 && privileged;
+  return article.nsfwLevel === 0 && canViewOwnerOnly(article.userId, viewer);
 }

@@ -54,7 +54,7 @@ const taggedModel = (tagId: number, id = TAGGED_MODEL) => {
 
 const PG_ARTICLE = 31;
 const X_ARTICLE = 32;
-const linkedArticle = (id: number, nsfwLevel: number) => ({
+const linkedArticle = (id: number, nsfwLevel: number, extra: Record<string, unknown> = {}) => ({
   id,
   toModel: null,
   toArticle: {
@@ -67,6 +67,7 @@ const linkedArticle = (id: number, nsfwLevel: number) => ({
     status: 'Published',
     ingestion: 'Scanned',
     availability: 'Public',
+    ...extra,
   },
 });
 
@@ -140,9 +141,18 @@ function hide({
   } as never);
 }
 
+// Users who blocked the caller, as the per-user cache hash holds them.
+function blockedBy(ids: number[]) {
+  redisMock.redis.packed.hGet.mockImplementation((async (_key: string, field: string) =>
+    field === 'blocked-by-users-2'
+      ? ids.map((id) => ({ id, username: `user ${id}` }))
+      : null) as never);
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   redisMock.redis.packed.get.mockResolvedValue([] as never);
+  redisMock.redis.packed.hGet.mockResolvedValue(null as never);
   hide();
   dbMock.dbWrite.modelAssociations.findMany.mockResolvedValue([
     linkedModel(PG_MODEL, NsfwLevel.PG),
@@ -184,6 +194,46 @@ describe('model.getAssociatedResourcesSimple owner view', () => {
         tokenScope: TokenScope.ModelsRead,
       })
     ).not.toContain(PRIVATE_MODEL);
+  });
+});
+
+// Linked articles take the same owner-or-moderator viewer as linked models.
+describe('model.getAssociatedResourcesSimple article owner view', () => {
+  const DRAFT_ARTICLE = 33;
+  const UNRATED_ARTICLE = 34;
+  beforeEach(() => {
+    dbMock.dbWrite.modelAssociations.findMany.mockResolvedValue([
+      linkedArticle(PG_ARTICLE, NsfwLevel.PG),
+      linkedArticle(DRAFT_ARTICLE, NsfwLevel.PG, { status: 'Draft', publishedAt: null }),
+      linkedArticle(UNRATED_ARTICLE, 0),
+    ] as never);
+  });
+
+  it('shows the author their own draft and unrated articles on a session, not on a scoped key', async () => {
+    expect(await listedIds(signedIn(ITEM_OWNER), true)).toEqual([
+      PG_ARTICLE,
+      DRAFT_ARTICLE,
+      UNRATED_ARTICLE,
+    ]);
+    expect(
+      await listedIds(signedIn(ITEM_OWNER), true, {
+        ...scopedKey,
+        tokenScope: TokenScope.ModelsRead,
+      })
+    ).toEqual([PG_ARTICLE]);
+  });
+});
+
+describe('model.getAssociatedResourcesSimple blocked authors', () => {
+  it('hides an article whose author blocked the caller, on a session and on a scoped key', async () => {
+    dbMock.dbWrite.modelAssociations.findMany.mockResolvedValue([
+      linkedArticle(PG_ARTICLE, NsfwLevel.PG),
+    ] as never);
+    blockedBy([ITEM_OWNER]);
+    expect(await listedIds(signedIn(5), true)).toEqual([]);
+    expect(
+      await listedIds(signedIn(5), true, { ...scopedKey, tokenScope: TokenScope.ModelsRead })
+    ).toEqual([]);
   });
 });
 
@@ -268,12 +318,15 @@ describe('model.setAssociatedResources', () => {
   const FROM_OWNER = 5;
   const removedIds = async (
     canViewNsfw: boolean,
-    linked = linkedModel(X_MODEL, NsfwLevel.X),
+    linked: ReturnType<typeof linkedModel> | ReturnType<typeof linkedArticle> = linkedModel(
+      X_MODEL,
+      NsfwLevel.X
+    ),
     credential?: Record<string, unknown>
   ) => {
     dbMock.dbWrite.model.findUnique.mockResolvedValue({
       userId: FROM_OWNER,
-      associations: [{ ...linked, id: 1, toModelId: linked.toModel.id }],
+      associations: [{ ...linked, id: 1, toModelId: linked.toModel?.id ?? null }],
     } as never);
     dbMock.dbWrite.$transaction.mockResolvedValue([] as never);
     await caller(signedIn(FROM_OWNER), canViewNsfw, credential).setAssociatedResources({
@@ -286,7 +339,6 @@ describe('model.setAssociatedResources', () => {
     ];
     return args.where.id.in;
   };
-
   it('a save on the SFW domain keeps a mature link its editor could not show', async () => {
     expect(await removedIds(false)).toEqual([]);
   });
@@ -307,6 +359,27 @@ describe('model.setAssociatedResources', () => {
     redisMock.redis.packed.get.mockResolvedValue([] as never);
     hide({ models: [PG_MODEL] });
     expect(await removedIds(true, linkedModel(PG_MODEL, NsfwLevel.PG))).toEqual([]);
+  });
+
+  it('a save on a scoped key keeps a link to an article whose author blocked the caller', async () => {
+    blockedBy([ITEM_OWNER]);
+    const scopedWrite = { ...scopedKey, tokenScope: TokenScope.ModelsWrite };
+    expect(await removedIds(true, linkedArticle(PG_ARTICLE, NsfwLevel.PG), scopedWrite)).toEqual(
+      []
+    );
+  });
+
+  it("a save on a scoped key keeps a link to the caller's own draft article", async () => {
+    const ownDraft = linkedArticle(40, NsfwLevel.PG, {
+      userId: FROM_OWNER,
+      status: 'Draft',
+      publishedAt: null,
+    });
+    expect(await removedIds(true, ownDraft)).toEqual([1]);
+    vi.clearAllMocks();
+    expect(
+      await removedIds(true, ownDraft, { ...scopedKey, tokenScope: TokenScope.ModelsWrite })
+    ).toEqual([]);
   });
 
   it("a save on a scoped key keeps a link to the caller's own private model", async () => {

@@ -185,7 +185,8 @@ const list = (
     {
       isRestricted: () => restricted,
       viewer: viewer ?? {},
-    }
+    },
+    viewer
   );
 const save = (
   fromId: number,
@@ -193,10 +194,12 @@ const save = (
   associations: Parameters<typeof setAssociatedResources>[0]['associations'] = [],
   { restricted = false, browsingLevel = 31 } = {}
 ) =>
-  setAssociatedResources({ fromId, type: 'Suggested', associations, browsingLevel }, user, {
-    isRestricted: () => restricted,
-    viewer: user,
-  });
+  setAssociatedResources(
+    { fromId, type: 'Suggested', associations, browsingLevel },
+    user,
+    { isRestricted: () => restricted, viewer: user },
+    user
+  );
 const listed = async (viewer: ArticleReader) =>
   (await list(viewer)).items.map((x) => ('title' in x.item ? x.item.title : null));
 
@@ -260,8 +263,9 @@ describe('setAssociatedResources and articles the editor cannot list', () => {
     expect(await ids()).toEqual([ARTICLES.draft.id]);
   });
 
-  // Drops every link: deletes LEVEL_MODEL's rows, so the browsing-level reads above must run before
-  // these, and the two calls in the first test run in order. OWNER wrote the articles.
+  // Mutates links (removes those visible at browsingLevel), so the read-only browsing-level tests
+  // above must run first; the two calls in the first test are order-dependent. OWNER wrote the
+  // articles.
   const savedLevelLinks = async (fromId: number, editor: number, browsingLevel: number) => {
     await save(fromId, { id: editor } as SessionUser, [], { browsingLevel });
     const rows = await h.prisma.modelAssociations.findMany({
@@ -333,7 +337,8 @@ describe("a moderator editing another user's model", () => {
       {
         isRestricted: () => false,
         viewer,
-      }
+      },
+      viewer
     );
   const rows = () => h.prisma.modelAssociations.count({ where: { fromModelId: M } });
 
