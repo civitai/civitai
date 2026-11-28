@@ -15,11 +15,95 @@ export const ALLOWED_SANDBOX_TOKENS: ReadonlySet<string> = new Set([
   'allow-downloads',
 ]);
 
-// Auto-injected for trusted publishers. Unverified blocks still get an
-// opaque origin; verified/internal blocks need their real origin so the
-// host's explicit-targetOrigin postMessage + host-side origin allowlist
-// work as designed.
+// Tiers that get `allow-same-origin` without the viewer flag. Their frames run at a
+// real origin so the host's explicit-targetOrigin postMessage and its origin
+// allowlist work as designed. Every other tier gets a real origin only through
+// `mayGrantSameOrigin` with the `appBlocksSameOriginFrames` flag on.
 export const TRUSTED_TIERS: ReadonlySet<string> = new Set(['internal', 'verified']);
+
+/**
+ * Where a frame may run at a REAL origin. The host page builds this once per mount
+ * (`useAppFrameOriginPolicy`) from server config, so the attribute and the
+ * transport mode cannot change under a frame that is already loaded.
+ */
+export type AppFrameOriginPolicy = {
+  /**
+   * The roots whose one-label subdomains hold app frames: the apps domain (published
+   * apps and dev tunnels) and the App Assistant preview domain. A root that is not a
+   * dotted name, or that is the embedding host or one of its parents, is ignored.
+   */
+  domains: readonly string[];
+  /** The embedding page's own host. A frame on it, or under it, never gets a real origin. */
+  embedderHost: string;
+  /** The viewer's `appBlocksSameOriginFrames` flag. Unverified frames need it. */
+  unverifiedEnabled: boolean;
+};
+
+/** The DNS label prefix of moderator review hosts (`review-<sha16>.<apps domain>`). */
+export const REVIEW_HOST_LABEL_PREFIX = 'review-';
+
+function normaliseRoot(root: string): string {
+  return root
+    .trim()
+    .toLowerCase()
+    .replace(/^\.+|\.+$/g, '');
+}
+
+/**
+ * Is `src` on an app-frame host: `https:`, no port, no credentials, and a hostname
+ * that is exactly ONE label under one of `policy.domains`, not a review host, and not
+ * the embedding host or a parent of it. Pure, no DOM. A root equal to the embedding
+ * host or a parent of it (e.g. a misconfigured `civitai.com`) is dropped, because a
+ * real-origin frame under the embedder's own site reads its domain cookies.
+ */
+export function isAppFrameHost(src: string | undefined, policy: AppFrameOriginPolicy): boolean {
+  if (!src) return false;
+  let url: URL;
+  try {
+    url = new URL(src);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== 'https:' || url.port !== '' || url.username || url.password) return false;
+  const host = url.hostname.toLowerCase();
+  const embedder = normaliseRoot(policy.embedderHost.split(':')[0] ?? '');
+  if (!embedder || host === embedder || embedder.endsWith(`.${host}`)) return false;
+  for (const raw of policy.domains) {
+    const root = normaliseRoot(raw);
+    if (!root.includes('.')) continue;
+    if (embedder === root || embedder.endsWith(`.${root}`)) continue;
+    const suffix = `.${root}`;
+    if (!host.endsWith(suffix)) continue;
+    const label = host.slice(0, -suffix.length);
+    if (!label || label.includes('.')) continue;
+    if (label.startsWith(REVIEW_HOST_LABEL_PREFIX)) continue;
+    return true;
+  }
+  return false;
+}
+
+/**
+ * THE rule for `allow-same-origin` on an App Block frame. Every host derives its
+ * sandbox through `intersectSandbox`, which asks only this.
+ *
+ *  - A review mount (`reviewMode`) never gets it: pending code runs in a moderator's tab.
+ *  - `unverified`: only with a policy, the viewer flag on, and `src` on an app-frame host.
+ *  - `verified` / `internal`: with a policy, only on an app-frame host. With NO policy
+ *    (no `AppProvider` above the host: component tests, or a tab that booted without
+ *    server props) they keep the token as before; nothing else changes for them.
+ */
+export function mayGrantSameOrigin(args: {
+  src: string | undefined;
+  trustTier: string;
+  reviewMode?: boolean;
+  policy: AppFrameOriginPolicy | null;
+}): boolean {
+  const { src, trustTier, reviewMode, policy } = args;
+  if (reviewMode) return false;
+  if (TRUSTED_TIERS.has(trustTier)) return policy === null || isAppFrameHost(src, policy);
+  if (!policy || !policy.unverifiedEnabled) return false;
+  return isAppFrameHost(src, policy);
+}
 
 // Minimal safe sandbox: just enough for a block to execute its own bundle,
 // and nothing that widens its reach over the embedding page or the user
@@ -35,13 +119,24 @@ export const MINIMAL_SANDBOX: ReadonlyArray<string> = ['allow-scripts'];
  * minimal safe set rather than an implicit wider default. The output is the
  * intersection of {declared ∪ minimal} with the allowlist, so it can only
  * ever be as wide as what the manifest explicitly (and validly) declared.
- * `allow-same-origin` is added only for trusted (internal/verified) tiers.
+ * `allow-same-origin` is added only when `mayGrantSameOrigin` says so for `frame`.
+ * Without `frame` (a server caller), only a trusted tier gets it, as before.
  */
-export function intersectSandbox(raw: string | undefined, trustTier: string): string {
+export function intersectSandbox(
+  raw: string | undefined,
+  trustTier: string,
+  frame?: { src: string | undefined; reviewMode?: boolean; policy: AppFrameOriginPolicy | null }
+): string {
   const declared = (raw ?? '').split(/\s+/).filter((t) => ALLOWED_SANDBOX_TOKENS.has(t));
   const tokens = new Set<string>(MINIMAL_SANDBOX);
   for (const t of declared) tokens.add(t);
-  if (TRUSTED_TIERS.has(trustTier)) tokens.add('allow-same-origin');
+  const grant = mayGrantSameOrigin({
+    src: frame?.src,
+    trustTier,
+    reviewMode: frame?.reviewMode,
+    policy: frame?.policy ?? null,
+  });
+  if (grant) tokens.add('allow-same-origin');
   return Array.from(tokens).join(' ');
 }
 
@@ -54,7 +149,9 @@ export function intersectSandbox(raw: string | undefined, trustTier: string): st
  * `allow-popups-to-escape-sandbox` are not in ALLOWED_SANDBOX_TOKENS, so
  * intersectSandbox already strips them.) Only `allow-scripts` (mandatory to render)
  * and `allow-forms` (low-risk to an opaque origin) survive. `allow-same-origin` is
- * NEVER added — the review host forces `trustTier:'unverified'` (opaque origin).
+ * NEVER added: the review host forces `trustTier:'unverified'` AND mounts the page
+ * host with `reviewMode`, which `mayGrantSameOrigin` refuses whatever the flag says;
+ * review hosts (`review-<sha16>`) are also refused by `isAppFrameHost`.
  */
 export const REVIEW_SANDBOX_ALLOWED_TOKENS: ReadonlySet<string> = new Set<string>([
   'allow-scripts',
@@ -64,8 +161,8 @@ export const REVIEW_SANDBOX_ALLOWED_TOKENS: ReadonlySet<string> = new Set<string
 /**
  * Clamp a manifest-declared sandbox string down to the review render-only set
  * (REVIEW_SANDBOX_ALLOWED_TOKENS ∪ the minimal floor). The output is passed to the
- * review host, which runs it through `intersectSandbox(…, 'unverified')` again —
- * so `allow-same-origin` is never added and the opaque origin is preserved. Fails
+ * review host, which runs it through `intersectSandbox(…, 'unverified', { reviewMode })`
+ * again, so `allow-same-origin` is never added and the opaque origin is preserved. Fails
  * CLOSED (an empty / all-stripped manifest → the minimal `allow-scripts` floor).
  */
 export function clampReviewSandbox(raw: string | undefined): string {
@@ -89,10 +186,10 @@ export function clampReviewSandbox(raw: string | undefined): string {
  * blocks.
  *
  * Pass the SAME value used for the iframe attribute (i.e. the
- * `intersectSandbox(sandbox, trustTier)` result) so the transport mode can
- * never drift from the actual frame origin. Internal/verified tiers keep
- * `allow-same-origin` → real origin → returns false → pinned behavior is
- * preserved byte-for-byte.
+ * `intersectSandbox(...)` result) so the transport mode can never drift from the
+ * actual frame origin. A frame `mayGrantSameOrigin` granted (a trusted tier, or an
+ * unverified one with the flag on, on an app-frame host) has a real origin, so this
+ * returns false and the transport pins its origin.
  */
 export function effectiveSandboxIsOpaque(effectiveSandbox: string): boolean {
   return !effectiveSandbox.split(/\s+/).includes('allow-same-origin');

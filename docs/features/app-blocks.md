@@ -269,7 +269,7 @@ viewer-keyed documents (above); reports go through the report API
 (`POST /api/v1/blocks/moderation/reports`).
 
 - **Routes:** the removed ones answer exactly as an unknown route: `PATCH /:c/:key` is `405
-  method_not_allowed` (`Allow: GET, PUT, DELETE`), `/:c/:key/counters/:name`,
+method_not_allowed` (`Allow: GET, PUT, DELETE`), `/:c/:key/counters/:name`,
   `/:c/:key/marks/:name`, `/_publish/:to` and `/_unpublish/:to` are `404 not_found`, except the
   `report` mark (below). A list refuses
   `markedBy` and `mark` as unknown parameters and `sort=counter:` / `sort=mark:` as an undeclared
@@ -312,10 +312,49 @@ off for everyone): `app-blocks-post-creation` (`posts:write:self`),
 `app-blocks-app-reactions` (`social:react:self`; off refuses both reaction
 procedures at once). See `src/server/services/app-blocks-flag.ts`.
 
+## Frame origin and storage
+
+An app frame runs either at an OPAQUE origin (`'null'`: no localStorage,
+IndexedDB, SharedWorker or cookies; every attempt throws `SecurityError`) or at
+its REAL origin, `https://<slug>.<APPS_DOMAIN>` for a published app,
+`dev-<16 hex>.<APPS_DOMAIN>` for a dev tunnel, or its session host under
+`APP_ASSISTANT_PREVIEW_DOMAIN` for an App Assistant preview.
+
+- **Who gets a real origin:** see the sandbox bullet under "Threat model
+  highlights". For an unverified app it is the `appBlocksSameOriginFrames` flag
+  (Flipt `app-blocks-same-origin-frames`, created off), so a preview and the
+  published app behave alike for the same viewer. While the flag is off for a
+  viewer the frame stays opaque, so an app must tolerate storage being
+  unavailable. Use `app.storage` for anything that must persist.
+- **Partitioned:** browser storage in the frame is keyed by the app's origin AND
+  the top-level site, so it is the app's own under civitai.com and separate
+  from the same app opened directly or under another Civitai site.
+- **Not durable:** Safari may evict script-written storage after a period
+  without a visit; third-party cookies are unreliable in every browser (the
+  frame is cross-site to civitai.com).
+- **Previews lose it:** a dev tunnel or App Assistant preview host is minted per
+  session, so its storage is gone when the session ends.
+- **Service workers are blocked:** the apps static server and the preview
+  gateway answer `403` to a service-worker script fetch, so a taken-down or
+  replaced app cannot keep serving a cached bundle. There is no client-side
+  check; the server answer is the control.
+- **Fixed per mount:** the host decides once when it mounts (a sandbox change
+  applies only when the frame navigates), so a flag change takes effect on the
+  next mount, not in a frame already loaded.
+
 ## Threat model highlights
 
 - **Iframe sandbox** is the primary isolation. Sandbox token allowlist is
-  trust-tier gated; `allow-same-origin` is internal-only.
+  trust-tier gated; a manifest can declare `allow-same-origin` only at the
+  `internal` tier. The HOST adds it (`mayGrantSameOrigin` in
+  `src/components/AppBlocks/sandbox.ts`, the one rule every host uses) for
+  `verified`/`internal`, and for `unverified` only with the viewer's
+  `appBlocksSameOriginFrames` flag on — and in every case only when
+  `iframe.src` is `https:`, has no port, and its host is one label under
+  `APPS_DOMAIN` or `APP_ASSISTANT_PREVIEW_DOMAIN`. Never for a review host
+  (`review-<sha16>`, and every review mount is refused by `reviewMode` whatever
+  its host), never for the embedding site or a host under it. See "Frame origin
+  and storage" below.
 - **CORS** on `/api/v1/block-tokens` is same-origin only (exact-host
   match). Block iframes never call this endpoint; the host page fetches
   and passes the token via `BLOCK_INIT`.
@@ -1119,6 +1158,7 @@ same page host, so the owner sees the same confirm.
    within the per-job limit.
 
    Three things to know as an author:
+
    - **Estimate it on its own.** Only the single `ESTIMATE_WORKFLOW` stores a confirmable
      quote. A batch estimate (`ESTIMATE_WORKFLOW_BATCH`) never persists anything, so its
      cells never carry `stepQuote`; price the grid in a batch, then estimate the one body
@@ -1126,10 +1166,11 @@ same page host, so the owner sees the same confirm.
    - **Plain JSON input only.** The quote is bound to the exact body, so `input` must be
      plain JSON — objects, arrays, strings, finite numbers, booleans and `null`. A `Date`,
      `Map`, `Set` or similar is refused (`a confirmed step needs plain JSON input … —
-     body.input.<path> is a Date`), at the estimate and at the submit.
+body.input.<path> is a Date`), at the estimate and at the submit.
    - **Not for training.** A training `$type` (`training`, `imageResourceTraining`) is
      refused with `a training step type cannot run as a confirmed step — use
-     kind:'training'`. Training runs have their own kind, with its own checks.
+kind:'training'`. Training runs have their own kind, with its own checks.
+
 2. **Run** — `RUN_CONFIRMED_STEP { requestId, body: { …the same body, quoteId } }`. The host
    reads the quote back from the server (`blocks.previewQuoteGrant`), shows the price, and on
    the viewer's confirm records it through `blocks.consentQuoteGrant` (signed-in session
@@ -1167,7 +1208,7 @@ same page host, so the owner sees the same confirm.
    `/apps/activity`, revoking spending, or "Ask me each job" there turns the opt-in off.
    Raising the limit from the raise dialog keeps it; that dialog then says "Jobs up to N Buzz
    that fit within the new limit will run without asking." Each submit records `consentKind: 'click' |
-   'standing'` on its audit row, and `civitai_app_block_confirmed_step_submit_total{app_block_id,consent}`
+'standing'` on its audit row, and `civitai_app_block_confirmed_step_submit_total{app_block_id,consent}`
    counts both. The per-app aggregate cap and velocity limit still apply.
 
 A quote is single-use, bound to the viewer, app, install and exact body, expires after 15

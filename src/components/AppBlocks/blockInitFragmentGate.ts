@@ -421,8 +421,9 @@ export const BLOCK_INIT_FRAGMENT_ALLOWLIST: ReadonlySet<string> = new Set<string
   //     safe "only because `seedFromFragment` strips synchronously at transport
   //     start". Measured, that premise is false in production: every block above is
   //     `trust_tier: 'unverified'` with `sandbox: "allow-scripts allow-forms"`, and
-  //     `sandbox.ts` adds `allow-same-origin` only for `TRUSTED_TIERS`
-  //     (`internal`/`verified`). The frame therefore runs at an OPAQUE ORIGIN, the
+  //     `sandbox.ts` adds `allow-same-origin` to an unverified frame only with the
+  //     `appBlocksSameOriginFrames` flag on (off, by default, for every viewer). With
+  //     it off the frame runs at an OPAQUE ORIGIN, the
   //     `history.replaceState` inside `seedFromFragment` throws, and that throw is
   //     swallowed by a `catch` documented as "nothing depends on this" — so the
   //     fragment is NOT stripped and persists in `location.hash` for the session.
@@ -441,12 +442,26 @@ export const BLOCK_INIT_FRAGMENT_ALLOWLIST: ReadonlySet<string> = new Set<string
   //     is not that, and a grep for `location.hash` alone will not tell you which
   //     kind you are looking at.
   //
-  //     Why that distinction is worth the words: the strip DOES start working if a
-  //     block is later promoted to `verified`/`internal`. A maintainer who admitted
-  //     a block on "the transport already stripped it, so a captured href is clean"
-  //     would have been right at `unverified` only by accident (that block's own
-  //     write throws too), and wrong the moment the tier changes — reaching the
-  //     exact hazard along a path this comment would have declared closed.
+  //     Why that distinction is worth the words: the strip DOES start working once
+  //     the frame has a real origin — a block promoted to `verified`/`internal`, or
+  //     an unverified block on its app host for a viewer with
+  //     `appBlocksSameOriginFrames` on (`mayGrantSameOrigin`, sandbox.ts). So for one
+  //     viewer the fragment persists and for the next it is stripped, on the same
+  //     block. A maintainer who admitted a block on "the transport already stripped
+  //     it, so a captured href is clean" would be right only for the second viewer,
+  //     and wrong for the first, reaching the exact hazard along a path this comment
+  //     would have declared closed.
+  //
+  //     RE-CHECKED for that flag (all four entries in this list, against their
+  //     shipped source): each reads the fragment only in its inline pre-paint boot
+  //     script, which runs before the module bundle and so before the strip; none
+  //     has a client router or a `hashchange`/`popstate` listener; the strip keeps
+  //     pathname, search, `history.state` and any foreign fragment keys and fires no
+  //     event. `custom-generators`' own `?g=` cleanup (a live-href `replaceState`)
+  //     starts succeeding too, and keeps the hash. So every entry is safe with the
+  //     strip working. The one visible difference: a reload INSIDE the frame starts
+  //     from the stripped URL, so its boot paint falls back to the OS colour scheme
+  //     until BLOCK_INIT arrives, as a verified block's already does.
   //
   // KEYING: all three are page-mounted — `page` declared, no `slots` key at all,
   // and each `blockId` equals its store slug — so, exactly as for `app-requests`

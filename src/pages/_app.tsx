@@ -185,6 +185,7 @@ type CustomAppProps = {
   domain: ColorDomain;
   host: string;
   serverDomains: ServerDomains;
+  appFrameDomains?: string[];
   availableOAuthProviders: string[];
   verifiedBot: VerifiedBot | null;
   adsGated?: boolean;
@@ -221,6 +222,7 @@ function MyApp(props: CustomAppProps) {
       domain,
       host,
       serverDomains,
+      appFrameDomains,
       availableOAuthProviders,
       verifiedBot = null,
       adsGated: pageAdsGated = false,
@@ -307,6 +309,7 @@ function MyApp(props: CustomAppProps) {
       domain={domain}
       host={host}
       serverDomains={serverDomains}
+      appFrameDomains={appFrameDomains}
       availableOAuthProviders={availableOAuthProviders}
       verifiedBot={verifiedBot}
       isAuthed={!!session || hasAuthCookie}
@@ -555,6 +558,13 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     const { getAvailableOAuthProviders } = await import('~/server/auth/oauth-providers');
     availableOAuthProviders = await getAvailableOAuthProviders();
   }
+  // The App Block frame roots (`~/server/utils/app-frame-domains`): per-deployment server env,
+  // read per request rather than frozen into the client bundle. Same for every viewer.
+  let appFrameDomains: string[] = [];
+  if (typeof window === 'undefined') {
+    const { getAppFrameDomains } = await import('~/server/utils/app-frame-domains');
+    appFrameDomains = getAppFrameDomains();
+  }
 
   const region = getRegion(request);
 
@@ -617,6 +627,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
         hasAuthCookie: true,
         domain: getRequestDomainColor(request),
         serverDomains,
+        appFrameDomains,
         availableOAuthProviders,
         host: request.headers.host ?? '',
         verifiedBot: null,
@@ -897,6 +908,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       region: botCache ? undefined : region,
       domain,
       serverDomains,
+      appFrameDomains,
       availableOAuthProviders,
       host: appContext.ctx.req?.headers.host ?? '',
       // Which crawler asked is not part of the cache key.

@@ -366,6 +366,14 @@ const HEIGHT_MAX_CEILING = 4000;
 // is rejected even if HTML's iframe sandbox accepts it. This stops the
 // well-known boundary-escape combos (allow-same-origin + allow-scripts;
 // allow-popups-to-escape-sandbox; allow-top-navigation) by default.
+//
+// A manifest still cannot DECLARE allow-same-origin below `internal`. The host adds it
+// itself (`mayGrantSameOrigin`, src/components/AppBlocks/sandbox.ts) for a trusted tier,
+// or for an unverified frame with the viewer's `appBlocksSameOriginFrames` flag on, and
+// only when `iframe.src` is https, portless and one label under the apps or App Assistant
+// preview domain (never a review host, never the embedding site). That host check is what
+// keeps the grant off a JOB_TOKEN manifest's src: that path binds `iframe.src` to the
+// client's `allowedOrigins` below rather than stamping the canonical one.
 const SANDBOX_ALLOWLIST: Record<'unverified' | 'verified' | 'internal', Set<string>> = {
   // M-POPUPS (audit medium / app-exploits-user): `allow-popups` is dropped from
   // the unverified tier. With it, any approved-but-unverified block could

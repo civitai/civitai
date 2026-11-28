@@ -229,6 +229,7 @@ import {
 } from './saveImageDownload';
 import { env } from '~/env/client';
 import { effectiveSandboxIsOpaque, intersectSandbox } from './sandbox';
+import { useAppFrameOriginPolicy } from './useAppFrameOriginPolicy';
 import { PAGE_SLOT_ID } from '~/shared/constants/slot-registry';
 import { HEADER_HEIGHT_PX } from '~/shared/constants/app-layout.constants';
 import { hostRefusal, navigateDiagnostic } from './appFeedbackDiagnostics';
@@ -1408,11 +1409,19 @@ export function PageBlockHost({
 
   // The EFFECTIVE sandbox handed to the iframe attribute below. Derive the
   // transport's opaque-origin mode from the SAME string so the two can never
-  // drift: unverified (no allow-same-origin) → opaque frame → opaque transport;
-  // internal/verified (has allow-same-origin) → real origin → pinned transport.
+  // drift: no allow-same-origin → opaque frame → opaque transport; a grant from
+  // `mayGrantSameOrigin` → real origin → pinned transport. Judged on `entrySrc`, the
+  // URL the frame actually loads (the same base `expectedOrigin` is derived from, never
+  // the fragment); a review mount (`reviewMode`) is refused whatever its host.
+  const frameOriginPolicy = useAppFrameOriginPolicy();
   const effectiveSandbox = useMemo(
-    () => intersectSandbox(sandbox, trustTier),
-    [sandbox, trustTier]
+    () =>
+      intersectSandbox(sandbox, trustTier, {
+        src: entrySrc,
+        reviewMode: !!reviewMode,
+        policy: frameOriginPolicy,
+      }),
+    [sandbox, trustTier, entrySrc, reviewMode, frameOriginPolicy]
   );
   const opaqueOrigin = useMemo(
     () => effectiveSandboxIsOpaque(effectiveSandbox),

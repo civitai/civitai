@@ -23,8 +23,9 @@ interface BlockHostProps {
  * without a structural refactor.
  *
  * Why the correction matters rather than being pedantry: `internal`/`verified`
- * tiers get `allow-same-origin` (`intersectSandbox`), so such a frame runs at a
- * REAL origin with cookies. Anyone reasoning about what a link, a popup or a
+ * tiers get `allow-same-origin` (`mayGrantSameOrigin`, on an app-frame host), so
+ * such a frame runs at a REAL origin with cookies; with the
+ * `appBlocksSameOriginFrames` flag on, so does an unverified one on its app host. Anyone reasoning about what a link, a popup or a
  * postMessage transport can do in a block frame gets the opposite answer for
  * those 3 rows, and the retracted sentence said there were none.
  */

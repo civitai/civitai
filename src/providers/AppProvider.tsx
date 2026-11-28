@@ -61,6 +61,8 @@ type AppProviderProps = {
   domain: ColorDomain;
   host: string;
   serverDomains: ServerDomains;
+  /** App Block frame roots (`~/server/utils/app-frame-domains`); absent when the boot had no server props. */
+  appFrameDomains?: string[];
   availableOAuthProviders: string[];
   verifiedBot: VerifiedBot | null;
   // Whether the request is from a logged-in user (`!!session || hasAuthCookie`,
@@ -91,6 +93,8 @@ type AppContext = {
   domain: Record<ColorDomain, boolean>;
   host: string;
   serverDomains: ServerDomains;
+  /** Read only through `useAppFrameOriginPolicy`. */
+  appFrameDomains?: string[];
   availableOAuthProviders: string[];
   verifiedBot: VerifiedBot | null;
   announcements?: AnnouncementsSeed;
@@ -146,6 +150,7 @@ export function AppProvider({
   domain,
   host,
   serverDomains,
+  appFrameDomains,
   availableOAuthProviders,
   verifiedBot,
   isAuthed,
@@ -214,6 +219,7 @@ export function AppProvider({
     },
     host,
     serverDomains,
+    appFrameDomains,
     availableOAuthProviders,
     verifiedBot,
     announcements: reviveAnnouncementsSeed(announcements),
