@@ -15,6 +15,7 @@ import {
   countHomeBlockL1Hit,
   countHomeBlockL1Miss,
 } from '~/server/prom/home-block-l1.metrics';
+import type { HomeBlockCacheTier } from '~/server/prom/home-block-get.metrics';
 import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import type * as HomeBlockService from '~/server/services/home-block.service';
 import type { HomeBlockWithData } from '~/server/services/home-block.service';
@@ -191,16 +192,24 @@ export type HomeBlockSource = Pick<
   'resolveHomeBlockMetadata' | 'getHomeBlockData'
 >;
 
+/**
+ * `onTier` is told where the answer came from, once per call that returns (never on a throw):
+ * the L1, the shared Redis entry, a build from source, or nothing for a row with no identifier.
+ */
 export async function getHomeBlockCached(
   homeBlock: HomeBlockForCache,
   domain: DomainColor | undefined,
   resolvedMetadata: HomeBlockMetaSchema | undefined,
-  source: HomeBlockSource
+  source: HomeBlockSource,
+  onTier?: (tier: HomeBlockCacheTier) => void
 ) {
   const metadata = resolvedMetadata ?? (await source.resolveHomeBlockMetadata(homeBlock));
   const identifier = getHomeBlockIdentifier(homeBlock, metadata);
 
-  if (!identifier) return null;
+  if (!identifier) {
+    onTier?.('no_identifier');
+    return null;
+  }
 
   const cacheKey = homeBlockCacheKey(homeBlock.type, identifier, domain);
   const useL1 = isHomeBlockL1On();
@@ -219,6 +228,7 @@ export async function getHomeBlockCached(
   // row and uses its id to place the block on the page.
   if (cachedHomeBlock) {
     if (useL1 && !local) homeBlockL1.set(cacheKey, cachedHomeBlock);
+    onTier?.(local ? 'l1' : 'redis');
     // A new top-level object per caller over shared nested content; see the note on the miss path.
     return { ...cachedHomeBlock, ...homeBlock, metadata };
   }
@@ -254,6 +264,7 @@ export async function getHomeBlockCached(
 
     log('getHomeBlockCached :: done getting system home blocks');
   }
+  onTier?.('miss');
 
   // A copy: with the L1 on, `parsedHomeBlock` is the object later hits are served from. SHALLOW:
   // it protects the top-level fields only. The nested content (items, boards) is shared with the
