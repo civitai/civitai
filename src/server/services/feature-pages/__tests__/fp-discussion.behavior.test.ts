@@ -384,6 +384,25 @@ describe('edits', () => {
     } as never);
   });
 
+  it('refuses an author who no longer has a username, writing nothing', async () => {
+    const { comment } = await post('first words');
+    const ctx = { user: { id: AUTHOR, username: ' ', isModerator: false }, track: {} } as never;
+    await expect(
+      comments.editFeaturePageComment(ctx, {
+        requestId: `e${++seq}`,
+        comment: comment.urn!,
+        text: 'renamed away',
+      })
+    ).rejects.toMatchObject({
+      code: 'PRECONDITION_FAILED',
+      message: 'Set a username on your account to comment.',
+    });
+    expect(await q(`SELECT content FROM "CommentV3" WHERE id = $1`, [comment.sourceId])).toEqual([
+      { content: expect.stringContaining('first words') },
+    ]);
+    expect(await mirrorRow(comment.sourceId)).toMatchObject({ version: 1 });
+  });
+
   it('posts a new version under the same urn, shown, under a key of its own', async () => {
     const { comment } = await post('first words');
     const urn = comment.urn!;
