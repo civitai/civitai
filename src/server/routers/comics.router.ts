@@ -6221,7 +6221,7 @@ async function stampPanelImageLevel(level: number, panels: Prisma.Sql) {
       SET "nsfwLevel" = ${level}
       FROM target t
       WHERE i.id = t.id
-        AND (${level} = ${NsfwLevel.Blocked} OR NOT ${hasBlockMarkerSql('i')})
+        AND (${level}::int = ${NsfwLevel.Blocked} OR NOT ${hasBlockMarkerSql('i')})
       RETURNING i.id
     )
     SELECT ((SELECT count(*) FROM target) - (SELECT count(*) FROM stamped))::int AS skipped
