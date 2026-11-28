@@ -20,6 +20,14 @@ import { isServiceOfferingTakedownReason } from '@civitai/shared/service-offerin
 import { getReportedServiceReviews } from '$lib/server/service-review-reports.service';
 import { serviceReviewActions } from './service-review-actions.server';
 import { canAccess } from '$lib/server/access';
+import { type FpCommentState, getFpCommentStates } from '$lib/server/fp-comment-state';
+import {
+  FP_HIDDEN_MESSAGE,
+  FP_SHOWN_MESSAGE,
+  getReportCommentId,
+  setFpCommentVisibility,
+} from '$lib/server/fp-comment-visibility.service';
+import { isInt4Id } from '$lib/server/users.service';
 import { loadReportQueue } from '$lib/server/report-queue-load';
 import { reportStatusActions } from '$lib/server/report-queue-actions';
 import { reportEntityForSlug, reportPath, ReportStatus } from '$lib/reports';
@@ -36,15 +44,23 @@ export const load: PageServerLoad = async ({ params, url, locals }) => {
   const queue = await loadReportQueue(type, url);
   const entityIds = queue.items.flatMap((r) => (r.entityId != null ? [r.entityId] : []));
   const reportIds = queue.items.map((r) => r.id);
-  const [games, storylines, storylineHolds, deletedStorylines, serviceOfferings, serviceReviews] =
-    await Promise.all([
-      type === 'gameFrameGame' ? getGameMirrors(entityIds) : [],
-      type === 'storyline' ? getReportedStorylines(entityIds) : [],
-      type === 'storyline' ? getStorylineReportHolds(reportIds) : [],
-      type === 'storyline' ? getDeletedReportStorylines(reportIds) : [],
-      type === 'serviceOffering' ? getReportedServiceOfferings(entityIds) : [],
-      type === 'serviceOffering' ? getReportedServiceReviews(reportIds, locals.user) : new Map(),
-    ]);
+  const [
+    games,
+    storylines,
+    storylineHolds,
+    deletedStorylines,
+    serviceOfferings,
+    serviceReviews,
+    fpComments,
+  ] = await Promise.all([
+    type === 'gameFrameGame' ? getGameMirrors(entityIds) : [],
+    type === 'storyline' ? getReportedStorylines(entityIds) : [],
+    type === 'storyline' ? getStorylineReportHolds(reportIds) : [],
+    type === 'storyline' ? getDeletedReportStorylines(reportIds) : [],
+    type === 'serviceOffering' ? getReportedServiceOfferings(entityIds) : [],
+    type === 'serviceOffering' ? getReportedServiceReviews(reportIds, locals.user) : new Map(),
+    type === 'commentV3' ? getFpCommentStates(entityIds) : new Map<number, FpCommentState>(),
+  ]);
 
   return {
     ...queue,
@@ -56,6 +72,8 @@ export const load: PageServerLoad = async ({ params, url, locals }) => {
     serviceOfferings,
     // Keyed by report id: only a review report is in it.
     serviceReviews: Object.fromEntries(serviceReviews),
+    // Keyed by comment id: only a Feature Pages comment is in it.
+    fpComments: Object.fromEntries(fpComments),
   };
 };
 
@@ -223,6 +241,40 @@ export const actions: Actions = {
     });
     if (!result.ok) return fail(410, { error: `Released, but ${result.error}`, gone: true });
     return { success: true, serviceOfferingTakedown: 'Released' };
+  },
+
+  /** Hides or unhides the reported Feature Pages comment. Leaves the report's status as it is. */
+  fpVisibility: async ({ request, locals, params }) => {
+    const type = reportEntityForSlug(params.slug);
+    if (type !== 'commentV3' || !canAccess(locals.user, reportPath(type)))
+      return fail(403, { error: 'Not permitted.' });
+
+    const data = await request.formData();
+    const id = Number(data.get('id'));
+    const commentId = Number(data.get('commentId'));
+    const seenVersion = Number(data.get('seenVersion'));
+    const seenHiddenAt = data.get('seenHiddenAt');
+    const hidden = data.get('hidden');
+    if (!isInt4Id(id) || !isInt4Id(commentId) || !isInt4Id(seenVersion))
+      return fail(400, { error: 'Invalid report.' });
+    if ((hidden !== 'true' && hidden !== 'false') || typeof seenHiddenAt !== 'string')
+      return fail(400, { error: 'Invalid request.' });
+    // The comment the report is on, never one posted alongside it.
+    if ((await getReportCommentId(id)) !== commentId)
+      return fail(410, { error: 'That report no longer exists.', gone: true });
+
+    const result = await setFpCommentVisibility({
+      commentId,
+      reportId: id,
+      hidden: hidden === 'true',
+      seen: { version: seenVersion, hiddenAt: seenHiddenAt || null },
+    });
+    if (!result.ok) return fail(409, { error: result.error });
+    return {
+      success: true,
+      fpState: result.state,
+      message: hidden === 'true' ? FP_HIDDEN_MESSAGE : FP_SHOWN_MESSAGE,
+    };
   },
 
   /** Leaves the report's status as it is. */

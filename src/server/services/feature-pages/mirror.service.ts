@@ -908,8 +908,9 @@ export function reconcileAction(
   if (e.state === 'mod-hidden') return seen === 'visible' ? 'restrict' : null;
   // Retracted there is final: its text is never sent again.
   if (seen === 'retracted') return 'counted';
-  // Hidden there by the moderator hide sent here for the scan, which a moderator here has since
-  // lifted for this text: matched on its `at`, so a platform moderator's own hide never is.
+  // Hidden there by the moderator hide sent here (the scan's or a moderator's), which a moderator
+  // here has since lifted for this text: matched on its `at`, so a platform moderator's own hide
+  // never is.
   if (
     seen === 'hidden' &&
     item.verdict?.source === 'moderator' &&

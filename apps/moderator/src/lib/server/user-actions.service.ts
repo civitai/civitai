@@ -268,6 +268,7 @@ export type ModEndpoint =
   | 'version-showcase/remove'
   | 'comment/bulk-delete'
   | 'comment/remove-as-tos'
+  | 'comment/fp-visibility'
   | 'comment/restore-from-tos'
   | 'cosmetic/holdings-removed'
   | 'feedback/ticket-bug'
@@ -506,7 +507,7 @@ export async function bulkCommentAction(input: {
   commentIds: number[];
   userId: number;
   moderatorId: number;
-}): Promise<ActionResult & { affected?: number }> {
+}): Promise<ActionResult & { affected?: number; heldIds?: number[] }> {
   if (!input.commentIds.length) return { ok: false, error: 'Select at least one comment.' };
 
   const ENDPOINTS = {
@@ -531,6 +532,7 @@ export async function bulkCommentAction(input: {
 
   let affected = 0;
   let failed = 0;
+  let held = 0;
   for (let i = 0; i < input.commentIds.length; i += MOD_ENDPOINT_ID_BATCH) {
     const commentIds = input.commentIds.slice(i, i + MOD_ENDPOINT_ID_BATCH);
     const result = await callModEndpoint(path, { commentIds }, label);
@@ -549,10 +551,24 @@ export async function bulkCommentAction(input: {
     affected +=
       input.action === 'bulkDelete' ? countOf(result.body, ['deleted']) : countOf(tos, ['count']);
     failed += input.action === 'restoreFromTos' ? countOf(tos, ['failed']) : 0;
+    // Feature Pages comments the restore never shows again: they stay removed.
+    held += input.action === 'restoreFromTos' ? countOf(tos, ['held']) : 0;
   }
+  // Which they are, read back: the endpoint counts them only.
+  const heldIds = held
+    ? (
+        await dbWrite
+          .selectFrom('CommentV3')
+          .select('id')
+          .where('id', 'in', input.commentIds)
+          .where(sql<boolean>`"entityType"::text = 'featurePage'`)
+          .where('tosViolation', '=', true)
+          .execute()
+      ).map((r) => r.id)
+    : [];
 
   // Reporting success on zero would write a ModActivity row attributing a deletion that did not happen.
-  if (affected === 0 && failed === 0)
+  if (affected === 0 && failed === 0 && !heldIds.length)
     return {
       ok: false,
       error:
@@ -569,7 +585,7 @@ export async function bulkCommentAction(input: {
       error: `${failed} could not be restored and stay hidden. Restored ${affected}.`,
     };
   // Both endpoints count rows they actually wrote, so a short count is real.
-  return { ok: true, affected };
+  return heldIds.length ? { ok: true, affected, heldIds } : { ok: true, affected };
 }
 
 // BULK REVIEW ACTIONS (Retool's DeleteReview / ExcludeOrIncludeReview).

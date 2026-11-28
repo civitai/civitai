@@ -49,9 +49,14 @@
   import type { ActionResult } from '@sveltejs/kit';
   import { FormState } from '$lib/form-state.svelte';
   import type { PageData } from './$types';
+  import type { FpCommentState } from '$lib/fp-comment';
+  import FpCommentVisibility from '$lib/components/FpCommentVisibility.svelte';
   import LastWorked from '$lib/components/report-queue/LastWorked.svelte';
 
   let { data }: { data: PageData } = $props();
+
+  // A Feature Pages comment's hide as the action that changed it read it back, over the loaded one.
+  let fpAfterAction = $state<Record<number, FpCommentState | null>>({});
 
   /**
    * A `gone` refusal means the report was deleted underneath the moderator, so the queue reloads and
@@ -491,6 +496,28 @@
             {/if}
             {#if delistForm.error}
               <p class="mt-2 text-sm text-red-300" role="alert">{delistForm.error}</p>
+            {/if}
+          </div>
+        {/if}
+
+        {#if data.type === 'commentV3' && selected.entityId != null && data.fpComments[selected.entityId]}
+          {@const fp =
+            selected.entityId in fpAfterAction
+              ? fpAfterAction[selected.entityId]
+              : data.fpComments[selected.entityId]}
+          <div class="rounded-lg border border-dark-4 bg-dark-6 p-3">
+            <p class="mb-2 text-sm font-medium">Feature Pages comment</p>
+            {#if fp}
+              <FpCommentVisibility
+                commentId={selected.entityId}
+                {fp}
+                action="?/fpVisibility"
+                fields={{ id: selected.id }}
+                canAct
+                onchange={(next) => (fpAfterAction[selected.entityId!] = next)}
+              />
+            {:else}
+              <p class="text-sm text-dark-2">This comment no longer exists.</p>
             {/if}
           </div>
         {/if}

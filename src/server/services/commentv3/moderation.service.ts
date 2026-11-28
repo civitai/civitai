@@ -374,3 +374,39 @@ export async function deleteOwnCommentV3(
   }
   return deleteComments(db, [comment.id], 'author');
 }
+
+/**
+ * A moderator hides a shown Feature Pages comment, bound to the text version they saw. Through
+ * setCommentFlags, so the mirror sends it as a moderator hide; only a moderator's unhide
+ * (liftModeratorFpHide) shows it again. `held`: nothing was written, and why.
+ */
+export async function moderatorHideFpComment({
+  commentId,
+  seenVersion,
+  actorId,
+}: {
+  commentId: number;
+  seenVersion: number;
+  actorId: number;
+}): Promise<{ hidden: true } | { held: 'gone' | 'changed' }> {
+  return dbWrite.$transaction(async (tx) => {
+    const db = prismaRunner(tx);
+    await db.query(`SELECT id FROM "CommentV3" WHERE id = $1 FOR UPDATE`, [commentId]);
+    const { rows } = await db.query<{ changed: boolean }>(
+      `SELECT (c.hidden OR c."tosViolation" OR m.version <> $2) AS changed
+       FROM "FeaturePageCommentMirror" m JOIN "CommentV3" c ON c.id = m."commentId"
+       WHERE m."commentId" = $1 AND c."entityType"::text = 'featurePage'
+         AND c."deletedAt" IS NULL AND m."goneCause" IS NULL AND m."removeWantedAt" IS NULL`,
+      [commentId, seenVersion]
+    );
+    if (!rows[0]) return { held: 'gone' as const };
+    if (rows[0].changed) return { held: 'changed' as const };
+    await setCommentFlags(db, [commentId], { hidden: true });
+    await db.query(
+      `INSERT INTO "ModActivity" ("userId", "entityType", activity, "entityId")
+       VALUES ($1, 'commentV3', 'fpHide', $2) ON CONFLICT DO NOTHING`,
+      [actorId, commentId]
+    );
+    return { hidden: true as const };
+  });
+}

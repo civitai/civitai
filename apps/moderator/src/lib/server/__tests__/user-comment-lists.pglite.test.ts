@@ -26,7 +26,10 @@ beforeEach(async () => {
     CREATE TABLE "CommentV3" ("id" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL,
       "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL, "content" TEXT NOT NULL,
       "tosViolation" BOOLEAN NOT NULL DEFAULT false, "legacyV1Id" INTEGER,
-      "deletedAt" TIMESTAMP, "createdAt" TIMESTAMP NOT NULL);
+      "deletedAt" TIMESTAMP, "createdAt" TIMESTAMP NOT NULL,
+      "hidden" BOOLEAN NOT NULL DEFAULT false, "hiddenAt" TIMESTAMPTZ(6));
+    CREATE TABLE "FeaturePageCommentMirror" ("commentId" INTEGER PRIMARY KEY,
+      "version" INTEGER NOT NULL DEFAULT 1, "scanHiddenAt" TIMESTAMPTZ(6));
     INSERT INTO "CommentV3" VALUES
       -- A model comment from before the flip, and one written on CommentV3 since (no old id).
       (1, 10, 'model', 70, 'old model', false, 501, NULL, '2026-10-01'),
@@ -100,5 +103,44 @@ describe("a user's comment list, which moderators bulk-delete and flag by id", (
     await db.exec(`DELETE FROM "CommentV3" WHERE id = ${first.items.at(-1)!.id}`);
     const rest = await getComments(10, 2, first.next!);
     expect(rest.items.map((r) => r.id)).toEqual([1]);
+  });
+});
+
+describe("a user's Feature Pages comments in that list", () => {
+  it('carry the hide a moderator acts on, bound to what is shown; other comments carry none', async () => {
+    await db.exec(`
+      INSERT INTO "CommentV3" ("id", "userId", "entityType", "entityId", "content", "createdAt",
+        "hidden", "hiddenAt") VALUES
+        (20, 12, 'featurePage', 90, 'hidden by a moderator', '2026-11-09', true,
+          '2026-11-20 01:00:00.123456+00'),
+        (21, 12, 'featurePage', 90, 'hidden by the scan', '2026-11-08', true,
+          '2026-11-21 01:00:00.5+00'),
+        (22, 12, 'model', 70, 'a model comment', '2026-11-07', false, NULL);
+      INSERT INTO "FeaturePageCommentMirror" VALUES (20, 3, NULL), (21, 1, '2026-11-21 01:00:00.5+00');
+    `);
+    const { items } = await getComments(12);
+    expect(items.map((r) => [r.id, r.fp])).toEqual([
+      [
+        20,
+        {
+          hidden: true,
+          hiddenAt: '2026-11-20 01:00:00.123456+00',
+          version: 3,
+          scanHide: false,
+          tosViolation: false,
+        },
+      ],
+      [
+        21,
+        {
+          hidden: true,
+          hiddenAt: '2026-11-21 01:00:00.5+00',
+          version: 1,
+          scanHide: true,
+          tosViolation: false,
+        },
+      ],
+      [22, undefined],
+    ]);
   });
 });

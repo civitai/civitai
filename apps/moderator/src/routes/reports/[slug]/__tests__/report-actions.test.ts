@@ -28,6 +28,8 @@ vi.mock('$lib/server/game-frame', async (importOriginal) => ({
   delistGame,
 }));
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
+// The SvelteKit runtime the main-app endpoint client reads the session from; no test here calls it.
+vi.mock('$app/server', () => ({ getRequestEvent: vi.fn() }));
 // Imports the main-app client (`$app/server`, private env), which nothing else in this graph loads.
 vi.mock('$lib/server/storyline-scan-lift.service', () => ({ liftStorylineScanTakedown: vi.fn() }));
 vi.mock('$lib/server/service-review-reports.service', () => ({

@@ -69,8 +69,8 @@ export type FpMirrorFactsRow = {
   /** The text version a moderator lifted the scan's hide for. */
   liftGrantedVersion: number | null;
   /**
-   * A moderator lifted the scan's hide on this version after the last moderator hide sent, and
-   * that hide was sent for the scan.
+   * A moderator lifted the hide on this version after the last moderator hide sent, and that hide
+   * was sent for the scan or a moderator here, never another's.
    */
   liftGranted: boolean;
 };
@@ -81,7 +81,7 @@ const FACTS = `
          m."updatedAt"::text AS "mirrorUpdatedAt", m."postAttemptedAt", m."subjectMissingAt",
          m."removeWantedAt", m."restrictedAt", m."postSeq", m."goneAt", m."contentAt",
          m."modHideSentAt", m."modHideOrigin", m."liftGrantedVersion",
-         COALESCE(m."modHideOrigin" = 'scan' AND m."liftGrantedAt" > m."modHideSentAt"
+         COALESCE(m."modHideOrigin" IN ('scan', 'moderator') AND m."liftGrantedAt" > m."modHideSentAt"
            AND m."liftGrantedVersion" = m.version, false) AS "liftGranted",
          COALESCE(c."hiddenAt" = m."scanHiddenAt" AND NOT c."tosViolation", false) AS "scanHide",
          c.id IS NOT NULL AS "commentExists", c.hidden, c."tosViolation", c."deletedAt", c.content,
@@ -544,11 +544,14 @@ export async function readFpRunbookCounts(db: Kysely<DB>) {
   };
 }
 
-/** SQL predicate: an open report on the comment id expression `comment` from anyone but the user id expression `system`. */
-const openPersonReport = (comment: string, system: string) => `EXISTS (
+/**
+ * SQL predicate: an open report on the comment id expression `comment` from anyone but the user id
+ * expression `system`, other than the report id expression `except`.
+ */
+const openPersonReport = (comment: string, system: string, except = 'NULL') => `EXISTS (
   SELECT 1 FROM "CommentV3Report" pcr JOIN "Report" pr ON pr.id = pcr."reportId"
   WHERE pcr."commentId" = ${comment} AND pr.status IN ('Pending', 'Processing')
-    AND pr."userId" <> ${system})`;
+    AND pr."userId" <> ${system} AND pr.id IS DISTINCT FROM ${except})`;
 
 /** Whether anyone but the system user still has an open report on this comment. */
 export async function hasOpenPersonFpReport(
@@ -718,4 +721,116 @@ export async function scanHideReportIds(db: Kysely<DB>, reportIds: number[]) {
     [reportIds]
   );
   return new Set(found.map((r) => r.id));
+}
+
+/** Why a moderator's unhide of a Feature Pages comment was not made. */
+export type FpUnhideHeld =
+  | 'gone'
+  | 'changed'
+  | 'scan'
+  | 'tos'
+  | 'foreign'
+  | 'held'
+  | 'flagged'
+  | 'author'
+  | 'reported'
+  | 'pushing';
+
+/**
+ * A moderator shows again a Feature Pages comment hidden by a moderator, bound to the hide and text
+ * version they saw (`seenHiddenAt` is `hiddenAt::text`). The scan's own hide is lifted by
+ * dismissing its report instead (unactionReportLiftingScanHide). Locks as that does; the lift's time
+ * is taken under them and is strictly after both the hide and the last moderator hide sent, so the
+ * reconcile lifts it on the platform. It also grants the version, so a replayed scan of the same
+ * text does not hide it again. `exceptReportId`: the report the moderator is ruling on, which does
+ * not hold the unhide; the platform lift still waits for it to close. `held`: nothing was written,
+ * and why.
+ */
+export async function liftModeratorFpHide(
+  db: Kysely<DB>,
+  {
+    commentId,
+    actorId,
+    systemUserId,
+    seenHiddenAt,
+    seenVersion,
+    exceptReportId,
+  }: {
+    commentId: number;
+    actorId: number;
+    systemUserId: number;
+    seenHiddenAt: string;
+    seenVersion: number;
+    exceptReportId?: number;
+  }
+): Promise<{ lifted: { commentId: number; version: number } } | { held: FpUnhideHeld }> {
+  return db.transaction().execute(async (trx) => {
+    await rows(trx, `SELECT pg_advisory_xact_lock(hashtext($2), $1::int)`, [
+      commentId,
+      csamHoldLockKey('CommentV3'),
+    ]);
+    await rows(trx, `SELECT id FROM "CommentV3" WHERE id = $1 FOR UPDATE`, [commentId]);
+    await rows(trx, `SELECT 1 FROM "FeaturePageCommentMirror" WHERE "commentId" = $1 FOR UPDATE`, [
+      commentId,
+    ]);
+    const [f] = await rows<Record<Exclude<FpUnhideHeld, 'gone'>, boolean> & { at: string }>(
+      trx,
+      `SELECT n.t::text AS at,
+         (NOT c.hidden OR c."hiddenAt" IS DISTINCT FROM NULLIF($3, '')::timestamptz OR m.version <> $4
+           OR n.t <= c."hiddenAt") AS changed,
+         COALESCE(c."hiddenAt" = m."scanHiddenAt", false) AS scan,
+         c."tosViolation" AS tos,
+         COALESCE(m."modHideOrigin" = 'foreign', false) AS foreign,
+         ${csamQueueHeldText('CommentV3', 'm."commentId"')} AS held,
+         EXISTS (SELECT 1 FROM "EntityModeration" em WHERE em."entityType" = 'CommentV3'
+           AND em."entityId" = m."commentId"
+           AND coalesce(cardinality(em."triggeredLabels"), 0) > 0) AS flagged,
+         NOT ${fpAuthorInStanding('u')} AS author,
+         ${openPersonReport('m."commentId"', '$2', '$5::int')} AS reported,
+         (COALESCE(m."leaseUntil" > now(), false)
+           OR COALESCE(n.t <= m."modHideSentAt", false)) AS pushing
+       FROM (SELECT clock_timestamp() AS t) n, "FeaturePageCommentMirror" m
+       JOIN "CommentV3" c ON c.id = m."commentId"
+       LEFT JOIN "User" u ON u.id = c."userId"
+       WHERE m."commentId" = $1 AND c."entityType"::text = 'featurePage'
+         AND c."deletedAt" IS NULL AND m."goneCause" IS NULL AND m."removeWantedAt" IS NULL`,
+      [commentId, systemUserId, seenHiddenAt, seenVersion, exceptReportId ?? null]
+    );
+    if (!f) return { held: 'gone' as const };
+    const held = (
+      [
+        'changed',
+        'scan',
+        'tos',
+        'foreign',
+        'held',
+        'flagged',
+        'author',
+        'reported',
+        'pushing',
+      ] as const
+    ).find((why) => f[why]);
+    if (held) return { held };
+    await rows(
+      trx,
+      `UPDATE "CommentV3" SET hidden = false, "hiddenAt" = NULL, "updatedAt" = now() WHERE id = $1`,
+      [commentId]
+    );
+    const [lifted] = await rows<{ commentId: number; version: number }>(
+      trx,
+      `UPDATE "FeaturePageCommentMirror" SET "liftGrantedAt" = $3::timestamptz,
+         "liftGrantedBy" = $2, "liftGrantedVersion" = version, "nextPushAt" = now(),
+         "pushAttempts" = 0, "pendingDigest" = NULL, "updatedAt" = now()
+       WHERE "commentId" = $1
+       RETURNING "commentId", version`,
+      [commentId, actorId, f.at]
+    );
+    await rows(
+      trx,
+      `INSERT INTO "ModActivity" ("userId", "entityType", activity, "entityId")
+       VALUES ($1, 'commentV3', 'fpUnhide', $2) ON CONFLICT DO NOTHING`,
+      [actorId, commentId]
+    );
+    return { lifted };
+  });
 }

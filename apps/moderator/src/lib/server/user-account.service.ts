@@ -1,6 +1,7 @@
 import { sql, type RawBuilder } from '@civitai/db/kysely';
 import { BOX_OPENING_REWARD_STATUS, MOD_GRANT_SOURCE_PREFIX } from '@civitai/shared/mystery-box';
 import { dbRead } from './db';
+import { type FpCommentState, getFpCommentStates } from './fp-comment-state';
 import { getClickhouse } from './clickhouse';
 import { clickhouseDate, isClickhouseDateTime } from './clickhouse-date';
 import { utcMs } from '$lib/format';
@@ -340,6 +341,8 @@ export type UserComment = {
   /** What the comment is ON. A reply carries its entity on its own row. */
   entityType: string;
   entityId: number;
+  /** A Feature Pages comment's hide, which a moderator can hide or unhide here. */
+  fp?: FpCommentState;
 };
 
 /** What each comment hangs off, by id. A comment with no row has no entry. */
@@ -391,8 +394,11 @@ export async function getComments(
     limit,
     (r): ModActivityCursor => ({ at: r.cursorAt, id: r.id })
   );
+  const fp = await getFpCommentStates(
+    items.filter((r) => r.entityType === 'featurePage').map((r) => r.id)
+  );
   return {
-    items: items.map(({ cursorAt: _, ...r }) => r),
+    items: items.map(({ cursorAt: _, ...r }) => ({ ...r, fp: fp.get(r.id) })),
     truncated: !!nextCursor,
     next: nextCursor ?? null,
   };
