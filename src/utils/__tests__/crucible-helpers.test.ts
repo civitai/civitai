@@ -7,6 +7,7 @@ import {
   getCrucibleJudgingBadge,
   getCreatorFinish,
   baseModelMakesMediaType,
+  isCrucibleTrackModel,
   canSeeCrucibleEntryDetails,
   getCrucibleCountdown,
   getCrucibleManageActions,
@@ -585,6 +586,19 @@ describe('baseModelMakesMediaType', () => {
     ['Some Unknown Base', MediaType.video, true],
   ])('%s makes %s: %s', (baseModel, mediaType, expected) => {
     expect(baseModelMakesMediaType(baseModel, mediaType)).toBe(expected);
+  });
+});
+
+describe('isCrucibleTrackModel', () => {
+  it.each([
+    ['ACE Audio', MediaType.video, true],
+    ['MiniMax H3', MediaType.video, false],
+    ['Grok', MediaType.video, false],
+    ['Other', MediaType.video, false],
+    [undefined, MediaType.video, false],
+    ['ACE Audio', MediaType.image, false],
+  ])('%s in a %s crucible: %s', (baseModel, contentType, expected) => {
+    expect(isCrucibleTrackModel(contentType, baseModel)).toBe(expected);
   });
 });
 
