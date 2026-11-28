@@ -33,7 +33,10 @@ vi.mock('@civitai/mod-utils/profanity/word-rules', async (importOriginal) => {
     },
   };
 });
-import { ensureRegisterProfanityListMetrics } from '~/server/metrics/profanity-list.metrics';
+import {
+  ensureRegisterProfanityListMetrics,
+  profanityEntryId,
+} from '~/server/metrics/profanity-list.metrics';
 import {
   createProfanityListReader,
   getServerProfanityFilter,
@@ -254,9 +257,9 @@ describe('isProfaneSearch', () => {
   it('counts a refusal with the flag off, or with the list unreadable, by source only', async () => {
     const { hits } = ensureRegisterProfanityListMetrics();
     const count = async (source: string) =>
-      (await hits.get()).values.find(
-        (v) => v.labels.surface === 'search' && v.labels.source === source
-      )?.value ?? 0;
+      (await hits.get()).values
+        .filter((v) => v.labels.surface === 'search' && v.labels.source === source)
+        .reduce((sum, v) => sum + v.value, 0);
     h.flagOn = false;
     const shipped = await count('shipped');
     expect([await isProfaneSearch([SHIPPED_WORD]), await isProfaneSearch(['hello'])]).toEqual([
@@ -269,6 +272,34 @@ describe('isProfaneSearch', () => {
     const fallback = await count('fallback');
     expect(await isProfaneSearch([SHIPPED_WORD])).toBe(true);
     expect(await count('fallback')).toBe(fallback + 1);
+  });
+
+  // The label is how moderators find which entry drives refusals. If it ever carried the query,
+  // user text would land in Prometheus and its cardinality would be unbounded.
+  it('labels a search refusal with the matched list entry id, never the query', async () => {
+    setBlocked({ id: 1, data: MANAGED });
+    const { hits } = ensureRegisterProfanityListMetrics();
+    const entries = async () =>
+      new Map(
+        (await hits.get()).values
+          .filter((v) => v.labels.surface === 'search' && v.labels.source === 'managed')
+          .map((v) => [v.labels.entry, v.value])
+      );
+    const before = await entries();
+    const query = `zqvuniquequery ${MANAGED_WORD}`;
+    expect(await isProfaneSearch(['hello', query])).toBe(true);
+    const after = await entries();
+    const moved = [...after].filter(([entry, value]) => value !== (before.get(entry) ?? 0));
+    expect(moved).toEqual([
+      [profanityEntryId(MANAGED_WORD), (before.get(profanityEntryId(MANAGED_WORD)) ?? 0) + 1],
+    ]);
+    expect([...after.keys()]).not.toContain(profanityEntryId(query));
+    expect([...after.keys()].join(' ')).not.toContain('zqvuniquequery');
+  });
+
+  it('keys an entry id on the entry without its boundary markers or case', () => {
+    expect(profanityEntryId('|Zqvox|')).toBe(profanityEntryId('zqvox'));
+    expect(profanityEntryId('zqvox')).toMatch(/^[0-9a-f]{8}$/);
   });
 
   it('reads the query of a single search and of each search in a multi-search', () => {

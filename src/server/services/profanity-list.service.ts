@@ -12,6 +12,7 @@ import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
   ensureRegisterProfanityListMetrics,
+  profanityEntryId,
   type ProfanityHitSurface,
 } from '~/server/metrics/profanity-list.metrics';
 import { readBlocklistWithSource } from '~/server/services/blocklist.service';
@@ -159,8 +160,8 @@ export type ServerProfanityFilter = {
   source: ProfanityListSource;
   /** Flag off only: the moderators' benign words a search check allows. */
   benign?: string[] | null;
-  /** Counts a match against this filter's list source. */
-  countHit(surface: ProfanityHitSurface): void;
+  /** Counts a match against this filter's list source; `entry` is a `profanityEntryId`. */
+  countHit(surface: ProfanityHitSurface, entry?: string): void;
 };
 
 // One slot, keyed on the lists' CONTENT, since a read can parse fresh arrays; the same arrays skip
@@ -213,7 +214,7 @@ export async function getServerProfanityFilter(): Promise<ServerProfanityFilter>
     filter,
     source,
     benign: lists.benign ?? null,
-    countHit: (surface) => metrics.hits.inc({ surface, source }),
+    countHit: (surface, entry = 'none') => metrics.hits.inc({ surface, source, entry }),
   };
 }
 
@@ -252,21 +253,26 @@ export async function isProfaneSearch(queries: string[]): Promise<boolean> {
 export async function profaneSearchCheck(queries: string[]): Promise<'clean' | 'profane'> {
   const texts = queries.filter((query) => query.trim().length > 0);
   if (!texts.length) return 'clean';
-  const verdict = (filter: { analyze(text: string): { isProfane: boolean } }) =>
-    texts.some((text) => filter.analyze(text).isProfane)
-      ? ('profane' as const)
-      : ('clean' as const);
+  // The id of the first entry matched, or null when clean. Built from the filter's match metadata
+  // (a list entry), never from the query, so the hit counter's label stays bounded and term-free.
+  const firstEntry = (filter: {
+    analyze(text: string): { isProfane: boolean; matches: string[] };
+  }): string | null => {
+    for (const text of texts) {
+      const { isProfane, matches } = filter.analyze(text);
+      if (isProfane) return matches[0] ? profanityEntryId(matches[0]) : 'none';
+    }
+    return null;
+  };
   try {
     const profanity = await getServerProfanityFilter();
-    if (profanity.source === 'shipped') {
-      // Counted too: with the flag off, this is the refusal rate the flip is measured against.
-      const shipped = verdict(benignFilter(profanity.benign ?? null));
-      if (shipped === 'profane') profanity.countHit('search');
-      return shipped;
-    }
-    const result = verdict(profanity.filter);
-    if (result === 'profane') profanity.countHit('search');
-    return result;
+    // Flag off counts too: that is the refusal rate the flip is measured against.
+    const entry = firstEntry(
+      profanity.source === 'shipped' ? benignFilter(profanity.benign ?? null) : profanity.filter
+    );
+    if (entry === null) return 'clean';
+    profanity.countHit('search', entry);
+    return 'profane';
   } catch (error) {
     logToAxiom({
       name: 'profanity-search-check-failed',
@@ -274,9 +280,9 @@ export async function profaneSearchCheck(queries: string[]): Promise<'clean' | '
       message: 'Site search profanity check failed; checked against the shipped list',
       details: { error: error instanceof Error ? error.message : String(error) },
     });
-    const fallback = verdict(getProfanityFilter());
-    if (fallback === 'profane')
-      ensureRegisterProfanityListMetrics().hits.inc({ surface: 'search', source: 'fallback' });
-    return fallback;
+    const entry = firstEntry(getProfanityFilter());
+    if (entry === null) return 'clean';
+    ensureRegisterProfanityListMetrics().hits.inc({ surface: 'search', source: 'fallback', entry });
+    return 'profane';
   }
 }
