@@ -221,7 +221,8 @@ type HeldOutcome =
 /**
  * Whether a comment the platform holds hidden is hidden there by another moderator: the platform
  * keeps one moderator source, so only that hide would a lift from here clear. A pipeline or site hide
- * is not, and nor is this mirror's own last hide (its sent time), which keeps the origin it had.
+ * is not. This mirror's own last hide (matched by its sent time) counts as another's only when it
+ * was recorded as 'foreign'.
  */
 async function moderatorHidThere(
   held: HeldOutcome,
