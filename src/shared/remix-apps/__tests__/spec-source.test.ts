@@ -1,4 +1,4 @@
-import { parse } from 'acorn';
+import { parse, type Comment } from 'acorn';
 import { describe, expect, it } from 'vitest';
 import { remixSourceLiterals } from '~/server/services/remix-app-literals';
 import { DEFAULT_ENGINE } from '~/shared/constants/remix-apps.constants';
@@ -104,7 +104,7 @@ describe('remixSpecToSource', () => {
   it('keeps spec text out of comments and identifiers, and reads the spec back exactly', () => {
     const { spec } = FIXTURES.find((f) => f.slug === 'awkward-text')!;
     const source = remixSpecToSource(spec);
-    const comments: string[] = [];
+    const comments: Comment[] = [];
     const identifiers = new Set<string>();
     const walk = (node: unknown): void => {
       if (!node || typeof node !== 'object') return;
@@ -116,9 +116,7 @@ describe('remixSpecToSource', () => {
     };
     walk(parse(source, { ecmaVersion: 'latest', sourceType: 'module', onComment: comments }));
 
-    expect(comments.map((c) => (c as unknown as { value: string }).value)).toEqual([
-      ' remix-app-creator template v1',
-    ]);
+    expect(comments.map((c) => c.value)).toEqual([' remix-app-creator template v1']);
     // Indexed names and the runner's API only: none comes from the spec.
     const fixed =
       /^(?:[tco]\d+|SPEC|defineRemixApp|run|ctx|ask|workflow|source|images|Math|max|indexOf|trim|kind|prompt|maxLength|optional|options|image|scale|aspectRatio|quantity)$/;
