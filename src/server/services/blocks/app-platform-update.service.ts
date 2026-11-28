@@ -112,8 +112,9 @@ export type OwnerPlatformUpdate = {
   touchesManifest: boolean;
   status: PlatformUpdateStatus;
   /**
-   * `username` is {@link APP_PLATFORM_UPDATE_SENDER} for the owner, never the staff member's own
-   * (operator decision); only {@link listPlatformUpdatesForModerator} names the staff member.
+   * `username` is {@link APP_PLATFORM_UPDATE_SENDER} for the owner when `verifiedStaff`, else
+   * `null`; never the staff member's own (operator decision). Only
+   * {@link listPlatformUpdatesForModerator} names the staff member.
    */
   by: { username: string | null; verifiedStaff: boolean };
   /** ISO-8601. */
@@ -126,6 +127,7 @@ export type OwnerPlatformUpdate = {
  * Never from commit text.
  */
 export function ownerView(row: UpdateRow): OwnerPlatformUpdate {
+  const verifiedStaff = isVerifiedStaff(row);
   return {
     id: row.id,
     branch: row.branch,
@@ -136,8 +138,10 @@ export function ownerView(row: UpdateRow): OwnerPlatformUpdate {
     touchesManifest: row.touchesManifest === true,
     status: row.status,
     by: {
-      username: APP_PLATFORM_UPDATE_SENDER,
-      verifiedStaff: isVerifiedStaff(row),
+      // Only an update the server still trusts is named as from the official account; one whose
+      // author is no longer staff names nobody, so official credibility never rides on it.
+      username: verifiedStaff ? APP_PLATFORM_UPDATE_SENDER : null,
+      verifiedStaff,
     },
     createdAt: new Date(row.createdAt).toISOString(),
   };

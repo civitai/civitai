@@ -1239,7 +1239,8 @@ describe('🔴 "verified staff" comes from the record, never from commit text', 
       verified: false,
       update: {
         id: pushed.id,
-        by: { username: 'CivitaiOfficial (App Assistant)', verifiedStaff: false },
+        // No longer staff: named as nobody, never as the official account.
+        by: { username: null, verifiedStaff: false },
       },
     });
   });
@@ -1272,7 +1273,8 @@ describe('verifyCommit answers false for an update that is no longer staff’s',
       verified: false,
       update: {
         id: pushed.id,
-        by: { username: 'CivitaiOfficial (App Assistant)', verifiedStaff: false },
+        // No longer staff: named as nobody, never as the official account.
+        by: { username: null, verifiedStaff: false },
       },
     });
     expect((await caller(OWNER).listPending({ slug: SLUG })).updates[0].by.verifiedStaff).toBe(
