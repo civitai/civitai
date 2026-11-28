@@ -83,17 +83,42 @@ describe('findUserIdByUsername', () => {
 });
 
 describe('getAssociatedResourcesCardDataHandler', () => {
-  it('fetches an associated article as an article', async () => {
+  async function cardRead(nsfwLevel: number, browsingLevel = 31) {
     const { getAssociatedResourcesCardDataHandler } = await import(
       '~/server/controllers/model.controller'
     );
     q.listModelAssociationTargets.mockResolvedValue([
       { toModelId: null, toArticleId: ARTICLE },
     ] as never);
+    dbMock.dbRead.article.findMany.mockResolvedValue([
+      {
+        id: ARTICLE,
+        userId: PRIMARY_USER,
+        nsfwLevel,
+        publishedAt: new Date('2026-01-01'),
+        status: 'Published',
+        ingestion: 'Scanned',
+        availability: 'Public',
+      },
+    ] as never);
+    dbMock.dbRead.imageConnection.findMany.mockResolvedValue([]);
+    const cache = { edgeTTL: 60, browserTTL: 60, staleWhileRevalidate: 60 };
     await getAssociatedResourcesCardDataHandler({
-      input: { fromId: ID, type: 'Suggested' } as never,
-      ctx: { user: undefined, features: {} } as never,
+      input: { fromId: ID, type: 'Suggested', browsingLevel } as never,
+      ctx: { user: undefined, features: {}, cache, req: { headers: {} } } as never,
     });
-    expect(getArticles.mock.calls[0][0].ids).toEqual([ARTICLE]);
+    return { fetched: getArticles.mock.calls[0]?.[0].ids ?? [], edgeCached: cache.edgeTTL > 0 };
+  }
+
+  it('fetches an associated article as an article', async () => {
+    expect(await cardRead(1)).toEqual({ fetched: [ARTICLE], edgeCached: true });
+  });
+
+  it('does not fetch an article above the browsing level', async () => {
+    expect((await cardRead(4, 1)).fetched).toEqual([]);
+  });
+
+  it('keeps an answer with an article above SFW out of the edge cache', async () => {
+    expect(await cardRead(4)).toEqual({ fetched: [ARTICLE], edgeCached: false });
   });
 });

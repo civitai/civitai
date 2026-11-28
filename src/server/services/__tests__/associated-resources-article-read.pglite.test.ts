@@ -13,6 +13,7 @@ import {
 import {
   getAssociatedResourcesSimple,
   setAssociatedResources,
+  shownAssociatedArticleIds,
 } from '~/server/services/model.service';
 import { BlockedByUsers } from '~/server/services/user-preferences.service';
 import type { SessionUser } from '~/types/session';
@@ -172,6 +173,8 @@ beforeAll(async () => {
   $transaction.mockImplementation(((ops: never) => h.prisma.$transaction(ops)) as never);
   dbMock.dbRead.imageConnection.findMany.mockImplementation(((args: never) =>
     h.prisma.imageConnection.findMany(args)) as never);
+  dbMock.dbRead.article.findMany.mockImplementation(((args: never) =>
+    h.prisma.article.findMany(args)) as never);
 }, 60_000);
 
 afterAll(() => h?.stop());
@@ -399,6 +402,13 @@ describe('associated articles whose author blocked the viewer', () => {
     expect(await listed({ id: BLOCKED_VIEWER, isModerator: true })).toEqual(Object.keys(ARTICLES));
   });
 
+  it('are withheld from that viewer on the card read', async () => {
+    const card = (viewer: { id: number }) =>
+      shownAssociatedArticleIds([ARTICLES.live.id], { isRestricted: () => false, viewer }, 31);
+    expect([...(await card({ id: BLOCKED_VIEWER })).shown]).toEqual([]);
+    expect([...(await card({ id: 99 })).shown]).toEqual([ARTICLES.live.id]);
+  });
+
   it("are kept when that viewer saves their own model's list without them", async () => {
     await save(VIEWERS_MODEL, { id: BLOCKED_VIEWER } as SessionUser);
     expect(
@@ -465,6 +475,17 @@ describe('associated articles above SFW in a restricted region', () => {
 
   it('does not mark a list with no such article region-dependent', async () => {
     expect((await list(undefined)).regionDependent).toBe(false);
+  });
+
+  it('are withheld from the card read by the same rule', async () => {
+    const ids = REGION_ARTICLES.map(([id]) => id);
+    const reader = (restricted: boolean) => ({ isRestricted: () => restricted, viewer: { id: 8 } });
+    const restricted = await shownAssociatedArticleIds(ids, reader(true), 31);
+    expect([...restricted.shown]).toEqual([13]);
+    expect(restricted.regionDependent).toBe(true);
+    expect([...(await shownAssociatedArticleIds(ids, reader(false), 31)).shown]).toEqual([
+      11, 12, 13,
+    ]);
   });
 
   it('are kept when the model owner saves the list from a restricted region', async () => {
