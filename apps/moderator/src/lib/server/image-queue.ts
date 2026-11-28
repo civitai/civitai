@@ -368,6 +368,7 @@ export const imageQueueActions = {
         userId: locals.user.id,
         keepModeratorRemoved: !!reportId,
         shownNeedsReview: shownFlag(form.get('needsReview')),
+        csamReview: holdsCsamReview(locals.user),
       });
     } catch (e) {
       if (e instanceof ModeratorRemovedImageError && reportId) {
@@ -531,6 +532,7 @@ export const imageQueueActions = {
         resolvedMessage,
         ...reason,
         userId: locals.user.id,
+        csamReview: holdsCsamReview(locals.user),
       });
     } catch (e) {
       if (e instanceof AppealRestoreRefusedError)
@@ -570,6 +572,7 @@ export const imageQueueActions = {
           nsfwLevel,
           reason: 'Moderator queue rating',
           userId: locals.user.id,
+          csamReview: holdsCsamReview(locals.user),
         });
       } catch (e) {
         console.error('[images] setRating failed', { id, error: e });
@@ -641,6 +644,7 @@ export const imageQueueActions = {
           deferAppealEmail: true,
           keepModeratorRemoved: posted.length > 0,
           shownNeedsReview: shown?.get(imageId),
+          csamReview: holdsCsamReview(locals.user),
         }).catch((e) => {
           if (e instanceof ImageChangedError) {
             changed.push(imageId);
@@ -810,6 +814,7 @@ export const imageQueueActions = {
           ...reason,
           userId: locals.user.id,
           deferAppealEmail: true,
+          csamReview: holdsCsamReview(locals.user),
         }).catch((e) => {
           if (!(e instanceof AppealRestoreRefusedError)) throw e;
           refused.push(imageId);

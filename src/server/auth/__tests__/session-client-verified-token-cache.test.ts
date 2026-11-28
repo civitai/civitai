@@ -8,7 +8,7 @@ vi.mock('@civitai/auth', async (importOriginal) => {
   const actual = await importOriginal<typeof CivitaiAuth>();
   return { ...actual, createSessionClient: h.createSessionClient };
 });
-vi.mock('../session-verifier', () => ({ isRevoked: vi.fn() }));
+vi.mock('../session-verifier', () => ({ isRevoked: vi.fn(), confirmElevatedRevocation: vi.fn() }));
 
 describe('sessionClient construction', () => {
   it('passes verifiedTokenCache alongside isRevoked', async () => {

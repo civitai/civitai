@@ -580,6 +580,10 @@
       {
         "id": 6501,
         "modelId": 5006
+      },
+      {
+        "id": 6701,
+        "modelId": 5007
       }
     ],
     "models": [
@@ -626,6 +630,14 @@
       {
         "id": 5006,
         "userId": 1001,
+        "mode": null,
+        "minor": false,
+        "sfwOnly": false,
+        "galleryLevel": null
+      },
+      {
+        "id": 5007,
+        "userId": 1002,
         "mode": null,
         "minor": false,
         "sfwOnly": false,

@@ -15,7 +15,7 @@ import (
 // (MissImageMeta) is computed but never written, so it is not one.
 var WriteCaches = []string{MissUserCosmetics, MissImageFrames, MissEventDecorations, MissTagIDs, MissModelFrames,
 	MissModelDecorations, MissVersionImages, MissModelData, MissModelTags, MissOfficialModels, MissMetrics,
-	MissCreatorMemberships, MissGallerySettings}
+	MissCreatorMemberships, MissVersionFiles, MissGallerySettings}
 
 // PrimaryCaches are the caches whose lookups read the primary database when written back: the frame
 // and event-decoration lookups always (entityDB), the version-images and model-data lookups for an id

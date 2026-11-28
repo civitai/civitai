@@ -7,7 +7,13 @@ vi.mock('@civitai/auth', async (importOriginal) => {
   const actual = await importOriginal<typeof CivitaiAuth>();
   return {
     ...actual,
-    createSessionClient: () => ({ getSessionUser: h.getSessionUser }),
+    createSessionClient: () => ({
+      getSessionUser: h.getSessionUser,
+      resolveSessionUser: async (t: string) => {
+        const user = await h.getSessionUser(t);
+        return user ? { user } : { user: null, reason: 'invalid' };
+      },
+    }),
     createSessionTokenClient: () => ({ refresh: vi.fn(), revoke: vi.fn() }),
   };
 });

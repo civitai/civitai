@@ -59,11 +59,42 @@ type V1Models struct {
 	CircuitWindow        time.Duration
 	CircuitCooldown      time.Duration
 	// ServeDataMiss is FEED_GO_V1_MODELS_SERVE_DATA_MISS (default off): on the public
-	// `GET /api/v1/models` route, a model-data cache miss is computed with the cache's own lookup
-	// instead of falling back (`v1-models-data-miss`; DESIGN.md §16.7). A shadow sample computes it
-	// whenever FEED_GO_COMPUTE_MISSES is on, this switch or not. Needs FEED_GO_COMPUTE_MISSES
-	// (ValidateMisses).
+	// `GET /api/v1/models` and `/api/v1/models/{id}` routes, a model-data cache miss is computed with
+	// the cache's own lookup (written back, and read on the primary for a lag-flagged model, when
+	// FEED_GO_CACHE_WRITEBACK lists model-data) instead of falling back (`v1-models-data-miss`;
+	// DESIGN.md §16.7). A shadow sample computes it whenever FEED_GO_COMPUTE_MISSES is on, this
+	// switch or not. Needs FEED_GO_COMPUTE_MISSES (ValidateMisses).
 	ServeDataMiss bool
+	// ServeTagsMiss is FEED_GO_V1_MODELS_SERVE_TAGS_MISS (default off): on both public model routes,
+	// a model-tags cache miss is computed with modelTagCache's lookup (written back when
+	// FEED_GO_CACHE_WRITEBACK lists model-tags) instead of falling back (`v1-models-tags-miss`). A
+	// shadow sample computes it whenever FEED_GO_COMPUTE_MISSES is on. Needs FEED_GO_COMPUTE_MISSES.
+	ServeTagsMiss bool
+	// ServeTagNameStale is FEED_GO_V1_MODELS_SERVE_TAG_NAME_STALE (default off): on both public model
+	// routes, a tag-name (`basic-tags`) entry past its day is named by tagCache's lookup on the
+	// replica, as the Node reader that wins the revalidate lock names it, instead of falling back
+	// (`v1-models-tag-name-stale`). Nothing is written. A shadow sample does so whenever
+	// FEED_GO_COMPUTE_MISSES is on. Needs FEED_GO_COMPUTE_MISSES.
+	ServeTagNameStale bool
+	// ServeShowcaseMiss is FEED_GO_V1_MODELS_SERVE_SHOWCASE_MISS (default off): on both public model
+	// routes, a version-showcase miss that is a bust's debounce marker or a lag-flagged version is
+	// decided as Node's lookup decides it (the flagged versions on the primary) instead of falling
+	// back (`v1-models-showcase-miss`). A shadow sample does so whenever FEED_GO_COMPUTE_MISSES is on.
+	// Needs FEED_GO_COMPUTE_MISSES.
+	ServeShowcaseMiss bool
+	// ServeFilesMiss is FEED_GO_V1_MODELS_SERVE_FILES_MISS (default off): on both public model routes,
+	// a version-files miss is computed with filesForModelVersionCache's lookup, and a stale entry
+	// revalidated as Node's fetch revalidates it (written back, under Node's revalidate lock, when
+	// FEED_GO_CACHE_WRITEBACK lists version-files), instead of falling back (`v1-models-files-miss`,
+	// `v1-models-files-stale`). A shadow sample does so whenever FEED_GO_COMPUTE_MISSES is on, writing
+	// nothing. Needs FEED_GO_COMPUTE_MISSES.
+	ServeFilesMiss bool
+	// ServeFilename is FEED_GO_V1_MODELS_SERVE_FILENAME (default off): on both public model routes, a
+	// download file name whose model or version name holds non-ASCII text is named as Node names it
+	// (the Node engine's case folding and trim, internal/v1models/jscanon.json) instead of falling back
+	// (`v1-models-filename`). A shadow sample always does. Reads nothing, so it needs no miss
+	// computation.
+	ServeFilename bool
 	// AnswerNotFound is FEED_GO_V1_MODELS_ANSWER_NOT_FOUND (default off): a public
 	// `GET /api/v1/models/{id}` request for a model the model statement returns no row for, with the
 	// model's lag flag read clean, is answered here with Node's 404 (outcome `not_found`) instead of
@@ -87,6 +118,11 @@ func LoadV1Models() V1Models {
 		SearchAPIKey:      os.Getenv("SEARCH_API_KEY"),
 		SearchTimeout:     2500 * time.Millisecond,
 		ServeDataMiss:     boolEnv("FEED_GO_V1_MODELS_SERVE_DATA_MISS", false),
+		ServeTagsMiss:     boolEnv("FEED_GO_V1_MODELS_SERVE_TAGS_MISS", false),
+		ServeTagNameStale: boolEnv("FEED_GO_V1_MODELS_SERVE_TAG_NAME_STALE", false),
+		ServeShowcaseMiss: boolEnv("FEED_GO_V1_MODELS_SERVE_SHOWCASE_MISS", false),
+		ServeFilesMiss:    boolEnv("FEED_GO_V1_MODELS_SERVE_FILES_MISS", false),
+		ServeFilename:     boolEnv("FEED_GO_V1_MODELS_SERVE_FILENAME", false),
 		AnswerNotFound:    boolEnv("FEED_GO_V1_MODELS_ANSWER_NOT_FOUND", false),
 	}
 	if ms, err := strconv.Atoi(strings.TrimSpace(os.Getenv("MEILI_CALL_TIMEOUT_MS"))); err == nil && ms > 0 {
@@ -122,12 +158,27 @@ func (c V1Models) Validate(bearerAuth bool) error {
 	return nil
 }
 
-// ValidateMisses refuses FEED_GO_V1_MODELS_SERVE_DATA_MISS without computeMisses
-// (FEED_GO_COMPUTE_MISSES, Config.ComputeMisses): with no miss computation every model-data miss
-// would fall back anyway, so the setting would claim what it cannot do.
+// ValidateMisses refuses any of the v1 models miss switches (FEED_GO_V1_MODELS_SERVE_DATA_MISS,
+// _TAGS_MISS, _TAG_NAME_STALE, _SHOWCASE_MISS, _FILES_MISS) without computeMisses (FEED_GO_COMPUTE_MISSES,
+// Config.ComputeMisses): with no miss computation every such miss would fall back anyway, so the
+// setting would claim what it cannot do.
 func (c V1Models) ValidateMisses(computeMisses bool) error {
-	if c.ServeDataMiss && !computeMisses {
-		return errors.New("FEED_GO_V1_MODELS_SERVE_DATA_MISS is on without FEED_GO_COMPUTE_MISSES: a model-data miss on GET /api/v1/models is computed by the miss computation that switch turns on")
+	if computeMisses {
+		return nil
+	}
+	for _, sw := range []struct {
+		on   bool
+		name string
+	}{
+		{c.ServeDataMiss, "FEED_GO_V1_MODELS_SERVE_DATA_MISS"},
+		{c.ServeTagsMiss, "FEED_GO_V1_MODELS_SERVE_TAGS_MISS"},
+		{c.ServeTagNameStale, "FEED_GO_V1_MODELS_SERVE_TAG_NAME_STALE"},
+		{c.ServeShowcaseMiss, "FEED_GO_V1_MODELS_SERVE_SHOWCASE_MISS"},
+		{c.ServeFilesMiss, "FEED_GO_V1_MODELS_SERVE_FILES_MISS"},
+	} {
+		if sw.on {
+			return errors.New(sw.name + " is on without FEED_GO_COMPUTE_MISSES: that miss on the v1 model routes is computed by the miss computation that switch turns on")
+		}
 	}
 	return nil
 }

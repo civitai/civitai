@@ -256,6 +256,14 @@ export function spokeReauthResponse(authorize: string): Response {
   });
 }
 
+/** The 503 a spoke answers a guard `unavailable` result with; the session cookies are left as they are. */
+export function spokeUnavailableResponse(): Response {
+  return new Response(null, {
+    status: 503,
+    headers: { 'cache-control': 'no-store', 'retry-after': '5' },
+  });
+}
+
 /**
  * Whether a request is a top-level page load, which can follow a sign-in redirect. A SvelteKit `__data.json`
  * fetch counts: when the redirect it follows ends cross-origin, the client falls back to a full page load.

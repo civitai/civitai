@@ -4,6 +4,7 @@ import type { RemixEngine, RemixKind, RemixTier } from '~/shared/constants/remix
 import { REMIX_ENGINES } from '~/shared/constants/remix.constants';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import { isImageShownBlocked } from '~/shared/utils/image-blocked';
 
 /**
  * Fields the remix entry-points need.
@@ -75,7 +76,7 @@ export function getEngineRefusal(
 ): string | undefined {
   const noun = image.type === 'video' ? 'video' : 'image';
   const plural = `${noun}s`;
-  if (image.ingestion === ImageIngestionStatus.Blocked || image.blockedFor || image.tosViolation)
+  if (isImageShownBlocked(image) || image.tosViolation)
     return `This ${noun} was blocked, so it cannot be remixed.`;
   // Any pending review, fail closed. Only use as an input is refused; its owner still sees it.
   if (image.needsReview) return `This ${noun} is waiting on a review, so it cannot be remixed yet.`;

@@ -544,6 +544,64 @@ func TestLoadInfiniteHubIDPortDefaultOff(t *testing.T) {
 	}
 }
 
+// FEED_GO_INFINITE_SERVE_JUDGE_SCORE and FEED_GO_INFINITE_SERVE_HAT_TURF_IGNORED are off unless set,
+// each its own switch: neither turns the other (or FEED_GO_SERVE_INFINITE) on.
+func TestLoadInfiniteJudgeScoreAndHatTurfPortsDefaultOff(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	read := func(c *Config) [3]bool {
+		return [3]bool{c.InfiniteServeJudgeScore, c.InfiniteServeHatTurfIgnored, c.ServeInfinite}
+	}
+	for _, c := range []struct {
+		judge, hat string
+		want       [3]bool
+	}{
+		{"", "", [3]bool{false, false, false}},
+		{"false", "junk", [3]bool{false, false, false}},
+		{"true", "", [3]bool{true, false, false}},
+		{"", "1", [3]bool{false, true, false}},
+		{"1", "true", [3]bool{true, true, false}},
+	} {
+		t.Setenv("FEED_GO_INFINITE_SERVE_JUDGE_SCORE", c.judge)
+		t.Setenv("FEED_GO_INFINITE_SERVE_HAT_TURF_IGNORED", c.hat)
+		cfg, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := read(cfg); got != c.want {
+			t.Errorf("JUDGE_SCORE=%q HAT_TURF_IGNORED=%q -> %v, want %v", c.judge, c.hat, got, c.want)
+		}
+	}
+}
+
+// FEED_GO_V1_IMAGES_SERVE_IMAGE_ID and FEED_GO_V1_IMAGES_SERVE_MODEL_ONLY are off unless set, each its
+// own switch: neither turns the other on.
+func TestLoadV1ImagesLegacyShapesDefaultOff(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	for in, want := range map[string]bool{"": false, "false": false, "junk": false, "true": true, "1": true} {
+		t.Setenv("FEED_GO_V1_IMAGES_SERVE_IMAGE_ID", in)
+		t.Setenv("FEED_GO_V1_IMAGES_SERVE_MODEL_ONLY", "")
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.V1ImagesServeImageID != want || c.V1ImagesServeModelOnly {
+			t.Errorf("FEED_GO_V1_IMAGES_SERVE_IMAGE_ID=%q -> image id %v, model only %v; want %v, false", in, c.V1ImagesServeImageID, c.V1ImagesServeModelOnly, want)
+		}
+		t.Setenv("FEED_GO_V1_IMAGES_SERVE_IMAGE_ID", "")
+		t.Setenv("FEED_GO_V1_IMAGES_SERVE_MODEL_ONLY", in)
+		if c, err = Load(); err != nil {
+			t.Fatal(err)
+		}
+		if c.V1ImagesServeModelOnly != want || c.V1ImagesServeImageID {
+			t.Errorf("FEED_GO_V1_IMAGES_SERVE_MODEL_ONLY=%q -> model only %v, image id %v; want %v, false", in, c.V1ImagesServeModelOnly, c.V1ImagesServeImageID, want)
+		}
+	}
+}
+
 // TRPC_WRITE_DEVALUE is read as the main app reads it (`=== 'true'`): only the exact string turns it
 // on, and unset is off.
 func TestLoadWriteDevalue(t *testing.T) {

@@ -23,7 +23,7 @@ scripts touch it; its CI is `.github/workflows/feed-go.yml`.
 |                                   | `GET /api/trpc/model.getAll`                           | computed only with `FEED_GO_SERVE_MODEL_GETALL=true` (default off: proxied to the Node app as the `model-getall-off` fallback; DESIGN.md §15.8) |
 |                                   | `GET /api/trpc/image.getInfinite`                      | computed only with `FEED_GO_SERVE_INFINITE=true` (default off: proxied to the Node app as the `infinite-off` fallback; DESIGN.md §14.8); a collection's Random sort only with `FEED_GO_INFINITE_SERVE_SORT_RANDOM=true` too (default off, §14.9) |
 |                                   | `GET /api/v1/models`, `GET /api/v1/models/{id}`        | mounted only with `FEED_GO_V1_FALLBACK_URL`; computed only with `FEED_GO_SERVE_V1_MODELS=true` (default off: proxied as `v1-models-off`; §16.8) |
-|                                   | `GET /api/v1/images`                                   | mounted only with `FEED_GO_V1_IMAGES_FALLBACK_URL`, its one fallback upstream; computed only with `FEED_GO_SERVE_V1_IMAGES=true` (default off: proxied as `v1-images-off`; §13.8) |
+|                                   | `GET /api/v1/images`                                   | mounted only with `FEED_GO_V1_IMAGES_FALLBACK_URL`, its one fallback upstream; computed only with `FEED_GO_SERVE_V1_IMAGES=true` (default off: proxied as `v1-images-off`; §13.8); an `imageId` only with `FEED_GO_V1_IMAGES_SERVE_IMAGE_ID=true` too, a `modelId` without a version only with `FEED_GO_V1_IMAGES_SERVE_MODEL_ONLY=true` too (each default off, §13.2.1; keep the model one off for now: most requested models' queries run past the request budget and are handed back, §13.2.1 Cost) |
 | `FEED_GO_INTERNAL_ADDR` (`:9090`) | `GET /healthz`                                         | liveness (200 while the process runs, draining included)                                                                                        |
 |                                   | `GET /readyz`                                          | readiness: 503 from SIGTERM on, for `FEED_GO_SHUTDOWN_DELAY_MS` (default 10 s) before the listeners close (DESIGN.md §6.1 Shutdown)           |
 |                                   | `GET /metrics`                                         | Prometheus (`feed_go_*`, Go runtime, process CPU)                                                                                               |
@@ -173,7 +173,11 @@ reading the tier under the app's own `TIER_METADATA_KEY`. `image.getInfinite`'s
 off: the `input-publishedOnly` fallback; DESIGN.md §14.2.1), and its `postIds` input only behind `FEED_GO_INFINITE_SERVE_INPUT_POST_IDS`
 (default off: the `input-postIds` fallback; DESIGN.md §14.2.2), and its `hubId` input (a
 user-composed hub, read with the `user-hubs` flag per viewer from `FLIPT_URL`) only behind
-`FEED_GO_INFINITE_SERVE_INPUT_HUB_ID` (default off: the `input-hubId` fallback; DESIGN.md §14.2.3). The `feed_endpoint`
+`FEED_GO_INFINITE_SERVE_INPUT_HUB_ID` (default off: the `input-hubId` fallback; DESIGN.md §14.2.3). A
+collection item's judge score is answered only behind `FEED_GO_INFINITE_SERVE_JUDGE_SCORE` (default
+off: the `collection-judge-score` fallback; DESIGN.md §14.2.4), and the Hat Turf keys where the app
+ignores them (no session user, or a scoped feed) only behind `FEED_GO_INFINITE_SERVE_HAT_TURF_IGNORED`
+(default off: the `infinite-hat-turf` fallback; DESIGN.md §14.2.5). The `feed_endpoint`
 label is not called `endpoint` because that is a reserved scrape target label: the scraper's own
 `endpoint` would overwrite it.
 

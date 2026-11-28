@@ -132,7 +132,11 @@ function givenTargetLists(rows: Array<{ fromModelId: number; toModelId: number |
 const save = (
   associations: Array<{ resourceId: number; resourceType: 'model' | 'article'; id?: number }>,
   { reciprocal, user = owner }: { reciprocal?: number[]; user?: SessionUser } = {}
-) => setAssociatedResources({ fromId: SOURCE, type: 'Suggested', associations, reciprocal }, user);
+) =>
+  setAssociatedResources(
+    { fromId: SOURCE, type: 'Suggested', associations, reciprocal, browsingLevel: 31 },
+    user
+  );
 
 const createdRows = () =>
   (dbMock.dbWrite.modelAssociations.createMany.mock.calls[0]?.[0]?.data ?? []) as Array<{

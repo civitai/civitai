@@ -4,6 +4,7 @@ import {
   NEWEST_BLOCKLIST_ROW_SQL,
 } from '@civitai/shared/held-media';
 import { REDACT_LOG_MARKER } from '@civitai/db';
+import { csamInBlockedForSql } from '@civitai/shared/csam-blocked-for';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
@@ -25,7 +26,9 @@ import { createJob } from './job';
  */
 
 const LISTED_IDS = `ARRAY(SELECT l.id::bigint FROM (${CSAM_REPORT_LISTED_IMAGE_IDS_SQL}) l WHERE l.id ~ '^[0-9]{1,18}$')`;
-const CSAM_BLOCKED = `ingestion IN ('Blocked', 'Error') AND "blockedFor" = 'CSAM' AND "pHash" IS NOT NULL`;
+const CSAM_BLOCKED = `ingestion IN ('Blocked', 'Error') AND ${csamInBlockedForSql(
+  '"blockedFor"'
+)} AND "pHash" IS NOT NULL`;
 
 /** With each image's earliest report, which decides whether a never-listed hash may be healed. */
 export const REPORTED_CANDIDATES_SQL = `WITH listed AS (
@@ -42,8 +45,13 @@ WHERE ${CSAM_BLOCKED}`;
  * blocklist read nor copied may be an unblocklist a merge hid, so it is never healed.
  */
 export const COPY_ERA_START = new Date('2026-11-19T01:00:00Z');
+/**
+ * Logged only; nothing reads it to decide a write. The exact `'CSAM'` keeps it on the partial CSAM-blocked
+ * index: the comma-list test cannot use it and walks every Blocked image.
+ */
 export const SWEEP_COUNT_SQL = `SELECT count(*)::int AS sweep FROM "Image"
-  WHERE ${CSAM_BLOCKED} AND NOT (id = ANY(${LISTED_IDS}))`;
+  WHERE ingestion IN ('Blocked', 'Error') AND "blockedFor" = 'CSAM' AND "pHash" IS NOT NULL
+  AND NOT (id = ANY(${LISTED_IDS}))`;
 /** On the primary, right before a write: the ids among $1 still removed for CSAM, with their hash. */
 export const STILL_BLOCKED_SQL = `SELECT id, "pHash"::text AS "pHash" FROM "Image"
   WHERE id = ANY($1::int[]) AND ${CSAM_BLOCKED}`;

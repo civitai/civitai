@@ -43,7 +43,13 @@ import {
   upsertModelHandler,
 } from '~/server/controllers/model.controller';
 import { dbRead } from '~/server/db/client';
-import { applyUserPreferences, cacheIt, edgeCacheIt, rateLimit } from '~/server/middleware.trpc';
+import {
+  applyUserPreferences,
+  cacheIt,
+  edgeCacheIt,
+  rateLimit,
+  resolveHiddenPreferenceExclusions,
+} from '~/server/middleware.trpc';
 import { getAllQuerySchema, getByIdSchema } from '~/server/schema/base.schema';
 import type { EarlyAccessRefundSummary } from '~/server/services/model-early-access-refund.service';
 import { toEarlyAccessRefundSummary } from '~/server/services/model-early-access-refund.service';
@@ -132,6 +138,13 @@ import {
 } from '~/server/services/training-data-restricted.service';
 import { isModelDeletedOrTakenDown } from '~/server/utils/model-withheld';
 import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
+import { ownerOrModeratorViewer } from '~/server/auth/full-user-credential';
+import type { AssociatedModelAddons } from '~/server/services/associated-model-visibility';
+import type { Context } from '~/server/createContext';
+import { getBrowsingSettingAddons } from '~/server/services/system-cache';
+import { requestServableLevels } from '~/server/utils/browsing-level';
+import { actsAsModerator } from '~/server/utils/image-media-visibility';
+import { resolveStrictestAddons } from '~/shared/constants/browsing-settings-addons';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { readModelPoiAndOwnerViaKysely } from '~/server/services/hot-reads-6.reads';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -266,6 +279,34 @@ const modelFileUrlsForOwner = ownerOnlyFileUrls<Awaited<ReturnType<typeof getMod
     };
   },
 });
+
+/**
+ * Resolved on the server, never read from the input. The list is asked for at every level, so each
+ * addon rule holds if it holds at any level the request may be served, as the image gallery
+ * resolves it.
+ */
+async function resolveAssociatedModelAddons(
+  ctx: Pick<
+    Context,
+    'user' | 'features' | 'req' | 'apiKeyId' | 'apiKeyType' | 'subject' | 'tokenScope'
+  >
+): Promise<AssociatedModelAddons> {
+  const [addons, hidden] = await Promise.all([
+    getBrowsingSettingAddons(),
+    resolveHiddenPreferenceExclusions(ctx),
+  ]);
+  const { disableMinor, excludedTagIds } = resolveStrictestAddons(
+    addons,
+    requestServableLevels(ctx),
+    { isModerator: actsAsModerator(ctx) }
+  );
+  return {
+    disableMinor,
+    excludedTagIds: [...new Set([...excludedTagIds, ...hidden.excludedTagIds])],
+    excludedUserIds: hidden.excludedUserIds,
+    excludedModelIds: hidden.excludedModelIds,
+  };
+}
 
 export const modelRouter = router({
   getById: publicProcedure
@@ -473,11 +514,23 @@ export const modelRouter = router({
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getAssociatedResourcesSchema)
     .use(associationSourceVisible)
-    .query(({ input, ctx }) => getAssociatedResourcesSimple(input, ctx.user)),
+    .query(async ({ input, ctx }) =>
+      getAssociatedResourcesSimple(
+        { ...input, ...(await resolveAssociatedModelAddons(ctx)) },
+        ctx.user,
+        ownerOrModeratorViewer(ctx)
+      )
+    ),
   setAssociatedResources: guardedProcedure
     .meta({ requiredScope: TokenScope.ModelsWrite })
     .input(setAssociatedResourcesSchema)
-    .mutation(({ input, ctx }) => setAssociatedResources(input, ctx.user)),
+    .mutation(async ({ input, ctx }) =>
+      setAssociatedResources(
+        { ...input, ...(await resolveAssociatedModelAddons(ctx)) },
+        ctx.user,
+        ownerOrModeratorViewer(ctx)
+      )
+    ),
   rescan: moderatorProcedure.input(getByIdSchema).mutation(({ input }) => rescanModel(input)),
   getModelsByHash: protectedProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })

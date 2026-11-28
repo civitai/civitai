@@ -77,8 +77,9 @@ func missWorld() *testWorld {
 
 // FEED_GO_V1_MODELS_SERVE_DATA_MISS: a model-data miss on the public list is answered from the
 // cache's own lookup, with the bytes a cache hit of the same record gives; off, or with no miss
-// computation, or with the model's lag flag set (Node reads the primary), it falls back as before;
-// `[id]` is unchanged.
+// computation, or with the model's lag flag set and model-data not written back (no primary read for
+// it: TestServeDataMissWrittenBackAndLagAware), it falls back as before. `[id]` computes it on a
+// public request too, and a shadow `[id]` sample without the miss computation still falls back.
 func TestServeListComputesModelDataMiss(t *testing.T) {
 	serve := func(w *testWorld, on, compute bool) (*Answer, int, error) {
 		return serveDataMissList(t, w, true, on, compute)
@@ -122,14 +123,24 @@ func TestServeListComputesModelDataMiss(t *testing.T) {
 		}
 	}
 
-	// `[id]` keeps falling back on a data miss, switch or not.
+	// `[id]`: a shadow sample without the miss computation falls back; a public request with the
+	// switch (and the computation) is computed.
 	w := miss()
 	d := w.deps(t)
 	d.Sources.Compute = &hydrate.MissCompute{Now: func() time.Time { return testNow }}
 	d.Config.ServeDataMiss = true
 	d.Config.ResponseCacheTTL = 0
 	if _, err := ServeDetail(context.Background(), d, DetailRequest{ID: "5001", TrainingDataSQL: TrainingDataSQLHash}); reason(err) != "v1-models-data-miss" {
-		t.Errorf("[id]: %q (%v), want v1-models-data-miss", reason(err), err)
+		t.Errorf("[id] sample, no miss computation: %q (%v), want v1-models-data-miss", reason(err), err)
+	}
+	w = miss()
+	d = w.deps(t)
+	idReads := 0
+	d.Sources.Replica = &testkit.DB{Routes: append(modelDataRoutes(&idReads), w.db.Routes...)}
+	d.Sources.Compute = &hydrate.MissCompute{Now: func() time.Time { return testNow }}
+	d.Config.ComputeMisses, d.Config.ServeDataMiss, d.Config.ResponseCacheTTL = true, true, 0
+	if _, err := ServeDetail(context.Background(), d, DetailRequest{ID: "5001", Serving: true}); err != nil || idReads != 1 {
+		t.Errorf("[id] public, switch on: %v (%s), %d lookups; want served from one lookup", err, reason(err), idReads)
 	}
 }
 

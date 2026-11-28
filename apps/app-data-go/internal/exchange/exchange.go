@@ -58,6 +58,9 @@ const Scope = "AppDataRead"
 type Token struct {
 	Access  string
 	Expires time.Time
+	// Checked is when the hub last exchanged the subject this token was exchanged from, for a token
+	// answered from a cache (package cache); zero for a token the hub has just issued.
+	Checked time.Time
 }
 
 // ErrRefused is the hub refusing the exchange (an expired, revoked or unknown subject token, an

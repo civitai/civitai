@@ -2,7 +2,7 @@ import type { MediaRatingOutput } from '@civitai/orchestration-client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { computePerceptualHash } from '~/server/services/orchestrator/orchestrator.service';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
-import { BlockedReason, NsfwLevel } from '~/server/common/enums';
+import { NsfwLevel } from '~/server/common/enums';
 import { isDefined } from '~/utils/type-guards';
 import { orchestratorNsfwLevelMap } from '~/shared/constants/browsingLevel.constants';
 import type { MediaMetadata } from '~/server/schema/media.schema';
@@ -14,7 +14,7 @@ import { handleLogError } from '~/server/utils/errorHandling';
 import { refreshProfilePicturesForImagesLazy } from '~/server/services/refresh-profile-pictures-lazy';
 import { bustPostCachesLazy } from '~/server/services/bust-post-caches-lazy';
 import { evictHomeBlocksForImages } from '~/server/services/home-block-cache.service';
-import { withoutGraceMarkersSql } from '~/server/common/image-visibility';
+import { csamBlockedSql, withoutGraceMarkersSql } from '~/server/common/image-visibility';
 import {
   readJobFailureReason,
   sendIngestionSignal,
@@ -104,14 +104,15 @@ export async function processImageScanWorkflow({
     const failureType =
       status === 'expired' ? 'expired' : status === 'canceled' ? 'canceled' : 'workflow-failed';
     const reason = await readJobFailureReason(workflowId);
-    const { retryCount, mediaType, userId, failureClass } = await markImageScanError({
-      workflowId,
-      imageId,
-      status,
-      failureType,
-      failedSteps,
-      reason,
-    });
+    const { retryCount, mediaType, userId, ingestion, blockedFor, failureClass } =
+      await markImageScanError({
+        workflowId,
+        imageId,
+        status,
+        failureType,
+        failedSteps,
+        reason,
+      });
     logToAxiom(
       {
         name: 'image-scan-result',
@@ -130,7 +131,12 @@ export async function processImageScanWorkflow({
       },
       'webhooks'
     );
-    await sendIngestionSignal({ imageId, userId, ingestion: ImageIngestionStatus.Error });
+    await sendIngestionSignal({
+      imageId,
+      userId,
+      ingestion: ingestion ?? ImageIngestionStatus.Error,
+      blockedFor,
+    });
     if (articleImageScanning) await fanOutArticleImageUpdates(imageId);
     return;
   }
@@ -144,14 +150,15 @@ export async function processImageScanWorkflow({
     parsed = parseScanSteps({ steps, workflowId });
   } catch (error) {
     const reason = error instanceof Error ? error.message : 'Unknown error';
-    const { retryCount, mediaType, userId, failureClass } = await markImageScanError({
-      workflowId,
-      imageId,
-      status,
-      failureType: 'unusable-result',
-      failedSteps: extractFailedSteps(steps),
-      reason,
-    });
+    const { retryCount, mediaType, userId, ingestion, blockedFor, failureClass } =
+      await markImageScanError({
+        workflowId,
+        imageId,
+        status,
+        failureType: 'unusable-result',
+        failedSteps: extractFailedSteps(steps),
+        reason,
+      });
     logToAxiom(
       {
         name: 'image-scan-result',
@@ -168,7 +175,12 @@ export async function processImageScanWorkflow({
       },
       'webhooks'
     );
-    await sendIngestionSignal({ imageId, userId, ingestion: ImageIngestionStatus.Error });
+    await sendIngestionSignal({
+      imageId,
+      userId,
+      ingestion: ingestion ?? ImageIngestionStatus.Error,
+      blockedFor,
+    });
     if (articleImageScanning) await fanOutArticleImageUpdates(imageId);
     return;
   }
@@ -240,18 +252,20 @@ export async function processImageScanWorkflow({
       await refreshProfilePicturesForImagesLazy([imageId]);
       await bustPostOfImage(imageId);
       await evictHomeBlocksForImages({ imageIds: [imageId] });
+      await signalHardBlock(imageId);
       if (articleImageScanning) await fanOutArticleImageUpdates(imageId);
       return;
     }
 
-    const { retryCount, mediaType, userId, failureClass } = await markImageScanError({
-      workflowId,
-      imageId,
-      status,
-      failureType: 'processing-failed',
-      failedSteps: extractFailedSteps(steps),
-      reason,
-    });
+    const { retryCount, mediaType, userId, ingestion, blockedFor, failureClass } =
+      await markImageScanError({
+        workflowId,
+        imageId,
+        status,
+        failureType: 'processing-failed',
+        failedSteps: extractFailedSteps(steps),
+        reason,
+      });
     logToAxiom(
       {
         name: 'image-scan-result',
@@ -270,7 +284,12 @@ export async function processImageScanWorkflow({
       },
       'webhooks'
     );
-    await sendIngestionSignal({ imageId, userId, ingestion: ImageIngestionStatus.Error });
+    await sendIngestionSignal({
+      imageId,
+      userId,
+      ingestion: ingestion ?? ImageIngestionStatus.Error,
+      blockedFor,
+    });
     if (articleImageScanning) await fanOutArticleImageUpdates(imageId);
     return;
   }
@@ -461,13 +480,30 @@ export async function blockImageFromRating({
       "pHash" = COALESCE(${pHash ?? null}, "pHash"),
       ingestion = ${ImageIngestionStatus.Blocked}::"ImageIngestionStatus",
       "nsfwLevel" = ${NsfwLevel.Blocked}::int,
-      "blockedFor" = CASE WHEN "blockedFor" = ${BlockedReason.CSAM} OR ${
-    blockedReason === undefined
-  }
+      "blockedFor" = CASE WHEN ${csamBlockedSql()} OR ${blockedReason === undefined}
         THEN "blockedFor" ELSE ${blockedReason ?? null} END,
       "metadata" = ${withoutGraceMarkersSql()}
     WHERE id = ${imageId}
   `;
+}
+
+/** Never throws: tells the owner's open page the image is Blocked, so its card stops pending. */
+async function signalHardBlock(imageId: number) {
+  try {
+    // primary: the scan can land seconds after the upload, before the replica has the row.
+    const row = await dbWrite.image.findUnique({
+      where: { id: imageId },
+      select: { userId: true },
+    });
+    await sendIngestionSignal({
+      imageId,
+      userId: row?.userId ?? null,
+      ingestion: ImageIngestionStatus.Blocked,
+      nsfwLevel: NsfwLevel.Blocked,
+    });
+  } catch (error) {
+    handleLogError(error as Error);
+  }
 }
 
 /** Never throws: the block it follows has committed, and the rest of the scan failed. */

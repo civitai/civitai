@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf16"
 	"unicode/utf8"
 
 	"github.com/redis/go-redis/v9"
@@ -88,6 +89,12 @@ type InfiniteInput struct {
 	// request is always the feed path (`useIndex = !!input.hubId || …`), filtered by the hub's resolved
 	// sources (hub.go).
 	HubID int
+	// Hat is a truthy Hat Turf sort or Show filter (hatSort, hatTurfMine, hatTurfExpired, hideTurfHats,
+	// hideWornHats; read only with InfinitePorts.HatTurfIgnored, otherwise one falls back as
+	// `infinite-hat-turf`). The handler strips them all (and `hatTeams`) from the input; they act only
+	// for a signed-in viewer's unscoped feed (ServeInfinite falls back there), and make the answer
+	// viewer-scoped (never edge-cached).
+	Hat bool
 	// HubExcludedSources is `hubExcludedSources` (read only with InfinitePorts.HubID): the sources the
 	// viewer switched off for the session, a subtraction from what HubID resolves to. Entries whose
 	// targetId is past int4 are dropped: no source row can carry one, so they subtract nothing.
@@ -113,6 +120,15 @@ type InfinitePorts struct {
 	// `hubExcludedSources`), a user-composed hub (hub.go). Off, either key present is the
 	// `input-hubId` / `input-hubExcludedSources` fallback.
 	HubID bool
+	// JudgeScore is FEED_GO_INFINITE_SERVE_JUDGE_SCORE: a collection item whose note holds a judge's
+	// score is answered with it (`judgeScore`, parseJudgeScore of the note). Off, such a page is the
+	// `collection-judge-score` fallback, as before the port.
+	JudgeScore bool
+	// HatTurfIgnored is FEED_GO_INFINITE_SERVE_HAT_TURF_IGNORED: a request carrying a Hat Turf sort or
+	// Show filter is answered where Node ignores them without reading anything (no session user, or a
+	// scoped feed: getHatTurfFeedEvent is never asked), as the feed without them. Off, and for a
+	// signed-in viewer's unscoped feed, it is the `infinite-hat-turf` fallback.
+	HatTurfIgnored bool
 }
 
 // maxInputIDs is the `ids` schema's `.max(200)`: a longer list is Node's BAD_REQUEST.
@@ -175,10 +191,50 @@ var infiniteAbsentKeys = func() map[string]bool {
 
 // hatKeys are the Hat Turf sorts and Show filters. Node acts on them only when its hat-turf flags
 // are on and getHatTurfFeedEvent finds a live event (read from the event engine, per viewer), then
-// pages from the turf rank or drops images by turfHiddenIds; none of that is read here, so a request
-// carrying one falls back whatever the flags say. `hatTeams` only narrows a hat sort, so it is
-// ignored alone.
+// pages from the turf rank or drops images by turfHiddenIds; none of that is read here. A request
+// carrying one falls back whatever the flags say, unless InfinitePorts.HatTurfIgnored serves the cases
+// where Node never asks (ServeInfinite). `hatTeams` only narrows a hat sort, so it is ignored alone.
 var hatKeys = []string{"hatSort", "hatTurfMine", "hatTurfExpired", "hideTurfHats", "hideWornHats"}
+
+// hatSorts is HAT_SORTS (src/shared/constants/hat-turf-feed.constants.ts).
+var hatSorts = map[string]bool{"most": true, "fewest": true}
+
+// parseHat validates the Hat Turf keys as getInfiniteImagesSchema does (`hatSort:
+// z.enum(HAT_SORTS)`, `hatTeams: z.string().max(32).array().max(8)`, the four Show filters
+// `z.boolean()`, each optional: absent is fine, null is not), a rejected value being the BAD_REQUEST
+// (`input-invalid`), and reports whether one of hatKeys is truthy.
+func parseHat(m map[string]any) (truthy bool, err error) {
+	if v, ok := m["hatSort"]; ok {
+		s, isStr := v.(string)
+		if !isStr || !hatSorts[s] {
+			return false, fallback.NewfSafe("input-invalid", "hatSort", "hatSort: %v", v)
+		}
+		truthy = true
+	}
+	for _, k := range hatKeys[1:] {
+		if v, ok := m[k]; ok {
+			b, isBool := v.(bool)
+			if !isBool {
+				return false, fallback.NewfSafe("input-invalid", k, "%s: %T", k, v)
+			}
+			truthy = truthy || b
+		}
+	}
+	if v, ok := m["hatTeams"]; ok {
+		list, isList := v.([]any)
+		if !isList || len(list) > 8 {
+			return false, fallback.NewfSafe("input-invalid", "hatTeams", "hatTeams: %T", v)
+		}
+		for _, e := range list {
+			// zod's max(32) counts UTF-16 code units.
+			s, isStr := e.(string)
+			if !isStr || len(utf16.Encode([]rune(s))) > 32 {
+				return false, fallback.NewfSafe("input-invalid", "hatTeams", "hatTeams entry: %T", e)
+			}
+		}
+	}
+	return truthy, nil
+}
 
 // ParseInfinite is ParseInfiniteWith with every port's switch off.
 func ParseInfinite(m map[string]any) (*InfiniteInput, error) {
@@ -189,10 +245,16 @@ func ParseInfinite(m map[string]any) (*InfiniteInput, error) {
 // is a fallback, and so is a value the schema rejects (Node answers it with its own BAD_REQUEST). A
 // shape in ports is read rather than refused only when its switch is on.
 func ParseInfiniteWith(m map[string]any, ports InfinitePorts) (*InfiniteInput, error) {
-	for _, k := range hatKeys {
-		if v, ok := m[k]; ok && !isEmpty(v) {
-			return nil, fallback.New("infinite-hat-turf")
+	if !ports.HatTurfIgnored {
+		for _, k := range hatKeys {
+			if v, ok := m[k]; ok && !isEmpty(v) {
+				return nil, fallback.New("infinite-hat-turf")
+			}
 		}
+	}
+	hat, err := parseHat(m)
+	if err != nil {
+		return nil, err
 	}
 	// Recently Added and Random order on the collection's items: answered beside a collectionId only
 	// (without one, Node's BAD_REQUEST: the input-sort fallback parseInput raises for it). Random only
@@ -224,7 +286,7 @@ func ParseInfiniteWith(m map[string]any, ports InfinitePorts) (*InfiniteInput, e
 	if err != nil {
 		return nil, err
 	}
-	in := &InfiniteInput{Input: *base}
+	in := &InfiniteInput{Input: *base, Hat: hat}
 	if collectionSort != "" {
 		in.Sort = collectionSort
 	}
@@ -370,17 +432,12 @@ func (in *InfiniteInput) parseHub(m map[string]any) error {
 			}
 		}
 	}
-	if in.HubID != 0 && in.rawDBPath() {
+	if in.HubID != 0 && in.dbPath() {
+		// The schema's superRefine reads requiresImageDbPath on the input as sent (before the
+		// handler withdraws a foreign `publishedOnly`).
 		return fallback.NewfSafe("input-invalid", "hubId", "hubId beside a Postgres-path input")
 	}
 	return nil
-}
-
-// rawDBPath is requiresImageDbPath on the input as sent, for the inputs ParseInfiniteWith reads (the
-// schema's superRefine): dbPath, plus `requiringMeta` beside a `userId`. `hidden` and `imageId` fall
-// back before this is read.
-func (in *InfiniteInput) rawDBPath() bool {
-	return in.dbPath() || (in.RequiringMeta && in.UserID != 0)
 }
 
 // withoutKey is list without key (a copy).
@@ -556,7 +613,14 @@ func (in *InfiniteInput) prioritizedSystemUser() bool {
 // port answers; the rest of that list falls back to the app. The answer depends on the viewer, so it
 // is not edge-cached.
 func (in *InfiniteInput) ViewerScoped() bool {
-	return len(in.Reactions) > 0 || in.Followed || in.Pending
+	return len(in.Reactions) > 0 || in.Followed || in.Pending || in.Hat
+}
+
+// scopedFeed is the handler's isScopedImageFeed (a model, hub, creator, collection or picked images,
+// not the main feed) for the inputs this port reads; `imageId` and `reviewId` fall back in parsing.
+func (in *InfiniteInput) scopedFeed() bool {
+	return in.ModelID != 0 || in.ModelVersionID != 0 || in.Model3DID != 0 || in.HubID != 0 || in.CollectionID != 0 ||
+		in.PostID != 0 || len(in.PostIDs) > 0 || in.UserID != 0 || in.Username != "" || len(in.IDs) > 0 || in.HasRemixOfID
 }
 
 // ownScoped is applyAddonExclusions' isOwnScoped for this input (see ownScope).
@@ -574,14 +638,15 @@ func ownScope(viewerID int, viewerUsername string, userID int, username string) 
 	return username != "" && viewerUsername != "" && strings.EqualFold(username, viewerUsername)
 }
 
-// dbPath is requiresImageDbPath for the supported inputs: a post's media, several posts' media
-// (`postIds`), a collection, reactions, ids, a model without a version (the feed has no model
-// dimension), prioritizedUserIds with a model or version scope, or `publishedOnly` beside a
-// `userId` (the own-content submit pickers; read on the input after the handler's withdrawal,
-// withPublishedOnlyScoped). Every other shape it lists falls
-// back in parsing.
+// dbPath is requiresImageDbPath for the supported inputs: `requiringMeta` beside a `userId` (the feed
+// has no filter for metadata-blocked images), a post's media, several posts' media (`postIds`), a
+// collection, reactions, ids, a model without a version (the feed has no model dimension),
+// prioritizedUserIds with a model or version scope, or `publishedOnly` beside a `userId` (the
+// own-content submit pickers; the handler reads it after its withdrawal, withPublishedOnlyScoped, the
+// schema's hub check before it). `hidden` and `imageId` fall back in parsing.
 func (in *InfiniteInput) dbPath() bool {
-	return in.PostID != 0 || len(in.PostIDs) > 0 || in.CollectionID != 0 || len(in.Reactions) > 0 || len(in.IDs) > 0 ||
+	return (in.RequiringMeta && in.UserID != 0) ||
+		in.PostID != 0 || len(in.PostIDs) > 0 || in.CollectionID != 0 || len(in.Reactions) > 0 || len(in.IDs) > 0 ||
 		(in.ModelID != 0 && in.ModelVersionID == 0) ||
 		(in.prioritized() && (in.ModelID != 0 || in.ModelVersionID != 0)) ||
 		(in.PublishedOnly && in.UserID != 0)
@@ -941,6 +1006,12 @@ func ServeInfinite(ctx context.Context, d *InfiniteDeps, req InfiniteRequest) (*
 	} else {
 		in = in.withPublishedOnlyScoped(0)
 	}
+	if in.Hat && req.Viewer != nil && !in.scopedFeed() {
+		// `turfEvent`: hat keys on a signed-in viewer's main feed ask the hat-turf flags and the event
+		// engine (getHatTurfFeedEvent) whether the viewer plays, neither read here. Signed out (or
+		// banned) or on a scoped feed Node never asks, and serves the feed without the keys.
+		return nil, fallback.New("infinite-hat-turf")
+	}
 	// A hub is only expressible on the feed path, so it pins it whatever the flag says (parseHub has
 	// refused a hub beside a Postgres-path input).
 	useIndex := in.HubID != 0 || (d.Config.ImageIndexFeed && !in.dbPath())
@@ -1090,6 +1161,11 @@ func ServeInfinite(ctx context.Context, d *InfiniteDeps, req InfiniteRequest) (*
 		IDs:               in.IDs,
 		NewCreators:       in.NewCreators,
 		NewCreatorUserIDs: board,
+		// getAllImages reads both from the input the handler spreads (`domain:
+		// getRequestBoardDomainColor(ctx.req)`). On the feed path the mapper refuses `requiringMeta`
+		// before any hydrate, so only the Postgres page reads them.
+		RequiringMeta: in.RequiringMeta,
+		Domain:        req.BoardColor,
 	}
 	if viewer.ID != 0 {
 		// `userId && reactions?.length`: signed out, the input still routes to Postgres but adds no
@@ -1418,8 +1494,12 @@ func fetchInfiniteRows(ctx context.Context, d *InfiniteDeps, q ImagesQuery, view
 		}
 	}
 	for _, r := range rows {
-		if r.Collection != nil && !judgeScoreNull(r.Collection.Note) {
-			// parseJudgeScore would answer a judge's score for this item: not rebuilt here.
+		if r.Collection == nil {
+			continue
+		}
+		// parseJudgeScore of the item's note: rebuilt with the JudgeScore port on (a score it does not
+		// model still falls back), else any score but null falls back.
+		if score, ok := judgeScore(r.Collection.Note); !ok || (score != nil && !d.Ports.JudgeScore) {
 			return nil, nil, fallback.New("collection-judge-score")
 		}
 	}
@@ -1437,8 +1517,9 @@ func fetchInfiniteRows(ctx context.Context, d *InfiniteDeps, q ImagesQuery, view
 // BuildInfiniteImages is getAllImagesUncaptured's per-image transform under stripImageForInfiniteWire
 // only (image.getInfinite does not apply the gallery's stripImageForAsPostsWire): the gallery wire
 // plus `availability`, `meta` (null: 'metaSelect' is not ported), `baseModel` (undefined:
-// includeBaseModel is not ported) and `judgeScore` (null: outside a collection, and in one for every
-// item served, as fetchInfiniteRows falls back on any other score). A collection page's row also
+// includeBaseModel is not ported) and `judgeScore` (null outside a collection; in
+// one, parseJudgeScore of the item's note, judgeScore, whose unmodelled scores fetchInfiniteRows has
+// already handed back). A collection page's row also
 // carries `collectionItemStatus` and `collectionItemAddedById` (the SELECT's columns, after
 // `restricted`). The publish filter is BuildImages'.
 func BuildInfiniteImages(rows []RawImage, hy *Hydrated, viewer Viewer, now time.Time) []Image {
@@ -1476,7 +1557,11 @@ func BuildInfiniteImages(rows []RawImage, hy *Hydrated, viewer Viewer, now time.
 				)
 			}
 		}
-		wire = append(wire, superjson.Field{Key: "judgeScore", Val: nil})
+		var score any
+		if item != nil {
+			score, _ = judgeScore(item.Note)
+		}
+		wire = append(wire, superjson.Field{Key: "judgeScore", Val: score})
 		img.Wire = wire
 	}
 	return images

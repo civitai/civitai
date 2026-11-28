@@ -37,6 +37,16 @@ describe('moderator sign-in wiring', () => {
     }
   );
 
+  // civitai/civitai#10695: an elevated session whose revocation read failed gets a 503, not a sign-in.
+  it('answers 503 to an unconfirmed session, with no redirect and no cookie change', async () => {
+    guardCheck.mockResolvedValue({ status: 'unavailable' });
+    const { response, resolve } = await run('/reports');
+    expect(response.status).toBe(503);
+    expect(response.headers.get('location')).toBeNull();
+    expect(response.headers.get('set-cookie')).toBeNull();
+    expect(resolve).not.toHaveBeenCalled();
+  });
+
   it('a fetch whose session is gone gets a 401 carrying the sign-in URL', async () => {
     const authorize = 'https://moderator.civitai.com/api/auth/authorize?returnUrl=%2Freports';
     guardCheck.mockResolvedValue({ status: 'reauth', authorize });

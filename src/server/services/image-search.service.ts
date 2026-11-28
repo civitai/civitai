@@ -1,4 +1,5 @@
 import { credentialViews } from '~/server/auth/full-user-credential';
+import { holdLeavesImage } from '~/server/utils/held-level';
 import { getRequestCredential } from '~/server/auth/request-credential';
 import type { NextApiRequest } from 'next';
 import type { SessionUser } from '~/types/session';
@@ -19,7 +20,6 @@ import {
   NsfwLevelDeprecated,
 } from '~/shared/constants/browsingLevel.constants';
 import { MediaType } from '~/shared/utils/prisma/enums';
-import { Flags } from '~/shared/utils/flags';
 import { isDefined } from '~/utils/type-guards';
 
 /**
@@ -388,6 +388,6 @@ export async function withoutHeldImages<T extends Pick<ShapedImage, 'postId' | '
   return items.filter((image) => {
     const postId = postIdOf(image);
     const hold = postId ? held.get(postId) : undefined;
-    return !hold || Flags.intersects(hold.level, image.browsingLevel);
+    return holdLeavesImage(hold, undefined, image.browsingLevel);
   });
 }

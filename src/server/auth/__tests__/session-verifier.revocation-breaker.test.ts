@@ -61,10 +61,10 @@ const storeAnswers = () => {
   redisMock.sysRedis.get.mockResolvedValue(null);
 };
 
-/** A store the client cannot reach: every read fails with a connection error. */
+/** A store the client cannot reach: every read fails at once, and the check does not retry it. */
 const storeErrors = () => {
-  redisMock.sysRedis.hGet.mockRejectedValue(new Error('ECONNRESET'));
-  redisMock.sysRedis.get.mockRejectedValue(new Error('ECONNRESET'));
+  redisMock.sysRedis.hGet.mockRejectedValue(new Error('The client is closed'));
+  redisMock.sysRedis.get.mockRejectedValue(new Error('The client is closed'));
 };
 
 const outcomes = () => observeSessionLeg.mock.calls.map((c) => c[1]);
@@ -153,5 +153,18 @@ describe('the session revocation read breaker', () => {
     expect(await isRevoked(signedOut)).toBe(true);
     expect(outcomes()).not.toContain('breaker-open');
     await expect(sharedRead()).resolves.toBe('through');
+  });
+
+  // civitai/civitai#10695: a reset is retried once through the same breaker, so one check can count twice;
+  // a retry that fails pauses retries, so the next check counts once.
+  it('counts a retried reset and its failed retry toward the breaker, and reports one outcome per check', async () => {
+    breakerOn();
+    redisMock.sysRedis.hGet.mockRejectedValue(new Error('read ECONNRESET'));
+    redisMock.sysRedis.get.mockRejectedValue(new Error('read ECONNRESET'));
+    expect(await isRevoked(signedOut)).toBe(false);
+    expect(outcomes()).toEqual(['error']);
+    expect(await isRevoked(signedOut)).toBe(false);
+    expect(await isRevoked(signedOut)).toBe(false);
+    expect(outcomes()).toEqual(['error', 'error', 'breaker-open']);
   });
 });

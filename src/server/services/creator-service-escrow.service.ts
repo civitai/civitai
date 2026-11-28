@@ -124,6 +124,7 @@ export async function claimRefund(tx: Db, dealId: number) {
 /** Why a deal went to the moderators instead of being paid out. */
 export const SELLER_UNAVAILABLE = SERVICE_DEAL_HOLD_REASONS.sellerUnavailable;
 export const FINAL_SCAN_FAILED = SERVICE_DEAL_HOLD_REASONS.finalScanFailed;
+export const FINAL_IMAGE_GONE = SERVICE_DEAL_HOLD_REASONS.finalImageGone;
 /** Only these: the deal view hides exactly this list from the parties. */
 type ServiceDealHoldReason =
   (typeof SERVICE_DEAL_HOLD_REASONS)[keyof typeof SERVICE_DEAL_HOLD_REASONS];
@@ -136,7 +137,13 @@ type ServiceDealHoldReason =
  */
 export const dealFinalsClear = (
   deal: Prisma.Sql = Prisma.sql`"ServiceDeal"`,
-  options?: Parameters<typeof fileImageGone>[1]
+  {
+    imageGone = true,
+    ...options
+  }: NonNullable<Parameters<typeof fileImageGone>[1]> & {
+    /** False: a final whose scanned image is gone still counts as clear. */
+    imageGone?: boolean;
+  } = {}
 ) => Prisma.sql`(
   EXISTS (
     SELECT 1 FROM "ServiceDealFile" f
@@ -148,10 +155,9 @@ export const dealFinalsClear = (
     WHERE f."dealId" = ${deal}."id" AND f."round" = ${deal}."revisionsUsed"
       AND f."kind" = 'Final'::"ServiceDealFileKind" AND ${liveFile(Prisma.sql`f`)}
       AND (f."scanStatus" <> 'Passed'::"ServiceDealFileScanStatus"
-        OR f."status" <> 'Ready'::"ServiceDealFileStatus" OR ${fileImageGone(
-          Prisma.sql`f`,
-          options
-        )})
+        OR f."status" <> 'Ready'::"ServiceDealFileStatus"${
+          imageGone ? Prisma.sql` OR ${fileImageGone(Prisma.sql`f`, options)}` : Prisma.empty
+        })
   )
 )`;
 
@@ -239,6 +245,17 @@ export async function claimRelease(tx: Db, dealId: number): Promise<'held' | boo
       tx,
       dealId,
       FINAL_SCAN_FAILED,
+      Prisma.sql`${unclaimed}
+      AND NOT ${dealFinalsClear(Prisma.sql`d`, { exceptSettling: true, imageGone: false })}`
+    )
+  )
+    return 'held';
+  // Every final passed, but one lost an image it was scanned with.
+  if (
+    await holdForReview(
+      tx,
+      dealId,
+      FINAL_IMAGE_GONE,
       Prisma.sql`${unclaimed}
       AND NOT ${dealFinalsClear(Prisma.sql`d`, { exceptSettling: true })}`
     )

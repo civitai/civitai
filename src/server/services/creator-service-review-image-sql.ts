@@ -1,4 +1,4 @@
-import { reviewCopyImageSql } from '@civitai/db-queries/content-deletion';
+import { dealFileImageSql, serverCopyImageSql } from '@civitai/db-queries/content-deletion';
 import { Prisma } from '@prisma/client';
 import { sql } from 'kysely';
 import { toPrismaSql } from '~/server/db/prisma-sql-kysely';
@@ -51,12 +51,15 @@ export const notHeldReviewCopySql = Prisma.sql`NOT EXISTS (
 )`;
 
 /**
- * True in SQL when image `i` is attached to no service review. A review image is the seller's work:
- * it is viewed and reported, never collected, reacted to, commented on, remixed or made a cover.
+ * True in SQL when image `i` is no copy the server made of a deal file (`serverCopyImageSql`): not a
+ * review image, which is the seller's work and is viewed and reported, never collected, reacted to,
+ * commented on, remixed or made a cover; and not a deal file's own copy, which no one but moderators
+ * sees.
  */
-export const notReviewImageSql = Prisma.sql`NOT ${toPrismaSql(
-  reviewCopyImageSql(sql.ref('i.id'))
-)}`;
+export const notServerCopySql = Prisma.sql`NOT ${toPrismaSql(serverCopyImageSql(sql.ref('i.id')))}`;
+
+/** True in SQL when image `i` is not a deal file's own copy (`dealFileImageSql`). */
+export const notDealFileCopySql = Prisma.sql`NOT ${toPrismaSql(dealFileImageSql(sql.ref('i.id')))}`;
 
 /**
  * True in SQL when image `i` is shown on its review at `levels`: the offering is one a visitor may open

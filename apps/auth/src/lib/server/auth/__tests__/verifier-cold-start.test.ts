@@ -17,12 +17,15 @@ const h = await vi.hoisted(async () => {
   const client = {
     isReady: false,
     revokedJti: 'jti-7',
+    hGets: 0,
+    failWith: 'The client is closed',
     async hGet(_key: string, field: string) {
-      if (!client.isReady) throw new Error('The client is closed');
+      client.hGets++;
+      if (!client.isReady) throw new Error(client.failWith);
       return field === client.revokedJti ? 'invalid' : null;
     },
     async get() {
-      if (!client.isReady) throw new Error('The client is closed');
+      if (!client.isReady) throw new Error(client.failWith);
       return null;
     },
   };
@@ -125,5 +128,21 @@ describe('hub verifier after the store has been ready', () => {
     expect(Date.now() - started).toBeLessThan(300);
     expect(claims?.sub).toBe('7');
     expect(isUnconfirmedSession(claims!)).toBe(true);
+  });
+});
+
+// civitai/civitai#10695: the hub opts out of the one retry the shared check makes after a fast error.
+describe('hub verifier on a fast store error', () => {
+  it('reads once and falls back, without the retry the shared check makes elsewhere', async () => {
+    const { verifier } = await load();
+    h.client.isReady = true;
+    let before = h.client.hGets;
+    expect(await verifier.verifyToken(live)).not.toBeNull();
+    const perRead = h.client.hGets - before;
+    h.client.isReady = false;
+    h.client.failWith = 'read ECONNRESET';
+    before = h.client.hGets;
+    expect(await verifier.verifyToken(live)).not.toBeNull();
+    expect(h.client.hGets - before).toBe(perRead);
   });
 });

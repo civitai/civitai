@@ -1,3 +1,4 @@
+import { serverCopyTablesSql } from '@civitai/db-queries/test/image-uses';
 import { PGlite } from '@electric-sql/pglite';
 import { readFileSync } from 'fs';
 import path from 'path';
@@ -32,6 +33,7 @@ import {
   imageVisibilityConditions,
 } from '~/server/services/image-visibility.service';
 import { reviewOfImageSql } from '~/server/services/creator-service-review-image-sql';
+import { getOwnRetractedMedia } from '~/server/services/retracted-media.service';
 import { BlockedByUsers, BlockedUsers } from '~/server/services/user-preferences.service';
 import { shownReviewImageLevelsFor } from '~/server/utils/review-image-levels';
 import { childSafetyCaseTablesSql } from '~/server/services/__tests__/child-safety-case-tables';
@@ -114,6 +116,7 @@ beforeAll(async () => {
       "publishedAt" timestamp, "hiddenAt" timestamp
     );
     CREATE TABLE "ServiceDealReviewImage" ("reviewId" int NOT NULL, "imageId" int NOT NULL UNIQUE, "sourceFileId" int);
+    ${serverCopyTablesSql};
     CREATE TABLE "Report" (id serial PRIMARY KEY, status text NOT NULL DEFAULT 'Pending');
   `);
   await db.exec(childSafetyCaseTablesSql);
@@ -133,6 +136,16 @@ beforeAll(async () => {
   (dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockImplementation(answer);
   (dbMock.dbWrite.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockImplementation(answer);
 });
+
+// What the owner CSAM check (`ownerCsamMarkedSql`) reads, beyond this file's tables.
+const CSAM_CHECK_TABLES = `
+  ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS "pHash" bigint;
+  CREATE TABLE IF NOT EXISTS "BlockedImage" (hash bigint, reason text);
+  CREATE TABLE IF NOT EXISTS "ScanLabelItem" (id int PRIMARY KEY, "imageId" int, "voidReason" text);
+  CREATE TABLE IF NOT EXISTS "ScanLabelFlag" ("itemId" int, snapshot jsonb);
+  CREATE TABLE IF NOT EXISTS "ScanLabelVote" ("itemId" int, reason text);
+  CREATE TABLE IF NOT EXISTS "ImageCdnModeratorDelete" ("imageId" int, url text, "userId" int, "csamReview" boolean);
+`;
 
 let blocks: Array<[number, number]> = [];
 
@@ -297,6 +310,20 @@ describe('a review copy whose source Final is held', () => {
     await sourced(true);
     expect(await opens(MOD, allBrowsingLevelsFlag)).toBe(true);
   });
+
+  // The owner retracted-media route holds a moderated copy to the same rule as the image page.
+  it('is refused to its buyer by the owner route once the source is held, as by the page', async () => {
+    await db.exec(`
+      ${CSAM_CHECK_TABLES}
+      UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'moderated', url = 'copy-key' WHERE id = ${IMAGE};
+    `);
+    const own = () =>
+      getOwnRetractedMedia(IMAGE, BUYER, { shownReviewImageLevels: allBrowsingLevelsFlag });
+    await sourced(false);
+    expect(await own()).toMatchObject({ url: 'copy-key' });
+    await sourced(true);
+    expect(await own()).toBeNull();
+  });
 });
 
 describe('the levels a request opts in at', () => {
@@ -349,6 +376,52 @@ describe('by-id readers without the opt-in', () => {
     expect(await getImageIdsVisibleToViewer({ ids: [UNRELATED], userId: BUYER })).toEqual(
       new Set([UNRELATED])
     );
+  });
+});
+
+// A deal file's own copy is the seller's postless image, yet no one but a moderator opens it.
+describe("a deal file's own copy", () => {
+  const POINTED = 990000020;
+  const KEYED = 990000021;
+  const PLAIN = 990000022;
+  beforeEach(() =>
+    db.exec(`
+      INSERT INTO "Image" (id, "userId", url) VALUES
+        (${POINTED}, ${SELLER}, 'pointed-key'), (${KEYED}, ${SELLER}, 'keyed-key'),
+        (${PLAIN}, ${SELLER}, 'plain-key');
+      INSERT INTO "ServiceDealFile" ("imageId") VALUES (${POINTED});
+      INSERT INTO "ServiceDealFileEntry" ("scanKey") VALUES ('keyed-key');
+    `)
+  );
+
+  it.each([
+    ['pointed at by its file', POINTED],
+    ['named only by its key', KEYED],
+  ])('opens to no one but moderators, its seller included (%s)', async (_, id) => {
+    for (const levels of [undefined, allBrowsingLevelsFlag]) {
+      expect(await opens({ userId: SELLER }, levels, id)).toBe(false);
+      expect(await opens(STRANGER, levels, id)).toBe(false);
+      expect(await opens(MOD, levels, id)).toBe(true);
+    }
+  });
+
+  it("leaves the seller's own plain postless image open to them (control)", async () => {
+    expect(await opens({ userId: SELLER }, undefined, PLAIN)).toBe(true);
+    expect(await opens({ userId: SELLER }, allBrowsingLevelsFlag, PLAIN)).toBe(true);
+  });
+
+  it('is never served as a collection cover, even from an item its seller added', async () => {
+    const { servableCollectionCoverSql, itemUploadSql } = await import(
+      '~/server/services/collection-cover-visibility'
+    );
+    const cover = (id: number) =>
+      pgliteRaw(db).queryRaw`SELECT i.id FROM "Image" i LEFT JOIN "Post" p ON p.id = i."postId"
+        WHERE i.id = ${id} AND ${servableCollectionCoverSql({
+        postlessAllowed: itemUploadSql(Prisma.sql`${SELLER}`),
+      })}`;
+    expect(await cover(PLAIN)).toHaveLength(1);
+    expect(await cover(POINTED)).toHaveLength(0);
+    expect(await cover(KEYED)).toHaveLength(0);
   });
 });
 
@@ -515,6 +588,24 @@ describe('the image page behind a block', () => {
     expect(await publishedAt(IMAGE)).toBe('2026-01-04T00:00:00.000Z');
     // No firstVisibleAt: GREATEST(publishedAt, scannedAt, createdAt).
     expect(await publishedAt(UNRELATED)).toBe('2026-01-02T00:00:00.000Z');
+  });
+
+  it("reads the owner CSAM check for the image's owner, only with the owner-media read on", async () => {
+    await db.exec(`
+      ${CSAM_CHECK_TABLES}
+      UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'moderated' WHERE id = ${UNRELATED};
+    `);
+    const { getImage } = await import('~/server/services/image.service');
+    const marked = (viewer: Viewer, ownerReviewedBlocks?: boolean) =>
+      getImage({
+        id: UNRELATED,
+        ...viewer,
+        ownerReviewedBlocks,
+        shownReviewImageLevels: allBrowsingLevelsFlag,
+      }).then((image) => (image as { ownerCsamMarked?: boolean | null }).ownerCsamMarked);
+    expect(await marked({ userId: BUYER }, true)).toBe(false);
+    expect(await marked({ userId: BUYER })).toBeUndefined();
+    expect(await marked(MOD, true)).toBeNull();
   });
 
   it('still serves its buyer and a moderator through a block', async () => {

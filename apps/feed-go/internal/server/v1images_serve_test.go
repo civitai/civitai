@@ -533,6 +533,22 @@ func TestServeV1ImagesUnsupportedInputs(t *testing.T) {
 	if imagesCount(t, reg, "feed_go_fallback_total", map[string]string{"reason": "index-feed-unconfigured"}) != 1 {
 		t.Errorf("signed out, origin form: want the index-feed-unconfigured fallback")
 	}
+	// The legacy-path shapes with their switches on (V1Deps.Ports, which the route's parse reads too)
+	// get past the query to the same configuration check; `imageId=0` keeps the shape's reason.
+	for _, c := range []struct{ target, reason string }{
+		{"/api/v1/images?imageId=5", "index-feed-unconfigured"},
+		{"/api/v1/images?modelId=5", "index-feed-unconfigured"},
+		{"/api/v1/images?imageId=0", "v1-image-id"},
+	} {
+		reg := prometheus.NewRegistry()
+		up := &v1Upstream{}
+		s := newServer(reg, up)
+		s.V1.Ports = feed.V1Ports{ImageID: true, ModelOnly: true}
+		s.ServeV1ImagesHTTP(httptest.NewRecorder(), v1Request(c.target, nil))
+		if up.count() != 1 || imagesCount(t, reg, "feed_go_fallback_total", map[string]string{"reason": c.reason}) != 1 {
+			t.Errorf("%s with the ports on: proxied=%d, want a %s fallback", c.target, up.count(), c.reason)
+		}
+	}
 }
 
 // PublicMux mounts the images route only with the /api/v1 upstream configured, on its exact path:
@@ -617,6 +633,7 @@ func TestServeV1ImagesNeverUsesTheV1Upstream(t *testing.T) {
 var goldenV1NoStore = map[string]bool{
 	"held-images-on-page": true, "held-model-version": true, "ids-model-version-held": true,
 	"ids-with-meta-wrapped": true, "nsfw-deprecated-name-x": true, "nsfw-true": true,
+	"image-id-held-post": true, "model-only-held": true,
 	"cold-gallery-settings-held-model-version": true,
 }
 
@@ -695,8 +712,8 @@ func TestServeV1ImagesGolden(t *testing.T) {
 		})
 	}
 	// Positive control: each arm was reached, the no-store arm on every fixture that names it.
-	if served < 25 || handed != 3 || fellBack < 5 || noStore != len(goldenV1NoStore) {
-		t.Fatalf("served %d, handed back %d, fell back %d, no-store %d; want >= 25, 3, >= 5, %d", served, handed, fellBack, noStore, len(goldenV1NoStore))
+	if served < 25 || handed != 4 || fellBack < 5 || noStore != len(goldenV1NoStore) {
+		t.Fatalf("served %d, handed back %d, fell back %d, no-store %d; want >= 25, 4, >= 5, %d", served, handed, fellBack, noStore, len(goldenV1NoStore))
 	}
 }
 

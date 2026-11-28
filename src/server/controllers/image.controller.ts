@@ -56,7 +56,8 @@ import {
 import { clearAccountDeletionImageMarkers } from '~/server/services/account-deletion-image-markers';
 import { getRequestBrowsingLevel, requestServableLevels } from '~/server/utils/browsing-level';
 import { shownReviewImageLevelsFor } from '~/server/utils/review-image-levels';
-import { resolveStrictestPoiMinor } from '~/shared/constants/browsing-settings-addons';
+import { holdLeavesImage } from '~/server/utils/held-level';
+import { resolveStrictestAddons } from '~/shared/constants/browsing-settings-addons';
 import { DELETE_PROCESSING_MESSAGE } from '~/shared/constants/delete-after-review.constants';
 import { filterImagesForViewer } from '~/server/utils/model-getall-images';
 import { resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
@@ -436,7 +437,7 @@ export const getImagesForModelVersionHandler = async ({
       );
   // Not resolved at the viewer's own level (the request carries none), so at the strictest level
   // a viewer here could pick.
-  const settings = resolveStrictestPoiMinor(
+  const settings = resolveStrictestAddons(
     await getBrowsingSettingAddons(),
     requestServableLevels(ctx),
     { isModerator: actsAsModerator(ctx) }
@@ -479,8 +480,8 @@ async function withoutHeldFromViewer<T extends { postId?: number | null; nsfwLev
   const held = await getHeldLevelsByPost(postIds);
   return images.filter((image) => {
     const hold = image.postId ? held.get(image.postId) : undefined;
-    const owner = !!ctx.user && isSessionOrFullUserKey(ctx) && hold?.ownerId === ctx.user.id;
-    return !hold || owner || Flags.intersects(hold.level, image.nsfwLevel);
+    const viewerId = ctx.user && isSessionOrFullUserKey(ctx) ? ctx.user.id : undefined;
+    return holdLeavesImage(hold, viewerId, image.nsfwLevel);
   });
 }
 
@@ -1190,13 +1191,16 @@ export const getImagesAsPostsInfiniteHandler = async ({
 
 export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ctx: Context }) => {
   try {
-    const [image, eventDecorations] = await Promise.all([
+    const ownerBlockedMedia = !!ctx.features?.ownerBlockedMedia;
+    // `ownerCsamMarked` is read by `ownerMediaAllowed` and is not part of the response.
+    const [{ ownerCsamMarked, ...image }, eventDecorations] = await Promise.all([
       getImage({
         ...input,
         userId: ctx.user?.id,
         isModerator: ctx.user?.isModerator,
         ownerSeesHeld: isSessionOrFullUserKey(ctx),
         shownReviewImageLevels: shownReviewImageLevelsFor(ctx),
+        ownerReviewedBlocks: ownerBlockedMedia,
       }),
       // The hat the image detail draws when it is opened on its own, with no feed to seed it.
       // Safe per viewer only while image.get caches nothing per URL.
@@ -1229,13 +1233,25 @@ export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ct
       if (blocked) throw throwNotFoundError();
     }
 
-    const canSeeMedia = await viewerCanSeeImageMedia(ctx, {
-      nsfwLevel: result.nsfwLevel,
-      userId: result.user.id,
-      postId: result.postId ?? null,
-      ingestion: result.ingestion,
-      blockedFor: result.blockedFor,
-    });
+    const reviewedBlocks =
+      ownerBlockedMedia &&
+      !actsAsModerator(ctx) &&
+      !!ctx.user &&
+      ctx.user.id === result.user.id &&
+      isSessionOrFullUserKey(ctx) &&
+      ctx.impersonatedBy == null;
+    const canSeeMedia = await viewerCanSeeImageMedia(
+      ctx,
+      {
+        nsfwLevel: result.nsfwLevel,
+        userId: result.user.id,
+        postId: result.postId ?? null,
+        ingestion: result.ingestion,
+        blockedFor: result.blockedFor,
+        ownerCsamMarked,
+      },
+      { reviewedBlocks }
+    );
     // A failed hold lookup serves the image without media rather than failing the page.
     const heldChecked = await withoutHeldFromViewer(ctx, [result]).catch((error) => {
       logToAxiom({
@@ -1247,6 +1263,10 @@ export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ct
       return [];
     });
     const servable = canSeeMedia && !!heldChecked.length;
+    // The CDN does not serve a blocked image, so the owner's browser loads a reviewed block's media
+    // from the owner retracted-media route, by id, and is given no url to ask the CDN for.
+    if (reviewedBlocks && servable && result.blockedFor != null && !ownerMediaAllowed(result))
+      return { ...withoutMedia(result), ownerRetractedMedia: true as const };
     if (servable) return result;
     // A block leaves its owner the notice and the appeal, not the media or its preview.
     if (!ownerMediaAllowed(result))

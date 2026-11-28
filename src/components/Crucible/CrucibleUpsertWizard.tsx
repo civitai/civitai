@@ -115,8 +115,9 @@ import { Flags } from '~/shared/utils/flags';
 import { CrucibleStatus, Currency, MediaType } from '~/shared/utils/prisma/enums';
 import type { RouterOutput } from '~/types/router';
 import {
-  baseModelMakesMediaType,
+  baseModelFitsCrucible,
   CRUCIBLE_PRIZE_BUZZ_TYPE,
+  getCrucibleModelMediaTypes,
   getCrucibleUrl,
   getFreeEntriesLabel,
   toCrucibleBuzzType,
@@ -129,7 +130,7 @@ const InputContentRatingSelect = withController(ContentRatingSelect);
 
 const getCrucibleBaseModelSelectData = (contentType: CrucibleContentType) =>
   baseModelSelectData.flatMap(({ items }) =>
-    items.filter(({ value }) => baseModelMakesMediaType(value, contentType))
+    items.filter(({ value }) => baseModelFitsCrucible(value, contentType))
   );
 const InputModelVersionMultiSelect = withController(ModelVersionMultiSelect);
 const InputCrucibleImage = withController(CrucibleImageUpload);
@@ -607,7 +608,7 @@ export function CrucibleUpsertWizard(props: Props) {
                       form.setValue(
                         'allowedBaseModels',
                         (form.getValues('allowedBaseModels') ?? []).filter((baseModel) =>
-                          baseModelMakesMediaType(baseModel, value)
+                          baseModelFitsCrucible(baseModel, value)
                         )
                       );
                       if (value !== MediaType.video) {
@@ -808,7 +809,7 @@ export function CrucibleUpsertWizard(props: Props) {
         description="Entries must use at least one of the selected models. Leave empty to allow any model."
         disabled={isLocked('allowedResources')}
         generatableOnly={false}
-        mediaType={values.contentType}
+        mediaTypes={getCrucibleModelMediaTypes(values.contentType)}
         error={contentLevelError}
       />
 

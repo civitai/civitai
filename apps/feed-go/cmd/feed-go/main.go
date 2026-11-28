@@ -496,6 +496,8 @@ func run(log *slog.Logger) error {
 		ImageLocation: cfg.ImageLocation,
 		// The Node app this service shadows is the production build (isProd): nextPage on https://<host>.
 		NodeProduction: true,
+		// The legacy-path shapes behind their own switches: computed in the shadow and served alike.
+		Ports: feed.V1Ports{ImageID: cfg.V1ImagesServeImageID, ModelOnly: cfg.V1ImagesServeModelOnly},
 	}
 	if cfg.V1ImagesServeGallerySettingsMiss {
 		// An absent gallery-settings key's hold, as image.getInfinite's switch computes it (lag-aware;
@@ -516,6 +518,8 @@ func run(log *slog.Logger) error {
 			SortRandom:          cfg.InfiniteServeSortRandom,
 			GallerySettingsMiss: cfg.InfiniteServeGallerySettingsMiss,
 			HubID:               cfg.InfiniteServeInputHubID,
+			JudgeScore:          cfg.InfiniteServeJudgeScore,
+			HatTurfIgnored:      cfg.InfiniteServeHatTurfIgnored,
 		},
 		// A collection's Random seed: the system redis key, read-only.
 		RandomSeed: &feed.RandomSeed{Sys: sys},
@@ -590,6 +594,11 @@ func run(log *slog.Logger) error {
 				BaseModelFeedMetrics: cfg.BaseModelFeedMetrics,
 				ComputeMisses:        cfg.ComputeMisses,
 				ServeDataMiss:        mc.ServeDataMiss,
+				ServeTagsMiss:        mc.ServeTagsMiss,
+				ServeTagNameStale:    mc.ServeTagNameStale,
+				ServeShowcaseMiss:    mc.ServeShowcaseMiss,
+				ServeFilesMiss:       mc.ServeFilesMiss,
+				ServeFilename:        mc.ServeFilename,
 				AnswerNotFound:       mc.AnswerNotFound,
 				ResponseCacheTTL:     mc.ResponseCacheTTL,
 				Production:           true,
@@ -745,6 +754,8 @@ func run(log *slog.Logger) error {
 		"FEED_GO_INFINITE_SERVE_INPUT_POST_IDS", cfg.InfiniteServeInputPostIDs,
 		"FEED_GO_INFINITE_SERVE_SORT_RANDOM", cfg.InfiniteServeSortRandom,
 		"FEED_GO_INFINITE_SERVE_GALLERY_SETTINGS_MISS", cfg.InfiniteServeGallerySettingsMiss,
+		"FEED_GO_INFINITE_SERVE_JUDGE_SCORE", cfg.InfiniteServeJudgeScore,
+		"FEED_GO_INFINITE_SERVE_HAT_TURF_IGNORED", cfg.InfiniteServeHatTurfIgnored,
 		"FEED_GO_INFINITE_ANSWER_FEED_UNAVAILABLE", cfg.InfiniteAnswerFeedUnavailable,
 		"FEED_GO_INFINITE_SERVE_INPUT_HUB_ID", cfg.InfiniteServeInputHubID, "user_hubs_flag_read", userHubs != nil)
 	log.Info("public /api/v1/models", "FEED_GO_SERVE_V1_MODELS", mc.Serve, "mounted", srv.V1Fallback != nil,
@@ -752,6 +763,8 @@ func run(log *slog.Logger) error {
 	log.Info("public /api/v1/images", "FEED_GO_SERVE_V1_IMAGES", mc.ServeImages,
 		"mounted", srv.V1ImagesFallback != nil,
 		"FEED_GO_V1_IMAGES_SERVE_GALLERY_SETTINGS_MISS", cfg.V1ImagesServeGallerySettingsMiss)
+	log.Info("GET /api/v1/images legacy-path shapes", "FEED_GO_V1_IMAGES_SERVE_IMAGE_ID", cfg.V1ImagesServeImageID,
+		"FEED_GO_V1_IMAGES_SERVE_MODEL_ONLY", cfg.V1ImagesServeModelOnly)
 	log.Info("public /api/search", "FEED_GO_SERVE_SEARCH", sc.Serve, "mounted", srv.SearchFallback != nil,
 		"search_backend_configured", searchDeps.Upstream != nil)
 	log.Info("public tRPC answers' write format", "TRPC_WRITE_DEVALUE", cfg.WriteDevalue)

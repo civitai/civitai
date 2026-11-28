@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { int4Id, parseForm } from '../query';
 import { AppealRestoreRefusedError, APPEAL_RESTORE_REFUSED } from '../image-moderation.service';
 import { WITHHELD_REFUSED } from '$lib/held-media';
+import { holdsCsamReview } from '../held-media';
 import { classifyAppeal } from '$lib/tickets/appeals';
 import {
   NOT_PERMITTED,
@@ -42,6 +43,7 @@ export type AppealWriteDeps = TicketActionDeps & {
     resolvedReason: string;
     internalNotes: string | undefined;
     userId: number;
+    csamReview: boolean;
   }) => Promise<{ id: number } | undefined>;
 };
 
@@ -110,6 +112,7 @@ export function createTicketAppealActions(deps: AppealWriteDeps) {
           status: input.status,
           ...reason,
           userId: event.locals.user.id,
+          csamReview: holdsCsamReview(event.locals.user),
         });
       } catch (e) {
         if (e instanceof AppealRestoreRefusedError)

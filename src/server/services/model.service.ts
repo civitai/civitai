@@ -9,7 +9,11 @@ import { minorContentBrowsingLevelsFlag } from '@civitai/shared/minor-content-ga
 import { queueModelCollectionsReindex } from '~/server/services/collection-index-sync';
 import { queueModelArticlesReindex } from '~/server/services/article-cover-reindex';
 import type { ArticleReader } from '~/server/services/article-read';
-import { articleReadSelect, canReadArticle } from '~/server/services/article-read';
+import {
+  articleReadSelect,
+  articleWithinBrowsingLevel,
+  canReadArticle,
+} from '~/server/services/article-read';
 import type { EventViewer } from '~/server/events/event-access';
 import { onStorySparkPostsHidden, onStorySparkPostsRestored } from '~/server/events/points/hooks';
 import {
@@ -145,6 +149,12 @@ import {
   associatedResourceSelect,
   modelWithDetailsSelect,
 } from '~/server/selectors/model.selector';
+import {
+  associatedModelVisibilitySelect,
+  canListAssociatedModel,
+  type AssociatedModelAddons,
+  type AssociatedModelVisibility,
+} from '~/server/services/associated-model-visibility';
 import { readModelWithDetailsViaKysely } from '~/server/services/model-details.reads';
 import { readModelsWithVersionsStats } from '~/server/services/hot-reads-11.reads';
 import { readSimpleModelWithOwner } from '~/server/services/hot-reads-12.reads';
@@ -355,6 +365,7 @@ import {
   pickCoverImageId,
   resolveModelFace,
   showsSfwFace,
+  type ModelSfwFaceSource,
 } from '~/shared/utils/model-sfw-face';
 import { isModelWithheld } from '~/shared/utils/model-withhold';
 import {
@@ -6265,8 +6276,9 @@ export const setModelsCategory = async ({
 
 // #region [associated models]
 export const getAssociatedResourcesSimple = async (
-  { fromId, type }: GetAssociatedResourcesInput,
-  viewer?: ArticleReader
+  { fromId, type, browsingLevel, ...addons }: GetAssociatedResourcesInput & AssociatedModelAddons,
+  viewer?: ArticleReader,
+  modelViewer?: ArticleReader
 ) => {
   const associations = await dbWrite.modelAssociations.findMany({
     where: { fromModelId: fromId, type },
@@ -6274,13 +6286,12 @@ export const getAssociatedResourcesSimple = async (
     select: {
       id: true,
       toModel: {
-        select: associatedResourceSelect,
+        select: { ...associatedResourceSelect, ...associatedModelVisibilitySelect, sfwName: true },
       },
       toArticle: {
         select: {
           id: true,
           title: true,
-          nsfwLevel: true,
           user: { select: simpleUserSelect },
           ...articleReadSelect,
         },
@@ -6290,8 +6301,13 @@ export const getAssociatedResourcesSimple = async (
 
   const items = associations
     .map(({ id, toModel, toArticle }) => {
-      if (toModel) return { id, item: toModel, resourceType: 'model' as const };
-      if (!toArticle || !canReadArticle(toArticle, viewer)) return null;
+      if (toModel) return associatedModelItem(id, toModel, modelViewer, browsingLevel, addons);
+      if (
+        !toArticle ||
+        !canReadArticle(toArticle, viewer) ||
+        !articleWithinBrowsingLevel(toArticle, viewer, browsingLevel)
+      )
+        return null;
       const { userId, publishedAt, status, ingestion, availability, ...item } = toArticle;
       return { id, item, resourceType: 'article' as const };
     })
@@ -6300,9 +6316,30 @@ export const getAssociatedResourcesSimple = async (
   return items;
 };
 
+function associatedModelItem<T extends AssociatedModelVisibility & ModelSfwFaceSource>(
+  id: number,
+  model: T,
+  viewer: ArticleReader,
+  browsingLevel: number,
+  addons: AssociatedModelAddons
+) {
+  if (!canListAssociatedModel(model, viewer, browsingLevel, addons)) return null;
+  const { userId, status, availability, mode, poi, minor, tagsOnModels, ...item } =
+    resolveModelFace(model, showsSfwFace(browsingLevel));
+  return { id, item, resourceType: 'model' as const };
+}
+
 export const setAssociatedResources = async (
-  { fromId, type, associations, reciprocal }: SetAssociatedResourcesInput,
-  user?: SessionUser
+  {
+    fromId,
+    type,
+    associations,
+    reciprocal,
+    browsingLevel,
+    ...addons
+  }: SetAssociatedResourcesInput & AssociatedModelAddons,
+  user?: SessionUser,
+  modelViewer?: ArticleReader
 ) => {
   const fromModel = await dbWrite.model.findUnique({
     where: { id: fromId },
@@ -6310,7 +6347,12 @@ export const setAssociatedResources = async (
       userId: true,
       associations: {
         where: { type },
-        select: { id: true, toModelId: true, toArticle: { select: articleReadSelect } },
+        select: {
+          id: true,
+          toModelId: true,
+          toModel: { select: associatedModelVisibilitySelect },
+          toArticle: { select: articleReadSelect },
+        },
         orderBy: { index: 'asc' },
       },
     },
@@ -6320,10 +6362,18 @@ export const setAssociatedResources = async (
   // only allow moderators or model owners to add/remove associated models
   if (!user?.isModerator && fromModel.userId !== user?.id) throw throwAuthorizationError();
 
-  // The editor never lists an article the caller cannot read, so its absence from the payload
-  // is not a removal.
+  // The editor never lists a link the caller cannot see (an unreadable article, a model withheld
+  // from them), so its absence from the payload is not a removal.
   const existingAssociations = fromModel.associations
-    .filter((x) => !x.toArticle || canReadArticle(x.toArticle, user))
+    .filter(
+      (x) =>
+        !x.toArticle ||
+        (canReadArticle(x.toArticle, user) &&
+          articleWithinBrowsingLevel(x.toArticle, user, browsingLevel))
+    )
+    .filter(
+      (x) => !x.toModel || canListAssociatedModel(x.toModel, modelViewer, browsingLevel, addons)
+    )
     .map((x) => x.id);
   const existingModelTargets = new Set(
     fromModel.associations.map((x) => x.toModelId).filter(isDefined)

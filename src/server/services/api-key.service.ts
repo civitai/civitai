@@ -26,6 +26,11 @@ import { evictCachedApiKeys } from '~/server/auth/api-key-principal-cache';
 import { revokeLinksOfRevokedCredentials } from '~/server/services/download-link/download-link.store';
 import { revokeReviewBatchesOfKeys } from '~/server/services/review-batch/review-batch.store';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import {
+  DOCS_API_KEY_LIVE_CAP,
+  DOCS_API_KEY_NAME_PREFIX,
+  isDocsApiKey,
+} from '~/shared/constants/docs-api-key.constants';
 
 export async function getApiKey({ id, userId }: GetAPIKeyInput & { userId: number }) {
   const key = await dbRead.apiKey.findFirst({
@@ -344,17 +349,24 @@ export async function forgetGenerationToken(userId: number) {
 }
 
 /**
- * Expires the user's generation credentials: every System key and every app token carrying an
- * AI Services scope. Other app tokens, personal keys and the site session are left alone. The next
- * generation call that is allowed mints afresh.
+ * Expires the user's generation credentials: every System key, every developer docs key and every
+ * app token carrying an AI Services scope. Other app tokens, personal keys and the site session are
+ * left alone. The next generation call that is allowed mints afresh.
  */
 export async function expireGenerationCredentials(userId: number) {
   const now = new Date();
   const rows = await dbWrite.apiKey.findMany({
-    where: { userId, type: { in: ['System', 'Access', 'Refresh'] } },
+    where: {
+      userId,
+      OR: [
+        { type: { in: ['System', 'Access', 'Refresh'] } },
+        { type: 'User', name: { startsWith: DOCS_API_KEY_NAME_PREFIX } },
+      ],
+    },
     select: {
       id: true,
       key: true,
+      name: true,
       type: true,
       tokenScope: true,
       tokenScopeWide: true,
@@ -364,6 +376,7 @@ export async function expireGenerationCredentials(userId: number) {
   const matched = rows.filter(
     (row) =>
       row.type === 'System' ||
+      isDocsApiKey(row) ||
       ((row.type === 'Access' || row.type === 'Refresh') &&
         (readApiKeyScope(row) & AI_SERVICES_SCOPES) !== 0n)
   );
@@ -398,4 +411,51 @@ export async function deleteApiKey({ id, userId }: DeleteAPIKeyInput & { userId:
   }
 
   return result;
+}
+
+/**
+ * Before a developer docs key named `name` is minted: removes the user's expired docs keys of that
+ * name and, past the live cap, the oldest live ones, so the new key leaves at most the cap live.
+ */
+export async function pruneDocsApiKeys({
+  userId,
+  name,
+  date = new Date(),
+}: {
+  userId: number;
+  name: string;
+  date?: Date;
+}) {
+  // primary: the rows chosen here are deleted next.
+  const rows = await dbWrite.apiKey.findMany({
+    where: { userId, type: 'User', name },
+    select: {
+      id: true,
+      name: true,
+      type: true,
+      tokenScope: true,
+      tokenScopeWide: true,
+      expiresAt: true,
+    },
+  });
+  const docsKeys = rows.filter(isDocsApiKey);
+  const kept = docsKeys
+    .filter((row) => row.expiresAt! > date)
+    .sort((a, b) => b.id - a.id)
+    .slice(0, DOCS_API_KEY_LIVE_CAP - 1)
+    .map((row) => row.id);
+  const removed = docsKeys.map((row) => row.id).filter((id) => !kept.includes(id));
+  if (!removed.length) return { removed };
+  await deleteApiKeys({ userId, id: { in: removed } });
+  // As `deleteApiKey`: the orchestrator drops each key's spend record.
+  for (const id of removed) {
+    deleteAuthSubject({ userId, subject: { type: 'apiKey', id } }).catch((err) => {
+      logToAxiom({
+        type: 'oauth.delete-subject.failed',
+        message: `delete-subject failed for apiKey ${id} user ${userId}`,
+        error: safeError(err),
+      });
+    });
+  }
+  return { removed };
 }

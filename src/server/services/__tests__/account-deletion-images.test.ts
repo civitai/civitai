@@ -1,6 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { blockedForNamesCsam } from '@civitai/shared/csam-blocked-for';
 
 const { mockResetNsfwLevel, mockDropDeleteQueue, mockQueueSearchIndex, mockBustCachesForPosts } =
   vi.hoisted(() => ({
@@ -107,6 +108,9 @@ const OWNER_CHECK = /^\s*\(SELECT [^()]*\([^()]*\)[^()]* FROM "User" u WHERE u\.
 const ENUM_RANGE = /\(SELECT unnest\(enum_range\(NULL::"ImageIngestionStatus"\)\)::text\)/;
 
 const COALESCE_EXPR = /^COALESCE\(("\w+"),\s*([\s\S]+)\)$/;
+// `csamInBlockedForSql`, read here with its JS twin.
+const CSAM_IN_EXPR =
+  /^EXISTS \(\s*SELECT 1 FROM unnest\(string_to_array\(([\s\S]+?), ','\)\) AS mw_reason\(value\)\s*WHERE lower\(btrim\(mw_reason\.value\)\) = 'csam'\s*\)$/;
 const CASE_EXPR = /^CASE\s+WHEN\s+([\s\S]+?)\s+THEN\s+([\s\S]+?)\s+ELSE\s+([\s\S]+?)\s+END$/;
 const takeKeys = (part: string, keys: string[]) => keys.splice(0, (part.match(/\?/g) ?? []).length);
 
@@ -119,6 +123,11 @@ function evalValue(expr: string, keys: string[], row: ImageRow): string | null {
     const condKeys = takeKeys(cond, keys);
     // Every conjunct is evaluated (none short-circuits), so each consumes its own parameters.
     const conjunct = (clause: string) => {
+      const csamIn = clause.match(CSAM_IN_EXPR);
+      if (csamIn) {
+        const operand = csamIn[1].trim().replace(/^\(([\s\S]*)\)$/, '$1');
+        return blockedForNamesCsam(evalValue(operand, takeKeys(operand, condKeys), row));
+      }
       const anyOf = clause.match(/^([\s\S]+?)\s*=\s*ANY\(\?::text\[\]\)$/);
       if (anyOf) {
         const operandKeys = takeKeys(anyOf[1], condKeys);

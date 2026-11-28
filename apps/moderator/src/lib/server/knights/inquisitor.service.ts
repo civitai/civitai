@@ -297,7 +297,14 @@ export async function ruleOnInquisitorItem(
   itemId: number,
   ruling: InquisitorRuling,
   moderatorId: number,
-  now: Date = new Date()
+  {
+    csamReview,
+    now = new Date(),
+  }: {
+    /** The moderator's CSAM grant: an image withheld from them keeps its rating. */
+    csamReview: boolean;
+    now?: Date;
+  }
 ): Promise<RulingOutcome> {
   const problem = rulingProblem(ruling);
   if (problem) return { ok: false, error: problem };
@@ -336,6 +343,7 @@ export async function ruleOnInquisitorItem(
       // Left Pending, the requests come back to the rating queue if the level is ever unlocked.
       status: 'Actioned',
       userId: moderatorId,
+      csamReview,
     });
   } catch (error) {
     await release(itemId, moderatorId, now).catch(() => undefined);

@@ -407,36 +407,36 @@ func TestResolveFileName(t *testing.T) {
 		files   []nameFile
 		want    []string
 	}{
-		{nameModel{"Model 5001", "Checkpoint"}, nameVersion{name: "v6001"}, []nameFile{
+		{nameModel{name: "Model 5001", typ: "Checkpoint"}, nameVersion{name: "v6001"}, []nameFile{
 			f(1, "model.safetensors", "Model", "full", "fp32", ""), f(2, "golden_pruned.safetensors", "Model", nil, nil, ""),
 			f(3, "config.yaml", "Config", nil, nil, ""), f(4, "model.safetensors", "Model", "pruned", "fp16", ""),
 		}, []string{"model5001_v6001_full_fp32.safetensors", "golden_pruned.safetensors", "config.yaml", "model5001_v6001_pruned_fp16.safetensors"}},
-		{nameModel{"BB Bunny", "Checkpoint"}, nameVersion{name: "BB Bunny v2"}, []nameFile{
+		{nameModel{name: "BB Bunny", typ: "Checkpoint"}, nameVersion{name: "BB Bunny v2"}, []nameFile{
 			f(1, "model.safetensors", "Model", nil, nil, ""), f(2, "01HZX3J8K9M2N4P6Q7R8S9T0VW.safetensors", "Model", nil, nil, ""),
 		}, []string{"bbBunny_v2_1.safetensors", "bbBunny_v2_2.safetensors"}},
-		{nameModel{"Lora Thing", "LORA"}, nameVersion{name: "v1"}, []nameFile{
+		{nameModel{name: "Lora Thing", typ: "LORA"}, nameVersion{name: "v1"}, []nameFile{
 			f(1, "model.safetensors", "Model", nil, nil, ""), f(2, "mylora.safetensors", "Model", nil, nil, ""),
 		}, []string{"model.safetensors", "mylora.safetensors"}},
-		{nameModel{"Lora Thing", "LORA"}, nameVersion{name: "v1"}, []nameFile{
+		{nameModel{name: "Lora Thing", typ: "LORA"}, nameVersion{name: "v1"}, []nameFile{
 			f(1, "01HZX3J8K9M2N4P6Q7R8S9T0VW.safetensors", "Model", nil, nil, ""),
 		}, []string{"loraThing_v1.safetensors"}},
-		{nameModel{"Embed", "TextualInversion"}, nameVersion{name: "v1", trainedWords: []string{"golden token"}}, []nameFile{
+		{nameModel{name: "Embed", typ: "TextualInversion"}, nameVersion{name: "v1", trainedWords: []string{"golden token"}}, []nameFile{
 			f(1, "embed.pt", "Model", nil, nil, ""), f(2, "neg.pt", "Negative", nil, nil, ""),
 		}, []string{"golden token.pt", "golden token-neg.pt"}},
-		{nameModel{"Embed", "TextualInversion"}, nameVersion{name: "v1"}, []nameFile{f(1, "embed.pt", "Model", nil, nil, "")}, []string{"embed.pt"}},
-		{nameModel{"Data Model", "Checkpoint"}, nameVersion{name: "v3"}, []nameFile{f(1, "stuff.zip", "Training Data", nil, nil, "")}, []string{"dataModel_v3_trainingData.zip"}},
-		{nameModel{"Inpaint Model", "Checkpoint"}, nameVersion{name: "v1 Inpainting"}, []nameFile{f(1, "model-inpainting.safetensors", "Model", nil, nil, "")}, []string{"model-inpainting.safetensors"}},
-		{nameModel{"Pix Model", "Checkpoint"}, nameVersion{name: "instruct pix2pix v1"}, []nameFile{f(1, "model.instruct-pix2pix.ckpt", "Model", nil, nil, "")}, []string{"model.instruct-pix2pix.ckpt"}},
-		{nameModel{"TE Model", "Checkpoint"}, nameVersion{name: "v1"}, []nameFile{f(1, "text_encoder.safetensors", "Text Encoder", nil, nil, "")}, []string{"teModel_v1_txt.safetensors"}},
-		{nameModel{"VAE Model", "Checkpoint"}, nameVersion{name: "v1"}, []nameFile{f(1, "vae.safetensors", "VAE", nil, nil, "")}, []string{"vae.safetensors"}},
-		{nameModel{"Dup", "Checkpoint"}, nameVersion{name: "v1"}, []nameFile{
+		{nameModel{name: "Embed", typ: "TextualInversion"}, nameVersion{name: "v1"}, []nameFile{f(1, "embed.pt", "Model", nil, nil, "")}, []string{"embed.pt"}},
+		{nameModel{name: "Data Model", typ: "Checkpoint"}, nameVersion{name: "v3"}, []nameFile{f(1, "stuff.zip", "Training Data", nil, nil, "")}, []string{"dataModel_v3_trainingData.zip"}},
+		{nameModel{name: "Inpaint Model", typ: "Checkpoint"}, nameVersion{name: "v1 Inpainting"}, []nameFile{f(1, "model-inpainting.safetensors", "Model", nil, nil, "")}, []string{"model-inpainting.safetensors"}},
+		{nameModel{name: "Pix Model", typ: "Checkpoint"}, nameVersion{name: "instruct pix2pix v1"}, []nameFile{f(1, "model.instruct-pix2pix.ckpt", "Model", nil, nil, "")}, []string{"model.instruct-pix2pix.ckpt"}},
+		{nameModel{name: "TE Model", typ: "Checkpoint"}, nameVersion{name: "v1"}, []nameFile{f(1, "text_encoder.safetensors", "Text Encoder", nil, nil, "")}, []string{"teModel_v1_txt.safetensors"}},
+		{nameModel{name: "VAE Model", typ: "Checkpoint"}, nameVersion{name: "v1"}, []nameFile{f(1, "vae.safetensors", "VAE", nil, nil, "")}, []string{"vae.safetensors"}},
+		{nameModel{name: "Dup", typ: "Checkpoint"}, nameVersion{name: "v1"}, []nameFile{
 			f(1, "model.safetensors", "Model", nil, nil, ""), f(2, "model.safetensors", "Model", nil, nil, ""), f(3, "model.safetensors", "Model", nil, nil, ""),
 		}, []string{"dup_v1_1.safetensors", "dup_v1_2.safetensors", "dup_v1_3.safetensors"}},
-		{nameModel{"Dup", "Checkpoint"}, nameVersion{name: "v1"}, []nameFile{
+		{nameModel{name: "Dup", typ: "Checkpoint"}, nameVersion{name: "v1"}, []nameFile{
 			f(1, "model.safetensors", "Model", nil, nil, `Custom "Name"%41.safetensors`), f(2, "weird\u200bname.safetensors", "Model", nil, nil, ""),
 		}, []string{"Custom _Name__41.safetensors", "weirdname.safetensors"}},
-		{nameModel{"Other", "Checkpoint"}, nameVersion{name: "v1"}, []nameFile{f(1, "thing.bin", "Mystery Type", nil, nil, "")}, []string{"thing.bin"}},
-		{nameModel{"Same", "Checkpoint"}, nameVersion{name: "Same"}, []nameFile{f(1, "model.safetensors", "Model", nil, nil, "")}, []string{"same.safetensors"}},
+		{nameModel{name: "Other", typ: "Checkpoint"}, nameVersion{name: "v1"}, []nameFile{f(1, "thing.bin", "Mystery Type", nil, nil, "")}, []string{"thing.bin"}},
+		{nameModel{name: "Same", typ: "Checkpoint"}, nameVersion{name: "Same"}, []nameFile{f(1, "model.safetensors", "Model", nil, nil, "")}, []string{"same.safetensors"}},
 	} {
 		for i, file := range c.files {
 			got, err := resolveFileName(c.model, c.version, file, c.files)
@@ -446,7 +446,7 @@ func TestResolveFileName(t *testing.T) {
 		}
 	}
 	// A name the scheme must strip a non-ASCII model name from is not read here.
-	if _, err := resolveFileName(nameModel{"Ünï", "Checkpoint"}, nameVersion{name: "Ünï v1"},
+	if _, err := resolveFileName(nameModel{name: "Ünï", typ: "Checkpoint"}, nameVersion{name: "Ünï v1"},
 		f(1, "model.safetensors", "Model", nil, nil, ""), nil); reason(err) != "v1-models-filename" {
 		t.Errorf("non-ASCII strip: %v", err)
 	}

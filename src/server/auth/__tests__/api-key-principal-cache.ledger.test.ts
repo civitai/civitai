@@ -21,6 +21,8 @@ import type * as OrchestratorCivitai from '~/server/services/orchestrator/civita
 import type * as FeatureFlagsService from '~/server/services/feature-flags.service';
 import type * as UserService from '~/server/services/user.service';
 import { OnboardingSteps } from '~/server/common/enums';
+import { DOCS_API_KEY_SCOPE } from '~/shared/constants/docs-api-key.constants';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { stripCodeComments } from '~/test-utils/strip-code-comments';
 
 /**
@@ -75,6 +77,7 @@ vi.mock('~/server/services/user.service', async (importOriginal) => ({
 }));
 
 const { getSessionFromBearerToken } = await import('~/server/auth/bearer-token');
+const { deleteAuthSubject } = await import('~/server/http/orchestrator/api-key-spend');
 const {
   deleteApiKey,
   deleteApiKeys,
@@ -260,6 +263,17 @@ const seed = (): Row[] => [
     expiresAt: null,
   },
 ];
+const DOCS_NAME = 'Developer docs (civitai.com)';
+const docsRow = (id: number, token: string, over: Partial<Row> = {}): Row => ({
+  ...seed()[0],
+  id,
+  key: `hash-of-${token}`,
+  name: DOCS_NAME,
+  tokenScope: Number(DOCS_API_KEY_SCOPE),
+  buzzLimit: null,
+  expiresAt: new Date(T0.getTime() + 10 * 86_400_000),
+  ...over,
+});
 const matches = (row: Row, where: Record<string, unknown>): boolean =>
   Object.entries(where).every(([field, cond]) => {
     if (field === 'AND') return (cond as Record<string, unknown>[]).every((c) => matches(row, c));
@@ -272,6 +286,10 @@ const matches = (row: Row, where: Record<string, unknown>): boolean =>
       const value = row[field as keyof Row] as Date | null;
       return value !== null && value >= (cond as { gte: Date }).gte;
     }
+    if (cond && typeof cond === 'object' && 'startsWith' in cond)
+      return (row[field as keyof Row] as string).startsWith(
+        (cond as { startsWith: string }).startsWith
+      );
     if (cond && typeof cond === 'object' && 'in' in cond)
       return (cond as { in: unknown[] }).in.includes(row[field as keyof Row]);
     return row[field as keyof Row] === cond;
@@ -316,9 +334,10 @@ beforeEach(() => {
   }) =>
     rows
       .filter((r) => matches(r, where))
-      .map(({ id, key, userId, expiresAt, type, tokenScope }) => ({
+      .map(({ id, key, name, userId, expiresAt, type, tokenScope }) => ({
         id,
         key,
+        name,
         userId,
         expiresAt,
         type,
@@ -450,6 +469,20 @@ describe('writes that evict the bearer cache', () => {
     expect((await getSessionFromBearerToken('personal'))?.apiKeyId).toBe(51);
   });
 
+  it('expireGenerationCredentials stops a docs key, not a personal key that only shares its name', async () => {
+    rows.push(
+      docsRow(71, 'docs'),
+      docsRow(72, 'look-alike', { tokenScope: Number(TokenScope.Full), expiresAt: null })
+    );
+    await warm('docs');
+    await warm('look-alike');
+    await expireGenerationCredentials(501);
+    vi.setSystemTime(new Date(T0.getTime() + 1000)); // the next request
+    expect(await getSessionFromBearerToken('docs')).toBeNull();
+    expect((await getSessionFromBearerToken('look-alike'))?.apiKeyId).toBe(72);
+    expect(rows.find((r) => r.id === 72)?.expiresAt).toBeNull();
+  });
+
   it("expireClientTokens stops that client's tokens on the next request, not another client's", async () => {
     const token = (id: number, clientId: string) => ({
       ...seed()[0],
@@ -526,7 +559,10 @@ describe('writes that evict the bearer cache', () => {
     expect((await getSessionFromBearerToken('personal'))?.buzzLimit).toEqual({ limit: 9 });
   });
 
-  it('GET /api/user/orchestrator-key (regenerate) stops the old orchestrator key', async () => {
+  it('GET /api/user/orchestrator-key past the cap stops the oldest docs key, not the System key', async () => {
+    rows.push(docsRow(71, 'docs-old'), docsRow(72, 'docs-new'));
+    await warm('docs-old');
+    await warm('docs-new');
     await warm('orchestrator');
     // The route checks the caller's stored standing first; answer that read only.
     dbMock.dbWrite.user.findUnique.mockImplementation((async (args: {
@@ -561,13 +597,19 @@ describe('writes that evict the bearer cache', () => {
     const req = {
       method: 'GET',
       url: '/api/user/orchestrator-key',
-      headers: { host: 'civitai.com' },
+      headers: { host: 'civitai.com', origin: 'https://developer.civitai.com' },
       query: {},
       cookies: {},
     } as unknown as NextApiRequest;
     await orchestratorKeyRoute(req, res);
-    expect(body).toEqual({ key: 'minted-api-key' });
-    expect(tombstoned('hash-of-orchestrator')).toBe(true);
-    expect(await getSessionFromBearerToken('orchestrator')).toBeNull();
+    expect(body).toMatchObject({ key: 'minted-api-key' });
+    expect(tombstoned('hash-of-docs-old')).toBe(true);
+    expect(await getSessionFromBearerToken('docs-old')).toBeNull();
+    expect(deleteAuthSubject).toHaveBeenCalledWith({
+      userId: 501,
+      subject: { type: 'apiKey', id: 71 },
+    });
+    expect((await getSessionFromBearerToken('docs-new'))?.apiKeyId).toBe(72);
+    expect((await getSessionFromBearerToken('orchestrator'))?.apiKeyId).toBe(52);
   });
 });

@@ -144,8 +144,12 @@ func (r *Resolver) resolve(ctx context.Context, req *http.Request) (*SessionUser
 	if IsModerationAccount(claims.UserID(), "", r.ModerationAccountID) {
 		return nil, nil
 	}
-	if r.Revocation != nil && r.Revocation.IsRevoked(ctx, claims) {
-		return nil, nil
+	var readFailed bool
+	if r.Revocation != nil {
+		var revoked bool
+		if revoked, readFailed = r.Revocation.Check(ctx, claims); revoked {
+			return nil, nil
+		}
 	}
 	u, err := r.user(ctx, claims.UserID())
 	if err != nil {
@@ -158,6 +162,10 @@ func (r *Resolver) resolve(ctx context.Context, req *http.Request) (*SessionUser
 	// refusesMemorializedSession: a moderator's impersonation of a memorialized account still resolves.
 	if u.Memorialized && claims.ImpersonatedBy == nil {
 		return nil, nil
+	}
+	// Mirrors createSessionClient's confirmElevatedRevocation; the Node path decides.
+	if readFailed && (u.IsModerator || claims.ImpersonatedBy != nil) {
+		return nil, fallback.New("revocation-unconfirmed")
 	}
 	if r.OnSlot != nil {
 		r.OnSlot(CookieSlot(tokenCookie))

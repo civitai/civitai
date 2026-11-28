@@ -1,6 +1,8 @@
 import { poiWords } from '@civitai/mod-utils/prompt-audit/lists';
 import { isMinorRestrictedLevel } from '@civitai/shared/minor-content-gate';
+import { blockedForNamesCsam } from '@civitai/shared/csam-blocked-for';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { ownerIngestionSignalData } from '~/server/common/image-block-marker';
 import type { TagType } from '~/shared/utils/prisma/enums';
 import {
   ImageIngestionStatus,
@@ -169,7 +171,8 @@ export const LEGACY_SCAN_LOG: ScanLog = {
  * Push the resolved ingestion state to the uploader's open editor. The editor renders
  * Pending as an in-progress spinner, so any state that LEAVES Pending has to send —
  * Error included, retryable though it is — or the card goes on claiming to analyze
- * until the page is reloaded.
+ * until the page is reloaded. The owner gets only an owner-actionable block reason
+ * (`ownerIngestionSignalData`).
  */
 export async function sendIngestionSignal({
   imageId,
@@ -190,7 +193,7 @@ export async function sendIngestionSignal({
   await signalClient
     .send({
       target: SignalMessages.ImageIngestionStatus,
-      data: { imageId, ingestion, blockedFor, nsfwLevel },
+      data: ownerIngestionSignalData({ imageId, ingestion, blockedFor, nsfwLevel }),
       userId,
     })
     .catch((error) =>
@@ -263,15 +266,16 @@ export function extractFailedSteps(steps: unknown[]): string[] {
 }
 
 /**
- * Flip an image to `Error`, increment its scan `retryCount`, and stamp a small
+ * Flip an image to `Error` (a NotFound, Blocked or held Rescan row keeps its state, see
+ * `ingestionAfterScanErrorSql`), increment its scan `retryCount`, and stamp a small
  * `scanJobs.error = { status, failureType, failedSteps, reason, failureClass, at }`
  * so a plain Postgres query can tell WHY a scan errored (and which step) without an
  * orchestrator lookup — and so the `ingest-images` cron can pick a retry ceiling
  * from `failureClass`. retryCount ALWAYS increments: it's the absolute attempt
- * count the per-class ceilings are applied against. Returns the new (post-increment)
- * retryCount, the image's mediaType, and the computed failureClass; retryCount /
- * mediaType are `null` when no row matched (e.g. the image was deleted between scan
- * request and callback).
+ * count the per-class ceilings are applied against. Returns the new retryCount, mediaType,
+ * userId, failureClass, and the stored ingestion and blockedFor, which the owner signal
+ * reports; all but failureClass are `null` when no row matched (e.g. the image was deleted
+ * between scan request and callback).
  */
 export async function markImageScanError({
   workflowId,
@@ -295,6 +299,8 @@ export async function markImageScanError({
   retryCount: number | null;
   mediaType: string | null;
   userId: number | null;
+  ingestion: ImageIngestionStatus | null;
+  blockedFor: string | null;
   failureClass: string;
 }> {
   const failureClass = classifyImageScanFailure({ reason, failureType, middleware, failedSteps });
@@ -310,7 +316,13 @@ export async function markImageScanError({
     at: new Date().toISOString(),
   });
   const rows = await dbWrite.$queryRaw<
-    { retryCount: number | null; mediaType: string | null; userId: number | null }[]
+    {
+      retryCount: number | null;
+      mediaType: string | null;
+      userId: number | null;
+      ingestion: ImageIngestionStatus;
+      blockedFor: string | null;
+    }[]
   >`
     UPDATE "Image"
     SET
@@ -330,7 +342,7 @@ export async function markImageScanError({
       ) || ${keepPermanentScanFailureSql()}
     WHERE id = ${imageId}
     RETURNING ("scanJobs"->>'retryCount')::int as "retryCount", type as "mediaType",
-      "userId"
+      "userId", "ingestion", "blockedFor"
   `;
   await queueCdnAccessSyncWhen(
     imageId,
@@ -343,6 +355,8 @@ export async function markImageScanError({
     retryCount: rows[0]?.retryCount ?? null,
     mediaType: rows[0]?.mediaType ?? null,
     userId: rows[0]?.userId ?? null,
+    ingestion: rows[0]?.ingestion ?? null,
+    blockedFor: rows[0]?.blockedFor ?? null,
     failureClass,
   };
 }
@@ -685,7 +699,7 @@ export async function resolveScanOutcome({
     );
     return {
       ingestion: ImageIngestionStatus.Blocked,
-      blockedFor: stored === BlockedReason.CSAM ? BlockedReason.CSAM : blocked.reason,
+      blockedFor: stored && blockedForNamesCsam(stored) ? stored : blocked.reason,
       reviewKey: null,
     };
   }
@@ -802,9 +816,9 @@ export async function resolveScanOutcome({
   // Decided on the row, so a stored CSAM block holds whatever this scan loaded or decided.
   const csamBlocked = csamBlockedSql();
   // The CSAM block the row holds once this write lands: the stored one, or one this verdict writes.
-  const csamAfterWrite = Prisma.sql`(${csamBlocked} OR ${
-    (toUpdate.blockedFor as string) ?? null
-  }::text = ${BlockedReason.CSAM})`;
+  const csamAfterWrite = Prisma.sql`(${csamBlocked} OR ${blockedForNamesCsam(
+    toUpdate.blockedFor as string | undefined
+  )})`;
   // A block outlives an account restore (every write that lands drops the breadcrumbs); anything
   // else leaves a grace-blocked row as it is.
   const metadataSet = Prisma.sql`CASE WHEN ${metadataJson}::jsonb IS NULL OR ${csamBlocked} THEN "metadata"
@@ -812,7 +826,7 @@ export async function resolveScanOutcome({
   const lifting = toUpdate.ingestion !== ImageIngestionStatus.Blocked;
   // Blocked/Error/NotFound rows a block marker keeps: the verdict skips them (CSAM is left to csamBlocked below).
   const keptFromScan = Prisma.sql`(COALESCE("ingestion" IN ('Blocked'::"ImageIngestionStatus", 'Error'::"ImageIngestionStatus", 'NotFound'::"ImageIngestionStatus"), false)
-    AND ${scanKeepsRowSql('Image')} AND "blockedFor" IS DISTINCT FROM ${BlockedReason.CSAM})`;
+    AND ${scanKeepsRowSql('Image')} AND NOT ${csamBlocked})`;
   let rowsWritten: number | undefined;
   await writeWithNsfwAxes(
     async (axesTerm) =>
@@ -932,13 +946,13 @@ export async function resolveScanOutcome({
   });
   // Not awaited: a slow replica must not hold up the outcome.
   void logScanAfterReview(image, toUpdate).catch(() => undefined);
-  if (written?.blockedFor === BlockedReason.CSAM) {
+  if (written?.blockedFor && blockedForNamesCsam(written.blockedFor)) {
     toUpdate.ingestion = ImageIngestionStatus.Blocked;
-    toUpdate.blockedFor = BlockedReason.CSAM;
+    toUpdate.blockedFor = written.blockedFor;
     toUpdate.nsfwLevel = scanLevel = NsfwLevel.Blocked;
   }
   // A CSAM block is decided only in a moderator's CSAM review, so its owner gets no rule notice.
-  if (ruleBlocked && toUpdate.blockedFor !== BlockedReason.CSAM)
+  if (ruleBlocked && !blockedForNamesCsam(toUpdate.blockedFor as string | undefined))
     await notifyImageAutoBlocked({
       imageId: image.id,
       userId: image.userId,

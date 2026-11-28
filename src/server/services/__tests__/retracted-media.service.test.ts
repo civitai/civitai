@@ -10,7 +10,12 @@ import {
   csamCaseCleanupSql,
 } from '../../../../packages/civitai-shared/src/__tests__/csam-restriction-cases';
 import { POST_PENDING_DELETE_REASON } from '@civitai/db-queries/content-deletion';
-import { heldImageSql, heldUserSql } from '@civitai/shared/held-media';
+import { serverCopyTablesSql } from '@civitai/db-queries/test/image-uses';
+import {
+  CSAM_REPORT_LISTED_IMAGE_IDS_SQL,
+  heldImageSql,
+  heldUserSql,
+} from '@civitai/shared/held-media';
 import { heldUrlSql } from '@civitai/shared/held-url';
 import { semanticImageHeldText } from '~/server/services/semantic-image-flags.sql';
 
@@ -145,7 +150,9 @@ beforeEach(() => {
   }) as never);
 });
 
-const { getRetractedMedia } = await import('~/server/services/retracted-media.service');
+const { getRetractedMedia, getOwnRetractedMedia } = await import(
+  '~/server/services/retracted-media.service'
+);
 
 /** Who sees the image: `none` (refused to every moderator), `anyMod` (any moderator) or `cleared`
  *  (only a moderator cleared for CSAM review). */
@@ -726,5 +733,230 @@ describe("a held account's image outside the moderator routes", () => {
     } finally {
       await pg.exec(`DELETE FROM "CsamReport" WHERE "userId" IN (${OWNER}, 990100301)`);
     }
+  });
+});
+
+describe('getOwnRetractedMedia', () => {
+  const ownerOf = (id: number) => 500 + id;
+  beforeAll(async () => {
+    // `ownerMediaAllowedSql` compares the column as the enum it is in the real schema.
+    // A moderated image whose url another row, blocked as CSAM, shares; and one with a clean sibling.
+    await pg.exec(`
+      CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
+      ALTER TABLE "Image" ALTER COLUMN ingestion TYPE "ImageIngestionStatus" USING ingestion::"ImageIngestionStatus";
+      -- What \`imageVisibilityConditions\` reads beyond the tables above.
+      DO $$ BEGIN CREATE TYPE "Availability" AS ENUM ('Public', 'Unsearchable', 'Private', 'EarlyAccess'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      DO $$ BEGIN CREATE TYPE "CollectionContributorPermission" AS ENUM ('VIEW', 'ADD', 'ADD_REVIEW', 'MANAGE'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      DO $$ BEGIN CREATE TYPE "ServiceOfferingStatus" AS ENUM ('Draft', 'Active', 'Paused', 'Removed'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS "nsfwLevelLocked" boolean DEFAULT false,
+        ADD COLUMN IF NOT EXISTS metadata jsonb NOT NULL DEFAULT '{}', ADD COLUMN IF NOT EXISTS "scanJobs" jsonb,
+        ADD COLUMN IF NOT EXISTS "modelRestricted" boolean NOT NULL DEFAULT false,
+        ADD COLUMN IF NOT EXISTS poi boolean NOT NULL DEFAULT false,
+        ADD COLUMN IF NOT EXISTS "tosViolation" boolean NOT NULL DEFAULT false;
+      ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS availability "Availability" DEFAULT 'Public',
+        ADD COLUMN IF NOT EXISTS "collectionId" int;
+      ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "bannedAt" timestamp, ADD COLUMN IF NOT EXISTS "deletedAt" timestamp,
+        ADD COLUMN IF NOT EXISTS muted boolean NOT NULL DEFAULT false, ADD COLUMN IF NOT EXISTS settings jsonb DEFAULT '{}';
+      ALTER TABLE "Model" ADD COLUMN IF NOT EXISTS mode text, ADD COLUMN IF NOT EXISTS minor boolean,
+        ADD COLUMN IF NOT EXISTS "sfwOnly" boolean, ADD COLUMN IF NOT EXISTS "gallerySettings" jsonb;
+      ALTER TABLE "Article" ADD COLUMN IF NOT EXISTS status text, ADD COLUMN IF NOT EXISTS "publishedAt" timestamp,
+        ADD COLUMN IF NOT EXISTS ingestion text, ADD COLUMN IF NOT EXISTS availability "Availability" DEFAULT 'Public',
+        ADD COLUMN IF NOT EXISTS "userId" int;
+      CREATE TABLE IF NOT EXISTS "CollectionContributor" ("collectionId" int, "userId" int, permissions "CollectionContributorPermission"[]);
+      CREATE TABLE IF NOT EXISTS "Bounty" (id int PRIMARY KEY, "userId" int, availability "Availability" DEFAULT 'Public');
+      CREATE TABLE IF NOT EXISTS "BountyEntry" (id int PRIMARY KEY, "bountyId" int NOT NULL, "userId" int);
+      CREATE TABLE IF NOT EXISTS "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
+      ALTER TABLE "ServiceOffering" ADD COLUMN IF NOT EXISTS "sellerId" int,
+        ADD COLUMN IF NOT EXISTS "allowReviewWork" boolean NOT NULL DEFAULT true,
+        ADD COLUMN IF NOT EXISTS status "ServiceOfferingStatus" NOT NULL DEFAULT 'Active';
+      CREATE TABLE IF NOT EXISTS "ServiceDeal" (id int PRIMARY KEY, "offeringId" int NOT NULL, "sellerId" int NOT NULL,
+        "buyerId" int NOT NULL, "maxNsfwLevel" int NOT NULL DEFAULT 1);
+      CREATE TABLE IF NOT EXISTS "ServiceDealReview" (id int PRIMARY KEY, "dealId" int NOT NULL, "buyerId" int NOT NULL,
+        "sellerId" int NOT NULL, "publishedAt" timestamp, "hiddenAt" timestamp);
+      CREATE TABLE IF NOT EXISTS "ServiceDealReviewImage" ("reviewId" int NOT NULL, "imageId" int NOT NULL UNIQUE, "sourceFileId" int);
+      CREATE TABLE IF NOT EXISTS "ServiceDealFile" (id serial PRIMARY KEY, "imageId" int);
+      CREATE TABLE IF NOT EXISTS "ServiceDealFileEntry" (id serial PRIMARY KEY, "fileId" int, "imageId" int);
+      ${serverCopyTablesSql};
+      INSERT INTO "Image" (id, url, ingestion, "blockedFor", "userId") VALUES
+        (900, 'key-900', 'Blocked', 'moderated', 1400),
+        (901, 'key-900', 'Blocked', 'CSAM', 1401),
+        (902, 'key-902', 'Blocked', 'tos,moderated', 1402),
+        (903, 'key-902', 'Scanned', NULL, 1403),
+        (904, 'key-904', 'Blocked', 'moderated,csam', 1404);
+      INSERT INTO "CsamReport" ("userId", details, images) VALUES (1402, '{}', '[]');
+    `);
+  });
+  const own = (id: number, userId = ownerOf(id)) => getOwnRetractedMedia(id, userId);
+
+  it('serves the owner a moderated or tos block with no CSAM mark', async () => {
+    expect(await own(1)).toMatchObject({
+      url: 'key-1',
+      type: 'image',
+      mimeType: null,
+      nsfwLevel: 4,
+    });
+    expect(await own(2)).toMatchObject({ url: 'key-2', type: 'image', mimeType: null });
+  });
+
+  it('serves the owner a report-listed image with no CSAM mark, and a held owner their own', async () => {
+    expect(await own(23)).not.toBeNull();
+    expect(await own(24)).not.toBeNull();
+    expect(await own(902)).toMatchObject({ url: 'key-902', type: 'image', mimeType: null });
+  });
+
+  it('never serves anyone else', async () => {
+    expect(await own(1, ownerOf(2))).toBeNull();
+    expect(await own(1, 42)).toBeNull();
+  });
+
+  it.each([
+    ['blocked as CSAM', 11],
+    ['in the CSAM queue', 13],
+    ['a CSAM hash block', 27],
+    ['a CSAM hold', 28],
+    ['a CSAM scan flag', 29],
+    ['a CSAM vote', 31],
+    ['a url sibling blocked as CSAM', 900],
+    ['csam in the list', 904],
+    ['an unknown reason', 10],
+    ['a differently cased reason', 5],
+    ['the metadata hold, which the CDN serves', 3],
+    ['no block', 4],
+  ])('refuses the owner an image with %s', async (_, id) => {
+    expect(await own(id)).toBeNull();
+  });
+
+  it("refuses the owner Y when a moderator deleted X, a copy on Y's url, for CSAM review", async () => {
+    await pg.exec(`
+      INSERT INTO "Image" (id, url, ingestion, "blockedFor", "userId") VALUES (905, 'key-905', 'Blocked', 'moderated', 1405);
+      INSERT INTO "ImageCdnModeratorDelete" ("imageId", url, "userId", "csamReview") VALUES (906, 'key-905', 1405, true);
+    `);
+    expect(await own(905)).toBeNull();
+    expect(await getRetractedMedia(905, { csamReview: false })).toBeNull();
+    await pg.exec(
+      `UPDATE "ImageCdnModeratorDelete" SET "csamReview" = false WHERE "imageId" = 906`
+    );
+    expect(await own(905)).not.toBeNull();
+  });
+
+  // `ownerMediaAllowedSql` in getOwnRetractedMedia is the only clause keeping a CSAM-marked row out
+  // of the owner route: its visibility conditions keep the owner's blocked rows.
+  describe('the owner route on a CSAM-marked row', () => {
+    const MARKED = { id: 907, url: '0d6f0c1e-7a3b-4c5d-9e8f-1a2b3c4d5e6f' };
+    const CLEAN = { id: 909, url: '5e4d3c2b-1a0f-4e9d-8c7b-6a5f4e3d2c1b' };
+    beforeAll(async () => {
+      await pg.exec(`
+        INSERT INTO "Image" (id, url, ingestion, "blockedFor", "userId") VALUES
+          (${MARKED.id}, '${MARKED.url}', 'Blocked', 'moderated', ${ownerOf(MARKED.id)}),
+          (908, '${MARKED.url}', 'Blocked', 'CSAM', 1408),
+          (${CLEAN.id}, '${CLEAN.url}', 'Blocked', 'moderated', ${ownerOf(CLEAN.id)});
+      `);
+    });
+
+    const serve = async (id: number, query: Record<string, string> = {}) => {
+      const { serveOwnRetractedMedia } = await import('~/server/utils/own-retracted-media');
+      const res = {
+        statusCode: 200,
+        headers: {} as Record<string, string>,
+        setHeader(name: string, value: string) {
+          this.headers[name.toLowerCase()] = value;
+          return this;
+        },
+        status(code: number) {
+          this.statusCode = code;
+          return this;
+        },
+        json() {
+          return this;
+        },
+        end() {
+          return this;
+        },
+      };
+      await serveOwnRetractedMedia(
+        { method: 'GET', query: { imageId: String(id), ...query }, headers: {} } as never,
+        res as never,
+        {
+          viewer: { id: ownerOf(id), impersonated: false, fullScope: true },
+          enabled: async () => true,
+          rateLimit: async () => ({ allowed: true }),
+          readMedia: (imageId) => getOwnRetractedMedia(imageId, ownerOf(id)),
+          heldFor: async () => undefined,
+        }
+      );
+      return res.statusCode;
+    };
+
+    it('reads nothing for it, and the route answers 404 without reaching storage', async () => {
+      const fetchSpy = vi.fn();
+      vi.stubGlobal('fetch', fetchSpy);
+      try {
+        expect(await own(MARKED.id)).toBeNull();
+        expect(await serve(MARKED.id)).toBe(404);
+        expect(fetchSpy).not.toHaveBeenCalled();
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it('serves the same row shape with no mark (the control)', async () => {
+      expect(await own(CLEAN.id)).toMatchObject({ url: CLEAN.url });
+      expect(await serve(CLEAN.id, { probe: '1' })).toBe(204);
+    });
+  });
+
+  // Whatever row shape makes the moderator route refuse a moderator without the CSAM grant (and
+  // serve one with it), the owner route refuses too, except where the mark is the image's own
+  // listing on a CSAM report, which its owner keeps (civitai/civitai#10672).
+  describe('refuses the owner whatever the moderator route keeps to the CSAM grant', () => {
+    const target = { id: 990900000, url: 'key-990900000' };
+    const OWNER = 990910000;
+    // The target the cases mark, as the url-sharing tests above seed it, for a run without them.
+    beforeAll(async () => {
+      await pg.exec(`
+        INSERT INTO "Image" (id, url, "userId", ingestion, "blockedFor")
+        SELECT ${target.id}, '${target.url}', ${OWNER}, 'Blocked', 'moderated'
+        WHERE NOT EXISTS (SELECT 1 FROM "Image" WHERE id = ${target.id})
+      `);
+    });
+    afterEach(async () => {
+      await pg.exec(csamCaseCleanupSql(target));
+    });
+    /** The one allowed divergence: the target's own row listed on a CSAM report. */
+    const ownListed = async () =>
+      (
+        await pg.query<{ listed: boolean }>(
+          `SELECT (i.id)::text IN (${CSAM_REPORT_LISTED_IMAGE_IDS_SQL}) AS listed FROM "Image" i WHERE i.id = $1`,
+          [target.id]
+        )
+      ).rows[0].listed;
+
+    it('serves the owner the target with no case marked (the control)', async () => {
+      expect(await getOwnRetractedMedia(target.id, OWNER)).not.toBeNull();
+    });
+
+    // One test over every case, so the tally does not depend on which tests ran before it.
+    it('refuses every case the moderator route keeps to the grant, but its own listing', async () => {
+      const grantOnly: string[] = [];
+      const listedOnly: string[] = [];
+      for (const { label, mark } of CSAM_RESTRICTION_CASES) {
+        await pg.exec(mark(target));
+        const withheld =
+          (await getRetractedMedia(target.id, { csamReview: false })) === null &&
+          (await getRetractedMedia(target.id, { csamReview: true })) !== null;
+        if (withheld) {
+          grantOnly.push(label);
+          if ((await getOwnRetractedMedia(target.id, OWNER)) !== null) {
+            expect({ label, ownListed: await ownListed() }).toEqual({ label, ownListed: true });
+            listedOnly.push(label);
+          }
+        }
+        await pg.exec(csamCaseCleanupSql(target));
+      }
+      expect(grantOnly.length).toBeGreaterThan(5);
+      expect(listedOnly.length).toBeLessThan(grantOnly.length);
+      expect(listedOnly).toEqual(['its listing on a CSAM report']);
+      expect(grantOnly).toContain('a moderator delete on its url flagged for CSAM review');
+    });
   });
 });

@@ -1,33 +1,41 @@
 import { describe, expect, it } from 'vitest';
 import type { BuzzSpendEntry } from '~/server/http/orchestrator/api-key-spend';
+import { OFFLINE_BUZZ_CAP_REACHED } from '~/server/orchestrator/api-key-buzz-limit-refusal';
 import {
-  OFFLINE_BUZZ_CAP_REACHED,
   readMintOrigin,
-  resolveOfflineCapToken,
-  type OfflineCapReads,
-  type OfflineCapRequest,
+  resolveOwnKeyToken,
+  type OwnKeyReads,
+  type OwnKeyRequest,
 } from '~/server/orchestrator/offline-spend-cap';
 import { ApiKeyType } from '~/shared/utils/prisma/enums';
 
-// The offline Buzz cap: a refresh-minted OAuth token (no user present) whose consent carries a cap
-// goes to the orchestrator as itself, metered under the app's subject against that cap, and is
-// refused here once the orchestrator reports the cap spent. Everything else gets null, which leaves
-// getOrchestratorToken as before.
+// Which requests reach the orchestrator as their own limited key: a refresh-minted OAuth token whose
+// consent has a cap (flag `oauth-offline-grant`), or a personal API key with a Buzz limit used by its
+// own user (flag `user-key-buzz-limit-proxy`). Everything else gets null, which leaves
+// getOrchestratorToken on the System token. The OAuth case is refused here once the orchestrator's
+// snapshot shows its cap spent; a personal key is never checked here (the orchestrator enforces it).
 
 const USER = 4242;
-const CAP = [{ type: 'sliding' as const, limit: 500, window: 'day' as const, unit: 1 }];
-const BEARER = 'civitai_app-token-value';
+const LIMIT = [{ type: 'sliding' as const, limit: 500, window: 'day' as const, unit: 1 }];
+const BEARER = 'civitai_caller-token-value';
 
-function request(over: Partial<OfflineCapRequest> = {}): OfflineCapRequest {
+const oauth = {
+  subject: { type: 'oauth' as const, id: 'offline-app' },
+  apiKeyId: 9,
+  apiKeyType: ApiKeyType.Access,
+};
+const personal = {
+  subject: { type: 'apiKey' as const, id: 3 },
+  apiKeyId: 3,
+  apiKeyType: ApiKeyType.User,
+};
+
+function request(over: Partial<OwnKeyRequest> = {}): OwnKeyRequest {
   return {
     userId: USER,
-    credential: {
-      subject: { type: 'oauth', id: 'offline-app' },
-      apiKeyId: 9,
-      apiKeyType: ApiKeyType.Access,
-    },
+    credential: oauth,
     sessionUserId: USER,
-    buzzLimit: CAP,
+    buzzLimit: LIMIT,
     bearerToken: () => BEARER,
     ...over,
   };
@@ -45,12 +53,23 @@ function spendEntry(remaining: number): BuzzSpendEntry {
   };
 }
 
-function reads(over: Partial<OfflineCapReads> & { origin?: string | null } = {}) {
-  const calls = { flag: 0, origin: [] as number[], spend: 0 };
-  const r: OfflineCapReads = {
-    flagOn: async () => {
-      calls.flag++;
-      return true;
+function reads(
+  over: {
+    offlineGrant?: boolean;
+    userKey?: boolean;
+    origin?: string | null;
+    spend?: () => Promise<BuzzSpendEntry | null>;
+  } = {}
+) {
+  const calls = { offlineGrantFlag: 0, userKeyFlag: 0, origin: [] as number[], spend: 0 };
+  const r: OwnKeyReads = {
+    offlineGrantFlagOn: async () => {
+      calls.offlineGrantFlag++;
+      return over.offlineGrant ?? true;
+    },
+    userKeyFlagOn: async () => {
+      calls.userKeyFlag++;
+      return over.userKey ?? true;
     },
     mintOrigin: async (id) => {
       calls.origin.push(id);
@@ -58,65 +77,84 @@ function reads(over: Partial<OfflineCapReads> & { origin?: string | null } = {})
     },
     spend: async () => {
       calls.spend++;
-      return spendEntry(120);
+      return over.spend ? over.spend() : spendEntry(120);
     },
-    ...over,
   };
   return { r, calls };
 }
 
-describe('the offline Buzz cap', () => {
-  it('sends a refresh-minted token with a cap to the orchestrator as itself, with budget left', async () => {
+describe('a refresh-minted OAuth token with a cap', () => {
+  it('is sent as itself, with budget left', async () => {
     const { r, calls } = reads();
-    await expect(resolveOfflineCapToken(request(), r)).resolves.toBe(BEARER);
+    await expect(resolveOwnKeyToken(request(), r)).resolves.toBe(BEARER);
     expect(calls.origin).toEqual([9]);
+    expect(calls.spend).toBe(1);
   });
 
-  it('refuses with a clear error once the orchestrator reports the cap spent', async () => {
+  it('is refused with a clear error once the orchestrator reports the cap spent', async () => {
     const { r } = reads({ spend: async () => spendEntry(0) });
-    await expect(resolveOfflineCapToken(request(), r)).rejects.toMatchObject({
+    await expect(resolveOwnKeyToken(request(), r)).rejects.toMatchObject({
       code: 'FORBIDDEN',
       message: OFFLINE_BUZZ_CAP_REACHED,
     });
   });
 
-  it('still sends the token when the orchestrator snapshot cannot be read (it enforces the cap itself)', async () => {
-    const { r } = reads({ spend: async () => Promise.reject(new Error('orchestrator down')) });
-    await expect(resolveOfflineCapToken(request(), r)).resolves.toBe(BEARER);
+  it('is still sent when the snapshot cannot be read (the orchestrator enforces the cap itself)', async () => {
+    const { r } = reads({ spend: () => Promise.reject(new Error('orchestrator down')) });
+    await expect(resolveOwnKeyToken(request(), r)).resolves.toBe(BEARER);
   });
 
   it.each(['auth_code', 'app_token', 'device_code', null])(
-    'leaves a token minted as %s alone',
+    'is left alone when minted as %s',
     async (origin) => {
       const { r } = reads({ origin });
-      await expect(resolveOfflineCapToken(request(), r)).resolves.toBeNull();
+      await expect(resolveOwnKeyToken(request(), r)).resolves.toBeNull();
     }
   );
 
-  it.each([
-    ['no cap (null)', { buzzLimit: null }],
-    ['no cap (empty)', { buzzLimit: [] }],
-    [
-      'a personal API key',
-      {
-        credential: {
-          subject: { type: 'apiKey' as const, id: 3 },
-          apiKeyId: 3,
-          apiKeyType: ApiKeyType.User,
-        },
-      },
-    ],
-    ['a moderator fetching another user’s token', { sessionUserId: 1 }],
-  ])('changes nothing for %s, and reads neither Flipt nor the key', async (_, over) => {
-    const { r, calls } = reads();
-    await expect(resolveOfflineCapToken(request(over), r)).resolves.toBeNull();
-    expect(calls).toEqual({ flag: 0, origin: [], spend: 0 });
+  it('is left alone with its flag off, even with the personal-key flag on and its cap spent', async () => {
+    const { r, calls } = reads({
+      offlineGrant: false,
+      userKey: true,
+      spend: async () => spendEntry(0),
+    });
+    await expect(resolveOwnKeyToken(request(), r)).resolves.toBeNull();
+    expect(calls).toMatchObject({ origin: [], spend: 0, userKeyFlag: 0 });
+  });
+});
+
+describe('a personal API key with a Buzz limit', () => {
+  it('is sent as itself even with its budget spent, reading neither the spend nor the mint origin', async () => {
+    const { r, calls } = reads({ spend: async () => spendEntry(0) });
+    await expect(resolveOwnKeyToken(request({ credential: personal }), r)).resolves.toBe(BEARER);
+    expect(calls).toEqual({ offlineGrantFlag: 0, userKeyFlag: 1, origin: [], spend: 0 });
   });
 
-  it('changes nothing with the flag off, and never reads the mint origin', async () => {
-    const { r, calls } = reads({ flagOn: async () => false });
-    await expect(resolveOfflineCapToken(request(), r)).resolves.toBeNull();
-    expect(calls.origin).toEqual([]);
+  it('is left alone with its flag off, even with the offline-grant flag on', async () => {
+    const { r } = reads({ userKey: false, offlineGrant: true });
+    await expect(resolveOwnKeyToken(request({ credential: personal }), r)).resolves.toBeNull();
+  });
+
+  it('is left alone when it is a System key', async () => {
+    const { r } = reads();
+    const system = { ...personal, apiKeyType: ApiKeyType.System };
+    await expect(resolveOwnKeyToken(request({ credential: system }), r)).resolves.toBeNull();
+  });
+});
+
+describe.each([
+  ['an OAuth token', oauth],
+  ['a personal key', personal],
+])('%s changes nothing, reading neither Flipt nor the key, for', (_, credential) => {
+  it.each([
+    ['no limit (null)', { buzzLimit: null }],
+    ['no limit (empty)', { buzzLimit: [] }],
+    ['a moderator fetching another user’s token', { sessionUserId: 1 }],
+    ['no bearer token on the request', { bearerToken: () => undefined }],
+  ])('%s', async (_, over) => {
+    const { r, calls } = reads();
+    await expect(resolveOwnKeyToken(request({ credential, ...over }), r)).resolves.toBeNull();
+    expect(calls).toEqual({ offlineGrantFlag: 0, userKeyFlag: 0, origin: [], spend: 0 });
   });
 });
 

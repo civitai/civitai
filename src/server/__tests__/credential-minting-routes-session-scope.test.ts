@@ -5,6 +5,7 @@ import type * as ApiKeyService from '~/server/services/api-key.service';
 import type * as AppAssistantService from '~/server/services/app-assistant/app-assistant.service';
 import type * as AssistantRunnerTokens from '~/server/services/app-assistant/assistant-runner-tokens';
 import type * as FeatureFlagsService from '~/server/services/feature-flags.service';
+import type * as FliptClient from '~/server/flipt/client';
 import type * as UserService from '~/server/services/user.service';
 import { OnboardingSteps } from '~/server/common/enums';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -29,6 +30,16 @@ vi.mock('~/server/services/api-key.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ApiKeyService>()),
   mintApiKey: vi.fn(async () => 'minted-api-key'),
 }));
+// Only the personal-key flag is on, for the Training Studio host's limited-key case below.
+vi.mock('~/server/flipt/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof FliptClient>();
+  return {
+    ...actual,
+    isFlipt: vi.fn(
+      async (key: string) => key === actual.FLIPT_FEATURE_FLAGS.USER_KEY_BUZZ_LIMIT_PROXY
+    ),
+  };
+});
 vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
   getOrchestratorToken: vi.fn(async () => 'minted-orchestrator-token'),
 }));
@@ -87,12 +98,18 @@ const routes: {
   handler: Handler;
   minted: () => unknown;
   query?: Record<string, string>;
+  /** Sent on every call, e.g. the one Origin a route serves. */
+  headers?: Record<string, string>;
+  /** Refuses every bearer credential, even a full-scope personal key. */
+  sessionOnly?: boolean;
 }[] = [
   {
     name: 'GET /api/user/orchestrator-key',
     path: '/api/user/orchestrator-key',
     handler: (await import('~/pages/api/user/orchestrator-key')).default as unknown as Handler,
     minted: () => mintApiKey,
+    headers: { origin: 'https://developer.civitai.com' },
+    sessionOnly: true,
   },
   {
     name: 'GET /api/training-studio/host',
@@ -172,6 +189,7 @@ async function call(
     url,
     headers: {
       host: 'civitai.com',
+      ...route.headers,
       ...(authorization ? { authorization } : {}),
       ...extraHeaders,
     },
@@ -233,11 +251,13 @@ describe.each(routes)('$name credential requirements', (route) => {
     expect(route.minted()).toHaveBeenCalledTimes(1);
   });
 
-  it('serves a personal API key holding the full scope', async () => {
+  it(`${
+    route.sessionOnly ? 'refuses' : 'serves'
+  } a personal API key holding the full scope`, async () => {
     bearerSession.mockResolvedValue(personalKey(TokenScope.Full));
     const { status } = await call(route, { authorization: 'Bearer personal-full' });
-    expect(status).toBe(200);
-    expect(route.minted()).toHaveBeenCalledTimes(1);
+    expect(status).toBe(route.sessionOnly ? 403 : 200);
+    expect(route.minted()).toHaveBeenCalledTimes(route.sessionOnly ? 0 : 1);
   });
 
   it('refuses a personal API key with a reduced scope', async () => {
@@ -280,13 +300,33 @@ describe.each(routes)('$name credential requirements', (route) => {
 describe('the minted credential is still returned to an allowed caller', () => {
   it('returns the new key from orchestrator-key', async () => {
     hubSession.current = { user: USER };
-    dbMock.dbWrite.apiKey.deleteMany.mockResolvedValue({ count: 0 });
-    expect((await call(routes[0])).body).toEqual({ key: 'minted-api-key' });
+    expect((await call(routes[0])).body).toEqual({
+      key: 'minted-api-key',
+      name: 'Developer docs (civitai.com)',
+      expiresAt: expect.any(String),
+    });
   });
 
   it('returns the token from training-studio/host', async () => {
     hubSession.current = { user: USER };
     expect((await call(routes[1])).body).toMatchObject({ token: 'minted-orchestrator-token' });
+  });
+
+  // The host hands back whatever getOrchestratorToken returns for the request it is given; the
+  // request a limited personal key arrives on is one the token resolver sends as that key.
+  it('passes training-studio/host a request that a limited personal key is sent as', async () => {
+    const { ownKeyOrchestratorToken } = await import('~/server/orchestrator/offline-spend-cap');
+    bearerSession.mockResolvedValue({
+      ...personalKey(TokenScope.Full),
+      buzzLimit: [{ type: 'sliding', limit: 500, window: 'day', unit: 1 }],
+    });
+    const host = routes.find((r) => r.path === '/api/training-studio/host')!;
+    expect((await call(host, { authorization: 'Bearer personal-limited' })).status).toBe(200);
+    const [userId, ctx] = vi.mocked(getOrchestratorToken).mock.calls[0] as unknown as [
+      number,
+      { req: NextApiRequest }
+    ];
+    await expect(ownKeyOrchestratorToken(userId, ctx.req)).resolves.toBe('personal-limited');
   });
 
   it('returns the token from apps/assistant/token', async () => {

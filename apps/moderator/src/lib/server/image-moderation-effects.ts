@@ -620,7 +620,7 @@ export async function applyBlockSideEffects(
     violationDetails?: string;
     /** `HELD_IMAGE` as the block wrote it. */
     heldImage?: boolean;
-    /** `blockedFor = 'CSAM'` as the block wrote it: a confirmed CSAM removal. */
+    /** A CSAM block as the block wrote it: a confirmed CSAM removal. */
     removedForCsam?: boolean;
     /** Under the review flag as the block wrote it. */
     underReview?: boolean;
