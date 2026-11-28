@@ -3,7 +3,8 @@ import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { canAccess, denied, requiresGrant } from '$lib/server/access';
 import { int4Id, jsonField, parseForm, userIdSchema } from '$lib/server/query';
-import { isInt4Id } from '$lib/server/users.service';
+import { isInt4Id, MAX_INT4 } from '$lib/server/users.service';
+import { setFpCommentVisibility } from '$lib/server/fp-comment-visibility.service';
 import { checkedResolutionReason, resolutionReasonFields } from '$lib/server/resolution-reason';
 import { RETIRED_SECTIONS, isSection } from '../sections';
 import {
@@ -838,6 +839,7 @@ export const actions: Actions = {
         success: true,
         op: input.op,
         affected: result.affected ?? 0,
+        heldIds: result.heldIds ?? [],
         requested: commentIds.length,
       };
     }
@@ -853,6 +855,28 @@ export const actions: Actions = {
     });
     if (!result.ok) return contentFail(result.error);
     return { success: true };
+  }),
+
+  /** Hides or unhides one of the account's Feature Pages comments, bound to the state on screen. */
+  fpVisibility: requiresGrant('user.comments.bulk', async ({ request }) => {
+    const input = parseForm(
+      userIdSchema.extend({
+        commentId: z.coerce.number().int().positive().max(MAX_INT4),
+        hidden: z.enum(['true', 'false']).transform((v) => v === 'true'),
+        seenVersion: z.coerce.number().int().positive().max(MAX_INT4),
+        seenHiddenAt: z.string().optional(),
+      }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return contentFail(input);
+    const result = await setFpCommentVisibility({
+      commentId: input.commentId,
+      authorId: input.userId,
+      hidden: input.hidden,
+      seen: { version: input.seenVersion, hiddenAt: input.seenHiddenAt || null },
+    });
+    if (!result.ok) return contentFail(result.error);
+    return { success: true, fpState: result.state, message: result.message };
   }),
 
   // The typed-username confirmation is checked SERVER-side as well as in the UI: this is irreversible,

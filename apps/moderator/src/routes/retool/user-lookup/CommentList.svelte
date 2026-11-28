@@ -1,6 +1,6 @@
 <script
   lang="ts"
-  generics="T extends { id: number; content: string; createdAt: Date | string; tosViolation: boolean | null }"
+  generics="T extends { id: number; content: string; createdAt: Date | string; tosViolation: boolean | null; fp?: FpCommentState }"
 >
   import type { Snippet } from 'svelte';
   import { enhance } from '$app/forms';
@@ -9,8 +9,10 @@
   import { Label } from '@civitai/ui/components/ui/label/index.js';
   import { SelectionCheckbox } from '@civitai/ui/components/selection/index.js';
   import { SelectionSet } from '@civitai/ui/hooks/selection-set.svelte.js';
-  import { SvelteMap } from 'svelte/reactivity';
+  import { SvelteMap, SvelteSet } from 'svelte/reactivity';
   import { FormState } from '$lib/form-state.svelte';
+  import type { FpCommentState } from '$lib/fp-comment';
+  import FpCommentVisibility from '$lib/components/FpCommentVisibility.svelte';
   import { dateTime, num, plainText } from '$lib/format';
   import { postedIds } from './posted-ids';
   import ListCard from './ListCard.svelte';
@@ -61,6 +63,20 @@
   // refetch the page, and a later refetch reads the replica, which can lag.
   const tosAfterAction = new SvelteMap<number, boolean>();
   const flaggedNow = (c: T) => tosAfterAction.get(c.id) ?? !!c.tosViolation;
+  // Feature Pages comments a ToS restore skipped: it never shows them again, so they stay removed.
+  const held = new SvelteSet<number>();
+  // This session's hide state per Feature Pages comment, read back by the action that changed it
+  // (null: gone), kept only while the loaded state is the one it changed: a newer load wins.
+  const fpAfterAction = new SvelteMap<number, { from: string; state: FpCommentState | null }>();
+  const fpKey = (c: T) => JSON.stringify(c.fp ?? null);
+  const fpNow = (c: T) => {
+    const after = fpAfterAction.get(c.id);
+    return after && after.from === fpKey(c) ? after.state : c.fp;
+  };
+  const fpGone = (c: T) => {
+    const after = fpAfterAction.get(c.id);
+    return !!after && after.from === fpKey(c) && after.state === null;
+  };
   // Outlives a page turn: the panel keeps this mounted while paging.
   const selected = new SelectionSet<number>();
   let partial = $state<string | null>(null);
@@ -81,19 +97,33 @@
     onSubmit: () => (acted = posting),
     onSuccess: (data) => {
       const affected = typeof data?.affected === 'number' ? data.affected : acted.length;
+      const heldIds = Array.isArray(data?.heldIds) ? (data.heldIds as number[]) : [];
+      for (const id of heldIds) held.add(id);
       selected.clear();
       // A short count means some ids did not take, and the endpoints report how many rather than which.
       // Marking all of them would fabricate the difference: on a delete, rows that still exist vanish;
       // on a ToS op, comments that were never flagged wear the badge. Mark nothing, say so, reload.
-      if (affected < acted.length) {
-        partial = `${affected} of ${acted.length} went through — reload to see which.`;
+      const heldNote = heldIds.length
+        ? ` ${heldIds.length} Feature Pages ${heldIds.length === 1 ? 'comment is' : 'comments are'} held: a ToS restore never shows them again.`
+        : '';
+      if (affected + heldIds.length < acted.length) {
+        partial = `${affected} of ${acted.length} went through — reload to see which.${heldNote}`;
         return;
       }
-      partial = null;
+      partial = heldNote ? heldNote.trim() : null;
       if (data?.op === 'delete') {
         removed = [...removed, ...acted];
         onDeleted?.();
-      } else for (const id of acted) tosAfterAction.set(id, data?.op === 'tos');
+      } else
+        for (const id of acted) {
+          if (heldIds.includes(id)) continue;
+          tosAfterAction.set(id, data?.op === 'tos');
+          // A ToS removal hides a Feature Pages comment too: no Hide or Unhide is offered for it.
+          const row = rows.find((r) => r.id === id);
+          const fp = row && fpNow(row);
+          if (row && fp && data?.op === 'tos')
+            fpAfterAction.set(id, { from: fpKey(row), state: { ...fp, tosViolation: true } });
+        }
     },
   });
 
@@ -147,6 +177,7 @@
     {#snippet children(limit)}
       <ul class="space-y-2 text-sm">
         {#each shown.slice(0, limit) as c (c.id)}
+          {@const fp = fpNow(c)}
           <li>
             <div class="flex flex-wrap items-center gap-x-2" data-touch-target>
               {#if canBulkAct}
@@ -159,6 +190,19 @@
               {/if}
               {@render link(c)}
               {#if flaggedNow(c)}<Badge variant="destructive">ToS</Badge>{/if}
+              {#if held.has(c.id)}<Badge variant="secondary">Held</Badge>{/if}
+              {#if fp}
+                <FpCommentVisibility
+                  commentId={c.id}
+                  {fp}
+                  action="?/fpVisibility"
+                  fields={{ userId }}
+                  canAct={canBulkAct}
+                  onchange={(next) => fpAfterAction.set(c.id, { from: fpKey(c), state: next })}
+                />
+              {:else if fpGone(c)}
+                <span class="text-xs text-dark-2">This comment no longer exists.</span>
+              {/if}
               <span class="text-xs text-dark-2">{dateTime(c.createdAt)}</span>
             </div>
             <p class="line-clamp-2 text-dark-1">{plainText(c.content)}</p>

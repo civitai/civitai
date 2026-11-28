@@ -29,6 +29,7 @@ export const routes: ApiRoutes = {
   'clean-up': () => import('~/server/api-routes/mod/clean-up'),
   'collection/set-item-tag': () => import('~/server/api-routes/mod/collection/set-item-tag'),
   'comment/bulk-delete': () => import('~/server/api-routes/mod/comment/bulk-delete'),
+  'comment/fp-visibility': () => import('~/server/api-routes/mod/comment/fp-visibility'),
   'comment/remove-as-tos': () => import('~/server/api-routes/mod/comment/remove-as-tos'),
   'comment/restore-from-tos': () => import('~/server/api-routes/mod/comment/restore-from-tos'),
   'compute-tags': () => import('~/server/api-routes/mod/compute-tags'),

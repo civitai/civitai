@@ -49,9 +49,15 @@
   import type { ActionResult } from '@sveltejs/kit';
   import { FormState } from '$lib/form-state.svelte';
   import type { PageData } from './$types';
+  import type { FpCommentState } from '$lib/fp-comment';
+  import FpCommentVisibility from '$lib/components/FpCommentVisibility.svelte';
   import LastWorked from '$lib/components/report-queue/LastWorked.svelte';
 
   let { data }: { data: PageData } = $props();
+
+  // A Feature Pages comment's hide as the action that changed it read it back, over the loaded one.
+  // Kept only while the loaded state is the one it changed: a newer load wins.
+  let fpAfterAction = $state<Record<number, { from: string; state: FpCommentState | null }>>({});
 
   /**
    * A `gone` refusal means the report was deleted underneath the moderator, so the queue reloads and
@@ -491,6 +497,34 @@
             {/if}
             {#if delistForm.error}
               <p class="mt-2 text-sm text-red-300" role="alert">{delistForm.error}</p>
+            {/if}
+          </div>
+        {/if}
+
+        {#if data.type === 'commentV3' && selected.entityId != null && data.fpComments[selected.entityId]}
+          {@const loaded = data.fpComments[selected.entityId]}
+          {@const after = fpAfterAction[selected.entityId]}
+          {@const fp = after && after.from === JSON.stringify(loaded) ? after.state : loaded}
+          <div class="rounded-lg border border-dark-4 bg-dark-6 p-3">
+            <p class="mb-2 text-sm font-medium">Feature Pages comment</p>
+            {#if fp}
+              <!-- Keyed on the report: its outcome message belongs to the report it was made on. -->
+              {#key selected.id}
+                <FpCommentVisibility
+                  commentId={selected.entityId}
+                  {fp}
+                  action="?/fpVisibility"
+                  fields={{ id: selected.id }}
+                  canAct
+                  onchange={(next) =>
+                    (fpAfterAction[selected.entityId!] = {
+                      from: JSON.stringify(loaded),
+                      state: next,
+                    })}
+                />
+              {/key}
+            {:else}
+              <p class="text-sm text-dark-2">This comment no longer exists.</p>
             {/if}
           </div>
         {/if}

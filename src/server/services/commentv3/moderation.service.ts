@@ -6,9 +6,11 @@ import { onTopicCommentsRemoved } from '~/server/events/points/hooks';
 import {
   type CommentGoneCause,
   deleteComments,
+  getStoredComment,
   prismaRunner,
   setCommentFlags,
 } from '~/server/services/commentv3/write.service';
+import { trackModActivity } from '~/server/services/moderator.service';
 import { logToAxiom } from '~/server/logging/client';
 import { TRPCError } from '@trpc/server';
 import { commentV3CsamHold, hasOpenCommentReport } from '~/server/services/commentv3/review-hold';
@@ -18,7 +20,12 @@ import { textScanTextHash } from '~/server/services/text-scan/prompt';
 import { constants } from '~/server/common/constants';
 import { ReportReason, ReportStatus } from '~/shared/utils/prisma/enums';
 import { ReportEntity } from '~/shared/utils/report-helpers';
-import { FP_AUTO_HIDE_REPORT_COMMENT } from '@civitai/db-queries/feature-page-comments';
+import {
+  FP_AUTO_HIDE_REPORT_COMMENT,
+  liftModeratorFpHide,
+} from '@civitai/db-queries/feature-page-comments';
+import { kyselyWrite } from '~/server/db/kyselyDb';
+import { currentScanContentHashes } from '~/server/services/text-scan/submit';
 import { OPEN_REPORT_STATUSES } from '@civitai/db-queries/image-removal-confirmation';
 
 /**
@@ -373,4 +380,61 @@ export async function deleteOwnCommentV3(
     }
   }
   return deleteComments(db, [comment.id], 'author');
+}
+
+/**
+ * A moderator hides a shown Feature Pages comment, bound to the text version they saw. Through
+ * setCommentFlags, so the mirror sends it as a moderator hide; only a moderator's unhide
+ * (liftModeratorFpHide) shows it again. `held`: nothing was written, and why.
+ */
+export async function moderatorHideFpComment({
+  commentId,
+  seenVersion,
+  actorId,
+}: {
+  commentId: number;
+  seenVersion: number;
+  actorId: number;
+}): Promise<{ hidden: true } | { held: 'gone' | 'changed' }> {
+  return dbWrite.$transaction(async (tx) => {
+    const db = prismaRunner(tx);
+    await getStoredComment(db, commentId, 'FOR UPDATE');
+    const { rows } = await db.query<{ changed: boolean }>(
+      `SELECT (c.hidden OR c."tosViolation" OR m.version <> $2) AS changed
+       FROM "FeaturePageCommentMirror" m JOIN "CommentV3" c ON c.id = m."commentId"
+       WHERE m."commentId" = $1 AND c."entityType"::text = 'featurePage'
+         AND c."deletedAt" IS NULL AND m."goneCause" IS NULL AND m."removeWantedAt" IS NULL`,
+      [commentId, seenVersion]
+    );
+    if (!rows[0]) return { held: 'gone' as const };
+    if (rows[0].changed) return { held: 'changed' as const };
+    await setCommentFlags(db, [commentId], { hidden: true });
+    await trackModActivity(
+      actorId,
+      { entityType: 'commentV3', activity: 'fpHide', entityId: commentId },
+      tx
+    );
+    return { hidden: true as const };
+  });
+}
+
+/**
+ * A moderator shows again a Feature Pages comment they or another moderator hid
+ * (liftModeratorFpHide), bound to what they saw, and only over a clean finished scan of its text
+ * now. An edit after the hash is read bumps the version, which the bind refuses.
+ */
+export async function moderatorUnhideFpComment(input: {
+  commentId: number;
+  actorId: number;
+  seenHiddenAt: string;
+  seenVersion: number;
+  exceptReportId?: number;
+}) {
+  const contentHash =
+    (await currentScanContentHashes('CommentV3', [input.commentId])).get(input.commentId) ?? null;
+  return liftModeratorFpHide(kyselyWrite, {
+    ...input,
+    systemUserId: constants.system.user.id,
+    contentHash,
+  });
 }

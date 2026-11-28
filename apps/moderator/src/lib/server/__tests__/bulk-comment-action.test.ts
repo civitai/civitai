@@ -4,12 +4,16 @@ const recordModActivity = vi.hoisted(() => vi.fn(async (_row: { activity: string
 // The selected ids the ownership check finds under another author; every other read returns nothing.
 const foreign = vi.hoisted(() => ({ ids: [] as number[] }));
 const readSql = vi.hoisted(() => [] as string[]);
+// The selected Feature Pages comments still ToS-flagged when read back on the primary.
+const stillFlagged = vi.hoisted(() => ({ ids: [] as number[], sql: [] as string[] }));
 
 vi.mock('$lib/server/db', async () => {
   const { capturingDb } = await import('../../../test/capture-sql');
   const rows = (sql: string) =>
     sql.includes('"CommentV3"') ? foreign.ids.map((id) => ({ id })) : [];
-  return { dbRead: capturingDb(readSql, rows), dbWrite: capturingDb([], []) };
+  const written = (sql: string) =>
+    sql.includes('featurePage') ? stillFlagged.ids.map((id) => ({ id })) : [];
+  return { dbRead: capturingDb(readSql, rows), dbWrite: capturingDb(stillFlagged.sql, written) };
 });
 vi.mock('../mod-activity', () => ({ recordModActivity, recordModActivityBatch: vi.fn() }));
 vi.mock('$env/dynamic/private', () => ({
@@ -30,6 +34,8 @@ let batches: number[];
 
 beforeEach(() => {
   foreign.ids = [];
+  stillFlagged.ids = [];
+  stillFlagged.sql.length = 0;
   readSql.length = 0;
   sent = undefined;
   vi.unstubAllGlobals();
@@ -139,6 +145,37 @@ describe('a ToS restore', () => {
 
     await expect(run('restoreFromTos')).resolves.toEqual({ ok: true, affected: 2 });
     expect(activities()).toEqual(['comments:restoreFromTos:2']);
+  });
+});
+
+describe('a ToS restore over Feature Pages comments, which it never shows again', () => {
+  it('names them as held, never "nothing changed", when every one was held', async () => {
+    body = { comments: { count: 0, reopenedReports: 0, held: 3, failed: 0 } };
+    stillFlagged.ids = [1, 2, 3];
+
+    await expect(run('restoreFromTos')).resolves.toEqual({
+      ok: true,
+      affected: 0,
+      heldIds: [1, 2, 3],
+    });
+    expect(activities()).toEqual([]);
+    // Read back as those still flagged and live among the selection.
+    expect(stillFlagged.sql).toHaveLength(1);
+    expect(stillFlagged.sql[0]).toMatch(/"id" in \(\$1, \$2, \$3\)/);
+    expect(stillFlagged.sql[0]).toMatch(/"tosViolation" = \$\d/);
+    expect(stillFlagged.sql[0]).toMatch(/"deletedAt" is null/);
+  });
+
+  it('names the held ones apart from those restored', async () => {
+    body = { comments: { count: 1, reopenedReports: 0, held: 2, failed: 0 } };
+    stillFlagged.ids = [2, 3];
+
+    await expect(run('restoreFromTos')).resolves.toEqual({
+      ok: true,
+      affected: 1,
+      heldIds: [2, 3],
+    });
+    expect(activities()).toEqual(['comments:restoreFromTos:1']);
   });
 });
 

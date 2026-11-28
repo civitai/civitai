@@ -4,6 +4,7 @@ import {
   scanHideReportIds,
   unactionReportLiftingScanHide,
 } from '@civitai/db-queries/feature-page-comments';
+import { FP_LIFT_HELD } from './fp-lift-held';
 import { reportersWithoutReward } from '@civitai/shared/report-reward';
 import { LAST_ACTIONED_WINDOW_DAYS, URGENT_REPORT_COUNT } from '$lib/queue-thresholds';
 import { dbRead, dbWrite } from './db';
@@ -540,11 +541,8 @@ async function perReportType<V>(
 
 /** Why the scan's report was left open: the comment it hid cannot be shown again yet. */
 const SCAN_LIFT_HELD = {
-  foreign: 'It was hidden by another action on the platform first, so it stays hidden.',
+  ...FP_LIFT_HELD,
   reported: 'Someone else has also reported this comment. Rule on that report first.',
-  pushing: 'This comment is being sent to the platform. Try again in a minute.',
-  author: "The comment's author is banned or muted, so it stays hidden.",
-  held: 'This comment is held for a child-safety check, so it stays hidden.',
   version: 'The comment changed since the scan hid it, so it stays hidden.',
 } as const;
 

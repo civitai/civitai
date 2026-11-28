@@ -21,7 +21,7 @@ import {
   markFpRunbookRemoval,
   readFpMirrorByUrns,
   readFpMirrorFacts,
-  readFpScanVerdict,
+  readFpTextScan,
   readFpMirrorFactsPage,
   readFpRunbookCounts,
   readFpScanCandidates,
@@ -219,11 +219,14 @@ type HeldOutcome =
   | { kind: 'retry'; status: number | 'unreachable' };
 
 /**
- * Whether a comment the platform holds hidden is hidden there by a moderator: the platform keeps one
- * moderator source, so only that hide would a lift from here clear. A pipeline or site hide is not.
+ * Whether a comment the platform holds hidden is hidden there by another moderator: the platform
+ * keeps one moderator source, so only that hide would a lift from here clear. A pipeline or site hide
+ * is not. This mirror's own last hide (matched by its sent time) counts as another's only when it
+ * was recorded as 'foreign'.
  */
 async function moderatorHidThere(
-  held: HeldOutcome
+  held: HeldOutcome,
+  row: FpMirrorFactsRow
 ): Promise<boolean | { retry: number | 'unreachable' }> {
   if (held.kind !== 'held' || held.state !== 'hidden') return false;
   let read: Awaited<ReturnType<typeof readDecidingVerdict>>;
@@ -234,7 +237,11 @@ async function moderatorHidThere(
     throw e;
   }
   if ('failed' in read) return { retry: read.status };
-  return read.verdict?.source === 'moderator' && read.verdict.verdict === 'hidden';
+  const v = read.verdict;
+  if (v?.source !== 'moderator' || v.verdict !== 'hidden') return false;
+  if (row.modHideSentAt && Date.parse(v.at ?? '') === row.modHideSentAt.getTime())
+    return row.modHideOrigin === 'foreign';
+  return true;
 }
 
 /** What the platform holds for a comment, by its sourceId: never its text. */
@@ -461,16 +468,9 @@ async function pushRow(e: Evaluated): Promise<PushResult> {
     return 'pushed';
   }
 
-  // Nothing is shown until a finished scan of its current text found nothing, or a moderator lifted
-  // the scan's hide of that text, and only while its author is in standing.
   if (state === 'visible') {
-    if ((await getTextScanMode('CommentV3', row.commentId)) !== 'active')
-      return wait(SCAN_INACTIVE_WAIT_MINUTES, 'text scan not active');
-    const scan = await currentTextScan(row.commentId);
-    if (scan === 'not clean' && row.liftGrantedVersion !== row.version)
-      return wait(UNRESOLVED_WAIT_MINUTES, 'current text scanned, not clean');
-    if (scan === 'pending') return wait(SCAN_PENDING_WAIT_MINUTES, 'current text not scanned yet');
-    if (!row.authorInStanding) return wait(STANDING_WAIT_MINUTES, 'author banned or muted');
+    const gate = await visibleGate(row);
+    if (gate) return wait(gate.minutes, gate.why);
   }
 
   const sendText = async () => {
@@ -642,7 +642,7 @@ async function pushRow(e: Evaluated): Promise<PushResult> {
       if (held.kind === 'held') {
         if (held.state === 'erased') return erased();
         if (state === 'mod-hidden' && row.pushedState !== 'mod-hidden') {
-          const there = await moderatorHidThere(held);
+          const there = await moderatorHidThere(held, row);
           if (typeof there !== 'boolean') return fail(there.retry, 'verdict-source');
           foreign = there;
         }
@@ -674,7 +674,7 @@ async function pushRow(e: Evaluated): Promise<PushResult> {
     if (row.pushedState !== 'mod-hidden' && !steps.includes('by-source')) {
       const held = await readBySource(row.commentId);
       if (held.kind === 'retry') return fail(held.status, 'by-source');
-      const there = await moderatorHidThere(held);
+      const there = await moderatorHidThere(held, row);
       if (typeof there !== 'boolean') return fail(there.retry, 'verdict-source');
       foreign = there;
     }
@@ -721,11 +721,7 @@ const finishedFor = (
 async function currentTextScan(commentId: number) {
   const hash = (await currentScanContentHashes('CommentV3', [commentId])).get(commentId);
   if (!hash) return 'pending' as const;
-  const verdict = await readFpScanVerdict(kyselyWrite, commentId);
-  if (finishedFor(verdict?.status, verdict?.contentHash, hash))
-    return verdict!.flagged ? ('not clean' as const) : ('clean' as const);
-  if (verdict?.status === 'Failed' && verdict.contentHash === hash) return 'not clean' as const;
-  return 'pending' as const;
+  return readFpTextScan(kyselyWrite, commentId, hash);
 }
 
 /** What the frame shows: shown on civitai, and pushed to the platform as shown. */
@@ -908,8 +904,9 @@ export function reconcileAction(
   if (e.state === 'mod-hidden') return seen === 'visible' ? 'restrict' : null;
   // Retracted there is final: its text is never sent again.
   if (seen === 'retracted') return 'counted';
-  // Hidden there by the moderator hide sent here for the scan, which a moderator here has since
-  // lifted for this text: matched on its `at`, so a platform moderator's own hide never is.
+  // Hidden there by the moderator hide sent here (the scan's or a moderator's), which a moderator
+  // here has since lifted for this text: matched on its `at`, so a platform moderator's own hide
+  // never is.
   if (
     seen === 'hidden' &&
     item.verdict?.source === 'moderator' &&
@@ -994,6 +991,23 @@ async function readDecidingVerdict(
 }
 
 /**
+ * Why the row may not be shown yet, and how long to wait, or null when it may: text scan inactive,
+ * current text unscanned, not clean without a lift for this version, or author not in standing.
+ */
+async function visibleGate(row: FpMirrorFactsRow) {
+  if ((await getTextScanMode('CommentV3', row.commentId)) !== 'active')
+    return { minutes: SCAN_INACTIVE_WAIT_MINUTES, why: 'text scan not active' };
+  const scan = await currentTextScan(row.commentId);
+  if (scan === 'not clean' && row.liftGrantedVersion !== row.version)
+    return { minutes: UNRESOLVED_WAIT_MINUTES, why: 'current text scanned, not clean' };
+  if (scan === 'pending')
+    return { minutes: SCAN_PENDING_WAIT_MINUTES, why: 'current text not scanned yet' };
+  if (!row.authorInStanding)
+    return { minutes: STANDING_WAIT_MINUTES, why: 'author banned or muted' };
+  return null;
+}
+
+/**
  * Why the platform's deciding verdict for this row is not confirmed as the moderator hide sent from
  * here, or null when it is.
  */
@@ -1026,6 +1040,11 @@ async function sendModeratorLift(commentId: number, item: PlatformCommentItem) {
       })
     )
       return 'held' as const;
+    const gate = await visibleGate(row);
+    if (gate) {
+      log('warning', 'moderator lift gated', { commentId, reason: gate.why });
+      return 'skipped' as const;
+    }
     // Confirmed again just before the send, as the page may be minutes old: only while the platform's
     // deciding verdict is still the moderator hide sent from here. Anything else sends nothing.
     const unconfirmed = await unconfirmedLift(row);
