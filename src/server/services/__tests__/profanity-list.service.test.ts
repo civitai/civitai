@@ -276,7 +276,6 @@ describe('isProfaneSearch', () => {
 
   // The label is how moderators find which entry drives refusals. If it ever carried the query,
   // user text would land in Prometheus and its cardinality would be unbounded.
-  // The entry sits inside a longer typed word, so the typed word and the entry differ.
   async function labelsMovedBy(source: string, query: string) {
     const { hits } = ensureRegisterProfanityListMetrics();
     const entries = async () =>

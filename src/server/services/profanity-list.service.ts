@@ -253,8 +253,7 @@ export async function isProfaneSearch(queries: string[]): Promise<boolean> {
 export async function profaneSearchCheck(queries: string[]): Promise<'clean' | 'profane'> {
   const texts = queries.filter((query) => query.trim().length > 0);
   if (!texts.length) return 'clean';
-  // The id of the first entry matched, or null when clean. Built from the filter's match metadata
-  // (a list entry), never from the query, so the hit counter's label stays bounded and term-free.
+  // `matches` (list entries), never `matchedWords` (typed text): the label must stay term-free.
   const firstEntry = (filter: {
     analyze(text: string): { isProfane: boolean; matches: string[] };
   }): string | null => {
