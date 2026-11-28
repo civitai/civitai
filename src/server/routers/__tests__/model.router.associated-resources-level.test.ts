@@ -188,6 +188,7 @@ describe('model.getAssociatedResourcesSimple owner view', () => {
   });
 });
 
+// Linked articles take the same owner-or-moderator viewer as linked models.
 describe('model.getAssociatedResourcesSimple article owner view', () => {
   const DRAFT_ARTICLE = 33;
   const UNRATED_ARTICLE = 34;
@@ -295,12 +296,15 @@ describe('model.setAssociatedResources', () => {
   const FROM_OWNER = 5;
   const removedIds = async (
     canViewNsfw: boolean,
-    linked = linkedModel(X_MODEL, NsfwLevel.X),
+    linked: ReturnType<typeof linkedModel> | ReturnType<typeof linkedArticle> = linkedModel(
+      X_MODEL,
+      NsfwLevel.X
+    ),
     credential?: Record<string, unknown>
   ) => {
     dbMock.dbWrite.model.findUnique.mockResolvedValue({
       userId: FROM_OWNER,
-      associations: [{ ...linked, id: 1, toModelId: linked.toModel.id }],
+      associations: [{ ...linked, id: 1, toModelId: linked.toModel?.id ?? null }],
     } as never);
     dbMock.dbWrite.$transaction.mockResolvedValue([] as never);
     await caller(signedIn(FROM_OWNER), canViewNsfw, credential).setAssociatedResources({
@@ -313,26 +317,6 @@ describe('model.setAssociatedResources', () => {
     ];
     return args.where.id.in;
   };
-  const removedArticleIds = async (
-    linked: ReturnType<typeof linkedArticle>,
-    credential?: Record<string, unknown>
-  ) => {
-    dbMock.dbWrite.model.findUnique.mockResolvedValue({
-      userId: FROM_OWNER,
-      associations: [{ ...linked, id: 1, toModelId: null }],
-    } as never);
-    dbMock.dbWrite.$transaction.mockResolvedValue([] as never);
-    await caller(signedIn(FROM_OWNER), true, credential).setAssociatedResources({
-      fromId: 1,
-      type: 'Suggested',
-      associations: [],
-    });
-    const [args] = dbMock.dbWrite.modelAssociations.deleteMany.mock.calls[0] as [
-      { where: { id: { in: number[] } } }
-    ];
-    return args.where.id.in;
-  };
-
   it('a save on the SFW domain keeps a mature link its editor could not show', async () => {
     expect(await removedIds(false)).toEqual([]);
   });
@@ -361,10 +345,10 @@ describe('model.setAssociatedResources', () => {
       status: 'Draft',
       publishedAt: null,
     });
-    expect(await removedArticleIds(ownDraft)).toEqual([1]);
+    expect(await removedIds(true, ownDraft)).toEqual([1]);
     vi.clearAllMocks();
     expect(
-      await removedArticleIds(ownDraft, { ...scopedKey, tokenScope: TokenScope.ModelsWrite })
+      await removedIds(true, ownDraft, { ...scopedKey, tokenScope: TokenScope.ModelsWrite })
     ).toEqual([]);
   });
 
