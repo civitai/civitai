@@ -53,7 +53,8 @@ type Config struct {
 	DecorationEvents map[string]bool // FEED_GO_DECORATION_EVENTS: events whose hats every viewer sees (started, flag base on; DESIGN.md §8)
 	ShadowWorkers    int             // FEED_GO_SHADOW_WORKERS: concurrent shadow comparisons
 	// ServeParityRate is FEED_GO_SERVE_PARITY_SAMPLE_RATE (default 0 = off): the fraction of served
-	// tRPC answers replayed to the Node app and compared (server.ServeParity, DESIGN.md §7.2). Outside
+	// tRPC and public model-route answers replayed to the Node app and compared (server.ServeParity,
+	// DESIGN.md §7.2). Outside
 	// [0, 1] or junk reads as 0.
 	ServeParityRate float64
 	// EvalCapture is FEED_GO_EVAL_CAPTURE (default off): the eval capture taps (server.EvalCapture,

@@ -139,10 +139,11 @@ func TestShadowResultsAreSeeded(t *testing.T) {
 	// source="shadow": 8 endpoints x 10 results, less match_cached on the 7 without a cached answer,
 	// order on v1-models-id (one model: ClassifyV1ModelID has no order) and site-search
 	// (ClassifySearch has none), and match_empty on as-posts and site-search. source="serve-parity" (the
-	// same family, seedServeParity): 3 replayed endpoints x 6 results, less match_empty on as-posts. A
-	// curried vector collects the whole family.
-	if n := testutil.CollectAndCount(m.ShadowResults); n != 8*10-7-2-2+3*6-1 {
-		t.Fatalf("feed_go_shadow_compare_total has %d series at construction, want 69 + 17", n)
+	// same family, seedServeParity): the 3 replayed tRPC endpoints x 6 results, less match_empty on
+	// as-posts; the 2 replayed model routes x 6 (v1-models: no match_cached; v1-models-id: no order).
+	// A curried vector collects the whole family.
+	if n := testutil.CollectAndCount(m.ShadowResults); n != 8*10-7-2-2+3*6-1+2*6 {
+		t.Fatalf("feed_go_shadow_compare_total has %d series at construction, want 69 + 17 + 12", n)
 	}
 	common := []string{"match", "fields", "membership", "unsupported", "deadline", "go_error", "bad_request"}
 	for _, e := range []string{"as-posts", "v1-images", "infinite", "model-getall", "v1-models", "v1-models-id", "model-associated", "site-search"} {

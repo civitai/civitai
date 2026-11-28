@@ -1223,31 +1223,40 @@ definitions, so read both figures over a window that begins after it.
 
 ### 7.2 Serve-side parity (`FEED_GO_SERVE_PARITY_SAMPLE_RATE`, default 0 = off)
 
-The shadow comparison needs Node to serve the request. Once a tRPC route is served from Go for
-every user, Node answers only the fallbacks, and the body parity of what Go serves goes dark. The
+The shadow comparison needs Node to serve the request. Once a route is served from Go for every
+user, Node answers only the fallbacks, and the body parity of what Go serves goes dark. The
 serve-side sampler (`internal/server/serveparity.go`) keeps it lit from the Go side: for a sampled
-fraction of the requests this service **served** (`served` / `served_empty`) on `as-posts`,
-`infinite` and `model-getall`, it replays the same request to the Node app and compares Node's body
-with what Go served.
+fraction of the requests this service **served** (`served` / `served_empty`; on `v1-models-id` also
+`served_cached` and `not_found`) on `as-posts`, `infinite`, `model-getall`, `v1-models` and
+`v1-models-id`, it replays the same request to the Node app and compares Node's body with what Go
+served.
 
-- **Off the latency path.** The sample is decided after `trpc.WriteResult`; it copies the served
-  superjson envelope (an answer written as devalue keeps its value, encoded as superjson in the
-  background, the format both the shadow compute and Node's replay answer use) and the request's
-  method, URL, host, client address and headers, before the answer's buffer is released. The replay
+- **Off the latency path.** The sample is decided after `trpc.WriteResult` (the model routes: after
+  `writeV1Models`); it copies the served superjson envelope (an answer written as devalue keeps its
+  value, encoded as superjson in the background, the format both the shadow compute and Node's
+  replay answer use; a model route's plain-JSON body and the response headers it computed) and the
+  request's method, URL, host, client address and headers, before the answer's buffer is released. The replay
   runs in its own goroutine after the handler has finished with the response and never touches it:
   a replay that fails, times out or panics changes nothing the client received.
-- **Upstream and viewer.** The replay goes through the fallback proxy code to the same Node app as a
-  hand-back (`FEED_GO_FALLBACK_URL`), but its own instance, so its failures are counted as its
-  outcome, never in `feed_go_fallback_proxy_errors_total`. It carries the original's headers,
+- **Upstream and viewer.** The replay goes through the fallback proxy code to the same Node app as the
+  route's hand-backs (the tRPC routes: `FEED_GO_FALLBACK_URL`; the model routes:
+  `FEED_GO_V1_FALLBACK_URL`, `ServeParity.V1Upstream`; a route whose target is unset is not
+  replayed), never to another, but its own instance, so its failures are counted as its outcome,
+  never in `feed_go_fallback_proxy_errors_total`. It carries the original's headers,
   cookies included, so Node resolves the same session and computes for the same viewer; the
   original `Accept-Encoding` is dropped so the transport negotiates (and decodes) its own
   compression, and so are the client's `traceparent`, `tracestate` and `baggage` (the replay is not
   part of the user's request, and the span-less background context would inject nothing over
-  them). A request with an API credential (an `Authorization` header or a `?token=`) is never
-  replayed (`skipped_credential`): Node would resolve the key's own viewer and scopes again.
+  them). A request with an API credential is never replayed (`skipped_credential`): Node would
+  resolve the key's own viewer and scopes again. The credential is read as loosely as any route reads
+  it (`parityCredential`): any `Authorization` line, an empty one included, or any non-empty `token`
+  query value; on the model routes only `[id]` with `FEED_GO_V1_BEARER_AUTH` serves such a request
+  at all. A model route's replay also drops `If-None-Match` and `If-Modified-Since`: Node would answer
+  a 304 without a body, and Go's answer (a 200 or a 304) was computed over the whole body.
 - **Marked.** The replay carries `X-Feed-Go-Parity-Replay: 1` (`ParityReplayHeader`). The Node app
   (`src/server/trpc/feed-go-parity-replay.ts`) then does not shadow-sample it (it would be posted
-  back here as a second comparison of the same request), writes it as superjson, never devalue,
+  back here as a second comparison of the same request; the model routes' REST sampler,
+  `beginRest`, skips it as the tRPC one does), writes it as superjson, never devalue,
   and leaves it out of its per-procedure metrics (`civitai_app_trpc_procedure_duration_seconds`,
   the call-traffic and caller counters, `src/server/trpc.ts`): after a procedure moves to Go the
   replays would otherwise be a large share of what reads as Node's calls and latency there. Its
@@ -1263,18 +1272,24 @@ with what Go served.
 - **Outcomes.** `feed_go_serve_parity_total{feed_endpoint,outcome}`, one per sampled served request:
   `compared`, `dropped_queue`, `skipped_bulkhead`, `skipped_credential`, `skipped_closing`,
   `upstream_error` (Node unreachable or the connection broken), `upstream_status` (a status other
-  than 200, e.g. Node's own bulkhead's 429), `timeout`, `bad_body` (not a tRPC result). A body
+  than 200, e.g. Node's own bulkhead's 429; on `v1-models-id` a 404 is its not-found answer and is
+  compared), `timeout`, `bad_body` (not a tRPC result; on a model route, not JSON). A body
   that is a tRPC result but not a superjson envelope (Node answered devalue: a web release without
   the marker) is `compared` with result `bad_request`.
 - **Same comparator, same series.** A compared replay runs `compareAnswer`, the function the shadow
   path runs, with the endpoint's `server.CompareSelection` (`shadow.Compare`, the route's classifier;
-  the one selection the eval harness also makes, §19.8), the response headers of
-  `shadow.ComparedHeaders` picked as the Node sampler picks them), into the same families:
+  the model routes: `shadow.CompareJSON` with `ClassifyJSON` / `ClassifyV1ModelID`; the one
+  selection the eval harness also makes, §19.8), the response headers of the list a sampler of the
+  endpoint picks (`Selection.HeaderSet`: `shadow.ComparedHeaders`, the REST list on the model
+  routes) picked as the Node sampler picks them, into the same families:
   `feed_go_shadow_compare_total`, `feed_go_shadow_field_diffs_total` and
   `feed_go_shadow_response_total`, each with a `source` label, `shadow` for a Node sample and
   `serve-parity` for a replay. A query that sums by `feed_endpoint` (the recorded parity ratios)
   reads both; `source` splits them. The replay results are seeded at 0 per endpoint (`match`,
-  `fields`, `order`, `membership`, `bad_request`, and `match_empty` where an answer can be trivial).
+  `fields`, `membership`, `bad_request`; `order` except on `v1-models-id`; `match_empty` where an
+  answer can be trivial, `v1-models-id`'s not-found answer included; `match_cached` on `v1-models-id`).
+  The model routes' replays are compared, not written to the eval capture (T2 is the tRPC routes'
+  only, §19.6).
 
 **Time skew runs the other way.** A shadow sample is computed by Go milliseconds AFTER Node answered;
 a replay is computed by Node AFTER Go answered: the replay starts once the served answer is written,
@@ -4088,7 +4103,7 @@ endpoints are captured (`evalcapture.Supported`); every other endpoint is skippe
 | tap | source | where | Node's answer | weight |
 |---|---|---|---|---|
 | T1 | `shadow` | `compare`: the hand-back branch (result `unsupported` / `deadline`, its reason), the compute-error branch (`go_error`), and after the comparison (its result, header result, diff categories) | the sample's `node` and `responseHeaders` | 1 / the sample's `sampleRate` (the Node sampler's effective rate, below); when absent (an older sampler) or outside (0, 1], 1 / `FEED_GO_EVAL_CAPTURE_SHADOW_RATE` (its configured rate; 0 when unset: unknown) |
-| T2 | `serve-parity` | `replay`, after a compared replay | the replay's `result.data` and picked headers | 1 / `FEED_GO_SERVE_PARITY_SAMPLE_RATE` |
+| T2 | `serve-parity` | `replay`, after a compared replay of a tRPC route (the model routes' replays are compared, not captured) | the replay's `result.data` and picked headers | 1 / `FEED_GO_SERVE_PARITY_SAMPLE_RATE` |
 | T3 | `serve` | the public routes (`serve`, `serveV1Models`), after the answer is written or the request handed back, at `FEED_GO_EVAL_CAPTURE_SERVE_RATE` (default 0: off) | none; the result is `served`, `handback` (with the fallback reason) or `error` | 1 / that rate |
 | T4 | `corpus-only` | the `v1-models-id` and `infinite` shadow handlers, for a sample marked `corpusOnly` (below); never computed or compared | none; the result is `corpus-only` | 1 / the sample's `sampleRate`; 0 when absent or outside (0, 1] (the shadow's configured rate is not its rate) |
 

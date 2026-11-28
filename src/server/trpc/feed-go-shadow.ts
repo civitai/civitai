@@ -860,6 +860,9 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
       if (!route.url || config.rate <= 0) return undefined;
       const method = endpoint === 'site-search' ? 'POST' : 'GET';
       if ((req.method ?? '').toUpperCase() !== method) return undefined;
+      // feed-go's own replay of a model-route request it served (feed-go-parity-replay.ts), as in
+      // `begin`: it compares that answer itself.
+      if (isFeedGoParityReplay(req.headers)) return undefined;
       // The list's text search is mirrored only with FEED_GO_SHADOW_V1_MODELS_QUERY. A text query is
       // any value other than the one empty string (the handler's `if (query)`).
       if (endpoint === 'v1-models' && !config.v1ModelsQuery) {

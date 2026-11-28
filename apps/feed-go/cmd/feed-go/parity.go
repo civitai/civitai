@@ -9,18 +9,25 @@ import (
 )
 
 // newServeParity is the serve-side parity sampler (server.ServeParity, DESIGN.md §7.2) for
-// FEED_GO_SERVE_PARITY_SAMPLE_RATE: nil (off) at a rate of 0, the default. Its replays reach target,
-// the Node app the fallbacks are handed to (FEED_GO_FALLBACK_URL), through the fallback proxy code
-// but their own instance with no error hook: a replay's failure is its outcome
-// (feed_go_serve_parity_total), never a fallback proxy error.
-func newServeParity(rate float64, target *url.URL, prop propagation.TextMapPropagator) *server.ServeParity {
-	if rate <= 0 || target == nil {
+// FEED_GO_SERVE_PARITY_SAMPLE_RATE: nil (off) at a rate of 0, the default, or with neither upstream.
+// Its replays reach the Node app each route hands its fallbacks to: target (FEED_GO_FALLBACK_URL) for
+// the tRPC routes, v1Target (FEED_GO_V1_FALLBACK_URL) for the public model routes; a nil one leaves
+// its routes unreplayed. Each goes through the fallback proxy code but its own instance with no error
+// hook: a replay's failure is its outcome (feed_go_serve_parity_total), never a fallback proxy error.
+func newServeParity(rate float64, target, v1Target *url.URL, prop propagation.TextMapPropagator) *server.ServeParity {
+	if rate <= 0 || (target == nil && v1Target == nil) {
 		return nil
 	}
-	return &server.ServeParity{
-		Rate:     rate,
-		Upstream: fallbackProxy(target, fallbackIdleTimeout, nil, prop),
-		Queue:    make(chan struct{}, server.DefaultServeParityWorkers),
-		Timeout:  server.DefaultServeParityTimeout,
+	p := &server.ServeParity{
+		Rate:    rate,
+		Queue:   make(chan struct{}, server.DefaultServeParityWorkers),
+		Timeout: server.DefaultServeParityTimeout,
 	}
+	if target != nil {
+		p.Upstream = fallbackProxy(target, fallbackIdleTimeout, nil, prop)
+	}
+	if v1Target != nil {
+		p.V1Upstream = fallbackProxy(v1Target, fallbackIdleTimeout, nil, prop)
+	}
+	return p
 }

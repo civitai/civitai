@@ -839,7 +839,8 @@ func TestEvalCaptureCorpusOnlyDiscarded(t *testing.T) {
 }
 
 // feed_go_eval_capture_total is seeded: every outcome per source for the endpoints it captures (shadow
-// and serve: the four first-wave endpoints; serve-parity: the three tRPC ones), and nothing else.
+// and serve: the four first-wave endpoints; serve-parity: the three tRPC ones, the only replays
+// captured), and nothing else.
 func TestEvalCaptureSeeded(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	m := NewMetrics(reg)
@@ -898,6 +899,6 @@ func TestEvalCaptureSeeded(t *testing.T) {
 		}
 	}
 	if _, found := metricValue(t, reg, "feed_go_eval_capture_total", map[string]string{"feed_endpoint": "v1-models-id", "source": "serve-parity", "outcome": "written"}); found {
-		t.Error("serve-parity never replays v1-models-id, but its series exists")
+		t.Error("serve-parity replays of v1-models-id are compared, never captured, but its series exists")
 	}
 }

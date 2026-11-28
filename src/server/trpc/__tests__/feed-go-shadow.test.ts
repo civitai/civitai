@@ -1118,6 +1118,26 @@ describe('createFeedGoShadow — GET /api/v1/models and /api/v1/models/[id]', ()
     expect(h.endpoints).toEqual(['v1-models-id']);
   });
 
+  // feed-go's serve-side parity replay of a model-route request it served (feed-go-parity-replay.ts):
+  // feed-go compares it itself, so neither route samples it, and nothing is posted or counted. The
+  // same request without the marker is sampled (the positive control).
+  it.each([
+    ['v1-models', '/api/v1/models?limit=1'],
+    ['v1-models-id', '/api/v1/models/42'],
+  ] as const)('%s: a feed-go parity replay is never sampled', async (endpoint, url) => {
+    const h = harness();
+    const headers = { host: 'civitai.com', 'cf-ipcountry': 'GB' };
+    const replay = modelsRequest(url, { headers: { ...headers, 'x-feed-go-parity-replay': '1' } });
+    expect(serveModels(h, endpoint, replay)).toBeUndefined();
+    await h.flush();
+    expect(h.fetchMock).not.toHaveBeenCalled();
+    expect(h.outcomes).toEqual([]);
+    expect(serveModels(h, endpoint, modelsRequest(url, { headers }))).toBeDefined();
+    await h.flush();
+    expect(h.fetchMock).toHaveBeenCalledTimes(1);
+    expect(h.outcomes).toEqual(['sent']);
+  });
+
   it("a model sample carries the Training Data statement hash; another route's does not", async () => {
     const hash = { [FEED_GO_TRAINING_DATA_SQL_HEADER]: 'abc123' };
     const h = harness({ modelSampleHeaders: () => hash });
