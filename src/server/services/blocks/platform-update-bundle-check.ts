@@ -47,6 +47,7 @@
  * paths some update touches.
  */
 import { logToAxiom } from '~/server/logging/client';
+import { APP_PLATFORM_UPDATE_SENDER } from '~/shared/constants/app-assistant.constants';
 import { shipsNoPlatformUpdates } from '~/shared/utils/publish-request-on-behalf';
 import type { Advisory } from './submit-advisories';
 import { missingUpdateChanges } from './platform-update-containment';
@@ -65,7 +66,11 @@ export { PLATFORM_UPDATE_CHECK_CAP };
 export type MissingPlatformUpdate = {
   id: string;
   reason: string;
-  /** The staff account's username; `null` when it no longer exists. */
+  /**
+   * The staff account's username; `null` when it no longer exists. For the moderator record only
+   * ({@link platformUpdatesMissingRecord}): what the owner reads names
+   * {@link APP_PLATFORM_UPDATE_SENDER} instead ({@link ownerFacingUpdate}).
+   */
   by: string | null;
   /** The update's paths the version does not hold, in the record's order. */
   paths: string[];
@@ -244,9 +249,22 @@ const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
 const UNREADABLE_NOTE =
   ' [its files could not be read from the source repo; Civitai staff can withdraw it]';
 
-function describeUpdate(update: MissingPlatformUpdate): string {
+/**
+ * The update as its app's owner reads it (the refusal, its `details`, the advisories): from
+ * {@link APP_PLATFORM_UPDATE_SENDER}, never the staff member's username (operator decision). Every
+ * update here has a verified-staff author: `listUnshippedPlatformUpdates` returns only those
+ * (`isVerifiedStaff`), the rule `ownerView` names the official sender under, so an update whose
+ * author is no longer staff is never checked and never named. The moderator record keeps `by`.
+ */
+export function ownerFacingUpdate(update: MissingPlatformUpdate): MissingPlatformUpdate {
+  return { ...update, by: APP_PLATFORM_UPDATE_SENDER };
+}
+
+/** One owner-facing update: always read through {@link ownerFacingUpdate}. */
+function describeUpdate(missing: MissingPlatformUpdate): string {
+  const update = ownerFacingUpdate(missing);
   const changes = update.changes?.length ? ` [${update.changes.join('; ')}]` : '';
-  return `${update.id} by ${update.by ?? 'Civitai staff'} ("${update.reason}"): ${update.paths.join(
+  return `${update.id} by ${update.by} ("${update.reason}"): ${update.paths.join(
     ', '
   )}${changes}${update.unreadable ? UNREADABLE_NOTE : ''}`;
 }
@@ -272,7 +290,10 @@ export function platformUpdateMissingMessage(
   );
 }
 
-/** A submit refused for a bundle missing an unshipped platform update. Routes answer 409. */
+/**
+ * A submit refused for a bundle missing an unshipped platform update. Routes answer 409 with
+ * `message`, `code` and `details`, all owner-facing: `details.updates` names the official sender.
+ */
 export class PlatformUpdateMissingRefusal extends Error {
   readonly code = PLATFORM_UPDATE_MISSING_CODE;
   readonly status = 409;
@@ -280,7 +301,10 @@ export class PlatformUpdateMissingRefusal extends Error {
   constructor(missing: MissingPlatformUpdate[], opts: { truncated?: boolean } = {}) {
     super(platformUpdateMissingMessage(missing, opts));
     this.name = 'PlatformUpdateMissingRefusal';
-    this.details = { updates: missing, ...(opts.truncated ? { truncated: true as const } : {}) };
+    this.details = {
+      updates: missing.map(ownerFacingUpdate),
+      ...(opts.truncated ? { truncated: true as const } : {}),
+    };
   }
 }
 
