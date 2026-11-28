@@ -1,4 +1,4 @@
-// Generates the golden fixtures (testdata/golden/{ping,pulse}/*.json) and the reference vectors
+// Generates the golden fixtures (testdata/golden/{ping,pulse,track-batch}/*.json) and the reference vectors
 // (testdata/golden/vectors.json) beacon-go's tests read. Run from the repo root:
 //
 //   pnpm exec tsx --tsconfig tsconfig.json apps/beacon-go/testdata/golden/gen.ts
@@ -7,7 +7,8 @@
 // RFC 3849), invented user ids (1001..). No production data.
 //
 // Where an expected value comes from: the REAL Node code wherever it imports cleanly —
-// pageViewBeaconSchema / addViewSchema (src/server/schema/track.schema.ts), getMatchingPathname
+// pageViewBeaconSchema / addViewSchema / parseTrackBatch (src/server/schema/track.schema.ts), the
+// constants the track-batch action arms import, getMatchingPathname
 // (src/shared/constants/pathname.constants.ts), resolveClientIp (src/server/utils/client-ip.ts),
 // Next 16's own parseBody, generateETag and `fresh`, the JS engine's URL / JSON / Number / String,
 // and the shadow sampler's own payload builder (src/server/beacon/beacon-go-shadow-payload.ts).
@@ -19,7 +20,45 @@ import { isIP } from 'node:net';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { getMatchingPathname } from '~/shared/constants/pathname.constants';
-import { addViewSchema, pageViewBeaconSchema } from '~/server/schema/track.schema';
+import {
+  addViewSchema,
+  pageViewBeaconSchema,
+  parseTrackBatch,
+  PUSH_PROMPT_ACTIONS,
+  PUSH_PROMPT_SURFACES,
+  PUSH_PROMPT_VARIANTS,
+  TRACK_BATCH_MAX,
+  TRACK_FREEFORM_MAX_CHARS,
+  trackActionSchema,
+} from '~/server/schema/track.schema';
+import { trackedReasons } from '~/utils/login-helpers';
+import { USER_MENU_ITEM_IDS } from '~/shared/constants/user-menu.constants';
+import {
+  USER_MENU_GROUP_IDS,
+  USER_MENU_HEADER_GROUP,
+} from '~/shared/constants/user-menu-groups.constants';
+import {
+  EXPERIMENT_SURFACES,
+  HAT_TURF_CLIENT_ACTIONS,
+  HAT_TURF_EVENTS,
+} from '~/shared/constants/experiments.constants';
+import {
+  APP_STORE_ACTIONS,
+  APP_STORE_LISTING_ID_RE,
+  APP_STORE_POSITION_MAX,
+  APP_STORE_QUERY_LENGTH_BUCKETS,
+  APP_SURFACES,
+} from '~/shared/utils/app-store-telemetry';
+import { listingSortSchema } from '~/server/schema/blocks/app-listing-read.schema';
+import { MARKETPLACE_CATEGORIES } from '~/server/services/blocks/marketplace-categories.constants';
+import {
+  APP_ERROR_STAGES,
+  APP_SESSION_HOSTS,
+  APP_SESSION_MAX_COUNT,
+  APP_SESSION_MAX_DURATION_MS,
+  APP_SUBMIT_FAILURE_REASONS,
+  APP_TELEMETRY_APP_BLOCK_ID_RE,
+} from '~/shared/constants/app-telemetry.constants';
 import { resolveClientIp } from '~/server/utils/client-ip';
 import {
   buildBeaconGoShadowPayload,
@@ -32,9 +71,17 @@ const HERE = join(process.cwd(), 'apps/beacon-go/testdata/golden');
 
 type Headers = Record<string, string>;
 type Session = { id: number; tier?: string | null; cookie: string; iat: number } | null;
+type Endpoint = 'ping' | 'pulse' | 'track-batch';
+const ENDPOINTS: Endpoint[] = ['ping', 'pulse', 'track-batch'];
+// Each endpoint's route (beacon-go internal/server Routes).
+const ROUTES: Record<Endpoint, string> = {
+  ping: '/api/internal/ping',
+  pulse: '/api/internal/pulse',
+  'track-batch': '/api/track/batch',
+};
 type Fixture = {
   name: string;
-  endpoint: 'ping' | 'pulse';
+  endpoint: Endpoint;
   method?: string;
   target?: string;
   headers: Headers;
@@ -177,7 +224,49 @@ class MirrorTracker {
     this.writes.push({ table: 'views', body: JSON.stringify({ ...this.actor, ...values }) });
     return true;
   }
+  // track(): `{...actorMeta, ...custom}`, actorMeta `{ userId }` alone under skipActorMeta.
+  private track(table: string, custom: object, skipActorMeta = false) {
+    if (!this.enabled) return false;
+    this.resolve();
+    const actorMeta = skipActorMeta ? { userId: this.actor.userId } : { ...this.actor };
+    this.writes.push({ table, body: JSON.stringify({ ...actorMeta, ...custom }) });
+    return true;
+  }
+  // Tracker.search.
+  async search(values: { query: string; index: string; filters?: any }) {
+    const { filters, ...rest } = values;
+    return this.track('search', {
+      ...rest,
+      filters:
+        filters != null ? (typeof filters === 'string' ? filters : JSON.stringify(filters)) : '',
+    });
+  }
+  // Tracker.action.
+  async action(values: { type: string; details?: any }) {
+    const { details, ...rest } = values;
+    return this.track(
+      'actions',
+      {
+        ...rest,
+        details:
+          details != null ? (typeof details === 'string' ? details : JSON.stringify(details)) : '',
+      },
+      ACTOR_META_FREE_ACTION_TYPES.has(values.type)
+    );
+  }
+  // Tracker.impressions inserts into ClickHouse directly (sendMany), not through send, so the shadow
+  // sampler never sees its rows: nothing is recorded here either.
 }
+
+// tracker.ts ACTOR_META_FREE_ACTION_TYPES (pinned against the exported set by
+// src/server/beacon/__tests__/beacon-go-track-batch-vectors.test.ts through vectors.json).
+const ACTOR_META_FREE_ACTION_TYPES: ReadonlySet<string> = new Set([
+  'Experiment_Exposure',
+  'HatTurf_Action',
+  'AppStore_Action',
+  'App_Error',
+  'App_Session',
+]);
 
 // src/pages/api/internal/ping.ts (isDev false).
 async function ping(req: any, res: MiniRes, tracker: MirrorTracker) {
@@ -241,6 +330,37 @@ async function pulse(req: any, res: MiniRes, tracker: MirrorTracker) {
   return res.status(200).end();
 }
 
+// src/pages/api/track/batch.ts (isDev false) for the parts the fixtures reach: feed events go to the
+// feed events recorder and hatted impressions to the event points, neither of which is a tracker row
+// (beacon-go falls back on both kinds, so their fixtures pin only the fallback reason).
+async function trackBatch(req: any, res: MiniRes, tracker: MirrorTracker) {
+  const source = req.headers.origin ?? req.headers.referer;
+  const sourceHost = source
+    ? (() => {
+        try {
+          return new URL(source).host;
+        } catch {
+          return undefined;
+        }
+      })()
+    : undefined;
+  if (!sourceHost || sourceHost !== req.headers.host)
+    return res.status(400).send('invalid request');
+  let parsed: unknown;
+  try {
+    parsed = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
+  } catch {
+    return res.status(400).send('invalid body');
+  }
+  const events = parseTrackBatch(parsed);
+  if (!events) return res.status(400).send('invalid input');
+  for (const event of events) {
+    if (event.kind === 'search') await tracker.search(event.data);
+    else if (event.kind === 'action') await tracker.action(event.data);
+  }
+  return res.status(200).end();
+}
+
 function bodyBytes(fx: Fixture): Buffer {
   if (fx.bodyHex !== undefined) return Buffer.from(fx.bodyHex, 'hex');
   if (fx.bodyTemplate) {
@@ -255,7 +375,7 @@ async function outcome(fx: Fixture, next: Awaited<ReturnType<typeof nextModules>
   const req: any = Readable.from(bytes.length ? [bytes] : []);
   req.headers = { ...fx.headers };
   req.method = fx.method ?? 'POST';
-  req.url = fx.target ?? `/api/internal/${fx.endpoint}`;
+  req.url = fx.target ?? ROUTES[fx.endpoint];
   req.socket = { remoteAddress: undefined };
   try {
     req.body = await next.parseBody(req, '1mb');
@@ -286,7 +406,7 @@ async function outcome(fx: Fixture, next: Awaited<ReturnType<typeof nextModules>
     res.setHeader('Cache-Control', 'max-age=0, private, no-cache');
   else res.setHeader('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=150');
   const tracker = new MirrorTracker(req, fx.session ?? null, fx.trackerEnabled ?? true);
-  await (fx.endpoint === 'ping' ? ping : pulse)(req, res, tracker);
+  await { ping, pulse, 'track-batch': trackBatch }[fx.endpoint](req, res, tracker);
   const expect = {
     status: res.statusCode,
     headers: res.headers,
@@ -942,7 +1062,338 @@ const fixtures: Fixture[] = [
     },
     body: JSON.stringify(viewBody),
   },
+  // ---- track-batch ----
+  ...trackBatchFixtures(),
 ];
+
+// ---- track-batch fixtures ------------------------------------------------------------------------
+// The browser's trackEventBuffer flushes `[{kind, data}, ...]` with Content-Type application/json
+// (sendBeacon's Blob and the keepalive fetch both set it).
+function trackBatchFixtures(): Fixture[] {
+  const baseBatch = {
+    host: HOST,
+    origin: `https://${HOST}`,
+    'content-type': 'application/json',
+    'user-agent': UA,
+    'cf-connecting-ip': IP4,
+  };
+  const batch = (events: unknown[]) => JSON.stringify(events);
+  const search = (data: object) => ({ kind: 'search', data });
+  const action = (data: object) => ({ kind: 'action', data });
+  const impression = {
+    kind: 'impression',
+    data: { sessionKey: 'k1', surface: 'images', entities: [{ entityType: 'Image', entityId: 5 }] },
+  };
+  const feed = {
+    kind: 'feed',
+    data: { event: 'load', sessionKey: 'k1', feed: 'images', page: '/images' },
+  };
+  const fx = (name: string, body: string, extra: Partial<Fixture> = {}): Fixture => ({
+    name,
+    endpoint: 'track-batch',
+    headers: baseBatch,
+    body,
+    ...extra,
+  });
+  const one = (name: string, data: object, extra: Partial<Fixture> = {}) =>
+    fx(name, batch([action(data)]), extra);
+  return [
+    // -- search
+    fx(
+      'search-filters',
+      batch([
+        search({
+          query: '  cat  ',
+          index: 'models_v9',
+          filters: { '2': 'b', sort: 'Newest', nested: { z: [1, 2.5, 1e21] }, '1': true },
+          extra: 'stripped',
+        }),
+      ])
+    ),
+    fx('search-no-filters', batch([search({ query: 'dog', index: 'images_v6' })])),
+    fx(
+      'search-proto-key',
+      '[{"kind":"search","data":{"query":"q","index":"i","filters":{"__proto__":{"x":1},"k":2}}}]'
+    ),
+    fx('search-unicode', batch([search({ query: ' café 😀　', index: 'i' })])),
+    fx('search-signed-in', batch([search({ query: 'x', index: 'i' })]), {
+      headers: { ...baseBatch, cookie: '_ga=GA1.1; __Secure-civ-token=hdr.payload.sig' },
+      session: SIGNED_IN,
+    }),
+    // -- action, every arm
+    one('action-bare-strips-details', { type: 'AddToBounty_Click', details: { a: 1 } }),
+    one('action-add-to-bounty-confirm', { type: 'AddToBounty_Confirm' }),
+    one('action-award-bounty-click', { type: 'AwardBounty_Click' }),
+    one('action-award-bounty-confirm', { type: 'AwardBounty_Confirm' }),
+    one('action-tip-click-nullish', {
+      type: 'Tip_Click',
+      details: { entityType: null, toUserId: 3, extra: 1 },
+    }),
+    one('action-tip-click-no-details', { type: 'Tip_Click' }),
+    one('action-tip-confirm', {
+      type: 'Tip_Confirm',
+      details: { amount: 50, toUserId: 3, entityId: 7, entityType: 'Image' },
+    }),
+    one('action-tip-interactive-click', {
+      type: 'TipInteractive_Click',
+      details: { toUserId: 3, entityId: 7, entityType: 'Image', amount: 5 },
+    }),
+    one('action-tip-interactive-cancel', {
+      type: 'TipInteractive_Cancel',
+      details: { toUserId: 3, entityId: 7, entityType: 'Model', amount: 0 },
+    }),
+    one('action-not-enough-funds', { type: 'NotEnoughFunds', details: { amount: 1.5 } }),
+    one('action-purchase-cancel', { type: 'PurchaseFunds_Cancel', details: { step: 2 } }),
+    one('action-purchase-confirm', {
+      type: 'PurchaseFunds_Confirm',
+      details: { method: 'card', unitAmount: 999, buzzAmount: 10000 },
+    }),
+    one('action-login-redirect-reason', {
+      type: 'LoginRedirect',
+      reason: 'image-gen',
+      details: { a: 1 },
+    }),
+    one('action-membership-cancel-passthrough', {
+      type: 'Membership_Cancel',
+      details: { z: 1, from: 'gold', '5': 2, reason: 'price', extra: { deep: [true] } },
+    }),
+    fx(
+      'action-membership-cancel-proto',
+      '[{"kind":"action","data":{"type":"Membership_Cancel","details":{"__proto__":{"a":1},"reason":"r","from":"f"}}}]'
+    ),
+    one('action-membership-downgrade', {
+      type: 'Membership_Downgrade',
+      details: { reason: 'r', to: 'bronze', note: 'kept' },
+    }),
+    one('action-csam-help', { type: 'CSAM_Help_Triggered', details: { query: 'q', surface: 's' } }),
+    one('action-profanity-loose', {
+      type: 'ProfanitySearch',
+      details: { matches: ['a', 'b'], q: 1, query: 'x' },
+    }),
+    one('action-model-create-click', {
+      type: 'Model_Create_Click',
+      details: { source: 'create:navbar', modelId: 1 },
+    }),
+    one('action-image-remix', {
+      type: 'Image_Remix_Click',
+      details: {
+        remixKind: 'video',
+        imageId: 9,
+        sourceModelVersionId: null,
+        imageType: 'video',
+        source: 'remix:image',
+      },
+    }),
+    one('action-generator-submit', {
+      type: 'Generator_Submit',
+      details: {
+        externalId: 'abc_DEF-123',
+        fromAction: 'remix',
+        modelVersionId: 77,
+        formVersion: 'form-graph',
+        isValid: true,
+        isRateLimited: false,
+        hasRemixOfId: true,
+        prompt: 'stripped',
+      },
+    }),
+    one('action-feed-tagbar-trim', {
+      type: 'Feed_TagBar_Click',
+      details: { feed: 'images', tag: '  Anime  ', tagId: null, action: 'select' },
+    }),
+    one('action-feed-tagbar-all', {
+      type: 'Feed_TagBar_Click',
+      details: { feed: 'videos', tag: null, tagId: null, action: 'clear' },
+    }),
+    one('action-announcement-click', {
+      type: 'Announcement_Click',
+      details: { creatorId: 2, announcementId: 9007199254740991 },
+    }),
+    one('action-apps-build', {
+      type: 'AppsBuild_Action',
+      details: { state: 'pitch', action: 'agent_prompt_copy' },
+    }),
+    one('action-user-menu-null-group', {
+      type: 'UserMenu_Click',
+      details: { item: 'vault', group: null, pinned: false, surface: 'desktop' },
+    }),
+    one('action-user-menu-header', {
+      type: 'UserMenu_Click',
+      details: { item: 'profile', group: 'header', pinned: true, surface: 'mobile' },
+    }),
+    one('action-push-prompt', {
+      type: 'Push_Prompt',
+      details: { action: 'granted', surface: 'deal-flow', variant: 'finish', platform: 'mobile' },
+    }),
+    one('action-hat-turf-no-actor-meta', {
+      type: 'HatTurf_Action',
+      details: { action: 'invite_view', event: 'birthday2026', surface: 'feed-card' },
+    }),
+    one('action-app-store-no-actor-meta', {
+      type: 'AppStore_Action',
+      details: {
+        queryLength: '4-10',
+        hasQuery: true,
+        category: 'games',
+        sort: 'newest',
+        position: 10000,
+        surface: 'store_card',
+        listingId: 'lst_01-ABC',
+        action: 'impression',
+      },
+    }),
+    one('action-app-error', {
+      type: 'App_Error',
+      details: { stage: 'submit', reason: 'rate_limited', appBlockId: 'apb_01HXYZ' },
+    }),
+    one('action-app-session', {
+      type: 'App_Session',
+      details: {
+        appBlockId: 'apb_1',
+        host: 'iframe',
+        durationMs: 86400000,
+        submits: 0,
+        messagesToHost: 1000000,
+      },
+    }),
+    one(
+      'action-signed-in',
+      { type: 'Tip_Click' },
+      {
+        headers: { ...baseBatch, cookie: '__Secure-civ-token=hdr.payload.sig' },
+        session: SIGNED_IN,
+      }
+    ),
+    one(
+      'action-signed-in-no-actor-meta',
+      {
+        type: 'App_Error',
+        details: { appBlockId: 'a', reason: 'other', stage: 'training_submit' },
+      },
+      {
+        headers: { ...baseBatch, cookie: '__Secure-civ-token=hdr.payload.sig' },
+        session: SIGNED_IN,
+      }
+    ),
+    // -- batches
+    fx(
+      'mixed-order',
+      batch([
+        search({ query: 'a', index: 'i' }),
+        action({ type: 'AwardBounty_Click' }),
+        search({ query: 'b', index: 'j', filters: {} }),
+      ])
+    ),
+    fx(
+      'max-events',
+      batch(
+        Array.from({ length: 100 }, (_, i) =>
+          action({ type: 'NotEnoughFunds', details: { amount: i } })
+        )
+      )
+    ),
+    fx('text-body', batch([search({ query: 'q', index: 'i' })]), {
+      headers: { host: HOST, origin: `https://${HOST}`, 'user-agent': UA, 'cf-connecting-ip': IP4 },
+    }),
+    fx('json-string-body', JSON.stringify(batch([search({ query: 'q', index: 'i' })]))),
+    fx('referer-only', batch([search({ query: 'q', index: 'i' })]), {
+      headers: {
+        host: HOST,
+        referer: REF,
+        'content-type': 'application/json',
+        'cf-connecting-ip': IP4,
+      },
+    }),
+    fx('tracker-disabled', batch([search({ query: 'q', index: 'i' })]), { trackerEnabled: false }),
+    fx('no-user-agent', batch([search({ query: 'q', index: 'i' })]), {
+      headers: {
+        host: HOST,
+        origin: `https://${HOST}`,
+        'content-type': 'application/json',
+        'x-forwarded-for': IP4,
+      },
+    }),
+    // -- 400s
+    fx('no-origin', batch([search({ query: 'q', index: 'i' })]), {
+      headers: { host: HOST, 'content-type': 'application/json', 'cf-connecting-ip': IP4 },
+    }),
+    fx('cross-origin', batch([search({ query: 'q', index: 'i' })]), {
+      headers: { ...baseBatch, origin: 'https://evil.example.test' },
+    }),
+    fx('empty-origin-wins', batch([search({ query: 'q', index: 'i' })]), {
+      headers: { ...baseBatch, origin: '', referer: REF },
+    }),
+    fx('invalid-text-body', '[{"kind":', {
+      headers: { host: HOST, origin: `https://${HOST}`, 'cf-connecting-ip': IP4 },
+    }),
+    fx('invalid-json-body', '[{"kind":'),
+    fx('not-an-array', JSON.stringify(search({ query: 'q', index: 'i' }))),
+    fx('empty-array', '[]'),
+    fx('null-body', 'null'),
+    fx('empty-json-body', ''),
+    fx(
+      'over-max-events',
+      batch(Array.from({ length: 101 }, () => action({ type: 'AwardBounty_Click' })))
+    ),
+    // -- fallbacks (Node's answer is recorded; beacon-go hands the whole request back)
+    fx('impression-only', batch([impression]), { fallback: 'track-impression' }),
+    fx('impression-with-search', batch([search({ query: 'q', index: 'i' }), impression]), {
+      fallback: 'track-impression',
+    }),
+    fx('feed-event', batch([feed, action({ type: 'AwardBounty_Click' })]), {
+      fallback: 'track-feed',
+    }),
+    fx('impression-beats-feed', batch([feed, impression]), { fallback: 'track-impression' }),
+    fx(
+      'experiment-exposure',
+      batch([
+        action({
+          type: 'Experiment_Exposure',
+          details: { exp: 'x', variant: 'a', assignment: 'rule', surface: 'feed-card' },
+        }),
+      ]),
+      { fallback: 'track-action-unported' }
+    ),
+    // Node drops the malformed event and writes the rest; beacon-go leaves the batch to Node.
+    fx(
+      'malformed-event-dropped',
+      batch([
+        search({ query: 'kept', index: 'i' }),
+        action({ type: 'Tip_Click', details: { toUserId: 'three' } }),
+        action({ type: 'AwardBounty_Click' }),
+      ]),
+      { fallback: 'track-event-invalid' }
+    ),
+    fx('unknown-kind', batch([{ kind: 'future', data: {} }, search({ query: 'q', index: 'i' })]), {
+      fallback: 'track-event-invalid',
+    }),
+    fx('unknown-action-type', batch([action({ type: 'App_Open' })]), {
+      fallback: 'track-event-invalid',
+    }),
+    fx('all-invalid', batch([1, 'x', null]), { fallback: 'track-event-invalid' }),
+    fx(
+      'unsafe-integer',
+      batch([
+        action({
+          type: 'Announcement_Click',
+          details: { announcementId: 9007199254740992, creatorId: 1 },
+        }),
+      ]),
+      { fallback: 'track-event-invalid' }
+    ),
+    fx('filters-null', batch([search({ query: 'q', index: 'i', filters: null })]), {
+      fallback: 'track-event-invalid',
+    }),
+    fx('bearer-token', batch([search({ query: 'q', index: 'i' })]), {
+      headers: { ...baseBatch, authorization: 'Bearer some-api-key' },
+      fallback: 'bearer-token',
+    }),
+    fx('query-string', batch([search({ query: 'q', index: 'i' })]), {
+      target: '/api/track/batch?x=1',
+      fallback: 'query-string',
+    }),
+  ];
+}
 
 // ---- Reference vectors -------------------------------------------------------------------------
 function vectors() {
@@ -1218,12 +1669,57 @@ function vectors() {
       }
     }),
     trims: trims.map((s) => ({ in: s, units: toHexUnits(s.trim()) })),
+    trackBatch: trackBatchVectors(),
+  };
+}
+
+// The constants beacon-go's track-batch action arms copy (internal/beacon/trackbatch_arms.go,
+// pinned by TestTrackBatchConstants), the arm list, and the tracker's actor-meta-free types.
+function trackBatchVectors() {
+  const re = (r: RegExp) => {
+    if (r.flags) throw new Error(`regex ${r} has flags beacon-go does not reproduce`);
+    return r.source;
+  };
+  return {
+    trackBatchMax: TRACK_BATCH_MAX,
+    freeformMaxChars: TRACK_FREEFORM_MAX_CHARS,
+    actionTypes: trackActionSchema.options.map((o) => o.shape.type.value).sort(),
+    actorMetaFree: [...ACTOR_META_FREE_ACTION_TYPES].sort(),
+    enums: {
+      trackedReasons: [...trackedReasons],
+      userMenuItemIds: [...USER_MENU_ITEM_IDS],
+      userMenuGroupIds: [...USER_MENU_GROUP_IDS],
+      userMenuHeaderGroup: [USER_MENU_HEADER_GROUP],
+      pushPromptActions: [...PUSH_PROMPT_ACTIONS],
+      pushPromptSurfaces: [...PUSH_PROMPT_SURFACES],
+      pushPromptVariants: [...PUSH_PROMPT_VARIANTS],
+      experimentSurfaces: [...EXPERIMENT_SURFACES],
+      hatTurfClientActions: [...HAT_TURF_CLIENT_ACTIONS],
+      hatTurfEvents: [...HAT_TURF_EVENTS],
+      appStoreActions: [...APP_STORE_ACTIONS],
+      appStoreQueryLengthBuckets: [...APP_STORE_QUERY_LENGTH_BUCKETS],
+      appSurfaces: [...APP_SURFACES],
+      listingSorts: [...listingSortSchema.options],
+      marketplaceCategories: [...MARKETPLACE_CATEGORIES],
+      appSubmitFailureReasons: [...APP_SUBMIT_FAILURE_REASONS],
+      appErrorStages: [...APP_ERROR_STAGES],
+      appSessionHosts: [...APP_SESSION_HOSTS],
+    },
+    patterns: {
+      appStoreListingId: re(APP_STORE_LISTING_ID_RE),
+      appBlockId: re(APP_TELEMETRY_APP_BLOCK_ID_RE),
+    },
+    numbers: {
+      appStorePositionMax: APP_STORE_POSITION_MAX,
+      appSessionMaxDurationMs: APP_SESSION_MAX_DURATION_MS,
+      appSessionMaxCount: APP_SESSION_MAX_COUNT,
+    },
   };
 }
 
 async function main() {
   const next = await nextModules();
-  for (const dir of ['ping', 'pulse']) {
+  for (const dir of ENDPOINTS) {
     rmSync(join(HERE, dir), { recursive: true, force: true });
     mkdirSync(join(HERE, dir), { recursive: true });
   }
@@ -1238,7 +1734,7 @@ async function main() {
       endpoint: fx.endpoint,
       request: {
         method: fx.method ?? 'POST',
-        target: fx.target ?? `/api/internal/${fx.endpoint}`,
+        target: fx.target ?? ROUTES[fx.endpoint],
         headers: fx.headers,
         ...(fx.bodyTemplate
           ? { bodyTemplate: fx.bodyTemplate }
@@ -1265,7 +1761,7 @@ async function main() {
     writeFileSync(join(HERE, fx.endpoint, `${fx.name}.json`), JSON.stringify(file, null, 2) + '\n');
   }
   writeFileSync(join(HERE, 'vectors.json'), JSON.stringify(vectors(), null, 2) + '\n');
-  const counts = ['ping', 'pulse'].map((d) => `${d}: ${readdirSync(join(HERE, d)).length}`);
+  const counts = ENDPOINTS.map((d) => `${d}: ${readdirSync(join(HERE, d)).length}`);
   console.log(`wrote ${counts.join(', ')} fixtures and vectors.json`);
 }
 

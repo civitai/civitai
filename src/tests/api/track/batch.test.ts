@@ -24,8 +24,11 @@ const {
   mockGetSession,
   mockInsert,
   mockIsFlipt,
+  mockBeginShadow,
   devStore,
 } = vi.hoisted(() => ({
+  // The beacon-go shadow sampler's entry point; undefined (not sampled) unless a test says otherwise.
+  mockBeginShadow: vi.fn((..._args: unknown[]): unknown => undefined),
   mockIsFlipt: vi.fn(async (_flag: string, _entityId?: string) => false),
   mockSearch: vi.fn(),
   mockAction: vi.fn(),
@@ -57,6 +60,8 @@ vi.mock('~/env/other', () => ({
   },
 }));
 
+vi.mock('~/server/beacon/beacon-go-shadow', () => ({ beginBeaconGoShadow: mockBeginShadow }));
+
 // Tracker is the shared ClickHouse client; assert .search()/.action() are called
 // with the exact per-event payload (same methods the tRPC resolvers used).
 vi.mock('~/server/clickhouse/client', () => ({
@@ -70,6 +75,7 @@ vi.mock('~/server/clickhouse/client', () => ({
     }
   },
   clickhouse: { insert: mockInsert },
+  trackerSends: () => true,
 }));
 
 // The beacon writes feed events straight to ClickHouse at the Flipt-set rate; record everything.
@@ -482,6 +488,66 @@ describe('POST /api/track/batch', () => {
     expect(values[0].userId).toBe(0);
     expect(values[0].personalHotLead).toBeNull();
     expect(mockIsFlipt).not.toHaveBeenCalled();
+  });
+
+  // The beacon-go shadow sampler (~/server/beacon/beacon-go-shadow, off by default: its own sample
+  // rate and the beacon-go-shadow flag; its gates are pinned in beacon-go-shadow.test.ts). A sampled
+  // request attaches it to the Tracker before any event is dispatched (the rows arrive through
+  // Tracker.onSend) and holds the mirror for every search and action row, the two kinds beacon-go
+  // writes; impression and feed events are not waited for.
+  it('wires a sampled request to the beacon-go shadow: attach first, then wait for each search and action', async () => {
+    const order: string[] = [];
+    const handle = {
+      attach: vi.fn(() => order.push('attach')),
+      waitFor: vi.fn((p: unknown) => order.push(`wait:${String((p as { tag?: string }).tag)}`)),
+    };
+    mockBeginShadow.mockReturnValueOnce(handle);
+    const searched = Object.assign(Promise.resolve(true), { tag: 'search' });
+    const acted = Object.assign(Promise.resolve(true), { tag: 'action' });
+    mockSearch.mockImplementationOnce(() => {
+      order.push('search');
+      return searched;
+    });
+    mockAction.mockImplementationOnce(() => {
+      order.push('action');
+      return acted;
+    });
+    const handler = await importHandler();
+    const req = makeReq({
+      origin: 'https://civitai.com',
+      body: [searchEvent, impressionEvent, actionEvent],
+    });
+    const res = makeRes();
+
+    await handler(req as any, res);
+
+    expect(mockBeginShadow).toHaveBeenCalledTimes(1);
+    const [shadowReq, shadowRes, endpoint, sends] = mockBeginShadow.mock.calls[0];
+    expect(shadowReq).toBe(req);
+    expect(shadowRes).toBe(res);
+    expect(endpoint).toBe('track-batch');
+    expect((sends as () => boolean)()).toBe(true);
+    expect(handle.attach).toHaveBeenCalledTimes(1);
+    expect(order).toEqual(['attach', 'search', 'wait:search', 'action', 'wait:action']);
+    expect(handle.waitFor).toHaveBeenNthCalledWith(1, searched);
+    expect(handle.waitFor).toHaveBeenNthCalledWith(2, acted);
+    expect(mockImpressions).toHaveBeenCalledTimes(1);
+    expect(res.status).toHaveBeenCalledWith(200);
+  });
+
+  it('asks the shadow sampler before the origin guard, and dispatches nothing on a 400', async () => {
+    const handle = { attach: vi.fn(), waitFor: vi.fn() };
+    mockBeginShadow.mockReturnValueOnce(handle);
+    const handler = await importHandler();
+    const req = makeReq({ origin: 'https://evil.example', body: [searchEvent] });
+    const res = makeRes();
+
+    await handler(req as any, res);
+
+    expect(mockBeginShadow).toHaveBeenCalledTimes(1);
+    expect(handle.attach).not.toHaveBeenCalled();
+    expect(handle.waitFor).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(400);
   });
 
   it('short-circuits to 200 in dev without dispatching', async () => {

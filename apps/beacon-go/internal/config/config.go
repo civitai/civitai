@@ -25,6 +25,9 @@ type Config struct {
 	Addr         string // BEACON_GO_ADDR: public listener (serve mode only), default :8080
 	InternalAddr string // BEACON_GO_INTERNAL_ADDR: /metrics, /healthz, /internal/shadow/..., default :9090
 	FallbackURL  string // BEACON_GO_FALLBACK_URL: the Node app (required in serve mode)
+	// TrackBatchServe is BEACON_GO_TRACK_BATCH_SERVE (default false): serve mode answers
+	// /api/track/batch itself only when true; otherwise every such request is proxied to the Node app.
+	TrackBatchServe bool
 
 	// TrackerURL is CLICKHOUSE_TRACKER_URL (required in serve mode).
 	TrackerURL string
@@ -71,14 +74,16 @@ func Load(getenv func(string) string) (*Config, error) {
 		return def
 	}
 	c := &Config{
-		Mode:           strings.ToLower(strings.TrimSpace(env("BEACON_GO_MODE", "shadow"))),
-		Addr:           env("BEACON_GO_ADDR", ":8080"),
-		InternalAddr:   env("BEACON_GO_INTERNAL_ADDR", ":9090"),
-		FallbackURL:    getenv("BEACON_GO_FALLBACK_URL"),
-		TrackerURL:     getenv("CLICKHOUSE_TRACKER_URL"),
-		OutwardTraffic: OutwardTrafficAllowed(getenv("NEXT_PUBLIC_CIVITAI_LINK"), getenv("NEXT_PUBLIC_LOCAL_TRACKER_ENABLED")),
-		TrackerWorkers: positiveInt(getenv("BEACON_GO_TRACKER_WORKERS"), 16),
-		TrackerQueue:   positiveInt(getenv("BEACON_GO_TRACKER_QUEUE"), 10000),
+		Mode:         strings.ToLower(strings.TrimSpace(env("BEACON_GO_MODE", "shadow"))),
+		Addr:         env("BEACON_GO_ADDR", ":8080"),
+		InternalAddr: env("BEACON_GO_INTERNAL_ADDR", ":9090"),
+		FallbackURL:  getenv("BEACON_GO_FALLBACK_URL"),
+		// Exactly "true" turns it on, so a typo leaves the route on Node.
+		TrackBatchServe: strings.TrimSpace(getenv("BEACON_GO_TRACK_BATCH_SERVE")) == "true",
+		TrackerURL:      getenv("CLICKHOUSE_TRACKER_URL"),
+		OutwardTraffic:  OutwardTrafficAllowed(getenv("NEXT_PUBLIC_CIVITAI_LINK"), getenv("NEXT_PUBLIC_LOCAL_TRACKER_ENABLED")),
+		TrackerWorkers:  positiveInt(getenv("BEACON_GO_TRACKER_WORKERS"), 16),
+		TrackerQueue:    positiveInt(getenv("BEACON_GO_TRACKER_QUEUE"), 10000),
 
 		RedisURL:                 getenv("REDIS_URL"),
 		RedisCluster:             boolValue(getenv("REDIS_CLUSTER"), true),

@@ -1,10 +1,10 @@
 # beacon-go design
 
-beacon-go answers the two browser beacons — `POST /api/internal/ping` (page views) and
-`POST /api/internal/pulse` (entity views) — exactly as the Node handlers do, and writes the same
-tracker rows. It exists to move these high-volume, framework-overhead-dominated requests off the Node
+beacon-go answers the browser beacons — `POST /api/internal/ping` (page views),
+`POST /api/internal/pulse` (entity views) and, behind its own switch, `POST /api/track/batch` (search
+and action telemetry, §1.4) — exactly as the Node handlers do, and writes the same tracker rows. It exists to move these high-volume, framework-overhead-dominated requests off the Node
 API pool. It is its own small service (not part of `apps/feed-go`) so that the writes stay isolated
-from the read-only feed service. `/api/track/batch` is out of scope here.
+from the read-only feed service.
 
 The rule, borrowed from feed-go: **answer only what can be answered exactly as Node would, and hand
 everything else back** (a *fallback*). In serve mode a fallback is proxied to the Node app unchanged;
@@ -134,6 +134,53 @@ Row: `{...actor, ...values}`:
 
 `userAgent` is `req.headers['user-agent'] ?? 'unknown'`.
 
+### 1.4 `/api/track/batch` → tables `search` and `actions`
+
+Sources: `src/pages/api/track/batch.ts`, `parseTrackBatch` / `trackBatchEventSchema` /
+`trackSearchSchema` / `trackActionSchema` (`track.schema.ts`), `Tracker.search` / `Tracker.action` /
+`ACTOR_META_FREE_ACTION_TYPES` (`tracker.ts`).
+
+1. The same-origin guard and the body step of pulse (§1.3 steps 1 and 2): `400 invalid request`,
+   `400 invalid body`.
+2. The envelope: an array of 1..`TRACK_BATCH_MAX` (100) elements, else `400 invalid input`.
+3. Each element is parsed on its own (`trackBatchEventSchema`, on `kind`). Node DROPS an element
+   that does not parse and keeps the rest (`400 invalid input` when none survives).
+4. Node dispatches each event in order through one Tracker, not awaited; `200`, empty, is sent at
+   once (so, as on pulse, no rolling refresh can reach the response):
+   - `search` → `Tracker.search` → one row in `search`: `{...actor, query (trimmed), index,
+     filters}`, `filters` the `JSON.stringify` of the passthrough object (at most
+     `TRACK_FREEFORM_MAX_CHARS`), or `''` when absent;
+   - `action` → `Tracker.action` → one row in `actions`: `{...actor, type, [reason], details}`,
+     `details` the `JSON.stringify` of the arm's parsed object (zod key order: the shape's keys,
+     then a passthrough object's other keys; unknown keys of a strict object stripped), or `''`;
+     for the five `ACTOR_META_FREE_ACTION_TYPES` the actor is `{userId}` alone;
+   - `impression` → `Tracker.impressions`: a DIRECT ClickHouse insert into `impressions` (not the
+     tracker service), plus event points for hatted entities (`awardViewPoints`, a `UserWrite`
+     session);
+   - `feed` → the feed events recorder (its own buffer; the viewer's tier and hot-lead state).
+
+`actor` is pulse's (`userId`, `ip`, `userAgent`), resolved once per batch.
+
+**What beacon-go answers**: a batch whose every element is a `search` or an `action` it parses. It
+answers every 400 of steps 1-2 itself. Everything else falls back WITH THE WHOLE REQUEST, so a batch
+is written by one writer only and nothing is split, lost or written twice:
+
+| reason | when |
+|---|---|
+| `track-impression` | the batch has an `impression` event (a sink this service does not hold) |
+| `track-feed` | the batch has a `feed` event |
+| `track-action-unported` | an `Experiment_Exposure` action (its schema reads the experiment registry) |
+| `track-event-invalid` | an element this service's copy of the schema does not accept: Node would drop it, but a value Node has started accepting since the copy was taken would be lost, so Node decides |
+| `disabled` | serve mode with `BEACON_GO_TRACK_BATCH_SERVE` off (§3): every request |
+
+When several apply, the first in that order is counted, so the `track-impression` and `track-feed`
+rates are the share of batches carrying one: the measured size of the follow-up ports.
+
+The action arms import constants (`USER_MENU_ITEM_IDS`, the app-store and app-telemetry enums, ...);
+`internal/beacon/trackbatch_arms.go` holds copies, pinned by `TestTrackBatchConstants` against
+`vectors.json`, which `src/server/beacon/__tests__/beacon-go-track-batch-vectors.test.ts` pins
+against the live Node values.
+
 ## 2. What beacon-go reproduces, and what it hands back
 
 Exact, byte for byte: the body parse (UTF-8, BOM strip, text and JSON bodies, Next's empty-JSON and
@@ -176,6 +223,11 @@ JSON` (Go writes the standard one).
 
 ## 3. Modes
 
+`/api/track/batch` has its own switch, `BEACON_GO_TRACK_BATCH_SERVE` (exactly `true` turns it on;
+default off), read in serve mode only: off, the public listener proxies every `/api/track/batch`
+request to the Node app unchanged (fallback `disabled`), whatever share of that route the ingress
+sends here. Its shadow compare endpoint runs in either mode and either way, and writes nothing.
+
 `BEACON_GO_MODE=shadow` (default): only the internal listener runs. Nothing is written. The Node
 sampler (below) posts samples; each one is computed and compared.
 
@@ -200,7 +252,10 @@ given up on per table (`dropped`), their total and how many were in flight. Besi
 
 The sampler is `src/server/beacon/beacon-go-shadow.ts` (payload code in
 `beacon-go-shadow-payload.ts`), behind the Flipt flag **`beacon-go-shadow`** (default off) and
-`BEACON_GO_SHADOW_URL` + `BEACON_GO_SHADOW_SAMPLE_RATE > 0`, and only where the Tracker would send.
+`BEACON_GO_SHADOW_URL` + `BEACON_GO_SHADOW_SAMPLE_RATE > 0` (ping, pulse) or
+`BEACON_GO_SHADOW_TRACK_BATCH_SAMPLE_RATE > 0` (track-batch, default 0), and only where the Tracker
+would send. A track-batch sample carries the `search` and `actions` rows Node sent (an impression's
+direct insert and a feed row are not tracker sends, and such a batch falls back here anyway).
 For a sampled request it captures, after the response has finished (and, for pulse, after the
 un-awaited view has settled):
 
@@ -255,7 +310,7 @@ All fixture data is synthetic.
 ## 7. Deployment needs
 
 Ports: 8080 (public, serve mode only), 9090 (internal: `/metrics`, `/healthz`,
-`/internal/shadow/api/internal/{ping,pulse}`). Env vars: see `.env.example`. Resource guess: CPU
+`/internal/shadow/api/internal/{ping,pulse}`, `/internal/shadow/api/track/batch`). Env vars: see `.env.example`. Resource guess: CPU
 request 100m, limit 1 core; memory request 64 MiB, limit 256 MiB, per replica, to be replaced by
 measurements from the shadow phase.
 

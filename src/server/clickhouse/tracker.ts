@@ -353,8 +353,9 @@ export const ActionType = [
 ] as const;
 
 // Written without ip and userAgent, whoever calls: `actions` has no TTL, and these feed per-user
-// experiment readouts that need only the user id.
-const ACTOR_META_FREE_ACTION_TYPES: ReadonlySet<ActionType> = new Set([
+// experiment readouts that need only the user id. Exported for the beacon-go copy's pin
+// (src/server/beacon/__tests__/beacon-go-track-batch-vectors.test.ts).
+export const ACTOR_META_FREE_ACTION_TYPES: ReadonlySet<ActionType> = new Set([
   'Experiment_Exposure',
   'HatTurf_Action',
   // Store funnel rows (impressions are high-volume) need only the user id. NOT `App_Open` /

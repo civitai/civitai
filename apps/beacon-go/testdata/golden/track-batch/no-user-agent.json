@@ -1,0 +1,36 @@
+{
+  "name": "no-user-agent",
+  "endpoint": "track-batch",
+  "request": {
+    "method": "POST",
+    "target": "/api/track/batch",
+    "headers": {
+      "host": "www.example.test",
+      "origin": "https://www.example.test",
+      "content-type": "application/json",
+      "x-forwarded-for": "203.0.113.7"
+    },
+    "body": "[{\"kind\":\"search\",\"data\":{\"query\":\"q\",\"index\":\"i\"}}]"
+  },
+  "session": null,
+  "trackerEnabled": true,
+  "fallback": "",
+  "expect": {
+    "status": 200,
+    "headers": {
+      "vary": "Authorization",
+      "access-control-allow-origin": "*",
+      "access-control-allow-headers": "Authorization, Content-Type, *",
+      "access-control-allow-methods": "POST",
+      "cache-control": "public, s-maxage=300, stale-while-revalidate=150"
+    },
+    "body": "",
+    "writes": [
+      {
+        "table": "search",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"unknown\",\"query\":\"q\",\"index\":\"i\",\"filters\":\"\"}"
+      }
+    ]
+  },
+  "shadow": "{\"method\":\"POST\",\"target\":\"/api/track/batch\",\"query\":\"\",\"headers\":{\"host\":\"www.example.test\",\"origin\":\"https://www.example.test\",\"content-type\":\"application/json\",\"x-forwarded-for\":\"203.0.113.7\"},\"body\":\"[{\\\"kind\\\":\\\"search\\\",\\\"data\\\":{\\\"query\\\":\\\"q\\\",\\\"index\\\":\\\"i\\\"}}]\",\"bodyIsString\":false,\"node\":{\"status\":200,\"headers\":{\"access-control-allow-origin\":\"*\",\"access-control-allow-headers\":\"Authorization, Content-Type, *\",\"access-control-allow-methods\":\"POST\",\"vary\":\"Authorization\",\"cache-control\":\"public, s-maxage=300, stale-while-revalidate=150\"},\"body\":\"\",\"writes\":[{\"table\":\"search\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"unknown\\\",\\\"query\\\":\\\"q\\\",\\\"index\\\":\\\"i\\\",\\\"filters\\\":\\\"\\\"}\"}]}}"
+}

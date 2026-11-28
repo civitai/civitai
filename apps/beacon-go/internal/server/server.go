@@ -46,6 +46,11 @@ type Server struct {
 	ShadowQueue chan struct{}
 	// ComputeBudget bounds one computation (the session read is its only I/O).
 	ComputeBudget time.Duration
+	// TrackBatchServe is BEACON_GO_TRACK_BATCH_SERVE (default off). Off, every /api/track/batch
+	// request the public listener receives is proxied to the Node app unchanged (fallback reason
+	// `disabled`), whatever share of that route the ingress sends here. Its shadow compare endpoint
+	// runs either way, and never writes.
+	TrackBatchServe bool
 
 	shadowMu sync.Mutex
 	closing  bool
@@ -70,12 +75,20 @@ func (s *Server) panicked(where string, err error) {
 	}
 }
 
-// PublicMux routes the two beacons; every other path is proxied (it should never arrive: the
-// ingress routes only these two here).
+// Routes are the public path of each endpoint.
+var Routes = map[string]string{
+	beacon.EndpointPing:       "/api/internal/ping",
+	beacon.EndpointPulse:      "/api/internal/pulse",
+	beacon.EndpointTrackBatch: "/api/track/batch",
+}
+
+// PublicMux routes the beacons; every other path is proxied (it should never arrive: the ingress
+// routes only these here).
 func PublicMux(s *Server) *http.ServeMux {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/internal/ping", func(w http.ResponseWriter, r *http.Request) { s.serve(w, r, beacon.EndpointPing) })
-	mux.HandleFunc("/api/internal/pulse", func(w http.ResponseWriter, r *http.Request) { s.serve(w, r, beacon.EndpointPulse) })
+	for _, endpoint := range Endpoints {
+		mux.HandleFunc(Routes[endpoint], func(w http.ResponseWriter, r *http.Request) { s.serve(w, r, endpoint) })
+	}
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if s.Proxy == nil {
 			http.NotFound(w, r)
@@ -94,21 +107,28 @@ func InternalMux(s *Server, metrics http.Handler) *http.ServeMux {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
-	mux.HandleFunc(ShadowPath(beacon.EndpointPing), func(w http.ResponseWriter, r *http.Request) {
-		s.shadowHandler(w, r, beacon.EndpointPing) //nolint:contextcheck // compared after the 202 on a background context: it must outlive the request
-	})
-	mux.HandleFunc(ShadowPath(beacon.EndpointPulse), func(w http.ResponseWriter, r *http.Request) {
-		s.shadowHandler(w, r, beacon.EndpointPulse) //nolint:contextcheck // compared after the 202 on a background context: it must outlive the request
-	})
+	for _, endpoint := range Endpoints {
+		mux.HandleFunc(ShadowPath(endpoint), func(w http.ResponseWriter, r *http.Request) {
+			s.shadowHandler(w, r, endpoint) //nolint:contextcheck // compared after the 202 on a background context: it must outlive the request
+		})
+	}
 	return mux
 }
 
-// ShadowPath is the internal compare path for an endpoint (the sampler appends it to
-// BEACON_GO_SHADOW_URL).
-func ShadowPath(endpoint string) string { return "/internal/shadow/api/internal/" + endpoint }
+// ShadowPath is the internal compare path for an endpoint, `/internal/shadow` + its public route
+// (the sampler appends it to BEACON_GO_SHADOW_URL: beaconGoShadowUrl in
+// src/server/beacon/beacon-go-shadow.ts).
+func ShadowPath(endpoint string) string { return "/internal/shadow" + Routes[endpoint] }
 
 // serve answers one beacon, or proxies it to the Node app on a fallback.
 func (s *Server) serve(w http.ResponseWriter, r *http.Request, endpoint string) {
+	if endpoint == beacon.EndpointTrackBatch && !s.TrackBatchServe {
+		// The switch is off: the request goes to the Node app as it came, body unread.
+		s.Metrics.Fallbacks.WithLabelValues(endpoint, "serve", ReasonDisabled).Inc()
+		s.Metrics.Requests.WithLabelValues(endpoint, "fallback").Inc()
+		s.proxy(w, r)
+		return
+	}
 	// Read at most one byte past Next's limit; a longer body is Next's 413 to give.
 	body, err := io.ReadAll(io.LimitReader(r.Body, beacon.MaxBody+1))
 	if err != nil {
@@ -131,13 +151,9 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, endpoint string) 
 		}
 		s.Metrics.Fallbacks.WithLabelValues(endpoint, "serve", reason).Inc()
 		s.Metrics.Requests.WithLabelValues(endpoint, "fallback").Inc()
-		if s.Proxy == nil {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			return
-		}
 		// The proxy reads the body from the start: what was read, then whatever is left.
 		r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(body), r.Body))
-		s.Proxy.ServeHTTP(w, r)
+		s.proxy(w, r)
 		return
 	}
 	if s.Writer != nil {
@@ -147,6 +163,18 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, endpoint string) 
 	}
 	s.Metrics.Requests.WithLabelValues(endpoint, "served").Inc()
 	WriteResponse(w, out.Response)
+}
+
+// ReasonDisabled is the fallback reason of a /api/track/batch request while TrackBatchServe is off.
+const ReasonDisabled = "disabled"
+
+// proxy hands a request to the Node app; without one (never in serve mode) it is a 503.
+func (s *Server) proxy(w http.ResponseWriter, r *http.Request) {
+	if s.Proxy == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+	s.Proxy.ServeHTTP(w, r)
 }
 
 // WriteResponse writes a computed response. No Content-Type is sniffed: Node's res.send of a string

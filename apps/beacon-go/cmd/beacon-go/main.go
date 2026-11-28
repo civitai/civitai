@@ -1,7 +1,7 @@
-// Command beacon-go answers the browser beacons POST /api/internal/ping and POST /api/internal/pulse
-// exactly as the Node app does, and either shadow-compares them against Node (BEACON_GO_MODE=shadow,
-// the default: nothing is written) or serves them and writes their tracker rows (serve). See
-// apps/beacon-go/DESIGN.md.
+// Command beacon-go answers the browser beacons POST /api/internal/ping, POST /api/internal/pulse and
+// (with BEACON_GO_TRACK_BATCH_SERVE=true) POST /api/track/batch exactly as the Node app does, and
+// either shadow-compares them against Node (BEACON_GO_MODE=shadow, the default: nothing is written)
+// or serves them and writes their tracker rows (serve). See apps/beacon-go/DESIGN.md.
 package main
 
 import (
@@ -143,6 +143,8 @@ func run(log *slog.Logger) error {
 		Log:           log,
 		ShadowQueue:   make(chan struct{}, cfg.ShadowWorkers),
 		ComputeBudget: cfg.ComputeBudget,
+		// Read only by the public listener, which runs in serve mode only.
+		TrackBatchServe: cfg.TrackBatchServe,
 	}
 	var writer rowWriter
 	internal := server.InternalHTTPServer(cfg.InternalAddr, server.InternalMux(srv, promhttp.HandlerFor(reg, promhttp.HandlerOpts{})))
@@ -158,7 +160,7 @@ func run(log *slog.Logger) error {
 		writer = w
 		public = append(public, server.PublicHTTPServer(cfg.Addr, server.PublicMux(srv)))
 	}
-	log.Info("starting", "mode", cfg.Mode)
+	log.Info("starting", "mode", cfg.Mode, "track_batch_serve", cfg.TrackBatchServe)
 
 	servers := append([]*http.Server{internal}, public...)
 	errs := make(chan error, len(servers))

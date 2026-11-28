@@ -1006,5 +1006,211 @@
       "in": "\t\u000b\f\r\na",
       "units": "0061"
     }
-  ]
+  ],
+  "trackBatch": {
+    "trackBatchMax": 100,
+    "freeformMaxChars": 65536,
+    "actionTypes": [
+      "AddToBounty_Click",
+      "AddToBounty_Confirm",
+      "Announcement_Click",
+      "AppStore_Action",
+      "App_Error",
+      "App_Session",
+      "AppsBuild_Action",
+      "AwardBounty_Click",
+      "AwardBounty_Confirm",
+      "CSAM_Help_Triggered",
+      "Experiment_Exposure",
+      "Feed_TagBar_Click",
+      "Generator_Submit",
+      "HatTurf_Action",
+      "Image_Remix_Click",
+      "LoginRedirect",
+      "Membership_Cancel",
+      "Membership_Downgrade",
+      "Model_Create_Click",
+      "NotEnoughFunds",
+      "ProfanitySearch",
+      "PurchaseFunds_Cancel",
+      "PurchaseFunds_Confirm",
+      "Push_Prompt",
+      "TipInteractive_Cancel",
+      "TipInteractive_Click",
+      "Tip_Click",
+      "Tip_Confirm",
+      "UserMenu_Click"
+    ],
+    "actorMetaFree": [
+      "AppStore_Action",
+      "App_Error",
+      "App_Session",
+      "Experiment_Exposure",
+      "HatTurf_Action"
+    ],
+    "enums": {
+      "trackedReasons": [
+        "image-gen",
+        "train-model",
+        "blur-toggle"
+      ],
+      "userMenuItemIds": [
+        "profile",
+        "inventory",
+        "prizes",
+        "my-shop",
+        "service-requests",
+        "browse-services",
+        "placements",
+        "training",
+        "collections",
+        "liked-models",
+        "bookmarked-articles",
+        "bounties",
+        "challenges",
+        "browse-challenges",
+        "crucibles",
+        "buzz-dashboard",
+        "creator-studio",
+        "creator-journey",
+        "vault",
+        "referrals",
+        "apps",
+        "leaderboard",
+        "auctions",
+        "knights-of-new",
+        "link-app",
+        "following",
+        "downloads",
+        "getting-started",
+        "civitai-link",
+        "sign-in",
+        "support-report-bug",
+        "support-education",
+        "support-faq",
+        "support-discord",
+        "support-assistant",
+        "support-portal",
+        "create-generate",
+        "create-post-images",
+        "create-post-videos",
+        "create-model",
+        "create-model3d",
+        "create-train",
+        "create-article",
+        "create-comic",
+        "create-bounty",
+        "create-challenge"
+      ],
+      "userMenuGroupIds": [
+        "create",
+        "your-stuff",
+        "creator-tools",
+        "rewards",
+        "help"
+      ],
+      "userMenuHeaderGroup": [
+        "header"
+      ],
+      "pushPromptActions": [
+        "shown",
+        "enable_click",
+        "not_now",
+        "granted",
+        "native_dismissed",
+        "denied",
+        "subscribed",
+        "failed"
+      ],
+      "pushPromptSurfaces": [
+        "visit-prompt",
+        "settings-card",
+        "deal-flow"
+      ],
+      "pushPromptVariants": [
+        "new",
+        "finish",
+        "another-device"
+      ],
+      "experimentSurfaces": [
+        "image-detail",
+        "feed-card"
+      ],
+      "hatTurfClientActions": [
+        "invite_view",
+        "invite_dismiss",
+        "hat_count_open",
+        "feed_place_start",
+        "feed_place_save",
+        "hide_all_hats_on",
+        "hide_all_hats_off"
+      ],
+      "hatTurfEvents": [
+        "birthday2026"
+      ],
+      "appStoreActions": [
+        "impression",
+        "card_click",
+        "detail_view",
+        "cta_click"
+      ],
+      "appStoreQueryLengthBuckets": [
+        "0",
+        "1-3",
+        "4-10",
+        "11-30",
+        "31+"
+      ],
+      "appSurfaces": [
+        "store_card",
+        "detail",
+        "sub_listing",
+        "made_with",
+        "related",
+        "direct"
+      ],
+      "listingSorts": [
+        "top-rated",
+        "popular",
+        "newest",
+        "name"
+      ],
+      "marketplaceCategories": [
+        "generation",
+        "games",
+        "utility",
+        "discovery",
+        "moderation",
+        "analytics",
+        "other"
+      ],
+      "appSubmitFailureReasons": [
+        "validation",
+        "prompt_refused",
+        "ecosystem_unavailable",
+        "insufficient_buzz",
+        "rate_limited",
+        "server_error",
+        "other"
+      ],
+      "appErrorStages": [
+        "submit",
+        "training_submit",
+        "confirmed_step_submit"
+      ],
+      "appSessionHosts": [
+        "page",
+        "iframe"
+      ]
+    },
+    "patterns": {
+      "appStoreListingId": "^[A-Za-z0-9_-]{1,64}$",
+      "appBlockId": "^[A-Za-z0-9_]{1,64}$"
+    },
+    "numbers": {
+      "appStorePositionMax": 10000,
+      "appSessionMaxDurationMs": 86400000,
+      "appSessionMaxCount": 1000000
+    }
+  }
 }
