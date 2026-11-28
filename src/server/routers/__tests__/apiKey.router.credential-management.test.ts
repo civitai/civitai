@@ -3,6 +3,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as ApiKeyController from '~/server/controllers/api-key.controller';
 import { OnboardingSteps } from '~/server/common/enums';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { DOCS_API_KEY_SCOPE } from '~/shared/constants/docs-api-key.constants';
 
 vi.mock('~/server/controllers/api-key.controller', async (importOriginal) => ({
   ...(await importOriginal<typeof ApiKeyController>()),
@@ -147,6 +148,40 @@ describe('apiKey.setBuzzLimit on the calling key itself', () => {
       })
     ).rejects.toThrow(expect.objectContaining({ code: 'NOT_FOUND' }));
     expect(dbMock.dbRead.apiKey.findFirst).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('apiKey.setBuzzLimit on a developer docs key', () => {
+  const docsKey = {
+    id: 9,
+    name: 'Developer docs (civitai.com)',
+    type: 'User',
+    expiresAt: new Date('2099-01-01'),
+    tokenScope: DOCS_API_KEY_SCOPE,
+    tokenScopeWide: null,
+  };
+  const wrote = new Error('update reached');
+  beforeEach(() => {
+    dbMock.dbRead.apiKey.findFirst.mockReset();
+    dbMock.dbWrite.apiKey.update.mockReset();
+    dbMock.dbWrite.apiKey.update.mockRejectedValue(wrote);
+  });
+  const setLimit = (
+    buzzLimit: null | { type: 'sliding'; limit: number; window: 'day'; unit: number }[]
+  ) => actualController.setBuzzLimitHandler({ ctx: ctx(), input: { id: 9, buzzLimit } });
+
+  it.each([
+    ['removed', null],
+    ['raised', [{ type: 'sliding' as const, limit: 100_000, window: 'day' as const, unit: 1 }]],
+  ])('refuses its limit being %s, writing nothing', async (_label, buzzLimit) => {
+    dbMock.dbRead.apiKey.findFirst.mockResolvedValue(docsKey as never);
+    await expect(setLimit(buzzLimit)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(dbMock.dbWrite.apiKey.update).not.toHaveBeenCalled();
+  });
+
+  it('CONTROL: a personal key that only shares the docs name still changes', async () => {
+    dbMock.dbRead.apiKey.findFirst.mockResolvedValue({ ...docsKey, expiresAt: null } as never);
+    await expect(setLimit(null)).rejects.toBe(wrote);
   });
 });
 

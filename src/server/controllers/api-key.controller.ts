@@ -21,6 +21,7 @@ import { RESTRICTED_ACCOUNT_MESSAGE } from '~/server/common/content-restriction'
 import { assertAccountNotRestricted } from '~/server/services/account-restriction.service';
 import { getBuzzSpendForSubjects, type Subject } from '~/server/http/orchestrator/api-key-spend';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
+import { isDocsApiKey } from '~/shared/constants/docs-api-key.constants';
 
 export async function getApiKeyHandler({
   input,
@@ -96,9 +97,23 @@ export async function setBuzzLimitHandler({
   // Verify the key belongs to the requesting user before mutating.
   const existing = await dbRead.apiKey.findFirst({
     where: { id: input.id, userId: user.id, type: 'User' },
-    select: { id: true },
+    select: {
+      id: true,
+      name: true,
+      type: true,
+      expiresAt: true,
+      tokenScope: true,
+      tokenScopeWide: true,
+    },
   });
   if (!existing) throw throwNotFoundError(`No api key with id ${input.id} on your account`);
+  // The docs mint each key with a fixed limit and a 30-day life; a new one comes from the docs.
+  if (isDocsApiKey(existing))
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message:
+        'A developer docs key keeps the Buzz limit it was created with. Create your own key to set a different one.',
+    });
 
   const updated = await setApiKeyBuzzLimit({
     id: input.id,

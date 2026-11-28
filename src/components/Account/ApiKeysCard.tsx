@@ -25,6 +25,7 @@ import {
   IconCoinOff,
   IconCalendar,
   IconClock,
+  IconHourglass,
 } from '@tabler/icons-react';
 import { formatDate } from '~/utils/date-helpers';
 import { ApiKeyModal } from '~/components/Account/ApiKeyModal';
@@ -232,6 +233,14 @@ export function ApiKeysCard({ flat }: { flat?: boolean } = {}) {
                             {apiKey.lastUsedAt ? formatDate(apiKey.lastUsedAt) : 'Never used'}
                           </Text>
                         </Group>
+                        {apiKey.expiresAt && (
+                          <Group gap={4} wrap="nowrap">
+                            <IconHourglass size={12} color="var(--mantine-color-dimmed)" />
+                            <Text size="xs" c="dimmed">
+                              Expires {formatDate(apiKey.expiresAt)}
+                            </Text>
+                          </Group>
+                        )}
                         {features.apiKeyBuzzLimit &&
                           (hasLimit && simpleLimit ? (
                             (() => {

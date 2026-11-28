@@ -4,6 +4,8 @@ import type * as AccountRestriction from '~/server/services/account-restriction.
 import type * as ApiKeyPrincipalCache from '~/server/auth/api-key-principal-cache';
 import type * as OrchestratorCivitai from '~/server/services/orchestrator/civitai';
 import type * as KeyGenerator from '~/server/utils/key-generator';
+import type * as EnvOther from '~/env/other';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { RESTRICTED_ACCOUNT_MESSAGE } from '~/server/common/content-restriction';
 import { addApiKeyInputSchema } from '~/server/schema/api-key.schema';
@@ -19,13 +21,30 @@ const NAME = `Developer docs (${HOST})`;
 const DOCS_ORIGIN = 'https://developer.civitai.com';
 const DAY = 86_400_000;
 
-const { getServerAuthSession, assertAccountNotRestricted, revokeCivitaiUserTokens, minted } =
-  vi.hoisted(() => ({
-    getServerAuthSession: vi.fn(),
-    assertAccountNotRestricted: vi.fn(async () => undefined),
-    revokeCivitaiUserTokens: vi.fn(async () => true),
-    minted: { count: 0 },
-  }));
+const {
+  getServerAuthSession,
+  assertAccountNotRestricted,
+  revokeCivitaiUserTokens,
+  minted,
+  envFlags,
+} = vi.hoisted(() => ({
+  getServerAuthSession: vi.fn(),
+  assertAccountNotRestricted: vi.fn(async () => undefined),
+  revokeCivitaiUserTokens: vi.fn(async () => true),
+  minted: { count: 0 },
+  envFlags: { isTest: true },
+}));
+
+// The rate limiter exempts the test env; the limit test below switches that off.
+vi.mock('~/env/other', async (importOriginal) => {
+  const actual = await importOriginal<typeof EnvOther>();
+  return {
+    ...actual,
+    get isTest() {
+      return envFlags.isTest;
+    },
+  };
+});
 
 vi.mock('~/server/auth/get-server-auth-session', () => ({ getServerAuthSession }));
 // The cached standing check: it passes here, as it does when the cache has not yet seen a ban.
@@ -272,6 +291,23 @@ describe.each(['GET', 'POST'])('%s /api/user/orchestrator-key', (method) => {
     expect((await call({ method })).status).toBe(200);
     expect(keys.filter((k) => k.id === 1 || k.id === 1001)).toEqual(lookAlikes);
     expect(keys.map((k) => k.id).sort()).toEqual([1, 1001, 100, 11].sort());
+  });
+});
+
+describe('rate limit', () => {
+  afterEach(async () => {
+    envFlags.isTest = true;
+    (await import('~/server/utils/rate-limit-bucket')).__resetLocalRateLimitBucketsForTests();
+  });
+
+  it('refuses the 11th key in an hour with a 429', async () => {
+    envFlags.isTest = false;
+    // The store is down, so the limiter counts in this process; the limit still holds.
+    redisMock.redis.packed.hGet.mockRejectedValue(new Error('store down'));
+    const statuses: number[] = [];
+    for (let i = 0; i < 11; i++) statuses.push((await call()).status);
+    expect(statuses).toEqual([...Array(10).fill(200), 429]);
+    expect(dbMock.dbWrite.apiKey.create).toHaveBeenCalledTimes(10);
   });
 });
 
