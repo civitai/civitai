@@ -17,7 +17,7 @@ Closed/clean items are in the buckets below; this table is only what's still **o
 
 | # | Gap | Surface | Severity | Status |
 |---|---|---|---|---|
-| 1 | Rating-locked **Blocked** rows never unblocked on accept (`resetBlockedNsfwLevel` missing) | shared `acceptImage` (minor-review, comics-review, appeals, delegated `image.moderate`) | **BLOCKER** (regression vs `c371fcbc16`) | ✅ **DONE** — reset UPDATE before recompute in `acceptImage` |
+| 1 | Rating-locked **Blocked** rows never unblocked on accept (no Blocked reset) | shared `acceptImage` (minor-review, comics-review, appeals, delegated `image.moderate`) | **BLOCKER** (regression vs `c371fcbc16`) | ✅ **DONE** — the lift UPDATE itself resets and unlocks a restored Blocked row, as the main app's lifts do |
 | 2 | **KoNO finalize** dropped (vote finalize, smites, counters, pool-reset, signals) | `/images/ratings` + `/images/downleveled` `setLevel` | **BLOCKER** (downleveled) | ✅ **RETIRED** — the delegate (`kono.ts` → `/api/internal/kono-finalize`) was removed with the old Knights game |
 | 3 | Comic **project/chapter** mod tools not ported (TOS toggle, set project/chapter nsfw, unpublish chapter) | comic detail mod UI (not the queue) | BLOCKER-if-expected | 🅿️ **Deferred** — NOT a migrated page (this surface was never in the spoke); revisit if comic project/chapter moderation moves here. Every *migrated* page is at parity. |
 | 4 | **User moderation** (ban / mute / strikes / restrictions) unbuilt | `/users` still a placeholder; `/users/newest` is read-only | BLOCKER-if-expected | 🅿️ **Out of scope for now** (user decision) — stays main-app until session-revoke is designed |
@@ -120,14 +120,10 @@ Four parallel audits of every migrated mutation surface not covered by the origi
 comic re-queue included). `prompt-tester`/`page-visits`/`users`/`admin` are read-only, spoke-native, or placeholders.
 New gaps found:
 
-- [ ] **Shared image-accept — rating-locked Blocked rows never unblocked** — **BLOCKER (regression).** The main
-  app's `handleUnblockImages` runs `resetBlockedNsfwLevel(ids)` (`image.service.ts:740`: `UPDATE Image SET
-  nsfwLevel=0, nsfwLevelLocked=FALSE WHERE nsfwLevel=Blocked`) **before** recompute, because
-  `update_nsfw_levels_new` skips locked rows (`update_nsfw_level.sql:68`: `AND NOT nsfwLevelLocked`). The spoke's
-  `acceptImage` (`image-moderation.service.ts`) never unlocks, so an image rating-locked at Blocked stays hidden
-  after a mod explicitly unblocks it. Affects **minor-review, comics-review queue, appeals-approve, and the
-  delegated `image.moderate` unblock**. This is exactly what main commit `c371fcbc16` (#3355) fixed; the spoke
-  port predates/missed it. Cheap: add the unlock UPDATE before `recompute` in `acceptImage`.
+- [x] **Shared image-accept — rating-locked Blocked rows never unblocked** — done: each lift `UPDATE`
+  (the spoke's accept and appeal approval; the main app's unblock, appeal approval and account restore) sets a
+  restored Blocked row to 0 and unlocked, and the recompute runs after it. `update_nsfw_levels_new` skips locked rows, so the unlock has to come first. Same item as
+  row 1 above.
 - [ ] **`/images/ratings` + `/images/downleveled` `setLevel` — `metadata.nsfwLevelReason` not written** —
   DEGRADED. The shared `updateImageNsfwLevel` (`image-nsfw-level.ts`) sets only `nsfwLevel`/`nsfwLevelLocked`;
   the main app also writes `metadata.nsfwLevelReason` (`image.service.ts:6350`) and busts `imageMetadataCache`
