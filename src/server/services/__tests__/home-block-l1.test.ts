@@ -612,3 +612,42 @@ describe('hiding an image refreshes the home blocks holding it', () => {
     expect(await ingestionOf(1)).toBe('Blocked');
   });
 });
+
+// `onTier` is what `home_block_get_total` counts (pinned through getHomeBlockById in
+// home-block-get-counter.test.ts): told once per returning call where the answer came from.
+describe('getHomeBlockCached onTier', () => {
+  async function tiersOf(calls: number, block: object = leaderboard(ROW_A)) {
+    const tiers: string[] = [];
+    for (let i = 0; i < calls; i++)
+      await getHomeBlockCached(block as never, undefined, {}, homeBlockSource, (t) =>
+        tiers.push(t)
+      );
+    return tiers;
+  }
+
+  it('L1 off: a cold call is a miss, the next ones are Redis hits', async () => {
+    expect(await tiersOf(3)).toEqual(['miss', 'redis', 'redis']);
+  });
+
+  it('L1 on: a cold call is a miss, the next ones are L1 hits', async () => {
+    setFlag(true);
+    expect(await tiersOf(3)).toEqual(['miss', 'l1', 'l1']);
+  });
+
+  it('L1 on: an entry already in Redis is a Redis hit first, then L1', async () => {
+    store.set('packed:home-blocks:Leaderboard:5:unscoped', JSON.stringify({ leaderboards: [] }));
+    setFlag(true);
+    expect(await tiersOf(2)).toEqual(['redis', 'l1']);
+  });
+
+  it('a block that builds to nothing is still a miss (built from source, nothing stored)', async () => {
+    getHomeBlockData.mockResolvedValue(null);
+    expect(await tiersOf(2)).toEqual(['miss', 'miss']);
+  });
+
+  it('a row with no identifier reports no_identifier and reads nothing', async () => {
+    const shop = { id: 12, type: HomeBlockType.CosmeticShop, metadata: {} };
+    expect(await tiersOf(1, shop)).toEqual(['no_identifier']);
+    expect(packedGet).not.toHaveBeenCalled();
+  });
+});

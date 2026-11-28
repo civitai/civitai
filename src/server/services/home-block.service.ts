@@ -7,6 +7,8 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { isFliptPublic } from '~/server/flipt/tester-segment';
 import { dbReadFallbackCounter } from '~/server/prom/client';
+import { countHomeBlockGet } from '~/server/prom/home-block-get.metrics';
+import type { HomeBlockGetTier } from '~/server/prom/home-block-get.metrics';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import {
   homeBlockByIdSelect,
@@ -238,78 +240,106 @@ export const getHomeBlockById = async ({
   //    200 is kept off the edge by the controller (`isHomeBlockGated`).
   viewer: EventViewer;
 }) => {
-  const homeBlockFindArgs = {
-    select: homeBlockByIdSelect,
-    where: {
-      id,
-    },
-  } as const;
-  // A miss (a missing row, or any error) on the replica falls back to the primary, through Prisma.
-  // A row missing there too answers null, the same answer as a block this viewer may not see. A call
-  // with no `id` (the input allows it) stays on Prisma, which rejects it as before.
-  const fallback = () => {
-    dbReadFallbackCounter.inc({ entity: 'homeBlock', caller: 'getHomeBlockById' });
-    return dbWrite.homeBlock.findUnique(homeBlockFindArgs);
+  // Counted once per call in `home_block_get_total` (`~/server/prom/home-block-get.metrics`), under
+  // the tier each path sets as it returns, or `error` if it throws.
+  const answer: { tier: HomeBlockGetTier; type: string | undefined } = {
+    tier: 'error',
+    type: undefined,
   };
-  const homeBlock =
-    id !== undefined
-      ? await readHomeBlockViaKysely((await loadKyselyDb()).kyselyRead, id).then(
-          (row) => row ?? fallback(),
-          fallback
-        )
-      : await readHomeBlockViaPrisma(dbRead, id).catch(fallback);
+  try {
+    const homeBlockFindArgs = {
+      select: homeBlockByIdSelect,
+      where: {
+        id,
+      },
+    } as const;
+    // A miss (a missing row, or any error) on the replica falls back to the primary, through Prisma.
+    // A row missing there too answers null, the same answer as a block this viewer may not see. A call
+    // with no `id` (the input allows it) stays on Prisma, which rejects it as before.
+    const fallback = () => {
+      dbReadFallbackCounter.inc({ entity: 'homeBlock', caller: 'getHomeBlockById' });
+      return dbWrite.homeBlock.findUnique(homeBlockFindArgs);
+    };
+    const homeBlock =
+      id !== undefined
+        ? await readHomeBlockViaKysely((await loadKyselyDb()).kyselyRead, id).then(
+            (row) => row ?? fallback(),
+            fallback
+          )
+        : await readHomeBlockViaPrisma(dbRead, id).catch(fallback);
 
-  if (!homeBlock) {
-    return null;
-  }
-
-  const row = { ...homeBlock, metadata: homeBlock.metadata as HomeBlockMetaSchema };
-  const { metadata, fromSystem } = await resolveHomeBlockSource(row);
-  if (!(await canViewHomeBlock({ type: row.type, metadata }, viewer))) return null;
-
-  if (row.type === HomeBlockType.Collection) {
-    const audience = await getCollectionBlockAudience({
-      // A clone of a system block shows the collection the system block chose.
-      blockUserId: fromSystem ? -1 : row.userId,
-      collectionId: metadata.collection?.id,
-      viewer,
-    });
-    if (audience === 'none') return null;
-    if (audience === 'viewer') {
-      onViewerOnly?.();
-      // The same read as the shared path (`getHomeBlockCached`), with no user, kept out of it.
-      const block = await getHomeBlockData({
-        homeBlock: { ...row, metadata },
-        input: { limit: 14 * 4, domain },
-      });
-      return block ? { ...block, ...row, metadata } : null;
+    if (!homeBlock) {
+      answer.tier = 'not_found';
+      return null;
     }
+
+    answer.type = homeBlock.type;
+    const row = { ...homeBlock, metadata: homeBlock.metadata as HomeBlockMetaSchema };
+    const { metadata, fromSystem } = await resolveHomeBlockSource(row);
+    if (!(await canViewHomeBlock({ type: row.type, metadata }, viewer))) {
+      answer.tier = 'denied';
+      return null;
+    }
+
+    if (row.type === HomeBlockType.Collection) {
+      const audience = await getCollectionBlockAudience({
+        // A clone of a system block shows the collection the system block chose.
+        blockUserId: fromSystem ? -1 : row.userId,
+        collectionId: metadata.collection?.id,
+        viewer,
+      });
+      if (audience === 'none') {
+        answer.tier = 'denied';
+        return null;
+      }
+      if (audience === 'viewer') {
+        onViewerOnly?.();
+        // The same read as the shared path (`getHomeBlockCached`), with no user, kept out of it.
+        const block = await getHomeBlockData({
+          homeBlock: { ...row, metadata },
+          input: { limit: 14 * 4, domain },
+        });
+        answer.tier = 'uncached';
+        return block ? { ...block, ...row, metadata } : null;
+      }
+    }
+
+    const block = await getHomeBlockCached(
+      row,
+      domain,
+      metadata,
+      { resolveHomeBlockMetadata, getHomeBlockData },
+      (tier) => {
+        answer.tier = tier;
+      }
+    );
+    const rotation = metadata.cosmeticShopSection;
+    if (!block?.cosmeticShopSection || !rotation?.random) return block;
+
+    const visible = shopBlockMaxItems(rotation) ?? COSMETIC_SHOP_ROTATION_DEFAULTS.maxItems;
+    const rotated = rotateShopSectionItems(block.cosmeticShopSection.items, {
+      sectionId: rotation.id,
+      rotateHours: rotation.rotateHours,
+      now: Date.now(),
+      visible,
+      getId: (item) => item.shopItem.id,
+    });
+    return {
+      ...block,
+      cosmeticShopSection: {
+        ...block.cosmeticShopSection,
+        // A rotating block shows a handful of a section that can hold over a hundred. Three times
+        // that is room for the client to drop blocked sellers and still fill the row.
+        items: rotated.slice(0, 3 * visible),
+      },
+    };
+  } catch (error) {
+    // Even after a tier answered: a throw past it (the shop rotation) is still a failed call.
+    answer.tier = 'error';
+    throw error;
+  } finally {
+    countHomeBlockGet({ type: answer.type, tier: answer.tier, viewer });
   }
-
-  const block = await getHomeBlockCached(row, domain, metadata, {
-    resolveHomeBlockMetadata,
-    getHomeBlockData,
-  });
-  const rotation = metadata.cosmeticShopSection;
-  if (!block?.cosmeticShopSection || !rotation?.random) return block;
-
-  const visible = shopBlockMaxItems(rotation) ?? COSMETIC_SHOP_ROTATION_DEFAULTS.maxItems;
-  const rotated = rotateShopSectionItems(block.cosmeticShopSection.items, {
-    sectionId: rotation.id,
-    rotateHours: rotation.rotateHours,
-    now: Date.now(),
-    visible,
-    getId: (item) => item.shopItem.id,
-  });
-  return {
-    ...block,
-    cosmeticShopSection: {
-      ...block.cosmeticShopSection,
-      // A rotating block shows a handful of a section that can hold over a hundred. Three times
-      // that is room for the client to drop blocked sellers and still fill the row.
-      items: rotated.slice(0, 3 * visible),
-    },
-  };
 };
 
 // `moreHref` is carried from the block's own metadata, not from the board row, so
