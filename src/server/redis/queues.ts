@@ -7,6 +7,10 @@ import {
 } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { dbWrite } from '~/server/db/client';
+import {
+  SEARCH_INDEX_QUEUE_FALLBACK_MAX_IDS as FALLBACK_MAX_IDS_PER_KEY,
+  SEARCH_INDEX_QUEUE_FALLBACK_PREFIX as FALLBACK_KEY_PREFIX,
+} from '@civitai/shared/search-index-queue';
 import { logToAxiom } from '~/server/logging/client';
 
 // ---------------------------------------------------------------------------
@@ -44,7 +48,7 @@ import { logToAxiom } from '~/server/logging/client';
 // "skip + retry next run" over "proceed on a false-empty read + destructive write".
 //
 // Recovery for a dropped enqueue: the ids are parked in Postgres and replayed by
-// `search-index-queue-drain` (see FALLBACK_KEY_PREFIX below). That is the only
+// `search-index-queue-drain` (see `@civitai/shared/search-index-queue`). That is the only
 // recovery a dropped DELETE has ever had — the delta `update` job's `updatedAt`
 // range-scan re-derives updates but cannot re-derive a delete, and the daily
 // `search-index-cleanup` reconciles neither images index (`CLEANUP_INDEXES` in
@@ -146,23 +150,7 @@ function getNewBucket(key: string) {
 
 const QUEUE_ADD_CHUNK_SIZE = 10000;
 
-/**
- * Postgres parking lot for enqueues sysRedis refused. `Delete` is why it exists: a
- * dropped `Update` is re-derived by the delta `updatedAt` range-scan, but nothing can
- * re-derive a delete from a row that is already gone, so the id is simply lost and the
- * document stays in the index forever. Postgres is the store that is, by construction,
- * not the one currently failing.
- */
-const FALLBACK_KEY_PREFIX = 'search-index-queue-fallback:';
-
-/**
- * Ceiling per queue key. A single fan-out can carry ~211K ids and this is a JSON column,
- * not a queue — past this the parking lot stops absorbing rather than growing without
- * bound through a long outage. Hitting it is itself the signal that the outage needs a
- * full reindex, not a replay.
- */
-const FALLBACK_MAX_IDS_PER_KEY = 100000;
-
+/** Parks enqueues sysRedis refused in Postgres. */
 async function persistDroppedEnqueue(key: string, ids: number[]) {
   if (!ids.length) return;
   try {
@@ -238,15 +226,14 @@ export async function drainDroppedEnqueues() {
     }
     replayed += ids.length;
 
-    // Length guard, not an unconditional delete by key: a drop landing between the read
-    // and here appends to the same row, and deleting it wholesale would swallow ids that
-    // were never replayed. A grown row survives and is replayed in full next run —
-    // duplicated work, which is a no-op, rather than lost work, which is not.
+    // Deletes only the value it replayed, not the row by key: a drop landing between the
+    // read and here appends to the row, and an overlapping run can clear it and a writer
+    // park a new one of the same length. Either changed row survives and is replayed in
+    // full next run — duplicated work, which is a no-op, rather than lost work, which is not.
     await dbWrite.$executeRaw`
       DELETE FROM "KeyValue"
       WHERE "key" = ${row.key}
-        AND jsonb_typeof("value") = 'array'
-        AND jsonb_array_length("value") = ${ids.length}
+        AND "value" = ${JSON.stringify(ids)}::jsonb
     `;
   }
   return { keys: rows.length, replayed, reparked };
@@ -324,15 +311,87 @@ async function enqueue(
   return true;
 }
 
-export async function checkoutQueue(key: string, isMerge = false, readOnly = false) {
-  if (!isMerge) await waitForMerge(key);
+// How long a consumer's lease keeps mergeQueue off its key. Must exceed the longest run of any
+// committing consumer; a lapsed lease costs a duplicate pass, never an id.
+const CONSUMER_LEASE_TTL_MS = 60 * 60 * 1000;
 
+function leaseKey(key: string) {
+  return `${REDIS_SYS_KEYS.QUEUES.BUCKETS}:${key}:${REDIS_SUB_KEYS.QUEUES.CONSUMING}` as RedisKeyTemplateSys;
+}
+
+/**
+ * Registers a consumer on the key until it commits, so mergeQueue cannot copy the buckets it is
+ * still processing into a new one. Best-effort: a consumer whose lease did not land still runs.
+ */
+async function takeConsumerLease(key: string) {
+  const token = `${Date.now()}:${Math.random().toString(36).slice(2)}`;
+  const lease = leaseKey(key);
+  const now = Date.now();
+  // The key has no TTL (sysRedis), so lapsed leases are pruned here and in mergeQueue.
+  await safeSysWrite(
+    () => sysRedis.zRemRangeByScore(lease, '-inf', now),
+    'queues.checkoutQueue lease prune',
+    { key }
+  );
+  await safeSysWrite(
+    () => sysRedis.zAdd(lease, { score: now + CONSUMER_LEASE_TTL_MS, value: token }),
+    'queues.checkoutQueue lease zAdd',
+    { key }
+  );
+  return async () => {
+    await safeSysWrite(() => sysRedis.zRem(lease, token), 'queues.checkoutQueue lease zRem', {
+      key,
+    });
+  };
+}
+
+/** Whether a consumer may still be processing the key's buckets. Unreadable counts as yes. */
+async function hasLiveConsumer(key: string) {
+  const lease = leaseKey(key);
+  const now = Date.now();
+  await safeSysWrite(
+    () => sysRedis.zRemRangeByScore(lease, '-inf', now),
+    'queues.mergeQueue lease prune',
+    { key }
+  );
+  const { value, degraded } = await safeSysRead(
+    () => sysRedis.zCount(lease, now, '+inf'),
+    0,
+    'queues.mergeQueue lease zCount',
+    { key }
+  );
+  return degraded || value > 0;
+}
+
+export async function checkoutQueue(key: string, isMerge = false, readOnly = false) {
+  // Taken before the merge check: mergeQueue sets its lock before reading leases, so a merge
+  // starting with this checkout either skips the key or is waited for (up to waitForMerge's cap).
+  const releaseLease = !isMerge && !readOnly ? await takeConsumerLease(key) : undefined;
+  if (!isMerge) await waitForMerge(key);
+  const result = await checkoutBuckets(key, isMerge, readOnly);
+  if (!releaseLease) return result;
+  // Nothing checked out, nothing to process twice. Released now because callers with an empty
+  // queue return without committing, and a lease held every minute would stop merges for good.
+  if (!result.content.length) await releaseLease();
+  return {
+    content: result.content,
+    commit: async () => {
+      try {
+        await result.commit();
+      } finally {
+        await releaseLease();
+      }
+    },
+  };
+}
+
+async function checkoutBuckets(key: string, isMerge: boolean, readOnly: boolean) {
   // Get the current buckets. If this read failed open we do NOT know the real
   // bucket list — abort the whole checkout: process nothing, write nothing,
   // delete nothing. Leaves the queue intact for the next run.
   const { buckets: currentBuckets, degraded: bucketsDegraded } = await getBucketNames(key);
   if (bucketsDegraded) {
-    return { content: [] as number[], commit: async () => {} };
+    return { content: [] as number[], commit: async () => undefined };
   }
 
   if (!readOnly) {
@@ -447,13 +506,15 @@ export async function mergeQueue(key: string) {
     { key }
   );
 
-  // Get the current queue
-  const queue = await checkoutQueue(key, true);
-  if (queue.content.length > 0) {
-    // If we have content, move it to the newest bucket
-    await addToQueue(key, queue.content);
+  // A consumer's buckets stay its own until it commits: merged now, they would be processed twice.
+  if (!(await hasLiveConsumer(key))) {
+    const queue = await checkoutQueue(key, true);
+    if (queue.content.length > 0) {
+      // If we have content, move it to the newest bucket
+      await addToQueue(key, queue.content);
+    }
+    await queue.commit();
   }
-  await queue.commit();
 
   // Remove the merging lock
   await safeSysWrite(

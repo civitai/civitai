@@ -3,6 +3,7 @@ import {
   isNavigationRequest,
   parseCookieHeader,
   spokeReauthResponse,
+  spokeUnavailableResponse,
   withSetCookies,
 } from '@civitai/auth';
 import { civitaiAppUrl } from '$lib/server/civitai-url';
@@ -12,6 +13,8 @@ import { movedViewTarget } from '$lib/moved-pages';
 import { loadPageAccessGrants } from '$lib/server/page-access';
 import { authenticateWebhookToken, type AcceptedCredential } from '$lib/server/webhook-endpoint';
 import { logAxiomError, logToAxiom } from '$lib/server/axiom';
+import { registerEmailSendRecorder } from '$lib/server/emails/send-recorder';
+import { registerEmailLinkTracker } from '$lib/server/emails/link-tracker';
 import {
   batchPathTier,
   reviewBatchesEnabled,
@@ -33,7 +36,7 @@ const NON_MODERATOR_REDIRECT = civitaiAppUrl();
 // framework-agnostic (@civitai/auth `createSpokeGuard`); only this hook is SvelteKit-specific. Runs on the
 // Node runtime, so the guard can resolve the rich user via redis/the hub identity endpoint.
 //
-//   login     → no valid session  → redirect to the hub login, returning here afterward
+//   login     → no valid session  → redirect to this app's /api/auth/authorize, returning here afterward
 //   forbidden → signed in, not mod → redirect to civitai.com (not a 403 — re-login can't help)
 //   ok        → authenticated moderator → populate locals.user and continue
 
@@ -153,6 +156,10 @@ function logCredentialAttribution(
 // Boot has no session, so no scan can resume here. Releasing this host's dead leases lets runs resume on
 // the next Test sets page load instead of after the lease goes stale.
 export const init: ServerInit = async () => {
+  // Every send this app makes is a send row in the main app's emailEvents, through its internal route.
+  registerEmailSendRecorder();
+  // Its links to the main app go out tracked, signed by the main app (its internal route).
+  registerEmailLinkTracker();
   try {
     const { releaseLeasesAtBoot } = await import('$lib/server/text-scan-tests/deps');
     await releaseLeasesAtBoot();
@@ -183,12 +190,9 @@ export const handle: Handle = async ({ event, resolve }) => {
     if (token.kind === 'refused') return token.response;
     if (token.kind === 'authenticated') {
       logCredentialAttribution(event, token.credential);
-      // 🔴 Stays the bare string, for BOTH credential classes. Which credential authenticated is a
-      // migration question and belongs in the log line above; it is NOT a privilege distinction, and
-      // three call sites compare this field strictly (`!== 'webhook'` in the two endpoint wrappers,
-      // truthiness in defineEndpoint). Widening it to carry the class would refuse every
-      // token-authenticated request at those sites without a type error anywhere.
-      event.locals.tokenClient = 'webhook';
+      // 'cases' is a distinct value so the existing wrappers don't admit it; only /api/mod/[action]
+      // does, and only for case actions.
+      event.locals.tokenClient = token.credential === 'MOD_CASES_TOKEN' ? 'cases' : 'webhook';
       event.locals.grants = {};
       return resolve(event);
     }
@@ -216,7 +220,11 @@ export const handle: Handle = async ({ event, resolve }) => {
     });
     return new Response(null, { status: 403, headers: { 'cache-control': 'no-store' } });
   }
-  if (webSession && webSession.status !== 'ok' && webSession.reason === 'unavailable') {
+  if (
+    webSession &&
+    (webSession.status === 'unavailable' ||
+      (webSession.status !== 'ok' && webSession.reason === 'unavailable'))
+  ) {
     // The web session could not be resolved right now, so whether one exists is unknown: answer from
     // neither, and keep the sheet cookie for when it can be.
     return new Response(null, { status: 503, headers: { 'cache-control': 'no-store' } });
@@ -261,6 +269,7 @@ export const handle: Handle = async ({ event, resolve }) => {
       navigation: isNavigationRequest(event.request),
     }));
 
+  if (result.status === 'unavailable') return spokeUnavailableResponse();
   if (result.status === 'login') {
     return new Response(null, { status: 302, headers: { location: result.redirect } });
   }

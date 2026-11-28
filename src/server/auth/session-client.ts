@@ -4,10 +4,11 @@ import {
   createSessionTokenClient,
   readSessionToken,
   type CookieSlot,
+  type RefreshFailure,
 } from '@civitai/auth';
 import { setSessionCookie, type CookieWritable } from './civ-cookie';
-import { isRevoked } from './session-verifier';
-import { decodeTokenClaim } from './token-claims';
+import { confirmElevatedRevocation, isRevoked } from './session-verifier';
+import { decodeTokenClaim, decodeTokenPayload } from './token-claims';
 import { refuseModerationAccountSession } from './moderation-account';
 import { observeSessionLeg, observeSessionRollFailed } from './session-metrics';
 
@@ -22,6 +23,7 @@ import { observeSessionLeg, observeSessionRollFailed } from './session-metrics';
 // them to prom-client here.
 export const sessionClient = createSessionClient({
   isRevoked,
+  confirmElevatedRevocation,
   onIdentityLeg: (outcome, durationSeconds) =>
     observeSessionLeg('identity', outcome, durationSeconds),
   onJwksLeg: (outcome, durationSeconds) => observeSessionLeg('jwks', outcome, durationSeconds),
@@ -37,6 +39,16 @@ export const sessionClient = createSessionClient({
 // Session-token lifecycle (rolling refresh / revoke) — the hub contract lives in the package, not inline here.
 const sessionTokenClient = createSessionTokenClient();
 
+// Requests whose moderator or impersonation session could not be confirmed (its revocation read failed): signed
+// out for this request only, with the cookie left as it is. /login sends these home rather than to the hub,
+// which would only bounce back.
+const unconfirmedRequests = new WeakSet<object>();
+
+/** Whether getHubSession refused this request's session because its revocation read failed. */
+export function isSessionUnconfirmed(req: object): boolean {
+  return unconfirmedRequests.has(req);
+}
+
 /**
  * Resolve the session from the hub, next-auth-free: read the session cookie → verify → resolve the user
  * (shared cache, hub fetch on miss). Returns the existing `Session` shape so every getServerAuthSession
@@ -44,12 +56,18 @@ const sessionTokenClient = createSessionTokenClient();
  */
 export async function getHubSession(req: {
   cookies?: Partial<Record<string, string>>;
+  headers: { host?: string };
 }): Promise<Session | null> {
-  // The hub's THIN cookie (`civ-token`, either slot), distinct from next-auth's legacy `civitai-token`.
-  const token = readSessionToken(req.cookies)?.value;
+  // The hub's THIN cookie (`civ-token`, in the slots this site reads), distinct from next-auth's legacy `civitai-token`.
+  const token = readSessionToken(req.cookies, { host: req.headers.host })?.value;
   if (!token) return null;
-  const user = await sessionClient.getSessionUser(token);
-  if (!user || refuseModerationAccountSession(user, 'session-token')) return null;
+  const resolved = await sessionClient.resolveSessionUser(token);
+  if (!resolved.user) {
+    if (resolved.reason === 'unconfirmed') unconfirmedRequests.add(req);
+    return null;
+  }
+  const { user } = resolved;
+  if (refuseModerationAccountSession(user, 'session-token')) return null;
   // Impersonation (F): surface the moderator's id from the (already-verified) token so the client can show the
   // "exit impersonation" control. The claim is identity-only — no credential.
   const impersonatedBy = decodeTokenClaim(token, 'impersonatedBy');
@@ -64,6 +82,28 @@ export async function getHubSession(req: {
 // AUTH_SESSION_UPDATE_AGE, ask the hub to mint a fresh one (only the hub can mint) and re-set the cookie.
 const UPDATE_AGE_MS = (Number(process.env.AUTH_SESSION_UPDATE_AGE) || 24 * 60 * 60) * 1000; // default 24h
 const HUB_ORIGIN = process.env.AUTH_JWT_ISSUER;
+
+// After the hub answers 503 for a token, this process does not ask again for that token for a while: an SSR
+// render awaits the roll, so retrying on every request would add the round trip to each one.
+const UNAVAILABLE_BACKOFF_MS = 5 * 60 * 1000;
+const UNAVAILABLE_BACKOFF_MAX = 10_000;
+const rollBackoff = new Map<string, number>();
+
+function backingOff(jti: string, now: number): boolean {
+  const until = rollBackoff.get(jti);
+  if (until === undefined) return false;
+  if (now < until) return true;
+  rollBackoff.delete(jti);
+  return false;
+}
+
+function backOff(jti: string, now: number): void {
+  if (rollBackoff.size >= UNAVAILABLE_BACKOFF_MAX) {
+    for (const [key, until] of rollBackoff) if (until <= now) rollBackoff.delete(key);
+    if (rollBackoff.size >= UNAVAILABLE_BACKOFF_MAX) rollBackoff.clear();
+  }
+  rollBackoff.set(jti, now + UNAVAILABLE_BACKOFF_MS);
+}
 
 /**
  * Rolling session: when the civ-token's age exceeds AUTH_SESSION_UPDATE_AGE, ask the hub to mint a fresh
@@ -83,12 +123,16 @@ export async function maybeRollHubCookie(
   if (!HUB_ORIGIN || !token || typeof res.setHeader !== 'function') return;
   const iat = decodeTokenClaim(token, 'iat');
   if (!iat || Date.now() - iat * 1000 < UPDATE_AGE_MS) return; // fresh enough — no work
+  const jti = decodeTokenPayload(token)?.jti;
+  if (typeof jti === 'string' && backingOff(jti, Date.now())) return;
 
   try {
     // Only the hub can mint — the package helper forwards the bearer token (+ device cookie) and times out.
-    const fresh = (
-      await sessionTokenClient.refresh(token, { deviceCookie, onFailure: observeSessionRollFailed })
-    )?.token;
+    const onFailure = (reason: RefreshFailure) => {
+      observeSessionRollFailed(reason);
+      if (reason === 'unavailable' && typeof jti === 'string') backOff(jti, Date.now());
+    };
+    const fresh = (await sessionTokenClient.refresh(token, { deviceCookie, onFailure }))?.token;
     if (!fresh) return;
     // Re-set the civ-token + roll the device cookie in lockstep (both live 30 rolling days from last activity).
     setSessionCookie(res, fresh, { deviceCookie, host, slot, requestCookies });

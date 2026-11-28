@@ -1,4 +1,4 @@
-import { readCookie, sessionCookieName } from './cookies';
+import { parseCookieHeader, readSessionToken, siteCookieHeader } from './cookies';
 import { hubFetch, sessionCall } from './hub';
 
 // IMPERSONATION CLIENT — the hub's moderator-impersonation endpoints (section F). The hub gates `impersonate`
@@ -20,28 +20,31 @@ export interface ImpersonationClient {
    * `{ ok: false, status, error }` (hub declined / no such user / unreachable); the caller sets the returned
    * token as the session cookie.
    */
-  impersonate(cookie: string, userId: number): Promise<ImpersonationResult>;
+  impersonate(
+    cookie: string,
+    userId: number,
+    host: string | null | undefined
+  ): Promise<ImpersonationResult>;
   /**
    * Stop impersonating: the hub reads `impersonatedBy` from the forwarded session token and returns a fresh
    * civ-token for the MODERATOR. On failure returns `{ ok: false, status, error }` (e.g. the session isn't an
    * impersonation session, or the hub is unreachable).
    */
-  exit(cookie: string): Promise<ImpersonationResult>;
+  exit(cookie: string, host: string | null | undefined): Promise<ImpersonationResult>;
 }
 
 export function createImpersonationClient(): ImpersonationClient {
   const post = async (
     path: string,
-    cookie: string,
+    rawCookie: string,
+    host: string | null | undefined,
     fields?: Record<string, unknown>
   ): Promise<ImpersonationResult> => {
     let res: Response;
     try {
-      const { headers, body } = sessionCall(
-        { token: readCookie(cookie, sessionCookieName()) },
-        { cookie },
-        fields
-      );
+      const cookie = siteCookieHeader(rawCookie, host);
+      const token = readSessionToken(parseCookieHeader(cookie), { host })?.value;
+      const { headers, body } = sessionCall({ token }, { cookie }, fields);
       res = await hubFetch(path, { method: 'POST', headers, body });
     } catch {
       // hub unreachable or unconfigured (AUTH_JWT_ISSUER unset) — status 0 signals "no hub response".
@@ -68,7 +71,7 @@ export function createImpersonationClient(): ImpersonationClient {
   };
 
   return {
-    impersonate: (cookie, userId) => post('/api/auth/impersonate', cookie, { userId }),
-    exit: (cookie) => post('/api/auth/impersonate/exit', cookie),
+    impersonate: (cookie, userId, host) => post('/api/auth/impersonate', cookie, host, { userId }),
+    exit: (cookie, host) => post('/api/auth/impersonate/exit', cookie, host),
   };
 }

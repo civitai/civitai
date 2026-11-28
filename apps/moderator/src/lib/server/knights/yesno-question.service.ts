@@ -5,6 +5,7 @@ import {
   mergeMeta,
   MODERATION_META_KEY,
   moderationMeta,
+  MOD_TAG_REVIEW_SOURCE,
   MODERATOR_RETIRED,
   REWORD_OF_META_KEY,
   YESNO_QUESTION_MAX,
@@ -13,7 +14,7 @@ import {
 import { NOTE_MAX } from '../../knights/trials-limits';
 import { dbWrite } from '../db';
 import { countRows, FIRST_PAGE, pageWindow, type ListPage, type ListQuery } from './coreset.config';
-import type { Outcome } from './coreset.service';
+import { unservableReason, type Outcome } from './coreset.service';
 
 export const YESNO_QUESTION_STATUSES = ['open', 'closed', 'all'] as const;
 export type YesNoQuestionStatus = (typeof YESNO_QUESTION_STATUSES)[number];
@@ -71,7 +72,9 @@ export async function getYesNoQuestionItems(
     let q = dbWrite
       .selectFrom('KnightsQueueItem as i')
       .innerJoin('Image as img', 'img.id', 'i.imageId')
-      .where('i.audience', '=', 'players');
+      .where('i.audience', '=', 'players')
+      // A tag review item writes its answer back to the tag it names, so it cannot be retired or reworded here.
+      .where('i.source', '<>', MOD_TAG_REVIEW_SOURCE);
     if (query.imageId !== undefined) q = q.where('i.imageId', '=', query.imageId);
     if (query.axis) q = q.where('i.questionKey', '=', query.axis);
     if (query.status === 'open') q = q.where('i.status', '=', 'Open');
@@ -177,6 +180,7 @@ async function lockItem(trx: Trx, id: number) {
     .select(lockColumns)
     .where('id', '=', id)
     .where('audience', '=', 'players')
+    .where('source', '<>', MOD_TAG_REVIEW_SOURCE)
     .forUpdate()
     .executeTakeFirst();
 }
@@ -191,6 +195,16 @@ function checkedPrompt(raw: string): { prompt: string } | { error: string } {
   const prompt = raw.trim();
   if (!prompt) return { error: NEEDS_PROMPT };
   return prompt.length > YESNO_QUESTION_MAX ? { error: TOO_LONG } : { prompt };
+}
+
+/** The image a yes/no question shows; none when the question is gone. */
+export async function yesNoQuestionImageIds(id: number): Promise<number[]> {
+  const row = await dbWrite
+    .selectFrom('KnightsQueueItem')
+    .select('imageId')
+    .where('id', '=', id)
+    .executeTakeFirst();
+  return row ? [row.imageId] : [];
 }
 
 export async function retireYesNoQuestion(input: {
@@ -235,6 +249,8 @@ export async function unretireYesNoQuestion(input: {
     if (item.voteCount > 0) {
       return { ok: false, error: 'Players have answered this question, so it stays retired.' };
     }
+    const problem = await unservableReason(item.imageId, trx);
+    if (problem) return { ok: false, error: problem };
     const origin = originOf(item);
     const copy = origin && (await openCopies(trx, [origin])).get(origin);
     if (copy) return { ok: false, error: `Retire ${copy} first: it replaced this question.` };
@@ -280,6 +296,8 @@ export async function rewordYesNoQuestion(input: {
         return { ok: false, error: 'Only an open question can be reworded.' };
       }
       if (prompt === item.prompt) return { ok: false, error: 'That is already the question.' };
+      const problem = await unservableReason(item.imageId, trx);
+      if (problem) return { ok: false, error: problem };
 
       const { [MODERATION_META_KEY]: _previous, ...inherited } = (item.meta ?? {}) as Record<
         string,

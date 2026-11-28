@@ -7,24 +7,24 @@ import { queueModelsReindexSchema } from '~/server/search-index/queue-models-rei
 
 export { queueModelsReindexSchema };
 
-const QUEUE_ACTION = SearchIndexUpdateQueueAction.Update;
+type QueueAction = SearchIndexUpdateQueueAction.Update | SearchIndexUpdateQueueAction.Delete;
 
 type ReindexTarget = {
   indexName: string;
   index: {
-    queueUpdate: (items: { id: number; action: typeof QUEUE_ACTION }[]) => Promise<unknown>;
+    queueUpdate: (items: { id: number; action: QueueAction }[]) => Promise<unknown>;
   };
 };
 
-async function readQueuedIds(indexName: string) {
+async function readQueuedIds(indexName: string, action: QueueAction) {
   // readOnly: does NOT append a new bucket or retire the current ones, so calling this cannot
   // consume work the 15-minute sync is about to pick up.
-  const queue = await SearchIndexUpdate.getQueue(indexName, QUEUE_ACTION, true);
+  const queue = await SearchIndexUpdate.getQueue(indexName, action, true);
   return queue.content;
 }
 
 /**
- * Queue models for a models-index rewrite, for the admin backfill endpoints.
+ * Queue models for a models-index rewrite (or deletion), for the admin backfill endpoints.
  *
  * `queueDepthBefore`/`queueDepthAfter` are READ BACK from the queue, not inferred from the call
  * returning: `addToQueue` fails open on a degraded sysRedis (it parks the ids in Postgres and
@@ -38,12 +38,14 @@ async function readQueuedIds(indexName: string) {
  */
 export async function queueModelsReindex(
   modelIds: number[],
-  options: z.infer<typeof queueModelsReindexSchema>
+  options: z.infer<typeof queueModelsReindexSchema>,
+  action: QueueAction = SearchIndexUpdateQueueAction.Update
 ) {
   const { count, ...result } = await queueReindex(
     { indexName: MODELS_SEARCH_INDEX, index: modelsSearchIndex },
     modelIds,
-    options
+    options,
+    action
   );
   return { modelCount: count, ...result };
 }
@@ -64,9 +66,10 @@ export async function queueCollectionsReindex(
 async function queueReindex(
   { indexName, index }: ReindexTarget,
   ids: number[],
-  { dryRun, chunkSize }: z.infer<typeof queueModelsReindexSchema>
+  { dryRun, chunkSize }: z.infer<typeof queueModelsReindexSchema>,
+  action: QueueAction = SearchIndexUpdateQueueAction.Update
 ) {
-  const before = await readQueuedIds(indexName);
+  const before = await readQueuedIds(indexName, action);
   // Set, not Array.includes: this queue reaches ~211K ids on a large fan-out, and scanning it once
   // per id is enough to wedge the handler.
   const beforeSet = new Set(before);
@@ -82,10 +85,10 @@ async function queueReindex(
 
   for (let i = 0; i < ids.length; i += chunkSize) {
     const chunk = ids.slice(i, i + chunkSize);
-    await index.queueUpdate(chunk.map((id) => ({ id, action: QUEUE_ACTION })));
+    await index.queueUpdate(chunk.map((id) => ({ id, action })));
   }
 
-  const after = await readQueuedIds(indexName);
+  const after = await readQueuedIds(indexName, action);
   const afterSet = new Set(after);
   return {
     dryRun: false,

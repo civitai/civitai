@@ -1,4 +1,5 @@
 import {
+  comparableReasons,
   holdSameReasonRemovals,
   type ApprovedImageAppeal,
   type HeldRemoval,
@@ -10,10 +11,7 @@ import { dbWrite } from './db';
 
 export type { HeldRemoval };
 
-// 'other' says nothing about what the image showed, so two removals filed under it cannot be told apart.
-const COMPARABLE_REASONS: ReadonlySet<string> = new Set(
-  VIOLATION_TYPES.filter((v) => v !== 'other')
-);
+export const COMPARABLE_REASONS = comparableReasons(VIOLATION_TYPES);
 
 /**
  * Holds each removal that repeats the reason the image's approved appeal overturned, for a moderator

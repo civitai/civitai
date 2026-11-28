@@ -46,13 +46,34 @@ type PageQuery struct {
 	EarlyAccess           bool
 	PaidAccess            bool
 	HidePaid              bool
-	OnSale                bool
-	ExcludedUserIDs       []int
-	FileFormats           []string
+	// HidePrivate is getModelsRaw's hidePrivateModels (Serve): under HidePaid, the free version that
+	// keeps a gated model must then also be Public.
+	HidePrivate     bool
+	OnSale          bool
+	ExcludedUserIDs []int
+	FileFormats     []string
 	// CollectionID is the collection filter (0 = none), applied only once the viewer may read the
 	// collection (servePage); CollectionTagID narrows it to one collection tag (0 = none).
 	CollectionID    int
 	CollectionTagID int
+	// OnlyModelIDs / ExcludeModelIDs are getModelsRaw's onlyModelIds / excludeModelIds: the browse
+	// feed's official-checkpoint pin (Serve). Neither relaxes the private-model filter.
+	OnlyModelIDs    []int
+	ExcludeModelIDs []int
+	// IDs is the `ids` input (Input.IDs): a non-empty list filters the page to those models.
+	IDs []int
+	// Followed is `followed` with a signed-in viewer: the page is held to FollowedUserIDs, the creators
+	// the viewer follows, or to nothing (`1 = 0`) when they follow no one.
+	Followed        bool
+	FollowedUserIDs []int
+	// NewCreators is `newCreators`: the page is held to NewCreatorUserIDs, the creators on the
+	// request's "new & upcoming" board, or to nothing (`1 = 0`) for an empty board.
+	NewCreators       bool
+	NewCreatorUserIDs []int
+	// PublishedGte / PublishedLt are a published range's half-open bounds `[gte, lt)` (zero: none;
+	// both or neither).
+	PublishedGte time.Time
+	PublishedLt  time.Time
 }
 
 // SQL is one statement and its arguments.
@@ -62,6 +83,9 @@ type SQL struct {
 }
 
 type builder struct{ args []any }
+
+// withheldViewerSlot stands for the taken-down clause's viewer until Build binds it, last.
+const withheldViewerSlot = "\x00withheld-viewer\x00"
 
 // arg binds v and returns its placeholder.
 func (b *builder) arg(v any) string {
@@ -81,6 +105,27 @@ func (b *builder) viewer(id int) string {
 const paidAccessLiveSQL = `pa."entityType" = 'ModelVersion'
       AND (pa."endsAt" IS NULL OR pa."endsAt" > NOW())
       AND mv.status = 'Published'::"ModelStatus"`
+
+// freePublishedVersionExistsSQL is freePublishedVersionExistsSql over `m.id` (paid-access-sql.ts): the
+// model has a Published version with no live gate; publicOnly also requires that version be Public.
+func freePublishedVersionExistsSQL(publicOnly bool) string {
+	public := ""
+	if publicOnly {
+		public = `
+        AND fv.availability = 'Public'::"Availability"`
+	}
+	return `EXISTS (
+      SELECT 1 FROM "ModelVersion" fv
+      WHERE fv."modelId" = m.id
+        AND fv.status = 'Published'::"ModelStatus"` + public + `
+        AND NOT EXISTS (
+          SELECT 1 FROM "PaidAccess" pa
+          JOIN "ModelVersion" mv ON mv.id = pa."entityId"
+          WHERE ` + paidAccessLiveSQL + `
+            AND mv.id = fv.id
+        )
+    )`
+}
 
 // orderBy is getModelsRaw's ORDER BY for a sort, over the alias that carries the per-base-model
 // columns.
@@ -194,7 +239,7 @@ const (
 func parseCursor(fields []sortField, cursor string) ([]any, error) {
 	toks := strings.Split(cursor, "|")
 	if len(toks) != len(fields) {
-		return nil, fallback.Newf("model-cursor", "%d tokens for %d fields", len(toks), len(fields))
+		return nil, fallback.Safef("model-cursor", "%d tokens for %d fields", len(toks), len(fields))
 	}
 	out := make([]any, len(toks))
 	for i, tok := range toks {
@@ -302,9 +347,33 @@ func (q *PageQuery) Build() (SQL, error) {
 	if multiDriven {
 		rankP = "mbm"
 	}
+	// The `ranged` CTE leads the statement, so Prisma numbers its values first: bound before any
+	// clause. getModelsRaw builds it only with both bounds (publishedRangeError refuses one).
+	ranged := ""
+	if !q.PublishedGte.IsZero() && !q.PublishedLt.IsZero() {
+		// `!sessionUser?.isModerator || !status?.length`: status is not ported, so always Published.
+		ranged = `
+    WITH ranged AS MATERIALIZED (
+        SELECT "id" FROM "Model"
+        WHERE "status" = 'Published'::"ModelStatus" AND "publishedAt" >= ` + b.arg(q.PublishedGte) + ` AND "publishedAt" < ` + b.arg(q.PublishedLt)
+		if len(q.Types) > 0 {
+			ranged += ` AND "type" = ANY(` + b.arg(q.Types) + `::text[]::"ModelType"[])`
+		}
+		ranged += `
+      )`
+	}
 
 	if !q.Archived {
 		and = append(and, `(`+p+`."mode" IS NULL OR `+p+`."mode" != 'Archived'::"ModelModifier")`)
+	}
+	// Port of modelNotWithheldSql (src/server/utils/model-withheld.ts): a taken-down model is its
+	// owner's and moderators' alone.
+	if !q.IsModerator {
+		withheld := `(` + p + `."mode" IS DISTINCT FROM 'TakenDown'::"ModelModifier"`
+		if q.ViewerID != 0 {
+			withheld += ` OR mm."userId" = ` + withheldViewerSlot
+		}
+		and = append(and, withheld+`)`)
 	}
 	if q.DisablePoi {
 		and = append(and, `(`+p+`."poi" = false OR mm."userId" = `+b.viewer(q.ViewerID)+`)`)
@@ -346,6 +415,23 @@ func (q *PageQuery) Build() (SQL, error) {
 	if len(q.Types) > 0 {
 		and = append(and, `m.type = ANY(`+b.arg(q.Types)+`::text[]::"ModelType"[])`)
 	}
+	// `followed && sessionUser?.id`: the viewer's follows (`IN (…)`), or no row at all.
+	if q.Followed {
+		if len(q.FollowedUserIDs) == 0 {
+			and = append(and, `1 = 0`)
+		} else {
+			and = append(and, `mm."userId" = ANY(`+b.arg(q.FollowedUserIDs)+`::int[])`)
+		}
+	}
+	// `newCreators`: the board's creators (`IN (…)`), or no row for an empty board. The `integer[]`
+	// cast (the same type as `int[]`) keeps its text apart from `followed`'s.
+	if q.NewCreators {
+		if len(q.NewCreatorUserIDs) == 0 {
+			and = append(and, `1 = 0`)
+		} else {
+			and = append(and, `mm."userId" = ANY(`+b.arg(q.NewCreatorUserIDs)+`::integer[])`)
+		}
+	}
 	switch {
 	case useBM && len(q.BaseModels) == 1:
 		and = append(and, `mbm."baseModel" = `+b.arg(q.BaseModels[0]))
@@ -358,6 +444,13 @@ func (q *PageQuery) Build() (SQL, error) {
 	}
 	if !q.PeriodCutoff.IsZero() {
 		and = append(and, `(mm."lastVersionAt" >= `+b.arg(q.PeriodCutoff)+`)`)
+	}
+	// publishedRangeBounds: `[from 00:00Z, to + 1 day 00:00Z)`.
+	if !q.PublishedGte.IsZero() {
+		and = append(and, `m."publishedAt" >= `+b.arg(q.PublishedGte))
+	}
+	if !q.PublishedLt.IsZero() {
+		and = append(and, `m."publishedAt" < `+b.arg(q.PublishedLt))
 	}
 	// `!sessionUser?.isModerator || !status?.length`: status is not ported, so always Published.
 	and = append(and, p+`."status" = 'Published'::"ModelStatus"`)
@@ -372,6 +465,17 @@ func (q *PageQuery) Build() (SQL, error) {
 	}
 	if q.AllowNoCredit != nil {
 		and = append(and, `m."allowNoCredit" = `+b.arg(*q.AllowNoCredit))
+	}
+	// `!!ids?.length` (`IN (…)`), then onlyModelIds and excludeModelIds, as `IN (…)` / `NOT IN (…)`.
+	// The ids clause casts to `integer[]` (the same type as `int[]`) so its text is not the pin's.
+	if len(q.IDs) > 0 {
+		and = append(and, `mm."modelId" = ANY(`+b.arg(q.IDs)+`::integer[])`)
+	}
+	if len(q.OnlyModelIDs) > 0 {
+		and = append(and, `mm."modelId" = ANY(`+b.arg(q.OnlyModelIDs)+`::int[])`)
+	}
+	if len(q.ExcludeModelIDs) > 0 {
+		and = append(and, `mm."modelId" != ALL(`+b.arg(q.ExcludeModelIDs)+`::int[])`)
 	}
 	if q.CheckpointType != "" && (len(q.Types) == 0 || contains(q.Types, "Checkpoint")) {
 		or := []string{`m."checkpointType" = ` + b.arg(q.CheckpointType) + `::text::"CheckpointType"`}
@@ -405,12 +509,13 @@ func (q *PageQuery) Build() (SQL, error) {
       )`)
 	}
 	if q.HidePaid {
-		and = append(and, `NOT EXISTS (
+		// The OR arm (freePublishedVersionExistsSql) keeps a gated model that has a free version to show.
+		and = append(and, `(NOT EXISTS (
         SELECT 1 FROM "PaidAccess" pa
         JOIN "ModelVersion" mv ON mv.id = pa."entityId"
         WHERE `+paidAccessLiveSQL+`
           AND mv."modelId" = m.id
-      )`)
+      ) OR `+freePublishedVersionExistsSQL(q.HidePrivate)+`)`)
 	}
 	if q.OnSale {
 		and = append(and, `EXISTS (
@@ -431,7 +536,7 @@ func (q *PageQuery) Build() (SQL, error) {
 		and = append(and, p+`."availability" != 'Private'::"Availability"`)
 	}
 	if q.CollectionID != 0 {
-		// The semi-join of every sort but Recently Added (Parse refuses that one), with
+		// The semi-join of every sort but Recently Added (ParseWith refuses that one), with
 		// getAvailableCollectionItemsFilterForUser's item filter built without `statuses`: accepted
 		// items, and for a signed-in viewer also the items they added that are still in review.
 		clause := `EXISTS (
@@ -467,7 +572,7 @@ func (q *PageQuery) Build() (SQL, error) {
 	if len(q.FileFormats) > 0 {
 		ors := make([]string, len(q.FileFormats))
 		for i, f := range q.FileFormats {
-			// Interpolated as Node does; Parse admits only the constants.modelFileFormats values.
+			// Interpolated as Node does; ParseWith admits only the constants.modelFileFormats values.
 			ors[i] = `mf."metadata" @> '{"format": "` + f + `"}'`
 		}
 		and = append(and, `EXISTS (
@@ -526,6 +631,10 @@ func (q *PageQuery) Build() (SQL, error) {
           mbs."imageCount", mbs."status", mbs."nsfwLevel", mbs."availability",
           mbs."mode", mbs."minor", mbs."poi"
       ) mbm`
+	}
+	if ranged != "" {
+		from += `
+      JOIN ranged ON ranged."id" = m."id"`
 	}
 
 	// The enum and citext columns are read as text, which is what node-postgres hands Node for them.
@@ -600,6 +709,12 @@ func (q *PageQuery) Build() (SQL, error) {
       ` + order + `
     LIMIT ` + limit + `
   `
+	}
+	text = ranged + text
+	// Bound last, so the clause leaves every other placeholder's number as it was. A split cursor
+	// puts the WHERE in both UNION ALL branches: one bind, every occurrence.
+	if strings.Contains(text, withheldViewerSlot) {
+		text = strings.ReplaceAll(text, withheldViewerSlot, b.arg(q.ViewerID))
 	}
 	return SQL{Text: text, Args: b.args}, nil
 }

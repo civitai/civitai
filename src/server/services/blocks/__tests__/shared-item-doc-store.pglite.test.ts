@@ -51,6 +51,10 @@ vi.mock('~/server/flipt/client', async (importOriginal) => {
       flag === 'app-blocks-shared-doc-levels'
         ? Promise.resolve(h.docLevels)
         : real.isFlipt(flag, entityId, context as never),
+    readFliptBoolean: (flag: string, entityId?: string, context?: unknown) =>
+      flag === 'app-blocks-shared-doc-levels'
+        ? Promise.resolve(h.docLevels)
+        : real.readFliptBoolean(flag, entityId, context as never),
   };
 });
 
@@ -107,8 +111,8 @@ const BROKEN_MANIFEST = { storage: { collections: { posts: { visibility: 'bogus'
 /** Storage declared, but no shared collection: the app's shared items are legacy. */
 const LEGACY_ONLY_MANIFEST = { storage: { collections: { prefs: { visibility: 'private' } } } };
 /**
- * The only shared collection is `write: "none"` (counters/marks only): it holds no item, so the
- * app has not moved and its shared items are legacy.
+ * The only shared collection is `write: "none"` (read-only since counters were removed): it holds
+ * no item, so the app has not moved and its shared items are legacy.
  */
 const COUNTERS_ONLY_MANIFEST = {
   storage: {
@@ -180,6 +184,16 @@ function defineSuite(rls: boolean) {
       store.put(ctx(app, ns, uid), coll, key, { title: key });
     const hide = (app: string, coll: DocCollection, key: string) =>
       mod.setHidden(app, NS_PROD, coll.name, key, true, MOD);
+    /**
+     * A document left in the read-only `write: "none"` collection (no viewer can write one since
+     * counters were removed; a leftover, authored by no user), seeded directly.
+     */
+    const leftover = (app: string, key: string) =>
+      harness.raw(
+        `INSERT INTO appdata.doc (app_id, ns, coll, scope_uid, key, data, version, seq, author_kind)
+         VALUES ($1, 'prod', $2, 0, $3, '{}', 1, 1, 'app')`,
+        [app, TALLIES.name, key]
+      );
 
     describe('readSharedItemForSubListing', () => {
       it('a document-store item resolves to its author', async () => {
@@ -268,14 +282,14 @@ function defineSuite(rls: boolean) {
 
       it('a document in a write-"none" collection is not an item: not found', async () => {
         const app = freshApp();
-        await store.increment(ctx(app, NS_PROD, DOC_AUTHOR), TALLIES, 'counted', 'plays', 1);
+        await leftover(app, 'counted');
         expect(await subListing(app, 'counted')).toBeNull();
       });
 
-      it("a counter kept under an item's own key does not make the key ambiguous", async () => {
+      it('a write-"none" document under an item\'s own key does not make the key ambiguous', async () => {
         const app = freshApp();
         await put(app, POSTS, 'voted', DOC_AUTHOR);
-        await store.increment(ctx(app, NS_PROD, OTHER_AUTHOR), TALLIES, 'voted', 'plays', 1);
+        await leftover(app, 'voted');
         expect(await subListing(app, 'voted')).toEqual({ authorUserId: DOC_AUTHOR, hidden: false });
         expect(h.legacyCalls).toBe(0);
       });
@@ -283,7 +297,7 @@ function defineSuite(rls: boolean) {
       it('an app whose only shared collection is write-"none" still resolves from the legacy store', async () => {
         const app = freshApp(COUNTERS_ONLY_MANIFEST);
         legacyRow(app, 'old', LEGACY_AUTHOR);
-        await store.increment(ctx(app, NS_PROD, DOC_AUTHOR), TALLIES, 'old', 'plays', 1);
+        await leftover(app, 'old');
         expect(await subListing(app, 'old')).toEqual({
           authorUserId: LEGACY_AUTHOR,
           hidden: false,
@@ -424,16 +438,16 @@ function defineSuite(rls: boolean) {
         expect(await attribution(app, 'mine')).toBeNull();
       });
 
-      it('a counter document attributes nobody: its first incrementer is not its author', async () => {
+      it('a document in a write-"none" collection attributes nobody', async () => {
         const app = freshApp();
-        await store.increment(ctx(app, NS_PROD, DOC_AUTHOR), TALLIES, 'counted', 'plays', 1);
+        await leftover(app, 'counted');
         expect(await attribution(app, 'counted')).toBeNull();
       });
 
-      it("a counter kept under an item's own key does not make the key ambiguous", async () => {
+      it('a write-"none" document under an item\'s own key does not make the key ambiguous', async () => {
         const app = freshApp();
         await put(app, POSTS, 'voted', DOC_AUTHOR);
-        await store.increment(ctx(app, NS_PROD, OTHER_AUTHOR), TALLIES, 'voted', 'plays', 1);
+        await leftover(app, 'voted');
         expect(await attribution(app, 'voted')).toBe(DOC_AUTHOR);
       });
 

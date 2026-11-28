@@ -1,16 +1,28 @@
 import { Anchor, Center, List, Stack, Text } from '@mantine/core';
 import { IconAlertTriangle } from '@tabler/icons-react';
 import Link from 'next/link';
-import type { SearchRefusal } from '~/components/Search/search-refusal';
+import { refusedByOf, type SearchRefusal } from '~/components/Search/search-refusal';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import {
+  SEARCH_POLICY_MESSAGE,
+  searchRefusedByLine,
+  type SearchRefusedBy,
+} from '~/shared/constants/search-refusal.constants';
 
-/** What a refused search shows in place of results, on the search pages and on a searched feed. */
+/**
+ * What a refused search shows in place of results, on the search pages and on a searched feed.
+ * Every refusal but the minors one shows the same message, which names no rule and no term.
+ * `refusedBy` is the server's moderator view (absent for everyone else); a refusal decided in the
+ * browser names its own check, to a moderator only.
+ */
 export function SearchRefusalNotice({
   refusal,
-  profanityMatches = [],
+  refusedBy,
 }: {
   refusal: SearchRefusal;
-  profanityMatches?: string[];
+  refusedBy?: SearchRefusedBy;
 }) {
+  const currentUser = useCurrentUser();
   if (refusal === 'illegal')
     return (
       <Center>
@@ -85,70 +97,50 @@ export function SearchRefusalNotice({
       </Center>
     );
 
-  if (refusal === 'profanity')
-    return (
-      <Center>
-        <Stack maw={750} align="center" justify="center" className="h-full">
-          <Stack align="center" gap={0}>
-            <IconAlertTriangle size={42} color="orange" />
-            <Text weight={700} size="xl" c="orange">
-              Content Policy Violation
-            </Text>
-          </Stack>
-          <Text align="center">
-            Your search contains{' '}
-            <Text span weight={700} c="orange">
-              inappropriate content
-            </Text>{' '}
-            that violates our community guidelines.
-          </Text>
-          {profanityMatches.length > 0 && (
-            <Text align="center" c="dimmed" size="sm">
-              Flagged terms: {profanityMatches.join(', ')}
-            </Text>
-          )}
-          <Text align="center">
-            Our family-friendly environment requires all searches to comply with our{' '}
-            <Text span weight={700}>
-              content policies
-            </Text>
-            . Please refine your search terms to find appropriate content.
-          </Text>
-          <Text align="center" c="dimmed" size="sm" mt="md">
-            We maintain strict{' '}
-            <Anchor href="/content/tos#content-policies" target="_blank">
-              community standards
-            </Anchor>{' '}
-            to ensure a safe environment for all users. Visit our{' '}
-            <Anchor href="/safety" target="_blank">
-              Safety Center
-            </Anchor>{' '}
-            for more information about our policies.
-          </Text>
-          <Stack mt="lg" align="center" gap={4}>
-            <Anchor component={Link} href="/" variant="subtle">
-              <Text size="md">Go Home ↩︎</Text>
-            </Anchor>
-            <Text c="dimmed" size="sm">
-              or modify your search above
-            </Text>
-          </Stack>
-        </Stack>
-      </Center>
-    );
+  return (
+    <SearchPolicyMessage
+      refusedBy={currentUser?.isModerator ? refusedBy ?? refusedByOf(refusal) : undefined}
+    />
+  );
+}
 
+/** The policy message, with the moderator's line when one is given; `compact` for the dropdown. */
+export function SearchPolicyMessage({
+  refusedBy,
+  compact = false,
+}: {
+  refusedBy?: SearchRefusedBy;
+  compact?: boolean;
+}) {
+  if (compact)
+    return (
+      <Stack gap="xs" align="center">
+        <Text size="sm" align="center" weight={600}>
+          {SEARCH_POLICY_MESSAGE.title}
+        </Text>
+        <Text size="xs" align="center">
+          {SEARCH_POLICY_MESSAGE.body}
+        </Text>
+        {refusedBy && (
+          <Text size="xs" align="center" c="dimmed">
+            {searchRefusedByLine(refusedBy)}
+          </Text>
+        )}
+      </Stack>
+    );
   return (
     <Center>
       <Stack maw={750} align="center" gap="xs" className="h-full py-8">
         <IconAlertTriangle size={42} color="orange" />
-        <Text align="center">
-          {refusal === 'poi'
-            ? 'Your search includes terms tied to real people. Content depicting real people is filtered from search results.'
-            : 'Your search query contains blocked words and has been filtered.'}
+        <Text weight={700} size="lg" align="center">
+          {SEARCH_POLICY_MESSAGE.title}
         </Text>
-        <Text align="center" size="sm" c="dimmed">
-          Please try a different search term.
-        </Text>
+        <Text align="center">{SEARCH_POLICY_MESSAGE.body}</Text>
+        {refusedBy && (
+          <Text align="center" size="sm" c="dimmed">
+            {searchRefusedByLine(refusedBy)}
+          </Text>
+        )}
       </Stack>
     </Center>
   );

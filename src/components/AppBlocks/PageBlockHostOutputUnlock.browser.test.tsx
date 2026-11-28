@@ -18,8 +18,6 @@ const mocks = vi.hoisted(() => ({
   unlock: vi.fn(),
 }));
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const { makeInertSubRouter, makeTrpcProxy } = await import('../../../test/trpcProxyStub');
   const baseUtils = (makeTrpcProxy() as { useUtils: () => Record<string, unknown> }).useUtils();

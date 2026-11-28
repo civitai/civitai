@@ -3,9 +3,10 @@ import { initTRPC, TRPCError } from '@trpc/server';
 import { fetchRequestHandler } from '@trpc/server/adapters/fetch';
 import { createTRPCClient, httpLink, TRPCClientError } from '@trpc/client';
 import { errorFormatter } from '~/server/trpc/error-formatter';
-import { throwSharedRateLimited } from '~/server/utils/rate-limit-error';
+import { throwAppRateLimited } from '~/server/utils/app-rate-limit';
 import { buildTransformer, clientTransformer } from '~/shared/utils/trpc-union-transformer';
 import { sharedStorageErrorReply } from '~/components/AppBlocks/sharedStorageError';
+import { rateLimitReplyFields } from '~/components/AppBlocks/bridgeRateLimit';
 import { getRateLimit } from '~/utils/rate-limit';
 
 /**
@@ -23,7 +24,10 @@ const MESSAGE = 'Too many submissions — retry in 17s';
 const t = initTRPC.create({ transformer: buildTransformer(), errorFormatter });
 const appRouter = t.router({
   append: t.procedure.mutation((): { key: string } =>
-    throwSharedRateLimited({ retryAfterSeconds: 17 }, MESSAGE)
+    throwAppRateLimited('apps.shared-storage', 17, MESSAGE)
+  ),
+  createPost: t.procedure.mutation((): { postId: number } =>
+    throwAppRateLimited('apps.post', 17, MESSAGE)
   ),
   forbidden: t.procedure.mutation((): { key: string } => {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'shared storage is not enabled' });
@@ -69,7 +73,28 @@ describe('rate-limit refusal → host SHARED_APPEND_RESULT reply', () => {
     expect({ requestId: 'rq_seam', ...sharedStorageErrorReply(err) }).toEqual({
       requestId: 'rq_seam',
       error: MESSAGE,
-      rateLimit: { retryAfterSeconds: 17, retryAt: RETRY_AT },
+      rateLimit: {
+        retryAfterSeconds: 17,
+        retryAt: RETRY_AT,
+        id: 'apps.shared-storage',
+        kind: 'abuse',
+      },
+    });
+  });
+
+  it('a refusal by a non-storage limiter carries its rateLimit into any bridge error reply', async () => {
+    // 'apps.post' is CREATE_POST_FROM_APP's limiter.
+    const err = await rejection(() => client.createPost.mutate());
+
+    expect({ requestId: 'rq_seam', error: 'x', ...rateLimitReplyFields(err) }).toEqual({
+      requestId: 'rq_seam',
+      error: 'x',
+      rateLimit: {
+        retryAfterSeconds: 17,
+        retryAt: RETRY_AT,
+        id: 'apps.post',
+        kind: 'abuse',
+      },
     });
   });
 

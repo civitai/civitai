@@ -102,8 +102,22 @@ describe('optionsOnScreen', () => {
 });
 
 describe('spaceSkips', () => {
-  it('leaves Space to the browser in the apprenticeship', () => {
-    expect(spaceSkips({ apprentice: { kind: 'question', options } })).toBe(false);
+  it('leaves Space to the browser on every apprenticeship item, practice pairs included (graded, no skip)', () => {
+    expect(
+      spaceSkips({ apprentice: { kind: 'question', options, item: { kind: 'rating' } } })
+    ).toBe(false);
+    expect(spaceSkips({ apprentice: { kind: 'question', options, item: { kind: 'yesno' } } })).toBe(
+      false
+    );
     expect(spaceSkips({ question: { options } })).toBe(true);
+  });
+});
+
+describe('a ruling on screen', () => {
+  // The page builds the screen from the question alone: a smite, warning or close call in the toast holds nothing back.
+  it('leaves the answer keys and Space working, as with no ruling', () => {
+    const screen = { question: { options } };
+    expect(answerForKeyPress(optionsOnScreen(screen) ?? [], '3', false)).toBe('4');
+    expect(spaceSkips(screen)).toBe(true);
   });
 });

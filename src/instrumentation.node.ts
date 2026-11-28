@@ -13,6 +13,7 @@ import {
   registerOtelShutdown,
 } from '@civitai/telemetry/otel-logs';
 import { setStructuredLogSink } from '~/server/logging/structured-log-sink';
+import { armConsoleOtlpBackstop } from '~/server/logging/console-otlp-backstop';
 import { CredentialRedactingSpanProcessor } from '~/server/otel-redact-span-processor';
 import { trace } from '@opentelemetry/api';
 import {
@@ -190,8 +191,7 @@ void startWarmupAndHealthMetricsLoop({
 // single call armed the one copy that happened to be merged alongside this file (which is
 // why `eventloop-longtask`, merged into this same runtime module, was the ONLY call site
 // that ever emitted) and left the other 13 permanently dark. See the header of
-// `~/server/logging/structured-log-sink`, and `scripts/check-server-graph-singletons.mjs`,
-// which fails the build if a copy of that module ever loses the globalThis pin.
+// `~/server/logging/structured-log-sink`.
 //
 // Unconditional on purpose: `emitOtelLog` is itself gated on OTEL_LOGS_ENABLED (default
 // off), so wiring it here keeps ONE gate rather than two, and its skip counter is then a
@@ -315,6 +315,13 @@ if (!OTEL_ENABLED) {
 
     sdk.start();
     console.log(`[instrumentation.node] OTEL SDK started - traces and logs -> ${OTEL_ENDPOINT}`);
+
+    // Must run after `new NodeSDK`, which installs the diag logger the backstop re-registers.
+    try {
+      armConsoleOtlpBackstop();
+    } catch (err) {
+      console.error('[instrumentation.node] console backstop not installed (fail-open):', err);
+    }
 
     // Arm withSpan's unsampled-parent shortcut (dark until the `otel-withspan-skip-unsampled`
     // Flipt flag is on). Dynamic, like the warmer: keeps the Flipt client out of this module's

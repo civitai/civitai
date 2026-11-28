@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { serverCopyTablesSql } from '@civitai/db-queries/test/image-uses';
+import { PGlite } from '@electric-sql/pglite';
+import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { upsertModel3DSchema } from '~/server/schema/model3d.schema';
 import { Prisma } from '@prisma/client';
@@ -34,6 +37,8 @@ const images: Record<number, number> = {
   22: stranger.id,
   33: moderator.id,
   44: owner.id,
+  55: owner.id,
+  66: owner.id,
 };
 const postIds: Record<number, number> = { 44: 900 };
 
@@ -57,6 +62,28 @@ beforeEach(() => {
   db.$transaction.mockImplementation(async (cb: (t: unknown) => unknown) => cb(db));
 });
 
+// The use check runs its real SQL: a copy pointed at by its entry, and one named only by its key.
+const POINTED_COPY = 55;
+const KEYED_COPY = 66;
+let pg: PGlite;
+beforeAll(async () => {
+  pg = new PGlite();
+  await pg.exec(`
+    CREATE TABLE "Image" (id int PRIMARY KEY, url text NOT NULL);
+    ${serverCopyTablesSql};
+    INSERT INTO "Image" VALUES (11, 'own'), (${POINTED_COPY}, 'pointed'), (${KEYED_COPY}, 'keyed');
+    INSERT INTO "ServiceDealFileEntry" ("imageId", "scanKey")
+      VALUES (${POINTED_COPY}, NULL), (NULL, 'keyed');
+  `);
+});
+afterAll(() => pg.close());
+const bridgeUseCheck = () => {
+  const raw = pgliteRaw(pg);
+  dbMock.dbWrite.$queryRaw.mockImplementation(((s: TemplateStringsArray, ...v: unknown[]) =>
+    raw.queryRaw(s, ...v)) as never);
+};
+beforeEach(bridgeUseCheck);
+
 const queuedRatingFor = () =>
   enqueueJobs.mock.calls.flatMap(([jobs]) => jobs).filter((j) => j.type === 'UpdateNsfwLevel');
 
@@ -64,6 +91,18 @@ const written = () =>
   (db.model3D.update.mock.calls[0] ?? db.model3D.create.mock.calls[0])?.[0]?.data;
 
 describe('upsertModel3D thumbnail ownership', () => {
+  it.each([
+    ['pointed at by its entry', POINTED_COPY],
+    ['named only by its key', KEYED_COPY],
+  ])("refuses the owner's own deal file copy (%s), and takes their plain image", async (_, id) => {
+    await expect(
+      upsertModel3D({ input: { ...base, id: MODEL_ID, thumbnailImageId: id }, user: owner })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(db.model3D.update).not.toHaveBeenCalled();
+    await upsertModel3D({ input: { ...base, id: MODEL_ID, thumbnailImageId: 11 }, user: owner });
+    expect(written().thumbnailImageId).toBe(11);
+  });
+
   it("accepts the owner's own image on create and update", async () => {
     await upsertModel3D({ input: { ...base, thumbnailImageId: 11 }, user: owner });
     expect(written().thumbnailImageId).toBe(11);

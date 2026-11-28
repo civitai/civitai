@@ -1,8 +1,9 @@
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import type { ImageReferenceInput } from '~/server/schema/image.schema';
 import { profileImageSelect } from '~/server/selectors/image.selector';
+import { withServableImage } from '~/server/common/image-visibility';
 import { resolveCoverImageId } from '~/server/services/cover-image.service';
 import { isImageOwner } from '~/server/services/util.service';
 import { updateServiceOfferingNsfwLevels } from '~/server/services/nsfwLevels.service';
@@ -13,7 +14,10 @@ import {
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getHiddenOrBlockedUserIds } from '~/server/services/user-preferences.service';
 import { assertCreatorShopVisible } from '~/server/services/creator-shop.service';
-import { countOpenDealsByOffering } from '~/server/services/creator-service-deal.service';
+import {
+  countOpenDealsByOffering,
+  getServiceDealRecord,
+} from '~/server/services/creator-service-deal.service';
 import { getServicesMinCreatorScore } from '~/server/services/creator-service-min-score';
 import { createNotification } from '~/server/services/notification.service';
 import {
@@ -22,8 +26,16 @@ import {
   serviceOfferingTakenDownKey,
 } from '@civitai/shared/service-offering-takedown';
 import { NotificationCategory } from '~/server/common/enums';
+import type { ServiceRequestForm } from '~/shared/utils/service-request-form';
+import {
+  serviceFormLabels,
+  serviceFormRange,
+  serviceFormRangeError,
+  serviceRequestFormSchema,
+} from '~/shared/utils/service-request-form';
 import { SERVICE_DEAL_OPEN_STATUSES } from '~/shared/constants/creator-services.constants';
 import type {
+  GetServiceOfferingByIdInput,
   GetServiceOfferingFeedInput,
   GetShopServiceOfferingsInput,
   ServiceOfferingFeedSort,
@@ -51,12 +63,15 @@ import {
 } from '~/shared/constants/creator-service-terms.constants';
 import { MUTE_POINTS } from '~/shared/constants/strike.constants';
 import { creatorAggregateScoreFromMeta } from '~/shared/utils/creator-score';
+import { escapeLike } from '~/server/utils/ilike';
 import {
   ImageIngestionStatus,
   ServiceOfferingIngestionStatus,
   ServiceOfferingStatus,
+  ServiceLicensePreset,
   StrikeStatus,
 } from '~/shared/utils/prisma/enums';
+import { normalizeServiceLicense } from '~/shared/constants/creator-service-license.constants';
 
 export const serviceOfferingSelect = {
   id: true,
@@ -67,11 +82,19 @@ export const serviceOfferingSelect = {
   deliveryDays: true,
   revisionsIncluded: true,
   maxOpenDeals: true,
+  licensePreset: true,
+  licenseCustomText: true,
+  licenseAllowResale: true,
+  requestForm: true,
+  requestFormVersion: true,
+  fromPrice: true,
   maxNsfwLevel: true,
   status: true,
   createdAt: true,
   updatedAt: true,
-  coverImage: { select: profileImageSelect },
+  happyCount: true,
+  reviewCount: true,
+  coverImage: { select: { ...profileImageSelect, modelRestricted: true } },
 } satisfies Prisma.ServiceOfferingSelect;
 
 /** What only the seller and moderators see: the seller's own rating and the content check. */
@@ -81,6 +104,7 @@ const ownServiceOfferingSelect = {
   declaredNsfwLevel: true,
   ingestion: true,
   sellerAffirmation: true,
+  allowReviewWork: true,
 } satisfies Prisma.ServiceOfferingSelect;
 
 /**
@@ -344,14 +368,104 @@ export async function getShopServiceOfferings({
     select: serviceOfferingSelect,
     orderBy: { createdAt: 'asc' },
   });
-  return withOpenSlots(offerings);
+  // No viewer: a restricted cover is withheld from its seller too, as the storefront shows what
+  // visitors see. The offering stays listed without it.
+  return withOpenSlots(offerings.map((offering) => withServableImage(offering, 'coverImage')));
+}
+
+/**
+ * One offering for its own page. Visitors get it only where the storefront and the feed would list
+ * it (`listableServiceOfferingWhere`, a published shop, no block either way, not a creator they
+ * hid); its seller also sees it unlisted (Draft, Paused, under review) and moderators see any
+ * status. Nobody is sent a rating the domain may not serve.
+ */
+export async function getServiceOfferingById(input: ServiceOfferingViewerInput) {
+  const offering = await findViewableServiceOffering(input, {
+    ...serviceOfferingSelect,
+    seller: { select: { ...userWithCosmeticsSelect, createdAt: true } },
+  });
+  const [[withSlots], record] = await Promise.all([
+    withOpenSlots([withServableImage(offering, 'coverImage')]),
+    getServiceDealRecord({ sellerId: offering.seller.id, offeringId: input.id }),
+  ]);
+  return { ...withSlots, record };
+}
+
+type ServiceOfferingViewerInput = GetServiceOfferingByIdInput & {
+  /** What this domain may be sent: `domainServableLevels(ctx)`. */
+  servable: number;
+  viewerId?: number;
+  isModerator?: boolean;
+};
+
+/** Not found unless this viewer may open the offering's page; the reviews on it follow the same rule. */
+export async function assertServiceOfferingViewable(input: ServiceOfferingViewerInput) {
+  await findViewableServiceOffering(input, { id: true, seller: { select: { id: true } } });
+}
+
+async function findViewableServiceOffering<
+  S extends Prisma.ServiceOfferingSelect & { seller: { select: { id: true } } }
+>({ id, browsingLevel, servable, viewerId, isModerator }: ServiceOfferingViewerInput, select: S) {
+  const offering = await dbRead.serviceOffering.findFirst({
+    where: {
+      id,
+      maxNsfwLevel: { in: servableServiceRatings(servable) },
+      ...(isModerator
+        ? {}
+        : {
+            OR: [
+              listableServiceOfferingWhere({ browsingLevel, servable }),
+              ...(viewerId
+                ? [{ sellerId: viewerId, status: { not: ServiceOfferingStatus.Removed } }]
+                : []),
+            ],
+          }),
+    },
+    select,
+  });
+  if (!offering) throw throwNotFoundError('Service not found');
+
+  const sellerId = (offering as { seller: { id: number } }).seller.id;
+  const seesUnlisted = isModerator || viewerId === sellerId;
+  await assertCreatorShopVisible({ userId: sellerId, viewerId, isModerator });
+  if (!seesUnlisted && viewerId) {
+    const hidden = await getHiddenOrBlockedUserIds(viewerId);
+    if (hidden.includes(sellerId)) throw throwNotFoundError('Service not found');
+  }
+  return offering;
 }
 
 const feedOrderBy = {
   newest: [{ createdAt: 'desc' }, { id: 'desc' }],
-  price_asc: [{ price: 'asc' }, { id: 'asc' }],
-  price_desc: [{ price: 'desc' }, { id: 'desc' }],
+  // What a buyer pays at least: the price, or a request form's cheapest total.
+  price_asc: [{ fromPrice: { sort: 'asc', nulls: 'last' } }, { id: 'asc' }],
+  price_desc: [{ fromPrice: { sort: 'desc', nulls: 'last' } }, { id: 'desc' }],
+  // -1 below SERVICE_HAPPY_MIN_REVIEWS, so offerings without a share sort after those with one.
+  happy: [{ happySortKey: 'desc' }, { id: 'desc' }],
 } satisfies Record<ServiceOfferingFeedSort, Prisma.ServiceOfferingOrderByWithRelationInput[]>;
+
+/**
+ * The offerings after `cursor` in a price sort, NULLs last. Prisma's own cursor compares the cursor
+ * row's fromPrice in SQL, where a NULL is never past anything, so it would drop rows. Null when
+ * the cursor row is gone.
+ */
+async function pastFromPrice(cursor: number, sort: 'price_asc' | 'price_desc') {
+  const anchor = await dbRead.serviceOffering.findFirst({
+    where: { id: cursor },
+    select: { fromPrice: true },
+  });
+  if (!anchor) return null;
+  const past = sort === 'price_asc' ? 'gt' : 'lt';
+  return anchor.fromPrice === null
+    ? { fromPrice: null, id: { [past]: cursor } }
+    : {
+        OR: [
+          { fromPrice: { [past]: anchor.fromPrice } },
+          { fromPrice: anchor.fromPrice, id: { [past]: cursor } },
+          { fromPrice: null },
+        ],
+      };
+}
 
 /**
  * Active offerings across every seller whose storefront a visitor could open: the storefront's
@@ -364,6 +478,7 @@ export async function getServiceOfferingFeed({
   servable,
   viewerId,
   sort,
+  query,
   cursor,
   limit,
 }: GetServiceOfferingFeedInput & {
@@ -373,9 +488,28 @@ export async function getServiceOfferingFeed({
 }) {
   const excludedSellerIds = viewerId ? await getHiddenOrBlockedUserIds(viewerId) : [];
   const listable = listableServiceOfferingWhere({ browsingLevel, servable });
+  const byPrice = sort === 'price_asc' || sort === 'price_desc';
+  const pastCursor = byPrice && cursor ? await pastFromPrice(cursor, sort) : undefined;
+  if (pastCursor === null) return { items: [], nextCursor: undefined };
   const rows = await dbRead.serviceOffering.findMany({
     where: {
       ...listable,
+      // Keep the listing rule's AND; the query only narrows it.
+      AND: [
+        ...listable.AND,
+        ...(pastCursor ? [pastCursor] : []),
+        ...(query
+          ? [
+              {
+                // Prisma passes `%` and `_` through to LIKE as wildcards.
+                OR: [
+                  { title: { contains: escapeLike(query), mode: 'insensitive' as const } },
+                  { description: { contains: escapeLike(query), mode: 'insensitive' as const } },
+                ],
+              },
+            ]
+          : []),
+      ],
       seller: {
         ...listable.seller,
         // The card links to the storefront, which is addressed by username.
@@ -387,30 +521,62 @@ export async function getServiceOfferingFeed({
     select: { ...serviceOfferingSelect, seller: { select: userWithCosmeticsSelect } },
     orderBy: feedOrderBy[sort],
     take: limit + 1,
-    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+    ...(cursor && !byPrice ? { cursor: { id: cursor }, skip: 1 } : {}),
   });
   const page = rows.slice(0, limit);
   return {
-    items: await withOpenSlots(page),
+    items: await withOpenSlots(page.map((offering) => withServableImage(offering, 'coverImage'))),
     nextCursor: rows.length > limit ? page[page.length - 1].id : undefined,
   };
 }
 
+const LICENSE_REQUIRED = 'Pick license terms to publish this service.';
+
 export async function upsertServiceOffering({
   sellerId,
   input,
+  licenseEditor = false,
 }: {
   sellerId: number;
   input: UpsertServiceOfferingInput;
+  /** `creatorServicesNext`: the seller sets the license, and publishing needs one. */
+  licenseEditor?: boolean;
 }) {
-  const { id, publish, affirmedTermsVersion, coverImage, ...fields } = input;
+  const {
+    id,
+    publish,
+    affirmedTermsVersion,
+    coverImage,
+    licensePreset,
+    licenseCustomText,
+    licenseAllowResale,
+    requestForm,
+    ...rest
+  } = input;
+  // Outside the rollout the license is left as it is: terms a seller set stay in force.
+  const license =
+    licenseEditor && licensePreset !== undefined
+      ? normalizeServiceLicense({ licensePreset, licenseCustomText, licenseAllowResale })
+      : undefined;
+  if (license?.licensePreset === ServiceLicensePreset.Custom && !license.licenseCustomText)
+    throw throwBadRequestError('Write your license terms, or pick a preset.');
+  // Outside the rollout the form is left as it is too: a form already set still prices requests.
+  const form = licenseEditor ? requestForm : undefined;
+  const fields = { ...rest, ...license };
   await assertCanSellServices(sellerId);
-  await throwOnBlockedUserContent([fields.title, fields.description], {
-    surface: 'creator-service-offering',
-  });
+  await throwOnBlockedUserContent(
+    [
+      fields.title,
+      fields.description,
+      license?.licenseCustomText ?? '',
+      ...(form ? serviceFormLabels(form) : []),
+    ].filter(Boolean),
+    { surface: 'creator-service-offering' }
+  );
 
   if (!id) {
     if (publish) {
+      if (licenseEditor && !license?.licensePreset) throw throwBadRequestError(LICENSE_REQUIRED);
       // Checked before the cap so a missing tick never reads as a cap error.
       affirmationForPublish({ sellerId, offeringId: 0, existing: null, affirmedTermsVersion });
       await assertUnderActiveOfferingCap(sellerId);
@@ -419,11 +585,13 @@ export async function upsertServiceOffering({
       ? await resolveServiceCoverImageId({ coverImage, sellerId, currentCoverId: null })
       : null;
     const declaredNsfwLevel = fields.declaredNsfwLevel ?? SERVICE_OFFERING_DEFAULT_RATING;
+    const priced = requestFormFields(form ?? null, fields, form ? 1 : 0);
     // The record carries the offering's id, which exists only once it is created.
     const created = await dbWrite.$transaction(async (tx) => {
       const created = await tx.serviceOffering.create({
         data: {
           ...fields,
+          ...priced,
           declaredNsfwLevel,
           maxNsfwLevel: declaredNsfwLevel,
           coverImageId,
@@ -452,11 +620,28 @@ export async function upsertServiceOffering({
       description: true,
       ingestion: true,
       coverImageId: true,
+      licensePreset: true,
+      licenseCustomText: true,
+      requestForm: true,
+      requestFormVersion: true,
     },
   });
   if (!existing) throw throwNotFoundError('Service not found');
+  const existingForm = existing.requestForm
+    ? serviceRequestFormSchema.parse(existing.requestForm)
+    : null;
+  const formChanged = form !== undefined && !sameForm(form, existingForm);
   const textChanged =
-    existing.title !== fields.title || existing.description !== fields.description;
+    existing.title !== fields.title ||
+    existing.description !== fields.description ||
+    (license !== undefined && existing.licenseCustomText !== license.licenseCustomText) ||
+    (formChanged && !sameLabels(form, existingForm));
+  // A new base price or days moves the range of a form left as it is, so it is checked again.
+  const priced = requestFormFields(
+    form === undefined ? existingForm : form,
+    fields,
+    existing.requestFormVersion + (formChanged ? 1 : 0)
+  );
   const coverImageId =
     coverImage === undefined
       ? undefined
@@ -469,6 +654,15 @@ export async function upsertServiceOffering({
         });
 
   const activating = publish && existing.status !== ServiceOfferingStatus.Active;
+  if (activating && licenseEditor && !(license ?? existing).licensePreset)
+    throw throwBadRequestError(LICENSE_REQUIRED);
+  if (
+    existing.status === ServiceOfferingStatus.Active &&
+    existing.licensePreset &&
+    license &&
+    !license.licensePreset
+  )
+    throw throwBadRequestError('A published service keeps license terms. Pick one to save.');
   const affirmation = activating
     ? affirmationForPublish({
         sellerId,
@@ -485,6 +679,7 @@ export async function upsertServiceOffering({
     where: textChanged ? { ...owned, ingestion: existing.ingestion } : owned,
     data: {
       ...fields,
+      ...priced,
       ...(coverImageId !== undefined ? { coverImageId } : {}),
       // New text is shown once it is checked; a blocked offering's goes back below.
       ...(textChanged && existing.ingestion !== ServiceOfferingIngestionStatus.Blocked
@@ -502,6 +697,31 @@ export async function upsertServiceOffering({
     await requeueBlockedServiceOffering(id);
   return afterServiceOfferingWrite(id, { textChanged });
 }
+
+/**
+ * The form's columns for a save: refused when some valid answers would total outside the price
+ * bounds or add too many days. `fromPrice` is the least a buyer pays (the price, or the form's
+ * cheapest total), which the feed sorts by.
+ */
+function requestFormFields(
+  form: ServiceRequestForm | null,
+  base: { price: number; deliveryDays: number },
+  requestFormVersion: number
+) {
+  if (!form) return { requestForm: Prisma.DbNull, fromPrice: base.price, requestFormVersion };
+  const error = serviceFormRangeError(form, base);
+  if (error) throw throwBadRequestError(error);
+  return {
+    requestForm: form as Prisma.InputJsonObject,
+    fromPrice: serviceFormRange(form, base).minPrice,
+    requestFormVersion,
+  };
+}
+
+const sameForm = (a: ServiceRequestForm | null, b: ServiceRequestForm | null) =>
+  JSON.stringify(a) === JSON.stringify(b);
+const sameLabels = (a: ServiceRequestForm | null, b: ServiceRequestForm | null) =>
+  JSON.stringify(a ? serviceFormLabels(a) : []) === JSON.stringify(b ? serviceFormLabels(b) : []);
 
 async function resolveServiceCoverImageId({
   coverImage,
@@ -537,9 +757,12 @@ async function afterServiceOfferingWrite(id: number, { textChanged }: { textChan
 export async function setServiceOfferingStatus({
   sellerId,
   input: { id, status, affirmedTermsVersion },
+  licenseRequired = false,
 }: {
   sellerId: number;
   input: SetServiceOfferingStatusInput;
+  /** `creatorServicesNext`: publishing needs license terms. */
+  licenseRequired?: boolean;
 }) {
   const from =
     status === ServiceOfferingStatus.Active
@@ -551,9 +774,10 @@ export async function setServiceOfferingStatus({
     await assertCanSellServices(sellerId);
     const existing = await dbWrite.serviceOffering.findFirst({
       where: { id, sellerId, status: { in: from } },
-      select: { sellerAffirmation: true },
+      select: { sellerAffirmation: true, licensePreset: true },
     });
     if (!existing) throw throwNotFoundError('Service not found');
+    if (licenseRequired && !existing.licensePreset) throw throwBadRequestError(LICENSE_REQUIRED);
     affirmation = affirmationForPublish({
       sellerId,
       offeringId: id,

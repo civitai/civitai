@@ -28,10 +28,12 @@ import { getOrCreateDeviceId, linkAccount, rotateDeviceId } from './device';
 import { clearOtherCookieNames, cookieDomain } from './cookie';
 import { cookieJar } from './cookie-jar';
 import { verifier } from './verifier';
+import { isUnconfirmedSession } from './unconfirmed-session';
 import { acceptHubSession } from './lineage';
 import { issuePendingAuthz } from './pending-authz';
 import { registrableDomain } from './domain';
 import { isRefusedModerationAccount } from './moderation-account';
+import { refuseAccountSession } from './account-refusal';
 
 // THE thin-session cookie — a shared contract: every app must use this exact name for SSO to work, so
 // it's a hardcoded constant (via the package's single-source-of-truth helper), NOT configurable.
@@ -108,6 +110,14 @@ export function sessionExpiresIn(lineage: FamilyClaims, now = Date.now()): numbe
   return Math.max(1, Math.floor((until - now) / 1000));
 }
 
+/**
+ * 503 when these claims were accepted without reading the session store: nothing that outlives the request may
+ * be minted from them, since the store may hold a revocation for them. The caller retries once it is back.
+ */
+export function requireLiveSession(claims: SessionClaims | null | undefined): void {
+  if (claims && isUnconfirmedSession(claims)) error(503, 'session store unavailable, try again');
+}
+
 export interface MintOptions {
   /** The session this one descends from (refreshed, switched or impersonated from, or the browser's prior
    *  session on an add-account login). Null or absent: a new sign-in. */
@@ -128,6 +138,7 @@ export async function mintSession(
   opts: MintOptions = {}
 ): Promise<{ token: string; family: string }> {
   refuseModerationAccount(user, opts.impersonatedBy ? 'impersonate' : 'mint');
+  requireLiveSession(opts.parent);
   const now = Date.now();
   const tokenId = randomUUID();
   const lineage = familyClaims(opts.parent ?? null, {
@@ -139,12 +150,16 @@ export async function mintSession(
     lineage.impersonatedBy = opts.impersonatedBy;
     lineage.impExp = now + IMPERSONATION_MAX_AGE_MS;
   }
+  // Decided on the lineage being minted: a switch or sign-in from an impersonation clears it, so it is refused.
+  await refuseAccountSession(user.id, opts.impersonatedBy ? 'impersonate' : 'mint', {
+    impersonation: lineage.impersonatedBy != null,
+  });
   const token = await getSigner().mintSessionToken(
     { signedAt: now, sub: String(user.id), ...lineage },
     { jti: tokenId, expiresIn: sessionExpiresIn(lineage, now) }
   );
   // Best-effort: track the token so it can be invalidated later (logout / ban). A redis blip must not fail.
-  await sessions.trackToken(tokenId, user.id).catch(() => {});
+  await sessions.trackToken(tokenId, user.id).catch(() => undefined);
   return { token, family: familyId({ sid: lineage.sid, jti: tokenId }) ?? tokenId };
 }
 
@@ -154,6 +169,8 @@ export async function reissueSession(
   userId: number,
   jti: string
 ): Promise<string> {
+  requireLiveSession(claims);
+  await refuseAccountSession(userId, 'reissue', { impersonation: claims.impersonatedBy != null });
   const now = Date.now();
   const lineage = familyClaims(claims, { now });
   const token = await getSigner().mintSessionToken(
@@ -170,7 +187,7 @@ export async function mintUserSession(user: SessionUser, opts?: MintOptions): Pr
 
 /** The hub session token this request carries, and which slot it was read from. */
 export function readHubSession(cookies: Pick<Cookies, 'get'>): CookieRead | null {
-  return readSessionToken(cookieJar(cookies));
+  return readSessionToken(cookieJar(cookies), { host: null });
 }
 
 /**
@@ -183,7 +200,7 @@ export function readHubSession(cookies: Pick<Cookies, 'get'>): CookieRead | null
 export function setSessionCookie(
   cookies: Cookies,
   token: string,
-  slot: CookieSlot = sessionCookieMode(),
+  slot: CookieSlot = sessionCookieMode(null),
   { roll = false }: { roll?: boolean } = {}
 ): void {
   const clearShared = slot === 'host' && !roll && otherSharedSession(cookies, token);
@@ -207,7 +224,7 @@ export function setSessionCookie(
  * app switched to.
  */
 function otherSharedSession(cookies: Pick<Cookies, 'get'>, token: string): boolean {
-  if (sessionCookieMode() !== 'host' || hostSessionCookieName() === sessionCookieName())
+  if (sessionCookieMode(null) !== 'host' || hostSessionCookieName() === sessionCookieName())
     return false;
   const shared = cookies.get(sessionCookieNameForSlot('shared'));
   return shared !== undefined && !isCopyOf(shared, token);
@@ -267,8 +284,13 @@ export async function establishSession(
   // up front because setSessionCookie below queues the new cookie; reading `cookies.get` after that could echo
   // the just-set value. Verification failures (no/expired/invalid prior session) → undefined → no materialize.
   refuseModerationAccount(user, 'login');
+  // Before the cross-domain hand-off below, which mints nothing.
+  await refuseAccountSession(user.id, 'login');
   const prior = await resolvePriorSession(cookies);
   const priorUserId = prior ? Number(prior.sub) : undefined;
+  // A prior session the store could not confirm may be revoked: this sign-in stands on its own credentials and
+  // takes nothing from it (no family, no device-record proof), like a sign-in with no prior session.
+  const confirmedPrior = prior && !isUnconfirmedSession(prior) ? prior : undefined;
 
   // A login bound for a spoke on another registrable domain must not re-point THIS domain's session — the hub
   // cookie is civitai.com's session too. Hand the identity to /authorize out-of-band instead, leaving whoever
@@ -290,7 +312,7 @@ export async function establishSession(
   let family: string | undefined;
   if (!handedOff) {
     const minted = await mintSession(user, {
-      parent: prior,
+      parent: confirmedPrior ?? null,
       iat0: Date.now(),
       clearImpersonation: true,
     });
@@ -300,17 +322,18 @@ export async function establishSession(
 
   // Link this account and family to the browser's records (docs/auth/auth-hub-spoke-overview.md). Records this
   // browser can't show it is signed in to stay with the old device id; the sign-in starts on a new one.
-  const proofFamily = prior ? familyId(prior) : undefined;
+  const proofFamily = confirmedPrior ? familyId(confirmedPrior) : undefined;
   // The prior session proves the browser is signed in to its principal: the moderator, when impersonating.
-  const priorPrincipal = prior ? prior.impersonatedBy ?? priorUserId : undefined;
-  const link = (id: string, proof?: string) =>
-    linkAccount(
-      id,
-      user.id,
-      priorPrincipal,
-      family ? { family, proofFamily: proof } : undefined
-    ).catch(() => 'none' as const);
-  if ((await link(getOrCreateDeviceId(cookies), proofFamily)) === 'rotate') {
+  const priorPrincipal = confirmedPrior
+    ? confirmedPrior.impersonatedBy ?? Number(confirmedPrior.sub)
+    : undefined;
+  // A hand-off mints no family, but the browser stays signed in to the prior session's: a list it creates gets a
+  // record holding that family, so a sign-out from it still forgets the list. Without a hand-off, `family` is
+  // the prior session's family whenever there is one (the sign-in joins it), so the proof adds no other family.
+  const families = family || proofFamily ? { family, proofFamily } : undefined;
+  const link = (id: string) =>
+    linkAccount(id, user.id, priorPrincipal, families).catch(() => 'none' as const);
+  if ((await link(getOrCreateDeviceId(cookies))) === 'rotate') {
     await link(rotateDeviceId(cookies));
   }
 }
@@ -331,10 +354,10 @@ export async function establishSession(
  * 2. REGISTERED first-party spoke — keeps this off the third-party OAuth flow, which reaches /login with a
  *    hub-relative returnUrl anyway.
  * 3. The landing is the spoke's `/api/auth/authorize` — the ONE shape that produces the second hop where the
- *    pending record gets consumed. Without this, a `createSpokeGuard` app (which sends the raw current page
- *    URL as returnUrl) on a foreign domain would hand off, receive no cookie, land on a page whose guard
- *    finds no session, bounce back to /login with the same returnUrl, and loop forever with no error. Trust
- *    is a `TrustedSpokeDomain` DB row, so that app needs no code change to appear.
+ *    pending record gets consumed. Without this, an app that sends the raw current page URL to /login as
+ *    returnUrl on a foreign domain would hand off, receive no cookie, land on a page that finds no session,
+ *    bounce back to /login with the same returnUrl, and loop forever with no error.
+ *    Trust is a `TrustedSpokeDomain` DB row, so that app needs no code change to appear.
  */
 async function foreignScopeSpokeDomain(returnUrl?: string): Promise<string | undefined> {
   if (!returnUrl) return undefined;
@@ -365,7 +388,7 @@ async function foreignScopeSpokeDomain(returnUrl?: string): Promise<string | und
   // THROWS without DATABASE_URL. A static import would put that in the graph of everything that touches
   // sessions, including unit tests that have no database.
   const { isFirstPartyOrigin } = await import('../oauth/first-party');
-  return (await isFirstPartyOrigin(origin)) ? domain : undefined;
+  return (await isFirstPartyOrigin(origin, 'post_login')) ? domain : undefined;
 }
 
 /** The valid session already on this request's civ-token cookie, or undefined. Best-effort. */

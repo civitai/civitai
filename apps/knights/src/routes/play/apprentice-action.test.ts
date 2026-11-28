@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const answerApprentice = vi.hoisted(() => vi.fn());
+const unsureApprentice = vi.hoisted(() => vi.fn());
 const acknowledgeCheckpoint = vi.hoisted(() => vi.fn());
-vi.mock('$lib/server/db', () => ({ db: {} }));
+vi.mock('$lib/server/db', () => ({ db: {}, dbRead: {} }));
 // Consent has its own tests (membership.test.ts); these cover what /play does once it is given.
 vi.mock('$lib/server/membership', async (original) => ({
   ...(await original<typeof import('$lib/server/membership')>()),
@@ -21,8 +22,14 @@ vi.mock('$lib/server/queue/runtime', () => ({
 vi.mock('$lib/server/daily/daily.service', () => ({}));
 vi.mock('$lib/server/smites/runtime', () => ({ feedSecret: () => 'secret', resetDeps: {} }));
 vi.mock('$lib/server/hidden/runtime', () => ({ hiddenSettings: () => ({ rate: 1 }) }));
+const inquisitorQueue = vi.hoisted(() => ({ enabled: true }));
+vi.mock('$lib/server/skill-check/runtime', () => ({
+  skillChecks: async () => ({ enabled: inquisitorQueue.enabled, poolCap: 500, serveJudged: true }),
+}));
 vi.mock('$lib/server/smites/smites.service', () => ({}));
-vi.mock('$lib/server/hidden/hidden.service', () => ({}));
+vi.mock('$lib/server/hidden/hidden.service', () => ({
+  hiddenItemId: (id: number) => -id,
+}));
 vi.mock('$lib/server/queue/queue.service', () => ({ castVote: vi.fn(), getFeed: vi.fn() }));
 vi.mock('$lib/server/yesno/vote', () => ({ castYesNoVote: vi.fn() }));
 vi.mock('$lib/server/yesno/feed', () => ({ pickYesNo: vi.fn() }));
@@ -32,6 +39,7 @@ vi.mock('$lib/server/apprenticeship/runtime', () => ({
 }));
 vi.mock('$lib/server/apprenticeship/apprenticeship.service', () => ({
   answerApprentice,
+  unsureApprentice,
   acknowledgeCheckpoint,
   getApprentice: vi.fn(),
 }));
@@ -71,6 +79,7 @@ beforeEach(() => {
   getStanding.mockReset();
   getStanding.mockResolvedValue({ banned: false, muted: false });
   answerApprentice.mockReset();
+  unsureApprentice.mockReset();
   acknowledgeCheckpoint.mockReset();
 });
 
@@ -90,6 +99,32 @@ describe('apprentice action', () => {
       expect.anything()
     );
   });
+
+  it.each([
+    [true, 1],
+    [false, 0],
+  ])(
+    'checks the answer against the same skill-check rate the item was served with (inquisitor queue on: %s)',
+    async (enabled, skillCheckRate) => {
+      answerApprentice.mockResolvedValue({
+        status: 'recorded',
+        correct: true,
+        xp: 0,
+        promoted: false,
+      });
+      inquisitorQueue.enabled = enabled;
+      try {
+        await post(valid);
+      } finally {
+        inquisitorQueue.enabled = true;
+      }
+      expect(answerApprentice).toHaveBeenCalledWith(
+        {},
+        expect.anything(),
+        expect.objectContaining({ skillCheckRate })
+      );
+    }
+  );
 
   it('hands the version the item was served with to the ledger', async () => {
     answerApprentice.mockResolvedValue({ status: 'rejected', reason: 'not-current' });
@@ -114,10 +149,44 @@ describe('apprentice action', () => {
     expect(answerApprentice).not.toHaveBeenCalled();
   });
 
+  it('refuses a body with no answer before touching the ledger', async () => {
+    const { answer: _answer, ...noAnswer } = valid;
+    expect(await post(noAnswer)).toMatchObject({
+      status: 400,
+      data: { message: 'Pick an answer.' },
+    });
+    expect(answerApprentice).not.toHaveBeenCalled();
+  });
+
   it('answers 500 rather than a verdict when the ledger throws', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     answerApprentice.mockRejectedValue(new Error('down'));
     expect(await post(valid)).toMatchObject({ status: 500 });
+  });
+
+  it('refuses "Not sure" on a graded practice pair: it goes to the ledger as an answer, which turns it down', async () => {
+    answerApprentice.mockResolvedValue({ status: 'rejected', reason: 'bad-answer' });
+
+    expect(
+      await post({ kind: 'yesno', referenceId: '5', version: 'v1', answer: 'unsure' })
+    ).toMatchObject({ status: 409, data: { message: 'That answer is not on offer.' } });
+    expect(answerApprentice).toHaveBeenCalledWith(
+      {},
+      expect.objectContaining({ userId: 7, kind: 'yesno', referenceId: 5, answer: 'unsure' }),
+      expect.anything()
+    );
+  });
+
+  it('still records a Yes on a practice pair', async () => {
+    answerApprentice.mockResolvedValue({
+      status: 'recorded',
+      correct: true,
+      xp: 10,
+      promoted: false,
+    });
+    expect(
+      await post({ kind: 'yesno', referenceId: '5', version: 'v1', answer: 'yes' })
+    ).toMatchObject({ success: true, correct: true });
   });
 
   it('moves past a checkpoint for the signed-in player', async () => {

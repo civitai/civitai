@@ -30,6 +30,7 @@ import type {
   workflowQuerySchema,
 } from '~/server/schema/orchestrator/workflows.schema';
 import { createOrchestratorClient } from '~/server/services/orchestrator/client';
+import { throwIfApiKeyBuzzLimitRefusal } from '~/server/orchestrator/api-key-buzz-limit-refusal';
 import { observeOrchestratorRead } from '~/server/services/orchestrator/orchestrator-read-metrics';
 import {
   clampSubmitSource,
@@ -231,6 +232,7 @@ export async function queryWorkflows({
     (performance.now() - readStart) / 1000
   );
   if (!data) {
+    throwIfApiKeyBuzzLimitRefusal(error.status, error);
     switch (error.status) {
       case 400:
         throw throwBadRequestError(error.detail);
@@ -310,6 +312,7 @@ export async function getWorkflow({
     (performance.now() - readStart) / 1000
   );
   if (!data) {
+    throwIfApiKeyBuzzLimitRefusal(error.status, error);
     switch (error.status) {
       case 400:
         throw throwBadRequestError(error.detail);
@@ -804,10 +807,30 @@ function timeoutSignal(ms: number) {
 export async function cancelWorkflow({
   workflowId,
   token,
-}: z.infer<typeof workflowIdSchema> & { token: string }) {
+  throwOnError,
+}: z.infer<typeof workflowIdSchema> & {
+  token: string;
+  /**
+   * Surface a non-2xx cancel as a throw carrying the HTTP `status`, as `deleteWorkflow`; OFF keeps
+   * every existing caller.
+   */
+  throwOnError?: boolean;
+}): Promise<number | undefined> {
   const client = createOrchestratorClient(token);
 
-  await clientUpdateWorkflow({ client, path: { workflowId }, body: { status: 'canceled' } });
+  const result = await clientUpdateWorkflow({
+    client,
+    path: { workflowId },
+    body: { status: 'canceled' },
+  });
+  const status = result?.response?.status;
+  if (throwOnError && result?.error) {
+    throw Object.assign(
+      new Error(`cancelWorkflow failed for ${workflowId}: ${JSON.stringify(result.error)}`),
+      { status }
+    );
+  }
+  return status;
 }
 
 export async function deleteWorkflow({
@@ -853,10 +876,13 @@ export async function updateWorkflow({
   workflowId,
   token,
   throwOnError,
+  signal,
   ...body
 }: UpdateWorkflowRequest & {
   token: string;
   workflowId: string;
+  /** Bounds the write; the read-back after it is not. */
+  signal?: AbortSignal;
   /**
    * Surface a refused update (the orchestrator's 400 for an unlock it won't charge, a 403 for
    * insufficient Buzz) as a throw. Off by default, as for `deleteWorkflow`: the generated client
@@ -866,7 +892,12 @@ export async function updateWorkflow({
 }) {
   const client = createOrchestratorClient(token);
 
-  const { error, response } = await clientUpdateWorkflow({ client, path: { workflowId }, body });
+  const { error, response } = await clientUpdateWorkflow({
+    client,
+    path: { workflowId },
+    body,
+    ...(signal ? { signal } : {}),
+  });
   if (throwOnError && !response?.ok)
     throwOrchestratorFailure({ error, response, message: orchestratorErrorMessage(error) });
   return await getWorkflow({ token, path: { workflowId } });
@@ -878,8 +909,8 @@ export async function updateWorkflow({
  * differently from an error:
  *   - `insufficient-funds`: the orchestrator's 403, it could not take the yellow charge;
  *   - `no-response`: no HTTP response at all (the client resolves with `response: undefined` when
- *     the fetch throws, our `signal` firing included). The write may still be in flight at the
- *     orchestrator, so the caller must not treat it as failed.
+ *     the fetch throws, our `signal` firing included), or a 5xx. Either way the write may have
+ *     landed or still be in flight, so the caller must not treat it as failed.
  * Every other failure throws as `throwOrchestratorFailure` maps it.
  */
 export async function liftWorkflowMatureRestriction({
@@ -898,7 +929,8 @@ export async function liftWorkflowMatureRestriction({
     body: { allowMatureContent: true },
     ...(signal ? { signal } : {}),
   });
-  if (!response) return { outcome: 'no-response' };
+  if (!response || response.status >= 500) return { outcome: 'no-response' };
+  throwIfApiKeyBuzzLimitRefusal(response.status, error);
   if (response.status === 403) return { outcome: 'insufficient-funds' };
   if (!response.ok)
     throwOrchestratorFailure({ error, response, message: orchestratorErrorMessage(error) });
@@ -976,6 +1008,7 @@ export function throwOrchestratorFailure({
   if (!response) {
     throw throwServiceUnavailableError(unavailableMessage, error);
   }
+  throwIfApiKeyBuzzLimitRefusal(response.status, error);
   switch (response.status) {
     case 400:
       throw throwBadRequestError(message);

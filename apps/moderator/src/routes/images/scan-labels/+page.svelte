@@ -10,6 +10,7 @@
   import { imageLookupUrl, userLookupUrl } from '$lib/entity-url';
   import { LINK_CLASS } from '$lib/format';
   import { urlWith } from '$lib/url';
+  import CardMedia from './CardMedia.svelte';
   import VoteForm from './VoteForm.svelte';
   import type { VotedItemOwner } from '$lib/server/scan-label.service';
   import type { ActionData, PageData } from './$types';
@@ -29,26 +30,20 @@
     (document.activeElement as HTMLElement | null)?.blur();
   };
 
-  let videoState = $state<'loading' | 'ready' | 'failed'>('loading');
+  let mediaFailed = $state(false);
   $effect.pre(() => {
     void data.card?.token;
-    videoState = 'loading';
+    mediaFailed = false;
   });
-
-  // A <source> error fires per candidate; only the last one (or the <video>) means nothing can play.
-  const onMediaError = (e: Event) => {
-    const el = e.target as HTMLElement;
-    if (el.tagName === 'VIDEO' || (el.tagName === 'SOURCE' && !el.nextElementSibling)) {
-      videoState = 'failed';
-    }
-  };
 
   let serverError = $state<string | null>(null);
   // Kept here rather than derived from `form`: a refused vote replaces `form` and would drop the
   // owner of the vote that did land.
   let lastVoted = $state<VotedItemOwner | null>(null);
+  type VoteData = { voted?: boolean; owner?: VotedItemOwner | null };
 
-  const submitVote: SubmitFunction = ({ formData }) => {
+  const submitVote: SubmitFunction = ({ formData, action }) => {
+    const skipping = action.search === '?/skip';
     submitting = true;
     serverError = null;
     formData.set('ms', String(Date.now() - shownAt));
@@ -57,11 +52,14 @@
         // An error result must not reload: the reload would serve the same item again and hide
         // that the vote was not recorded.
         if (result.type === 'error') {
-          serverError = 'Your vote was not recorded. Try again.';
+          serverError = skipping
+            ? 'The skip did not go through. Try again.'
+            : 'Your vote was not recorded. Try again.';
           return;
         }
-        if (result.type === 'success')
-          lastVoted = (result.data as { owner?: VotedItemOwner | null } | undefined)?.owner ?? null;
+        // A skip records no vote, so the last vote's owner stays.
+        const voted = result.type === 'success' ? (result.data as VoteData | undefined) : undefined;
+        if (voted?.voted) lastVoted = voted.owner ?? null;
         await applyAction(result);
         // Invalidate on 409 too: the reload claims the next item.
         await invalidateAll();
@@ -156,50 +154,14 @@
         class="flex flex-col gap-4 rounded-xl border border-dark-4 bg-dark-6 p-5 transition-opacity"
         class:opacity-50={submitting}
       >
-        <!-- Media events do not bubble; capture on the wrapper hears the inner <video>. -->
-        <div
-          class="relative flex justify-center"
-          onloadeddatacapture={() => (videoState = 'ready')}
-          oncanplaycapture={() => (videoState = 'ready')}
-          onerrorcapture={onMediaError}
-        >
-          <!-- Served by the card's token, so the page never names the media itself. -->
-          {#if data.card.type === 'video'}
-            <video
-              class="max-h-[75vh] w-auto max-w-full rounded-lg object-contain"
-              poster="{data.card.mediaSrc}?v=poster"
-              autoplay
-              muted
-              loop
-              controls
-              playsinline
-              preload="metadata"
-            >
-              <source src="{data.card.mediaSrc}?v=webm" type="video/webm" />
-              <source src="{data.card.mediaSrc}?v=mp4" type="video/mp4" />
-            </video>
-          {:else}
-            <img
-              src="{data.card.mediaSrc}?v=image"
-              alt="Under review"
-              width={data.card.width ?? undefined}
-              height={data.card.height ?? undefined}
-              decoding="async"
-              class="max-h-[75vh] w-auto max-w-full rounded-lg object-contain"
-            />
-          {/if}
-          {#if data.card.type === 'video' && videoState !== 'ready'}
-            <div
-              class="pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-dark-2"
-              role="status"
-            >
-              <span class="rounded-md bg-dark-8/80 px-3 py-1.5">
-                {videoState === 'failed' ? 'Video failed to load' : 'Loading video...'}
-              </span>
-            </div>
-          {/if}
-        </div>
-        <VoteForm token={data.card.token} {submitting} onsubmit={submitVote} />
+        <CardMedia
+          type={data.card.type}
+          mediaSrc={data.card.mediaSrc}
+          width={data.card.width}
+          height={data.card.height}
+          bind:failed={mediaFailed}
+        />
+        <VoteForm token={data.card.token} {submitting} {mediaFailed} onsubmit={submitVote} />
       </section>
     {/key}
   {:else}

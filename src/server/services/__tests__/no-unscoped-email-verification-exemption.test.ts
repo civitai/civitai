@@ -42,6 +42,10 @@ const ALLOWLIST: Record<string, { procedures: string[]; why: string }> = {
     procedures: ['create', 'getStatus'],
     why: 'Developer-platform feedback sent with an API token, same posture as feedback.create: reporting a broken tool, and reading that report back, must not depend on a verified email.',
   },
+  'feature-pages.router.ts': {
+    procedures: ['report'],
+    why: 'Reporting a Feature Pages comment is reporting abuse, as report.create.',
+  },
   'user.router.ts': {
     procedures: ['updateBrowsingMode'],
     why: 'A browsing preference, not a content action.',
@@ -56,6 +60,7 @@ const ALLOWLIST: Record<string, { procedures: string[]; why: string }> = {
 const MUST_STAY_GUARDED: Record<string, string[]> = {
   'post.router.ts': ['create', 'createWithImages', 'addImage'],
   'commentv3.router.ts': ['create', 'update'],
+  'feature-pages.router.ts': ['vote', 'comment', 'edit'],
   'model.router.ts': ['upsert'],
   'article.router.ts': ['upsert'],
   'orchestrator.router.ts': ['iterateGenerate'],
@@ -87,6 +92,8 @@ const MUST_NOT_BE_GUARDED: Record<string, string[]> = {
  * to say whether that was intended. Update the value in the same commit that moves it, or don't move it.
  */
 const DERIVED_BASES: Record<string, string> = {
+  // `takedown-request.router.ts`: the public takedown forms; a claimant needs no account.
+  takedownFormsProcedure: 'publicProcedure',
   appStorageProcedure: 'publicProcedure',
   // `app-storage.router.ts`: reading and deleting the caller's OWN app data, never creating content.
   appStorageUserProcedure: 'protectedProcedure',
@@ -107,6 +114,8 @@ const DERIVED_BASES: Record<string, string> = {
   experimentalProcedure: 'protectedProcedure',
   giftProcedure: 'protectedProcedure',
   guardedPromotionProcedure: 'guardedProcedure',
+  // `image-search-upload.router.ts`: a private upload to search by, never shown or posted.
+  imageSearchUploadProcedure: 'protectedProcedure',
   // `orchestrator.router.ts` `enhancePrompt`: `orchestratorGuardedProcedure` with the generation
   // kill switch ahead of the token fetch; the same `guardedProcedure` base it had before.
   orchestratorEnhanceProcedure: 'guardedProcedure',
@@ -118,9 +127,13 @@ const DERIVED_BASES: Record<string, string> = {
   // `remix-app.router.ts`: `list` and `quote` only read; `run` is on `guardedProcedure` itself.
   // `remix-app.router.ts` `admin.*`: mod-only edits of the remix app rows, and a mod's own test run.
   remixAppAdminProcedure: 'moderatorProcedure',
+  remixAppBuilderProcedure: 'guardedProcedure',
   remixAppProcedure: 'protectedProcedure',
+  reviewsProcedure: 'publicProcedure',
   // `semantic-image-search.router.ts`: read-only image search, open to signed-out visitors.
   semanticSearchProcedure: 'publicProcedure',
+  // The same, over the video index (flag-gated, mods-only to start).
+  semanticVideoSearchProcedure: 'publicProcedure',
   servicesGuardedProcedure: 'guardedProcedure',
   servicesProcedure: 'protectedProcedure',
   sharedStorageProcedure: 'publicProcedure',
@@ -130,6 +143,11 @@ const DERIVED_BASES: Record<string, string> = {
   storylineReadProcedure: 'publicProcedure',
   storylineTextProcedure: 'guardedProcedure',
   storylineWriteProcedure: 'guardedProcedure',
+  userCodeReviewProcedure: 'remixAppAdminProcedure',
+  // `app-listings.router.ts`: the review reply thread, behind `appReviewReplies`. The reads and the
+  // moderator queue count need no verified email; the post itself is on `guardedProcedure`.
+  reviewThreadProcedure: 'protectedProcedure',
+  reviewThreadModeratorProcedure: 'moderatorProcedure',
 };
 
 const stripComments = (s: string) =>

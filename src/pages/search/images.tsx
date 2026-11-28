@@ -10,6 +10,8 @@ import {
   Title,
 } from '@mantine/core';
 import { useEffect } from 'react';
+import { CorrectedQueryNote } from '~/components/Search/FeedSearchSummary';
+import { setImageSearchAsTyped } from '~/components/Search/semanticImageSearchClient';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useInstantSearch } from 'react-instantsearch';
 import {
@@ -32,9 +34,11 @@ import { InViewLoader } from '~/components/InView/InViewLoader';
 import { ImagesCardMemoized } from '~/components/Image/Infinite/ImagesCard';
 import { adjustImagesCardHeight } from '~/components/Image/Infinite/images-card-footer';
 import { useSearchEventDecorations } from '~/components/Decorations/useSearchEventDecorations';
-import { useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
+import { useInfiniteHitsTransformed, useSearchFeedHits } from '~/components/Search/search.utils2';
 import { useSimilarImage } from '~/components/Search/useSimilarImage';
 import { useScrollToTopOnChange } from '~/hooks/useScrollToTopOnChange';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { renderBaseModelOption } from '~/components/SfwOnlyBadge/SfwOnlyBadge';
 import { SEARCH_FACET_LIMIT } from '~/shared/constants/search.constants';
@@ -82,11 +86,12 @@ function RenderFilters() {
 }
 
 function ImagesHitList() {
-  const { status, indexUiState, results } = useInstantSearch();
+  const { status, indexUiState, results, refresh } = useInstantSearch();
   const correctedQuery = (results?.userData as { correctedQuery?: string }[] | undefined)?.[0]
     ?.correctedQuery;
 
   const { hits, showMore, isLastPage } = useInfiniteHitsTransformed<'images'>();
+  useSearchFeedHits(IMAGES_SEARCH_INDEX, 'Image', hits);
 
   const { loadingPreferences, items, hiddenCount } = useApplyHiddenPreferences({
     type: 'images',
@@ -95,6 +100,8 @@ function ImagesHitList() {
   const decorated = useSearchEventDecorations(hits, items as { id: number }[], { entity: 'Image' });
 
   const query = indexUiState.query?.trim();
+  const features = useFeatureFlags();
+  const currentUser = useCurrentUser();
   const similar = useSimilarImage();
   // A typed query replaces "more like this": drop it from the URL too, or clearing the query would
   // bring it back.
@@ -132,6 +139,11 @@ function ImagesHitList() {
               ? 'Image search starts from what you describe. Filters like users, tags and base model narrow those results, but they can’t list images on their own.'
               : 'Describe what you want to see, like “a red fox in the snow”, then use the filters to narrow the results.'}
           </Text>
+          {features.imageSearchUpload && features.moreLikeThis && currentUser && (
+            <Button component={NextLink} href="/search/by-image" variant="light">
+              Search by image
+            </Button>
+          )}
         </Stack>
       </Center>
     );
@@ -208,11 +220,15 @@ function ImagesHitList() {
           </Button>
         </Group>
       )}
-      {correctedQuery && (
-        <Text size="sm">
-          Showing results for <strong>{correctedQuery}</strong>
-        </Text>
-      )}
+      <CorrectedQueryNote
+        query={indexUiState.query ?? ''}
+        correctedQuery={correctedQuery}
+        onSearchAsTyped={() => {
+          setImageSearchAsTyped(indexUiState.query);
+          // The same request again: refresh past InstantSearch's cache.
+          refresh();
+        }}
+      />
       {hiddenCount > 0 && (
         <Text c="dimmed">{hiddenCount} images have been hidden due to your settings.</Text>
       )}

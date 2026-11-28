@@ -525,3 +525,66 @@ describe('getModelShowcaseImages', () => {
     });
   });
 });
+
+describe('getModelShowcaseImages: restricted base model images', () => {
+  // Applies the read's `image` where to the fixture rows, so the test sees what the query returns
+  // rather than which filter it was handed. Covers the operators that where uses; the post relation
+  // is left to the pglite suite.
+  const matches = (row: Record<string, unknown>, where: Record<string, unknown>): boolean =>
+    Object.entries(where).every(([key, cond]) => {
+      if (key === 'post') return true;
+      if (key === 'OR') return (cond as Record<string, unknown>[]).some((w) => matches(row, w));
+      if (key === 'AND') return (cond as Record<string, unknown>[]).every((w) => matches(row, w));
+      const value = row[key];
+      if (cond !== null && typeof cond === 'object') {
+        const op = cond as { not?: unknown; in?: unknown[]; notIn?: unknown[] };
+        if ('in' in op) return op.in!.includes(value);
+        if ('notIn' in op) return !op.notIn!.includes(value);
+        if ('not' in op) return value !== op.not;
+        throw new Error(`unsupported where on ${key}`);
+      }
+      return value === cond;
+    });
+
+  const row = (id: number, over: Record<string, unknown>) =>
+    imageRow(
+      id,
+      100 - id,
+      {},
+      {
+        ingestion: 'Scanned',
+        tosViolation: false,
+        needsReview: null,
+        postId: 1,
+        userId: 7,
+        modelRestricted: false,
+        ...over,
+      }
+    );
+
+  const rows = [
+    row(1, { nsfwLevel: 8, modelRestricted: true }),
+    row(2, { nsfwLevel: 8 }),
+    row(3, { nsfwLevel: 1, modelRestricted: true }),
+    row(4, { nsfwLevel: 8, modelRestricted: true, userId: 42 }),
+  ];
+
+  beforeEach(() => {
+    mockDbRead.imageResourceNew.findMany.mockImplementation(
+      async ({ where }: { where: { image: Record<string, unknown> } }) =>
+        rows.filter((r) => matches(r.image, where.image))
+    );
+  });
+
+  const allLevels = { browsingLevel: 31, domain: 'red' as const };
+
+  it('drops a mature restricted image another user uploaded and keeps the rest', async () => {
+    const result = await getModelShowcaseImages(99, { userId: 5, ...allLevels });
+    expect(result.map((i) => i.id)).toEqual([2, 3]);
+  });
+
+  it('shows the viewer their own mature restricted image', async () => {
+    const result = await getModelShowcaseImages(99, { userId: 42, ...allLevels });
+    expect(result.map((i) => i.id)).toEqual([2, 3, 4]);
+  });
+});

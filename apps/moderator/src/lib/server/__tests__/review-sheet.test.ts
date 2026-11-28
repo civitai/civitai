@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as ReviewBatchModule from '../review-batch';
+import { keyHashSlots } from '@civitai/redis';
 
 /**
  * Review batches on the moderator app: signing the sheet in to a batch (`auth/start?batch`,
@@ -20,7 +21,7 @@ const {
   guardCheck,
   getBatchMedia,
   mintingKeyLive,
-  scannerHoldsImage,
+  scanner,
   streamStoredMedia,
   insertModActivity,
 } = vi.hoisted(() => {
@@ -84,11 +85,14 @@ const {
     redis,
     getSessionUserById: vi.fn(async (_id: number) => null as unknown),
     verifyToken: vi.fn(async (_token: string) => null as unknown),
-    isRevoked: vi.fn(async (_claims: unknown) => false),
+    isRevoked: Object.assign(
+      vi.fn(async (_claims: unknown) => false),
+      { confirmElevated: vi.fn(async (_claims: unknown) => 'ok' as string) }
+    ),
     guardCheck: vi.fn(async (_cookie: string, _url: string, _opts?: unknown) => ({} as unknown)),
     getBatchMedia: vi.fn(),
     mintingKeyLive: vi.fn(async (_keyId: number) => true),
-    scannerHoldsImage: vi.fn(async (_imageId: number) => false),
+    scanner: { csamHit: new Set<string>() },
     streamStoredMedia: vi.fn(async (input: { audit: () => Promise<unknown> }) => {
       await input.audit();
       return new Response('bytes', { status: 200 });
@@ -101,7 +105,7 @@ vi.mock('$lib/server/db', async () => {
   const { capturingDb } = await import('../../../test/capture-sql');
   return { dbRead: capturingDb([], []), dbWrite: capturingDb([], []) };
 });
-vi.mock('$lib/server/redis', () => ({ getSysRedis: () => redis }));
+vi.mock('$lib/server/redis', () => ({ getRedis: () => redis, getSysRedis: () => redis }));
 vi.mock('$lib/server/auth', () => ({
   guard: { check: guardCheck },
   isRevoked,
@@ -131,7 +135,21 @@ vi.mock('$lib/server/review-batch', async (importOriginal) => ({
   ...(await importOriginal<typeof ReviewBatchModule>()),
   getBatchMedia,
   mintingKeyLive,
-  scannerHoldsImage,
+}));
+// The routing rule itself runs for real; only the scanner's ClickHouse and the pattern list are faked.
+vi.mock('$lib/server/clickhouse', () => ({
+  getClickhouse: () => ({
+    query: async ({ query_params }: { query_params: { hashes: string[] } }) => ({
+      json: async () =>
+        query_params.hashes.map((contentHash) => ({
+          contentHash,
+          csamHit: scanner.csamHit.has(contentHash) ? 1 : 0,
+        })),
+    }),
+  }),
+}));
+vi.mock('$lib/server/blocked-for-patterns', () => ({
+  blockedForPatterns: () => ({ signal: [], nonMinor: [/^moderated$/] }),
 }));
 vi.mock('$lib/server/held-media-stream', () => ({ streamStoredMedia }));
 vi.mock('$lib/server/mod-activity', () => ({
@@ -149,6 +167,15 @@ const reviewCount = await import('../../../routes/api/review-media/b/[batchId]/+
 const signout = await import('../../../routes/api/review-media/auth/signout/+server');
 const { handle } = await import('../../../hooks.server');
 const { reviewBatchHash } = await import('@civitai/shared/review-batch');
+const { imageAuditContentHash } = await import('@civitai/shared/media-signals');
+/** An image's signals as `getBatchMedia` reads them, CSAM-restricted or clean. */
+const signalRow = (id: number, restricted: boolean) => ({
+  id,
+  restricted,
+  siblings: [],
+  unreadable: false,
+  blockedFor: 'moderated',
+});
 
 const ORIGIN = 'https://mod.test';
 const CALLBACK = 'https://sheet.test/held-media/callback';
@@ -277,14 +304,15 @@ beforeEach(() => {
   verifyToken.mockResolvedValue(CLAIMS);
   getSessionUserById.mockResolvedValue({ ...MOD });
   isRevoked.mockResolvedValue(false);
+  isRevoked.confirmElevated.mockResolvedValue('ok');
   mintingKeyLive.mockResolvedValue(true);
-  scannerHoldsImage.mockResolvedValue(false);
+  scanner.csamHit.clear();
   getBatchMedia.mockResolvedValue({
     imageId: 101,
     url: 'k',
     type: 'image',
     mimeType: null,
-    held: false,
+    signals: signalRow(101, false),
   });
   seedBatch(GENERAL, 'general');
   seedBatch(GENERAL_2, 'general');
@@ -345,6 +373,17 @@ describe('one general sign-in a day', () => {
   const batchesOf = async (token: string) =>
     (await hook(`/api/review-media/b/${GENERAL}`, `${COOKIE.review}=${token}`)).locals.reviewSheet
       ?.batches ?? null;
+
+  // civitai/civitai#10695: a moderator whose revocation read failed is refused, and the session is kept.
+  it('answers 503 while the web session is unconfirmed, then opens the batch again', async () => {
+    const token = (await signIn('review', GENERAL))!;
+    isRevoked.confirmElevated.mockResolvedValue('unavailable');
+    const { res } = await hook(`/api/review-media/b/${GENERAL}/0`, `${COOKIE.review}=${token}`);
+    expect(res.status).toBe(503);
+    expect(res.headers.get('set-cookie')).toBeNull();
+    isRevoked.confirmElevated.mockResolvedValue('ok');
+    expect(await open('review', GENERAL, token)).toBe(200);
+  });
 
   it('the review cookie joins a second live general batch minted for this moderator', async () => {
     const token = (await signIn('review', GENERAL))!;
@@ -514,6 +553,19 @@ describe('one general sign-in a day', () => {
     expect([...store.keys()].filter((k) => k.startsWith('app:review-sheet:session'))).toEqual([]);
   });
 
+  it('🔴 a session and its batch set share one cluster slot, so one DEL ends both', async () => {
+    const token = (await signIn('review', GENERAL))!;
+    const keys = [...store.keys()].filter((k) => k.startsWith('app:review-sheet:session'));
+    expect(keys).toHaveLength(2);
+    expect(keys.some((k) => k.endsWith(':batches'))).toBe(true);
+    expect(keyHashSlots(keys)).toHaveLength(1);
+    redis.del.mockClear();
+    await signout.POST({
+      cookies: { get: (n: string) => (n === COOKIE.review ? token : undefined) },
+    } as never);
+    expect(redis.del).toHaveBeenCalledWith([...keys].sort());
+  });
+
   it('a revoked web session ends it on the next request', async () => {
     const token = (await signIn('review', GENERAL))!;
     expect(await open('review', GENERAL, token)).toBe(200);
@@ -537,7 +589,7 @@ describe('one general sign-in a day', () => {
       url: 'k',
       type: 'image',
       mimeType: null,
-      held: true,
+      signals: signalRow(101, true),
     });
     expect(await open('review', GENERAL_2, token)).toBe(409);
     expect(streamStoredMedia).not.toHaveBeenCalled();
@@ -636,19 +688,20 @@ describe('the batch item routes', () => {
       url: 'k',
       type: 'image',
       mimeType: null,
-      held: true,
+      signals: signalRow(101, true),
     });
     const res = await item('review', GENERAL, '0', reviewLocals([GENERAL_HASH]));
     expect(res.status).toBe(409);
     expect(await res.json()).toEqual({ moved: true });
     expect(streamStoredMedia).not.toHaveBeenCalled();
-    scannerHoldsImage.mockResolvedValueOnce(true);
+    // A CSAM label the scanner wrote after the mint.
+    scanner.csamHit.add(imageAuditContentHash(101));
     getBatchMedia.mockResolvedValue({
       imageId: 101,
       url: 'k',
       type: 'image',
       mimeType: null,
-      held: false,
+      signals: signalRow(101, false),
     });
     const late = await item('review', GENERAL, '0', reviewLocals([GENERAL_HASH]));
     expect(late.status).toBe(409);
@@ -663,7 +716,7 @@ describe('the batch item routes', () => {
       url: 'k',
       type: 'image',
       mimeType: null,
-      held: n === 0,
+      signals: signalRow(101 + n, n === 0),
     }));
     expect((await item('held', HELD, '0', heldLocals([HELD_HASH]))).status).toBe(200);
     expect((await item('held', HELD, '1', heldLocals([HELD_HASH]))).status).toBe(200);
@@ -697,5 +750,226 @@ describe('the batch item routes', () => {
     expect((await item('review', GENERAL, '0', reviewLocals([GENERAL_HASH], staff))).status).toBe(
       200
     );
+  });
+});
+
+describe('the access audit', () => {
+  const audits = async (name: string) => {
+    const { logToAxiom } = await import('$lib/server/axiom');
+    return vi
+      .mocked(logToAxiom)
+      .mock.calls.map(([data]) => data as Record<string, unknown>)
+      .filter((data) => data.name === name);
+  };
+  const pick = (rows: Record<string, unknown>[], ...keys: string[]) =>
+    rows.map((row) => Object.fromEntries(keys.map((k) => [k, row[k]])));
+  const tag = (batchId: string) => reviewBatchHash(batchId).slice(0, 6);
+  const codeFor = async (family: Family, batch: string | null) =>
+    new URL((await startPost(family, batch)).headers.get('location')!).searchParams.get('code')!;
+  const post = (family: Family, body: string, type = 'application/json') => {
+    const url = new URL(`${ORIGIN}/api/${family}-media/auth/exchange`);
+    return exchangeOf[family].POST({
+      url,
+      request: new Request(url, { method: 'POST', headers: { 'content-type': type }, body }),
+      locals: {},
+      cookies: { get: () => undefined },
+    } as never);
+  };
+  const signOut = (token: string | undefined) =>
+    signout.POST({
+      cookies: { get: (n: string) => (n === COOKIE.review ? token : undefined) },
+    } as never);
+
+  // These names are what the held-media access audit queries in Axiom. Renaming
+  // one silently empties those queries: change the queries first, then this test.
+  it('keeps the event names the access audit queries', async () => {
+    const audit = await import('$lib/server/sheet-audit');
+    expect([
+      audit.SHEET_START_EVENT,
+      audit.SHEET_EXCHANGE_EVENT,
+      audit.SHEET_SIGNOUT_EVENT,
+    ]).toEqual(['held-sheet-start', 'held-sheet-exchange', 'review-sheet-signout']);
+  });
+
+  it('logs one start and one exchange per sign-in, with the tier, the moderator and the batch tag', async () => {
+    seedBatch(HELD, 'held');
+    seedBatch(GENERAL, 'general');
+    seedBatch(GENERAL_2, 'general');
+    expect(await signIn('held', HELD)).toBeTruthy();
+    const token = await signIn('review', GENERAL);
+    // A second general batch joins the live review session; its exchange is still logged.
+    expect(await signIn('review', GENERAL_2, token!)).toBe(token);
+    const keys = ['type', 'tier', 'batch', 'outcome', 'moderatorId'];
+    expect(pick(await audits('held-sheet-start'), ...keys)).toEqual([
+      { type: 'info', tier: 'held', batch: tag(HELD), outcome: 'issued', moderatorId: 42 },
+      { type: 'info', tier: 'general', batch: tag(GENERAL), outcome: 'issued', moderatorId: 42 },
+      { type: 'info', tier: 'general', batch: tag(GENERAL_2), outcome: 'issued', moderatorId: 42 },
+    ]);
+    expect(pick(await audits('held-sheet-exchange'), ...keys)).toEqual([
+      { type: 'info', tier: 'held', batch: tag(HELD), outcome: 'ok', moderatorId: 42 },
+      { type: 'info', tier: 'general', batch: tag(GENERAL), outcome: 'ok', moderatorId: 42 },
+      { type: 'info', tier: 'general', batch: tag(GENERAL_2), outcome: 'ok', moderatorId: 42 },
+    ]);
+  });
+
+  it('logs every refused or failed start by a signed-in user, with the batch they named', async () => {
+    seedBatch(OTHER_VIEWER, 'held', { viewer: 99 });
+    seedBatch(HELD, 'held');
+    expect((await startPost('held', OTHER_VIEWER)).status).toBe(404);
+    expect((await startPost('held', HELD, { ...MOD, roles: [] })).status).toBe(403);
+    const url = new URL(`${ORIGIN}/api/held-media/auth/start`);
+    const malformed = new Request(url, {
+      method: 'POST',
+      headers: { cookie: WEB_COOKIE, 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ code_challenge_method: 'plain' }),
+    });
+    expect(
+      (await heldStart.POST({ url, locals: { user: MOD }, request: malformed } as never)).status
+    ).toBe(400);
+    verifyToken.mockResolvedValueOnce({ ...CLAIMS, impersonatedBy: 7 });
+    expect((await startPost('held', HELD)).status).toBe(403);
+    redis.set.mockRejectedValueOnce(new Error('down'));
+    expect((await startPost('held', HELD)).status).toBe(503);
+    expect(
+      pick(await audits('held-sheet-start'), 'tier', 'batch', 'outcome', 'status', 'moderatorId')
+    ).toEqual([
+      { tier: 'held', batch: tag(OTHER_VIEWER), outcome: 'refused', status: 404, moderatorId: 42 },
+      { tier: 'held', batch: undefined, outcome: 'refused', status: 403, moderatorId: 42 },
+      { tier: 'held', batch: undefined, outcome: 'refused', status: 400, moderatorId: 42 },
+      { tier: 'held', batch: tag(HELD), outcome: 'refused', status: 403, moderatorId: 42 },
+      { tier: 'held', batch: tag(HELD), outcome: 'error', status: 503, moderatorId: 42 },
+    ]);
+  });
+
+  it('logs why a found code was refused, on both routes, and a store failure', async () => {
+    seedBatch(HELD, 'held');
+    seedBatch(GENERAL, 'general');
+    const code = await codeFor('held', HELD);
+    expect(
+      (await post('held', JSON.stringify({ code, code_verifier: 'w'.repeat(43) }))).status
+    ).toBe(400);
+    expect((await exchange('held', await codeFor('review', GENERAL))).status).toBe(400);
+    expect((await exchange('review', await codeFor('held', HELD))).status).toBe(400);
+    const pending = await codeFor('held', HELD);
+    redis.getDel.mockRejectedValueOnce(new Error('down'));
+    expect((await exchange('held', pending)).status).toBe(503);
+    expect(
+      pick(await audits('held-sheet-exchange'), 'tier', 'outcome', 'reason', 'moderatorId', 'batch')
+    ).toEqual([
+      {
+        tier: 'held',
+        outcome: 'refused',
+        reason: 'verifier-mismatch',
+        moderatorId: 42,
+        batch: tag(HELD),
+      },
+      {
+        tier: 'held',
+        outcome: 'refused',
+        reason: 'wrong-tier',
+        moderatorId: 42,
+        batch: tag(GENERAL),
+      },
+      {
+        tier: 'general',
+        outcome: 'refused',
+        reason: 'wrong-tier',
+        moderatorId: 42,
+        batch: tag(HELD),
+      },
+      {
+        tier: 'held',
+        outcome: 'error',
+        reason: undefined,
+        moderatorId: undefined,
+        batch: undefined,
+      },
+    ]);
+  });
+
+  // The exchange and sign-out routes need no sign-in, so a refusal that names no moderator is
+  // anyone's to send; logging it would let them fill a stream that is kept for good.
+  it('logs no refusal that names no moderator: a used, unknown or malformed code, or a dead cookie', async () => {
+    seedBatch(HELD, 'held');
+    const used = await codeFor('held', HELD);
+    expect((await exchange('held', used)).status).toBe(204);
+    expect((await exchange('held', used)).status).toBe(400);
+    expect((await post('held', 'x', 'text/plain')).status).toBe(400);
+    expect((await post('review', 'x', 'text/plain')).status).toBe(400);
+    expect(
+      (await post('held', JSON.stringify({ code: 'short', code_verifier: VERIFIER }))).status
+    ).toBe(400);
+    expect((await signOut(undefined)).status).toBe(204);
+    expect((await signOut('t'.repeat(43))).status).toBe(204);
+    expect(pick(await audits('held-sheet-exchange'), 'outcome')).toEqual([{ outcome: 'ok' }]);
+    expect(await audits('review-sheet-signout')).toEqual([]);
+  });
+
+  it('logs a sign out that ended a session, and one that failed', async () => {
+    seedBatch(GENERAL, 'general');
+    const token = (await signIn('review', GENERAL))!;
+    expect((await signOut(token)).status).toBe(204);
+    const again = (await signIn('review', GENERAL))!;
+    redis.del.mockRejectedValueOnce(new Error('down'));
+    expect((await signOut(again)).status).toBe(503);
+    expect(
+      pick(
+        (await audits('review-sheet-signout')).map((row) => ({
+          ...row,
+          ended: (row.payload as { ended?: boolean })?.ended,
+        })),
+        'type',
+        'tier',
+        'moderatorId',
+        'ended'
+      )
+    ).toEqual([
+      { type: 'info', tier: 'general', moderatorId: 42, ended: true },
+      { type: 'error', tier: 'general', moderatorId: undefined, ended: false },
+    ]);
+  });
+
+  it('a corrupt session record still signs out, naming nobody', async () => {
+    seedBatch(GENERAL, 'general');
+    const token = (await signIn('review', GENERAL))!;
+    const key = [...store.keys()].find(
+      (k) => k.startsWith('app:review-sheet:session:') && !k.endsWith(':batches')
+    )!;
+    store.set(key, { value: '{not json', expiresAt: null });
+    expect((await signOut(token)).status).toBe(204);
+    expect(store.has(key)).toBe(false);
+    expect(
+      pick(
+        (await audits('review-sheet-signout')).map((row) => ({
+          ...row,
+          ended: (row.payload as { ended?: boolean })?.ended,
+        })),
+        'moderatorId',
+        'ended'
+      )
+    ).toEqual([]);
+  });
+
+  it('never logs a batch id, code, verifier, state or token, only six characters of the batch hash', async () => {
+    seedBatch(HELD, 'held');
+    seedBatch(GENERAL, 'general');
+    const code = await codeFor('held', HELD);
+    const held = await exchange('held', code);
+    const token = (await signIn('review', GENERAL))!;
+    await signOut(token);
+    const wrong = await codeFor('held', HELD);
+    await post('held', JSON.stringify({ code: wrong, code_verifier: 'w'.repeat(43) }));
+    const { inspect } = await import('node:util');
+    const logged = [
+      ...(await audits('held-sheet-start')),
+      ...(await audits('held-sheet-exchange')),
+      ...(await audits('review-sheet-signout')),
+    ];
+    expect(logged).toHaveLength(7);
+    const text = logged.map((e) => inspect(e, { depth: 8 })).join('\n');
+    const heldToken = /__Secure-held_sheet=([^;]+)/.exec(held.headers.get('set-cookie')!)![1];
+    const secrets = [HELD, GENERAL, reviewBatchHash(HELD), reviewBatchHash(GENERAL), code, wrong];
+    for (const secret of [...secrets, heldToken, token, VERIFIER, STATE, CHALLENGE])
+      expect(text).not.toContain(secret);
   });
 });

@@ -19,8 +19,14 @@ import {
 
 type WriteMock = {
   $transaction: ReturnType<typeof vi.fn>;
+  $queryRaw: ReturnType<typeof vi.fn>;
   appListing: { updateMany: ReturnType<typeof vi.fn> };
-  appBlock: { updateMany: ReturnType<typeof vi.fn> };
+  appBlock: {
+    updateMany: ReturnType<typeof vi.fn>;
+    findUnique: ReturnType<typeof vi.fn>;
+    count: ReturnType<typeof vi.fn>;
+  };
+  apiKey: { findMany: ReturnType<typeof vi.fn>; deleteMany: ReturnType<typeof vi.fn> };
   appBlockPublishRequest: { create: ReturnType<typeof vi.fn> };
   appListingModerationEvent: { create: ReturnType<typeof vi.fn> };
 };
@@ -32,8 +38,17 @@ type ReadMock = {
 const { mockRead, mockWrite, mockNotify, ids } = vi.hoisted(() => {
   const write: WriteMock = {
     $transaction: vi.fn(),
+    $queryRaw: vi.fn(async () => []),
     appListing: { updateMany: vi.fn(async () => ({ count: 1 })) },
-    appBlock: { updateMany: vi.fn(async () => ({ count: 1 })) },
+    appBlock: {
+      updateMany: vi.fn(async () => ({ count: 1 })),
+      findUnique: vi.fn(async () => ({ appId: 'appblk-reset', status: 'suspended' })),
+      count: vi.fn(async () => 0),
+    },
+    apiKey: {
+      findMany: vi.fn(async () => [{ userId: 7 }]),
+      deleteMany: vi.fn(async () => ({ count: 1 })),
+    },
     appBlockPublishRequest: { create: vi.fn(async (a: { data: unknown }) => a.data) },
     appListingModerationEvent: { create: vi.fn(async (a: { data: unknown }) => a.data) },
   };
@@ -53,6 +68,9 @@ const { mockRead, mockWrite, mockNotify, ids } = vi.hoisted(() => {
 });
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockRead, dbWrite: mockWrite }));
+vi.mock('~/server/services/orchestrator/civitai', () => ({
+  revokeCivitaiUserTokens: vi.fn(async () => undefined),
+}));
 vi.mock('~/server/services/blocks/app-listing-notify', () => ({
   notifyAppListingOwner: mockNotify,
 }));
@@ -124,6 +142,13 @@ beforeEach(() => {
     .mockImplementation(async (cb: (tx: WriteMock) => Promise<unknown>) => cb(mockWrite));
   mockWrite.appListing.updateMany.mockReset().mockResolvedValue({ count: 1 });
   mockWrite.appBlock.updateMany.mockReset().mockResolvedValue({ count: 1 });
+  mockWrite.$queryRaw.mockReset().mockResolvedValue([]);
+  mockWrite.appBlock.findUnique
+    .mockReset()
+    .mockResolvedValue({ appId: 'appblk-reset', status: 'suspended' });
+  mockWrite.appBlock.count.mockReset().mockResolvedValue(0);
+  mockWrite.apiKey.findMany.mockReset().mockResolvedValue([{ userId: 7 }]);
+  mockWrite.apiKey.deleteMany.mockReset().mockResolvedValue({ count: 1 });
   mockWrite.appBlockPublishRequest.create
     .mockReset()
     .mockImplementation(async (a: { data: unknown }) => a.data);
@@ -146,11 +171,20 @@ describe('resetOnsiteListingToPending', () => {
       where: { id: 'apl_1', kind: 'onsite', status: 'approved' },
       data: { status: 'pending' },
     });
-    // (2) backing block approved → suspended (the real runtime stop).
+    // (2) backing block approved → suspended (the real runtime stop), and its app tokens go.
     expect(mockWrite.appBlock.updateMany).toHaveBeenCalledWith({
       where: { id: 'apb_1', status: 'approved' },
       data: { status: 'suspended' },
     });
+    expect(mockWrite.apiKey.deleteMany).toHaveBeenCalledWith({
+      where: { clientId: 'appblk-reset', type: { in: ['Access', 'Refresh'] } },
+    });
+    // The client's block rows are locked before the flip, so a concurrent suspension waits on it.
+    expect(mockWrite.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      mockWrite.appBlock.updateMany.mock.invocationCallOrder[0]
+    );
+    const orchestrator = await import('~/server/services/orchestrator/civitai');
+    expect(orchestrator.revokeCivitaiUserTokens).toHaveBeenCalledWith({ userId: 7 });
     // (3) fresh pending block publish request cloned from the last approved (owner-owned).
     const reqArg = mockWrite.appBlockPublishRequest.create.mock.calls[0][0].data;
     expect(reqArg).toMatchObject({
@@ -271,6 +305,55 @@ describe('resetOnsiteListingToPending', () => {
       // Nor coerced to the `false` claim.
       expect(reqArg.sourceDirty).not.toBe(false);
     });
+  });
+
+  it('a staff on-behalf label on the approved request does not carry onto the owner’s clone; stagedFromOnBehalf takes its place', async () => {
+    mockRead.appBlockPublishRequest.findFirst
+      .mockReset()
+      .mockResolvedValueOnce({
+        ...lastApprovedReq,
+        fileSummary: {
+          files: [{ path: 'index.html', sha: 'aa' }],
+          added: ['index.html'],
+          sdkFloor: [{ package: '@civitai/app-sdk', installed: '2.4.0', minimum: '2.0.0' }],
+          onBehalf: {
+            platformUpdateId: 'apu_01JABCDEFGHJKMNPQRSTVWXYZ0',
+            staffUserId: 8001,
+            staffUsername: 'mod-ana',
+            ownerUserId: OWNER,
+            ownerUsername: 'owner-olga',
+          },
+        },
+      })
+      .mockResolvedValueOnce(null);
+    await resetOnsiteListingToPending({
+      input: { appListingId: 'apl_1', reason: 'needs another look' },
+      reviewerUserId: MOD,
+    });
+    const reqArg = mockWrite.appBlockPublishRequest.create.mock.calls[0][0].data;
+    expect(reqArg.submittedByUserId).toBe(OWNER);
+    // Every other key is kept as it was; the bytes are still the staff build, so the clone says
+    // which update it was staged from (its re-approve ships nothing).
+    expect(reqArg.fileSummary).toEqual({
+      files: [{ path: 'index.html', sha: 'aa' }],
+      added: ['index.html'],
+      sdkFloor: [{ package: '@civitai/app-sdk', installed: '2.4.0', minimum: '2.0.0' }],
+      stagedFromOnBehalf: { platformUpdateId: 'apu_01JABCDEFGHJKMNPQRSTVWXYZ0' },
+    });
+  });
+
+  it('CONTROL: an ordinary approved request is cloned with its fileSummary unchanged (no marker)', async () => {
+    const ordinary = { files: [{ path: 'index.html', sha: 'bb' }], added: [], removed: [] };
+    mockRead.appBlockPublishRequest.findFirst
+      .mockReset()
+      .mockResolvedValueOnce({ ...lastApprovedReq, fileSummary: ordinary })
+      .mockResolvedValueOnce(null);
+    await resetOnsiteListingToPending({
+      input: { appListingId: 'apl_1', reason: 'needs another look' },
+      reviewerUserId: MOD,
+    });
+    const reqArg = mockWrite.appBlockPublishRequest.create.mock.calls[0][0].data;
+    expect(reqArg.fileSummary).toEqual(ordinary);
   });
 
   it('NOT_FOUND for a missing listing', async () => {

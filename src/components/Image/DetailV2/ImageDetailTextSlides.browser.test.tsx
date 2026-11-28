@@ -112,10 +112,6 @@ vi.mock('~/components/Storyline/storyline.queries', async (o) => ({
   ...(await o<object>()),
   useStorylinesEnabled: () => true,
 }));
-vi.mock('~/hooks/useCurrentUser', async (o) => ({
-  ...(await o<object>()),
-  useCurrentUser: () => null,
-}));
 vi.mock('~/store/ClientHistoryStore', async (o) => ({
   ...(await o<object>()),
   useHasClientHistory: () => true,

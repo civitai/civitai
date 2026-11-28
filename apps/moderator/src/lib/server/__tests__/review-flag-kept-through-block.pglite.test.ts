@@ -46,6 +46,7 @@ vi.mock('../db', () => ({
 }));
 vi.mock('../image-moderation-effects', () => ({
   applyBlockSideEffects,
+  writeBlockBlocklistEntry: vi.fn(async () => undefined),
   applyAcceptSideEffects: vi.fn(async () => undefined),
   applyVisibilitySideEffects: vi.fn(async () => undefined),
   refundAppealFee: vi.fn(async () => undefined),
@@ -66,8 +67,11 @@ vi.mock('../mod-activity', async (importOriginal) => ({
 vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn() }));
 
 const {
+  acceptCsamReviewedImage,
   acceptImage,
   blockImage,
+  CsamReviewImageError,
+  ImageNotRestoredError,
   dismissFromCsamQueue,
   dismissUserFromCsamQueue,
   AppealRestoreRefusedError,
@@ -76,6 +80,7 @@ const {
 } = await import('../image-moderation.service');
 
 const SCHEMA = `
+CREATE DOMAIN "ImageIngestionStatus" AS TEXT;
 CREATE TYPE "EntityType" AS ENUM ('Image', 'Post', 'Model');
 CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected');
 CREATE TABLE "Image" (
@@ -94,7 +99,7 @@ CREATE TABLE "Image" (
 );
 ${DEFERRED_BLOCK_EFFECT_TABLE_SQL}
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
-CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER,
+CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER, "data" JSONB,
   PRIMARY KEY ("entityType", "entityId", "type"));
 CREATE TABLE "Appeal" (
   "id" SERIAL PRIMARY KEY,
@@ -110,7 +115,7 @@ CREATE TABLE "Appeal" (
   "buzzTransactionId" TEXT,
   "entityRemovedAt" TIMESTAMP(3)
 );
-CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "email" TEXT, "username" TEXT);
+CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "email" TEXT, "username" TEXT, "deletedAt" TIMESTAMP(3));
 -- Rates a restored image as its tags would: an untagged one would go back to the scanner.
 CREATE FUNCTION update_nsfw_levels_new(ids INTEGER[]) RETURNS VOID LANGUAGE SQL AS $$
   UPDATE "Image" SET "nsfwLevel" = 1
@@ -275,31 +280,56 @@ describe('blockImage and the block reason', () => {
     expect(await blockedFor(FLAGGED)).toBe('moderated');
     expect(await blockedFor(56)).toBe('moderated');
   });
+
+  it.each(['CSAM', 'Other,CSAM', 'Other, csam '])(
+    'an unblock leaves a row blocked as %j as it is',
+    async (reason) => {
+      await db.query(
+        `INSERT INTO "Image" ("id", "userId", "needsReview", "blockedFor", "ingestion", "nsfwLevel")
+         VALUES (57, 10, NULL, $1, 'Blocked', 32)`,
+        [reason]
+      );
+
+      await expect(
+        acceptImage({ csamReview: true, imageId: 57, userId: 2, restoreRemoved: true })
+      ).rejects.toBeInstanceOf(ImageNotRestoredError);
+
+      expect(await blockedFor(57)).toBe(reason);
+    }
+  );
 });
 
 // Removed with only the flag left: the flag's own queue lists it, and must not undo the removal.
 describe('an image removed with only the review flag left', () => {
   it('is not put back live by accepting it, and the refusal reaches the caller', async () => {
-    await expect(acceptImage({ imageId: FLAGGED_REMOVED, userId: 2 })).rejects.toBeInstanceOf(
-      RemovedImageNotRestorableError
-    );
+    await expect(
+      acceptImage({ csamReview: true, imageId: FLAGGED_REMOVED, userId: 2 })
+    ).rejects.toBeInstanceOf(CsamReviewImageError);
+    await expect(
+      acceptCsamReviewedImage({ csamReview: true, imageId: FLAGGED_REMOVED, userId: 2 })
+    ).rejects.toBeInstanceOf(RemovedImageNotRestorableError);
 
     expect(await imageRow(FLAGGED_REMOVED)).toEqual({ needsReview: 'csam', ingestion: 'Blocked' });
     expect(recordModActivity).not.toHaveBeenCalled();
   });
 
-  // The main app's Unblock is an explicit decision to restore it, and must still work.
-  it('is restored by an explicit unblock', async () => {
-    await acceptImage({ imageId: FLAGGED_REMOVED, userId: 2, restoreRemoved: true });
+  // Only the CSAM review clears the flag: the main app's Unblock leaves it, and the image, as they are.
+  it('is not restored by an explicit unblock', async () => {
+    await expect(
+      acceptImage({ csamReview: true, imageId: FLAGGED_REMOVED, userId: 2, restoreRemoved: true })
+    ).rejects.toBeInstanceOf(ImageNotRestoredError);
 
-    expect(await imageRow(FLAGGED_REMOVED)).toEqual({ needsReview: null, ingestion: 'Scanned' });
-    expect(trackImageRestore).toHaveBeenCalledWith(
-      expect.objectContaining({ imageId: FLAGGED_REMOVED, actorUserId: 2 })
-    );
+    expect(await imageRow(FLAGGED_REMOVED)).toEqual({ needsReview: 'csam', ingestion: 'Blocked' });
+    expect(trackImageRestore).not.toHaveBeenCalled();
   });
 
-  it('is accepted like any other image while it is still live', async () => {
-    await acceptImage({ imageId: FLAGGED, userId: 2 });
+  it('is accepted while it is still live only by the CSAM review', async () => {
+    await expect(
+      acceptImage({ csamReview: true, imageId: FLAGGED, userId: 2 })
+    ).rejects.toBeInstanceOf(CsamReviewImageError);
+    expect(await imageRow(FLAGGED)).toEqual({ needsReview: 'csam', ingestion: 'Scanned' });
+
+    await acceptCsamReviewedImage({ csamReview: true, imageId: FLAGGED, userId: 2 });
 
     expect(await imageRow(FLAGGED)).toEqual({ needsReview: null, ingestion: 'Scanned' });
     expect(trackImageRestore).not.toHaveBeenCalled();
@@ -310,7 +340,7 @@ describe('an image removed with only the review flag left', () => {
       `INSERT INTO "Image" ("id", "userId", "needsReview", "blockedFor", "ingestion", "nsfwLevel")
        VALUES (54, 7, 'tag', 'AiNotVerified', 'Blocked', 32)`
     );
-    await acceptImage({ imageId: 54, userId: 2 });
+    await acceptImage({ csamReview: true, imageId: 54, userId: 2 });
 
     expect(await imageRow(54)).toEqual({ needsReview: null, ingestion: 'Scanned' });
     expect(trackImageRestore).not.toHaveBeenCalled();
@@ -550,24 +580,6 @@ describe('dismissUserFromCsamQueue', () => {
     expect(await loggedIds()).toEqual([]);
   });
 
-  // A dismissal writes nothing a hold protects: the flag stays, the image stays removed, and its log
-  // entry is not a takedown. So a hold does not stand in its way.
-  it('dismisses a held user’s images like anyone else’s, and leaves them flagged and removed', async () => {
-    await db.exec(`
-      CREATE TABLE "EvidenceHold" ("id" SERIAL PRIMARY KEY, "userId" INTEGER NOT NULL);
-      CREATE VIEW "EvidenceHeldUser" AS SELECT "userId" FROM "EvidenceHold" GROUP BY "userId";
-      INSERT INTO "EvidenceHold" ("userId") VALUES (8);
-    `);
-    try {
-      expect(await dismissUser(2)).toEqual({ ok: true, dismissed: 2, remaining: 1 });
-    } finally {
-      await db.exec(`DROP VIEW "EvidenceHeldUser"; DROP TABLE "EvidenceHold";`);
-    }
-    expect(await imageRow(FLAGGED_REMOVED)).toEqual({ needsReview: 'csam', ingestion: 'Blocked' });
-    expect(await imageRow(55)).toEqual({ needsReview: 'csam', ingestion: 'Blocked' });
-    expect(await dismissedIds()).toEqual([FLAGGED_REMOVED, 55, 57]);
-  });
-
   it('dismisses nothing for a role that may not write set-asides', async () => {
     await withoutSetAsideInsert(async () => {
       expect(await dismissUser(2)).toEqual({ ok: false, reason: 'unavailable' });
@@ -595,6 +607,7 @@ describe('resolveImageAppeal', () => {
 
     await expect(
       resolveImageAppeal({
+        csamReview: true,
         imageId: FLAGGED_REMOVED,
         status: 'Approved',
         resolvedReason: 'misclassified',
@@ -619,6 +632,7 @@ describe('resolveImageAppeal', () => {
 
     await expect(
       resolveImageAppeal({
+        csamReview: true,
         imageId: FLAGGED_REMOVED,
         status: 'Approved',
         resolvedReason: 'misclassified',
@@ -640,6 +654,7 @@ describe('resolveImageAppeal', () => {
     await seedPendingAppeal(FLAGGED_REMOVED);
 
     await resolveImageAppeal({
+      csamReview: true,
       imageId: FLAGGED_REMOVED,
       status: 'Rejected',
       resolvedReason: 'violation-confirmed',
@@ -654,7 +669,13 @@ describe('approving the appeal of an image blocked for CSAM', () => {
   const CSAM_BLOCKED = 57;
   const OTHER_BLOCKED = 58;
   const approve = (imageId: number) =>
-    resolveImageAppeal({ imageId, status: 'Approved', resolvedReason: 'mistake', userId: 2 });
+    resolveImageAppeal({
+      csamReview: true,
+      imageId,
+      status: 'Approved',
+      resolvedReason: 'mistake',
+      userId: 2,
+    });
   const appealStatus = async (imageId: number) =>
     (
       await db.query<{ status: string }>(`SELECT status FROM "Appeal" WHERE "entityId" = $1`, [
@@ -688,6 +709,7 @@ describe('approving the appeal of an image blocked for CSAM', () => {
 
   it('can still be rejected', async () => {
     await resolveImageAppeal({
+      csamReview: true,
       imageId: CSAM_BLOCKED,
       status: 'Rejected',
       resolvedReason: 'violation-confirmed',
@@ -702,7 +724,13 @@ describe('approving the appeal of an image blocked for CSAM', () => {
 describe('approving an appeal whose image turns held after the close', () => {
   const TURNS_HELD = 59;
   const approve = () =>
-    resolveImageAppeal({ imageId: TURNS_HELD, status: 'Approved', resolvedReason: 'x', userId: 2 });
+    resolveImageAppeal({
+      csamReview: true,
+      imageId: TURNS_HELD,
+      status: 'Approved',
+      resolvedReason: 'x',
+      userId: 2,
+    });
   const appealStatus = async () =>
     (
       await db.query<{ status: string }>(`SELECT status FROM "Appeal" WHERE "entityId" = $1`, [
@@ -767,5 +795,106 @@ describe('approving an appeal whose image turns held after the close', () => {
 
     expect(await appealStatus()).toBe('Approved');
     await nothingPaidOrTold();
+  });
+});
+
+describe('an explicit unblock of an image an account deletion blocked', () => {
+  it.each([
+    ['minor', 'minor'],
+    ['appeal', null],
+    ['csam', null],
+  ])('a recorded %s leaves the review flag %s, and the breadcrumbs go', async (review, flag) => {
+    await db.query(
+      `UPDATE "Image" SET "metadata" = jsonb_build_object(
+         'accountDeletionPriorIngestion', 'Scanned',
+         'accountDeletionPriorBlockedFor', NULL,
+         'accountDeletionPriorNeedsReview', $2::text,
+         'keep', 1)
+       WHERE "id" = $1`,
+      [OTHER_FLAG_REMOVED, review]
+    );
+
+    await acceptImage({
+      csamReview: true,
+      imageId: OTHER_FLAG_REMOVED,
+      userId: 2,
+      restoreRemoved: true,
+    });
+
+    const { rows } = await db.query<{
+      needsReview: string | null;
+      ingestion: string;
+      metadata: unknown;
+    }>(`SELECT "needsReview", "ingestion", "metadata" FROM "Image" WHERE "id" = $1`, [
+      OTHER_FLAG_REMOVED,
+    ]);
+    expect(rows[0]).toEqual({ needsReview: flag, ingestion: 'Scanned', metadata: { keep: 1 } });
+  });
+});
+
+describe('the CSAM review flag and every accept but the CSAM review', () => {
+  const ROWS = [
+    { id: 61, owner: 7, ingestion: 'Blocked', blockedFor: 'moderated' },
+    { id: 62, owner: 7, ingestion: 'Scanned', blockedFor: null },
+    { id: 63, owner: 11, ingestion: 'Blocked', blockedFor: 'moderated' },
+    { id: 64, owner: 11, ingestion: 'Scanned', blockedFor: null },
+  ];
+  const rows = async () =>
+    (
+      await db.query<{ id: number; needsReview: string | null; ingestion: string }>(
+        `SELECT id, "needsReview", "ingestion" FROM "Image" WHERE id = ANY($1::int[]) ORDER BY id`,
+        [ROWS.map((r) => r.id)]
+      )
+    ).rows;
+  const untouched = ROWS.map(({ id, ingestion }) => ({ id, needsReview: 'csam', ingestion }));
+
+  // What a report verdict's guard and a lift kept blocked read, beyond this file's schema.
+  beforeAll(() =>
+    db.exec(`
+      ALTER TABLE "JobQueue" ADD COLUMN IF NOT EXISTS "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now();
+      CREATE TABLE IF NOT EXISTS "ModerationRule" ("id" INTEGER PRIMARY KEY, "action" TEXT);
+      CREATE TABLE IF NOT EXISTS "ModerationRuleVersion" ("ruleId" INTEGER, "action" TEXT);
+      ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "bannedAt" TIMESTAMP(3);
+    `)
+  );
+
+  beforeEach(async () => {
+    await db.exec(`INSERT INTO "User" ("id", "deletedAt") VALUES (7, NULL), (11, now())`);
+    for (const r of ROWS)
+      await db.query(
+        `INSERT INTO "Image" ("id", "userId", "needsReview", "blockedFor", "ingestion", "nsfwLevel")
+         VALUES ($1, $2, 'csam', $3, $4, 4)`,
+        [r.id, r.owner, r.blockedFor, r.ingestion]
+      );
+  });
+
+  it('an explicit unblock (the main app Unblock) leaves each one flagged and as it was', async () => {
+    for (const { id } of ROWS)
+      await expect(
+        acceptImage({ csamReview: true, imageId: id, userId: 2, restoreRemoved: true })
+      ).rejects.toBeInstanceOf(ImageNotRestoredError);
+    expect(await rows()).toEqual(untouched);
+  });
+
+  it('a review queue or report accept leaves each one flagged and as it was', async () => {
+    for (const { id } of ROWS) {
+      await expect(
+        acceptImage({ csamReview: true, imageId: id, userId: 2 })
+      ).rejects.toBeInstanceOf(CsamReviewImageError);
+      await expect(
+        acceptImage({ csamReview: true, imageId: id, userId: 2, keepModeratorRemoved: true })
+      ).rejects.toBeInstanceOf(CsamReviewImageError);
+    }
+    expect(await rows()).toEqual(untouched);
+  });
+
+  it('the CSAM review clears the flag on a live one, kept blocked while its owner is deleted', async () => {
+    await acceptCsamReviewedImage({ csamReview: true, imageId: 62, userId: 2 });
+    await acceptCsamReviewedImage({ csamReview: true, imageId: 64, userId: 2 });
+
+    expect((await rows()).filter((r) => r.id === 62 || r.id === 64)).toEqual([
+      { id: 62, needsReview: null, ingestion: 'Scanned' },
+      { id: 64, needsReview: null, ingestion: 'Blocked' },
+    ]);
   });
 });

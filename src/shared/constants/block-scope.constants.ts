@@ -42,7 +42,7 @@ import type { AppRole } from './app-capabilities.constants';
  * per-op server-side checks for apps:storage:*).
  */
 export const SKIP_OAUTH_CHECK = Symbol('SKIP_OAUTH_CHECK');
-export type ScopeBitmaskRequirement = number | typeof SKIP_OAUTH_CHECK;
+export type ScopeBitmaskRequirement = bigint | typeof SKIP_OAUTH_CHECK;
 
 export const BLOCK_SCOPE_TO_OAUTH_BIT: Record<string, ScopeBitmaskRequirement> = {
   'models:read:self': TokenScope.ModelsRead,
@@ -126,7 +126,7 @@ export const BLOCK_SCOPE_TO_OAUTH_BIT: Record<string, ScopeBitmaskRequirement> =
   // the publish scope, and narrower than the token: the storage route also requires a grant
   // per (viewer, this app, source app) covering the import on every call
   // (`storage-import-grant.service.ts`). In NO dev, tunnel, review or private-run allowlist,
-  // and the route refuses an import on a dev, hub or review token.
+  // and the route refuses an import on a dev or review token.
   'apps:storage:import': SKIP_OAUTH_CHECK,
   // collections:read:self / collections:write:self — the App Blocks Collections
   // surface (discover + read public collections and the viewer's OWN collections;
@@ -797,7 +797,7 @@ export type { SensitiveScopeManifestInput } from '@civitai/shared/sensitive-bloc
  */
 export function validateBlockScopesAgainstOauthClient(
   blockScopes: string[],
-  oauthClientAllowedScopes: number
+  oauthClientAllowedScopes: bigint
 ): { valid: boolean; rejectedScopes: string[] } {
   const rejected: string[] = [];
   for (const scope of blockScopes) {
@@ -849,8 +849,8 @@ export function isAppBlockOauthClientId(clientId: string | null | undefined): bo
  * the OAuth-eligible scope set, exactly what the validator / token-mint path
  * expects as the per-client ceiling.
  */
-export function deriveOauthBitmaskFromBlockScopes(blockScopes: string[]): number {
-  let bitmask = 0;
+export function deriveOauthBitmaskFromBlockScopes(blockScopes: string[]): bigint {
+  let bitmask = 0n;
   for (const scope of blockScopes) {
     if (!isKnownBlockScope(scope)) continue;
     const requirement = BLOCK_SCOPE_TO_OAUTH_BIT[scope];
@@ -858,6 +858,24 @@ export function deriveOauthBitmaskFromBlockScopes(blockScopes: string[]): number
     bitmask |= requirement;
   }
   return bitmask;
+}
+
+/**
+ * Bits an operator grants an app-block OauthClient by hand that no manifest scope maps to, so
+ * `deriveOauthBitmaskFromBlockScopes` can never produce them. `AppDataRead` is the one the auth
+ * hub's block exchange requires of the app.
+ */
+export const OPERATOR_GRANTED_APP_BLOCK_OAUTH_BITS = TokenScope.AppDataRead;
+
+/**
+ * The `allowedScopes` to write when re-deriving an existing app-block client's ceiling from its
+ * manifest: the derived bits, plus any operator-granted bit the client already holds. It grants
+ * nothing new — a client without the bit does not gain it — and every other bit follows the
+ * manifest, so a bit the manifest dropped is still dropped. Every writer that re-derives an
+ * `appblk-*` client's `allowedScopes` goes through this.
+ */
+export function appBlockOauthCeiling(derived: bigint, existing: bigint | null | undefined): bigint {
+  return derived | ((existing ?? 0n) & OPERATOR_GRANTED_APP_BLOCK_OAUTH_BITS);
 }
 
 /**

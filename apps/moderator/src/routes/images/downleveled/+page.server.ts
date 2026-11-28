@@ -4,7 +4,10 @@ import type { Actions, PageServerLoad } from './$types';
 import { parseQuery } from '$lib/server/query';
 import { getDownleveledImages } from '$lib/server/downleveled-review.service';
 import { updateImageNsfwLevel } from '$lib/server/image-nsfw-level';
+import { holdsCsamReview } from '$lib/server/held-media';
+import { WithheldImageError } from '$lib/server/withheld-write';
 import { isRatingLevel } from '$lib/nsfw-levels';
+import { withheldRefusal, withheldRow, withheldRows } from '$lib/server/retracted-media';
 
 const querySchema = z.object({
   cursor: z.string().optional().catch(undefined),
@@ -12,14 +15,15 @@ const querySchema = z.object({
   originalLevel: z.coerce.number().int().positive().optional().catch(undefined),
 });
 
-export const load: PageServerLoad = async ({ url }) => {
+export const load: PageServerLoad = async ({ url, locals }) => {
   const { cursor, limit, originalLevel } = parseQuery(url, querySchema);
-  const data = await getDownleveledImages({ cursor, limit, originalLevel });
+  const { items, nextCursor } = await getDownleveledImages({ cursor, limit, originalLevel });
   return {
     limit,
     originalLevel: originalLevel ?? null,
     wide: true,
-    ...data,
+    items: await withheldRows(items, locals.user, 'downleveled', (i) => i.id, withheldRow),
+    nextCursor,
   };
 };
 
@@ -33,13 +37,21 @@ export const actions: Actions = {
 
     if (!id) return fail(400, { error: 'Missing image id.' });
     if (!isRatingLevel(nsfwLevel)) return fail(400, { error: 'Invalid rating level.' });
+    const withheld = await withheldRefusal(locals.user, [id]);
+    if (withheld) return fail(403, { error: withheld, id });
 
-    await updateImageNsfwLevel({
-      id,
-      nsfwLevel,
-      reason: 'Moderator downleveled review',
-      userId: locals.user.id,
-    });
+    try {
+      await updateImageNsfwLevel({
+        id,
+        nsfwLevel,
+        reason: 'Moderator downleveled review',
+        userId: locals.user.id,
+        csamReview: holdsCsamReview(locals.user),
+      });
+    } catch (e) {
+      if (e instanceof WithheldImageError) return fail(403, { error: e.message, id });
+      throw e;
+    }
     return { success: true, id, nsfwLevel };
   },
 };

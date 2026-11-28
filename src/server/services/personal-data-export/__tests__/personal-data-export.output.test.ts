@@ -3,6 +3,7 @@ import { csvCell, type ExportWriter } from '../output';
 import {
   CH_TABLES,
   USER_BUZZ_ACCOUNT_TYPES,
+  USER_JOB_TYPES,
   exportClickhouse,
   reduceChRow,
   type ClickhouseReader,
@@ -41,17 +42,19 @@ describe('csvCell', () => {
 describe('reduceWorkflow', () => {
   it('keeps dates as ISO text, and drops blocked outputs and detection keys in any shape', () => {
     const out = reduceWorkflow({
-      createdAt: new Date('2026-11-06T00:00:00Z'),
-      output: { url: 'https://blob/bad', blockedReason: 'x' },
-      ok: { url: 'https://blob/ok', blocked: false },
-      xguardResult: { s: 1 },
-      scores: [0.1],
-    }) as Record<string, unknown>;
-    expect(out.createdAt).toBe('2026-11-06T00:00:00.000Z');
-    expect(out).not.toHaveProperty('output');
-    expect(out.ok).toEqual({ url: 'https://blob/ok', blocked: false });
-    expect(out).not.toHaveProperty('xguardResult');
-    expect(out).not.toHaveProperty('scores');
+      CreatedAt: new Date('2026-11-06T00:00:00Z'),
+      Steps: [
+        {
+          Output: { Video: { Url: 'https://blob/bad', BlockedReason: 'x' } },
+          Input: { Prompt: 'p', xguardResult: { s: 1 }, scores: [0.1] },
+        },
+        { Output: { Video: { Url: 'https://blob/ok', BlockedReason: null } } },
+      ],
+    }) as Record<string, any>;
+    expect(out.CreatedAt).toBe('2026-11-06T00:00:00.000Z');
+    expect(out.Steps[0].Output).toEqual({});
+    expect(out.Steps[1].Output.Video).toEqual({ Url: 'https://blob/ok' });
+    expect(out.Steps[0].Input).toEqual({ Prompt: 'p' });
   });
 
   it('marks the file partial when the server time limit ends the read, and closes the cursor', async () => {
@@ -60,7 +63,7 @@ describe('reduceWorkflow', () => {
       find() {
         return Object.assign(
           (async function* () {
-            yield { _id: '1-a' };
+            yield { _id: '1-a', Steps: [{ _t: 'imageGen' }] };
             throw Object.assign(new Error('time'), { codeName: 'MaxTimeMSExpired' });
           })(),
           { close: async () => void closed++ }
@@ -70,7 +73,7 @@ describe('reduceWorkflow', () => {
     const { files, w } = writer();
     const entry = await exportWorkflows({ userId: 1, writer: w, collection });
     expect(entry).toMatchObject({ status: 'partial', rows: 1 });
-    expect(files.get(entry.file)).toBe('{"_id":"1-a"}\n');
+    expect(files.get(entry.file)).toBe('{"_id":"1-a","Steps":[{"_t":"imageGen"}]}\n');
     expect(closed).toBe(1);
   });
 });
@@ -240,7 +243,17 @@ describe('ClickHouse', () => {
         return {
           json: async <T>() => [] as T,
           stream: async function* () {
-            yield [{ json: <T>() => ({ id: 'r', createdAt: '2024-01-01 00:00:00' } as T) }];
+            yield [
+              {
+                json: <T>() =>
+                  ({
+                    id: 'r',
+                    userId: 7,
+                    jobType: 'ComfyImageGen',
+                    createdAt: '2024-01-01 00:00:00',
+                  } as T),
+              },
+            ];
           },
         };
       },
@@ -304,6 +317,7 @@ describe('ClickHouse', () => {
     const base = {
       jobId: 'j1',
       userId: '7',
+      jobType: 'ComfyImageGen',
       createdAt: '2023-04-05 10:00:00',
       provider: '',
       cost: 4,
@@ -350,8 +364,92 @@ describe('ClickHouse', () => {
       .map((l) => JSON.parse(l) as Record<string, unknown>);
     // Only the valid 2023 row, with only approved columns; an empty provider reads as unknown.
     expect(written).toEqual([
-      { jobId: 'j1', userId: '7', createdAt: '2023-04-05 10:00:00', provider: 'unknown', cost: 4 },
+      {
+        jobId: 'j1',
+        userId: '7',
+        jobType: 'ComfyImageGen',
+        createdAt: '2023-04-05 10:00:00',
+        provider: 'unknown',
+        cost: 4,
+      },
     ]);
+  });
+
+  /**
+   * Decided in civitai/civitai#10668: a job the site ran on the user's content (a scan, a hash, a
+   * tagging pass) is not written or counted, so the archive does not reveal an automated check.
+   * Fail closed: only listed user job types are written, so an unknown type stays out.
+   */
+  it("writes only jobs the user started, and leaves out the site's own and unknown job types", async () => {
+    const row = (jobId: string, jobType?: unknown) => ({
+      jobId,
+      userId: '7',
+      ...(jobType === undefined ? {} : { jobType }),
+      createdAt: '2026-11-05 10:00:00',
+      provider: 'p',
+    });
+    const stored = [
+      row('gen', 'ComfyImageGen'),
+      row('gen-case', 'comfyimagegen'),
+      row('chat', 'chatCompletion'),
+      row('train', 'AIToolkitTrainingEpoch'),
+      row('caption', 'MediaCaptioning'),
+      row('scan', 'CivitaiImageScanning'),
+      row('hash', 'MediaHash'),
+      row('future', 'SomeNewSystemJob'),
+      row('render', 'model3DPreview'),
+      { ...row('site-token', 'ComfyImageGen'), userId: '0' },
+      row('empty', ''),
+      row('missing'),
+      row('not-text', 7),
+      { ...row('scan-bad-date', 'CivitaiImageScanning'), createdAt: '1900-01-01 00:00:00' },
+    ];
+    const ch: ClickhouseReader = {
+      async query({ query }) {
+        return {
+          json: async <T>() => [] as T,
+          stream: async function* () {
+            if (query.includes('FROM orchestration.jobs'))
+              yield stored.map((r) => ({ json: <T>() => r as T }));
+          },
+        };
+      },
+    };
+    const { files, w } = writer();
+    const result = await exportClickhouse({ userId: 7, writer: w, ch, onError: () => undefined });
+    const jobs = result.files.find((f) => f.file.endsWith('generation-jobs.jsonl'))!;
+    const ids = files
+      .get(jobs.file)!
+      .trim()
+      .split('\n')
+      .map((l) => (JSON.parse(l) as { jobId: string }).jobId);
+    expect(ids).toEqual(['gen', 'gen-case', 'chat', 'train', 'caption']);
+    expect(jobs.rows).toBe(5);
+    expect(jobs.leftOut).toBeUndefined();
+    expect(jobs.description).toMatch(/runs itself .* not included/);
+  });
+
+  // civitai/civitai#10668: site-run job types stay off the user list, including model3DPreview,
+  // which the site also submits on its own token to render a user's mesh for the rating check.
+  it('never lists a job type the site runs on its own', () => {
+    for (const t of [
+      'CivitaiImageScanning',
+      'CivitaiMediaRating',
+      'ConvertImage',
+      'MediaHash',
+      'MediaTagging',
+      'WDTagging',
+      'xGuardModeration',
+      'promptModeration',
+      'AgeClassification',
+      'AudioClassification',
+      'multimodalEmbedding',
+      'watermarkDetection',
+      'ModelPickleScan',
+      'BlobScanGate',
+      'model3DPreview',
+    ])
+      expect(USER_JOB_TYPES.has(t.toLowerCase()), t).toBe(false);
   });
 
   it("reads only the user's own Buzz accounts, never a club keyed by the same id", async () => {

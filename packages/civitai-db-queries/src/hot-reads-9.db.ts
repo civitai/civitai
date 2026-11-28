@@ -118,6 +118,8 @@ export function getUserWithProfileRow(db: Kysely<DB>, where: UserWithProfileWher
         'ProfilePicture.userId as profilePictureUserId',
         'ProfilePicture.ingestion as profilePictureIngestion',
         'ProfilePicture.needsReview as profilePictureNeedsReview',
+        'ProfilePicture.modelRestricted as profilePictureModelRestricted',
+        'ProfilePicture.blockedFor as profilePictureBlockedFor',
         'ProfilePicture.type as profilePictureType',
         'ProfilePicture.width as profilePictureWidth',
         'ProfilePicture.height as profilePictureHeight',
@@ -156,6 +158,7 @@ export function getUserWithProfileRow(db: Kysely<DB>, where: UserWithProfileWher
         'CoverImage.scannedAt as coverScannedAt',
         'CoverImage.ingestion as coverIngestion',
         'CoverImage.blockedFor as coverBlockedFor',
+        'CoverImage.modelRestricted as coverModelRestricted',
         'CoverImage.postId as coverPostId',
         'CoverImage.type as coverType',
         'CoverImage.metadata as coverMetadata',
@@ -176,6 +179,7 @@ export function getUserWithProfileRow(db: Kysely<DB>, where: UserWithProfileWher
         'SfwCoverImage.scannedAt as sfwCoverScannedAt',
         'SfwCoverImage.ingestion as sfwCoverIngestion',
         'SfwCoverImage.blockedFor as sfwCoverBlockedFor',
+        'SfwCoverImage.modelRestricted as sfwCoverModelRestricted',
         'SfwCoverImage.postId as sfwCoverPostId',
         'SfwCoverImage.type as sfwCoverType',
         'SfwCoverImage.metadata as sfwCoverMetadata',
@@ -201,6 +205,8 @@ export function getUserWithProfileRow(db: Kysely<DB>, where: UserWithProfileWher
               .as('links')
           )
           .whereRef('UserLink.userId', '=', 'User.id')
+          // A banned user's links are not served; a ban whose archive failed keeps them as evidence.
+          .where('User.bannedAt', 'is', null)
           .$castTo<{ links: UserWithProfileLinkJson[] }>()
           .as('links'),
         eb

@@ -18,7 +18,7 @@ const REQ = { headers: {}, socket: {} };
 const USER = { id: 42, tier: 'free', username: 'u', muted: false, onboarding: 0xff };
 const MODERATOR = { ...USER, isModerator: true, createdAt: new Date(2020, 0, 1) };
 
-const caller = (tokenScope: number, user: object = USER) =>
+const caller = (tokenScope: bigint, user: object = USER) =>
   userRouter.createCaller({
     acceptableOrigin: true,
     user,

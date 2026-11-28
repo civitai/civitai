@@ -120,11 +120,23 @@ describe('getImageMoveRefusal', () => {
 });
 
 describe('a permitted move never raises Image.sortAt', () => {
-  // Mirrors set_image_sort_at(); the text pin below fails if the trigger's formula changes.
-  const sortAt = (postPublishedAt: Date | null, scannedAt: Date | null, createdAt: Date) =>
-    Math.max(
-      ...[postPublishedAt, scannedAt, createdAt].filter((d): d is Date => !!d).map((d) => +d)
+  // Mirrors image_sort_at(); the text pin below fails if the trigger's formula changes.
+  const sortAt = (
+    postPublishedAt: Date | null,
+    scannedAt: Date | null,
+    createdAt: Date,
+    firstVisibleAt: Date | null
+  ) => {
+    const released =
+      firstVisibleAt && postPublishedAt && +firstVisibleAt <= +postPublishedAt + 7 * 864e5
+        ? firstVisibleAt
+        : null;
+    return Math.max(
+      ...[postPublishedAt, scannedAt, createdAt, released]
+        .filter((d): d is Date => !!d)
+        .map((d) => +d)
     );
+  };
 
   it('still matches the trigger formula', () => {
     const sql = readFileSync(
@@ -135,7 +147,10 @@ describe('a permitted move never raises Image.sortAt', () => {
       'utf8'
     );
     expect(sql).toMatch(
-      /NEW\."sortAt" := GREATEST\(post_published_at, NEW\."scannedAt", NEW\."createdAt"\);/
+      /NEW\."sortAt" := image_sort_at\(post_published_at, NEW\."scannedAt", NEW\."createdAt",\s+NEW\."firstVisibleAt"\);/
+    );
+    expect(sql).toMatch(
+      /SELECT GREATEST\(\s+published_at, scanned_at, created_at,\s+CASE WHEN first_visible_at <= published_at \+ interval '7 days' THEN first_visible_at END\s+\)/
     );
   });
 
@@ -146,24 +161,27 @@ describe('a permitted move never raises Image.sortAt', () => {
     for (const s of offsets)
       for (const t of [...offsets, null])
         for (const scanned of [...offsets, null])
-          for (const created of offsets) {
-            const source = post({ publishedAt: day(s) });
-            const target = t === null ? null : post({ id: 2, publishedAt: day(t) });
-            if (refusal({ source, target })) {
-              refusedBump++;
-              continue;
+          for (const created of offsets)
+            for (const visible of [...offsets, null]) {
+              const source = post({ publishedAt: day(s) });
+              const target = t === null ? null : post({ id: 2, publishedAt: day(t) });
+              if (refusal({ source, target })) {
+                refusedBump++;
+                continue;
+              }
+              admitted++;
+              const scannedAt = scanned === null ? null : day(scanned);
+              const firstVisibleAt = visible === null ? null : day(visible);
+              const before = sortAt(source.publishedAt, scannedAt, day(created), firstVisibleAt);
+              // A new post (target null) is published at the source's date.
+              const after = sortAt(
+                target ? target.publishedAt : source.publishedAt,
+                scannedAt,
+                day(created),
+                firstVisibleAt
+              );
+              expect(after).toBeLessThanOrEqual(before);
             }
-            admitted++;
-            const scannedAt = scanned === null ? null : day(scanned);
-            const before = sortAt(source.publishedAt, scannedAt, day(created));
-            // A new post (target null) is published at the source's date.
-            const after = sortAt(
-              target ? target.publishedAt : source.publishedAt,
-              scannedAt,
-              day(created)
-            );
-            expect(after).toBeLessThanOrEqual(before);
-          }
     // Both arms exercised, so the loop cannot pass vacuously.
     expect(admitted).toBeGreaterThan(0);
     expect(refusedBump).toBeGreaterThan(0);

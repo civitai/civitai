@@ -1,5 +1,7 @@
+import { showcaseOptOutChanged } from '~/shared/constants/version-showcase.constants';
 import { assertCollectionItemsVisibleToViewer } from '~/server/services/collection-item-visibility';
 import { TRPCError } from '@trpc/server';
+import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
 import { orderBy } from 'lodash-es';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
@@ -9,7 +11,9 @@ import { pickClientImageColumns } from '~/server/utils/image-columns';
 import {
   assertClientImageUrlsUsable,
   assertClientKeysIssuedToCaller,
+  keysIn,
 } from '~/server/services/image-url-ownership';
+import { anyImageHeldOrBlocked } from '~/server/services/held-image-keys';
 import { constants } from '~/server/common/constants';
 import { SUPPORT_LINKS } from '~/components/Support/support.constants';
 import {
@@ -19,7 +23,7 @@ import {
 } from '~/server/common/enums';
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { getStaticContent, resolveTosHash } from '~/server/services/content.service';
-import { LegalHoldError } from '~/server/services/legal-hold.service';
+import { MemorializedAccountError } from '~/server/services/memorial.service';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { readModelVersionIdsViaKysely } from '~/server/services/hot-reads-5.reads';
@@ -47,6 +51,7 @@ import type {
   SetLeaderboardEligibilitySchema,
   SetUserSettingsInput,
   ToggleBanUser,
+  ToggleMuteInput,
   ToggleFavoriteInput,
   ToggleFeatureInput,
   ToggleFollowUserSchema,
@@ -67,6 +72,7 @@ import type {
   StickerCosmetic,
   NamePlateCosmetic,
   ProfileBackgroundCosmetic,
+  SidebarBackgroundCosmetic,
   WithClaimKey,
 } from '~/server/selectors/cosmetic.selector';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
@@ -654,6 +660,7 @@ export const updateUserHandler = async ({
     profileDecorationId,
     profileBackgroundId,
     cardDecorationId,
+    sidebarBackgroundId,
     username,
     source,
     landingPage,
@@ -682,8 +689,10 @@ export const updateUserHandler = async ({
       : inputProfilePicture;
 
   try {
+    // From the primary: the unchanged-value pass below must not compare against a lagging replica.
     const user = await getUserById({
       id,
+      db: dbWrite,
       select: {
         username: true,
         image: true,
@@ -705,6 +714,16 @@ export const updateUserHandler = async ({
     const newPictureUrls = [newPicture?.url, data.image !== user.image ? data.image : null];
     await assertClientImageUrlsUsable({ urls: newPictureUrls, userId: id });
     await assertClientKeysIssuedToCaller({ urls: newPictureUrls, userId: id });
+    if (
+      await anyImageHeldOrBlocked(
+        dbWrite,
+        newPictureUrls.flatMap((url) => keysIn(url))
+      )
+    )
+      throw throwBadRequestError('Invalid avatar URL');
+    // Our upload keys reach `User.image` only through `profilePicture`, whose Image row is scanned.
+    if (data.image && data.image !== user.image && keysIn(data.image).length)
+      throw throwBadRequestError('Invalid avatar URL');
 
     const payloadCosmeticIds: number[] = [];
     const unequipPromises: Promise<unknown>[] = [];
@@ -734,14 +753,32 @@ export const updateUserHandler = async ({
         unequipCosmeticByType({ userId: id, type: CosmeticType.CardDecoration })
       );
 
+    // Only the redesigned profile draws a sidebar background, so only its customizer sets one.
+    const sidebarId = ctx.features?.profileRedesign ? sidebarBackgroundId : undefined;
+    if (sidebarId) payloadCosmeticIds.push(sidebarId);
+    else if (sidebarId === null)
+      unequipPromises.push(
+        unequipCosmeticByType({ userId: id, type: CosmeticType.SidebarBackground })
+      );
+
     await Promise.all(unequipPromises);
 
     const isSettingCosmetics = payloadCosmeticIds.length > 0;
+
+    // An unchanged image stays out of the write, so a moderation clear committed since the read stands.
+    // A new picture replaces an upload key left in `User.image`: only the profile picture may carry one.
+    const imageChanged = data.image !== undefined && data.image !== user.image;
+    const image = imageChanged
+      ? data.image
+      : newPicture && keysIn(user.image).length
+      ? null
+      : undefined;
 
     const updatedUser = await updateUserById({
       id,
       data: {
         ...data,
+        image,
         username,
         profilePicture: newPicture
           ? {
@@ -766,7 +803,7 @@ export const updateUserHandler = async ({
 
     // Queue the old profilePic for a DEFERRED reap, and ingest the new one.
     //
-    // This used to be an inline `deleteImageById`, which destroyed the row and the stored
+    // This used to be an inline image delete, which destroyed the row and the stored
     // object the instant the new picture saved. The write is instant; the references are
     // not — the image CDN caches its redirect for 24h, the account-switcher roster in
     // localStorage is durable by design, and other surfaces hold rendered avatar urls. None
@@ -792,10 +829,8 @@ export const updateUserHandler = async ({
 
     // Without this the new showcase isn't visible until the nightly rebuild, up to 24h later.
     // The modal sends the field on every user-level save, so this recomputes on cosmetic
-    // saves too. That is deliberate: comparing against the stored value would have to read
-    // it back, and the only cheap read is the replica — an A->B->A save inside the
-    // replication window would then compare equal and skip the recompute it needs. The
-    // upsert is 0.87 ms and idempotent, so the redundant call costs less than that risk.
+    // saves too. That is deliberate: the upsert is cheap and idempotent, cheaper than
+    // reading the stored value back to compare.
     if (input.leaderboardShowcase !== undefined)
       postUpdatePromises.push(updateLeaderboardRankForUsers({ userIds: id }));
 
@@ -857,7 +892,7 @@ export const deleteUserHandler = async ({
     throw new TRPCError({ code: 'FORBIDDEN', message: SELF_DELETE_RESTRICTED_MESSAGE });
 
   try {
-    const user = await deleteUser(input);
+    const user = await deleteUser({ ...input, actorId: currentUser.id });
     if (!user) throw throwNotFoundError(`No user with id ${id}`);
 
     await ctx.track.userActivity({
@@ -868,7 +903,7 @@ export const deleteUserHandler = async ({
     return user;
   } catch (error) {
     // The same refusal as a restricted account, so the two cannot be told apart.
-    if (error instanceof LegalHoldError)
+    if (error instanceof MemorializedAccountError)
       throw new TRPCError({ code: 'FORBIDDEN', message: SELF_DELETE_RESTRICTED_MESSAGE });
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -1235,6 +1270,7 @@ export const getLeaderboardHandler = async ({ input }: { input: GetAllSchema }) 
         image: true,
         username: true,
         links: {
+          where: { user: { bannedAt: null } },
           select: {
             url: true,
             type: true,
@@ -1305,14 +1341,17 @@ export const toggleMuteHandler = async ({
   input,
   ctx,
 }: {
-  input: GetByIdInput;
+  input: ToggleMuteInput;
   ctx: ProtectedContext;
 }) => {
   if (!ctx.user.isModerator) throw throwAuthorizationError();
 
-  const { id } = input;
-  const user = await getUserById({ id, select: { muted: true } });
+  const { id, setTo } = input;
+  // The primary decides the direction: a replica behind the last mute or unmute would flip it back.
+  const user = await getUserById({ id, select: { muted: true }, db: dbWrite });
   if (!user) throw throwNotFoundError(`No user with id ${id}`);
+  if (setTo === user.muted)
+    return { id, muted: user.muted, changed: false as const, sessionInvalidated: undefined };
 
   const updatedUser = user.muted
     ? await setUserMuted({ userId: id, muted: false, actorId: ctx.user.id })
@@ -1331,7 +1370,7 @@ export const toggleMuteHandler = async ({
     });
   }
 
-  return updatedUser;
+  return { ...updatedUser, changed: true as const };
 };
 
 export const toggleBanHandler = async ({
@@ -1351,10 +1390,11 @@ export const toggleBanHandler = async ({
 
   const updatedUser = await toggleBan({ ...input, userId: ctx.user.id, isModerator: true });
 
-  await ctx.track.userActivity({
-    type: updatedUser.bannedAt ? 'Banned' : 'Unbanned',
-    targetUserId: updatedUser.id,
-  });
+  if (updatedUser.changed)
+    await ctx.track.userActivity({
+      type: updatedUser.bannedAt ? 'Banned' : 'Unbanned',
+      targetUserId: updatedUser.id,
+    });
 
   return updatedUser;
 };
@@ -1392,7 +1432,7 @@ export const getUserCosmeticsHandler = async ({
       .filter(isDefined);
     const coverImages = await getEntityCoverImage({
       entities: inUseCosmeticEntities,
-      viewer: ctx.user,
+      viewer: isSessionOrFullUserKey(ctx) ? ctx.user : undefined,
     });
     const withheld = await getWithheldCosmeticIds(user.cosmetics.map((x) => x.cosmetic.id));
 
@@ -1459,6 +1499,11 @@ export const getUserCosmeticsHandler = async ({
           acc.sticker.push({ ...sharedData, data: data as StickerCosmetic['data'] });
         else if (type === CosmeticType.CardDecoration)
           acc.cardDecorations.push({ ...sharedData, data: data as CardDecorationCosmetic['data'] });
+        else if (type === CosmeticType.SidebarBackground)
+          acc.sidebarBackgrounds.push({
+            ...sharedData,
+            data: data as SidebarBackgroundCosmetic['data'],
+          });
 
         return acc;
       },
@@ -1470,6 +1515,7 @@ export const getUserCosmeticsHandler = async ({
         contentDecorations: [] as OwnedCosmetic<ContentDecorationCosmetic>[],
         sticker: [] as OwnedCosmetic<StickerCosmetic>[],
         cardDecorations: [] as OwnedCosmetic<CardDecorationCosmetic>[],
+        sidebarBackgrounds: [] as OwnedCosmetic<SidebarBackgroundCosmetic>[],
       }
     );
 
@@ -1725,6 +1771,12 @@ export const setUserSettingHandler = async ({
       (k) => k in restInput && (restSettings as Record<string, unknown>)[k] !== restInput[k]
     );
     if (metricPrivacyChanged) await queueModelMetricPrivacyReindex(id);
+    if (showcaseOptOutChanged(restSettings, restInput)) {
+      const { bustVersionShowcasesForUser } = await import(
+        '~/server/services/version-showcase.service'
+      );
+      await bustVersionShowcasesForUser(id);
+    }
 
     // Some settings keys are PROJECTED ONTO THE SESSION by the auth hub — `shapeSessionUser`
     // reads `allowAds` and `isEarlyAdopter` out of `User.settings` and

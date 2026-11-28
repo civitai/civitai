@@ -197,6 +197,31 @@ describe('getChallengeForEdit', () => {
 
     expect(result?.judgingCategories).toBeNull();
   });
+
+  it.each([
+    [true, true],
+    [false, false],
+  ])(
+    'keeps a cover whose modelRestricted is %s, marked restricted: %s',
+    async (flag, restricted) => {
+      mockGetChallengeById.mockResolvedValue(makeMockChallenge({ coverImageId: 5 }));
+      mockDbRead.image.findFirst.mockResolvedValue({
+        id: 5,
+        url: 'cover',
+        nsfwLevel: 8,
+        hash: null,
+        width: 1,
+        height: 1,
+        type: 'image',
+        userId: 7,
+        modelRestricted: flag,
+      } as never);
+
+      const result = await getChallengeForEdit(1);
+
+      expect(result?.coverImage).toMatchObject({ id: 5, restricted });
+    }
+  );
 });
 
 describe('upsertUserChallenge (edit branch) — creator standing re-check', () => {

@@ -6,7 +6,9 @@
     "baseUrl": "https://site.example.test",
     "coverageNext": false,
     "baseModelFeedMetrics": false,
-    "regionRestricted": false
+    "regionRestricted": false,
+    "serverDomainRed": "red.example.test",
+    "serverDomainRedAliases": " Mirror.Red.Example.Test ,"
   },
   "request": {
     "path": "/api/v1/models",
@@ -300,6 +302,9 @@
     },
     "vaeFiles": [],
     "usernames": {},
+    "tagIdsByName": {},
+    "blockedTags": [],
+    "trainingData": [],
     "responseCache": {}
   },
   "redis": {
@@ -415,7 +420,7 @@
       },
       "packed": "3gAFomlkzQPqqHVzZXJuYW1lqmFydGlzdF90d2+pZGVsZXRlZEF0wKVpbWFnZcCoY2FjaGVkQXTW/2ov6BQ="
     },
-    "packed:caches:profile-pictures:v3:1001": {
+    "packed:caches:profile-pictures:v4:1001": {
       "value": {
         "id": 8901,
         "name": null,
@@ -437,7 +442,7 @@
       },
       "packed": "3gAMomlkzSLFpG5hbWXAo3VybNkkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDA4OTAxqW5zZndMZXZlbAGkaGFzaKxVUFJPRklMRTg5MDGmdXNlcklkzQPpqWluZ2VzdGlvbqdTY2FubmVkpHR5cGWlaW1hZ2Wld2lkdGjNAgCmaGVpZ2h0zQIAqG1ldGFkYXRh3gACpXdpZHRozQIApmhlaWdodM0CAKhjYWNoZWRBdNb/ai/oFA=="
     },
-    "packed:caches:profile-pictures:v3:1002": {
+    "packed:caches:profile-pictures:v4:1002": {
       "value": {
         "notFound": true,
         "cachedAt": {
@@ -550,6 +555,9 @@
         "hideModelGenerations": false
       },
       "packed": "3gADrWhpZGVNb2RlbEJ1enrCsmhpZGVNb2RlbERvd25sb2Fkc8K0aGlkZU1vZGVsR2VuZXJhdGlvbnPC"
+    },
+    "system:blocked-browsing-tags": {
+      "raw": "[]"
     }
   },
   "sysRedis": {

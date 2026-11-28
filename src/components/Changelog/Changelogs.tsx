@@ -17,7 +17,8 @@ import {
 } from '@mantine/core';
 import { Tooltip } from '~/components/MantineOverlays';
 import { useClipboard, useDebouncedValue, useLocalStorage } from '@mantine/hooks';
-import { openConfirmModal } from '@mantine/modals';
+import { useFeedSearchQuery } from '~/components/Filters/FeedSearchInput';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import {
   IconAlertCircle,
   IconExternalLink,
@@ -101,10 +102,9 @@ const ChangelogItem = ({
   const { mutate: deleteItem } = trpc.changelog.delete.useMutation();
 
   const handleDelete = (id: number) => {
-    openConfirmModal({
+    openConfirm({
       title: 'Delete changelog',
-      children: 'Are you sure you want to delete this changelog?',
-      centered: true,
+      message: 'Are you sure you want to delete this changelog?',
       labels: { confirm: 'Delete', cancel: "No, don't delete it" },
       confirmProps: { color: 'red' },
       onConfirm: () => {
@@ -523,7 +523,10 @@ export function Changelogs() {
     filters: state.changelogs,
     setFilters: state.setChangelogFilters,
   }));
-  const [searchTxt, setSearchTxt] = useState('');
+  const [ownSearchTxt, setSearchTxt] = useState('');
+  // With pageSearch, the header bar is the search (the page's ?query=), not the box below.
+  const pageSearchText = useFeedSearchQuery();
+  const searchTxt = features.pageSearch ? pageSearchText ?? '' : ownSearchTxt;
   const [createOpened, setCreateOpened] = useState(false);
   const [editingItem, setEditingItem] = useState<Changelog | undefined>();
   const [lastSeenChangelog, setLastSeenChangelog] = useLocalStorage<number>({
@@ -580,12 +583,14 @@ export function Changelogs() {
         </Text>
 
         <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center sm:justify-end">
-          <TextInputWrapper
-            value={searchTxt}
-            onChange={(event) => setSearchTxt(event.currentTarget.value)}
-            placeholder="Search titles and content..."
-            className="w-full sm:mr-2 sm:w-[300px]"
-          />
+          {!features.pageSearch && (
+            <TextInputWrapper
+              value={ownSearchTxt}
+              onChange={(event) => setSearchTxt(event.currentTarget.value)}
+              placeholder="Search titles and content..."
+              className="w-full sm:mr-2 sm:w-[300px]"
+            />
+          )}
 
           <div className="flex w-full flex-row justify-end gap-2 sm:w-auto">
             <Button

@@ -5,14 +5,18 @@ import {
   type CandidateFilter,
   type CandidateSource,
 } from '~/server/services/semantic-search-client';
+import type { GuardRead } from '~/server/services/semantic-search-client';
 import type { SessionUser } from '~/types/session';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { describeUnauditedRefusedPage } from './semantic-audit.harness';
 loggingMock.logToAxiom.mockImplementation(async () => undefined);
 
 const h = vi.hoisted(() => ({
   feedCalls: [] as Record<string, unknown>[],
   // Ids the feed's own query drops (its visibility rule says no).
   hidden: new Set<number>(),
+  // A row's current level, when not PG: the feed shows it only within the level it is asked for.
+  rowLevel: new Map<number, number>(),
   // The viewer's hidden, blocked and blocked-by users (getAllHiddenForUser).
   viewerHidden: { hiddenUsers: [], blockedUsers: [], blockedByUsers: [] } as Record<
     'hiddenUsers' | 'blockedUsers' | 'blockedByUsers',
@@ -35,6 +39,7 @@ vi.mock('~/server/services/blocklist.service', () => ({
 }));
 vi.mock('~/server/services/search-query-rules', () => ({ matchesQueryRule: async () => false }));
 vi.mock('~/utils/metadata/audit', () => ({
+  includesNsfw: () => false,
   includesInappropriate: h.includesInappropriate,
   includesPoi: () => false,
   includesMinor: () => false,
@@ -46,13 +51,25 @@ vi.mock('~/server/services/user-preferences.service', () => ({
     return { ...h.viewerHidden, hiddenTags: [], hiddenModels: [], hiddenImages: [] };
   },
 }));
-// The feed's query: ids >= 20 are user challenges by creator 7, the rest System challenges.
+// The feed's query: ids >= 20 are user challenges by creator 7, the rest System challenges. A row
+// shows only within the level it is asked for, as the feed's gate does, or when it is the viewer's
+// own and own rows are exempt.
 vi.mock('~/server/services/challenge.service', () => ({
-  getInfiniteChallenges: async (input: { ids: number[] } & Record<string, unknown>) => {
+  getInfiniteChallenges: async (
+    input: {
+      ids: number[];
+      browsingLevel: number;
+      currentUserId?: number;
+      ownRowsExempt?: boolean;
+    } & Record<string, unknown>
+  ) => {
     h.feedCalls.push(input);
+    const ownExempt = (id: number) =>
+      input.ownRowsExempt !== false && id >= 20 && input.currentUserId === 7;
     return {
       items: input.ids
         .filter((id) => !h.hidden.has(id))
+        .filter((id) => ownExempt(id) || ((h.rowLevel.get(id) ?? 1) & input.browsingLevel) !== 0)
         // Newest first, not rank order.
         .sort((a, b) => b - a)
         .map((id) => ({
@@ -78,18 +95,20 @@ const run = (
     isGreen = false,
     cap,
     correctedQuery,
+    guard,
   }: {
     input?: Record<string, unknown>;
     user?: SessionUser;
     isGreen?: boolean;
     cap?: number;
     correctedQuery?: string;
+    guard?: GuardRead;
   } = {}
 ) => {
   const filters: CandidateFilter[] = [];
   const candidateSource: CandidateSource = async ({ filter, offset, limit }) => {
     filters.push(filter);
-    return { ids: ranked.slice(offset, offset + limit), correctedQuery };
+    return { ids: ranked.slice(offset, offset + limit), correctedQuery, guard };
   };
   const result = searchSemanticChallenges({
     input: {
@@ -113,6 +132,7 @@ const run = (
 beforeEach(() => {
   h.feedCalls = [];
   h.hidden = new Set();
+  h.rowLevel = new Map();
   h.viewerHidden = { hiddenUsers: [], blockedUsers: [], blockedByUsers: [] };
   h.hiddenFor = [];
   h.includesInappropriate.mockReset().mockReturnValue(false);
@@ -273,6 +293,19 @@ describe('searchSemanticChallenges', () => {
     expect(items.map((c) => c.id)).toEqual([...userIds.slice(0, MAX_HITS_PER_USER), ...systemIds]);
   });
 
+  it("cannot show the viewer's own challenge above the safe levels after a minor verdict", async () => {
+    // Challenge 20 is creator 7's, its cover re-rated R after it was indexed.
+    h.rowLevel.set(20, 4);
+    // With the clamp lifted and no verdict, the owner browsing R does see it.
+    h.evalBoolean.mockReturnValue({ enabled: false });
+    const unnarrowed = run([20, 1], { user: { id: 7 } as SessionUser }).result;
+    expect((await unnarrowed).items.map((c) => c.id)).toEqual([20, 1]);
+
+    h.includesInappropriate.mockReturnValue('minor');
+    const { result } = run([20, 1], { user: { id: 7 } as SessionUser });
+    expect((await result).items.map((c) => c.id)).toEqual([1]);
+  });
+
   it('a refused query searches nothing', async () => {
     h.includesInappropriate.mockReturnValue('minor');
     // A moderator's refusal is not narrowed; it refuses.
@@ -292,4 +325,14 @@ describe('searchSemanticChallenges', () => {
     const page = await result;
     expect(page.items).toEqual([]);
   });
+});
+
+describeUnauditedRefusedPage({
+  index: 'challenges',
+  run,
+  refuseWords: () => h.includesInappropriate.mockReturnValue('poi' as never),
+  refuseCorrection: () =>
+    h.includesInappropriate.mockImplementation(({ prompt }) =>
+      prompt === 'corrected' ? ('blocked' as never) : false
+    ),
 });

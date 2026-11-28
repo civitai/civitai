@@ -102,6 +102,10 @@ vi.mock('~/server/services/image.service', () => ({
   getImagesForModelVersionCache: {},
   queueImageSearchIndexUpdate: mockQueueImageSearchIndexUpdate,
 }));
+// Its own suite covers the image documents; here only that the fan-out runs is under test.
+vi.mock('~/server/services/image-models-reindex.service', () => ({
+  queueDocumentsForImageMinorChanges: vi.fn(async () => undefined),
+}));
 vi.mock('~/server/services/model-file.service', () => ({ getFilesForModelVersionCache: {} }));
 vi.mock('~/server/services/model-version.service', () => ({
   bustMvCache: vi.fn(),
@@ -1541,6 +1545,9 @@ describe('setModelMinor — lift restore on a real row', () => {
         "gallerySettings" jsonb, "nsfwLevel" int NOT NULL DEFAULT 1,
         "sfwName" text, "sfwCoverImageId" int);
       CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int);
+      CREATE TABLE "EntityModeration" ("entityType" text NOT NULL, "entityId" int NOT NULL,
+        "triggeredLabels" text[] NOT NULL DEFAULT '{}', result jsonb, "contentHash" text,
+        "nsfwLevel" int, UNIQUE ("entityType", "entityId"));
       CREATE TABLE "Post" (id int PRIMARY KEY, "modelVersionId" int);
       CREATE TABLE "Image" (id int PRIMARY KEY, "postId" int, minor bool NOT NULL DEFAULT false);
       CREATE TABLE "ModActivity" (id serial, "userId" int, activity text, "entityType" text,
@@ -1891,9 +1898,10 @@ describe('setModelMinor — lift restore on a real row', () => {
       );
       await flag();
       expect(await row()).toMatchObject({ minor: true, nsfw: false });
-      const { resolveRestrictedNsfwVerdict } = await import(
+      const { currentRestrictedLeadRevision, resolveRestrictedNsfwVerdict } = await import(
         '~/server/services/text-scan/actions/restricted-nsfw-verdict'
       );
+      const revision = (await currentRestrictedLeadRevision(client(pg) as never, MODEL_ID)) ?? '';
       // The ruling logs inside its transaction: through it, or PGlite's one connection waits on itself.
       mockTrackModActivity.mockImplementationOnce(
         async (userId: number, { activity }: Record<string, unknown>, tx: unknown) => {
@@ -1906,6 +1914,7 @@ describe('setModelMinor — lift restore on a real row', () => {
         modelId: MODEL_ID,
         ruling: 'keep',
         userId: MODERATOR_ID,
+        revision,
       });
 
       await liftMinor();

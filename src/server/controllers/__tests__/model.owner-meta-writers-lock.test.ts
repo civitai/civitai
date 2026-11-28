@@ -20,7 +20,7 @@ vi.mock('~/server/utils/moderator-endpoint', async (importOriginal) => ({
 
 /**
  * Owner actions and the moderator take-down, bring-back and review decline write a model's whole
- * meta back after reading it. A content wipe, another moderator or a scan that writes the meta
+ * meta back after reading it. Another moderator or a scan that writes the meta
  * between that read and the write must keep what it wrote: each writer merges over the row it
  * re-reads under a lock.
  */
@@ -29,8 +29,9 @@ const { requestReviewHandler, changeModelModifierHandler, declineReviewHandler }
   '../model.controller'
 );
 type ModHandler = { handler: (input: { modelId: number }, ctx: unknown) => Promise<unknown> };
-const takeDown = (await import('~/pages/api/mod/model/take-down')).default as unknown as ModHandler;
-const bringBack = (await import('~/pages/api/mod/model/bring-back'))
+const takeDown = (await import('~/server/api-routes/mod/model/take-down'))
+  .default as unknown as ModHandler;
+const bringBack = (await import('~/server/api-routes/mod/model/bring-back'))
   .default as unknown as ModHandler;
 const { setModelShowcaseCollection } = await import('~/server/services/model.service');
 
@@ -38,8 +39,6 @@ const MODEL = 1;
 const OWNER = 5;
 // Written after the action read the model: what the write must not drop.
 const WRITTEN_SINCE = { cannotPublish: true, cannotPromote: true } satisfies ModelMeta;
-// A content wipe's record: an owner's write is refused on it, a moderator's keeps it.
-const KEPT = { removedWithOwner: true, statusBeforeRemoval: 'Published' } satisfies ModelMeta;
 
 let lockHeld: boolean;
 
@@ -160,16 +159,6 @@ describe('setting the showcase collection', () => {
     expect(dbMock.dbWrite.model.update).not.toHaveBeenCalled();
   });
 
-  // The locked re-check only guards the meta write; the add runs before it.
-  it('refuses an owner on a model a content wipe kept before adding it anywhere', async () => {
-    for (const db of [dbMock.dbRead, dbMock.dbWrite])
-      db.model.findFirst.mockResolvedValue({ id: MODEL, userId: OWNER, meta: KEPT } as never);
-    await expect(
-      setModelShowcaseCollection({ id: MODEL, collectionId: 9, userId: OWNER })
-    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
-    expect(saveItemInCollections).not.toHaveBeenCalled();
-  });
-
   it('refuses the showcase when the add writes nothing', async () => {
     saveItemInCollections.mockResolvedValueOnce(null as never);
     await expect(
@@ -257,35 +246,6 @@ it('refuses an owner’s archive of a model already taken down', async () => {
   expect(dbMock.dbWrite.model.update).not.toHaveBeenCalled();
 });
 
-describe('a model a content wipe kept, as the locked row shows it', () => {
-  beforeEach(() => {
-    dbMock.dbWrite.model.findUnique.mockImplementation((async () =>
-      lockHeld
-        ? { status: 'UnpublishedViolation', mode: null, meta: { note: 1, ...KEPT } }
-        : null) as never);
-  });
-
-  it.each([
-    ['requests a review', () => requestReviewHandler({ input: { id: MODEL }, ctx: ctx() })],
-    [
-      'archives it',
-      () => changeModelModifierHandler({ input: { id: MODEL, mode: 'Archived' }, ctx: ctx() }),
-    ],
-    [
-      'sets its showcase',
-      () => setModelShowcaseCollection({ id: MODEL, collectionId: 9, userId: OWNER }),
-    ],
-  ])('refuses an owner who %s, writing nothing', async (_, act) => {
-    await expect(act()).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
-    expect(dbMock.dbWrite.model.update).not.toHaveBeenCalled();
-  });
-
-  it('lets a moderator archive it (control)', async () => {
-    await changeModelModifierHandler({ input: { id: MODEL, mode: 'Archived' }, ctx: ctx(true) });
-    expect(dbMock.dbWrite.model.update).toHaveBeenCalled();
-  });
-});
-
 describe('the moderator writers', () => {
   const actor = { actor: { id: 7 }, tracker: { modelEvent: vi.fn() } };
   beforeEach(() => {
@@ -294,7 +254,7 @@ describe('the moderator writers', () => {
         ? {
             status: 'UnpublishedViolation',
             mode: null,
-            meta: { note: 1, ...WRITTEN_SINCE, ...KEPT },
+            meta: { note: 1, ...WRITTEN_SINCE },
           }
         : null) as never);
   });
@@ -304,7 +264,6 @@ describe('the moderator writers', () => {
     expect(written()).toEqual({
       note: 1,
       ...WRITTEN_SINCE,
-      ...KEPT,
       takenDownAt: expect.any(String),
       takenDownBy: 7,
     });
@@ -315,12 +274,12 @@ describe('the moderator writers', () => {
       db.model.findFirst.mockResolvedValue({ id: MODEL, mode: 'TakenDown' } as never);
     dbMock.dbWrite.model.findUnique.mockImplementation((async () =>
       lockHeld
-        ? { mode: 'TakenDown', meta: { note: 1, ...WRITTEN_SINCE, ...KEPT, takenDownAt: 'then' } }
+        ? { mode: 'TakenDown', meta: { note: 1, ...WRITTEN_SINCE, takenDownAt: 'then' } }
         : null) as never);
 
     await bringBack.handler({ modelId: MODEL }, actor);
 
-    expect(written()).toEqual({ note: 1, ...WRITTEN_SINCE, ...KEPT });
+    expect(written()).toEqual({ note: 1, ...WRITTEN_SINCE });
   });
 
   it('keeps what was written since when a moderator declines a review', async () => {
@@ -328,7 +287,6 @@ describe('the moderator writers', () => {
     expect(written()).toEqual({
       note: 1,
       ...WRITTEN_SINCE,
-      ...KEPT,
       declinedReason: 'no',
       declinedAt: expect.any(String),
       needsReview: false,
@@ -374,24 +332,5 @@ describe('the locked re-checks of the moderator writers', () => {
       declineReviewHandler({ input: { id: MODEL, reason: 'no' }, ctx: ctx(true) })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     expect(dbMock.dbWrite.model.update).not.toHaveBeenCalled();
-  });
-});
-
-describe('a moderator on a model a content wipe kept', () => {
-  beforeEach(() => {
-    dbMock.dbWrite.model.findUnique.mockImplementation((async () =>
-      lockHeld
-        ? { status: 'UnpublishedViolation', mode: null, meta: { note: 1, ...KEPT } }
-        : null) as never);
-  });
-
-  it('may request a review on it', async () => {
-    await requestReviewHandler({ input: { id: MODEL }, ctx: ctx(true) });
-    expect(written()).toEqual({ note: 1, ...KEPT, needsReview: true });
-  });
-
-  it('may set its showcase', async () => {
-    await setModelShowcaseCollection({ id: MODEL, collectionId: 9, userId: 7, isModerator: true });
-    expect(written()).toEqual({ note: 1, ...KEPT, showcaseCollectionId: 9 });
   });
 });

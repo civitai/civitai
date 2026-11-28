@@ -1,17 +1,25 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { save, requireAccess } = vi.hoisted(() => ({ save: vi.fn(), requireAccess: vi.fn() }));
+const { save, saveGame, saveTagReview, requireAccess } = vi.hoisted(() => ({
+  save: vi.fn(),
+  saveGame: vi.fn(),
+  saveTagReview: vi.fn(),
+  requireAccess: vi.fn(),
+}));
 
 vi.mock('$lib/server/knights/sources-config.service', () => ({
   getLastSourcesChange: vi.fn(),
   getSourcesContext: vi.fn(),
   getSourcesSettings: vi.fn(),
   saveSourcesConfig: save,
+  saveGameSettings: saveGame,
+  saveModTagReview: saveTagReview,
 }));
 vi.mock('$lib/server/access', () => ({ requireAccess }));
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 
 import { actions, load } from '../+page.server';
+import { toggleChoice, toggleSubmission } from '../game-form';
 import { percentToRate, rateToPercent } from '../rates';
 
 const formEvent = (fields: Record<string, string>) => {
@@ -65,6 +73,57 @@ describe('Knights of New Order sources config action', () => {
     expect(save).toHaveBeenCalledWith({ enabled: true, sfwRate: 0.05, nsfwRate: 0.125 }, 77);
   });
 
+  it('saves the open-item cap as a number, commas allowed, and leaves it out when blank', async () => {
+    save.mockResolvedValue({ ok: true, changed: true });
+    await actions.save(
+      formEvent({ enabled: 'true', sfwPercent: '100', nsfwPercent: '30', maxOpen: '60,000' })
+    );
+    expect(save).toHaveBeenLastCalledWith(
+      { enabled: true, sfwRate: 1, nsfwRate: 0.3, maxOpen: 60000 },
+      77
+    );
+    await actions.save(
+      formEvent({ enabled: 'true', sfwPercent: '100', nsfwPercent: '30', maxOpen: '' })
+    );
+    expect(save).toHaveBeenLastCalledWith({ enabled: true, sfwRate: 1, nsfwRate: 0.3 }, 77);
+    expect(
+      await actions.save(
+        formEvent({ enabled: 'true', sfwPercent: '100', nsfwPercent: '30', maxOpen: '6e4' })
+      )
+    ).toMatchObject({ status: 400 });
+    expect(save).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ['on', 1],
+    ['off', 0],
+    ['default', null],
+  ] as const)('saves yes/no questions %s as a share of %s', async (choice, share) => {
+    save.mockResolvedValueOnce({ ok: true, changed: true });
+    await actions.save(
+      formEvent({ enabled: 'true', sfwPercent: '5', nsfwPercent: '5', yesNo: choice })
+    );
+    expect(save).toHaveBeenCalledWith(
+      { enabled: true, sfwRate: 0.05, nsfwRate: 0.05, yesNoShare: share },
+      77
+    );
+  });
+
+  it('leaves the yes/no switch out when it is not posted, so the stored one is kept', async () => {
+    save.mockResolvedValueOnce({ ok: true, changed: true });
+    await actions.save(formEvent({ enabled: 'true', sfwPercent: '5', nsfwPercent: '5' }));
+    expect(save).toHaveBeenCalledWith({ enabled: true, sfwRate: 0.05, nsfwRate: 0.05 }, 77);
+  });
+
+  it('refuses a yes/no value other than on, off or default without saving', async () => {
+    expect(
+      await actions.save(
+        formEvent({ enabled: 'true', sfwPercent: '5', nsfwPercent: '5', yesNo: '40' })
+      )
+    ).toMatchObject({ status: 400 });
+    expect(save).not.toHaveBeenCalled();
+  });
+
   it('shows the service refusing as a 400', async () => {
     save.mockResolvedValueOnce({ ok: false, error: 'nope' });
     expect(
@@ -78,6 +137,117 @@ describe('Knights of New Order sources config action', () => {
     expect(
       await actions.save(formEvent({ enabled: 'true', sfwPercent: '5', nsfwPercent: '5' }))
     ).toMatchObject({ status: 500 });
+  });
+});
+
+describe('Knights of New Order game settings action', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('sends only the posted settings, as numbers and booleans, as the acting moderator', async () => {
+    saveGame.mockResolvedValueOnce({ ok: true, changed: true });
+    expect(
+      await actions.game(
+        formEvent({
+          hiddenCheckRate: '0',
+          hiddenCheckSettleDelayMinutes: ' 12.5 ',
+          yesNoStretch: '3',
+          apprenticeSmites: 'false',
+        })
+      )
+    ).toEqual({ success: true, changed: true });
+    expect(saveGame).toHaveBeenCalledWith(
+      {
+        hiddenCheckRate: 0,
+        hiddenCheckSettleDelayMinutes: 12.5,
+        yesNoStretch: 3,
+        apprenticeSmites: false,
+      },
+      77,
+      { killSwitchesConfirmed: false }
+    );
+  });
+
+  it('clears a setting when "use the Knights default" is posted, whatever its box holds', async () => {
+    saveGame.mockResolvedValueOnce({ ok: true, changed: true });
+    await actions.game(
+      formEvent({
+        yesNoMaxAgeDays: '9',
+        'default.yesNoMaxAgeDays': 'true',
+        'default.shopDisabled': 'true',
+      })
+    );
+    expect(saveGame).toHaveBeenCalledWith({ yesNoMaxAgeDays: null, shopDisabled: null }, 77, {
+      killSwitchesConfirmed: false,
+    });
+  });
+
+  it('passes the kill switch confirmation through', async () => {
+    saveGame.mockResolvedValueOnce({ ok: true, changed: true });
+    await actions.game(formEvent({ conversionDisabled: 'true', confirmKillSwitches: 'true' }));
+    expect(saveGame).toHaveBeenCalledWith({ conversionDisabled: true }, 77, {
+      killSwitchesConfirmed: true,
+    });
+  });
+
+  it.each([
+    ['a word for a number', { yesNoStretch: 'four' }],
+    ['a blank number', { yesNoStretch: '' }],
+    ['an exponent', { hiddenCheckFailureWindowHours: '1e3' }],
+    ['a toggle that is not true or false', { shopDisabled: 'on' }],
+    ['nothing to change', {}],
+  ])('refuses %s without saving', async (_label, fields) => {
+    expect(await actions.game(formEvent(fields))).toMatchObject({ status: 400 });
+    expect(saveGame).not.toHaveBeenCalled();
+  });
+
+  it('shows the service refusing (an out-of-range value, an unconfirmed kill switch) as a 400', async () => {
+    saveGame.mockResolvedValueOnce({ ok: false, error: 'Shop closed needs confirming' });
+    expect(await actions.game(formEvent({ shopDisabled: 'true' }))).toMatchObject({
+      status: 400,
+      data: { error: 'Shop closed needs confirming' },
+    });
+  });
+
+  it('fails the action, not the page, when the store is unreachable', async () => {
+    saveGame.mockRejectedValueOnce(new Error('redis down'));
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    expect(await actions.game(formEvent({ yesNoStretch: '3' }))).toMatchObject({ status: 500 });
+  });
+
+  it('refuses without access before anything is written', async () => {
+    requireAccess.mockImplementationOnce(() => {
+      throw new Error('forbidden');
+    });
+    await expect(actions.game(formEvent({ yesNoStretch: '3' }))).rejects.toThrow('forbidden');
+    expect(saveGame).not.toHaveBeenCalled();
+  });
+});
+
+describe('toggle choices', () => {
+  it('starts on the Knights default when nothing is saved, and posts nothing while it stays there', () => {
+    expect(toggleChoice(undefined)).toBe('default');
+    expect(toggleSubmission(undefined, 'default')).toBeNull();
+  });
+
+  it('starts on the saved value when one is saved', () => {
+    expect(toggleChoice(true)).toBe('on');
+    expect(toggleChoice(false)).toBe('off');
+  });
+
+  it('saves an explicit off over a Knights default the environment may have on, in one step', () => {
+    expect(toggleSubmission(undefined, 'off')).toEqual({ set: false });
+    expect(toggleSubmission(undefined, 'on')).toEqual({ set: true });
+    expect(toggleSubmission(true, 'off')).toEqual({ set: false });
+  });
+
+  it('clears a saved value when the Knights default is chosen', () => {
+    expect(toggleSubmission(true, 'default')).toBe('clear');
+    expect(toggleSubmission(false, 'default')).toBe('clear');
+  });
+
+  it('posts nothing when the saved value is chosen again', () => {
+    expect(toggleSubmission(false, 'off')).toBeNull();
+    expect(toggleSubmission(true, 'on')).toBeNull();
   });
 });
 
@@ -101,5 +271,25 @@ describe('Knights of New Order config access', () => {
     denied();
     await expect(load(formEvent({}) as never)).rejects.toThrow('forbidden');
     expect(requireAccess).toHaveBeenCalledWith({ id: 77 }, '/knights-of-new-order/config');
+  });
+});
+
+describe('the tagReview action', () => {
+  beforeEach(() => saveTagReview.mockReset().mockResolvedValue({ ok: true, changed: true }));
+
+  it('saves the switch as the posting moderator', async () => {
+    expect(await actions.tagReview(formEvent({ modTagReview: 'on' }))).toEqual({
+      success: true,
+      changed: true,
+    });
+    expect(saveTagReview).toHaveBeenCalledWith(true, 77);
+    await actions.tagReview(formEvent({ modTagReview: 'off' }));
+    expect(saveTagReview).toHaveBeenLastCalledWith(false, 77);
+  });
+
+  it('refuses anything but on or off, saving nothing', async () => {
+    const result = await actions.tagReview(formEvent({ modTagReview: 'true' }));
+    expect(result).toMatchObject({ status: 400 });
+    expect(saveTagReview).not.toHaveBeenCalled();
   });
 });

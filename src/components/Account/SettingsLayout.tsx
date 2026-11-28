@@ -1,4 +1,4 @@
-import { Card as MantineCard, Group, Stack, Text, ThemeIcon, Title } from '@mantine/core';
+import { Card as MantineCard, Group, Stack, Switch, Text, ThemeIcon, Title } from '@mantine/core';
 import { IconArrowUpRight, IconCircleCheck } from '@tabler/icons-react';
 import clsx from 'clsx';
 import React from 'react';
@@ -155,6 +155,49 @@ export function SettingRow({
  * boundary telling you which column to read first, and the pairing only ever saved height on three
  * of eight panes.
  */
+/**
+ * A one-switch setting. `flat` renders it as its own settings section, with the label and
+ * description in the row; otherwise as a bare switch carrying them.
+ */
+export function SettingSwitch({
+  name,
+  sectionTitle,
+  label,
+  description,
+  checked,
+  disabled,
+  onChange,
+  flat,
+}: {
+  name: string;
+  sectionTitle: string;
+  label: string;
+  description: string;
+  checked: boolean;
+  disabled?: boolean;
+  onChange: (checked: boolean) => void;
+  flat?: boolean;
+}) {
+  const control = (
+    <Switch
+      name={name}
+      aria-label={flat ? label : undefined}
+      label={flat ? undefined : label}
+      description={flat ? undefined : description}
+      checked={checked}
+      disabled={disabled}
+      onChange={(e) => onChange(e.target.checked)}
+      styles={flat ? undefined : { track: { flex: '0 0 1em' } }}
+    />
+  );
+  if (!flat) return control;
+  return (
+    <SettingsSection title={sectionTitle}>
+      <SettingRow label={label} description={description} control={control} />
+    </SettingsSection>
+  );
+}
+
 export function SettingsStack({ children }: { children: React.ReactNode }) {
   return <div className="flex flex-col gap-10">{children}</div>;
 }

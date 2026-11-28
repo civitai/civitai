@@ -24,7 +24,12 @@ const { dbHandle, createNotification, setReportStatus, logToAxiom } = vi.hoisted
     async (_n: { userId: number; details: { url: string; reason?: string } }) => undefined
   ),
   setReportStatus: vi.fn(
-    async (_a: { id: number; status: string; noRewardFor?: readonly number[] }) => ({
+    async (_a: {
+      id: number;
+      status: string;
+      noRewardFor?: readonly number[];
+      fromStatuses?: readonly string[];
+    }) => ({
       ok: true as const,
       changed: true,
     })
@@ -64,15 +69,20 @@ vi.mock('../redis', () => ({ getSysRedis: () => ({ del: vi.fn(), sRem: vi.fn() }
 vi.mock('../tags-on-image.service', () => ({ upsertTagsOnImageNew: vi.fn() }));
 vi.mock('../axiom', () => ({ logAxiomError: vi.fn(async () => undefined), logToAxiom }));
 
-const { acceptImage, blockImage, dismissFromCsamQueue, dismissUserFromCsamQueue } = await import(
-  '../image-moderation.service'
-);
+const {
+  acceptImage,
+  blockImage,
+  dismissFromCsamQueue,
+  dismissUserFromCsamQueue,
+  ImageNotRestoredError,
+} = await import('../image-moderation.service');
 const { clearUserCsamFlags } = await import('../csam-flag-clear');
 const { DEFERRED_NOTICE_LOG } = await import('../deferred-block-effects');
 
 const SCHEMA = `
 CREATE TYPE "EntityType" AS ENUM ('Image', 'Post', 'Model');
 CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected');
+CREATE DOMAIN "ImageIngestionStatus" AS TEXT;
 CREATE TABLE "Image" (
   "id" INTEGER PRIMARY KEY,
   "type" TEXT,
@@ -100,7 +110,7 @@ ${DEFERRED_BLOCK_EFFECT_TABLE_SQL}
 CREATE TABLE "Report" ("id" INTEGER PRIMARY KEY, "status" TEXT NOT NULL, "reason" TEXT NOT NULL DEFAULT 'TOSViolation');
 CREATE TABLE "ImageReport" ("imageId" INTEGER, "reportId" INTEGER);
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
-CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER,
+CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER, "data" JSONB,
   PRIMARY KEY ("entityType", "entityId", "type"));
 CREATE TABLE "TagsOnImageDetails" ("imageId" INTEGER, "disabled" BOOLEAN);
 ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS "scanJobs" JSONB;
@@ -116,10 +126,7 @@ CREATE TABLE "ModActivity" (
   "entityId" INTEGER, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now()
 );
 CREATE TABLE "CsamReport" ("id" SERIAL PRIMARY KEY, "userId" INTEGER, "details" JSONB NOT NULL DEFAULT '{}', "images" JSONB NOT NULL DEFAULT '[]', "reportSentAt" TIMESTAMP(3));
-CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "bannedAt" TIMESTAMP(3), "meta" JSONB);
-CREATE TABLE "EvidenceHold" ("id" SERIAL PRIMARY KEY, "userId" INTEGER, "releaseAt" TIMESTAMP(3));
-CREATE VIEW "EvidenceHeldUser" AS
-  SELECT "userId" FROM "EvidenceHold" WHERE "releaseAt" IS NULL OR "releaseAt" > now() GROUP BY "userId";
+CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "deletedAt" TIMESTAMP(3), "bannedAt" TIMESTAMP(3), "meta" JSONB);
 CREATE FUNCTION update_nsfw_levels_new(ids INTEGER[]) RETURNS VOID LANGUAGE SQL AS $$ SELECT $$;
 `;
 
@@ -139,7 +146,7 @@ beforeAll(async () => {
 beforeEach(async () => {
   vi.clearAllMocks();
   await db.exec(`TRUNCATE "Image", "CsamQueueSetAside", "ImageDeferredBlockEffect", "Report",
-    "ImageReport", "Appeal", "ModActivity", "CsamReport", "EvidenceHold"`);
+    "ImageReport", "Appeal", "ModActivity", "CsamReport"`);
   await db.query(
     `INSERT INTO "Image" ("id", "userId", "needsReview", "blockedFor", "ingestion", "nsfwLevel", "postId") VALUES
       ($1, ${OWNER}, 'csam', NULL, 'Scanned', 4, 5), ($2, ${OWNER}, 'csam', NULL, 'Scanned', 4, 5)`,
@@ -298,6 +305,26 @@ describe('dismissing it from the review queue', () => {
     expect(actioned().map((a) => a.id)).toEqual([report(FLAGGED)]);
   });
 
+  it('leaves a report alone that a moderator closed between its read and its write', async () => {
+    await block(FLAGGED);
+    // As the real write does it: `fromStatuses` bounds the UPDATE itself.
+    setReportStatus.mockImplementationOnce(async (a) => {
+      await db.query(`UPDATE "Report" SET "status" = 'Unactioned' WHERE "id" = $1`, [a.id]);
+      await db.query(
+        `UPDATE "Report" SET "status" = $1 WHERE "id" = $2
+           AND ($3::text[] IS NULL OR "status" = ANY($3::text[]))`,
+        [a.status, a.id, a.fromStatuses ? [...a.fromStatuses] : null]
+      );
+      return { ok: true as const, changed: true };
+    });
+    await dismiss(FLAGGED);
+
+    const { rows } = await db.query(`SELECT "status" FROM "Report" WHERE "id" = $1`, [
+      report(FLAGGED),
+    ]);
+    expect(rows).toEqual([{ status: 'Unactioned' }]);
+  });
+
   it('for a row with a report reason, actions the open reports of that reason, including one filed after the block', async () => {
     // As the main app's TOS block writes it.
     await db.exec(`
@@ -416,17 +443,21 @@ describe('an image listed in a CSAM report', () => {
     expect(await deferredRows()).toEqual([]);
   });
 
-  it('fires nothing for an image removed for CSAM after its block', async () => {
-    await block(FLAGGED);
-    await block(OTHER);
-    await db.exec(`UPDATE "Image" SET "blockedFor" = 'CSAM' WHERE id = ${FLAGGED}`);
-    await dismiss(FLAGGED);
-    await dismiss(OTHER);
+  it.each(['CSAM', 'TOS,csam'])(
+    'fires nothing for an image removed for CSAM (%s) after its block',
+    async (blockedFor) => {
+      await block(FLAGGED);
+      await block(OTHER);
+      await db.exec(`UPDATE "Image" SET "blockedFor" = '${blockedFor}' WHERE id = ${FLAGGED}`);
+      await db.exec(`UPDATE "Image" SET "blockedFor" = 'TOS,Moderated' WHERE id = ${OTHER}`);
+      await dismiss(FLAGGED);
+      await dismiss(OTHER);
 
-    expect(notices().map((n) => n.url)).toEqual([`/images/${OTHER}`]);
-    expect(actioned().map((a) => a.id)).toEqual([report(OTHER)]);
-    expect(logged('deferred-effect-skipped')).toEqual([FLAGGED]);
-  });
+      expect(notices().map((n) => n.url)).toEqual([`/images/${OTHER}`]);
+      expect(actioned().map((a) => a.id)).toEqual([report(OTHER)]);
+      expect(logged('deferred-effect-skipped')).toEqual([FLAGGED]);
+    }
+  );
 
   it('fires nothing when the check itself fails', async () => {
     await block(FLAGGED);
@@ -450,11 +481,6 @@ describe('a dismissal whose owner check matches', () => {
       'a CSAM report naming the owner second',
       `INSERT INTO "CsamReport" ("userId", "details") VALUES (999, '{"secondaryUserId": "${OWNER}"}')`,
     ],
-    [
-      'a released evidence hold',
-      `INSERT INTO "EvidenceHold" ("userId", "releaseAt") VALUES (${OWNER}, now() - interval '1 day')`,
-    ],
-    ['an evidence hold', `INSERT INTO "EvidenceHold" ("userId") VALUES (${OWNER})`],
   ])('%s: sends no notice and writes the withheld row, ids only', async (_, seed) => {
     await block(FLAGGED);
     await db.exec(seed);
@@ -479,11 +505,11 @@ describe('a dismissal whose owner check matches', () => {
 
   it('withholds when the check itself fails', async () => {
     await block(FLAGGED);
-    await db.exec(`ALTER TABLE "EvidenceHold" RENAME TO "EvidenceHold_gone"`);
+    await db.exec(`ALTER TABLE "CsamReport" RENAME COLUMN "details" TO "details_gone"`);
     try {
       await dismiss(FLAGGED);
     } finally {
-      await db.exec(`ALTER TABLE "EvidenceHold_gone" RENAME TO "EvidenceHold"`);
+      await db.exec(`ALTER TABLE "CsamReport" RENAME COLUMN "details_gone" TO "details"`);
     }
 
     expect(notices()).toEqual([]);
@@ -547,9 +573,15 @@ describe('a re-block of an image already removed under the flag', () => {
 });
 
 describe('an unblock of it', () => {
-  it('drops its deferred effects unfired', async () => {
+  it('is refused while the flag is on, and once the flag is cleared drops its deferred effects unfired', async () => {
     await block(FLAGGED);
-    await acceptImage({ imageId: FLAGGED, userId: 2, restoreRemoved: true });
+    await expect(
+      acceptImage({ csamReview: true, imageId: FLAGGED, userId: 2, restoreRemoved: true })
+    ).rejects.toBeInstanceOf(ImageNotRestoredError);
+    expect(await deferredRows()).toEqual([{ imageId: FLAGGED }]);
+
+    await db.exec(`UPDATE "Image" SET "needsReview" = NULL WHERE id = ${FLAGGED}`);
+    await acceptImage({ csamReview: true, imageId: FLAGGED, userId: 2, restoreRemoved: true });
 
     expect(await deferredRows()).toEqual([]);
     expect(notices()).toEqual([]);

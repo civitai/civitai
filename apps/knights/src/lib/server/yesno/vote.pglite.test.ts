@@ -4,7 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import type { DB } from '@civitai/db-schema/kysely';
 import { counterValue } from '../../../test/metrics';
 import { createQueueDb } from '../../../test/pglite-kysely';
-import { seedImage, seedPlayer } from '../../../test/seed';
+import { engage, hideTagGroups, seedImage, seedPlayer, tagImage } from '../../../test/seed';
 import { PROGRESSION } from '../progression/config';
 import { ledgerOf, settleAndMirror, settleFinalItems } from '../progression/progression';
 import { ensureVotePartitions, lockPlayerVoting } from '../queue/queue.service';
@@ -80,7 +80,7 @@ afterAll(() => pg.close());
 beforeEach(async () => {
   mirror.mockClear();
   await pg.exec(
-    `TRUNCATE "KnightsVote","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","KnightsPlayerDay","Image","Post" RESTART IDENTITY CASCADE; DELETE FROM "KnightsQuestion" WHERE key LIKE 'knights.yesno.%'`
+    `TRUNCATE "KnightsVote","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","KnightsPlayerDay","Image","Post","UserEngagement","KnightsPlayer","TagsOnImageDetails" RESTART IDENTITY CASCADE; DELETE FROM "KnightsQuestion" WHERE key LIKE 'knights.yesno.%'`
   );
 });
 
@@ -149,6 +149,14 @@ describe('an answer', () => {
     expect(await vote(1, ids.hidden, 'yes')).toEqual({ status: 'rejected', reason: 'unavailable' });
     expect(await vote(1, ids.ok, 'yes')).toEqual({ status: 'recorded' });
     expect(await vote(1, 9999, 'yes')).toEqual({ status: 'rejected', reason: 'not-open' });
+  });
+
+  it('is refused for a question on a Private post', async () => {
+    const ids = await seed([row('p')]);
+    await pg.query(`UPDATE "Post" SET availability = 'Private' WHERE id = 10`);
+    await knights(1);
+    expect(await vote(1, ids.p, 'yes')).toEqual({ status: 'rejected', reason: 'unavailable' });
+    expect(await votes(ids.p)).toHaveLength(0);
   });
 
   it('is not asked twice: the same words about the same image under another id count as answered', async () => {
@@ -483,5 +491,57 @@ describe('escalation', () => {
       reason: 'no-consensus',
       minRank: 'Knight',
     });
+  });
+});
+
+describe('a yes/no question on an image in a tag group the player hides', () => {
+  it('is offered to other players only, and the answer is refused', async () => {
+    const ids = await seed([row('a')]);
+    await knights(2);
+    await tagImage(pg, 10, 511);
+    await hideTagGroups(pg, 1, ['bondage']);
+    const offer = (userId: number) =>
+      pickYesNo(db, { userId, rank: 'Knight', secret: 's', share: 1, stretch: 10, force: true });
+
+    expect(await offer(1)).toBeNull();
+    expect((await offer(2))?.itemId).toBe(ids.a);
+    expect(await vote(1, ids.a, 'yes')).toEqual({ status: 'rejected', reason: 'unavailable' });
+    expect(await votes(ids.a)).toEqual([]);
+  });
+});
+
+describe('a yes/no question on the image of a creator the player hid or blocked', () => {
+  it.each(['Block', 'Hide'] as const)(
+    'with a %s row, is offered to other players only, and the answer is refused',
+    async (type) => {
+      const ids = await seed([row('a')]);
+      await knights(2);
+      await pg.query(`UPDATE "Image" SET "userId"=50 WHERE id=10`);
+      await engage(pg, 1, 50, type);
+      const offer = (userId: number) =>
+        pickYesNo(db, { userId, rank: 'Knight', secret: 's', share: 1, stretch: 10, force: true });
+
+      expect(await offer(1)).toBeNull();
+      expect((await offer(2))?.itemId).toBe(ids.a);
+
+      expect(await vote(1, ids.a, 'yes')).toEqual({ status: 'rejected', reason: 'unavailable' });
+      expect(await votes(ids.a)).toEqual([]);
+    }
+  );
+});
+
+describe("a yes/no question on the player's own image", () => {
+  it('is never offered to the player who posted it, and their answer is refused', async () => {
+    const ids = await seed([row('a')]);
+    await knights(2);
+    await pg.query(`UPDATE "Image" SET "userId"=1 WHERE id=10`);
+    const offer = (userId: number) =>
+      pickYesNo(db, { userId, rank: 'Knight', secret: 's', share: 1, stretch: 10, force: true });
+
+    expect(await offer(1)).toBeNull();
+    expect((await offer(2))?.itemId).toBe(ids.a);
+
+    expect(await vote(1, ids.a, 'yes')).toEqual({ status: 'rejected', reason: 'own-image' });
+    expect(await votes(ids.a)).toEqual([]);
   });
 });

@@ -45,7 +45,9 @@ const {
   mockIsAppBlocksAuthorEnabled: vi.fn<(opts: { user: unknown }) => Promise<boolean>>(
     async () => true
   ),
-  mockTakeSubmitSlot: vi.fn<(subject: string) => Promise<unknown>>(async () => ({ ok: true })),
+  mockTakeSubmitSlot: vi.fn<(subject: string, user: unknown) => Promise<unknown>>(async () => ({
+    ok: true,
+  })),
   mockSubmitVersion: vi.fn<(...args: any[]) => Promise<any>>(),
 }));
 
@@ -62,10 +64,17 @@ vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksEnabled: mockIsAppBlocksEnabled,
   isAppBlocksAuthorEnabled: mockIsAppBlocksAuthorEnabled,
 }));
-vi.mock('~/server/services/blocks/submit-rate-limit', () => ({
-  SUBMIT_RATE_LIMIT: { max: 10, windowSeconds: 60 },
-  takeSubmitSlot: mockTakeSubmitSlot,
-}));
+vi.mock('~/server/services/blocks/submit-rate-limit', async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import('~/server/services/blocks/submit-rate-limit')
+  >();
+  return {
+    SUBMIT_RATE_LIMIT: actual.SUBMIT_RATE_LIMIT,
+    takeSubmitSlot: mockTakeSubmitSlot,
+    // The real 429 writer: what this file pins is the body it sends.
+    sendSubmitRateLimited: actual.sendSubmitRateLimited,
+  };
+});
 vi.mock('~/server/services/blocks/publish-request.service', () => ({
   submitVersion: mockSubmitVersion,
 }));
@@ -221,7 +230,7 @@ describe('POST /api/blocks/submit-version', () => {
       makeReq({
         body: { bundleBase64 },
         headers: { authorization: 'Bearer test-oauth-token' },
-        context: { subject: { type: 'oauth', id: 'client-1' }, tokenScope: 1, apiKeyId: 3 },
+        context: { subject: { type: 'oauth', id: 'client-1' }, tokenScope: 1n, apiKeyId: 3 },
       }),
       res
     );
@@ -230,12 +239,28 @@ describe('POST /api/blocks/submit-version', () => {
   });
 
   it('counts the submit against the user, and 429s past the limit without submitting', async () => {
-    mockTakeSubmitSlot.mockResolvedValue({ ok: false, reason: 'limited', retryAfterSeconds: 37 });
+    mockTakeSubmitSlot.mockResolvedValue({
+      ok: false,
+      reason: 'limited',
+      retryAfterSeconds: 37,
+      used: 11,
+      limit: 10,
+    });
     const res = makeRes();
     await invoke(makeReq({ body: { bundleBase64 } }), res);
-    expect(mockTakeSubmitSlot).toHaveBeenCalledWith('user:42');
+    expect(mockTakeSubmitSlot).toHaveBeenCalledWith('user:42', expect.objectContaining({ id: 42 }));
     expect(res._status).toBe(429);
     expect(res.setHeader).toHaveBeenCalledWith('Retry-After', '37');
+    // A product allowance: the window's count against its 10 a minute.
+    expect(res._body.rateLimit).toMatchObject({
+      retryAfterSeconds: 37,
+      id: 'apps.version-submits',
+      kind: 'product',
+      limit: 10,
+      used: 11,
+      remaining: 0,
+      windowSeconds: 60,
+    });
     expect(mockSubmitVersion).not.toHaveBeenCalled();
   });
 
@@ -326,7 +351,24 @@ describe('POST /api/blocks/submit-version', () => {
       status: 'pending',
       listing,
       storageMigrationWarnings: [],
+      advisories: [],
     });
+  });
+
+  it('answers the service’s advisories, which never refuse the submit (the CLI prints advisories[].message)', async () => {
+    const advisories = [
+      {
+        code: 'default-theme',
+        message:
+          "This app uses Civitai's default theme. A distinct accent helps it stand out in the store: https://developer.civitai.com/apps/guide/theming#give-your-app-its-own-look",
+        docsUrl: 'https://developer.civitai.com/apps/guide/theming#give-your-app-its-own-look',
+      },
+    ];
+    mockSubmitVersion.mockResolvedValueOnce({ ...SERVICE_RESULT, advisories });
+    const res = makeRes();
+    await invoke(makeReq({ body: { bundleBase64 } }), res);
+    expect(res._status).toBe(200);
+    expect(res._body).toMatchObject({ status: 'pending', advisories });
   });
 
   it('200s on success: decodes the bundle and calls the service with the moderator id', async () => {
@@ -343,6 +385,7 @@ describe('POST /api/blocks/submit-version', () => {
       listing: null,
       // Nor any schema-migration warning: the field is still there, empty.
       storageMigrationWarnings: [],
+      advisories: [],
     });
     expect(mockSubmitVersion).toHaveBeenCalledTimes(1);
     const arg = mockSubmitVersion.mock.calls[0][0];
@@ -392,6 +435,17 @@ describe('POST /api/blocks/submit-version', () => {
     expect(res._body).toEqual({ message: refusal.message, storageHookErrors: problems });
   });
 
+  it('🔴 a module-graph refusal returns 400 with the structured moduleGraphErrors', async () => {
+    const { ModuleGraphRefusal } = await import('~/server/services/blocks/bundle-module-graph');
+    const problems = [{ kind: 'bare-specifier' as const, importer: 'main.js', specifier: 'react' }];
+    const refusal = new ModuleGraphRefusal(problems);
+    mockSubmitVersion.mockRejectedValue(refusal);
+    const res = makeRes();
+    await invoke(makeReq({ body: { bundleBase64 } }), res);
+    expect(res._status).toBe(400);
+    expect(res._body).toEqual({ message: refusal.message, moduleGraphErrors: problems });
+  });
+
   // ---------------------------------------------------------------------------
   // #4059 build provenance. The route's job is to pass the client's CLAIM
   // through unchanged and to reject a malformed one with a message that names
@@ -407,6 +461,16 @@ describe('POST /api/blocks/submit-version', () => {
     const arg = mockSubmitVersion.mock.calls[0][0];
     expect(arg.sourceCommit).toBe('4f3a9c2e17b06d85fa1c39e470b28d6ac519e0f3');
     expect(arg.sourceDirty).toBe(true);
+  });
+
+  it('passes sdkFloorOverride through to the service verbatim', async () => {
+    const sdkFloorOverride = [{ package: '@civitai/sdk', installed: '0.29.4', minimum: '0.40.1' }];
+    const res = makeRes();
+    await invoke(makeReq({ body: { bundleBase64, sdkFloorOverride } }), res);
+    expect(res._status).toBe(200);
+    expect(mockSubmitVersion.mock.calls[0][0].sdkFloorOverride).toEqual([
+      { package: '@civitai/sdk', installed: '0.29.4', minimum: '0.40.1' },
+    ]);
   });
 
   it('passes sourceDirty:false through as FALSE, not as absent', async () => {
@@ -490,5 +554,58 @@ describe('POST /api/blocks/submit-version', () => {
     await invoke(makeReq({ body: {} }), res2);
     expect(res2._status).toBe(400);
     expect(res2._body).toEqual({ message: 'Invalid bundle payload' });
+  });
+});
+
+describe('POST /api/blocks/submit-version — staff platform updates', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockSession.value = MOD;
+    mockEnv.BUNDLE_S3_ENDPOINT = 'https://s3.example';
+    mockEnv.BUNDLE_S3_BUCKET = 'bundles';
+    mockOther.isProd = false;
+    mockIsAllowedOrigin.mockReturnValue(true);
+    mockIsAppBlocksEnabled.mockResolvedValue(true);
+    mockIsAppBlocksAuthorEnabled.mockResolvedValue(true);
+    mockTakeSubmitSlot.mockResolvedValue({ ok: true });
+    mockSubmitVersion.mockReset();
+    mockSubmitVersion.mockResolvedValue(SERVICE_RESULT);
+  });
+
+  it('🔴 a bundle missing an unshipped update answers 409 platform_update_missing with the updates', async () => {
+    const { PlatformUpdateMissingRefusal } = await import(
+      '~/server/services/blocks/platform-update-bundle-check'
+    );
+    const missing = [
+      { id: 'apu_1', reason: 'Fix the deprecated SDK call', by: 'mod-jane', paths: ['src/a.ts'] },
+    ];
+    const refusal = new PlatformUpdateMissingRefusal(missing);
+    mockSubmitVersion.mockRejectedValue(refusal);
+    const res = makeRes();
+    await invoke(makeReq({ body: { bundleBase64 } }), res);
+    expect(res._status).toBe(409);
+    expect(res._body).toEqual({
+      message: refusal.message,
+      code: 'platform_update_missing',
+      // The owner reads the official sender, never the staff member's username.
+      details: { updates: [{ ...missing[0], by: 'CivitaiOfficial (App Assistant)' }] },
+    });
+  });
+
+  it('passes allowUnmergedPlatformUpdate through to the service; absent stays absent', async () => {
+    await invoke(makeReq({ body: { bundleBase64, allowUnmergedPlatformUpdate: true } }), makeRes());
+    expect(mockSubmitVersion.mock.calls[0][0].allowUnmergedPlatformUpdate).toBe(true);
+    await invoke(makeReq({ body: { bundleBase64 } }), makeRes());
+    expect(mockSubmitVersion.mock.calls[1][0].allowUnmergedPlatformUpdate).toBeUndefined();
+  });
+
+  it('400s a non-boolean allowUnmergedPlatformUpdate with a message naming the field', async () => {
+    const res = makeRes();
+    await invoke(makeReq({ body: { bundleBase64, allowUnmergedPlatformUpdate: 'yes' } }), res);
+    expect(res._status).toBe(400);
+    expect(res._body).toEqual({
+      message: 'Invalid submit payload: allowUnmergedPlatformUpdate must be a boolean',
+    });
+    expect(mockSubmitVersion).not.toHaveBeenCalled();
   });
 });

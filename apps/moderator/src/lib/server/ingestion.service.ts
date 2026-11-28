@@ -11,7 +11,10 @@ import { invalidateThumbnails, thumbnailParentId } from './thumbnail-cache';
 import { bustProfilePictures } from './profile-picture-cache';
 import { syncSearchIndex } from './search-index';
 import { recordModActivity } from './mod-activity';
-import { queueModelsForImageChildTagChanges } from './image-models-reindex';
+import { queueDocumentsForImageMinorChanges } from './image-models-reindex';
+import { listWithheldIds, withheldRefusal } from './retracted-media';
+import { holdsCsamReview } from './held-media';
+import { assertNotWithheld, notWithheldTarget } from './withheld-write';
 import { getMediaProbeStorage } from './storage';
 import type { MediaType } from '$lib/media/edge-url';
 
@@ -134,7 +137,9 @@ export async function getIngestionHealth(): Promise<IngestionHealth> {
 
 export const MAX_RESCAN_PER_REQUEST = 500;
 
-export type RescanResult = { ok: true; count: number } | { ok: false; error: string };
+export type RescanResult =
+  | { ok: true; count: number; skipped: number }
+  | { ok: false; error: string };
 
 /**
  * Hands stuck images to the ingest-images cron by moving them to `Rescan`: the ingestion trigger
@@ -144,14 +149,23 @@ export type RescanResult = { ok: true; count: number } | { ok: false; error: str
 export async function rescanStuckImages({
   imageIds,
   userId,
+  viewer,
 }: {
   imageIds?: number[];
   userId: number;
+  viewer: App.Locals['user'] | undefined;
 }): Promise<RescanResult> {
   let ids = imageIds ? [...new Set(imageIds)] : undefined;
   if (ids && !ids.length) return { ok: false, error: 'Select at least one image.' };
   if (ids && ids.length > MAX_RESCAN_PER_REQUEST)
     return { ok: false, error: `Select at most ${MAX_RESCAN_PER_REQUEST} images at a time.` };
+  if (ids) {
+    const withheld = await withheldRefusal(viewer, ids);
+    if (withheld) return { ok: false, error: withheld };
+  }
+
+  // "All" leaves out what is withheld from this moderator rather than refusing the whole run.
+  let skipped = 0;
 
   ids ??= (
     await dbWrite
@@ -163,7 +177,16 @@ export async function rescanStuckImages({
       .limit(MAX_RESCAN_PER_REQUEST)
       .execute()
   ).map((row) => row.id);
-  if (!ids.length) return { ok: true, count: 0 };
+  if (!imageIds && ids.length) {
+    const withheld = await listWithheldIds(
+      ids,
+      { csamReview: holdsCsamReview(viewer) },
+      'to-ingest'
+    );
+    skipped = withheld.size;
+    ids = ids.filter((id) => !withheld.has(id));
+  }
+  if (!ids.length) return { ok: true, count: 0, skipped };
 
   // Re-checked rather than trusted from the page: a verdict that landed since it rendered must not be
   // reset, and a moderator's locked rating must not be rescanned away.
@@ -173,8 +196,13 @@ export async function rescanStuckImages({
     .where('id', 'in', ids)
     .where(stuckWhere())
     .where('nsfwLevelLocked', '=', false)
+    .where(notWithheldTarget(holdsCsamReview(viewer)))
     .returning('id')
     .execute();
+  const left = ids.filter((id) => !rescanned.some((row) => row.id === id));
+  if (left.length)
+    skipped += (await listWithheldIds(left, { csamReview: holdsCsamReview(viewer) }, 'to-ingest'))
+      .size;
 
   // One row per image, as `bulkRemove` does: ModActivity keys on the content id.
   await Promise.all(
@@ -182,13 +210,14 @@ export async function rescanStuckImages({
       recordModActivity({ userId, entityType: 'image', entityId: id, activity: 'rescanStuck' })
     )
   );
-  return { ok: true, count: rescanned.length };
+  return { ok: true, count: rescanned.length, skipped };
 }
 
 /** Shared by the queue and its badge: a divergence here is a count that never reaches zero. */
+// "createdAt" is a timestamp without time zone holding UTC; a bare now() would compare in the session zone.
 const ingestionErrorWhere = sql`
-  i."createdAt" > now() - INTERVAL '2 days'
-  AND i."createdAt" < now() - INTERVAL '1 hour'
+  i."createdAt" > (now() AT TIME ZONE 'UTC') - INTERVAL '2 days'
+  AND i."createdAt" < (now() AT TIME ZONE 'UTC') - INTERVAL '1 hour'
   AND i.ingestion = 'Error'::"ImageIngestionStatus"
   AND i."nsfwLevel" = 0
 `;
@@ -279,10 +308,13 @@ export async function resolveIngestionError({
   id,
   nsfwLevel,
   userId,
+  csamReview,
 }: {
   id: number;
   nsfwLevel: number;
   userId: number;
+  /** The moderator's CSAM grant: an image withheld from them is left as it is. */
+  csamReview: boolean;
 }): Promise<void> {
   const image = await dbWrite
     .selectFrom('Image')
@@ -370,7 +402,8 @@ export async function resolveIngestionError({
       nsfwLevelLocked: true,
       ingestion: 'Scanned',
       blockedFor: null,
-      scannedAt: new Date(),
+      // Not now(): resolving must not move the image in feeds. firstVisibleAt does that, once.
+      scannedAt: sql`COALESCE("scannedAt", "createdAt")`,
       metadata: sql`${JSON.stringify(metadata)}::jsonb`,
     })
     .where('id', '=', id)
@@ -394,9 +427,12 @@ export async function resolveIngestionError({
           .where('User.deletedAt', 'is', null)
       )
     )
+    .where(notWithheldTarget(csamReview))
     .executeTakeFirst();
-  if (Number(result?.numUpdatedRows ?? 0) === 0)
+  if (Number(result?.numUpdatedRows ?? 0) === 0) {
+    await assertNotWithheld([id], csamReview);
     throw new Error('This image changed since the queue loaded; reload the queue.');
+  }
   if (image.blockedFor !== null) await dropBlockedImageDeleteQueue(id);
   await invalidateThumbnails(id, [image.parentId]);
   await bustProfilePictures({ imageIds: [id] });
@@ -416,5 +452,5 @@ export async function resolveIngestionError({
       bustCachedObject(REDIS_KEYS.CACHES.TAG_IDS_FOR_IMAGES, id),
     ])
   );
-  if (image.postId != null) await queueModelsForImageChildTagChanges({ levelImageIds: [id] });
+  if (image.postId != null) await queueDocumentsForImageMinorChanges({ levelImageIds: [id] });
 }

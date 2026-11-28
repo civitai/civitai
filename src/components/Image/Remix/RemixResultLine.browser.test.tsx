@@ -21,7 +21,8 @@ describe('RemixResultLine', () => {
       (el) =>
         el instanceof HTMLInputElement
           ? `switch:${el.closest('label')?.textContent ?? el.labels?.[0]?.textContent}`
-          : el.getAttribute('aria-label') ?? el.textContent
+          : // Text a phone shows, not an aria-label: a tooltip never shows there.
+            el.textContent
     );
     expect(controls).toEqual([
       'Remix again',

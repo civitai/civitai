@@ -26,10 +26,11 @@ const (
 )
 
 // ModelData is one dataForModelsCache value after its appendFn: the model's versions (index order, as
-// cached), its SHA256 hashes, and its tag ids (modelTagCache's ids that tagCache still holds).
+// cached, each with the key order the cached record has: Entry.Ordered), its SHA256 hashes, and its
+// tag ids (modelTagCache's ids that tagCache still holds).
 type ModelData struct {
 	Hashes   []any
-	Versions []map[string]any
+	Versions []superjson.Object
 	TagIDs   []int
 }
 
@@ -39,6 +40,11 @@ type ModelPageRequest struct {
 	ModelIDs []int
 	// VisibleEvents is the decoration events every viewer sees; empty = no decoration read.
 	VisibleEvents map[string]bool
+	// ComputeUserCosmetics computes the owners' user-cosmetics misses with s.Compute
+	// (fillUserCosmetics, the lookup the image pages run), written back as FEED_GO_CACHE_WRITEBACK
+	// says; false (FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS off) leaves a miss falling back
+	// (`user-cosmetics-miss`), as it always has here.
+	ComputeUserCosmetics bool
 }
 
 // ModelPage is getModelsRaw's parallel fetch, plus the owners' metric-privacy defaults
@@ -61,9 +67,10 @@ type PrivacyDefaults struct{ Buzz, Downloads, Generations bool }
 // (users, profile pictures, user cosmetics, model data, model tags, model frames, decorations, the
 // metric-privacy defaults), then one for the records the first stage names (cosmetics for the user
 // cosmetics and the frames, basic tags for the model tags). The replica reads for misses run after,
-// concurrently. With s.Compute the frame and decoration misses are computed (fillModelFrames,
-// fillModelEvents: the image lookups over the models); the other misses that Node fills from the
-// primary or by a lag-aware read fall back (model data, model tags, user cosmetics); the rest are
+// concurrently. With s.Compute the frame, decoration, model-data and model-tags misses are computed
+// (fillModelFrames, fillModelEvents: the image lookups over the models; fillModelData,
+// fillModelTags: the model caches' own lookups), and with req.ComputeUserCosmetics the user-cosmetics
+// misses (fillUserCosmetics), which otherwise fall back; the rest are
 // read from the replica as the image feed's are (basic users, profile pictures, cosmetics) or as
 // Node's origin does (tags by id, the privacy defaults). Under a Go-first probe (WithPresence) each call counts as a page.
 func (s *Sources) ModelPage(ctx context.Context, req ModelPageRequest) (*ModelPage, error) {
@@ -98,7 +105,7 @@ func (s *Sources) ModelPage(ctx context.Context, req ModelPageRequest) (*ModelPa
 		return
 	}))
 	g.Go(safe.Go(func() (err error) {
-		out.Data, err = s.modelDataFrom(gctx, models, data.Entries(), tags.Entries())
+		out.Data, err = s.modelData(gctx, models, data, tags)
 		return
 	}))
 	g.Go(safe.Go(func() (err error) {
@@ -114,7 +121,7 @@ func (s *Sources) ModelPage(ctx context.Context, req ModelPageRequest) (*ModelPa
 		return
 	}))
 	g.Go(safe.Go(func() (err error) {
-		out.UserCosmetics, out.Frames, err = s.modelCosmetics(gctx, owners, models, userCosmetics, frames)
+		out.UserCosmetics, out.Frames, err = s.modelCosmetics(gctx, owners, models, userCosmetics, frames, req.ComputeUserCosmetics)
 		return
 	}))
 	if err := g.Wait(); err != nil {
@@ -124,9 +131,18 @@ func (s *Sources) ModelPage(ctx context.Context, req ModelPageRequest) (*ModelPa
 }
 
 // modelCosmetics is the second cosmetics stage: user cosmetics and the models' frames joined with one
-// cosmetic-records read (as Page's pageCosmetics does for image frames).
-func (s *Sources) modelCosmetics(ctx context.Context, owners, models []int, userCosmetics, frames *PackedRead) (map[int][]any, map[int]superjson.Object, error) {
-	perUser, userCIDs, err := userCosmeticsFrom(owners, userCosmetics.Entries())
+// cosmetic-records read (as Page's pageCosmetics does for image frames). computeUsers computes the
+// user-cosmetics misses first (fillUserCosmetics; a no-op without s.Compute).
+func (s *Sources) modelCosmetics(ctx context.Context, owners, models []int, userCosmetics, frames *PackedRead, computeUsers bool) (map[int][]any, map[int]superjson.Object, error) {
+	ucGot, ucWritable := userCosmetics.read()
+	if computeUsers {
+		// userCosmeticCache.fetch's lookup, as the image pages compute it; its write is SET NX, only
+		// for a miss Node would write too (PackedRead.read's writable).
+		if err := s.fillUserCosmetics(ctx, owners, ucGot, ucWritable); err != nil {
+			return nil, nil, err
+		}
+	}
+	perUser, userCIDs, err := userCosmeticsFrom(owners, ucGot)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -136,7 +152,7 @@ func (s *Sources) modelCosmetics(ctx context.Context, owners, models []int, user
 	}
 	if miss := Missing(models, frameEntries); len(miss) > 0 {
 		// No miss computation (FEED_GO_COMPUTE_MISSES off): the frame lookup reads the primary.
-		return nil, nil, fallback.Newf("model-frame-miss", "%d ids", len(miss))
+		return nil, nil, fallback.Safef("model-frame-miss", "%d ids", len(miss))
 	}
 	var frameCIDs []int
 	for _, e := range frameEntries {
@@ -175,20 +191,43 @@ func (s *Sources) modelCosmetics(ctx context.Context, owners, models []int, user
 // s.Compute, fillModelEvents has computed the misses into got first).
 func modelDecorations(ids []int, got map[int]Entry, visible map[string]bool) (map[int]superjson.Object, error) {
 	if miss := Missing(ids, got); len(miss) > 0 {
-		return nil, fallback.Newf("model-decoration-miss", "%d ids", len(miss))
+		return nil, fallback.Safef("model-decoration-miss", "%d ids", len(miss))
 	}
 	return VisibleEventDecorations(ids, got, visible)
 }
 
-// modelDataFrom is dataForModelsCache.fetch with its appendFn: each model's tags are modelTagCache's
-// tag ids that tagCache resolves (`.filter(isDefined)`), in modelTagCache's order; a model the tag
-// cache has no entry for keeps the tags its data entry was written with. A data miss, or a model-tags
-// miss for a model the data cache answered, falls back (Node reads them lag-aware, or from the
-// primary); a basic-tags miss is read from the
+// modelData is dataForModelsCache.fetch: the data misses computed (fillModelData), then the appendFn's
+// modelTagCache.fetch over the models the data cache answered, its misses computed (fillModelTags),
+// then modelDataFrom. Without s.Compute a miss on either falls back there.
+func (s *Sources) modelData(ctx context.Context, models []int, data, tags *PackedRead) (map[int]ModelData, error) {
+	dataGot, dataWritable := data.read()
+	if err := s.fillModelData(ctx, models, dataGot, dataWritable); err != nil {
+		return nil, err
+	}
+	tagGot, tagWritable := tags.read()
+	if miss := Missing(models, dataGot); len(miss) == 0 {
+		var found []int
+		for _, id := range models {
+			if !dataGot[id].NotFound {
+				found = append(found, id)
+			}
+		}
+		if err := s.fillModelTags(ctx, found, tagGot, tagWritable); err != nil {
+			return nil, err
+		}
+	}
+	return s.modelDataFrom(ctx, models, dataGot, tagGot)
+}
+
+// modelDataFrom is dataForModelsCache.fetch with its appendFn over the entries read (and computed):
+// each model's tags are modelTagCache's tag ids that tagCache resolves (`.filter(isDefined)`), in
+// modelTagCache's order; a model the tag cache has no entry for keeps the tags its data entry was
+// written with. A data miss, or a model-tags miss for a model the data cache answered, falls back
+// (only without s.Compute: with it modelData computed them); a basic-tags miss is read from the
 // replica, existence being all that is read of a tag here.
 func (s *Sources) modelDataFrom(ctx context.Context, models []int, data, tags map[int]Entry) (map[int]ModelData, error) {
 	if miss := Missing(models, data); len(miss) > 0 {
-		return nil, fallback.Newf("model-data-miss", "%d ids", len(miss))
+		return nil, fallback.Safef("model-data-miss", "%d ids", len(miss))
 	}
 	// The appendFn asks the tag cache for the models the data cache answered only.
 	var found []int
@@ -198,7 +237,7 @@ func (s *Sources) modelDataFrom(ctx context.Context, models []int, data, tags ma
 		}
 	}
 	if miss := Missing(found, tags); len(miss) > 0 {
-		return nil, fallback.Newf("model-tags-miss", "%d ids", len(miss))
+		return nil, fallback.Safef("model-tags-miss", "%d ids", len(miss))
 	}
 	out := make(map[int]ModelData, len(models))
 	tagIDsOf := map[int][]int{}
@@ -209,12 +248,14 @@ func (s *Sources) modelDataFrom(ctx context.Context, models []int, data, tags ma
 			continue
 		}
 		var md ModelData
-		md.Hashes, _ = e.Value["hashes"].([]any)
+		// The ordered record (an ordered cache): each version keeps the key order Node's answer has.
+		rec := e.Ordered()
+		md.Hashes, _ = ObjectField(rec, "hashes").([]any)
 		if md.Hashes == nil {
 			md.Hashes = []any{}
 		}
-		for _, v := range asList(e.Value["versions"]) {
-			if m, ok := v.(map[string]any); ok {
+		for _, v := range asList(ObjectField(rec, "versions")) {
+			if m, ok := v.(superjson.Object); ok {
 				md.Versions = append(md.Versions, m)
 			}
 		}
@@ -229,9 +270,9 @@ func (s *Sources) modelDataFrom(ctx context.Context, models []int, data, tags ma
 			allTags = append(allTags, list...)
 		} else {
 			// The entry's own `tags` (written as [] by the lookup).
-			for _, v := range asList(e.Value["tags"]) {
-				if m, ok := v.(map[string]any); ok {
-					if n, ok := Int(m["tagId"]); ok {
+			for _, v := range asList(ObjectField(rec, "tags")) {
+				if m, ok := v.(superjson.Object); ok {
+					if n, ok := Int(ObjectField(m, "tagId")); ok {
 						md.TagIDs = append(md.TagIDs, n)
 					}
 				}
@@ -345,15 +386,17 @@ func (s *Sources) privacyDefaultsFrom(ctx context.Context, owners []int, got map
 }
 
 // VersionImages is getImagesForModelVersionCache: each version's cached showcase images
-// (imagesForModelVersionsCache), each image's `tags` replaced by the image-tag cache's ids (the
-// appendFn: `tags ?? []`). A version whose entry is a notFound marker has no images (absent from the
+// (imagesForModelVersionsCache) without those the minor content rule restricts, each image's `tags`
+// replaced by the image-tag cache's ids (the appendFn: the filter, then `tags ?? []`). A version
+// whose images are all filtered out keeps its entry, with no images. A version whose entry is a
+// notFound marker has no images (absent from the
 // answer). With s.Compute a version-images miss is computed (fillVersionImages: the lookupFn's
 // showcase query, lag-aware with write-back on) and a stale entry revalidated as Node's fetch
 // revalidates it; without, a miss falls back and a stale entry is served. An image-tags miss is
 // computed as on the image feed (fillTagIDs), and falls back without s.Compute.
-func (s *Sources) VersionImages(ctx context.Context, versionIDs []int) (map[int][]map[string]any, error) {
+func (s *Sources) VersionImages(ctx context.Context, versionIDs []int) (map[int][]superjson.Object, error) {
 	ids := Unique(versionIDs)
-	out := map[int][]map[string]any{}
+	out := map[int][]superjson.Object{}
 	if len(ids) == 0 {
 		return out, nil
 	}
@@ -366,7 +409,7 @@ func (s *Sources) VersionImages(ctx context.Context, versionIDs []int) (map[int]
 	}
 	if miss := Missing(ids, got); len(miss) > 0 {
 		// No miss computation (FEED_GO_COMPUTE_MISSES off): the lookup is lag-aware.
-		return nil, fallback.Newf("model-images-miss", "%d ids", len(miss))
+		return nil, fallback.Safef("model-images-miss", "%d ids", len(miss))
 	}
 	var imageIDs []int
 	for _, id := range ids {
@@ -374,13 +417,21 @@ func (s *Sources) VersionImages(ctx context.Context, versionIDs []int) (map[int]
 		if e.NotFound {
 			continue
 		}
-		list := make([]map[string]any, 0)
-		for _, v := range asList(e.Value["images"]) {
-			if m, ok := v.(map[string]any); ok {
+		// The ordered record (an ordered cache): each image keeps the key order Node's answer has
+		// (model.getAll writes its images' keys in that order).
+		list := make([]superjson.Object, 0)
+		for _, v := range asList(ObjectField(e.Ordered(), "images")) {
+			if m, ok := v.(superjson.Object); ok {
 				list = append(list, m)
-				if iid, ok := Int(m["id"]); ok {
-					imageIDs = append(imageIDs, iid)
-				}
+			}
+		}
+		// The appendFn drops the images the minor content rule restricts before it reads their tags,
+		// on every read, for every viewer (an entry cached before the lookup left them out holds them).
+		// The same read drops the images at no selectable level.
+		list = WithSelectableLevel(WithoutMinorMatureImages(list, ObjectField), ObjectField)
+		for _, m := range list {
+			if iid, ok := Int(ObjectField(m, "id")); ok {
+				imageIDs = append(imageIDs, iid)
 			}
 		}
 		out[id] = list
@@ -401,17 +452,15 @@ func (s *Sources) VersionImages(ctx context.Context, versionIDs []int) (map[int]
 		return nil, err
 	}
 	for vid, list := range out {
-		copied := make([]map[string]any, len(list))
+		copied := make([]superjson.Object, len(list))
 		for i, img := range list {
-			c := make(map[string]any, len(img)+1)
-			for k, v := range img {
-				c[k] = v
-			}
-			iid, _ := Int(img["id"])
+			// `image.tags = …`: an existing member keeps its place, a new one goes last.
+			c := append(make(superjson.Object, 0, len(img)+1), img...)
+			iid, _ := Int(ObjectField(img, "id"))
 			if t, ok := tagIDs[iid]; ok && t != nil {
-				c["tags"] = t
+				c.Set("tags", t)
 			} else {
-				c["tags"] = []any{}
+				c.Set("tags", []any{})
 			}
 			copied[i] = c
 		}
@@ -447,7 +496,7 @@ func (s *Sources) CreatorMemberships(ctx context.Context, userIDs []int) (map[in
 			if errors.Is(err, redis.Nil) {
 				return nil, fallback.New("membership-miss")
 			}
-			return nil, fallback.Newf("membership-read-failed", "%v", err)
+			return nil, fallback.Wrap("membership-read-failed", err)
 		}
 		v, err := Unpack(raw)
 		if err != nil {

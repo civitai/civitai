@@ -49,7 +49,8 @@ import {
  * SCANNED ROWS. While `app-block-source-scanned-rows` is on, the generation gate refuses
  * that blob for an app, so (given `scannedRows`) the modal has the server copy it into a
  * PRIVATE, scanned `Image` row and resolves THAT row's url plus `imageId` and `ready`
- * (`toGenerationSource`). Off, or with the flag unreadable, it resolves the blob as above.
+ * (`toGenerationSource`). Off, it resolves the blob as above; with the flag unreadable, the
+ * copy is asked for anyway and the blob is the answer only when the copy is refused.
  */
 
 /** The blob as uploaded, or (scanned rows on) the private scanned row it was copied into. */
@@ -75,14 +76,19 @@ export default function BlockGenerationSourceUploadModal({
   const [unreadablePick, setUnreadablePick] = useState(false);
   const { requireSignIn } = useSignInToUpload();
 
-  // Guard against a resolved upload landing after the modal unmounts / a new
-  // upload supersedes it (epoch bump) — and clean up the object-URL preview.
+  // Guard against a resolved upload landing after the modal closes (it stays mounted through its
+  // exit transition) or a new upload supersedes it (epoch bump); clean up the preview on unmount.
   const epochRef = useRef(0);
   const objectUrlRef = useRef<string | null>(null);
   useEffect(() => {
+    if (!dialog.opened) return;
     return () => {
       // eslint-disable-next-line react-hooks/exhaustive-deps -- the live epoch counter, not a DOM node
       epochRef.current++;
+    };
+  }, [dialog.opened]);
+  useEffect(() => {
+    return () => {
       if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
     };
   }, []);

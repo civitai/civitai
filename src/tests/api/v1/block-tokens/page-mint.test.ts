@@ -161,13 +161,13 @@ function makeRes() {
 // (1<<15), BuzzRead (1<<16), SocialTip (1<<20). The page hard rule must reject
 // a money scope EVEN WHEN the OAuth client allows it (otherwise the earlier
 // OAuth-allowlist check would be what rejects, not the page rule).
-const MONEY_BITS = (1 << 15) | (1 << 16) | (1 << 20);
+const MONEY_BITS = (1n << 15n) | (1n << 16n) | (1n << 20n);
 
 // An approved page app (no install row). resolvePageBlock returns this.
 const PAGE_BLOCK = (
   manifestScopes: string[],
   approvedScopes = manifestScopes,
-  allowedScopes = 0
+  allowedScopes = 0n
 ) => ({
   appBlock: {
     id: 'apb_page',
@@ -183,7 +183,7 @@ const PAGE_BLOCK = (
 });
 
 // OAuth bit that allows ai:write:budgeted (AIServicesWrite = 1<<15).
-const AI_WRITE_BIT = 1 << 15;
+const AI_WRITE_BIT = 1n << 15n;
 
 // An approved page app that declares the W10 generation-spend scope plus an
 // (optional) manifest per-gen budget. The OAuth client allows ai:write:budgeted
@@ -230,7 +230,7 @@ const MODEL_INSTALL = {
     currentVersionDeployedAt: new Date('2026-01-01T00:00:00Z'),
     manifest: { scopes: ['models:read:self'] },
     approvedScopes: ['models:read:self'],
-    app: { allowedScopes: 4 /* TokenScope.ModelsRead */ },
+    app: { allowedScopes: 4n /* TokenScope.ModelsRead */ },
   },
 };
 const modelBody = () => ({
@@ -638,7 +638,7 @@ describe('POST /api/v1/block-tokens — W10 page mint', () => {
         ...MODEL_INSTALL.appBlock,
         manifest: { scopes: ['ai:write:budgeted'] },
         approvedScopes: ['ai:write:budgeted'],
-        app: { allowedScopes: 1 << 15 /* AIServicesWrite */ },
+        app: { allowedScopes: 1n << 15n /* AIServicesWrite */ },
       },
     });
     mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
@@ -670,7 +670,7 @@ describe('POST /api/v1/block-tokens — W10 page mint', () => {
         ...MODEL_INSTALL.appBlock,
         manifest: { scopes: ['ai:write:budgeted'] },
         approvedScopes: ['ai:write:budgeted'],
-        app: { allowedScopes: 1 << 15 /* AIServicesWrite */ },
+        app: { allowedScopes: 1n << 15n /* AIServicesWrite */ },
       },
     });
     mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
@@ -696,7 +696,7 @@ describe('POST /api/v1/block-tokens — W10 page mint', () => {
         ...MODEL_INSTALL.appBlock,
         manifest: { scopes: ['ai:write:budgeted'] },
         approvedScopes: ['ai:write:budgeted'],
-        app: { allowedScopes: 1 << 15 /* AIServicesWrite */ },
+        app: { allowedScopes: 1n << 15n /* AIServicesWrite */ },
       },
     });
     mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
@@ -720,7 +720,7 @@ describe('POST /api/v1/block-tokens — W10 page mint', () => {
         ...MODEL_INSTALL.appBlock,
         manifest: { scopes: ['ai:write:budgeted'] },
         approvedScopes: ['ai:write:budgeted'],
-        app: { allowedScopes: 1 << 15 /* AIServicesWrite */ },
+        app: { allowedScopes: 1n << 15n /* AIServicesWrite */ },
       },
     });
     mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue(null);
@@ -744,7 +744,7 @@ describe('POST /api/v1/block-tokens — W10 page mint', () => {
         ...MODEL_INSTALL.appBlock,
         manifest: { scopes: ['ai:write:budgeted'] },
         approvedScopes: ['ai:write:budgeted'],
-        app: { allowedScopes: 1 << 15 /* AIServicesWrite */ },
+        app: { allowedScopes: 1n << 15n /* AIServicesWrite */ },
       },
     });
     mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
@@ -849,7 +849,7 @@ describe('POST /api/v1/block-tokens — W10 page mint', () => {
       PAGE_BLOCK(
         ['collections:read:self', 'collections:read:private'],
         ['collections:read:self', 'collections:read:private'],
-        0 // both are SKIP_OAUTH_CHECK → allowedScopes irrelevant
+        0n // both are SKIP_OAUTH_CHECK → allowedScopes irrelevant
       );
 
     it('NO grant: token OMITS read:private (exempt read:self still mints); needsConsent surfaces it', async () => {
@@ -908,13 +908,76 @@ describe('POST /api/v1/block-tokens — W10 page mint', () => {
   // collections scopes (SKIP_OAUTH_CHECK), `posts:write:self` maps to a REAL bit
   // (`TokenScope.MediaWrite`), so the fixture must grant it or the mint refuses
   // for an unrelated reason and the consent claim goes untested.
+  describe('viewerImage (BLOCK_INIT.viewer.image) — rides the SIGNED user:read:self', () => {
+    // TokenScope.UserRead = 1 << 0. The avatar is keyed on the scopes the token was
+    // SIGNED with (after consent), never the requested set: a viewer who has not
+    // granted user:read:self must not have their avatar handed to the app.
+    const USER_READ_BIT = 1n << 0n;
+    const PAGE_VIEWER_BLOCK = () =>
+      PAGE_BLOCK(['user:read:self'], ['user:read:self'], USER_READ_BIT);
+    const xAvatar = {
+      image: null,
+      profilePicture: { url: 'key-x-avatar', nsfwLevel: 8, ingestion: 'Scanned' },
+    };
+
+    it('NO grant: the key is ABSENT and the avatar is never read', async () => {
+      mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+        grantedScopes: [],
+        revokedAt: null,
+      });
+      dbMock.dbRead.user.findUnique.mockResolvedValue(xAvatar);
+      mockBlockRegistry.resolvePageBlock.mockResolvedValue(PAGE_VIEWER_BLOCK());
+      const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+      const res = makeRes();
+      await handler(makeReq({ origin: 'https://civitai.com', body: pageBody() }), res);
+
+      expect(res._status).toBe(200);
+      expect(mockTokenService.sign.mock.calls[0][0].scopes).not.toContain('user:read:self');
+      expect(res._body.missingScopes).toContain('user:read:self');
+      expect('viewerImage' in res._body).toBe(false);
+      expect(JSON.stringify(res._body)).not.toContain('key-x-avatar');
+    });
+
+    it('WITH grant: the avatar is judged against the token ceiling (X on an SFW host → withheld)', async () => {
+      mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+        grantedScopes: ['user:read:self'],
+        revokedAt: null,
+      });
+      dbMock.dbRead.user.findUnique.mockResolvedValue(xAvatar);
+      mockBlockRegistry.resolvePageBlock.mockResolvedValue(PAGE_VIEWER_BLOCK());
+      const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+      const res = makeRes();
+      await handler(makeReq({ origin: 'https://civitai.com', body: pageBody() }), res);
+
+      expect(res._status).toBe(200);
+      expect(mockTokenService.sign.mock.calls[0][0].scopes).toContain('user:read:self');
+      expect(res._body.viewerImage).toEqual({ restricted: true });
+      expect(JSON.stringify(res._body)).not.toContain('key-x-avatar');
+    });
+
+    it('WITH grant, no avatar: the key is present and null', async () => {
+      mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+        grantedScopes: ['user:read:self'],
+        revokedAt: null,
+      });
+      dbMock.dbRead.user.findUnique.mockResolvedValue({ image: null, profilePicture: null });
+      mockBlockRegistry.resolvePageBlock.mockResolvedValue(PAGE_VIEWER_BLOCK());
+      const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+      const res = makeRes();
+      await handler(makeReq({ origin: 'https://civitai.com', body: pageBody() }), res);
+
+      expect(res._status).toBe(200);
+      expect(res._body.viewerImage).toBeNull();
+    });
+  });
+
   describe('posts:write:self — consent-PROMPTED, and it reaches the token', () => {
     // TokenScope.MediaWrite = 1 << 6; TokenScope.ModelsRead = 1 << 2. BOTH must be
     // in the fixture's ceiling: the mint validates the WHOLE manifest scope set
     // against it, so granting only MediaWrite 403s the request on `models:read:self`
     // and the consent claim below would go untested behind an unrelated refusal.
-    const MEDIA_WRITE_BIT = 1 << 6;
-    const MODELS_READ_BIT = 1 << 2;
+    const MEDIA_WRITE_BIT = 1n << 6n;
+    const MODELS_READ_BIT = 1n << 2n;
     const PAGE_POST_BLOCK = () =>
       PAGE_BLOCK(
         ['models:read:self', 'posts:write:self'],
@@ -1112,7 +1175,7 @@ describe('POST /api/v1/block-tokens — approved-scope snapshot gate', () => {
   // Nothing is being withheld and nothing is unapproved — the app simply wants
   // no capabilities — so the mint must succeed and sign an empty scope array.
   it('MINTS (200) a zero-scope token for an approved app whose manifest declares scopes: []', async () => {
-    mockBlockRegistry.resolvePageBlock.mockResolvedValue(PAGE_BLOCK([], [], 0));
+    mockBlockRegistry.resolvePageBlock.mockResolvedValue(PAGE_BLOCK([], [], 0n));
     const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
     const res = makeRes();
     await handler(makeReq({ origin: 'https://civitai.com', body: pageBody() }), res);
@@ -1139,7 +1202,7 @@ describe('POST /api/v1/block-tokens — approved-scope snapshot gate', () => {
   // this fix that whole class of app was unmintable: retiring a scope silently
   // bricked every block whose manifest named only that scope.
   it('MINTS (200) when the manifest declares ONLY retired scopes (deprecation path)', async () => {
-    mockBlockRegistry.resolvePageBlock.mockResolvedValue(PAGE_BLOCK(['catalog:read'], [], 0));
+    mockBlockRegistry.resolvePageBlock.mockResolvedValue(PAGE_BLOCK(['catalog:read'], [], 0n));
     const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
     const res = makeRes();
     await handler(makeReq({ origin: 'https://civitai.com', body: pageBody() }), res);
@@ -1163,7 +1226,7 @@ describe('POST /api/v1/block-tokens — approved-scope snapshot gate', () => {
         ...MODEL_INSTALL.appBlock,
         manifest: { scopes: [] },
         approvedScopes: [],
-        app: { allowedScopes: 0 },
+        app: { allowedScopes: 0n },
       },
     });
     const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
@@ -1181,7 +1244,7 @@ describe('POST /api/v1/block-tokens — approved-scope snapshot gate', () => {
   // the mint must refuse. This case passes before AND after the fix — it is an
   // invariant guard, not regression coverage.
   it('still 403s (no token) when the manifest DECLARES a scope but the approved snapshot is EMPTY', async () => {
-    mockBlockRegistry.resolvePageBlock.mockResolvedValue(PAGE_BLOCK(['apps:storage:read'], [], 0));
+    mockBlockRegistry.resolvePageBlock.mockResolvedValue(PAGE_BLOCK(['apps:storage:read'], [], 0n));
     const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
     const res = makeRes();
     await handler(makeReq({ origin: 'https://civitai.com', body: pageBody() }), res);
@@ -1196,7 +1259,7 @@ describe('POST /api/v1/block-tokens — approved-scope snapshot gate', () => {
   // check immediately after the gate above.
   it('still 403s (no token) when a declared scope is absent from a NON-empty approved snapshot', async () => {
     mockBlockRegistry.resolvePageBlock.mockResolvedValue(
-      PAGE_BLOCK(['apps:storage:read', 'apps:storage:write'], ['apps:storage:read'], 0)
+      PAGE_BLOCK(['apps:storage:read', 'apps:storage:write'], ['apps:storage:read'], 0n)
     );
     const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
     const res = makeRes();

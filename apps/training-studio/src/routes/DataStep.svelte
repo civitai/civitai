@@ -31,13 +31,13 @@
   } from '@tabler/icons-svelte';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
-  import * as Tooltip from '@civitai/ui/components/ui/tooltip/index.js';
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
   import * as Popover from '@civitai/ui/components/ui/popover/index.js';
   import { autoLabelAvailable, browser, hostConfig, hostLink, portalProps } from '$lib/host';
-  import { isMatureNsfwLevel, nsfwLevelLabel } from '$lib/buzz-balance.svelte';
+  import { nsfwLevelLabel } from '$lib/nsfw-rating';
   import StickySummary from '$lib/components/StickySummary.svelte';
-  import { blobPreviewUrl, directDatasetUrl, type ReuseItem } from '$lib/reuse';
+  import HelpTip, { TAP_TARGET } from '$lib/components/HelpTip.svelte';
+  import { blobPreview, directDatasetUrl, type ReuseItem } from '$lib/reuse';
   import { playOnHover, resetOnLeave } from '$lib/video-preview';
   import { extOfAir, extsOfMedia, mediaOfExt, mimeOfExt } from '$lib/media';
   import {
@@ -46,12 +46,13 @@
   } from '@civitai/ui/components/ui/toggle-group/index.js';
   import { loraTypeById, mediaCount, type LabelType, type Media } from '$lib/data/trainingModels';
   import { pool } from '$lib/pool';
-  import { runAutoLabel, type AutoLabelResult } from '$lib/autolabel';
+  import { offersLabelRetry, runAutoLabel, type AutoLabelResult } from '$lib/autolabel';
   import { buildTagExcluder, loadTagCategories, type TagCategories } from '$lib/autolabel-exclude';
   import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
   import { isAbort } from '$lib/upload';
   import { trainingBlobKey } from '$lib/train-core';
   import { buildDatasetZip, saveBlob, uniqueBaseNames } from '$lib/dataset-zip';
+  import { triggerForImport } from './triggerSuggest';
   import {
     blobAirFromUrl,
     captionTriggerHit,
@@ -74,6 +75,7 @@
     labelString,
     matchesTagFilter,
     mergeAutoLabel,
+    newBatch,
     nextImgId,
     parseLabel,
     plural,
@@ -82,12 +84,20 @@
     startLabelPass,
     tagsHaveTrigger,
     withFilterTags,
+    asDatasetFilter,
+    matchesRatingFilter,
+    matchesVerdictFilter,
+    imgRatingLabel,
+    isImgMature,
+    ratingChoices,
+    type BatchSource,
     type DatasetFilter,
     type Img,
     type LabelPosition,
     type Selection,
     type TagFilter,
   } from './trainingFlow';
+  import { groupTags } from './tagReplace';
   import LabelEditorModal from './LabelEditorModal.svelte';
   import TagEditor from './TagEditor.svelte';
   import GenerationPickerModal from './GenerationPickerModal.svelte';
@@ -103,6 +113,7 @@
   let {
     selection,
     prices,
+    ratingV2 = false,
     images = $bindable([]),
     trigger = $bindable(''),
     labelMode = $bindable('tag'),
@@ -112,12 +123,15 @@
     excludeSource = $bindable(true),
     filter = $bindable('all'),
     reuseItems = [],
+    findReplace = false,
     onContinue,
     onBack,
   }: {
     selection: Selection;
     /** Live "from" quotes per card type — keeps the running price visible during upload. */
     prices: Record<string, number>;
+    /** The server rates this dataset with the v2 rating: filter by its verdicts, not upload ratings. */
+    ratingV2?: boolean;
     images: Img[];
     trigger: string;
     /** The chosen dataset label format — owned by the flow. Fixed to the model's format for single-format
@@ -132,6 +146,7 @@
     excludeSource: boolean;
     /** Owned by the flow so Review's "see which" can land on the Mature view. */
     filter: DatasetFilter;
+    findReplace?: boolean;
     /** A "Train again" hand-off: existing blobs (air + caption) to seed the dataset with, no re-upload. */
     reuseItems?: ReuseItem[];
     onContinue: () => void;
@@ -268,8 +283,12 @@
   const labeledTotal = $derived(images.filter(isLabeled).length);
   const unlabeledTotal = $derived(images.length - labeledTotal);
   // Trainable only, matching Review's count — a blocked tile can't cause the Yellow charge.
-  const isMature = (i: Img) => isTrainable(i) && isMatureNsfwLevel(i.nsfwLevel);
+  const isMature = isImgMature;
   const matureTotal = $derived(images.filter(isMature).length);
+  // Under the v2 rating the upload ratings are no filter: Mature / Not mature / Not rated yet are.
+  const ratingFilters = $derived(ratingV2 ? [] : ratingChoices(images, filter));
+  const notMatureTotal = $derived(images.filter((i) => matchesVerdictFilter(i, 'not-mature')).length);
+  const notRatedTotal = $derived(images.filter((i) => matchesVerdictFilter(i, 'not-rated')).length);
   // With/without tag filter (and Manage tags' "Show images"): the images that matched when the filter
   // last changed — a snapshot, so adding a missing tag to one while reviewing doesn't hide it.
   let tagFilter = $state<(TagFilter & { ids: number[] }) | null>(null);
@@ -319,7 +338,11 @@
           ? images.filter(isMature)
           : filter === 'failed'
             ? images.filter(isFailed)
-            : images
+            : filter.startsWith('rating:')
+              ? images.filter((i) => matchesRatingFilter(i, filter))
+              : filter === 'not-mature' || filter === 'not-rated'
+                ? images.filter((i) => matchesVerdictFilter(i, filter))
+                : images
   );
   // Per-image repeats: tucked into the label editor, a bulk setter while a tag filter is on, and a
   // ×N badge only on images that repeat.
@@ -343,8 +366,6 @@
     const ids = new Set(tagFilter.ids);
     return statusShownImages.filter((i) => ids.has(i.id));
   });
-  // Unknown membership is treated as not a member, as on Review.
-  const isMember = hostConfig().isPaidMember === true;
   // Where the host has no auto-label, none of its actions are offered (the toggle, the Auto-label
   // and Label-all buttons, the editor's Re-run, the switch dialog's Re-label); the guards below back
   // that up for the callers that don't go through a button.
@@ -368,6 +389,7 @@
       .map((file) => ({ file, fileMediaType: fileMedia(file.type) }))
       .filter((x): x is { file: File; fileMediaType: Media } => !!x.fileMediaType);
     if (matched.length === 0) return;
+    const batch = newBatch('upload');
     const added: Img[] = matched.map(({ file, fileMediaType }) => ({
       id: nextImgId(),
       file,
@@ -378,6 +400,7 @@
       progress: 0,
       tags: [],
       caption: '',
+      batch,
     }));
     images = [...images, ...added];
     await pool(added, 4, (img) => uploadOne(img.id, img.file!));
@@ -427,7 +450,7 @@
       nsfwLevel?: string;
       repeats?: number;
     }[],
-    { silent = false }: { silent?: boolean } = {}
+    { silent = false, source = 'reuse' }: { silent?: boolean; source?: BatchSource } = {}
   ) {
     // Skip blobs already in the dataset (the picker can't see what's here) or repeated in the batch.
     const have = new Map<string, number>();
@@ -451,6 +474,7 @@
     if (!silent && skipped.length) dupOwnerIds = [...dupOwnerIds, ...skipped];
     if (fresh.length === 0) return;
     const toHydrate: { id: number; air: string; workflowId: string }[] = [];
+    const batch = newBatch(source);
     const added: Img[] = fresh.map(({ id, ...item }) => {
       const label = item.caption?.trim() ?? '';
       if (!item.url && item.previewWorkflowId)
@@ -473,6 +497,7 @@
         sourceLabel: item.caption || undefined,
         labelTried: label ? true : undefined,
         repeats: item.repeats,
+        batch,
       };
     });
     images = [...images, ...added];
@@ -487,7 +512,7 @@
     if (targets.length === 0) return;
     await pool(targets, 4, async (t) => {
       const direct = directDatasetUrl(t.air);
-      const url = direct ?? (await blobPreviewUrl(t.air, t.workflowId));
+      const { url, nsfwLevel } = direct ? { url: direct } : await blobPreview(t.air, t.workflowId);
       if (!url) return;
       // Tile removed mid-fetch — or the whole flow unmounted (its cleanup empties `images`, so
       // this same guard catches a late resolve after teardown and the URL never leaks).
@@ -495,7 +520,7 @@
         if (!direct) URL.revokeObjectURL(url);
         return;
       }
-      patch(t.id, { previewUrl: url, blobUrl: url });
+      patch(t.id, { previewUrl: url, blobUrl: url, ...(nsfwLevel ? { nsfwLevel } : {}) });
     });
     // A directly fetchable (https) item only becomes labelable once `blobUrl` exists — the add-time
     // drain saw nothing to do, so run it again now.
@@ -537,6 +562,7 @@
     importNotice = '';
     const unreadable: string[] = [];
     const empty: string[] = [];
+    let suggested: string | null = null;
     try {
       for (let next = zipQueue.shift(); next; next = zipQueue.shift()) {
         const { file, current } = next;
@@ -550,13 +576,16 @@
         }
         if (entries.length === 0) empty.push(file.name);
         // A Remove all while a zip was extracting: the user emptied the dataset this would refill.
-        else if (current()) await addImported(entries);
+        // One fill per batch: a user who clears it while the next zip unpacks has said no.
+        else if (current()) suggested = (await addImported(entries, suggested === null)) ?? suggested;
       }
     } finally {
       importing = false;
       importNotice = [
         unreadable.length > 0 && `Couldn't read ${unreadable.join(', ')} — not a valid .zip.`,
         empty.length > 0 && `No ${acceptedExtsText} files in ${empty.join(', ')}.`,
+        // Not if the user has since changed or cleared it.
+        suggested && trigger === suggested && `Trigger word set to "${suggested}" from the imported tags.`,
       ]
         .filter(Boolean)
         .join(' ');
@@ -621,7 +650,8 @@
             caption: labelString(img, labelMode),
             load: () => imgBytes(img),
           };
-        })
+        }),
+        trigger
       );
       if (!blob) {
         exportNotice = "Couldn't fetch any of the files — nothing to download.";
@@ -642,8 +672,17 @@
 
   // Upload zip-imported files, seeding each with its caption (and marking it label-tried so a captioned
   // image isn't re-labeled). Mirrors addFiles, plus the caption seed.
-  async function addImported(entries: { file: File; caption: string; path: string }[]) {
-    if (entries.length === 0) return;
+  /** Returns the trigger word it filled in from the captions, if any (see triggerForImport). */
+  async function addImported(entries: { file: File; caption: string; path: string }[], mayFill: boolean) {
+    if (entries.length === 0) return null;
+    const suggested = triggerForImport({
+      labelMode,
+      trigger,
+      mayFill,
+      captions: entries.map((e) => e.caption),
+    });
+    if (suggested) trigger = suggested;
+    const batch = newBatch('zip');
     const added: Img[] = entries.map((e) => {
       const label = e.caption.trim();
       return {
@@ -658,11 +697,13 @@
         // Verbatim (untrimmed) — the switch logic promises to restore the file's text exactly.
         sourceLabel: e.caption || undefined,
         labelTried: label ? true : undefined,
+        batch,
       };
     });
     images = [...images, ...added];
     await pool(added, 4, (img) => uploadOne(img.id, img.file!));
     void maybeAutoLabel();
+    return suggested;
   }
   function onPickZip(e: Event) {
     void importZips(pickedFiles(e));
@@ -867,7 +908,8 @@
         url: media === 'image' ? i.previewUrl ?? i.url : i.url,
         name: `generation ${i.blobId.slice(0, 8)}`,
         nsfwLevel: i.nsfwLevel,
-      }))
+      })),
+      { source: 'generations' }
     );
   }
 
@@ -916,14 +958,10 @@
     if (next !== undefined) editorId = next;
   }
 
-  // This dataset's tags with occurrence counts, frequency-ranked — feeds the editor's autocomplete
-  // and the Manage-tags panel.
-  const tagFreq = $derived.by(() => {
-    const freq = new Map<string, number>();
-    for (const img of images) for (const t of img.tags) freq.set(t, (freq.get(t) ?? 0) + 1);
-    return [...freq.entries()].sort((a, b) => b[1] - a[1]);
-  });
-  const tagVocab = $derived(tagFreq.map(([t]) => t));
+  // This dataset's tags, casings folded and frequency-ranked — feeds the editor's autocomplete and the
+  // Manage-tags panel.
+  const tagGroups = $derived(groupTags(images));
+  const tagVocab = $derived(tagGroups.map((g) => g.tag));
 
   let manageOpen = $state(false);
 
@@ -982,32 +1020,44 @@
 </script>
 
 {#snippet ratingBadge(img: Img)}
-  {@const rating = nsfwLevelLabel(img.nsfwLevel)}
+  {@const rating = imgRatingLabel(img)}
   {#if rating}
     {@const badgeClass = 'absolute bottom-1.5 left-1.5 rounded px-1.5 py-0.5 font-mono text-xs font-semibold'}
     {#if isMature(img)}
-      <Tooltip.Provider>
-        <Tooltip.Root>
-          <Tooltip.Trigger class="{badgeClass} bg-buzz text-black" aria-label="Rated {rating}">
-            {rating}
-          </Tooltip.Trigger>
-          <Tooltip.Content class="max-w-[240px] text-xs" portalProps={portalProps()}>
-            {#if !buzzMode.blueFirst}
-              Rated {rating}. Mature content can't be paid with Green Buzz, so it is charged in Yellow.
-            {:else if isMember}
-              Rated {rating}. Mature content can't be paid with Green Buzz, so anything beyond your
-              Blue Buzz is charged in Yellow.
-            {:else}
-              Rated {rating}. Without a membership, one mature image charges the whole run in Yellow
-              Buzz. Remove it to pay in Blue.
-            {/if}
-          </Tooltip.Content>
-        </Tooltip.Root>
-      </Tooltip.Provider>
+      <HelpTip label="Rated {rating}" class="{badgeClass} bg-buzz text-black">
+        {rating}
+        {#snippet content()}
+          {#if !buzzMode.blueFirst}
+            Rated {rating}. Mature content can't be paid with Green Buzz, so it is charged in Yellow.
+          {:else}
+            Rated {rating}. Mature content can't be paid with Green Buzz, so anything beyond your
+            Blue Buzz is charged in Yellow.
+          {/if}
+        {/snippet}
+      </HelpTip>
     {:else}
       <span class="{badgeClass} bg-black/60 text-on-accent" title="Rated {rating}">{rating}</span>
     {/if}
   {/if}
+{/snippet}
+
+{#snippet labelFailure(img: Img)}
+  <div class="mb-1 flex items-start gap-2 font-mono text-xs leading-tight text-red-300">
+    <span class="min-w-0 flex-1">{img.labelError}</span>
+    {#if canAutoLabel && img.blobUrl && canAutoLabelImage(img) && offersLabelRetry(img)}
+      <button
+        type="button"
+        onclick={(e) => {
+          e.stopPropagation();
+          void relabelOne(img.id);
+        }}
+        class="inline-flex shrink-0 items-center gap-1 text-dark-2 hover:text-primary"
+        aria-label={`Retry auto-label for ${img.name}`}
+      >
+        <IconRefresh size={12} stroke={2} />Retry
+      </button>
+    {/if}
+  </div>
 {/snippet}
 
 {#snippet triggerTags(tags: string[], limit: number)}
@@ -1300,7 +1350,7 @@
           </label>
         </div>
         {/if}
-        {#if tagFreq.length}
+        {#if tagGroups.length}
           <Button
             variant="outline"
             size="xs"
@@ -1500,8 +1550,8 @@
               type="single"
               value={filter}
               onValueChange={(v) => {
-                if (v === 'all' || v === 'labeled' || v === 'unlabeled' || v === 'mature' || v === 'failed')
-                  showFilter(v);
+                const next = asDatasetFilter(v);
+                if (next) showFilter(next);
               }}
               variant="outline"
               size="sm"
@@ -1516,11 +1566,25 @@
                   >{unlabeledTotal}</span
                 >
               </ToggleGroupItem>
-              {#if matureTotal > 0 || filter === 'mature'}
+              {#if filter === 'mature' || ratingV2}
                 <ToggleGroupItem value="mature" aria-label="Show images rated mature">
                   Mature <span class={matureTotal > 0 ? 'ml-1 font-semibold text-buzz' : 'ml-1'}>{matureTotal}</span>
                 </ToggleGroupItem>
               {/if}
+              {#if ratingV2}
+                <ToggleGroupItem value="not-mature" aria-label="Show images rated not mature">
+                  Not mature <span class="ml-1">{notMatureTotal}</span>
+                </ToggleGroupItem>
+                <ToggleGroupItem value="not-rated" aria-label="Show images not rated yet">
+                  Not rated yet <span class="ml-1">{notRatedTotal}</span>
+                </ToggleGroupItem>
+              {/if}
+              {#each ratingFilters as r (r.rating)}
+                <ToggleGroupItem value="rating:{r.rating}" aria-label="Show images rated {r.label}">
+                  {r.label}
+                  <span class={r.mature && r.count > 0 ? 'ml-1 font-semibold text-buzz' : 'ml-1'}>{r.count}</span>
+                </ToggleGroupItem>
+              {/each}
               {#if failedTotal > 0 || filter === 'failed'}
                 <ToggleGroupItem value="failed" aria-label="Show files that failed to upload">
                   Failed <span class={failedTotal > 0 ? 'ml-1 font-semibold text-red-400' : 'ml-1'}>{failedTotal}</span>
@@ -1547,7 +1611,7 @@
               </ToggleGroupItem>
             </ToggleGroup>
           </div>
-          {#if tagFreq.length > 0 || tagFilter}
+          {#if tagGroups.length > 0 || tagFilter}
             <form
               class="mt-2 flex flex-wrap items-center gap-2 text-xs text-dark-2"
               onsubmit={(e) => {
@@ -1619,10 +1683,10 @@
           {/if}
         </div>
 
-        {#if reuseItems.length > 0 && images.some((i) => isTrainable(i) && !i.nsfwLevel)}
+        {#if reuseItems.length > 0 && images.some((i) => isTrainable(i) && !!i.previewUrl && !i.nsfwLevel)}
           <p class="mb-3 text-xs text-dark-2">
-            Images reused from an earlier training have no rating badge. Retraining is charged the same
-            way the original run was.
+            Some images have no rating badge. Every image is checked again when you start training; if
+            that finds mature content, nothing is charged until you check the price and start again.
           </p>
         {/if}
 
@@ -1640,7 +1704,13 @@
                     ? 'No images rated mature.'
                     : filter === 'failed'
                       ? 'No failed uploads.'
-                      : 'No images.'}
+                      : filter.startsWith('rating:')
+                        ? `No images rated ${nsfwLevelLabel(filter.slice('rating:'.length))}.`
+                        : filter === 'not-mature'
+                          ? 'No images rated not mature.'
+                          : filter === 'not-rated'
+                            ? 'Every image is rated.'
+                            : 'No images.'}
           </div>
         {/if}
 
@@ -1796,7 +1866,7 @@
                   </div>
                 {:else if editsOnCard}
                   {#if img.labelError}
-                    <div class="mb-1 font-mono text-xs leading-tight text-red-300">{img.labelError}</div>
+                    {@render labelFailure(img)}
                   {/if}
                   {#if labelMode === 'tag'}
                     <TagEditor
@@ -1822,7 +1892,7 @@
                   {/if}
                 {:else if img.tags.length === 0 && !img.caption}
                   {#if img.labelError}
-                    <div class="mb-1 font-mono text-xs leading-tight text-red-300">{img.labelError}</div>
+                    {@render labelFailure(img)}
                   {/if}
                   <button
                     type="button"
@@ -1846,20 +1916,17 @@
       <StickySummary class="order-first lg:order-none">
         <div class="flex items-center gap-1.5">
           <h3 class="m-0 font-mono text-xs uppercase tracking-widest text-dark-2">Trigger word</h3>
-          <Tooltip.Provider>
-            <Tooltip.Root>
-              <Tooltip.Trigger
-                class="grid h-4 w-4 place-items-center rounded-full border border-dark-4 font-mono text-xs text-dark-2"
-              >
-                ?
-              </Tooltip.Trigger>
-              <Tooltip.Content class="max-w-[240px] text-xs" portalProps={portalProps()}>
-                An optional word prepended to every label. The model learns to associate it with your
-                subject, so you type it in prompts to summon the LoRA. Less essential on modern caption
-                models; handy for characters. Some large/video models can't train it (no-op).
-              </Tooltip.Content>
-            </Tooltip.Root>
-          </Tooltip.Provider>
+          <HelpTip
+            label="About the trigger word"
+            class="{TAP_TARGET} grid h-4 w-4 place-items-center rounded-full border border-dark-4 font-mono text-xs text-dark-2"
+          >
+            ?
+            {#snippet content()}
+              An optional word prepended to every label. The model learns to associate it with your
+              subject, so you type it in prompts to summon the LoRA. Less essential on modern caption
+              models; handy for characters. Some large/video models can't train it (no-op).
+            {/snippet}
+          </HelpTip>
         </div>
         <Input bind:value={trigger} placeholder="optional, e.g. my_character" class="mt-2 font-mono" />
         <p class="mt-2 text-[12px] leading-snug text-dark-2">
@@ -1922,7 +1989,14 @@
 <GenerationPickerModal bind:open={genPickerOpen} {media} onAdd={addFromGenerations} />
 <ReuseDatasetModal bind:open={reuseOpen} {media} onReuse={addFromBlobs} />
 
-<ManageTagsModal bind:open={manageOpen} {tagFreq} {images} {media} onShowTag={showTag} />
+<ManageTagsModal
+  bind:open={manageOpen}
+  {tagGroups}
+  {images}
+  {media}
+  {findReplace}
+  onShowTag={showTag}
+/>
 
 <Dialog.Root bind:open={switchDialogOpen}>
   <Dialog.Content class="sm:max-w-md" portalProps={portalProps()}>

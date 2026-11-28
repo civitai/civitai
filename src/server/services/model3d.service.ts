@@ -16,21 +16,21 @@ import {
   getUploadS3Client,
   isB2Url,
 } from '~/utils/s3-utils';
+import type { TagTarget } from '~/shared/utils/prisma/enums';
 import {
   EntityType,
   JobQueueType,
   MetricTimeframe,
   Model3DStatus,
-  TagTarget,
 } from '~/shared/utils/prisma/enums';
 import { enqueueJobs } from '~/server/services/job-queue.service';
 import {
-  nsfwBrowsingLevelsFlag,
   onlySelectableLevels,
   parseBitwiseBrowsingLevel,
   publicBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { canViewModel3d } from '~/server/services/model3d.visibility';
+import { assertNotDealFileImages } from '~/server/services/deal-file-image';
 import {
   getAvailableCollectionItemsFilterForUser,
   getUserCollectionPermissionsById,
@@ -67,14 +67,17 @@ import { Model3DSort } from '~/server/schema/model3d.schema';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { maxNsfwLevel } from '~/shared/constants/orchestrator.constants';
-import { NsfwLevel } from '~/server/common/enums';
-import { handlePolyGenWorkflowResult } from '~/server/services/orchestrator/handlers/polyGen.handler';
 import {
-  getPolyGenPostBlock,
-  getPolyGenPrimaryModel,
-} from '~/server/orchestrator/polygen/polygen-output';
+  getModel3DPostBlock,
+  model3DPostImages,
+} from '~/server/services/model3d-rating-v2.service';
+import { NsfwLevel } from '~/server/common/enums';
+import { imageNotRestrictedWhere, withServableImage } from '~/server/common/image-visibility';
+import { handlePolyGenWorkflowResult } from '~/server/services/orchestrator/handlers/polyGen.handler';
+import { getPolyGenPrimaryModel } from '~/server/orchestrator/polygen/polygen-output';
 import type { ImageBlob, PolyGenStep, Workflow, WorkflowStep } from '@civitai/orchestration-client';
 import type { Context } from '~/server/createContext';
+import type { SessionUser as AppSessionUser } from '~/types/session';
 
 type SessionUser = {
   id: number;
@@ -246,7 +249,11 @@ export const getModel3DById = async ({
       : null;
 
     return {
-      ...model3d,
+      ...withServableImage(
+        withServableImage(model3d, 'thumbnailImage', user?.id),
+        'sourceImage',
+        user?.id
+      ),
       tags: model3d.tags.map((t) => t.tag),
       userReview,
     };
@@ -291,6 +298,17 @@ export const getModel3DByWorkflowId = async ({
   }
 };
 
+/** False for an image `assertNotDealFileImages` refuses as a use: a source image is dropped, not refused. */
+async function usableHere(imageId: number) {
+  try {
+    await assertNotDealFileImages([imageId], 'used here');
+    return true;
+  } catch (error) {
+    if (error instanceof TRPCError && error.code === 'FORBIDDEN') return false;
+    throw error;
+  }
+}
+
 /**
  * Lazily materialize the Model3D draft for a completed PolyGen workflow.
  *
@@ -310,7 +328,8 @@ export const ensureModel3DFromWorkflow = async ({
   ctx,
 }: {
   input: EnsureModel3DFromWorkflowInput;
-  user: SessionUser;
+  // The full session user: the v2 rating's limits and flag read the user's tier and Flipt context.
+  user: AppSessionUser;
   ctx: Context;
 }) => {
   // Fast path: draft already exists (handler ran earlier, or a prior
@@ -347,22 +366,29 @@ export const ensureModel3DFromWorkflow = async ({
     const previewStep = workflow.steps.find((s: WorkflowStep) => s.$type === 'model3DPreview') as
       | { output?: { images?: ImageBlob[] } }
       | undefined;
-    const thumbnailOverride = previewStep?.output?.images?.find((img) => !!img?.url);
+    const {
+      coverOverride: thumbnailOverride,
+      cover,
+      ratedUrls,
+    } = model3DPostImages(previewStep?.output?.images ?? [], polyGenStep.output.thumbnail);
 
-    // Same gate the generator UI applies: the mesh blob is never rated by the
-    // orchestrator, so the effective rating comes from the preview renders /
-    // auto-thumbnail. A mature result generated without mature-content billing
-    // must be unlocked (yellow Buzz → allowMatureContent) before it can be
-    // materialized into a postable draft.
+    // The mesh blob is never rated by the orchestrator, so the effective rating
+    // comes from the preview renders / auto-thumbnail.
     const effectiveNsfwLevel = maxNsfwLevel([
       primaryModel.nsfwLevel,
       polyGenStep.output.thumbnail?.nsfwLevel,
       ...(previewStep?.output?.images ?? []).map((img) => img?.nsfwLevel),
     ]);
-    const postBlock = getPolyGenPostBlock({
+    const postBlock = await getModel3DPostBlock({
       primaryModel,
       effectiveNsfwLevel,
       allowMatureContent: workflow.allowMatureContent,
+      user,
+      req: ctx.req,
+      // A result with no preview render (FBX-only Tripo quad) is rated on the auto-thumbnail it shows.
+      previewUrls: ratedUrls,
+      coverUrl: cover?.url ?? undefined,
+      workflowId: input.workflowId,
     });
     if (postBlock) throw throwBadRequestError(postBlock);
 
@@ -379,7 +405,10 @@ export const ensureModel3DFromWorkflow = async ({
           select: { userId: true },
         })
       : null;
-    const sourceImageId = sourceImage?.userId === user.id ? claimedSourceImageId : undefined;
+    const sourceImageId =
+      sourceImage?.userId === user.id && (await usableHere(claimedSourceImageId!))
+        ? claimedSourceImageId
+        : undefined;
 
     await handlePolyGenWorkflowResult({
       workflowId: input.workflowId,
@@ -429,7 +458,7 @@ async function withUserReviews(
   return rows.map(({ tags, ...rest }) => {
     const review = reviewByModel.get(rest.id);
     return {
-      ...rest,
+      ...withServableImage(rest, 'thumbnailImage', user?.id),
       tags: tags.map((t) => t.tagId),
       userReview: review ? { id: review.id, recommended: review.recommended } : null,
     };
@@ -827,6 +856,7 @@ export const upsertModel3D = async ({
     // apps/moderator image-nsfw-level) skip posted images.
     if (!image || image.userId !== ownerId || image.postId != null)
       throw throwBadRequestError('Invalid thumbnail image.');
+    await assertNotDealFileImages([data.thumbnailImageId], 'used here');
     thumbnailNsfwLevel = image.nsfwLevel;
   } else if (data.thumbnailImageId === null) {
     thumbnailNsfwLevel = 0;
@@ -1311,7 +1341,16 @@ export const getModel3DByPostId = async ({
           userId: true,
           status: true,
           deletedAt: true,
-          thumbnailImage: { select: { id: true, url: true, name: true } },
+          thumbnailImage: {
+            select: {
+              id: true,
+              url: true,
+              name: true,
+              userId: true,
+              nsfwLevel: true,
+              modelRestricted: true,
+            },
+          },
         },
       },
     },
@@ -1330,10 +1369,11 @@ export const getModel3DByPostId = async ({
   )
     return null;
 
+  const { thumbnailImage: thumbnail } = withServableImage(model3d, 'thumbnailImage', userId);
   return {
     id: model3d.id,
     name: model3d.name,
-    thumbnailImage: model3d.thumbnailImage,
+    thumbnailImage: thumbnail && { id: thumbnail.id, url: thumbnail.url, name: thumbnail.name },
   };
 };
 
@@ -1593,20 +1633,6 @@ const postLevelsWithin = (level: number) =>
     (v) => (v & level) !== 0
   );
 
-/** Images a post card may fall back to when an earlier one is a restricted model's. */
-const COVER_CANDIDATES = 3;
-
-/** Of these images, the mature ones of a restricted model, which the image feeds never show. */
-async function restrictedMatureImageIds(ids: number[]) {
-  if (!ids.length) return new Set<number>();
-  const rows = await dbRead.$queryRaw<{ id: number }[]>`
-    SELECT i.id FROM "Image" i
-    WHERE i.id IN (${Prisma.join(ids)})
-      AND (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) != 0 AND i."modelRestricted"
-  `;
-  return new Set(rows.map((row) => row.id));
-}
-
 export type Model3DRelatedPost = AsyncReturnType<typeof getModel3DRelatedPosts>['items'][number];
 export const getModel3DRelatedPosts = async ({
   input,
@@ -1640,9 +1666,9 @@ export const getModel3DRelatedPosts = async ({
     // the viewer may see. Blocked is never a level a viewer browses at.
     const level = onlySelectableLevels(browsingLevel);
     // The cover, for a post that is not the viewer's, as the feed shows images: scanned, within
-    // their level, out of review and never blocked. A mature image of a restricted model is
-    // dropped below: that column is not in the Prisma schema.
+    // their level, out of review, never blocked and not restricted by its base model.
     const coverGate: Prisma.ImageWhereInput = {
+      AND: [imageNotRestrictedWhere()],
       ingestion: 'Scanned',
       nsfwLevel: { in: parseBitwiseBrowsingLevel(level) },
       needsReview: null,
@@ -1657,8 +1683,8 @@ export const getModel3DRelatedPosts = async ({
       nsfwLevel: { in: postLevelsWithin(level) },
       images: { some: coverGate },
     };
-    const coverWhere: Prisma.ImageWhereInput | undefined = isModerator
-      ? undefined
+    const coverWhere: Prisma.ImageWhereInput = isModerator
+      ? imageNotRestrictedWhere({ viewerId })
       : viewerId
       ? { OR: [{ userId: viewerId }, coverGate] }
       : coverGate;
@@ -1688,23 +1714,12 @@ export const getModel3DRelatedPosts = async ({
         user: { select: userWithCosmeticsSelect },
         images: {
           where: coverWhere,
-          take: COVER_CANDIDATES,
+          take: 1,
           orderBy: { index: 'asc' },
           select: model3dImageSelect,
         },
       },
     });
-    const restricted = isModerator
-      ? new Set<number>()
-      : await restrictedMatureImageIds(
-          items.flatMap((post) =>
-            post.images.filter((image) => image.userId !== viewerId).map((image) => image.id)
-          )
-        );
-    for (const post of items) {
-      post.images = post.images.filter((image) => !restricted.has(image.id)).slice(0, 1);
-    }
-
     let nextCursor: number | undefined;
     if (items.length > take) {
       const nextItem = items.pop();

@@ -43,7 +43,7 @@ RUN --mount=type=cache,id=pnpm-store,target=/root/.local/share/pnpm/store \
 FROM node:24.22.3-alpine3.24@sha256:116b800c3754b440ee0aa3ed2f20f5bf3d99a554bfd9adeea09ea8017f6e85f5 AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
-RUN addgroup -S nodejs -g 1001 && adduser -S nodeapp -u 1001
+RUN addgroup -S -g 1001 nodejs && adduser -S -u 1001 -G nodejs nodeapp
 
 COPY --from=prod-deps --chown=nodeapp:nodejs /app/deploy/node_modules ./node_modules
 COPY --from=build --chown=nodeapp:nodejs /app/apps/storage-hook-runner/dist ./dist

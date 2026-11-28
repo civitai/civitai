@@ -61,6 +61,7 @@ function harness(store: SnapshotStore, states: Entity[][], maxPolls = 3) {
     })) {
       // Its served set is the whole schema's, so its cursor moves only with a change.
       if ('progress' in c) throw new Error('the catalog adapter yielded progress');
+      if ('end' in c) throw new Error('the catalog adapter yielded an end');
       out.push(c);
     }
     return out;
@@ -68,7 +69,7 @@ function harness(store: SnapshotStore, states: Entity[][], maxPolls = 3) {
   return { adapter, drain, signal: abort.signal, polls: () => polls };
 }
 
-type Edit = Exclude<Change, { progress: string }>;
+type Edit = Exclude<Change, { progress: string } | { end: unknown }>;
 
 const shape = (c: Edit) =>
   'upsert' in c ? ['upsert', c.upsert.urn, c.upsert.rev] : ['delete', c.delete];

@@ -121,12 +121,34 @@ function caller(apiKeyId: number | null = null) {
   } as never);
 }
 
+/** Every `SET` the read limiter's MULTI sent: `[key, value, options]`. */
+let readRateSets: unknown[][] = [];
+
 beforeEach(() => {
   vi.clearAllMocks();
   m.raiseFlag.mockResolvedValue(true);
   appBlockFindUnique.mockResolvedValue({ status: 'approved' } as never);
-  redisMock.sysRedis.incrBy.mockResolvedValue(1 as never);
-  redisMock.sysRedis.get.mockResolvedValue(null as never);
+  redisMock.redis.incrBy.mockResolvedValue(1 as never);
+  // The read limiter counts with SET NX EX + INCR in one MULTI; its INCR answers from the
+  // `redis.incrBy` mock, so a test sets the count there.
+  readRateSets = [];
+  redisMock.redis.multi.mockImplementation((() => {
+    const queued: Array<() => unknown> = [];
+    const chain = {
+      set: (...a: unknown[]) => {
+        readRateSets.push(a);
+        queued.push(() => 'OK');
+        return chain;
+      },
+      incr: (key: string) => {
+        queued.push(() => redisMock.redis.incrBy(key, 1));
+        return chain;
+      },
+      exec: async () => Promise.all(queued.map((op) => op())),
+    };
+    return chain;
+  }) as never);
+  redisMock.redis.get.mockResolvedValue(null as never);
   m.readLimit.mockResolvedValue({ limit: 1000, spentToday: 980, remaining: 20, exceeds: false });
   m.raise.mockResolvedValue({ previousLimit: 1000 });
   m.withinLimitFlag.mockResolvedValue(false);
@@ -135,7 +157,7 @@ beforeEach(() => {
 
 describe('blocks.getMyAppDailyLimit', () => {
   it("returns the viewer's own limit, today's spend and whether a refusal is on record", async () => {
-    redisMock.sysRedis.get.mockImplementation((async (key: string) =>
+    redisMock.redis.get.mockImplementation((async (key: string) =>
       key === `system:blocks:consent-limit-refused:${USER}:${APP}` ? '1000' : null) as never);
     expect(await caller().getMyAppDailyLimit({ appBlockId: APP })).toEqual({
       limit: 1000,
@@ -147,7 +169,7 @@ describe('blocks.getMyAppDailyLimit', () => {
   });
 
   it('a refusal at an earlier limit no longer counts once the limit changed', async () => {
-    redisMock.sysRedis.get.mockImplementation((async (key: string) =>
+    redisMock.redis.get.mockImplementation((async (key: string) =>
       key === `system:blocks:consent-limit-refused:${USER}:${APP}` ? '500' : null) as never);
     expect(await caller().getMyAppDailyLimit({ appBlockId: APP })).toMatchObject({
       limit: 1000,
@@ -179,31 +201,30 @@ describe('blocks.getMyAppDailyLimit', () => {
   });
 
   it('over 30 reads a minute: null, and nothing is read', async () => {
-    redisMock.sysRedis.incrBy.mockResolvedValue(31 as never);
+    redisMock.redis.incrBy.mockResolvedValue(31 as never);
     expect(await caller().getMyAppDailyLimit({ appBlockId: APP })).toBeNull();
     expect(m.readLimit).not.toHaveBeenCalled();
   });
 
   it('the 30th read in a minute still reads', async () => {
-    redisMock.sysRedis.incrBy.mockResolvedValue(30 as never);
-    redisMock.sysRedis.ttl.mockResolvedValue(40 as never);
+    redisMock.redis.incrBy.mockResolvedValue(30 as never);
     expect(await caller().getMyAppDailyLimit({ appBlockId: APP })).not.toBeNull();
     expect(m.readLimit).toHaveBeenCalled();
-    expect(redisMock.sysRedis.expire).not.toHaveBeenCalled();
-  });
-
-  it('a rate window that lost its expiry gets one again, so it cannot lock the viewer out for good', async () => {
-    redisMock.sysRedis.incrBy.mockResolvedValue(5 as never);
-    redisMock.sysRedis.ttl.mockResolvedValue(-1 as never);
-    await caller().getMyAppDailyLimit({ appBlockId: APP });
-    expect(redisMock.sysRedis.expire).toHaveBeenCalledWith(
-      `system:blocks:daily-limit-read-rate:${USER}`,
-      60
-    );
+    // The window is created with its one-minute TTL in the same MULTI as the count.
+    expect(readRateSets).toEqual([
+      [`system:blocks:daily-limit-read-rate:${USER}`, '0', { NX: true, EX: 60 }],
+    ]);
+    // The rate window and the refusal record are on the cache cluster, not in system Redis.
+    expect(redisMock.sysRedis.incrBy).not.toHaveBeenCalled();
+    expect(
+      redisMock.sysRedis.get.mock.calls.filter(([k]: unknown[]) =>
+        String(k).startsWith('system:blocks:consent-limit-refused:')
+      )
+    ).toEqual([]);
   });
 
   it('a Redis error on the rate limit fails closed', async () => {
-    redisMock.sysRedis.incrBy.mockRejectedValue(new Error('down') as never);
+    redisMock.redis.incrBy.mockRejectedValue(new Error('down') as never);
     expect(await caller().getMyAppDailyLimit({ appBlockId: APP })).toBeNull();
   });
 });

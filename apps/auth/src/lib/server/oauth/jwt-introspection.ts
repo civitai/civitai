@@ -87,7 +87,7 @@ export async function introspectAccessTokenJwt(
     const record = await readExchangeRecord(jti);
     if (!record) return inactive('no exchange record', log);
     if (
-      record.kind === 'service' ||
+      record.kind !== undefined ||
       record.resource !== aud ||
       record.clientId !== clientId ||
       record.actor !== actor ||
@@ -110,7 +110,7 @@ export async function introspectAccessTokenJwt(
     }
 
     const scopeBits = record.scopeBits & exchangeScopeCeiling(subject.tokenScope, resource, app);
-    if (scopeBits === 0) return inactive('scope now empty', log);
+    if (scopeBits === 0n) return inactive('scope now empty', log);
 
     if (await userRefusal(record.userId, scopeBits, app)) return inactive('user refused', log);
 
@@ -170,7 +170,7 @@ async function introspectServiceToken(
   if (!client || !isServiceClient(client)) return inactive('service client not active', log);
 
   const scopeBits = record.scopeBits & entry.scopes;
-  if (scopeBits === 0) return inactive('scope now empty', log);
+  if (scopeBits === 0n) return inactive('scope now empty', log);
 
   return {
     kind: 'active',

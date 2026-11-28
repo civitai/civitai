@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import { isMissingTableError } from '~/server/services/blocks/missing-table-error';
 
 import { dbRead } from '~/server/db/client';
 // Static, not a lazy `import()`: `listing-problems` (imported below) already pulls this
@@ -347,42 +348,9 @@ export function canonicalOwnerWhereBranches(userId: number): Array<Record<string
 // wrong on every invite, and would drift from what the kind can physically do.
 // ---------------------------------------------------------------------------
 
-/**
- * Postgres/Prisma "the table isn't there yet" signals.
- *
- * P2021 is Prisma's typed code; 42P01 is the raw PG SQLSTATE that surfaces through
- * `$queryRaw` and through some driver paths where Prisma has not classified the error.
- * Matching BOTH matters: a check on P2021 alone let a raw-path failure through in
- * local testing.
- *
- * 🔴 THE MESSAGE BRANCH IS DELIBERATELY NARROWER THAN "does not exist". That substring
- * also appears in `column "displayed" does not exist` and in
- * `column "x" of relation "y" does not exist` (SQLSTATE 42703) — which is EXACTLY what a
- * HALF-APPLIED manual migration produces, and this repo applies migrations by hand
- * (datapacket-talos DB rule #8). Swallowing a column error would degrade a genuinely
- * broken schema to a permanent silent "no collaborators" instead of surfacing it. So the
- * message branch requires the missing object to be named as a RELATION or TABLE, and
- * refuses anything that mentions a column at all. `app-access.service.test.ts` pins both
- * directions, including the "broadened back to `does not exist` / `not found`" mutants.
- *
- * 🔴 EXPORTED BECAUSE IT IS THE MEASURED SPELLING, AND A SECOND COPY WAS NARROWER.
- * The digital-goods rail (`isMissingGoodsTableError` in `buzz-attribution.service.ts`)
- * open-coded a code-only version of this check. On a path where Prisma leaves the
- * SQLSTATE in the MESSAGE — the very case the sentence above records as measured — that
- * copy returned false, the goods `.catch` rethrew, and `Promise.all` took BOTH owner
- * revenue pages down, including the card figures that were readable. One spelling, one
- * place: new callers delegate here rather than re-deriving the condition.
- */
-export function isMissingTableError(err: unknown): boolean {
-  const code = (err as { code?: unknown })?.code;
-  if (code === 'P2021' || code === '42P01') return true;
-  // Prisma wraps the driver error; the SQLSTATE is only in the message on some paths.
-  const message = (err as { message?: unknown })?.message;
-  if (typeof message !== 'string') return false;
-  // A column/attribute error is a HALF-APPLIED migration, not an absent table.
-  if (/\bcolumns?\b/i.test(message)) return false;
-  return /\b42P01\b/.test(message) || /\b(?:relation|table)\s+\S+\s+does not exist/i.test(message);
-}
+// Moved to a leaf module (no imports) so a light module can use it without joining this one's
+// import graph; re-exported here, where every existing caller imports it.
+export { isMissingTableError } from '~/server/services/blocks/missing-table-error';
 
 /**
  * Run a collaborator-table READ, degrading to `fallback` when the manual-apply
@@ -1296,8 +1264,9 @@ async function hydrateMyAppListings(
             appRating: r.appBlock?.contentRating,
             assetScans: scansByListingId.get(r.id) ?? [],
             // 🔴 A PRE-APPROVAL ON-SITE DRAFT (no backing block yet) reports NO link nudge: its
-            // links are manifest-governed and reach this row only at approve, so its empty
-            // columns say nothing about the submitted manifest — and this surface has no manifest
+            // links are manifest-governed: a newly minted draft carries the first submit's, but a
+            // reused draft keeps an earlier submit's until approve, so its columns do not reliably
+            // describe the submitted manifest — and this surface has no manifest
             // for it. The submit's own readiness reads the submitted manifest instead.
             links:
               kind === 'onsite' && !r.appBlockId ? {} : listingProblemLinksFrom(r.id, linkMaps),
@@ -1633,16 +1602,35 @@ export async function getAppListingAuthoringContext(opts: {
  * pinned separately in `app-collaborator.public-projection.test.ts`.
  */
 export async function listDisplayedCollaboratorUserIds(appListingId: string): Promise<number[]> {
+  // The batched read for one listing: the store page and the listing stream share its predicate.
+  return (await listDisplayedCollaboratorUserIdsMany([appListingId])).get(appListingId) ?? [];
+}
+
+/**
+ * {@link listDisplayedCollaboratorUserIds} for many listings in one query, by the same two
+ * predicates: listing id → its displayed collaborators' user ids, in seat order (`createdAt asc`). A
+ * listing with none is absent.
+ */
+export async function listDisplayedCollaboratorUserIdsMany(
+  appListingIds: readonly string[]
+): Promise<Map<string, number[]>> {
+  const out = new Map<string, number[]>();
+  if (appListingIds.length === 0) return out;
   const rows = await safeCollaboratorQuery(
     () =>
       dbRead.appCollaborator.findMany({
-        where: { appListingId, status: ACCEPTED, displayed: true },
-        select: { userId: true },
+        where: { appListingId: { in: [...appListingIds] }, status: ACCEPTED, displayed: true },
+        select: { appListingId: true, userId: true },
         orderBy: { createdAt: 'asc' },
       }),
-    [] as { userId: number }[]
+    [] as { appListingId: string; userId: number }[]
   );
-  return rows.map((r: { userId: number }) => r.userId);
+  for (const r of rows as { appListingId: string; userId: number }[]) {
+    const ids = out.get(r.appListingId) ?? [];
+    ids.push(r.userId);
+    out.set(r.appListingId, ids);
+  }
+  return out;
 }
 
 /**

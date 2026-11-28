@@ -15,13 +15,14 @@ import {
   resolveModelSearchIds,
   runModelSearch,
 } from '~/server/services/model-search.service';
-import { resolveCatalogBrowsingLevel } from '~/server/utils/block-catalog-maturity';
+import { resolveCatalogViewerMaturity } from '~/server/utils/block-catalog-viewer-level';
 import { checkBlockCatalogRateLimit } from '~/server/utils/block-catalog-rate-limit';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { ModelSort } from '~/server/common/enums';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { constants } from '~/server/common/constants';
 import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
+import { appRateLimitMeta, sendAppRateLimited } from '~/server/utils/app-rate-limit';
 
 /**
  * GET /api/v1/blocks/models
@@ -31,11 +32,14 @@ import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
  * public /api/v1/models (it shares `runModelSearch`), so an in-block model
  * selector can switch endpoints with minimal change. The CRITICAL difference:
  *
- *   The effective browsing level is AUTHORITATIVELY CLAMPED to the block
- *   token's color-domain ceiling (`claims.maxBrowsingLevel`). A SFW-domain
- *   (green/blue) block CANNOT fetch mature catalog content, no matter what the
- *   client sends — `nsfw=true` / `browsingLevel=31` / a body maturity field are
- *   all ignored beyond the clamp.
+ *   The effective browsing level is AUTHORITATIVELY CLAMPED to the VIEWER's
+ *   level from the block token held to its color-domain ceiling
+ *   (`resolveCatalogViewerBrowsingLevel`: `viewerBrowsingLevel` &
+ *   `maxBrowsingLevel`, or the ceiling when they share no level — the main
+ *   site's rule). A SFW-domain (green/blue) block CANNOT fetch mature catalog
+ *   content, and neither can a viewer with mature content off on a mature
+ *   domain, no matter what the client sends — `nsfw=true` /
+ *   `browsingLevel=31` / a body maturity field are all ignored beyond the clamp.
  *
  * Why Option B (a block-gated endpoint) and NOT clamping the public
  * /api/v1/models: the public endpoint is the apex public-API contract +
@@ -175,16 +179,21 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
       endpoint: 'models',
       retryAfterSeconds: rateLimit.retryAfterSeconds,
     });
-    res.setHeader('Retry-After', String(rateLimit.retryAfterSeconds));
-    res.status(429).json({ error: 'Rate limit exceeded, please retry shortly.' });
+    sendAppRateLimited(
+      res,
+      appRateLimitMeta('apps.catalog', rateLimit.retryAfterSeconds),
+      'Rate limit exceeded, please retry shortly.'
+    );
     return;
   }
 
-  // AUTHORITATIVE clamp — maturity comes ONLY from the token's domain ceiling,
-  // then narrowed to SFW for region-restricted viewers (mirrors the public
-  // /api/v1/models region override the shared search service does NOT apply).
+  // AUTHORITATIVE clamp: maturity comes only from the token. Region-restricted viewers are
+  // narrowed to SFW (mirrors the public /api/v1/models region override the shared search service
+  // does NOT apply).
   const regionRestricted = isRegionRestricted(getRegion(req));
-  const { browsingLevel, isSfwCeiling } = resolveCatalogBrowsingLevel(claims, { regionRestricted });
+  const { browsingLevel, isSfwCeiling } = resolveCatalogViewerMaturity(claims, {
+    regionRestricted,
+  });
 
   const { query, types, baseModels, sort, limit, cursor, supportsGeneration, modelVersionIds } =
     parsed.data;
@@ -275,7 +284,7 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
 });
 
 // No requiredScope: any valid block token is accepted (see doc above). The
-// maturity clamp (resolveCatalogBrowsingLevel) remains the whole authority
+// maturity clamp (resolveCatalogViewerBrowsingLevel) remains the whole authority
 // surface. allowOpaqueOrigin: an UNVERIFIED block runs at an opaque origin
 // (`Origin: null`) so its direct catalog fetch needs `ACAO: null` to clear the
 // CORS preflight; safe here (public maturity-clamped data, no credentials,

@@ -96,10 +96,22 @@ export function useServiceDealMutations(dealId: number) {
     decline: trpc.creatorServiceDeal.decline.useMutation(options),
     withdraw: trpc.creatorServiceDeal.withdraw.useMutation(options),
     cancelLate: trpc.creatorServiceDeal.cancelLate.useMutation(options),
+    cancelAndRefund: trpc.creatorServiceDeal.cancelAndRefund.useMutation(options),
     requestCancellation: trpc.creatorServiceDeal.requestCancellation.useMutation(options),
     respondCancellation: trpc.creatorServiceDeal.respondCancellation.useMutation(options),
     acceptDelivery: trpc.creatorServiceDeal.acceptDelivery.useMutation(options),
     requestRevision: trpc.creatorServiceDeal.requestRevision.useMutation(options),
     openDispute: trpc.creatorServiceDeal.openDispute.useMutation(options),
+    review: trpc.creatorServiceDeal.review.useMutation(options),
+    editReview: trpc.creatorServiceDeal.editReview.useMutation(options),
+    replyToReview: trpc.creatorServiceDeal.replyToReview.useMutation(options),
+    attachReviewImage: trpc.creatorServiceDeal.attachReviewImage.useMutation({
+      ...options,
+      onSuccess: async () => {
+        await refresh();
+        await utils.creatorServiceDeal.reviewAttachableFinals.invalidate({ id: dealId });
+      },
+    }),
+    hideReview: trpc.creatorServiceDeal.hideReview.useMutation(options),
   };
 }

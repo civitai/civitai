@@ -23,6 +23,14 @@ import {
 import { mintUserSession, setSessionCookie } from '$lib/server/auth/session';
 import { getOrProduceSessionUser } from '$lib/server/auth/session-producer';
 import { NO_FRAMING } from '$lib/server/auth/same-origin';
+import type { SimpleBuzzLimit } from '@civitai/auth/buzz-limit';
+import {
+  isOfflineGrantOn,
+  offlineCapInitial,
+  parseOfflineBuzzCap,
+  readConsentForOffline,
+} from '$lib/server/oauth/offline-grant';
+import { offlineAllowedForClient } from '$lib/server/oauth/listing-offline';
 
 // Consent screen for the OAuth authorization_code flow. The §D /authorize endpoint redirects here
 // (303) when a user has no stored consent for the requested (client, scope). Approve POSTs straight
@@ -88,13 +96,42 @@ export const load: PageServerLoad = async ({ url, locals, cookies, setHeaders })
     isNew: granted !== null && !hasScope(granted, bit),
   }));
 
+  // Offline access (flag `oauth-offline-grant`; offline-grant.ts): the "Stay connected while you're
+  // away" line, ticked only when this app already holds the grant (`granted`), with a Buzz cap
+  // prefilled per offlineCapInitial (`custom`: a current cap the fields cannot show, kept unless the
+  // user sets one). Off, the page is unchanged.
+  let offline: { cap: SimpleBuzzLimit | null; custom: boolean; granted: boolean } | null = null;
+  const offlineParams: Record<string, string> = {};
+  // A listed connect client whose approved listing does not declare offline access gets no line
+  // (listing-offline.ts), matching what /authorize will do with the request.
+  if (
+    requested.offlineAccess &&
+    (await isOfflineGrantOn()) &&
+    (await offlineAllowedForClient(clientId))
+  ) {
+    const proposed = parseOfflineBuzzCap(
+      url.searchParams.get('offline_buzz_limit') ?? undefined,
+      url.searchParams.get('offline_buzz_period') ?? undefined
+    );
+    if (proposed === 'invalid') return { invalid: true as const };
+    const consent = await readConsentForOffline(locals.user.id, clientId);
+    const { initial, custom } = offlineCapInitial(consent?.offlineCap ?? null, proposed);
+    offline = { cap: initial, custom, granted: consent?.offlineGrantedAt != null };
+    // Carried so a switch of account reloads this page with the app's proposal intact.
+    for (const key of ['offline_buzz_limit', 'offline_buzz_period'] as const) {
+      const value = url.searchParams.get(key);
+      if (value !== null) offlineParams[key] = value;
+    }
+  }
+
   // Hidden-field values for the Approve form (normalized scope incl. UserRead, keeping an `openid`
-  // request so the id_token survives the round-trip). Typed as a Record so the page can read individual
-  // keys (client_id/redirect_uri/state) for the Deny form.
-  const formParams: Record<string, string> = {
-    ...params,
-    scope: requested.openid ? `openid ${scope}` : String(scope),
-  };
+  // request so the id_token survives the round-trip, and `offline_access` while the offline line is
+  // shown). Typed as a Record so the page can read individual keys (client_id/redirect_uri/state) for
+  // the Deny form.
+  const scopeParam = [requested.openid && 'openid', offline && 'offline_access', String(scope)]
+    .filter(Boolean)
+    .join(' ');
+  const formParams: Record<string, string> = { ...params, ...offlineParams, scope: scopeParam };
 
   // prompt=select_account: the client asked for the account picker, so it opens straight away and shows
   // even with one account, with a way to sign in to another.
@@ -137,6 +174,7 @@ export const load: PageServerLoad = async ({ url, locals, cookies, setHeaders })
       isVerified: client.isVerified,
     },
     scopes,
+    offline,
     params: formParams,
     accounts,
     selectAccount,

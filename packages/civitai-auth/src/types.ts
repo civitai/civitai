@@ -45,6 +45,11 @@ export interface SessionUser {
    * feeds it.
    */
   appBuilderApproved?: boolean;
+  /**
+   * The account is memorialized (`User.flags` Memorialized bit), set by the hub's session producer. A
+   * session token for it resolves to no user unless the session is an impersonation; by-id reads keep it.
+   */
+  memorialized?: true;
   // Client-only fields (parity with the main app's ExtendedUser — see src/types/next-auth.d.ts).
   name?: string;
   autoplayGifs?: boolean;

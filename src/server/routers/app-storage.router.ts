@@ -1,11 +1,15 @@
 import { TRPCError } from '@trpc/server';
+import { env } from '~/env/server';
 import { rateLimit } from '~/server/middleware.trpc';
 import {
   appStorageForAppSchema,
   emptyMyAppStorageSchema,
+  exportMyAppRecordsSchema,
 } from '~/server/schema/app-storage.schema';
+import { appRecordConfig } from '~/server/services/apps/app-record';
 import { isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
 import { protectedProcedure, router } from '~/server/trpc';
+import { usageLimits } from '~/shared/constants/usage-limits';
 
 /**
  * The signed-in user's OWN App Blocks document-store data (`doc-store-viewer-usage.service.ts`):
@@ -44,13 +48,33 @@ export const appStorageRouter = router({
   emptyMine: appStorageUserProcedure
     .meta({ blockApiKeys: true })
     .input(emptyMyAppStorageSchema)
-    .use(rateLimit({ limit: 20, period: 60 * 60 }))
+    .use(rateLimit(usageLimits('apps.storage-empties')))
     .mutation(async ({ ctx, input }) => {
       const { emptyMyAppStorage } = await import(
         '~/server/services/apps/doc-store-viewer-usage.service'
       );
       return emptyMyAppStorage(ctx.user.id, input.appBlockId, {
         includeShared: input.includeShared,
+      });
+    }),
+
+  /**
+   * One page of every record the user owns, across apps, as record-core objects
+   * (`exportMyAppRecords`). NOT_FOUND while the record core is switched off.
+   */
+  exportMine: appStorageUserProcedure
+    .meta({ blockApiKeys: true })
+    .input(exportMyAppRecordsSchema)
+    .use(rateLimit(usageLimits('apps.storage-exports')))
+    .query(async ({ ctx, input }) => {
+      const config = appRecordConfig(env);
+      if (!config) throw new TRPCError({ code: 'NOT_FOUND' });
+      const { exportMyAppRecords } = await import(
+        '~/server/services/apps/doc-store-viewer-usage.service'
+      );
+      return exportMyAppRecords(config, ctx.user.id, {
+        cursor: input.cursor ?? null,
+        limit: input.limit,
       });
     }),
 });

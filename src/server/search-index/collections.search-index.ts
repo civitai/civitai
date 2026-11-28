@@ -21,7 +21,6 @@ import { isDefined } from '~/utils/type-guards';
 import { COLLECTION_SEARCH_ELIGIBLE } from '~/server/search-index/collection-search-eligibility';
 import { uniqBy } from 'lodash-es';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
-import { isTaggedMatureImage } from '~/server/search-index/utils/tagged-mature-image';
 import { getServableProfilePictures } from '~/server/services/profile-picture.sql';
 import {
   collectionIndexImageSql,
@@ -116,9 +115,9 @@ type CollectionForSearchIndex = {
   };
   user: {
     id: number;
-    image: string | null;
     username: string | null;
     deletedAt: Date | null;
+    image: null;
     profilePictureId: number | null;
   };
   cosmetics: {
@@ -166,19 +165,13 @@ export const transformData = async ({
 }: CollectionPullData) => {
   const tagIdsOf = (imageId: number) =>
     tags.filter((t) => t.imageId === imageId).map((t) => t.tagId);
-  const isIndexed = (image: { id: number; nsfwLevel: number }) =>
-    !isTaggedMatureImage({ nsfwLevel: image.nsfwLevel, tags: tagIdsOf(image.id) });
 
   const records = collections
     .map(({ cosmetics, user, image, ...collection }) => {
-      const collectionImage =
-        image && isIndexed(image)
-          ? { ...image, tags: tagIdsOf(image.id).map((id) => ({ id })) }
-          : null;
-      // A left-out image takes its item's cover string with it.
-      const collectionImages = itemImages.filter(
-        (i) => i.id === collection.id && (!i.image || isIndexed(i.image))
-      );
+      const collectionImage = image
+        ? { ...image, tags: tagIdsOf(image.id).map((id) => ({ id })) }
+        : null;
+      const collectionImages = itemImages.filter((i) => i.id === collection.id);
       const images = collectionImages
         .map((i) => i.image)
         .filter(isDefined)
@@ -246,7 +239,7 @@ export const pullData = async (
         'id', u.id,
         'username', u.username,
         'deletedAt', u."deletedAt",
-        'image', u.image,
+        'image', NULL,
         'profilePictureId', u."profilePictureId"
       ) user
     FROM "User" u

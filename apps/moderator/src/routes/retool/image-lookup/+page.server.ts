@@ -2,6 +2,8 @@ import { fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { denied } from '$lib/server/access';
+import { holdsCsamReview } from '$lib/server/held-media';
+import { withheldRefusal } from '$lib/server/retracted-media';
 import { setImageFlag } from '$lib/server/user-actions.service';
 import { lookupQuerySchema, parseForm, parseQuery } from '$lib/server/query';
 import {
@@ -25,9 +27,10 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   // `asId`, not `Number`: `Post.id` is a Postgres integer, so an over-long id ERRORS the comparison
   // rather than missing it, and an uncaught throw in `load` renders a 500 instead of "no post matches".
   const postId = /^\d+$/.test(postParam) ? asId(postParam) : resolvePostId(q);
+  const csamReview = holdsCsamReview(locals.user);
 
   if (postId) {
-    const post = await getPostLookup(postId);
+    const post = await getPostLookup(postId, { csamReview });
     return {
       // NOT the post id. `LookupSearch` replaces the whole query string on submit, so echoing it here
       // meant pressing Search turned `?post=123` into `?q=123` — which resolves as an IMAGE id and
@@ -54,7 +57,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     };
 
   const imageId = await resolveImageId(q);
-  const result = imageId ? await getImageLookup(imageId) : null;
+  const result = imageId ? await getImageLookup(imageId, { csamReview }) : null;
 
   // A ToS deletion removes the Image row but leaves the ClickHouse lifecycle log — which is the record of
   // WHY it was removed, and the thing a moderator is looking for when an id no longer resolves.
@@ -103,11 +106,14 @@ export const actions: Actions = {
       await request.formData()
     );
     if (typeof input === 'string') return fail(400, { error: input });
+    const withheld = await withheldRefusal(locals.user, [input.imageId]);
+    if (withheld) return fail(403, { error: withheld });
 
     const result = await setImageFlag({
       ...splitImageFlagValue(input.flagValue),
       imageIds: [input.imageId],
       moderatorId: locals.user.id,
+      csamReview: holdsCsamReview(locals.user),
     });
     if (!result.ok) return fail(400, { error: result.error });
     return { success: true };

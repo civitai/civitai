@@ -1,12 +1,17 @@
+import dynamic from 'next/dynamic';
 import { Stack, Tabs, Text } from '@mantine/core';
 import {
   IconCode,
   IconFileCode,
   IconKey,
   IconLayoutDashboard,
+  IconMessageReply,
+  IconMessages,
   IconRobot,
+  IconTerminal2,
   IconWindow,
 } from '@tabler/icons-react';
+import { ReviewAssistantSessionsPanel } from '~/components/Apps/ReviewAssistantSessionsPanel';
 import { useRouter } from 'next/router';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -21,21 +26,34 @@ import {
   ScreenshotsReviewPanel,
   type OnsiteReviewSelection,
 } from '~/components/Apps/OnsiteReviewModal';
-import { ReviewListingMedia } from '~/components/Apps/ReviewListingMedia';
+import {
+  ReviewConsoleCountBadge,
+  ReviewConsolePanel,
+  ReviewConsoleProvider,
+} from '~/components/Apps/ReviewConsole';
+import { createReviewConsoleStore } from '~/components/Apps/reviewConsoleStore';
+import { ReviewListingMediaLive } from '~/components/Apps/ReviewListingMediaLive';
 import { ReviewOverviewPanel } from '~/components/Apps/ReviewOverviewPanel';
 import {
   isReviewDetailTab,
   resolveReviewDetailTab,
   REVIEW_DETAIL_TAB_LABELS,
   REVIEW_DETAIL_TAB_QUERY_KEY,
-  REVIEW_DETAIL_TAB_VALUES,
   reviewDetailTabQuery,
+  reviewDetailTabsFor,
   type ReviewDetailTab,
 } from '~/components/Apps/reviewDetailTabs';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { appDisplayName } from '~/shared/utils/app-display-name';
 
+// Loaded when the Conversation tab first opens: the thread (and the user-avatar graph it renders)
+// stays out of the review page's initial bundle, and the feature is dark behind its flag.
+const ReviewThread = dynamic(() =>
+  import('~/components/Apps/ReviewThread').then((m) => m.ReviewThread)
+);
+
 /**
- * The per-submission review PAGE's body, as SIX TABS with the OVERVIEW FIRST (see
+ * The per-submission review PAGE's body, as SEVEN TABS with the OVERVIEW FIRST (see
  * `reviewDetailTabs.ts` for the order and why).
  *
  * ## What moved, and why
@@ -84,6 +102,9 @@ export const TAB_ICONS: Record<ReviewDetailTab, typeof IconKey> = {
   agent: IconRobot,
   manifest: IconFileCode,
   preview: IconWindow,
+  console: IconTerminal2,
+  sessions: IconMessages,
+  conversation: IconMessageReply,
 };
 
 /**
@@ -114,7 +135,11 @@ function ReviewDetailTabsViewInner({
   selection: NonNullable<OnsiteReviewSelection>;
 }) {
   const router = useRouter();
+  const features = useFeatureFlags();
   const { request } = selection;
+  // The Conversation tab exists only while the reply thread is on.
+  const replies = !!features?.appReviewReplies;
+  const tabs = useMemo(() => reviewDetailTabsFor({ replies }), [replies]);
   const manifest = request.manifest as Record<string, unknown>;
 
   /**
@@ -133,11 +158,14 @@ function ReviewDetailTabsViewInner({
   }, []);
 
   const rawTab = router.query[REVIEW_DETAIL_TAB_QUERY_KEY];
-  const activeTab = useMemo(() => resolveReviewDetailTab(rawTab, { hash }), [rawTab, hash]);
+  const activeTab = useMemo(
+    () => resolveReviewDetailTab(rawTab, { hash, tabs }),
+    [rawTab, hash, tabs]
+  );
   const visited = useVisitedTabs(activeTab);
 
   const selectTab = (value: string | null) => {
-    if (!isReviewDetailTab(value)) return;
+    if (!isReviewDetailTab(value, tabs)) return;
     /*
       🔴 `replace` + `shallow`, like `/apps/activity`: no re-run of `getServerSideProps`
       and no history entry per click (which would turn Back into a tab-by-tab rewind out
@@ -178,10 +206,15 @@ function ReviewDetailTabsViewInner({
     >
       {/* Scrollable on narrow — the list scrolls within itself, never overflowing the page. */}
       <Tabs.List style={{ flexWrap: 'nowrap', overflowX: 'auto', overflowY: 'hidden' }}>
-        {REVIEW_DETAIL_TAB_VALUES.map((tab) => {
+        {tabs.map((tab) => {
           const Icon = TAB_ICONS[tab];
           return (
-            <Tabs.Tab key={tab} value={tab} leftSection={<Icon size={14} />}>
+            <Tabs.Tab
+              key={tab}
+              value={tab}
+              leftSection={<Icon size={14} />}
+              rightSection={tab === 'console' ? <ReviewConsoleCountBadge /> : undefined}
+            >
               {REVIEW_DETAIL_TAB_LABELS[tab]}
             </Tabs.Tab>
           );
@@ -299,7 +332,10 @@ function ReviewDetailTabsViewInner({
         {visited.has('preview') && (
           <Stack gap="md">
             <ReviewPreviewSection selection={selection} frameHeight={REVIEW_PREVIEW_TALL_HEIGHT} />
-            <ReviewListingMedia
+            <ReviewListingMediaLive
+              // The re-rate pickers and live levels (moderators): see `ReviewListingMediaLive`.
+              listingId={request.appListingId ?? null}
+              approveListingId={request.approveRating?.listingId ?? null}
               slug={request.slug}
               name={appDisplayName(request.manifest, request.slug)}
               iconUrl={request.iconUrl ?? null}
@@ -313,6 +349,34 @@ function ReviewDetailTabsViewInner({
           </Stack>
         )}
       </Tabs.Panel>
+
+      {/*
+        CONSOLE — what the running preview reported (the Overview and the Preview tab both run
+        it), for this session only. Not `visited`-gated: it fetches nothing, and the count on
+        its tab must be live before the moderator ever opens it.
+      */}
+      <Tabs.Panel value="console" pt="md">
+        <ReviewConsolePanel />
+      </Tabs.Panel>
+
+      {/*
+        BUILD SESSIONS — the App Assistant chats this submission was built in, its signals and
+        their frozen transcripts. `visited`-gated: it reads the moderator trace API only once
+        opened.
+      */}
+      <Tabs.Panel value="sessions" pt="md">
+        {visited.has('sessions') && <ReviewAssistantSessionsPanel publishRequestId={request.id} />}
+      </Tabs.Panel>
+
+      {/*
+        CONVERSATION — the reply thread with the submission's developer. Only while
+        `appReviewReplies` is on (the tab is not in `tabs` otherwise); `visited`-gated.
+      */}
+      {replies && (
+        <Tabs.Panel value="conversation" pt="md">
+          {visited.has('conversation') && <ReviewThread subjectId={request.id} />}
+        </Tabs.Panel>
+      )}
     </Tabs>
   );
 }
@@ -338,4 +402,21 @@ function ReviewDetailTabsViewInner({
  * `selection` is the only prop and it does not change on a tick, so this cuts the tick's
  * blast radius to the two components that actually consume `now`.
  */
-export const ReviewDetailTabsView = memo(ReviewDetailTabsViewInner);
+function ReviewDetailTabsViewWithConsole({
+  selection,
+}: {
+  selection: NonNullable<OnsiteReviewSelection>;
+}) {
+  /**
+   * The page session's app console, one per mount. A STORE rather than state: as state, every
+   * report would re-render the tabs with their diff tables.
+   */
+  const [reviewConsole] = useState(createReviewConsoleStore);
+  return (
+    <ReviewConsoleProvider store={reviewConsole}>
+      <ReviewDetailTabsViewInner selection={selection} />
+    </ReviewConsoleProvider>
+  );
+}
+
+export const ReviewDetailTabsView = memo(ReviewDetailTabsViewWithConsole);

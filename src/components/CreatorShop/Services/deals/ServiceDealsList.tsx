@@ -1,11 +1,14 @@
 import { Anchor, Badge, Button, Center, Group, Loader, Paper, Stack, Text } from '@mantine/core';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { awaitsViewer, dealStatusBadge } from '~/components/CreatorShop/Services/deals/deal-ui';
+import {
+  awaitsViewer,
+  dealStatusBadge,
+  sellerHeldLine,
+} from '~/components/CreatorShop/Services/deals/deal-ui';
 import { useMyServiceDeals } from '~/components/CreatorShop/Services/deals/deal.util';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { pluralize } from '~/components/CreatorShop/Services/creator-service.util';
-import { useSyncAccount } from '~/hooks/useSyncAccount';
-import { useServerDomains } from '~/providers/AppProvider';
+import { useRedHref } from '~/hooks/useRedHref';
 import { formatDate } from '~/utils/date-helpers';
 import { Currency } from '~/shared/utils/prisma/enums';
 
@@ -28,12 +31,11 @@ export function ServiceDealsList({
 }) {
   const { deals, hiddenOffDomain, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
     useMyServiceDeals({ role, status, enabled: true });
-  const redDomain = useServerDomains().red;
-  const syncAccount = useSyncAccount();
+  const redHref = useRedHref();
   // Mature deals are left out off red; say where they went so a party doesn't think one vanished.
   const offDomainLine = hiddenOffDomain > 0 && (
     <Text size="sm" c="dimmed">
-      <Anchor href={syncAccount(`//${redDomain}/services/deals`)} inherit>
+      <Anchor href={redHref('/services/deals')} inherit>
         {pluralize(hiddenOffDomain, 'deal')} on civitai.red
       </Anchor>
     </Text>
@@ -82,6 +84,11 @@ export function ServiceDealsList({
                     'MMM D, h:mm A'
                   )}`}
               </Text>
+              {role === 'seller' && sellerHeldLine(deal) && (
+                <Text size="xs" c="dimmed">
+                  {sellerHeldLine(deal)}
+                </Text>
+              )}
             </Stack>
             <Group gap="sm" wrap="nowrap">
               <CurrencyBadge

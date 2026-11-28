@@ -11,7 +11,7 @@ import {
   Table,
   Text,
 } from '@mantine/core';
-import { openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { IconExternalLink, IconTrash } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useState } from 'react';
@@ -44,10 +44,9 @@ export function UserDraftArticles() {
     },
   });
   const handleDeleteArticle = (article: (typeof items)[number]) => {
-    openConfirmModal({
+    openConfirm({
       title: 'Delete article',
-      children: 'Are you sure you want to delete this article? This action is destructive.',
-      centered: true,
+      message: 'Are you sure you want to delete this article? This action is destructive.',
       labels: { confirm: 'Delete Article', cancel: "No, don't delete it" },
       confirmProps: { color: 'red' },
       onConfirm: () => {

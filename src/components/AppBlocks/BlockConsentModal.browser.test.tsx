@@ -76,7 +76,7 @@ describe('BlockConsentModal — sensitive scope emphasis for the end user', () =
     // Friendly descriptions of both requested scopes render.
     await expect.element(page.getByText('Post tips on behalf of the viewer')).toBeInTheDocument();
     await expect
-      .element(page.getByText("Read the viewer's username and account status"))
+      .element(page.getByText("Read the viewer's username, profile picture and account status"))
       .toBeInTheDocument();
     // Exactly ONE sensitive badge — for the Buzz-spending scope only.
     expect(page.getByTestId('sensitive-scope-badge').elements()).toHaveLength(1);
@@ -429,7 +429,7 @@ describe('BlockConsentModal — scopes grouped and ordered like the store listin
     'models:read:self': 'See the model it sits on',
     [UNKNOWN]: 'Zz not a real scope',
     [APP_STORAGE_IMPORT]: 'Use your data from another app',
-    'user:read:self': 'See your username and account status',
+    'user:read:self': 'See your username, profile picture and account status',
     [SPEND]: 'Run AI work with your Buzz',
   };
 

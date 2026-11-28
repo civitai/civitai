@@ -7,6 +7,7 @@
  * pins one decision. The end-to-end path through the real route and transformer is
  * `src/server/__tests__/trpc-feed-go-shadow.test.ts`.
  */
+import { EventEmitter } from 'node:events';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import superjson from 'superjson';
@@ -14,11 +15,16 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createFeedGoShadow,
   feedGoV1ShapeClass,
+  FEED_GO_TRAINING_DATA_SQL_HEADER,
+  FEED_GO_SHADOW_MODEL_ASSOCIATED_PATH,
   FEED_GO_SHADOW_MODEL_GET_ALL_PATH,
   FEED_GO_SHADOW_PATH,
+  FEED_GO_COMPARED_RESPONSE_HEADERS,
+  FEED_GO_COMPARED_REST_RESPONSE_HEADERS,
   pickShadowHeaders,
   pickShadowResponseHeaders,
   readFeedGoShadowConfig,
+  type RestSampleOptions,
   SHADOW_DEFAULT_MAX_IN_FLIGHT,
   SHADOW_DEFAULT_MAX_PER_SECOND,
   SHADOW_DEFAULT_TIMEOUT_MS,
@@ -31,6 +37,7 @@ const V1_URL = 'http://feed-go.test:9090/internal/shadow/api/v1/images';
 const PROBE_URL = 'http://feed-go.test:9090/internal/probe/image.getImagesAsPostsInfinite';
 const INF_URL = 'http://feed-go.test:9090/internal/shadow/image.getInfinite';
 const MODELS_URL = 'http://feed-go.test:9090/internal/shadow/model.getAll';
+const ASSOC_URL = 'http://feed-go.test:9090/internal/shadow/model.getAssociatedResourcesCardData';
 const V1_MODELS_URL = 'http://feed-go.test:9090/internal/shadow/api/v1/models';
 const V1_MODEL_ID_URL = 'http://feed-go.test:9090/internal/shadow/api/v1/models/id';
 const INPUT = '{"json":{"modelId":7,"limit":50},"meta":{"values":{"cursor":["undefined"]}}}';
@@ -41,6 +48,7 @@ function config(overrides: Partial<FeedGoShadowConfig> = {}): FeedGoShadowConfig
     v1ImagesUrl: V1_URL,
     infiniteUrl: INF_URL,
     modelGetAllUrl: MODELS_URL,
+    modelAssociatedUrl: ASSOC_URL,
     v1ModelsUrl: V1_MODELS_URL,
     v1ModelsIdUrl: V1_MODEL_ID_URL,
     rate: 1,
@@ -51,6 +59,8 @@ function config(overrides: Partial<FeedGoShadowConfig> = {}): FeedGoShadowConfig
     probeInfiniteUrl: undefined,
     probeModelGetAllUrl: undefined,
     probeRate: 0,
+    v1ModelsCredentials: false,
+    v1ModelsQuery: false,
     ...overrides,
   };
 }
@@ -79,11 +89,14 @@ function harness(
     infinite?: boolean;
     /** The `feed-go-shadow-model-getall` flag (default OFF here, as in production). */
     models?: boolean;
+    /** The `feed-go-shadow-model-associated` flag (default OFF here, as in production). */
+    associated?: boolean;
     /** The `feed-go-shadow-v1-models` flag (default on here, as `v1` is). */
     v1Models?: boolean;
     random?: number;
     fetchImpl?: (url: string, init: RequestInit) => Promise<Response>;
     now?: () => number;
+    modelSampleHeaders?: () => Record<string, string>;
   } = {}
 ) {
   const outcomes: string[] = [];
@@ -99,6 +112,7 @@ function harness(
     enabledV1Images: () => opts.v1 ?? true,
     enabledInfinite: () => opts.infinite ?? false,
     enabledModelGetAll: () => opts.models ?? false,
+    enabledModelAssociated: () => opts.associated ?? false,
     enabledV1Models: () => opts.v1Models ?? true,
     random: () => opts.random ?? 0,
     fetch: fetchMock as unknown as typeof fetch,
@@ -109,6 +123,7 @@ function harness(
     recordEncode: (seconds, bytes) => void encodes.push({ seconds, bytes }),
     now: opts.now ?? (() => 0),
     schedule: (fn) => void queued.push(fn),
+    modelSampleHeaders: opts.modelSampleHeaders,
   });
   const flush = async () => {
     while (queued.length) queued.shift()!();
@@ -148,6 +163,7 @@ describe('readFeedGoShadowConfig', () => {
       v1ImagesUrl: undefined,
       infiniteUrl: undefined,
       modelGetAllUrl: undefined,
+      modelAssociatedUrl: undefined,
       v1ModelsUrl: undefined,
       v1ModelsIdUrl: undefined,
       rate: 0,
@@ -158,6 +174,11 @@ describe('readFeedGoShadowConfig', () => {
       probeInfiniteUrl: undefined,
       probeModelGetAllUrl: undefined,
       probeRate: 0,
+      probeV1ImagesUrl: undefined,
+      probeV1ImagesRate: 0,
+      v1ModelsCredentials: false,
+      v1ModelsQuery: false,
+      corpusOnlyRate: 0,
     });
   });
 
@@ -175,8 +196,11 @@ describe('readFeedGoShadowConfig', () => {
       v1ImagesUrl: 'http://feed-go.internal.test:9090/internal/shadow/api/v1/images',
       infiniteUrl: 'http://feed-go.internal.test:9090/internal/shadow/image.getInfinite',
       modelGetAllUrl: 'http://feed-go.internal.test:9090/internal/shadow/model.getAll',
+      modelAssociatedUrl:
+        'http://feed-go.internal.test:9090/internal/shadow/model.getAssociatedResourcesCardData',
       v1ModelsUrl: 'http://feed-go.internal.test:9090/internal/shadow/api/v1/models',
       v1ModelsIdUrl: 'http://feed-go.internal.test:9090/internal/shadow/api/v1/models/id',
+      siteSearchUrl: 'http://feed-go.internal.test:9090/internal/shadow/api/search',
       rate: 0.25,
       timeoutMs: 750,
       maxInFlight: 3,
@@ -185,7 +209,59 @@ describe('readFeedGoShadowConfig', () => {
       probeInfiniteUrl: 'http://feed-go.internal.test:9090/internal/probe/image.getInfinite',
       probeModelGetAllUrl: 'http://feed-go.internal.test:9090/internal/probe/model.getAll',
       probeRate: 0.5,
+      probeV1ImagesUrl: 'http://feed-go.internal.test:9090/internal/probe/api/v1/images',
+      probeV1ImagesRate: 0,
+      v1ModelsCredentials: false,
+      v1ModelsQuery: false,
+      corpusOnlyRate: 0,
     });
+  });
+
+  it('reads FEED_GO_SHADOW_V1_MODELS_CREDENTIALS as on only for true or 1', () => {
+    for (const [value, want] of [
+      [undefined, false],
+      ['', false],
+      ['false', false],
+      ['yes', false],
+      ['true', true],
+      [' TRUE ', true],
+      ['1', true],
+    ] as const) {
+      expect(
+        readFeedGoShadowConfig({ FEED_GO_SHADOW_V1_MODELS_CREDENTIALS: value }).v1ModelsCredentials
+      ).toBe(want);
+    }
+  });
+
+  it('reads FEED_GO_SHADOW_V1_MODELS_QUERY as on only for true or 1', () => {
+    for (const [value, want] of [
+      [undefined, false],
+      ['', false],
+      ['false', false],
+      ['on', false],
+      ['true', true],
+      [' True ', true],
+      ['1', true],
+    ] as const) {
+      expect(readFeedGoShadowConfig({ FEED_GO_SHADOW_V1_MODELS_QUERY: value }).v1ModelsQuery).toBe(
+        want
+      );
+    }
+  });
+
+  it('reads FEED_GO_SHADOW_CORPUS_ONLY_RATE: unset and junk are 0 (off), a number is clamped to [0, 1]', () => {
+    for (const [value, want] of [
+      [undefined, 0],
+      ['', 0],
+      ['on', 0],
+      ['-0.5', 0],
+      ['0.125', 0.125],
+      ['3', 1],
+    ] as const) {
+      expect(
+        readFeedGoShadowConfig({ FEED_GO_SHADOW_CORPUS_ONLY_RATE: value }).corpusOnlyRate
+      ).toBe(want);
+    }
   });
 
   it('rejects a non-http URL and clamps out-of-range numbers', () => {
@@ -201,6 +277,7 @@ describe('readFeedGoShadowConfig', () => {
     expect(c.probeUrl).toBeUndefined();
     expect(c.infiniteUrl).toBeUndefined();
     expect(c.modelGetAllUrl).toBeUndefined();
+    expect(c.modelAssociatedUrl).toBeUndefined();
     expect(c.v1ModelsUrl).toBeUndefined();
     expect(c.v1ModelsIdUrl).toBeUndefined();
     expect(c.rate).toBe(1);
@@ -385,6 +462,7 @@ describe('createFeedGoShadow — sampling decision', () => {
       input: INPUT,
       headers: { host: 'civitai.com', cookie: '__Secure-civ-token=t' },
       node: JSON.parse(JSON.stringify(written)),
+      sampleRate: 1,
     });
     expect(h.outcomes).toEqual(['sent']);
     expect(h.shadow.inFlight()).toBe(0);
@@ -406,6 +484,23 @@ describe('createFeedGoShadow — sampling decision', () => {
       request({ query: { trpc: 'model.getAll', input: INPUT } }),
     ],
     [
+      'model.getAssociatedResourcesCardData, its flag off',
+      { models: true },
+      request({ query: { trpc: 'model.getAssociatedResourcesCardData', input: INPUT } }),
+    ],
+    [
+      'model.getAssociatedResourcesCardData with no URL',
+      { associated: true, config: { modelAssociatedUrl: undefined } },
+      request({ query: { trpc: 'model.getAssociatedResourcesCardData', input: INPUT } }),
+    ],
+    [
+      'model.getAssociatedResourcesCardData batched',
+      { associated: true },
+      request({
+        query: { trpc: 'model.getAssociatedResourcesCardData', batch: '1', input: INPUT },
+      }),
+    ],
+    [
       'an unmirrored procedure',
       { infinite: true },
       request({ query: { trpc: 'image.get', input: INPUT } }),
@@ -424,6 +519,29 @@ describe('createFeedGoShadow — sampling decision', () => {
       'a multi-procedure path',
       {},
       request({ query: { trpc: 'image.getImagesAsPostsInfinite,user.getCreator', input: INPUT } }),
+    ],
+    // feed-go's serve-side parity replay of a request it served (feed-go-parity-replay.ts), on each
+    // mirrored procedure with its flag on: feed-go compares it itself.
+    [
+      'a feed-go parity replay',
+      {},
+      request({ headers: { host: 'civitai.com', 'x-feed-go-parity-replay': '1' } }),
+    ],
+    [
+      'a feed-go parity replay of image.getInfinite',
+      { infinite: true },
+      request({
+        headers: { host: 'civitai.com', 'x-feed-go-parity-replay': '1' },
+        query: { trpc: 'image.getInfinite', input: INPUT },
+      }),
+    ],
+    [
+      'a feed-go parity replay of model.getAll',
+      { models: true },
+      request({
+        headers: { host: 'civitai.com', 'x-feed-go-parity-replay': '1' },
+        query: { trpc: 'model.getAll', input: INPUT },
+      }),
     ],
   ])('does not sample: %s', async (_name, opts, req) => {
     const h = harness(opts as Parameters<typeof harness>[0]);
@@ -451,6 +569,42 @@ describe('createFeedGoShadow — sampling decision', () => {
     } finally {
       delete (Object.prototype as Record<string, unknown>)[key];
     }
+  });
+
+  it('samples model.getAssociatedResourcesCardData under its own flag and posts it to its own path', async () => {
+    const h = harness({ associated: true, enabled: false });
+    const input = '{"json":{"fromId":9001,"type":"Suggested","browsingLevel":1}}';
+    const data = [{ resourceType: 'model', id: 5001, sponsored: false }];
+    const written = superjson.serialize(data);
+    const sample = serve(
+      h,
+      request({ query: { trpc: 'model.getAssociatedResourcesCardData', input } }),
+      { data, written }
+    );
+    expect(sample?.endpoint).toBe('model-associated');
+    await h.flush();
+    expect(h.fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = h.fetchMock.mock.calls[0];
+    expect(url).toBe(ASSOC_URL);
+    expect(url.endsWith(FEED_GO_SHADOW_MODEL_ASSOCIATED_PATH)).toBe(true);
+    expect(JSON.parse(init.body as string)).toEqual({
+      input,
+      headers: { host: 'civitai.com' },
+      node: JSON.parse(JSON.stringify(written)),
+      sampleRate: 1,
+    });
+    expect(h.outcomes).toEqual(['sent']);
+    expect(h.endpoints).toEqual(['model-associated']);
+  });
+
+  it('the model.getAll flag does not sample model.getAssociatedResourcesCardData, nor its flag model.getAll', () => {
+    const assoc = request({
+      query: { trpc: 'model.getAssociatedResourcesCardData', input: INPUT },
+    });
+    const getAll = request({ query: { trpc: 'model.getAll', input: INPUT } });
+    expect(harness({ models: true }).shadow.begin(assoc)).toBeUndefined();
+    expect(harness({ associated: true }).shadow.begin(getAll)).toBeUndefined();
+    expect(harness({ associated: true }).shadow.begin(assoc)?.endpoint).toBe('model-associated');
   });
 
   it('samples a fraction: random below the rate is sampled, at the rate is not', () => {
@@ -506,6 +660,38 @@ describe('createFeedGoShadow — never on the user path', () => {
     await h.flush();
     expect([serve(h), serve(h), serve(h), serve(h)].filter(Boolean)).toHaveLength(3);
     expect(h.fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  // feed-go's eval capture weighs a sample by 1 / sampleRate (apps/feed-go DESIGN.md §19.6 T1).
+  it('every sample carries sampleRate: the configured rate times the share its bounds admitted', async () => {
+    let t = 0;
+    const h = harness({
+      config: { rate: 0.5, maxPerSecond: 10, maxInFlight: 1000 },
+      now: () => t,
+    });
+    const burst = (n: number) => Array.from({ length: n }, () => serve(h)).filter(Boolean).length;
+    // 40 selected in one instant: the bucket admits its 10 and drops 30. Each of the 10 is admitted
+    // while the window holds fewer than 20 checks, so it carries the configured rate alone.
+    expect(burst(40)).toBe(10);
+    t = 1_000; // the bucket refills: 41 checks, 11 admitted
+    expect(burst(1)).toBe(1);
+    t = 70_000; // a new window: the previous one (41, 11) plus this one's; 25 checks, 10 admitted
+    expect(burst(25)).toBe(10);
+    t = 135_000; // a new window: the previous (25, 10) is still recent; 25 checks, 10 admitted
+    expect(burst(25)).toBe(10);
+    t = 300_000; // the last window ended over a minute ago: stale, so too few checks again
+    expect(burst(1)).toBe(1);
+    await h.flush();
+    const rates = h.fetchMock.mock.calls.map(
+      ([, init]) => (JSON.parse(init.body as string) as { sampleRate: number }).sampleRate
+    );
+    expect(rates).toHaveLength(32);
+    expect(rates.slice(0, 10)).toEqual(Array(10).fill(0.5));
+    expect(rates[10]).toBeCloseTo((0.5 * 11) / 41, 12);
+    expect(rates[11]).toBeCloseTo((0.5 * 12) / 42, 12);
+    expect(rates[21]).toBeCloseTo((0.5 * 11) / 26, 12);
+    // Counted with the stale window (25 checks) it would be 0.5 * 11 / 26.
+    expect(rates[31]).toBe(0.5);
   });
 
   it('a budget below one per second still admits one sample', () => {
@@ -727,7 +913,7 @@ describe('createFeedGoShadow — GET /api/v1/images', () => {
       '{"input":"modelVersionId=9&limit=2","path":"/api/v1/images",' +
         '"headers":{"host":"civitai.com","cf-ipcountry":"GB","cookie":"__Secure-civ-token=t"},' +
         '"node":{"items":[{"id":11,"createdAt":"2024-03-01T10:00:00.000Z"}],' +
-        '"metadata":{"nextCursor":"feed:1:2"}}}'
+        '"metadata":{"nextCursor":"feed:1:2"}},"sampleRate":1}'
     );
     expect(h.outcomes).toEqual(['sent']);
     expect(h.endpoints).toEqual(['v1-images']);
@@ -883,9 +1069,10 @@ describe('createFeedGoShadow — GET /api/v1/models and /api/v1/models/[id]', ()
     h: ReturnType<typeof harness>,
     endpoint: 'v1-models' | 'v1-models-id',
     req: ReturnType<typeof restRequest>,
-    { status = 200, body = { items: [], metadata: {} } as unknown } = {}
+    { status = 200, body = { items: [], metadata: {} } as unknown } = {},
+    opts?: RestSampleOptions
   ) {
-    const sample = h.shadow.beginRest(endpoint, req);
+    const sample = h.shadow.beginRest(endpoint, req, opts);
     if (sample) {
       if (status === 200) h.shadow.captureRest(sample, body);
       h.shadow.finish(sample, status);
@@ -909,7 +1096,7 @@ describe('createFeedGoShadow — GET /api/v1/models and /api/v1/models/[id]', ()
       '{"input":"limit=1&sort=Newest","path":"/api/v1/models",' +
         '"headers":{"host":"civitai.com","cf-ipcountry":"GB","cookie":"__Secure-civ-token=t"},' +
         '"node":{"items":[{"id":5001,"name":"A","stats":{"downloadCount":null}}],' +
-        '"metadata":{"nextCursor":"7|5001"}}}'
+        '"metadata":{"nextCursor":"7|5001"}},"sampleRate":1}'
     );
     expect(h.outcomes).toEqual(['sent']);
     expect(h.endpoints).toEqual(['v1-models']);
@@ -926,8 +1113,64 @@ describe('createFeedGoShadow — GET /api/v1/models and /api/v1/models/[id]', ()
       path: '/api/v1/models/42',
       headers: { host: 'civitai.com', 'cf-ipcountry': 'GB', cookie: '__Secure-civ-token=t' },
       node: { id: 42 },
+      sampleRate: 1,
     });
     expect(h.endpoints).toEqual(['v1-models-id']);
+  });
+
+  it("a model sample carries the Training Data statement hash; another route's does not", async () => {
+    const hash = { [FEED_GO_TRAINING_DATA_SQL_HEADER]: 'abc123' };
+    const h = harness({ modelSampleHeaders: () => hash });
+    serveModels(h, 'v1-models', modelsRequest('/api/v1/models?limit=1'));
+    serveModels(h, 'v1-models-id', modelsRequest('/api/v1/models/42'), { body: { id: 42 } });
+    const img = h.shadow.beginV1Images(restRequest());
+    if (img) {
+      h.shadow.captureV1Images(img, { items: [] });
+      h.shadow.finish(img, 200);
+    }
+    await h.flush();
+    const headers = h.fetchMock.mock.calls.map(
+      ([url, init]) => [url, JSON.parse(init.body as string).headers] as const
+    );
+    expect(headers.filter(([url]) => url === V1_MODELS_URL || url === V1_MODEL_ID_URL)).toEqual([
+      [V1_MODELS_URL, expect.objectContaining(hash)],
+      [V1_MODEL_ID_URL, expect.objectContaining(hash)],
+    ]);
+    const others = headers.filter(([url]) => url !== V1_MODELS_URL && url !== V1_MODEL_ID_URL);
+    expect(others).toHaveLength(1);
+    expect(others[0][1]).not.toHaveProperty(FEED_GO_TRAINING_DATA_SQL_HEADER);
+    // A source that throws leaves the header off (feed-go then falls back on Training Data).
+    const broken = harness({
+      modelSampleHeaders: () => {
+        throw new Error('x');
+      },
+    });
+    const s = broken.shadow.beginRest('v1-models', modelsRequest('/api/v1/models'));
+    expect(s?.headers).not.toHaveProperty(FEED_GO_TRAINING_DATA_SQL_HEADER);
+  });
+
+  it('a list text query is sampled only with FEED_GO_SHADOW_V1_MODELS_QUERY; an empty one always', () => {
+    const text = (q: string | string[]) =>
+      modelsRequest(`/api/v1/models?query=${encodeURIComponent(String(q))}`, {
+        query: { query: q },
+      });
+    const off = harness();
+    expect(off.shadow.beginRest('v1-models', text('cat'))).toBeUndefined();
+    expect(off.shadow.beginRest('v1-models', text(' '))).toBeUndefined();
+    expect(off.shadow.beginRest('v1-models', text(['', '']))).toBeUndefined();
+    // The empty query is the database path: sampled as before.
+    expect(off.shadow.beginRest('v1-models', text(''))).toBeDefined();
+    // `[id]` has no text search: a `query` key there changes nothing.
+    expect(
+      off.shadow.beginRest(
+        'v1-models-id',
+        modelsRequest('/api/v1/models/1', { query: { query: 'x' } })
+      )
+    ).toBeDefined();
+    const on = harness({ config: { v1ModelsQuery: true } });
+    const sample = on.shadow.beginRest('v1-models', text('cat'));
+    expect(sample).toBeDefined();
+    expect(sample?.input).toBe('query=cat');
   });
 
   it('one flag covers both model routes, and neither the images nor the gallery flag does', () => {
@@ -963,6 +1206,321 @@ describe('createFeedGoShadow — GET /api/v1/models and /api/v1/models/[id]', ()
       expect(h.endpoints).toEqual([endpoint]);
     }
   );
+
+  describe('an API credential, with FEED_GO_SHADOW_V1_MODELS_CREDENTIALS', () => {
+    const KEY = 'k-live-secret-0123';
+    const DESCRIBED = 'key:described';
+    const keyed = (url: string, headers: Record<string, string> = {}) =>
+      modelsRequest(url, {
+        headers: { host: 'civitai.com', authorization: `Bearer ${KEY}`, ...headers },
+      });
+
+    it.each(['v1-models', 'v1-models-id'] as const)(
+      'off (the default): %s is counted skipped_credential and never sent, as before',
+      async (endpoint) => {
+        const h = harness();
+        expect(
+          serveModels(h, endpoint, keyed('/api/v1/models/1'), {}, { credential: () => DESCRIBED })
+        ).toBeUndefined();
+        await h.flush();
+        expect(h.fetchMock).not.toHaveBeenCalled();
+        expect(h.outcomes).toEqual(['skipped_credential']);
+      }
+    );
+
+    it('on: [id] is sent with the description in place of the key', async () => {
+      const h = harness({ config: { v1ModelsCredentials: true } });
+      const sample = serveModels(
+        h,
+        'v1-models-id',
+        keyed('/api/v1/models/1'),
+        { body: { id: 1 } },
+        { credential: () => DESCRIBED }
+      );
+      expect(sample).toBeDefined();
+      await h.flush();
+      expect(h.outcomes).toEqual(['sent']);
+      const [url, init] = h.fetchMock.mock.calls[0];
+      expect(url).toBe(V1_MODEL_ID_URL);
+      const body = init.body as string;
+      expect(JSON.parse(body).headers).toEqual({
+        host: 'civitai.com',
+        authorization: 'present',
+        'x-feed-go-credential': DESCRIBED,
+      });
+      expect(body).not.toContain(KEY);
+    });
+
+    it.each([
+      [
+        'the list (its credentials always fall back in feed-go)',
+        'v1-models',
+        keyed('/api/v1/models'),
+      ],
+      [
+        'a ?token= on [id] (the query string carries it)',
+        'v1-models-id',
+        modelsRequest('/api/v1/models/1?token=KEY', { query: { token: 'KEY' } }),
+      ],
+      ['GET /api/v1/images', 'v1-images', keyed('/api/v1/images')],
+    ] as const)('on: %s is still skipped_credential', async (_name, endpoint, req) => {
+      const h = harness({ config: { v1ModelsCredentials: true } });
+      const sample =
+        endpoint === 'v1-images'
+          ? h.shadow.beginV1Images(req)
+          : h.shadow.beginRest(endpoint, req, { credential: () => DESCRIBED });
+      expect(sample).toBeUndefined();
+      await h.flush();
+      expect(h.fetchMock).not.toHaveBeenCalled();
+      expect(h.outcomes).toEqual(['skipped_credential']);
+    });
+
+    it('on: no description, an empty one or a throwing one is skipped_credential', async () => {
+      const h = harness({ config: { v1ModelsCredentials: true } });
+      for (const credential of [
+        undefined,
+        () => undefined,
+        () => {
+          throw new Error('x');
+        },
+      ]) {
+        expect(
+          h.shadow.beginRest('v1-models-id', keyed('/api/v1/models/1'), { credential })
+        ).toBeUndefined();
+      }
+      await h.flush();
+      expect(h.outcomes).toEqual([
+        'skipped_credential',
+        'skipped_credential',
+        'skipped_credential',
+      ]);
+    });
+
+    it('on: a request with no credential carries no description', async () => {
+      const h = harness({ config: { v1ModelsCredentials: true } });
+      serveModels(
+        h,
+        'v1-models-id',
+        modelsRequest('/api/v1/models/1', { headers: { host: 'civitai.com' } }),
+        { body: { id: 1 } },
+        { credential: () => DESCRIBED }
+      );
+      await h.flush();
+      const [, init] = h.fetchMock.mock.calls[0];
+      expect(JSON.parse(init.body as string).headers).toEqual({ host: 'civitai.com' });
+    });
+  });
+
+  describe('corpus-only samples, with FEED_GO_SHADOW_CORPUS_ONLY_RATE', () => {
+    // A distinctive synthetic key: it must appear nowhere in what is sent. It holds no credential
+    // word, so a pair echoing it is dropped for holding the key, not for its spelling.
+    const KEY = 'zq7-synthetic-K3y-Hc93x'; // gitleaks:allow synthetic test key
+    const onlyHeaders = { host: 'civitai.com', 'cf-ipcountry': 'GB' };
+    const keyedHeaders = (extra: Record<string, string> = {}) => ({
+      ...onlyHeaders,
+      cookie: '__Secure-civ-token=session-value; theme=dark',
+      ...extra,
+    });
+    const bearer = { authorization: `Bearer ${KEY}` };
+
+    /** Every string the fetch mock was called with: the URL, the headers and the body. */
+    function sentText(h: ReturnType<typeof harness>) {
+      return h.fetchMock.mock.calls
+        .map(([url, init]) =>
+          [url, JSON.stringify(init.headers ?? {}), String(init.body)].join('\n')
+        )
+        .join('\n');
+    }
+
+    it.each([
+      [
+        'an Authorization bearer header',
+        modelsRequest('/api/v1/models/1?limit=1', {
+          headers: keyedHeaders(bearer),
+          query: { id: '1', limit: '1' },
+        }),
+        'header',
+      ],
+      [
+        'a ?token= key',
+        modelsRequest(`/api/v1/models/1?token=${KEY}&limit=1`, {
+          headers: keyedHeaders(),
+          query: { id: '1', token: KEY, limit: '1' },
+        }),
+        'query',
+      ],
+      [
+        // `Token` is not a credential to the app (it reads `token`), so alone it is an ordinary
+        // sample; beside a bearer header it is still taken out.
+        'a bearer header and the key under ?Token=',
+        modelsRequest(`/api/v1/models/1?Token=${KEY}&limit=1`, {
+          headers: keyedHeaders(bearer),
+          query: { id: '1', Token: KEY, limit: '1' },
+        }),
+        'header',
+      ],
+      [
+        'a percent-encoded %74oken= key',
+        modelsRequest(`/api/v1/models/1?%74oken=${KEY}&limit=1`, {
+          headers: keyedHeaders(),
+          query: { id: '1', token: KEY, limit: '1' },
+        }),
+        'query',
+      ],
+      [
+        'a bearer header and the key echoed under an ordinary name',
+        modelsRequest(`/api/v1/models/1?limit=1&note=${KEY}`, {
+          headers: keyedHeaders(bearer),
+          query: { id: '1', limit: '1', note: KEY },
+        }),
+        'header',
+      ],
+      [
+        // URLSearchParams decodes each valid escape and keeps the bad trailing `%`, so the reader
+        // sees the key in this value although decodeURIComponent gives up on it.
+        'a bearer header and the key behind an escape and a bad escape',
+        modelsRequest(`/api/v1/models/1?limit=1&note=%7A${KEY.slice(1)}%`, {
+          headers: keyedHeaders(bearer),
+          query: { id: '1', limit: '1', note: `${KEY}%` },
+        }),
+        'header',
+      ],
+      [
+        'a ?token= key echoed in another query value',
+        modelsRequest(`/api/v1/models/1?token=${KEY}&limit=1&note=${KEY}`, {
+          headers: keyedHeaders(),
+          query: { id: '1', token: KEY, limit: '1', note: KEY },
+        }),
+        'query',
+      ],
+    ] as const)(
+      '%s: posted with the credential taken out, its class, sampleRate and no Node answer',
+      async (_name, req, credential) => {
+        const h = harness({ config: { corpusOnlyRate: 0.5 } });
+        // The handler gets no sample: Node's answer is never captured or waited for.
+        expect(h.shadow.beginRest('v1-models-id', req)).toBeUndefined();
+        expect(h.fetchMock).not.toHaveBeenCalled();
+        await h.flush();
+        expect(h.fetchMock).toHaveBeenCalledTimes(1);
+        const [url, init] = h.fetchMock.mock.calls[0];
+        expect(url).toBe(V1_MODEL_ID_URL);
+        const body = JSON.parse(init.body as string);
+        expect(body).toEqual({
+          corpusOnly: true,
+          credential,
+          sampleRate: 0.5,
+          input: 'limit=1',
+          path: '/api/v1/models/1',
+          headers: onlyHeaders,
+        });
+        expect(body).not.toHaveProperty('node');
+        expect(body).not.toHaveProperty('responseHeaders');
+        const sent = sentText(h);
+        expect(sent).not.toContain(KEY);
+        expect(sent).not.toContain('session-value');
+        expect(sent).not.toContain('x-feed-go-credential');
+        expect(h.outcomes).toEqual(['corpus_only']);
+        expect(h.endpoints).toEqual(['v1-models-id']);
+        expect(h.shadow.inFlight()).toBe(0);
+      }
+    );
+
+    const keyed = modelsRequest('/api/v1/models/1', {
+      headers: keyedHeaders(bearer),
+      query: { id: '1' },
+    });
+
+    it.each([
+      ['off (the default)', {}],
+      ['rate 0', { corpusOnlyRate: 0 }],
+    ] as const)('%s: still skipped_credential, nothing sent', async (_name, cfg) => {
+      const h = harness({ config: cfg });
+      expect(h.shadow.beginRest('v1-models-id', keyed)).toBeUndefined();
+      await h.flush();
+      expect(h.fetchMock).not.toHaveBeenCalled();
+      expect(h.outcomes).toEqual(['skipped_credential']);
+    });
+
+    it('a request whose kept headers hold the key is not sent: skipped_credential', async () => {
+      const h = harness({ config: { corpusOnlyRate: 1 } });
+      const req = modelsRequest('/api/v1/models/1', {
+        headers: { ...keyedHeaders(bearer), host: `${KEY}.example` },
+        query: { id: '1' },
+      });
+      expect(h.shadow.beginRest('v1-models-id', req)).toBeUndefined();
+      await h.flush();
+      expect(h.fetchMock).not.toHaveBeenCalled();
+      expect(h.outcomes).toEqual(['skipped_credential']);
+    });
+
+    // All three factors distinct: base rate 0.4, admitted share 6/26, corpus-only rate 0.5.
+    it('sampleRate is the base rate times the [id] bucket share times the corpus-only rate', async () => {
+      let t = 0;
+      const h = harness({
+        config: { rate: 0.4, corpusOnlyRate: 0.5, maxPerSecond: 5, maxInFlight: 1000 },
+        now: () => t,
+      });
+      // 25 in one instant: the bucket admits 5 (each under 20 checks: 0.4 x 0.5) and drops 20.
+      for (let i = 0; i < 25; i++) h.shadow.beginRest('v1-models-id', keyed);
+      t = 1_000; // refilled: 26 checks, 6 admitted
+      h.shadow.beginRest('v1-models-id', keyed);
+      await h.flush();
+      const rates = h.fetchMock.mock.calls.map(
+        ([, init]) => (JSON.parse(init.body as string) as { sampleRate: number }).sampleRate
+      );
+      expect(rates).toHaveLength(6);
+      expect(rates.slice(0, 5)).toEqual(Array(5).fill(0.4 * 0.5));
+      expect(rates[5]).toBeCloseTo(0.4 * (6 / 26) * 0.5, 12);
+      expect(h.outcomes.filter((o) => o === 'dropped_rate_limit')).toHaveLength(20);
+      expect(h.outcomes.filter((o) => o === 'corpus_only')).toHaveLength(6);
+    });
+
+    it('not picked at its rate: skipped_credential', async () => {
+      const h = harness({ config: { corpusOnlyRate: 0.5 }, random: 0.5 });
+      expect(h.shadow.beginRest('v1-models-id', keyed)).toBeUndefined();
+      await h.flush();
+      expect(h.fetchMock).not.toHaveBeenCalled();
+      expect(h.outcomes).toEqual(['skipped_credential']);
+    });
+
+    it.each([
+      ['the list', 'v1-models', modelsRequest('/api/v1/models', { headers: keyedHeaders(bearer) })],
+      ['GET /api/v1/images', 'v1-images', restRequest({ headers: keyedHeaders(bearer) })],
+      [
+        '[id] with a bearer header and a ?token= at once',
+        'v1-models-id',
+        modelsRequest(`/api/v1/models/1?token=${KEY}`, {
+          headers: keyedHeaders(bearer),
+          query: { id: '1', token: KEY },
+        }),
+      ],
+    ] as const)('%s: unchanged, skipped_credential', async (_name, endpoint, req) => {
+      const h = harness({ config: { corpusOnlyRate: 1 } });
+      expect(h.shadow.beginRest(endpoint, req)).toBeUndefined();
+      await h.flush();
+      expect(h.fetchMock).not.toHaveBeenCalled();
+      expect(h.outcomes).toEqual(['skipped_credential']);
+      expect(h.endpoints).toEqual([endpoint]);
+    });
+
+    it('takes the shared in-flight cap and the [id] bucket like a sample', async () => {
+      const full = harness({ config: { corpusOnlyRate: 1, maxInFlight: 1 } });
+      // A gallery sample holds the only slot.
+      expect(full.shadow.begin(request())).toBeDefined();
+      expect(full.shadow.beginRest('v1-models-id', keyed)).toBeUndefined();
+      await full.flush();
+      expect(full.fetchMock).not.toHaveBeenCalled();
+      expect(full.outcomes).toEqual(['dropped_overload']);
+
+      const h = harness({ config: { corpusOnlyRate: 1, maxPerSecond: 1 }, now: () => 0 });
+      h.shadow.beginRest('v1-models-id', keyed);
+      await h.flush();
+      h.shadow.beginRest('v1-models-id', keyed);
+      await h.flush();
+      expect(h.outcomes).toEqual(['corpus_only', 'dropped_rate_limit']);
+      expect(h.fetchMock).toHaveBeenCalledTimes(1);
+    });
+  });
 
   it('each model route has its own per-second bucket', async () => {
     const h = harness({ config: { maxPerSecond: 1 }, now: () => 0 });
@@ -1015,6 +1573,7 @@ describe('createFeedGoShadow — image.getInfinite', () => {
       input: INPUT,
       headers: { host: 'civitai.com', cookie: '__Secure-civ-token=t' },
       node: JSON.parse(JSON.stringify(written)),
+      sampleRate: 1,
     });
     expect(h.outcomes).toEqual(['sent']);
     expect(h.endpoints).toEqual(['infinite']);
@@ -1068,6 +1627,180 @@ describe('createFeedGoShadow — image.getInfinite', () => {
     await h.flush();
     expect(h.outcomes).toEqual(['skipped_no_capture']);
     expect(h.fetchMock).not.toHaveBeenCalled();
+  });
+
+  // feed-go DESIGN.md §19.6 T4: a credentialed image.getInfinite request is sent corpus-only in place
+  // of its shadow sample, the credential taken out.
+  describe('corpus-only samples, with FEED_GO_SHADOW_CORPUS_ONLY_RATE', () => {
+    // A distinctive synthetic key: it must appear nowhere in what is sent.
+    const KEY = 'zq7-synthetic-K3y-Inf41'; // gitleaks:allow synthetic test key
+    const keptHeaders = { host: 'civitai.com', 'cf-ipcountry': 'GB', 'x-isuk': 'true' };
+    const keyedHeaders = (extra: Record<string, string> = {}) => ({
+      ...keptHeaders,
+      cookie: '__Secure-civ-token=session-value; theme=dark',
+      ...extra,
+    });
+    const bearer = { authorization: `Bearer ${KEY}` };
+
+    /** Every string the fetch mock was called with: the URL, the headers and the body. */
+    function sentText(h: ReturnType<typeof harness>) {
+      return h.fetchMock.mock.calls
+        .map(([url, init]) =>
+          [url, JSON.stringify(init.headers ?? {}), String(init.body)].join('\n')
+        )
+        .join('\n');
+    }
+
+    it.each([
+      [
+        'an Authorization bearer header',
+        infiniteRequest({ headers: keyedHeaders(bearer) }),
+        'header',
+      ],
+      [
+        'a ?token= key',
+        infiniteRequest({
+          headers: keyedHeaders(),
+          query: { trpc: 'image.getInfinite', input: INPUT, token: KEY },
+        }),
+        'query',
+      ],
+      [
+        'a bearer header and the key under another credential-named query pair',
+        infiniteRequest({
+          headers: keyedHeaders(bearer),
+          query: { trpc: 'image.getInfinite', input: INPUT, apiKey: KEY },
+        }),
+        'header',
+      ],
+    ] as const)(
+      '%s: posted in place of the shadow sample, the credential taken out, no Node answer',
+      async (_name, req, credential) => {
+        const h = harness({ infinite: true, config: { corpusOnlyRate: 0.5 } });
+        // The handler gets no sample: Node's answer is never captured or waited for.
+        expect(h.shadow.begin(req)).toBeUndefined();
+        expect(h.fetchMock).not.toHaveBeenCalled();
+        await h.flush();
+        expect(h.fetchMock).toHaveBeenCalledTimes(1);
+        const [url, init] = h.fetchMock.mock.calls[0];
+        expect(url).toBe(INF_URL);
+        expect(JSON.parse(init.body as string)).toEqual({
+          corpusOnly: true,
+          credential,
+          sampleRate: 0.5,
+          input: INPUT,
+          headers: keptHeaders,
+        });
+        const sent = sentText(h);
+        expect(sent).not.toContain(KEY);
+        expect(sent).not.toContain('session-value');
+        expect(sent).not.toContain('authorization');
+        expect(sent).not.toContain('"node"');
+        expect(h.outcomes).toEqual(['corpus_only']);
+        expect(h.endpoints).toEqual(['infinite']);
+        expect(h.shadow.inFlight()).toBe(0);
+      }
+    );
+
+    /** A credentialed request served as an ordinary shadow sample: what it posted. */
+    async function ordinarySample(h: ReturnType<typeof harness>, req: ReturnType<typeof request>) {
+      const sample = serve(h, req);
+      expect(sample?.endpoint).toBe(
+        req.query.trpc === 'image.getInfinite' ? 'infinite' : 'as-posts'
+      );
+      await h.flush();
+      expect(h.fetchMock).toHaveBeenCalledTimes(1);
+      expect(h.outcomes).toEqual(['sent']);
+      return JSON.parse(h.fetchMock.mock.calls[0][1].body as string) as Record<string, unknown>;
+    }
+
+    it.each([
+      ['off (the default)', {}],
+      ['rate 0', { corpusOnlyRate: 0 }],
+    ] as const)('%s: still an ordinary shadow sample', async (_name, cfg) => {
+      const h = harness({ infinite: true, config: cfg });
+      const body = await ordinarySample(h, infiniteRequest({ headers: keyedHeaders(bearer) }));
+      expect(body).not.toHaveProperty('corpusOnly');
+      expect(body.headers).toEqual({
+        ...keptHeaders,
+        cookie: '__Secure-civ-token=session-value',
+        authorization: 'present',
+      });
+    });
+
+    it('not picked at its rate: an ordinary shadow sample', async () => {
+      // random 0.5: under the base rate 1, not under the corpus-only rate 0.5.
+      const h = harness({ infinite: true, config: { corpusOnlyRate: 0.5 }, random: 0.5 });
+      const body = await ordinarySample(h, infiniteRequest({ headers: keyedHeaders(bearer) }));
+      expect(body).not.toHaveProperty('corpusOnly');
+    });
+
+    it.each([
+      [
+        'a bearer header and a ?token= at once',
+        infiniteRequest({
+          headers: keyedHeaders(bearer),
+          query: { trpc: 'image.getInfinite', input: INPUT, token: KEY },
+        }),
+      ],
+      [
+        'an input that holds the key',
+        infiniteRequest({
+          headers: keyedHeaders(bearer),
+          query: { trpc: 'image.getInfinite', input: `{"json":{"limit":5,"note":"${KEY}"}}` },
+        }),
+      ],
+      [
+        'an input that holds the key behind a JSON escape',
+        infiniteRequest({
+          headers: keyedHeaders(bearer),
+          query: {
+            trpc: 'image.getInfinite',
+            input: `{"json":{"limit":5,"note":"\\u007a${KEY.slice(1)}"}}`,
+          },
+        }),
+      ],
+      [
+        'a kept header that holds the key',
+        infiniteRequest({ headers: { ...keyedHeaders(bearer), host: `${KEY}.example` } }),
+      ],
+      ['image.getImagesAsPostsInfinite', request({ headers: keyedHeaders(bearer) })],
+    ] as const)('%s: not sent corpus-only, an ordinary shadow sample', async (_name, req) => {
+      const h = harness({ infinite: true, config: { corpusOnlyRate: 1 } });
+      const body = await ordinarySample(h, req);
+      expect(body).not.toHaveProperty('corpusOnly');
+      expect((body.headers as Record<string, string>).authorization).toBe('present');
+    });
+
+    it('a request with no credential is an ordinary shadow sample, whatever the rate', async () => {
+      const h = harness({ infinite: true, config: { corpusOnlyRate: 1 } });
+      const body = await ordinarySample(h, infiniteRequest({ headers: keptHeaders }));
+      expect(body).not.toHaveProperty('corpusOnly');
+      expect(body.headers).toEqual(keptHeaders);
+    });
+
+    it('takes the shared in-flight cap and the infinite bucket like a sample', async () => {
+      const full = harness({ infinite: true, config: { corpusOnlyRate: 1, maxInFlight: 1 } });
+      // A gallery sample holds the only slot.
+      expect(full.shadow.begin(request())).toBeDefined();
+      expect(full.shadow.begin(infiniteRequest({ headers: keyedHeaders(bearer) }))).toBeUndefined();
+      await full.flush();
+      expect(full.fetchMock).not.toHaveBeenCalled();
+      expect(full.outcomes).toEqual(['dropped_overload']);
+      expect(full.endpoints).toEqual(['infinite']);
+
+      const h = harness({
+        infinite: true,
+        config: { corpusOnlyRate: 1, maxPerSecond: 1 },
+        now: () => 0,
+      });
+      expect(h.shadow.begin(infiniteRequest({ headers: keyedHeaders(bearer) }))).toBeUndefined();
+      await h.flush();
+      expect(h.shadow.begin(infiniteRequest({ headers: keyedHeaders(bearer) }))).toBeUndefined();
+      await h.flush();
+      expect(h.outcomes).toEqual(['corpus_only', 'dropped_rate_limit']);
+      expect(h.fetchMock).toHaveBeenCalledTimes(1);
+    });
   });
 });
 
@@ -1192,6 +1925,7 @@ describe('createFeedGoShadow — model.getAll', () => {
       input: INPUT,
       headers: { host: 'civitai.com', cookie: '__Secure-civ-token=t' },
       node: JSON.parse(JSON.stringify(written)),
+      sampleRate: 1,
     });
     expect(h.outcomes).toEqual(['sent']);
     expect(h.endpoints).toEqual(['model-getall']);
@@ -1256,5 +1990,315 @@ describe('createFeedGoShadow — model.getAll', () => {
     await h.flush();
     expect(h.outcomes).toEqual(['skipped_no_capture']);
     expect(h.fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('createFeedGoShadow — REST response headers', () => {
+  // What a REST route's response holds after res.json: the wrapper's and handler's headers, Next's
+  // ETag and Content-Type, the router's config headers, the proxy's X-Handled-By.
+  const restResponse = () => ({
+    getHeaders: () => ({
+      'x-frame-options': 'DENY',
+      'x-handled-by': 'pod-a',
+      vary: 'Authorization',
+      'access-control-allow-origin': '*',
+      'access-control-allow-headers': 'Authorization, Content-Type, *',
+      'access-control-allow-methods': 'GET',
+      'cache-control': 'public, s-maxage=300, stale-while-revalidate=150',
+      etag: '"abc123"',
+      'content-type': 'application/json; charset=utf-8',
+      'content-length': 42,
+    }),
+  });
+
+  it('both lists are the ones feed-go compares (shadow.ComparedHeaders / RESTComparedHeaders)', () => {
+    // Read from the Go source, so a header added on either side without the other fails here: one
+    // Node forwards that Go never compares is dead weight, one Go compares that Node never sends
+    // reads as missing-in-node on every sample.
+    const src = readFileSync(
+      join(process.cwd(), 'apps/feed-go/internal/shadow/response.go'),
+      'utf8'
+    );
+    const names = (text: string | undefined) =>
+      [...(text ?? '').matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+    const base = names(/var ComparedHeaders = \[\]string\{([^}]*)\}/.exec(src)?.[1]);
+    const extras = names(
+      /var RESTComparedHeaders = append\(slices\.Clone\(ComparedHeaders\),([^)]*)\)/.exec(src)?.[1]
+    );
+    expect(base.length).toBeGreaterThan(0);
+    expect(extras.length).toBeGreaterThan(0);
+    expect([...FEED_GO_COMPARED_RESPONSE_HEADERS]).toEqual(base);
+    expect([...FEED_GO_COMPARED_REST_RESPONSE_HEADERS]).toEqual([...base, ...extras]);
+  });
+
+  it.each([
+    ['v1-models', '/api/v1/models?limit=1', V1_MODELS_URL],
+    ['v1-models-id', '/api/v1/models/42', V1_MODEL_ID_URL],
+  ] as const)(
+    '%s posts the REST header list, marked rest, and nothing transport or per-pod',
+    async (endpoint, url, compareUrl) => {
+      const h = harness();
+      const sample = h.shadow.beginRest(endpoint, modelsRequest(url))!;
+      h.shadow.captureRest(sample, { id: 42 });
+      h.shadow.finish(sample, 200, restResponse());
+      await h.flush();
+      const [posted, init] = h.fetchMock.mock.calls[0];
+      expect(posted).toBe(compareUrl);
+      const body = JSON.parse(init.body as string);
+      expect(body.responseHeaderSet).toBe('rest');
+      expect(body.responseHeaders).toEqual({
+        'x-frame-options': 'DENY',
+        vary: 'Authorization',
+        'access-control-allow-origin': '*',
+        'access-control-allow-headers': 'Authorization, Content-Type, *',
+        'access-control-allow-methods': 'GET',
+        'cache-control': 'public, s-maxage=300, stale-while-revalidate=150',
+        etag: '"abc123"',
+      });
+    }
+  );
+
+  it('a tRPC sample keeps the base list and no set marker', async () => {
+    const h = harness();
+    const sample = h.shadow.begin(request())!;
+    const data = { items: [] };
+    h.shadow.run(sample, () => h.shadow.capture(data, superjson.serialize(data), false));
+    h.shadow.finish(sample, 200, restResponse());
+    await h.flush();
+    const body = JSON.parse(h.fetchMock.mock.calls[0][1].body as string);
+    expect(body).not.toHaveProperty('responseHeaderSet');
+    expect(body.responseHeaders).toEqual({
+      vary: 'Authorization',
+      'cache-control': 'public, s-maxage=300, stale-while-revalidate=150',
+    });
+  });
+
+  /**
+   * A response that has not sent its headers when the route's `finally` calls `finish` (the endpoint
+   * wrappers' withAxiom runs Next's res.json later), emitting `finish` / `close` when told to.
+   */
+  function pendingResponse() {
+    const emitter = new EventEmitter();
+    const headers: Record<string, string> = { 'cache-control': 'private, no-store' };
+    const res = {
+      statusCode: 200,
+      headersSent: false,
+      getHeaders: () => ({ ...headers }),
+      once: (event: 'finish' | 'close', listener: () => void) => emitter.once(event, listener),
+    };
+    return { res, headers, emit: (event: 'finish' | 'close') => emitter.emit(event) };
+  }
+
+  it('a REST response not yet sent is read on finish: the ETag set after the handler is in the sample', async () => {
+    const h = harness();
+    const sample = h.shadow.beginRest('v1-models-id', modelsRequest('/api/v1/models/42'))!;
+    h.shadow.captureRest(sample, { id: 42 });
+    const p = pendingResponse();
+    h.shadow.finish(sample, 200, p.res);
+    // Nothing is read or queued before the response goes out, but the slot is already held.
+    expect(h.queued).toHaveLength(0);
+    expect(h.shadow.inFlight()).toBe(1);
+    // What Next's res.json sets when it finally runs.
+    p.headers.etag = '"later-etag"';
+    p.res.headersSent = true;
+    p.emit('finish');
+    p.emit('close');
+    await h.flush();
+    expect(h.fetchMock).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(h.fetchMock.mock.calls[0][1].body as string);
+    expect(body.responseHeaders).toEqual({
+      'cache-control': 'private, no-store',
+      etag: '"later-etag"',
+    });
+    expect(h.outcomes).toEqual(['sent']);
+    expect(h.shadow.inFlight()).toBe(0);
+  });
+
+  it('a REST response that finishes with a 304 (Next answering If-None-Match) is skipped_status', async () => {
+    const h = harness();
+    const sample = h.shadow.beginRest('v1-models', modelsRequest('/api/v1/models?limit=1'))!;
+    h.shadow.captureRest(sample, { items: [], metadata: {} });
+    const p = pendingResponse();
+    h.shadow.finish(sample, 200, p.res);
+    p.res.statusCode = 304;
+    p.emit('finish');
+    await h.flush();
+    expect(h.outcomes).toEqual(['skipped_status']);
+    expect(h.fetchMock).not.toHaveBeenCalled();
+    expect(h.shadow.inFlight()).toBe(0);
+  });
+
+  it('a REST response that closes without finishing (a client abort) is skipped_status and frees the slot', async () => {
+    const h = harness();
+    const sample = h.shadow.beginRest('v1-models-id', modelsRequest('/api/v1/models/42'))!;
+    h.shadow.captureRest(sample, { id: 42 });
+    const p = pendingResponse();
+    h.shadow.finish(sample, 200, p.res);
+    expect(h.shadow.inFlight()).toBe(1);
+    p.emit('close');
+    p.emit('finish');
+    await h.flush();
+    expect(h.outcomes).toEqual(['skipped_status']);
+    expect(h.fetchMock).not.toHaveBeenCalled();
+    expect(h.shadow.inFlight()).toBe(0);
+  });
+
+  it('a REST response already closed when the handler returns (a client abort mid-handler) is skipped_status and holds no slot', async () => {
+    // A destroyed response emits neither `finish` nor `close` again, so waiting on them would hold
+    // the in-flight slot for good.
+    const h = harness();
+    const sample = h.shadow.beginRest('v1-models-id', modelsRequest('/api/v1/models/42'))!;
+    h.shadow.captureRest(sample, { id: 42 });
+    const p = pendingResponse();
+    h.shadow.finish(sample, 200, { ...p.res, destroyed: true });
+    await h.flush();
+    expect(h.outcomes).toEqual(['skipped_status']);
+    expect(h.fetchMock).not.toHaveBeenCalled();
+    expect(h.shadow.inFlight()).toBe(0);
+  });
+
+  // Invariant guard (green before the fix too): a later slot-take would let the second sample in.
+  it('a REST response waiting to be sent counts against the in-flight cap', async () => {
+    const h = harness({ config: { maxInFlight: 1 } });
+    const first = h.shadow.beginRest('v1-models-id', modelsRequest('/api/v1/models/1'))!;
+    h.shadow.captureRest(first, { id: 1 });
+    const p = pendingResponse();
+    h.shadow.finish(first, 200, p.res);
+    const second = h.shadow.beginRest('v1-models-id', modelsRequest('/api/v1/models/2'))!;
+    h.shadow.captureRest(second, { id: 2 });
+    h.shadow.finish(second, 200, pendingResponse().res);
+    expect(h.outcomes).toEqual(['dropped_overload']);
+    p.emit('finish');
+    await h.flush();
+    expect(h.outcomes).toEqual(['dropped_overload', 'sent']);
+    expect(h.fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  // Invariant guard (green before the fix too): the tRPC path is unchanged.
+  it('a tRPC sample is read when finish is called, even on a response not yet sent', async () => {
+    const h = harness();
+    const sample = h.shadow.begin(request())!;
+    const data = { items: [] };
+    h.shadow.run(sample, () => h.shadow.capture(data, superjson.serialize(data), false));
+    const p = pendingResponse();
+    h.shadow.finish(sample, 200, p.res);
+    expect(h.queued).toHaveLength(1);
+    await h.flush();
+    const body = JSON.parse(h.fetchMock.mock.calls[0][1].body as string);
+    expect(body.responseHeaders).toEqual({ 'cache-control': 'private, no-store' });
+  });
+
+  it('a REST sample without readable headers carries neither field', async () => {
+    const h = harness();
+    const sample = h.shadow.beginRest('v1-models', modelsRequest('/api/v1/models'))!;
+    h.shadow.captureRest(sample, { items: [], metadata: {} });
+    h.shadow.finish(sample, 200);
+    await h.flush();
+    const body = JSON.parse(h.fetchMock.mock.calls[0][1].body as string);
+    expect(body).not.toHaveProperty('responseHeaders');
+    expect(body).not.toHaveProperty('responseHeaderSet');
+  });
+});
+
+describe('createFeedGoShadow — POST /api/search/*', () => {
+  const SEARCH_URL = 'http://feed-go.test:9090/internal/shadow/api/search';
+
+  function searchHarness(enabled = true) {
+    const outcomes: string[] = [];
+    const queued: Array<() => void> = [];
+    const fetchMock = vi.fn<(url: string, init: RequestInit) => Promise<Response>>(
+      async () => new Response(null, { status: 202 })
+    );
+    const shadow = createFeedGoShadow({
+      config: config({ siteSearchUrl: SEARCH_URL }),
+      enabled: () => true,
+      enabledSiteSearch: () => enabled,
+      random: () => 0,
+      fetch: fetchMock as unknown as typeof fetch,
+      record: (o) => void outcomes.push(o),
+      recordEncode: () => undefined,
+      now: () => 0,
+      schedule: (fn) => void queued.push(fn),
+    });
+    const flush = async () => {
+      while (queued.length) queued.shift()!();
+      for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+    };
+    return { shadow, outcomes, fetchMock, flush };
+  }
+
+  const searchRequest = (headers: Record<string, string> = {}) => ({
+    method: 'POST',
+    url: '/api/search/indexes/models_v9/search?x=1',
+    headers: { host: 'civitai.com', cookie: '__Secure-civ-token=t; _ga=1', ...headers },
+    query: { path: ['indexes', 'models_v9', 'search'] },
+    body: { q: 'cat', limit: 2 },
+  });
+
+  it('is off without its flag, and never mirrors a GET or a credentialed request', () => {
+    expect(searchHarness(false).shadow.beginSiteSearch(searchRequest())).toBeUndefined();
+    const h = searchHarness();
+    expect(h.shadow.beginSiteSearch({ ...searchRequest(), method: 'GET' })).toBeUndefined();
+    expect(
+      h.shadow.beginSiteSearch(searchRequest({ authorization: 'Bearer key' }))
+    ).toBeUndefined();
+    expect(h.outcomes).toEqual(['skipped_credential']);
+  });
+
+  // The sample carries the body as JSON, the path without the query, the session cookie only; the
+  // backend's answer and the call spliced in as JSON, and Node's answer as `node.body`.
+  it('posts the body, the call, the backend answer and the answer Node wrote', async () => {
+    const h = searchHarness();
+    const sample = h.shadow.beginSiteSearch(searchRequest())!;
+    expect(sample.endpoint).toBe('site-search');
+    const backend = Buffer.from('{"hits":[{"id":1,"name":"R","sfwName":"S"}]}');
+    h.shadow.captureSiteSearch(sample, {
+      path: '/indexes/models_v9/search',
+      request: '{"q":"cat","limit":2,"filter":["poi != true"]}',
+      response: backend,
+      body: { hits: [{ id: 1, name: 'S' }] },
+    });
+    h.shadow.finish(sample, 200, { getHeaders: () => ({ 'cache-control': 'private, no-store' }) });
+    await h.flush();
+    expect(h.fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = h.fetchMock.mock.calls[0];
+    expect(url).toBe(SEARCH_URL);
+    expect(JSON.parse(init.body as string)).toEqual({
+      input: '{"q":"cat","limit":2}',
+      path: '/api/search/indexes/models_v9/search',
+      headers: { host: 'civitai.com', cookie: '__Secure-civ-token=t' },
+      upstream: { hits: [{ id: 1, name: 'R', sfwName: 'S' }] },
+      node: {
+        upstream: {
+          path: '/indexes/models_v9/search',
+          body: { q: 'cat', limit: 2, filter: ['poi != true'] },
+        },
+        body: { hits: [{ id: 1, name: 'S' }] },
+      },
+      responseHeaders: { 'cache-control': 'private, no-store' },
+      responseHeaderSet: 'rest',
+      sampleRate: 1,
+    });
+    expect(h.outcomes).toEqual(['sent']);
+  });
+
+  it("a passthrough answer is mirrored as Node's bytes", async () => {
+    const h = searchHarness();
+    const sample = h.shadow.beginSiteSearch(searchRequest())!;
+    const raw = Buffer.from('{"hits":[],"query":"cat"}');
+    h.shadow.captureSiteSearch(sample, { path: '/p', request: '{}', response: raw, raw });
+    h.shadow.finish(sample, 200);
+    await h.flush();
+    const body = JSON.parse(h.fetchMock.mock.calls[0][1].body as string);
+    expect(body.node.body).toEqual({ hits: [], query: 'cat' });
+  });
+
+  it('a non-200 or an uncaptured answer is not sent', async () => {
+    const h = searchHarness();
+    h.shadow.finish(h.shadow.beginSiteSearch(searchRequest())!, 400);
+    h.shadow.finish(h.shadow.beginSiteSearch(searchRequest())!, 200);
+    await h.flush();
+    expect(h.fetchMock).not.toHaveBeenCalled();
+    expect(h.outcomes).toEqual(['skipped_status', 'skipped_no_capture']);
   });
 });

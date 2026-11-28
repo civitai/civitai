@@ -69,7 +69,8 @@ vi.mock('~/server/services/collection-media-index', () => ({
   isCoverLegUsable: coverLegUsable,
 }));
 
-const handler = (await import('~/pages/api/admin/temp/queue-takendown-models-reindex')).default;
+const handler = (await import('~/server/api-routes/admin/temp/queue-takendown-models-reindex'))
+  .default;
 
 beforeAll(async () => {
   const db = new PGlite();
@@ -136,11 +137,19 @@ const lookedUp = () => collectionsOf.mock.calls.map(([arg]) => arg.modelId);
 const enqueued = () =>
   enqueueCollectionRebuild.mock.calls.flatMap(([arg]) => arg.collectionIds).sort((a, b) => a - b);
 
+// Every taken-down row in the fixture, whatever its status or availability.
+const TAKEN_DOWN_IDS = [1, 2, 3, 4];
+
 describe('/api/admin/temp/queue-takendown-models-reindex', () => {
-  it('queues every indexed taken-down model, and no other, and no collection', async () => {
+  it('queues every taken-down model for deletion, indexed or not, and no collection', async () => {
     expect(await call({ dryRun: 'false' })).toBe(200);
-    const [ids] = queueModelsReindex.mock.calls.at(-1) as unknown as [number[]];
-    expect([...ids].sort()).toEqual([1, 2]);
+    const [ids, , action] = queueModelsReindex.mock.calls.at(-1) as unknown as [
+      number[],
+      unknown,
+      string
+    ];
+    expect(action).toBe('Delete');
+    expect([...ids].sort()).toEqual(TAKEN_DOWN_IDS);
     expect(collectionsOf).not.toHaveBeenCalled();
   });
 

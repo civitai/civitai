@@ -31,7 +31,8 @@ import type { JWTPayload, JWTVerifyGetKey } from 'jose';
 import { createRemoteJWKSet, errors as joseErrors, jwtVerify } from 'jose';
 
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
-import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { claimOnce } from '~/server/redis/claim-once';
+import { REDIS_KEYS } from '~/server/redis/client';
 import type { ActionsRunSource } from '~/server/schema/blocks/actions-run-source.schema';
 import { GithubActionsOidcRefusal } from '~/server/services/blocks/github-actions-oidc-refusal';
 import { buildFliptContext } from '~/server/services/feature-flags.service';
@@ -105,19 +106,9 @@ function githubActionsJwks(): JWTVerifyGetKey {
   }));
 }
 
-/**
- * Record `jti` as used. `true` = first use; `false` = already seen (a replay). Throws when Redis
- * cannot answer, which the caller turns into a 503: never accept a token whose replay status is
- * unknown.
- *
- * On the cache cluster with a TTL, not `sysRedis`: the marker is short-lived and only needs to
- * outlive the token. An eviction under memory pressure would reopen the window for that one token
- * until it expires, which the TTL cap bounds.
- */
-async function claimJtiInRedis(jti: string, ttlSeconds: number): Promise<boolean> {
-  const key: `${typeof REDIS_KEYS.BLOCKS.ACTIONS_OIDC_JTI}:${string}` = `${REDIS_KEYS.BLOCKS.ACTIONS_OIDC_JTI}:${jti}`;
-  const set = await redis.set(key, '1', { NX: true, EX: ttlSeconds });
-  return set !== null;
+/** Record `jti` as used (`claimOnce`); a throw is the caller's 503. */
+function claimJtiInRedis(jti: string, ttlSeconds: number): Promise<boolean> {
+  return claimOnce(`${REDIS_KEYS.BLOCKS.ACTIONS_OIDC_JTI}:${jti}`, ttlSeconds);
 }
 
 export type ActionsOidcVerifyDeps = {

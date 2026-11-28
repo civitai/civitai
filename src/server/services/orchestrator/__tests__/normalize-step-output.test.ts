@@ -57,8 +57,6 @@ describe('normalizeStepOutput — preprocessVideo', () => {
     expect(await normalize({ $type: 'preprocessVideo', output: {} })).toEqual([]);
   });
 
-  // Guards the case that produced the bug: the image sibling was handled and the
-  // video one silently fell through the switch to [].
   it('classifies preprocessImage as image, not video', async () => {
     const result = await normalize({
       $type: 'preprocessImage',
@@ -66,6 +64,19 @@ describe('normalizeStepOutput — preprocessVideo', () => {
     });
 
     expect(result[0]).toMatchObject({ type: 'image' });
+  });
+});
+
+describe('normalizeStepOutput — imageBackgroundRemoval', () => {
+  it('surfaces the cutout as an image', async () => {
+    const IMAGE_BLOB = { id: 'cutout', url: 'https://x/cutout.png', available: true };
+    const result = await normalize({
+      $type: 'imageBackgroundRemoval',
+      output: { image: IMAGE_BLOB },
+    });
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({ ...IMAGE_BLOB, type: 'image' });
   });
 });
 
@@ -82,6 +93,22 @@ describe('normalizeStepOutput — soniloAudioGen', () => {
   it('returns nothing when the step has no output yet', async () => {
     expect(await normalize({ $type: 'soniloAudioGen', output: undefined })).toEqual([]);
     expect(await normalize({ $type: 'soniloAudioGen', output: {} })).toEqual([]);
+  });
+});
+
+describe('normalizeStepOutput — seedAudioGen', () => {
+  it('surfaces every returned track as audio', async () => {
+    const tracks = [
+      { id: 'a', url: 'https://x/a.mp3', available: true, duration: 6.2 },
+      { id: 'b', url: 'https://x/b.mp3', available: true, duration: 6.2 },
+    ];
+    const result = await normalize({ $type: 'seedAudioGen', output: { blobs: tracks } });
+
+    expect(result).toEqual(tracks.map((t) => expect.objectContaining({ ...t, type: 'audio' })));
+  });
+
+  it('returns nothing when the step has no output yet', async () => {
+    expect(await normalize({ $type: 'seedAudioGen', output: {} })).toEqual([]);
   });
 });
 

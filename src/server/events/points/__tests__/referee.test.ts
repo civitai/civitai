@@ -163,7 +163,7 @@ describe('referee query params', () => {
     },
     refereeWindow(EVENT, 'live', new Date('2026-11-05T12:07:30.000Z')),
     undefined,
-    { hidden: [1], newAccountMinId: 2 }
+    { hidden: [{ id: 1, fromMs: 0 }], newAccountMinId: 2 }
   );
 
   it('supplies every placeholder in both queries, and nothing neither uses', () => {

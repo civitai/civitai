@@ -78,6 +78,20 @@ export async function unwrap<T>(res: Response, allowStatuses: number[] = []): Pr
 
 // ---------- in-cluster (dp-1) target ---------------------------------------
 
+/**
+ * A build-only environment (APPS_REVIEW_BUILD_ONLY, PR previews) creates nothing in
+ * APPS_KUBE_NAMESPACE: that namespace serves production apps and review previews. Called by every
+ * function here (and in agent-review.service) that creates a Job there, so the refusal does not
+ * rest on the cluster's RBAC alone.
+ */
+export function assertAppsNamespaceWritable(what: string): void {
+  if (env.APPS_REVIEW_BUILD_ONLY) {
+    throw new Error(
+      `${what} refused: this environment is build-only (APPS_REVIEW_BUILD_ONLY) and creates nothing in the apps namespace`
+    );
+  }
+}
+
 let dp1Target: K8sTarget | null = null;
 export async function getDp1Target(): Promise<K8sTarget> {
   if (dp1Target) return dp1Target;
@@ -575,6 +589,10 @@ export type TriggerReviewBuildArgs = {
  * are on (a direct publish only exists on the shared server). Any flag-read error is OFF.
  */
 export async function isReviewDirectPublishOn(): Promise<boolean> {
+  // A direct publish writes the shared static server, i.e. a production review host. A
+  // build-only environment (PR previews, APPS_REVIEW_BUILD_ONLY) never asks for one, whatever the
+  // shared flags say.
+  if (env.APPS_REVIEW_BUILD_ONLY) return false;
   try {
     const { isAppBlocksReviewDirectPublishEnabled, isAppBlocksReviewSharedServerEnabled } =
       await import('~/server/services/app-blocks-flag');
@@ -667,6 +685,7 @@ export type TriggerApplyReviewArgs = {
  * talos PR as `review.yaml.tmpl`).
  */
 export async function triggerApplyReview(args: TriggerApplyReviewArgs): Promise<{ name: string }> {
+  assertAppsNamespaceWritable('review apply Job');
   const target = await getDp1Target();
   const ns = env.APPS_KUBE_NAMESPACE;
   const host = reviewHostSha(args.sha);
@@ -788,6 +807,7 @@ async function runTemplatesScriptJob(args: {
   env: Array<{ name: string; value: string }>;
   script: string;
 }): Promise<{ name: string }> {
+  assertAppsNamespaceWritable(`${args.name} Job`);
   const target = await getDp1Target();
   const ns = env.APPS_KUBE_NAMESPACE;
   const labels = { ...args.labels, [TEMPLATES_JOB_ROLE_LABEL]: TEMPLATES_JOB_ROLE };
@@ -980,6 +1000,9 @@ export async function deleteReviewResources(args: {
    */
   sharedServer?: boolean;
 }): Promise<void> {
+  // A build-only environment never served a preview, so there is nothing to unpublish or sweep,
+  // and it must not list or delete in the apps namespace.
+  if (env.APPS_REVIEW_BUILD_ONLY) return;
   // Shared static server: the preview is a published meta, not objects. Unpublish it with a Job
   // (the web pod holds no storage credential). The label sweep below still runs: it removes any
   // per-preview objects a preview built before the flag was turned on still has.
@@ -1124,6 +1147,7 @@ export type TriggerApplyArgs = {
 };
 
 export async function triggerApply(args: TriggerApplyArgs): Promise<{ name: string }> {
+  assertAppsNamespaceWritable('apply Job');
   const target = await getDp1Target();
   const ns = env.APPS_KUBE_NAMESPACE;
   const jobName = `${args.slug}-apply-${args.sha.slice(0, 8)}`;
@@ -1309,6 +1333,63 @@ export type ApplyScriptOptions = {
 };
 
 /**
+ * The three smoke probes both apply scripts run against the smoke pod, each failure printing a
+ * `<label>: …` line and exiting 1. Expects POD_IP set and a cleanup trap that removes
+ * SMOKE_HDRS.
+ *
+ * Probe 2 reads only the response HEADERS: curl discards the body and dumps every header of the
+ * redirect chain to a file. It must never pipe the body into a reader that can exit before EOF
+ * (`awk '…exit'`, `grep -q`, `head`): once the body outgrows the pipe buffer (~64 KB) the writer
+ * takes SIGPIPE, pipefail makes the pipeline's status 141, and `set -e` ends the script with no
+ * message.
+ */
+function buildSmokeProbes(label: string): string {
+  return `# Probe 1: /healthz must return 200.
+HZ=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "http://\${POD_IP}:8080/healthz" || echo "000")
+if [ "\${HZ}" != "200" ]; then
+  echo "${label}: GET /healthz returned \${HZ} (expected 200)" >&2
+  exit 1
+fi
+
+# Probe 2: GET / must return 200 + text/html after at most one redirect.
+SMOKE_HDRS="$(mktemp)"
+ROOT=$(curl -sS -L --max-redirs 1 --max-time 15 -o /dev/null -D "\${SMOKE_HDRS}" \\
+  -w '%{http_code} %{content_type}' "http://\${POD_IP}:8080/" || true)
+ROOT_STATUS="\${ROOT%% *}"
+ROOT_CT="$(tr '[:upper:]' '[:lower:]' <<< "\${ROOT#* }")"
+
+if [ "\${ROOT_STATUS}" != "200" ]; then
+  echo "${label}: GET / final status \${ROOT_STATUS} (expected 200)" >&2
+  head -n 20 "\${SMOKE_HDRS}" >&2 || true
+  exit 1
+fi
+case "\${ROOT_CT}" in
+  *text/html*) ;;
+  *)
+    echo "${label}: GET / Content-Type was '\${ROOT_CT}' (expected text/html)" >&2
+    exit 1
+    ;;
+esac
+
+# Probe 3: catch the gen-from-model mixed-content trap. Any Location
+# header in the redirect chain whose value embeds the in-pod listen
+# port (:8080) means nginx is leaking $server_port — under Traefik's
+# HTTPS terminator this becomes "http://<slug>.civit.ai:8080/..." in
+# the browser, which mixed-content-blocks the iframe. Reject hard.
+BAD=$(awk 'tolower($0) ~ /^location:/ { v = substr($0, 10); sub(/^[ \\t]+/, "", v); sub(/\\r$/, "", v); if (index(v, ":8080")) { print v; exit } }' "\${SMOKE_HDRS}")
+if [ -n "\${BAD}" ]; then
+  echo "${label}: redirect Location leaks the in-pod port — will trigger" >&2
+  echo "  browser mixed-content block when served behind HTTPS Traefik." >&2
+  echo "  Location: \${BAD}" >&2
+  echo "  Common cause: bundler base path + nginx redirect from /." >&2
+  exit 1
+fi
+
+echo "${label}: PASSED — healthz 200, / 200 text/html, no port-leak redirect"
+`;
+}
+
+/**
  * The bash script that runs inside the production apply Job. A deploy succeeds (exit 0) only
  * when the candidate image passed the smoke test AND was published to the shared static server,
  * which is what serves `<slug>.<APPS_DOMAIN>`. Any failure exits non-zero, so the Job fails and
@@ -1361,7 +1442,7 @@ set -euo pipefail
 ${render}
 # ---- Pre-flight smoke test against the candidate image ---------------------
 # 8-char short SHA keeps the pod name under the 63-char DNS label limit.
-SMOKE_POD="smoke-\${SLUG}-$(printf '%s' "\${SHA}" | head -c 8)"
+SMOKE_POD="smoke-\${SLUG}-\${SHA:0:8}"
 echo "smoke test: creating pod \${SMOKE_POD} from \${IMAGE}"
 
 # Pod overrides:
@@ -1381,6 +1462,7 @@ kubectl -n ${ns} run "\${SMOKE_POD}" --image="\${IMAGE}" --restart=Never \\
 # Always clean up the smoke pod, even if the script fails mid-way.
 cleanup() {
   kubectl -n ${ns} delete pod "\${SMOKE_POD}" --wait=false --ignore-not-found=true >/dev/null 2>&1 || true
+  rm -f "\${SMOKE_HDRS:-}"
 }
 trap cleanup EXIT
 
@@ -1394,47 +1476,7 @@ fi
 POD_IP=$(kubectl -n ${ns} get "pod/\${SMOKE_POD}" -o jsonpath='{.status.podIP}')
 echo "smoke test: pod IP \${POD_IP}"
 
-# Probe 1: /healthz must return 200.
-HZ=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "http://\${POD_IP}:8080/healthz" || echo "000")
-if [ "\${HZ}" != "200" ]; then
-  echo "smoke test: GET /healthz returned \${HZ} (expected 200)" >&2
-  exit 1
-fi
-
-# Probe 2: GET / must return 200 + text/html after at most one redirect.
-ROOT=$(curl -sS -i -L --max-redirs 1 --max-time 15 "http://\${POD_IP}:8080/" || true)
-ROOT_STATUS=$(printf '%s\\n' "\${ROOT}" | awk '/^HTTP\\// {s=$2} END {print s}')
-ROOT_CT=$(printf '%s\\n' "\${ROOT}" | awk -F': ' 'tolower($1)=="content-type"{print tolower($2); exit}' | tr -d '\\r')
-
-if [ "\${ROOT_STATUS}" != "200" ]; then
-  echo "smoke test: GET / final status \${ROOT_STATUS} (expected 200)" >&2
-  printf '%s\\n' "\${ROOT}" | head -20 >&2
-  exit 1
-fi
-case "\${ROOT_CT}" in
-  *text/html*) ;;
-  *)
-    echo "smoke test: GET / Content-Type was '\${ROOT_CT}' (expected text/html)" >&2
-    exit 1
-    ;;
-esac
-
-# Probe 3: catch the gen-from-model mixed-content trap. Any Location
-# header in the redirect chain whose value embeds the in-pod listen
-# port (:8080) means nginx is leaking $server_port — under Traefik's
-# HTTPS terminator this becomes "http://<slug>.civit.ai:8080/..." in
-# the browser, which mixed-content-blocks the iframe. Reject hard.
-if printf '%s\\n' "\${ROOT}" | awk -F': ' 'tolower($1)=="location"{print $2}' | grep -q ':8080'; then
-  BAD=$(printf '%s\\n' "\${ROOT}" | awk -F': ' 'tolower($1)=="location"{print $2}' | tr -d '\\r' | head -1)
-  echo "smoke test: redirect Location leaks the in-pod port — will trigger" >&2
-  echo "  browser mixed-content block when served behind HTTPS Traefik." >&2
-  echo "  Location: \${BAD}" >&2
-  echo "  Common cause: bundler base path + nginx redirect from /." >&2
-  exit 1
-fi
-
-echo "smoke test: PASSED — healthz 200, / 200 text/html, no port-leak redirect"
-
+${buildSmokeProbes('smoke test')}
 # ---- Publish to the shared static server (required) ------------------------
 # The shared static server is what serves the app, so a build that is not
 # published is not deployed. PUBLISH_REQUIRED=1 makes the publish script fail on
@@ -1500,7 +1542,7 @@ cat /tmp/rendered.yaml
 `;
   const smoke = `# ---- Pre-flight smoke test against the candidate review image ---------------
 SMOKE_POD="smoke-review-\${REVIEW_HOST_SHA}"
-SMOKE_POD="\$(printf '%s' "\${SMOKE_POD}" | head -c 60)"
+SMOKE_POD="\${SMOKE_POD:0:60}"
 echo "review smoke test: creating pod \${SMOKE_POD} from \${IMAGE}"
 
 kubectl -n ${ns} run "\${SMOKE_POD}" --image="\${IMAGE}" --restart=Never \\
@@ -1509,6 +1551,7 @@ kubectl -n ${ns} run "\${SMOKE_POD}" --image="\${IMAGE}" --restart=Never \\
 
 cleanup() {
   kubectl -n ${ns} delete pod "\${SMOKE_POD}" --wait=false --ignore-not-found=true >/dev/null 2>&1 || true
+  rm -f "\${SMOKE_HDRS:-}"
 }
 trap cleanup EXIT
 
@@ -1522,36 +1565,7 @@ fi
 POD_IP=$(kubectl -n ${ns} get "pod/\${SMOKE_POD}" -o jsonpath='{.status.podIP}')
 echo "review smoke test: pod IP \${POD_IP}"
 
-HZ=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "http://\${POD_IP}:8080/healthz" || echo "000")
-if [ "\${HZ}" != "200" ]; then
-  echo "review smoke test: GET /healthz returned \${HZ} (expected 200)" >&2
-  exit 1
-fi
-
-ROOT=$(curl -sS -i -L --max-redirs 1 --max-time 15 "http://\${POD_IP}:8080/" || true)
-ROOT_STATUS=$(printf '%s\\n' "\${ROOT}" | awk '/^HTTP\\// {s=$2} END {print s}')
-ROOT_CT=$(printf '%s\\n' "\${ROOT}" | awk -F': ' 'tolower($1)=="content-type"{print tolower($2); exit}' | tr -d '\\r')
-
-if [ "\${ROOT_STATUS}" != "200" ]; then
-  echo "review smoke test: GET / final status \${ROOT_STATUS} (expected 200)" >&2
-  printf '%s\\n' "\${ROOT}" | head -20 >&2
-  exit 1
-fi
-case "\${ROOT_CT}" in
-  *text/html*) ;;
-  *)
-    echo "review smoke test: GET / Content-Type was '\${ROOT_CT}' (expected text/html)" >&2
-    exit 1
-    ;;
-esac
-
-if printf '%s\\n' "\${ROOT}" | awk -F': ' 'tolower($1)=="location"{print $2}' | grep -q ':8080'; then
-  echo "review smoke test: redirect Location leaks the in-pod port — would mixed-content block." >&2
-  exit 1
-fi
-
-echo "review smoke test: PASSED"
-
+${buildSmokeProbes('review smoke test')}
 `;
   const apply = `# ---- Recreate the review resources, then apply ----------------------------
 # A same-sha rebuild renders the SAME names. Delete them first so every apply creates them fresh:

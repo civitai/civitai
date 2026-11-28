@@ -2,6 +2,9 @@ import { TRPCError } from '@trpc/server';
 import { Prisma } from '@prisma/client';
 import { protectedProcedure, router } from '~/server/trpc';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { kyselyWrite } from '~/server/db/kyselyDb';
+import { revokeRunnerAuthorizations } from '@civitai/db-queries/recipe-runner';
+import { markRunnerClientRevoked } from '~/server/services/blocks/runner-submit.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { logOAuthEvent } from '~/server/oauth/audit-log';
 import { buzzLimitSchema, type BuzzLimit } from '~/server/schema/api-key.schema';
@@ -37,7 +40,7 @@ export const oauthConsentRouter = router({
         description: consent.client.description,
         logoUrl: consent.client.logoUrl,
         isVerified: consent.client.isVerified,
-        scope: consent.scope,
+        scope: Number(consent.scope),
         buzzLimit: consent.buzzLimit as BuzzLimit | null,
         authorizedAt: consent.createdAt,
       }));
@@ -93,7 +96,7 @@ export const oauthConsentRouter = router({
             viaSubject: (ctx as unknown as { subject?: unknown }).subject ?? null,
           },
         })
-        .catch(() => {});
+        .catch(() => undefined);
 
       return { success: true, buzzLimit: input.buzzLimit };
     }),
@@ -107,6 +110,19 @@ export const oauthConsentRouter = router({
         where: { userId_clientId: { userId: ctx.user.id, clientId: input.clientId } },
       });
       if (!consent) throw new TRPCError({ code: 'NOT_FOUND' });
+
+      // A runner client loses the runs the user authorized. First, so a failure here changes
+      // nothing and a retry runs every step.
+      await revokeRunnerAuthorizations(kyselyWrite, {
+        userId: ctx.user.id,
+        clientId: input.clientId,
+        reason: 'disconnected',
+      });
+      // Refuses runner submits with a token minted at or before now. Best-effort: a submit checks the
+      // authorizations revoked above first.
+      await markRunnerClientRevoked(ctx.user.id, input.clientId).catch((error) =>
+        logToAxiom({ name: 'runner-revoke-marker', type: 'error', error: safeError(error) })
+      );
 
       // Delete all tokens for this client+user
       await dbWrite.apiKey.deleteMany({

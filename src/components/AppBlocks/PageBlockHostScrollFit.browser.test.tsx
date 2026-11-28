@@ -52,8 +52,6 @@ import type * as TrpcMod from '~/utils/trpc';
  * half, and it is the one that can see layout at all.
  */
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
   // FeatureFlagsProvider (in PageBlockHost's real render graph) statically

@@ -1,5 +1,6 @@
 /**
- * State for the Go-transport flags (`feedGoTransport`, `feedGoTransportModelGetAll`), kept out of
+ * State for the Go-transport flags (`feedGoTransport`, `feedGoTransportModelGetAll`,
+ * `feedGoTransportInfinite`), kept out of
  * `~/utils/trpc` so the provider that writes them does not import the tRPC client module (component
  * tests mock that module with a fixed export list) — the same split as `~/utils/trpc-batch-window`.
  *
@@ -15,6 +16,7 @@
  */
 let feedGoTransportEnabled = false;
 let feedGoTransportModelGetAllEnabled = false;
+let feedGoTransportInfiniteEnabled = false;
 
 /**
  * Procedure → whether its flag is on. Each procedure has its OWN flag, so one can be turned on (or
@@ -25,6 +27,7 @@ let feedGoTransportModelGetAllEnabled = false;
 const GO_TRANSPORT_FLAGS: Readonly<Record<string, () => boolean>> = {
   'image.getImagesAsPostsInfinite': () => feedGoTransportEnabled,
   'model.getAll': () => feedGoTransportModelGetAllEnabled,
+  'image.getInfinite': () => feedGoTransportInfiniteEnabled,
 };
 
 /** Procedures a Go-transport flag can move (whichever flag is on). */
@@ -40,11 +43,49 @@ export function isGoTransportEnabledFor(path: string): boolean {
 }
 
 /**
+ * The signed-out cohort's toggles, one per procedure, written by `FeatureFlagsProvider` from the
+ * signed-out twin of each flag (`feedGoTransportSignedOut`, `…SignedOutModelGetAll`,
+ * `…SignedOutInfinite`; default OFF). Read only for a signed-out browser, so turning one on never
+ * moves a signed-in user, and the signed-in flags above never move a signed-out one.
+ */
+let feedGoTransportSignedOutEnabled = false;
+let feedGoTransportSignedOutModelGetAllEnabled = false;
+let feedGoTransportSignedOutInfiniteEnabled = false;
+
+const SIGNED_OUT_GO_TRANSPORT_FLAGS: Readonly<Record<string, () => boolean>> = {
+  'image.getImagesAsPostsInfinite': () => feedGoTransportSignedOutEnabled,
+  'model.getAll': () => feedGoTransportSignedOutModelGetAllEnabled,
+  'image.getInfinite': () => feedGoTransportSignedOutInfiniteEnabled,
+};
+
+/** Whether `path`'s own signed-out Go-transport flag is on (false for any other procedure). */
+export function isSignedOutGoTransportEnabledFor(path: string): boolean {
+  return Object.prototype.hasOwnProperty.call(SIGNED_OUT_GO_TRANSPORT_FLAGS, path)
+    ? SIGNED_OUT_GO_TRANSPORT_FLAGS[path]()
+    : false;
+}
+
+/** `feedGoTransportSignedOut`: `image.getImagesAsPostsInfinite`, signed out. */
+export function setFeedGoTransportSignedOutEnabled(enabled: boolean) {
+  feedGoTransportSignedOutEnabled = enabled;
+}
+
+/** `feedGoTransportSignedOutModelGetAll`: `model.getAll`, signed out. */
+export function setFeedGoTransportSignedOutModelGetAllEnabled(enabled: boolean) {
+  feedGoTransportSignedOutModelGetAllEnabled = enabled;
+}
+
+/** `feedGoTransportSignedOutInfinite`: `image.getInfinite`, signed out. */
+export function setFeedGoTransportSignedOutInfiniteEnabled(enabled: boolean) {
+  feedGoTransportSignedOutInfiniteEnabled = enabled;
+}
+
+/**
  * The separate path. `next.config.mjs` rewrites `<this>/<procedure>` back to `/api/trpc/<procedure>`
  * for each procedure above (only those), so with no route in front of it the request still reaches
- * this app and is served: a flag can never strand a request. It can still MOVE one — edge rules
- * keyed on the `/api/trpc/` prefix do not match this path (see `feedGoTransport` in
- * feature-flags.service.ts).
+ * this app and is served: a flag can never strand a request. Edge caching applies here as on
+ * `/api/trpc/`, as a separate cache entry from the same query there (measured:
+ * apps/feed-go/DESIGN.md, "Edge caching of").
  */
 export const GO_TRANSPORT_URL = '/api/trpc-go';
 
@@ -56,4 +97,9 @@ export function setFeedGoTransportEnabled(enabled: boolean) {
 /** `feedGoTransportModelGetAll`: `model.getAll`. */
 export function setFeedGoTransportModelGetAllEnabled(enabled: boolean) {
   feedGoTransportModelGetAllEnabled = enabled;
+}
+
+/** `feedGoTransportInfinite`: `image.getInfinite`. */
+export function setFeedGoTransportInfiniteEnabled(enabled: boolean) {
+  feedGoTransportInfiniteEnabled = enabled;
 }

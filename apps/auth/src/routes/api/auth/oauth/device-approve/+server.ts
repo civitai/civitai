@@ -6,7 +6,9 @@ import { logOAuthEvent } from '$lib/server/oauth/audit-log';
 import { resolvePendingDeviceCode, normalizeUserCode } from '$lib/server/oauth/device-codes';
 import { hSetWithTTL, type EvalCapableClient } from '$lib/server/oauth/redis-atomic';
 import { parseBody } from '$lib/server/oauth/http';
+import { stringToScope } from '$lib/server/oauth/scope';
 import { IMPERSONATION_REFUSED } from '$lib/server/auth/impersonation-refusal';
+import { isUnconfirmedSession } from '$lib/server/auth/unconfirmed-session';
 
 // POST /api/auth/oauth/device-approve — session-gated approval of a device user_code. Marks the device
 // code approved + stamps the approving user.
@@ -19,6 +21,13 @@ export const POST: RequestHandler = async ({ request, getClientAddress, locals }
     return json(
       { error: 'access_denied', error_description: IMPERSONATION_REFUSED },
       { status: 403 }
+    );
+
+  // The approved device gets its own lasting tokens, so not on a session accepted without reading the store.
+  if (locals.session && isUnconfirmedSession(locals.session))
+    return json(
+      { error: 'temporarily_unavailable', error_description: 'Try again in a minute' },
+      { status: 503 }
     );
 
   const { user_code } = await parseBody(request);
@@ -66,7 +75,7 @@ export const POST: RequestHandler = async ({ request, getClientAddress, locals }
     type: 'authorization.granted',
     userId: locals.user.id,
     clientId: data.clientId,
-    scope: parseInt(data.scope, 10),
+    scope: stringToScope(data.scope),
     ip: getClientAddress(),
     metadata: { grant_type: 'device_code' },
   });

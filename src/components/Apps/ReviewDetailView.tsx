@@ -5,11 +5,18 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ListingIconThumb } from '~/components/Apps/ListingMediaThumb';
 import {
   ReviewDecisionAlert,
+  ReviewOnBehalfMeta,
+  ReviewPlatformUpdatesMeta,
+  ReviewSdkFloorMeta,
   ReviewSourceProvenanceMeta,
   ReviewSubmitterMeta,
   type ManifestDiffSummary,
   type OnsiteReviewSelection,
 } from '~/components/Apps/OnsiteReviewModal';
+import {
+  DECLARED_REPOSITORY_LABEL,
+  declaredRepository,
+} from '~/components/Apps/reviewSourceProvenance';
 import { appDisplayName } from '~/shared/utils/app-display-name';
 import { trpc } from '~/utils/trpc';
 import { ReviewActionBar, type ReviewActionStatus } from '~/components/Apps/ReviewActionBar';
@@ -60,10 +67,13 @@ const STATUS_MESSAGE: Record<ReviewActionStatus, string> = {
 export function ReviewDetailView({
   selection,
   onClose,
+  onSkip,
 }: {
   selection: NonNullable<OnsiteReviewSelection>;
   /** After a decision — the page opens the next pending submission (or "No more app submissions waiting"). */
   onClose: () => void;
+  /** The bar's "Skip": the next submission, with no decision on this one. */
+  onSkip?: () => void;
 }) {
   const mainRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<ReviewActionStatus>('idle');
@@ -132,7 +142,16 @@ export function ReviewDetailView({
           <Stack gap={6}>
             <ReviewDetailHeader selection={selection} />
             <ReviewSubmitterMeta request={selection.request} now={now} />
+            <ReviewOnBehalfMeta fileSummary={selection.request.fileSummary} />
+            <ReviewDeclaredRepository
+              repository={
+                (selection.request.manifest as Record<string, unknown> | null)?.repository
+              }
+              claimedCommit={selection.request.sourceProvenance?.claimedCommit ?? null}
+            />
             <ReviewSourceProvenanceMeta provenance={selection.request.sourceProvenance} />
+            <ReviewSdkFloorMeta fileSummary={selection.request.fileSummary} />
+            <ReviewPlatformUpdatesMeta fileSummary={selection.request.fileSummary} />
           </Stack>
           <ReviewDecisionAlert selection={selection} now={now} />
           <ReviewDetailTabsView selection={selection} />
@@ -149,6 +168,7 @@ export function ReviewDetailView({
         onStatusChange={setStatus}
         sticky
         approveAndNext
+        onSkip={onSkip}
       />
     </>
   );
@@ -210,6 +230,67 @@ export function ReviewDetailHeader({
 }
 
 /**
+ * The manifest's `repository` on the header, as the developer's claim: a link only for an
+ * `https:` URL on a known code host (`declaredRepository`), opened with no referrer and no
+ * opener, and the client-claimed commit beside it labelled "claimed". The word "verified" is
+ * reserved for the GitHub-signed Actions run on the line below.
+ */
+export function ReviewDeclaredRepository({
+  repository,
+  claimedCommit,
+}: {
+  repository: unknown;
+  claimedCommit: string | null;
+}) {
+  const repo = declaredRepository(repository, claimedCommit);
+  if (!repo) return null;
+  const rel = 'noopener noreferrer nofollow';
+  return (
+    <Text size="xs" data-testid="apps-review-declared-repo">
+      <Text span size="xs" c="dimmed">
+        {DECLARED_REPOSITORY_LABEL}:{' '}
+      </Text>
+      {repo.href ? (
+        <Anchor
+          size="xs"
+          ff="monospace"
+          href={repo.href}
+          target="_blank"
+          rel={rel}
+          data-testid="apps-review-declared-repo-link"
+          style={{ wordBreak: 'break-all' }}
+        >
+          {repo.text}
+        </Anchor>
+      ) : (
+        <Code data-testid="apps-review-declared-repo-text">{repo.text}</Code>
+      )}
+      {repo.claimedCommit && (
+        <Text span size="xs" data-testid="apps-review-declared-repo-commit">
+          {' · commit '}
+          {repo.claimedCommitHref ? (
+            <Anchor
+              size="xs"
+              ff="monospace"
+              href={repo.claimedCommitHref}
+              target="_blank"
+              rel={rel}
+            >
+              {repo.claimedCommit}
+            </Anchor>
+          ) : (
+            <Code>{repo.claimedCommit}</Code>
+          )}{' '}
+          <Text span size="xs" c="dimmed">
+            (claimed)
+          </Text>
+        </Text>
+      )}
+    </Text>
+  );
+}
+
+/**
  * The end of the APP SUBMISSION queue: no on-site submission is left after the last decision.
  *
  * 🔴 IT DOES NOT SAY "NOTHING ELSE IS WAITING", because "next" only walks on-site app
@@ -217,17 +298,53 @@ export function ReviewDetailHeader({
  * pending. Those are counted here, from the same count proc as the Pending tab's badge, and
  * linked to the queue.
  */
-export function AllCaughtUp() {
+export function AllCaughtUp({
+  skippedPending = 0,
+  onReviewSkipped,
+  moreBeyondPage = false,
+}: {
+  /** Submissions skipped this session that are still pending (`useNextPendingReview`). */
+  skippedPending?: number;
+  /** Forget the skips and open the oldest of them. */
+  onReviewSkipped?: () => void;
+  /** The queue page "next" reads was full, so more submissions may wait beyond it. */
+  moreBeyondPage?: boolean;
+} = {}) {
   const { data } = trpc.blocks.countReviewQueue.useQuery(undefined, { retry: false });
   const listingRequests = data?.offsite ?? 0;
+  // 🔴 Skipped submissions are still waiting, so this is not "no more": say what is left.
+  const onlySkipped = skippedPending > 0 && !!onReviewSkipped;
   return (
-    <Card withBorder p="xl" data-testid="apps-review-all-caught-up">
+    <Card
+      withBorder
+      p="xl"
+      data-testid="apps-review-all-caught-up"
+      data-end-state={onlySkipped ? 'only-skipped' : 'caught-up'}
+    >
       <Stack align="center" gap="sm">
         <IconConfetti size={40} color="var(--mantine-color-green-6)" />
-        <Title order={3}>No more app submissions waiting</Title>
+        <Title order={3}>
+          {onlySkipped ? 'Only skipped submissions remain' : 'No more app submissions waiting'}
+        </Title>
         <Text c="dimmed" ta="center">
           Pending approvals finish in the background.
         </Text>
+        {onlySkipped && (
+          <Stack align="center" gap={6} data-testid="apps-review-skipped-pending">
+            <Text ta="center">
+              You skipped {skippedPending} submission{skippedPending === 1 ? '' : 's'} that{' '}
+              {skippedPending === 1 ? 'is' : 'are'} still waiting.
+              {moreBeyondPage && ' More may be waiting after them.'}
+            </Text>
+            <Button
+              variant="light"
+              onClick={onReviewSkipped}
+              data-testid="apps-review-skipped-review"
+            >
+              Review skipped
+            </Button>
+          </Stack>
+        )}
         {listingRequests > 0 && (
           <Text ta="center" data-testid="apps-review-other-queues">
             {listingRequests} listing request{listingRequests === 1 ? '' : 's'} still pending —{' '}

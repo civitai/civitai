@@ -34,8 +34,6 @@ vi.mock('~/components/Sticker/StickerPlacementOverlay', () => ({
   ),
 }));
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 7 }) }));
-
 /**
  * The post page's shape, reduced to the part that decides the geometry: a
  * positioned container, an anchor around the media, and the overlay as the
@@ -90,7 +88,7 @@ describe('PostStickerOverlay', () => {
 
   test('draws nothing while the reveal is off', async () => {
     useStickerRevealStore.getState().setRevealed(false);
-    renderWithProviders(<PostImageFixture />);
+    renderWithProviders(<PostImageFixture />, { user: { id: 7 } });
 
     // The image is the absorbing state here — it is present from the first
     // paint and nothing removes it — so waiting on it is what proves the tree
@@ -100,7 +98,7 @@ describe('PostStickerOverlay', () => {
   });
 
   test('sizes the sticker layer to the media, not to the container around it', async () => {
-    renderWithProviders(<PostImageFixture />);
+    renderWithProviders(<PostImageFixture />, { user: { id: 7 } });
 
     await vi.waitFor(() => expect(overlays()).toBe(1));
 

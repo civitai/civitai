@@ -11,25 +11,43 @@ import { carriesNonUserScope } from './scope';
 //   apps          — clients whose user tokens may be exchanged for this resource;
 //   relays        — clients that may exchange another listed app's token (the JWT names them in `act`);
 //   introspectors — clients that may introspect the resulting JWTs;
-//   services      — service clients that may get a token for the resource as themselves (optional).
-// Validation is all or nothing: one bad entry and no resource is registered. `services` is the exception:
-// a bad one empties that resource's `services` only.
+//   services      — service clients that may get a token for the resource as themselves (optional);
+//   serviceSubjects — service clients whose own token (no user) a relay may exchange for this resource
+//                   (client-exchange.ts; optional, default none, so by default no such token is exchanged).
+// and one capability:
+//   narrowsBlockClaims — `true` when the resource holds a block-exchange token's reads to its binding claims
+//                   (the ceiling, block and install; block-exchange.ts). Optional, default false: a resource
+//                   that does not declare it is only sent block-exchange tokens whose ceiling admits every
+//                   mature rating. Anything but `true` or `false` is a bad entry.
+// Validation is all or nothing: one bad entry and no resource is registered. `services` and
+// `serviceSubjects` are the exception: a bad one empties that resource's list only.
 
 export interface ExchangeResource {
   resource: string;
   /** Bitmask of the scopes the resource may receive. */
-  scopes: number;
+  scopes: bigint;
   apps: string[];
   relays: string[];
   introspectors: string[];
   services: ServiceEntry[];
+  /**
+   * Service clients whose own tokens (a client as itself, no user) may be exchanged for this resource
+   * by one of its relays (client-exchange.ts). Empty unless listed.
+   */
+  serviceSubjects: string[];
+  /**
+   * Whether the resource narrows a block-exchange token by its binding claims (`civitai_max_browsing_level`,
+   * `civitai_app_block_id`, `civitai_block_instance_id`). Only such a resource is sent a block-exchange
+   * token whose ceiling leaves out a mature rating (block-exchange.ts). False unless declared.
+   */
+  narrowsBlockClaims: boolean;
 }
 
 /** A service client's token for one resource: what it may hold, and the identity its tokens carry. */
 export interface ServiceEntry {
   client: string;
   /** Bitmask, within the resource's scopes. */
-  scopes: number;
+  scopes: bigint;
   /** Passed through to the resource as the token's `roles`, in this order. */
   roles: string[];
   /** The service's user id at the resource: at most -1000, and one service's only. */
@@ -80,22 +98,23 @@ function resourceError(value: unknown): string | null {
   return `resource ${value} must be https`;
 }
 
-function scopesFrom(value: unknown): number | string {
+function scopesFrom(value: unknown): bigint | string {
   if (!Array.isArray(value) || value.length === 0) return 'scopes must be a non-empty list';
-  let bits = 0;
+  let bits = 0n;
   for (const name of value) {
     if (typeof name !== 'string' || name === 'None' || !Object.hasOwn(TokenScope, name)) {
       return `unknown scope ${String(name)}`;
     }
     bits |= TokenScope[name as keyof typeof TokenScope];
   }
-  // A resource never receives UserRead or a scope only a client acting as itself can hold.
-  if (bits & TokenScope.UserRead) return 'scopes may not include UserRead';
+  // A resource never receives UserRead or a scope only a client acting as itself can hold. The Apps
+  // scopes (`AppsRead`, `AppDataRead`) are user scopes, so a resource may list them.
+  if ((bits & TokenScope.UserRead) !== 0n) return 'scopes may not include UserRead';
   if (carriesNonUserScope(bits)) return 'scopes may not include a client-only scope';
   return bits;
 }
 
-function serviceEntryError(value: unknown, resourceScopes: number): string | ServiceEntry {
+function serviceEntryError(value: unknown, resourceScopes: bigint): string | ServiceEntry {
   if (!value || typeof value !== 'object') return 'each service must be an object';
   const e = value as Record<string, unknown>;
   if (typeof e.client !== 'string' || !SERVICE_CLIENT_ID.test(e.client)) {
@@ -103,7 +122,7 @@ function serviceEntryError(value: unknown, resourceScopes: number): string | Ser
   }
   const scopes = scopesFrom(e.scopes);
   if (typeof scopes === 'string') return `service ${e.client}: ${scopes}`;
-  if ((scopes & ~resourceScopes) !== 0) {
+  if ((scopes & ~resourceScopes) !== 0n) {
     return `service ${e.client}: scopes must be within the resource's`;
   }
   const roles = e.roles ?? [];
@@ -166,6 +185,42 @@ function attachServices(resources: ExchangeResource[], rawServices: unknown[]): 
 }
 
 /**
+ * Fill in each resource's `serviceSubjects` from the raw lists. A list that is not a list of service client
+ * ids, repeats one, or names an app or relay of any resource is dropped (that resource gets none), and the
+ * reason is returned; the other resources and lists are untouched.
+ */
+function attachServiceSubjects(resources: ExchangeResource[], rawLists: unknown[]): string[] {
+  const errors: string[] = [];
+  const userClients = new Set(resources.flatMap((r) => [...r.apps, ...r.relays]));
+  for (const [i, resource] of resources.entries()) {
+    const raw = rawLists[i] ?? [];
+    const fail = (why: string) =>
+      errors.push(`${resource.resource}: serviceSubjects ignored: ${why}`);
+    if (!Array.isArray(raw)) {
+      fail('serviceSubjects must be a list');
+      continue;
+    }
+    const bad = raw.find((id) => typeof id !== 'string' || !SERVICE_CLIENT_ID.test(id));
+    if (bad !== undefined) {
+      fail('a service client id must be a lowercase random UUID');
+      continue;
+    }
+    const ids = raw as string[];
+    const user = ids.find((id) => userClients.has(id));
+    if (user !== undefined) {
+      fail(`${user} is also an app or relay`);
+      continue;
+    }
+    if (new Set(ids).size !== ids.length) {
+      fail('a client is listed twice');
+      continue;
+    }
+    resource.serviceSubjects = ids;
+  }
+  return errors;
+}
+
+/**
  * The registry parsed from `raw`, or the first reason it is invalid. `serviceErrors` lists the resources
  * whose `services` were dropped, and why.
  */
@@ -183,6 +238,7 @@ export function parseExchangeResources(
 
   const resources: ExchangeResource[] = [];
   const rawServices: unknown[] = [];
+  const rawServiceSubjects: unknown[] = [];
   const seen = new Set<string>();
   for (const entry of parsed) {
     if (!entry || typeof entry !== 'object') return { error: 'each entry must be an object' };
@@ -206,10 +262,27 @@ export function parseExchangeResources(
     }
     if (lists.apps.length === 0) return { error: `${resource}: apps must not be empty` };
 
-    resources.push({ resource, scopes, ...lists, services: [] });
+    // Absent is false; any other non-boolean (null included) is a bad entry.
+    const narrowsBlockClaims = e.narrowsBlockClaims === undefined ? false : e.narrowsBlockClaims;
+    if (typeof narrowsBlockClaims !== 'boolean') {
+      return { error: `${resource}: narrowsBlockClaims must be true or false` };
+    }
+
+    resources.push({
+      resource,
+      scopes,
+      ...lists,
+      services: [],
+      serviceSubjects: [],
+      narrowsBlockClaims,
+    });
     rawServices.push(e.services);
+    rawServiceSubjects.push(e.serviceSubjects);
   }
-  const serviceErrors = attachServices(resources, rawServices);
+  const serviceErrors = [
+    ...attachServices(resources, rawServices),
+    ...attachServiceSubjects(resources, rawServiceSubjects),
+  ];
   return { resources, serviceErrors };
 }
 

@@ -1,7 +1,7 @@
+import { postTextCsamHeldText } from '@civitai/shared/held-url';
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { dbWrite } from '~/server/db/client';
-import { OWNER_CONTENT_KEPT } from '~/server/services/legal-hold.service';
 
 // A leaf: post, user and job deletes import it, so it imports nothing of theirs.
 
@@ -20,10 +20,7 @@ export const postHoldsHeldTextSql = (postId: Prisma.Sql) => Prisma.sql`EXISTS (
  * csam hold. Read on the primary, row and hold together, so one snapshot decides it through a
  * detect, a confirm or a release, whatever the order of their writes.
  */
-const postTextHiddenText = (t: string) =>
-  `(${t}.refused OR ${t}."csamHeld" OR EXISTS (SELECT 1 FROM "TextScanHold" th
-    WHERE th."entityType" = 'PostText' AND th."entityId" = ${t}.id AND th.label = 'csam'
-      AND th.status IN ('Pending', 'Confirmed')))`;
+const postTextHiddenText = (t: string) => `(${t}.refused OR ${postTextCsamHeldText(t)})`;
 
 /** One text's post, rating and hidden decision, in one primary statement (the thread gate). */
 export const postTextGateRowSql = (textId: number) =>
@@ -72,11 +69,11 @@ export const unheldPostTextUpdateSql = (id: number, content: string, resetLevel:
   )}"updatedAt" = now() AT TIME ZONE 'UTC'
     WHERE t.id = ${id} AND NOT post_text_held(t.id, t."csamHeld", t."postId", t."userId")`;
 
-/** The refusal of a change to held text: an owner is never told why (`OWNER_CONTENT_KEPT`). */
+/** The refusal of a change to held text: an owner is never told why. */
 export const heldTextError = (isModerator: boolean | undefined, what: string) =>
   new TRPCError({
     code: 'FORBIDDEN',
     message: isModerator
       ? `${what} is held for review and can't change until the hold is released`
-      : OWNER_CONTENT_KEPT,
+      : "This can't be removed right now. Contact support if you need it removed.",
   });

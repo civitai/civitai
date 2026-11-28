@@ -1,15 +1,14 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import Icon from '$lib/Icon.svelte';
+  import QuestionRules from '$lib/QuestionRules.svelte';
   import RatingGuide from '$lib/RatingGuide.svelte';
-  import RestartCareerDialog from '$lib/RestartCareerDialog.svelte';
-  import { count, formatDate } from '$lib/format';
+  import { count } from '$lib/format';
   import RankLadder from './RankLadder.svelte';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
   let facts = $derived(data.facts);
-  let restarting = $state(false);
 
   const TABS = [
     { id: 'ranks', label: 'Ranks' },
@@ -18,7 +17,6 @@
     { id: 'gold', label: 'Gold, Buzz & shop' },
     { id: 'fervor', label: 'Fervor & leaderboard' },
     { id: 'rating-guide', label: 'Rating guide' },
-    { id: 'career', label: 'Your career' },
   ] as const;
 
   // The tab for the section being read; the browser handles the jump itself, this only marks where it landed.
@@ -116,7 +114,9 @@
           <strong>Correct</strong> matches the Order's final verdict: it pays gold and the extra XP.
           <strong>Wrong</strong> pays no gold or extra XP and counts against your accuracy.
           <strong>Inconclusive</strong> means the Order could not settle the image: no gold, and it does
-          not count against your accuracy.
+          not count against your accuracy. When the Order stays split on an image to the last rank, the
+          image takes the highest of the ratings given most often, and every judgment on it is set aside
+          as inconclusive.
         </p>
       </article>
     </div>
@@ -177,7 +177,8 @@
         <ul>
           <li>
             You have {facts.hearts.max} hearts. Poor judging can cost one. A lost heart comes back after
-            {facts.hearts.returnAfterDays} days, or sooner if you judge well, and restarting your career restores
+            {facts.hearts.returnAfterDays} days, or after {facts.hearts.rightVerdictsBack} right verdicts, whichever
+            comes first, and restarting your career restores
             them all. Lose all {facts.hearts.max} and your career restarts.
           </li>
           <li>Judging very fast pauses you for a short while.</li>
@@ -272,7 +273,7 @@
 
   <section id="fervor" aria-labelledby="fervor-title">
     <p class="kicker">05 · Fervor &amp; leaderboard</p>
-    <h2 id="fervor-title" class="with-icon"><Icon name="sparkles" size={26} />Fervor: your week in the Order</h2>
+    <h2 id="fervor-title" class="with-icon"><Icon name="sparkles" size={26} />Fervor: your last {facts.fervor.windowDays} days in the Order</h2>
     <div class="formula">
       <p class="small-caps">Fervor =</p>
       <p class="expr">correct judgments × {facts.fervor.scale} × accuracy²</p>
@@ -314,29 +315,10 @@
       <RatingGuide guide={facts.ratingGuide.slice(0, half)} />
       <RatingGuide guide={facts.ratingGuide.slice(half)} />
     </div>
+    <div class="question-rules"><QuestionRules /></div>
   </section>
 
-  {#if data.swornIn}
-    <hr class="rule" />
-    <section id="career" class="career" aria-labelledby="career-title">
-      <div>
-        <p class="kicker" id="career-title">Your career</p>
-        <p class="muted">
-          Sworn in on {formatDate(data.swornIn)}. Starting over returns you to Acolyte and cannot be undone.
-          It costs your unconverted and pending gold, your streak, and your older judgments, which are
-          forfeited. Your shields and the gold you already spent or converted are kept.
-        </p>
-      </div>
-      <button type="button" class="restart" onclick={() => (restarting = true)}>
-        <Icon name="rotate-ccw" size={14} />Restart career
-      </button>
-    </section>
-  {/if}
 </div>
-
-{#if restarting}
-  <RestartCareerDialog onclose={() => (restarting = false)} />
-{/if}
 
 <style>
   p {
@@ -526,28 +508,8 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 2.5rem;
   }
-
-  .rule {
-    margin: 2.5rem 0 1.5rem;
-    border: 0;
-    border-top: 1px solid var(--io-gold-muted);
-  }
-  .career {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1.5rem;
-    padding-bottom: 1rem;
-  }
-  .restart {
-    display: inline-flex;
-    flex: none;
-    align-items: center;
-    gap: 8px;
-    min-height: 40px;
-    border-color: var(--io-crimson);
-    background: transparent;
-    color: var(--io-crimson-text);
+  .question-rules {
+    margin-top: 2.5rem;
   }
 
   @media (max-width: 64rem) {
@@ -563,12 +525,6 @@
     .guide-cols {
       grid-template-columns: minmax(0, 1fr);
       gap: 1.25rem;
-    }
-  }
-  @media (max-width: 40rem) {
-    .career {
-      flex-direction: column;
-      align-items: flex-start;
     }
   }
 </style>

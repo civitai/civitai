@@ -1,10 +1,17 @@
 -- Image."sortAt" is the feed sort key. PG is its author:
---   sortAt = GREATEST(post.publishedAt, image.scannedAt, image.createdAt)
+--   sortAt = GREATEST(post.publishedAt, image.scannedAt, image.createdAt,
+--                     image.firstVisibleAt while within 7 days of post.publishedAt)
+-- firstVisibleAt is when the row first passed the public feed gates (image_row_public).
+-- set_image_sort_at writes NEW."firstVisibleAt": apply migration 20271201120000_image_first_visible_at
+-- (which adds the column) before this file, or every Image write fails.
+-- An image held from upload and released later sorts at its release, once; one that was
+-- already served keeps its place through any later hide and unhide.
 -- GREATEST ignores NULLs, so a draft / unpublished / postless image (no
 -- publishedAt) collapses to GREATEST(scannedAt, createdAt); createdAt is NOT
--- NULL so a value always results. This matches the formula the downstream feed
--- index (and Meili) already use — there is no sentinel, and visibility is still
--- gated elsewhere; this only fixes the sort *position*.
+-- NULL so a value always results. The feed index and feed queries still compute
+-- GREATEST(publishedAt, scannedAt, createdAt) themselves, without the firstVisibleAt
+-- term, until they call image_sort_at(). There is no sentinel, and visibility is
+-- still gated elsewhere; this only fixes the sort *position*.
 --
 -- Two authors:
 --   1. set_image_sort_at()   BEFORE INSERT OR UPDATE ON Image (ALL columns)
@@ -52,21 +59,119 @@ DROP TRIGGER IF EXISTS new_image_sort_at ON "Image";
 ---
 DROP FUNCTION IF EXISTS update_new_image_sort_at();
 ---
+-- 0. Shared pieces.
+--
+-- The public feed's row-level gates (getAllImages, for a viewer who is neither the owner nor a
+-- moderator): no review flag, not acceptableMinor, a browsable level, reviewed (imageReviewedSql),
+-- not blocked, not a minor-flagged mature image, not a mature image from a
+-- restricted model. Rules that depend on the viewer's settings (browsing level choice, POI or
+-- minor opt-out, excluded tags) stay out. tosViolation is not one of the gates: the feed
+-- does not read it, so a ToS removal and restore of a served image never counts as a release.
+-- image-first-visible-sort-at.pglite.test.ts fails if this and the TS helpers disagree.
+CREATE OR REPLACE FUNCTION image_row_public(
+  ingestion "ImageIngestionStatus", needs_review text, blocked_for text, acceptable_minor boolean, nsfw_level int, nsfw_level_locked boolean, metadata jsonb,
+  scan_jobs jsonb, minor boolean, model_restricted boolean
+) RETURNS boolean
+  LANGUAGE sql IMMUTABLE AS
+$$
+SELECT COALESCE(
+  needs_review IS NULL
+  AND NOT acceptable_minor
+  AND (nsfw_level & 31) <> 0
+  AND blocked_for IS NULL
+  AND NOT (COALESCE(minor, FALSE) AND (nsfw_level = 0 OR nsfw_level >= 4))
+  AND ((nsfw_level & 28) = 0 OR NOT model_restricted)
+  AND (
+    ingestion = 'Scanned'
+    OR (
+      nsfw_level_locked
+      AND ingestion NOT IN ('Blocked', 'NotFound')
+      AND NOT (
+        ingestion = 'Error'
+        AND (
+          COALESCE(metadata->>'nsfwLevelReason', '') = 'Knights Vote'
+          OR COALESCE(scan_jobs->'error'->>'failureClass', '') = 'permanent'
+          OR COALESCE(scan_jobs->'lastFailure'->>'failureClass', '') = 'permanent'
+          OR COALESCE(scan_jobs->'permanentFailure' = 'true'::jsonb, FALSE)
+        )
+      )
+    )
+  ),
+  FALSE
+)
+$$;
+---
+-- The last Image id handed out when firstVisibleAt was introduced. Rows at or below it predate
+-- the column, so whether they were ever served is unknown: they never get a firstVisibleAt and
+-- keep the old sort. Read from the id sequence (no lock on "Image"; counts ids of inserts still
+-- in flight). Created once per database, at apply time; re-running keeps the value.
+DO
+$$
+DECLARE
+  last_id bigint;
+BEGIN
+  IF to_regprocedure('image_first_visible_min_id()') IS NULL THEN
+    EXECUTE format('SELECT last_value FROM %s', pg_get_serial_sequence('"Image"', 'id'))
+      INTO last_id;
+    EXECUTE format(
+      'CREATE FUNCTION image_first_visible_min_id() RETURNS bigint LANGUAGE sql IMMUTABLE AS %L',
+      'SELECT ' || last_id
+    );
+  END IF;
+END
+$$;
+---
+-- The sort rule both authors below use. A first visibility more than 7 days after publish
+-- (the release cap, a product default) does not move the image.
+CREATE OR REPLACE FUNCTION image_sort_at(
+  published_at timestamp, scanned_at timestamp, created_at timestamp, first_visible_at timestamp
+) RETURNS timestamp
+  LANGUAGE sql IMMUTABLE AS
+$$
+SELECT GREATEST(
+  published_at, scanned_at, created_at,
+  CASE WHEN first_visible_at <= published_at + interval '7 days' THEN first_visible_at END
+)
+$$;
+---
 -- 1. Per-row author. Reads the parent Post's publishedAt directly and restamps
 --    sortAt on every image write — insert, scan completion, postId move, or any
 --    other column edit (see the all-updates rationale in the header).
+--    It also owns firstVisibleAt: set the first time the row turns public, never
+--    changed after, and any client write to it is discarded.
 CREATE OR REPLACE FUNCTION set_image_sort_at()
   RETURNS TRIGGER AS
 $$
 DECLARE
-  post_published_at timestamptz;
+  post_published_at timestamp;
 BEGIN
+  IF TG_OP = 'INSERT' THEN
+    NEW."firstVisibleAt" := NULL;
+  ELSE
+    NEW."firstVisibleAt" := OLD."firstVisibleAt";
+  END IF;
+  IF NEW."firstVisibleAt" IS NULL
+    AND NEW.id > image_first_visible_min_id()
+    AND image_row_public(NEW.ingestion, NEW."needsReview", NEW."blockedFor",
+      NEW."acceptableMinor", NEW."nsfwLevel", NEW."nsfwLevelLocked", NEW.metadata, NEW."scanJobs",
+      NEW.minor, NEW."modelRestricted")
+    AND (
+      TG_OP = 'INSERT'
+      OR NOT image_row_public(OLD.ingestion, OLD."needsReview", OLD."blockedFor",
+        OLD."acceptableMinor", OLD."nsfwLevel", OLD."nsfwLevelLocked",
+        OLD.metadata, OLD."scanJobs", OLD.minor, OLD."modelRestricted")
+    )
+  THEN
+    NEW."firstVisibleAt" := now();
+  END IF;
+
   IF NEW."postId" IS NOT NULL THEN
     SELECT p."publishedAt" INTO post_published_at
     FROM "Post" p
     WHERE p.id = NEW."postId";
   END IF;
-  NEW."sortAt" := GREATEST(post_published_at, NEW."scannedAt", NEW."createdAt");
+  NEW."sortAt" := image_sort_at(post_published_at, NEW."scannedAt", NEW."createdAt",
+    NEW."firstVisibleAt");
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
@@ -95,7 +200,7 @@ CREATE OR REPLACE FUNCTION update_image_sort_at()
 $$
 BEGIN
   UPDATE "Image"
-  SET "sortAt" = GREATEST(NEW."publishedAt", "scannedAt", "createdAt"),
+  SET "sortAt" = image_sort_at(NEW."publishedAt", "scannedAt", "createdAt", "firstVisibleAt"),
       "updatedAt" = now()
   WHERE "postId" = NEW."id";
   RETURN NEW;

@@ -10,7 +10,9 @@ package v1models
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,13 +20,16 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
+	"github.com/civitai/civitai/apps/feed-go/internal/jspack"
 	"github.com/civitai/civitai/apps/feed-go/internal/shadow"
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
 	"github.com/civitai/civitai/apps/feed-go/internal/testkit"
@@ -33,7 +38,7 @@ import (
 const (
 	goldenDir = "../../testdata/golden/v1-models"
 	// The fixture count gen-v1-models.mjs writes: fewer found means the glob matched the wrong place.
-	goldenMin = 14
+	goldenMin = 42
 )
 
 type goldenEntry struct {
@@ -50,6 +55,14 @@ type goldenFixture struct {
 		CoverageNext         bool   `json:"coverageNext"`
 		BaseModelFeedMetrics bool   `json:"baseModelFeedMetrics"`
 		RegionRestricted     bool   `json:"regionRestricted"`
+		// SERVER_DOMAIN_RED and its aliases, as the Node golden test sets them.
+		ServerDomainRed        string `json:"serverDomainRed"`
+		ServerDomainRedAliases string `json:"serverDomainRedAliases"`
+		// ServeDataMiss is the miss computation on (FEED_GO_COMPUTE_MISSES, which a shadow sample
+		// computes every v1 models miss under, and FEED_GO_V1_MODELS_SERVE_DATA_MISS): a fixture whose
+		// `coldModelData` records are computed by dataForModelsCache's lookup, `coldModelTags` by
+		// modelTagCache's and `staleTags` named by tagCache's.
+		ServeDataMiss bool `json:"serveDataMiss"`
 	} `json:"config"`
 	Request struct {
 		Path    string            `json:"path"`
@@ -60,13 +73,81 @@ type goldenFixture struct {
 	Redis    map[string]goldenEntry     `json:"redis"`
 	SysRedis map[string]goldenEntry     `json:"sysRedis"`
 	Expect   struct {
-		Fallback string  `json:"fallback"`
-		Body     *string `json:"body"`
-		SQL      *struct {
-			Text   string            `json:"text"`
-			Values []json.RawMessage `json:"values"`
-		} `json:"sql"`
+		Fallback string `json:"fallback"`
+		// Status is the status Node answers with (0: 200); the `[id]` not-found answer is a 404,
+		// which Go marks Answer.NotFound.
+		Status int        `json:"status"`
+		Body   *string    `json:"body"`
+		SQL    *goldenSQL `json:"sql"`
+		// TrainingDataSQL is trainingDataListing's statement, when Node sent one.
+		TrainingDataSQL *goldenSQL `json:"trainingDataSql"`
+		// Search is the text search's call, when Node made one.
+		Search *goldenSearch `json:"search"`
 	} `json:"expect"`
+}
+
+// goldenSearch is the search call Node's resolveModelSearchIds made: `index(index).search(q, params)`,
+// params as JSON.stringify sent them.
+type goldenSearch struct {
+	Index  string         `json:"index"`
+	Q      string         `json:"q"`
+	Params map[string]any `json:"params"`
+}
+
+// same is nil when req is Node's call: the same index, text and request body.
+func (g *goldenSearch) same(req SearchRequest) error {
+	body, err := req.Body()
+	if err != nil {
+		return err
+	}
+	var got map[string]any
+	if err := json.Unmarshal(body, &got); err != nil {
+		return err
+	}
+	q := got["q"]
+	delete(got, "q")
+	if req.Index != g.Index || q != g.Q || !reflect.DeepEqual(got, g.Params) {
+		return fmt.Errorf("search call differs from Node's:\n go:   %s %v %v\n node: %s %q %v", req.Index, q, got, g.Index, g.Q, g.Params)
+	}
+	return nil
+}
+
+// goldenSearcher answers the fixture's text search from `world.search.hits` and records each call.
+type goldenSearcher struct {
+	hits []int
+	reqs []SearchRequest
+}
+
+func (g *goldenSearcher) SearchModelIDs(_ context.Context, req SearchRequest) ([]int, error) {
+	g.reqs = append(g.reqs, req)
+	return g.hits, nil
+}
+
+type goldenSQL struct {
+	Text   string            `json:"text"`
+	Values []json.RawMessage `json:"values"`
+}
+
+// sameStatement is nil when the statement is the fixture's: the text whitespace-normalised (exact
+// bytes when exact), and the values.
+func (g *goldenSQL) sameStatement(what, sql string, args []any, exact bool) error {
+	if exact && sql != g.Text {
+		return fmt.Errorf("%s is not Node's text byte for byte:\n go:   %q\n node: %q", what, sql, g.Text)
+	}
+	if got, want := NormalizeSQL(sql), NormalizeSQL(g.Text); got != want {
+		return fmt.Errorf("%s differs from Node's:\n go:   %s\n node: %s", what, got, want)
+	}
+	if len(args) != len(g.Values) {
+		return fmt.Errorf("%s: %d values, Node binds %d", what, len(args), len(g.Values))
+	}
+	for i, a := range args {
+		var want any
+		_ = json.Unmarshal(g.Values[i], &want)
+		if got := jsonArg(a); !reflect.DeepEqual(got, want) {
+			return fmt.Errorf("%s value $%d: go %#v, node %#v", what, i+1, got, want)
+		}
+	}
+	return nil
 }
 
 // revive turns the fixture's JSON-with-markers into the Go values a pgx row holds: `{"$date": …}` a
@@ -181,11 +262,17 @@ func jsonArg(v any) any {
 }
 
 type goldenEnv struct {
-	deps  *Deps
-	users UsernameResolver
-	db    *testkit.DB
-	stmts int
+	deps    *Deps
+	users   UsernameResolver
+	db      *testkit.DB
+	stmts   int
+	tdStmts int
+	// search answers a fixture with `world.search` (nil: no search backend).
+	search *goldenSearcher
 }
+
+// trainingDataColumns are the training data statement's columns.
+var trainingDataColumns = []string{"id", "virusScanResult", "nsfwLevel", "fullyRated", "restricted"}
 
 func goldenSetup(t *testing.T, fx *goldenFixture) *goldenEnv {
 	t.Helper()
@@ -198,6 +285,7 @@ func goldenSetup(t *testing.T, fx *goldenFixture) *goldenEnv {
 	for key, e := range fx.Redis {
 		setGolden(t, cache, key, e)
 	}
+	seedUncuratedShowcases(cache, fx)
 	for key, e := range fx.SysRedis {
 		setGolden(t, sys, key, e)
 	}
@@ -218,6 +306,13 @@ func goldenSetup(t *testing.T, fx *goldenFixture) *goldenEnv {
 	vae := fx.rows(t, "vaeFiles")
 	var usernames map[string]int
 	fx.world(t, "usernames", &usernames)
+	trainingData := fx.rows(t, "trainingData")
+	var tdError bool
+	if raw, ok := fx.World["trainingDataError"]; ok {
+		_ = json.Unmarshal(raw, &tdError)
+	}
+	var tagIDs map[string]int
+	fx.world(t, "tagIdsByName", &tagIDs)
 
 	env.db = &testkit.DB{Routes: []testkit.Route{
 		{Match: `as "cursorId"`, SQLRows: func(sql string, args []any) (*testkit.Rows, error) {
@@ -229,20 +324,27 @@ func goldenSetup(t *testing.T, fx *goldenFixture) *goldenEnv {
 			if fx.Expect.SQL == nil {
 				return nil, errors.New("a model statement was built; the fixture expects none")
 			}
-			if got, want := NormalizeSQL(sql), NormalizeSQL(fx.Expect.SQL.Text); got != want {
-				return nil, fmt.Errorf("model statement differs from Node's:\n go:   %s\n node: %s", got, want)
-			}
-			if len(args) != len(fx.Expect.SQL.Values) {
-				return nil, fmt.Errorf("model statement: %d values, Node binds %d", len(args), len(fx.Expect.SQL.Values))
-			}
-			for i, a := range args {
-				var want any
-				_ = json.Unmarshal(fx.Expect.SQL.Values[i], &want)
-				if got := jsonArg(a); !reflect.DeepEqual(got, want) {
-					return nil, fmt.Errorf("model statement value $%d: go %#v, node %#v", i+1, got, want)
-				}
+			if err := fx.Expect.SQL.sameStatement("model statement", sql, args, false); err != nil {
+				return nil, err
 			}
 			return toRows(modelColumns, models), nil
+		}},
+		// trainingDataListing's statement: Node's text and candidates, answered from the fixture's rows
+		// of those versions (or its read error).
+		{Match: `AS restricted`, SQLRows: func(sql string, args []any) (*testkit.Rows, error) {
+			env.tdStmts++
+			if fx.Expect.Fallback == "" {
+				if fx.Expect.TrainingDataSQL == nil {
+					return nil, errors.New("a training data statement was sent; the fixture expects none")
+				}
+				if err := fx.Expect.TrainingDataSQL.sameStatement("training data statement", sql, args, true); err != nil {
+					return nil, err
+				}
+			}
+			if tdError {
+				return nil, errors.New("the fixture's training data read fails")
+			}
+			return toRows(trainingDataColumns, filterRows(trainingData, "modelVersionId", argIDs(args))), nil
 		}},
 		{Match: `AS deadline`, Rows: func(args []any) (*testkit.Rows, error) {
 			ids := argIDs(args)
@@ -294,29 +396,270 @@ func goldenSetup(t *testing.T, fx *goldenFixture) *goldenEnv {
 			}
 			return toRows([]string{"id"}, nil), nil
 		}},
+		// The `tag` filter's lookup by name (Node: dbRead.tag.findUnique over the same map).
+		{Match: `FROM "Tag" WHERE name`, Rows: func(args []any) (*testkit.Rows, error) {
+			name, _ := args[0].(string)
+			if id, ok := tagIDs[name]; ok {
+				return toRows([]string{"id"}, []map[string]any{{"id": float64(id)}}), nil
+			}
+			return toRows([]string{"id"}, nil), nil
+		}},
 	}}
 
+	if fx.Config.ServeDataMiss {
+		lookups := append(append(modelDataLookupRoutes(t, fx), tagLookupRoutes(t, fx)...), filesLookupRoutes(t, fx)...)
+		env.db.Routes = append(lookups, env.db.Routes...)
+	}
 	packed := &hydrate.PackedReader{Redis: cache, Now: nowFn}
 	sources := &hydrate.Sources{Packed: packed, Cache: cache, Replica: env.db}
+	if fx.Config.ServeDataMiss {
+		sources.Compute = &hydrate.MissCompute{Now: nowFn}
+	}
 	env.deps = &Deps{
 		DB:      env.db,
 		Packed:  packed,
 		Sources: sources,
 		Gallery: &feed.GalleryStore{Cache: cache, DB: env.db},
 		Addons:  (&feed.AddonSource{Sys: sys}).Addons,
+		// The blocked browsing tags under their real key in the cache redis (Node's
+		// getBlockedBrowsingTags reads the fixture's `blockedTags`), unmemoized.
+		Blocked: &feed.BlockedTags{Cache: cache, TTL: -1},
 		Config: Config{
 			ImageLocation:        fx.Config.ImageLocation,
 			BaseURL:              fx.Config.BaseURL,
 			CoverageNext:         fx.Config.CoverageNext,
 			BaseModelFeedMetrics: fx.Config.BaseModelFeedMetrics,
-			ResponseCacheTTL:     180 * time.Second,
+			ServeDataMiss:        fx.Config.ServeDataMiss,
+			// ServeDataMiss needs ComputeMisses (ValidateMisses).
+			ComputeMisses:    fx.Config.ServeDataMiss,
+			ResponseCacheTTL: 180 * time.Second,
 			// The Node golden test runs the non-production build (isProd false): localhost origins.
 			Production: false,
+			// isRedCapableHost's list from the env the Node golden test sets (config.Hosts["red"] order).
+			RedHosts: RedHosts(fx.Config.ServerDomainRed,
+				append([]string{fx.Config.ServerDomainRed}, strings.Split(fx.Config.ServerDomainRedAliases, ",")...)),
 		},
 		Now: nowFn,
 	}
 	env.users = sources
+	if raw, ok := fx.World["search"]; ok {
+		var s struct {
+			Hits []int `json:"hits"`
+		}
+		if err := json.Unmarshal(raw, &s); err != nil {
+			t.Fatalf("world search: %v", err)
+		}
+		env.search = &goldenSearcher{hits: s.Hits}
+		env.deps.Search = env.search
+	}
 	return env
+}
+
+// modelDataLookupColumns are dataForModelsCache's lookup columns, in its query's order.
+var modelDataLookupColumns = []string{"id", "index", "modelId", "name", "earlyAccessTimeFrame", "baseModel",
+	"baseModelType", "createdAt", "trainingStatus", "publishedAt", "status", "flags", "availability", "nsfwLevel",
+	"description", "trainedWords", "vaeId", "covered", "coveredNext"}
+
+// modelDataLookupRoutes answer dataForModelsCache's lookup queries (its versions and its SHA256 model
+// hashes) with the rows each requested model's `world.modelData` record was written from: the
+// versions in record order with their modelId (integers as int64, text[] as []string), the hashes
+// in record order. The record is what the lookup writes (gen-v1-models.mjs), so the rows are that
+// record's inverse.
+func modelDataLookupRoutes(t *testing.T, fx *goldenFixture) []testkit.Route {
+	t.Helper()
+	var data map[string]any
+	fx.world(t, "modelData", &data)
+	records := map[int]map[string]any{}
+	for k, v := range data {
+		id, err := strconv.Atoi(k)
+		if err != nil {
+			t.Fatalf("modelData key %q", k)
+		}
+		records[id], _ = revive(v).(map[string]any)
+	}
+	column := func(col string, v any) any {
+		switch x := v.(type) {
+		case float64:
+			return int64(x)
+		case []any:
+			if col == "trainedWords" {
+				out := make([]string, len(x))
+				for i, e := range x {
+					out[i], _ = e.(string)
+				}
+				return out
+			}
+		}
+		return v
+	}
+	return []testkit.Route{
+		{Match: `LEFT JOIN "GenerationCoverage"`, Rows: func(args []any) (*testkit.Rows, error) {
+			ids, _ := args[0].([]int)
+			var rows [][]any
+			for _, id := range ids {
+				vs, _ := records[id]["versions"].([]any)
+				for _, x := range vs {
+					v, _ := x.(map[string]any)
+					row := make([]any, len(modelDataLookupColumns))
+					for i, c := range modelDataLookupColumns {
+						if c == "modelId" {
+							row[i] = int64(id)
+							continue
+						}
+						row[i] = column(c, v[c])
+					}
+					rows = append(rows, row)
+				}
+			}
+			return testkit.NewRows(modelDataLookupColumns, rows...), nil
+		}},
+		{Match: `FROM "ModelHash"`, Rows: func(args []any) (*testkit.Rows, error) {
+			ids, _ := args[0].([]int)
+			var rows [][]any
+			for _, id := range ids {
+				hs, _ := records[id]["hashes"].([]any)
+				for _, h := range hs {
+					rows = append(rows, []any{int64(id), h})
+				}
+			}
+			return testkit.NewRows([]string{"modelId", "hash"}, rows...), nil
+		}},
+	}
+}
+
+// tagLookupRoutes answer modelTagCache's lookup (TagsOnModels: each requested model's
+// `world.modelTags` tag ids, in record order) and tagCache's name lookup (each requested tag of
+// `world.tags`): the rows those records were written from (gen-v1-models.mjs).
+func tagLookupRoutes(t *testing.T, fx *goldenFixture) []testkit.Route {
+	t.Helper()
+	var modelTags map[string]struct {
+		TagIDs []int `json:"tagIds"`
+	}
+	fx.world(t, "modelTags", &modelTags)
+	var tags map[string]struct {
+		Name string `json:"name"`
+	}
+	fx.world(t, "tags", &tags)
+	return []testkit.Route{
+		{Match: `FROM "TagsOnModels" WHERE "modelId" = ANY`, Rows: func(args []any) (*testkit.Rows, error) {
+			ids, _ := args[0].([]int)
+			var rows [][]any
+			for _, id := range ids {
+				for _, tid := range modelTags[strconv.Itoa(id)].TagIDs {
+					rows = append(rows, []any{int64(id), int64(tid)})
+				}
+			}
+			return testkit.NewRows([]string{"modelId", "tagId"}, rows...), nil
+		}},
+		{Match: `SELECT id, name FROM "Tag" WHERE id = ANY`, Rows: func(args []any) (*testkit.Rows, error) {
+			ids, _ := args[0].([]int)
+			var rows [][]any
+			for _, id := range ids {
+				if tg, ok := tags[strconv.Itoa(id)]; ok {
+					rows = append(rows, []any{int64(id), tg.Name})
+				}
+			}
+			return testkit.NewRows([]string{"id", "name"}, rows...), nil
+		}},
+	}
+}
+
+// filesLookupRoutes answer filesForModelVersionCache's lookup (its ModelFile and ModelFileHash reads)
+// with the rows each requested version's `world.files` record was written from: the files in record
+// order, `metadata` as the JSON text of the record's own (its key order kept, as the jsonb text
+// Prisma parses), the hashes in record order.
+func filesLookupRoutes(t *testing.T, fx *goldenFixture) []testkit.Route {
+	t.Helper()
+	var records map[string]struct {
+		Files []map[string]json.RawMessage `json:"files"`
+	}
+	fx.world(t, "files", &records)
+	cols := []string{"id", "url", "sizeKB", "name", "overrideName", "type", "visibility", "pickleScanResult",
+		"pickleScanMessage", "virusScanResult", "virusScanMessage", "scannedAt", "modelVersionId", "metadata"}
+	column := func(col string, raw json.RawMessage) any {
+		if string(raw) == "null" || raw == nil {
+			return nil
+		}
+		if col == "metadata" {
+			return string(raw)
+		}
+		var v any
+		_ = json.Unmarshal(raw, &v)
+		switch x := revive(v).(type) {
+		case float64:
+			if col == "sizeKB" {
+				return x
+			}
+			return int64(x)
+		default:
+			return x
+		}
+	}
+	type hash struct {
+		fileID    int64
+		typ, hash string
+	}
+	var hashes []hash
+	for _, r := range records {
+		for _, f := range r.Files {
+			var id int64
+			_ = json.Unmarshal(f["id"], &id)
+			var hs []struct{ Type, Hash string }
+			_ = json.Unmarshal(f["hashes"], &hs)
+			for _, h := range hs {
+				hashes = append(hashes, hash{id, h.Type, h.Hash})
+			}
+		}
+	}
+	return []testkit.Route{
+		{Match: `FROM "ModelFile"` + "\n" + `WHERE "modelVersionId" = ANY`, Rows: func(args []any) (*testkit.Rows, error) {
+			ids, _ := args[0].([]int)
+			var rows [][]any
+			for _, id := range ids {
+				for _, f := range records[strconv.Itoa(id)].Files {
+					row := make([]any, len(cols))
+					for i, c := range cols {
+						row[i] = column(c, f[c])
+					}
+					rows = append(rows, row)
+				}
+			}
+			return testkit.NewRows(cols, rows...), nil
+		}},
+		{Match: `type::text AS type, hash::text AS hash FROM "ModelFileHash"`, Rows: func(args []any) (*testkit.Rows, error) {
+			ids := argIDs(args)
+			var rows [][]any
+			for _, h := range hashes {
+				if ids[int(h.fileID)] {
+					rows = append(rows, []any{h.fileID, h.typ, h.hash})
+				}
+			}
+			return testkit.NewRows([]string{"fileId", "type", "hash"}, rows...), nil
+		}},
+	}
+}
+
+// seedUncuratedShowcases writes, for every version the fixture caches images for, the
+// version-showcase entry getVersionShowcaseCache's lookup writes for an uncurated version: the Node
+// golden test answers that lookup's ModelVersionShowcaseItem read with no rows (no fixture curates a
+// showcase), so Node read each of them as uncurated. A fixture's own entry is kept.
+func seedUncuratedShowcases(r *testkit.Redis, fx *goldenFixture) {
+	prefix := hydrate.KeyVersionImages + ":"
+	for key := range fx.Redis {
+		id, ok := strings.CutPrefix(key, prefix)
+		if !ok {
+			continue
+		}
+		showcase := hydrate.KeyVersionShowcase + ":" + id
+		if _, own := fx.Redis[showcase]; own {
+			continue
+		}
+		n, err := strconv.Atoi(id)
+		if err != nil {
+			continue
+		}
+		r.SetString(showcase, jspack.Pack(jspack.O("modelVersionId", n, "rows", []any{}, "community", []any{})))
+	}
 }
 
 func setGolden(t *testing.T, r *testkit.Redis, key string, e goldenEntry) {
@@ -361,14 +704,43 @@ func goldenLoad(t *testing.T, path string) *goldenFixture {
 	return fx
 }
 
-// goldenServe computes the fixture's request.
+// goldenNodeSQLHash is what the Node of these fixtures sends as its rule set id
+// (trainingDataListingRulesId): the SHA-256 of the training data statement its route sent, as one
+// fixture recorded it. Not derived from Go's embedded copy, so a drifted copy fails here.
+var goldenNodeSQLHash = sync.OnceValues(func() (string, error) {
+	raw, err := os.ReadFile(filepath.Join(goldenDir, "detail-training-data.json"))
+	if err != nil {
+		return "", err
+	}
+	var fx goldenFixture
+	if err := json.Unmarshal(raw, &fx); err != nil {
+		return "", err
+	}
+	if fx.Expect.TrainingDataSQL == nil {
+		return "", errors.New("detail-training-data.json records no training data statement")
+	}
+	sum := sha256.Sum256([]byte(fx.Expect.TrainingDataSQL.Text))
+	// The decision version is the Go mirror's: feed-go-training-data-listing.parity.test.ts requires it
+	// to be Node's TRAINING_DATA_LISTING_RULES_VERSION.
+	return hex.EncodeToString(sum[:]) + ";rules=" + strconv.Itoa(TrainingDataRulesVersion), nil
+})
+
+// goldenServe computes the fixture's request, as a sample from the fixtures' Node (its statement
+// hash attached).
 func goldenServe(ctx context.Context, env *goldenEnv, fx *goldenFixture) (*Answer, error) {
+	hash, err := goldenNodeSQLHash()
+	if err != nil {
+		return nil, err
+	}
 	if id, ok := strings.CutPrefix(fx.Request.Path, "/api/v1/models/"); ok {
-		return ServeDetail(ctx, env.deps, DetailRequest{ID: id, RegionRestricted: fx.Config.RegionRestricted})
+		return ServeDetail(ctx, env.deps, DetailRequest{
+			ID: id, RegionRestricted: fx.Config.RegionRestricted, Host: fx.Request.Headers["host"],
+			TrainingDataSQL: hash,
+		})
 	}
 	return ServeList(ctx, env.deps, env.users, ListRequest{
 		Query: fx.Request.Query, Path: fx.Request.Path, Host: fx.Request.Headers["host"],
-		RegionRestricted: fx.Config.RegionRestricted,
+		RegionRestricted: fx.Config.RegionRestricted, TrainingDataSQL: hash,
 	})
 }
 
@@ -390,13 +762,33 @@ func goldenRun(t *testing.T, fx *goldenFixture) {
 	if fx.Expect.Body == nil {
 		t.Fatalf("the fixture has no expected body yet: run the Node golden test and copy its GOLDEN-ACTUAL")
 	}
+	if err := fx.sameStatus(ans); err != nil {
+		t.Error(err)
+	}
 	got, err := superjson.Plain(ans.Body)
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := []byte(*fx.Expect.Body)
-	if fx.Expect.SQL != nil && env.stmts != 1 {
+	searched := env.search != nil && len(env.search.reqs) > 0
+	switch {
+	case fx.Expect.Search == nil && searched:
+		t.Errorf("a search call was made; the fixture expects none")
+	case fx.Expect.Search != nil && (env.search == nil || len(env.search.reqs) != 1):
+		t.Errorf("search calls: %v, want Node's one", env.search)
+	case fx.Expect.Search != nil:
+		if err := fx.Expect.Search.same(env.search.reqs[0]); err != nil {
+			t.Error(err)
+		}
+	}
+	// With no hit Node still sends its statement (no id clause) and discards its rows: none is sent
+	// here.
+	noHits := searched && len(env.search.hits) == 0
+	if fx.Expect.SQL != nil && env.stmts != 1 && (!noHits || env.stmts != 0) {
 		t.Errorf("model statements: %d, want 1", env.stmts)
+	}
+	if fx.Expect.TrainingDataSQL != nil && env.tdStmts != 1 {
+		t.Errorf("training data statements: %d, want 1", env.tdStmts)
 	}
 	if bytes.Equal(got, want) {
 		return
@@ -410,6 +802,21 @@ func goldenRun(t *testing.T, fx *goldenFixture) {
 		paths = append(paths, d.Kind+":"+d.Path)
 	}
 	t.Fatalf("not the bytes Node writes (structural match %v, diffs %v)\n go:   %s\n node: %s", rep.Match, paths, got, want)
+}
+
+// sameStatus is nil when ans is marked as Node's answer is: NotFound exactly when Node answers 404.
+func (fx *goldenFixture) sameStatus(ans *Answer) error {
+	status := fx.Expect.Status
+	if status == 0 {
+		status = 200
+	}
+	if status != 200 && status != 404 {
+		return fmt.Errorf("Node answers %d: not a status the port answers", status)
+	}
+	if ans.NotFound != (status == 404) {
+		return fmt.Errorf("NotFound=%v, Node answers %d", ans.NotFound, status)
+	}
+	return nil
 }
 
 func TestGoldenV1Models(t *testing.T) {

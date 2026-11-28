@@ -248,16 +248,6 @@ describe('enqueueing posts on unpublished resources for review', () => {
     expect(await run(3)).toMatchObject({ ok: true, reported: 3 });
   });
 
-  // An evidence-hold table with its view gone is "drift": the hold legs then hold everyone, so the
-  // job must file nothing rather than file around a hold it cannot read.
-  it('holds every poster when the hold marker has drifted', async () => {
-    await pg.exec(`CREATE TABLE "EvidenceHold" (id int);`);
-
-    const plan = await planEnqueue(REASONS, undefined, PAGE);
-    expect(plan.eligible).toBe(0);
-    expect(plan.excluded.posterHeld).toBe(5);
-  });
-
   // The replica may lag. A real run counts and files from the primary, so a stale replica can
   // neither refuse a correct count nor let a wrong one through.
   it('counts a real run from the primary, not the replica', async () => {

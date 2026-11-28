@@ -16,9 +16,8 @@
  * exist while both stay green. One module, one discriminator, one fix site.
  *
  * NOT a `.test.ts` file and not under a guard directory, so it is collected by no
- * project and counted by no ratchet — `no-lint-rules-script-drift` enumerates
- * `src/server/services/__tests__/no-*.test.ts`, which this is not, and neither
- * guard file moves.
+ * project and is not a `src/server/services/__tests__/no-*.test.ts` guard, and
+ * neither guard file moves.
  */
 
 /**
@@ -68,6 +67,8 @@ export const MONEY_MARKERS = [
   'chargeAppSpendOverage(',
   'chargeBlockAuthorFee(',
   'chargeDevSessionOverage(',
+  // customComfy's refund of the reservation, app and dev-session legs together.
+  'refundAllLegs(',
   'refundAppSpend(',
   'refundBlockBuzzReservation(',
   'refundBlockBuzzSpend(',
@@ -83,6 +84,11 @@ export const MONEY_MARKERS = [
   // against a cap, so a disclosing estimate region that reached it would be reserving.
   'reservePrivateRunBuzzSpend(',
   'reserveReviewRunForRealBuzzSpend(',
+  // Recipe runner spend: the Redis legs, the ledger attempt, and their refunds.
+  'reservePlatformAndConsentLegs(',
+  'reserveRunnerAttempt(',
+  'reserveRunnerLeg(',
+  'refundRunnerLeg(',
   'settleCustomComfySpend(',
 ] as const;
 

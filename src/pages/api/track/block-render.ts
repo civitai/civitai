@@ -187,7 +187,10 @@ export default PublicEndpoint(
     // Resolve the session ONCE here so we can derive isAnon, then hand it to the
     // Tracker (3rd ctor arg) so it isn't re-resolved. `isAnon` is SERVER-derived
     // (`!session?.user`) — never from the client body.
-    const session = await getApiAuthSession({ req, res }, { whenBanned: 'anonymous' });
+    const session = await getApiAuthSession(
+      { req, res },
+      { whenBanned: 'anonymous', scope: 'defer' }
+    );
 
     // 🔴 PRIVATE-RUN MOUNT → NO ClickHouse row, exactly like `secondary` above and for
     // the same reason: this is the OWNER-VISIBLE impression rail, and a private run of a

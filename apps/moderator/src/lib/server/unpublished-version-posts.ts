@@ -1,8 +1,9 @@
 import { sql } from '@civitai/db/kysely';
+import { csamBlockedForSql } from '@civitai/shared/retracted-media-tier';
 import type { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { dbRead, dbWrite } from './db';
-import { flagClearHoldLegs, holdMarkerState } from './csam-flag-clear';
+import { flagClearHoldLegs } from './csam-flag-clear';
 import { insertModActivityBatch } from './mod-activity';
 import { SYSTEM_USER_ID } from './users.service';
 import { logAxiomError } from './axiom';
@@ -45,9 +46,8 @@ async function candidatePage(
   cursor: number,
   limit: number
 ): Promise<CandidateRow[]> {
-  const marker = await holdMarkerState(db);
   // Not `c`: the hold legs alias "CsamReport" as c, which would shadow it.
-  const held = flagClearHoldLegs(sql<number>`cand."posterId"`, marker);
+  const held = flagClearHoldLegs(sql<number>`cand."posterId"`);
   const { rows } = await sql<CandidateRow>`
     -- Driven from the pulled versions, materialized: joined from Post instead, the planner walks the
     -- Post primary key from the cursor and reads the whole table to fill a page.
@@ -84,7 +84,9 @@ async function candidatePage(
       EXISTS (
         SELECT 1 FROM "Image" i
         WHERE i."postId" = cand."postId"
-          AND (i.ingestion <> 'Scanned' OR i."needsReview" = ${FLAG_KEPT_THROUGH_BLOCK} OR i."blockedFor" = 'CSAM')
+          AND (i.ingestion <> 'Scanned' OR i."needsReview" = ${FLAG_KEPT_THROUGH_BLOCK} OR ${sql.raw(
+    csamBlockedForSql('i')
+  )})
       ) AS "imageNotClear",
       EXISTS (SELECT 1 FROM "User" u WHERE u.id = cand."posterId" AND u."bannedAt" IS NOT NULL) AS "posterBanned",
       (${sql.join(Object.values(held), sql` OR `)}) AS "posterHeld",

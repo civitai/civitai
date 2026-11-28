@@ -5,6 +5,7 @@ import { Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { freshPglite } from '../../../../test/pglite';
 import { pgliteDialect } from '../../__tests__/abuse-detection-pglite.harness';
+import { INQUISITOR_IMAGE_SCHEMA } from './inquisitor-schema';
 
 vi.setConfig({ hookTimeout: 60_000 });
 
@@ -35,6 +36,9 @@ const {
   ruleOnInquisitorItem,
   RULING_LEASE_MS,
 } = await import('../inquisitor.service');
+const { INQUISITOR_FILTERS, parseInquisitorFilter } = await import(
+  '$lib/knights/inquisitor-filters'
+);
 
 const MIGRATIONS = path.resolve(
   __dirname,
@@ -114,11 +118,7 @@ const item = async (id: number) =>
 
 beforeAll(async () => {
   db = await freshPglite();
-  await db.exec(`CREATE TABLE "Image" (
-    "id" INTEGER PRIMARY KEY, "url" TEXT NOT NULL, "name" TEXT, "type" TEXT NOT NULL DEFAULT 'image',
-    "nsfwLevel" INTEGER NOT NULL DEFAULT 0, "nsfwLevelLocked" BOOLEAN NOT NULL DEFAULT false,
-    "ingestion" TEXT NOT NULL DEFAULT 'Scanned', "blockedFor" TEXT
-  );`);
+  await db.exec(INQUISITOR_IMAGE_SCHEMA);
   await db.exec(migration('20261210120000_knights_v2_tables'));
   dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
 });
@@ -167,6 +167,21 @@ describe('getInquisitorQueue', () => {
     expect(queue[0].votes).toEqual([
       { answer: '8', label: 'X', votes: 2, weight: 2.5, stages: [{ stage: 'Knight', votes: 2 }] },
       { answer: '2', label: 'PG-13', votes: 1, weight: 2, stages: [{ stage: 'Knight', votes: 1 }] },
+    ]);
+  });
+
+  it('carries the level the image had when the item was escalated, or null when none was recorded', async () => {
+    await insertItem(1, 1, 'Inquisitor', Q, 2, { reason: null, escalationReason: 'pushed-down' });
+    await insertItem(2, 3, 'Inquisitor', Q, 2, { reason: null, escalationReason: 'no-consensus' });
+    await db.query(
+      `UPDATE "KnightsQueueItem" SET "meta" = '{"escalatedFromLevel": 16}'::jsonb WHERE "id" = 1`
+    );
+
+    const queue = await getInquisitorQueue();
+
+    expect(queue.map((row) => [row.id, row.currentLevel, row.escalatedFromLevel])).toEqual([
+      [1, 4, 16],
+      [2, 2, null],
     ]);
   });
 
@@ -223,16 +238,24 @@ describe('Inquisitor queue filters', () => {
     ['all', [ID.blocked, ID.pushedDown, ID.noConsensus, ID.writeBack, ID.neither]],
     ['blocked', [ID.blocked]],
     ['pushed-down', [ID.pushedDown]],
-    ['no-consensus', [ID.noConsensus]],
     ['write-back', [ID.writeBack]],
   ] as const)('lists exactly the %s items', async (filter, ids) => {
     expect((await getInquisitorQueue(filter)).map((i) => i.id)).toEqual(ids);
   });
 
-  it('shows an item with neither reason under All only', async () => {
-    for (const filter of ['blocked', 'pushed-down', 'no-consensus', 'write-back'] as const) {
-      expect((await getInquisitorQueue(filter)).map((i) => i.id)).not.toContain(ID.neither);
+  it('shows an item with neither reason, or one still waiting as no-consensus, under All only', async () => {
+    for (const filter of ['blocked', 'pushed-down', 'write-back'] as const) {
+      const ids = (await getInquisitorQueue(filter)).map((i) => i.id);
+      expect(ids).not.toContain(ID.neither);
+      expect(ids).not.toContain(ID.noConsensus);
     }
+  });
+
+  it('has no no-consensus tab: a link to it opens the whole queue', async () => {
+    expect(INQUISITOR_FILTERS).not.toContain('no-consensus');
+    expect(
+      (await getInquisitorQueue(parseInquisitorFilter('no-consensus'))).map((i) => i.id)
+    ).toEqual([ID.blocked, ID.pushedDown, ID.noConsensus, ID.writeBack, ID.neither]);
   });
 
   it('counts each filter from the same rows it lists, with All equal to the sidebar badge', async () => {
@@ -243,7 +266,6 @@ describe('Inquisitor queue filters', () => {
       all: 5,
       blocked: 1,
       'pushed-down': 1,
-      'no-consensus': 1,
       'write-back': 1,
     });
     expect(counts.all).toBe(await countInquisitorQueue());
@@ -316,6 +338,30 @@ describe('getInquisitorQueue block markers', () => {
   });
 });
 
+describe('getInquisitorQueue media for a withheld image', () => {
+  it('draws an image whose url another row keeps as restricted without the grant, and a clean one from the CDN', async () => {
+    await db.query(
+      `INSERT INTO "Image" ("id","url","name","type","nsfwLevel","nsfwLevelLocked","ingestion") VALUES
+        (990000020,'k1',NULL,'image',4,false,'Scanned')`
+    );
+    await db.query(`UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 990000020`);
+    await insertItem(1, 1, 'Inquisitor');
+    await insertItem(3, 3, 'Inquisitor');
+
+    const media = async (csamReview: boolean) =>
+      (await getInquisitorQueue('all', { csamReview })).map((i) => [i.id, i.media, i.imageKey]);
+
+    expect(await media(false)).toEqual([
+      [1, 'restricted', ''],
+      [3, 'cdn', 'k3'],
+    ]);
+    expect(await media(true)).toEqual([
+      [1, 'cdn', 'k1'],
+      [3, 'cdn', 'k3'],
+    ]);
+  });
+});
+
 describe('ruleOnInquisitorItem', () => {
   it('sets the image through the moderator path, closes the item and grades pending votes against the ruling', async () => {
     await insertItem(1, 1, 'Inquisitor');
@@ -323,9 +369,17 @@ describe('ruleOnInquisitorItem', () => {
     await insertVote(1, 12, '2', 1);
     await insertVote(1, 13, '8', 1, 'inconclusive');
 
-    expect(await ruleOnInquisitorItem(1, 8, MOD)).toEqual({ ok: true });
+    expect(await ruleOnInquisitorItem(1, { level: 8 }, MOD, { csamReview: true })).toEqual({
+      ok: true,
+    });
 
-    expect(setLevel).toHaveBeenCalledWith({ id: 1, nsfwLevel: 8, userId: MOD });
+    expect(setLevel).toHaveBeenCalledWith({
+      id: 1,
+      nsfwLevel: 8,
+      status: 'Actioned',
+      userId: MOD,
+      csamReview: true,
+    });
     expect(await item(1)).toMatchObject({
       status: 'Closed',
       resolvedValue: '8',
@@ -340,25 +394,58 @@ describe('ruleOnInquisitorItem', () => {
     ]);
   });
 
-  it('counts a Blocked ruling like any other level', async () => {
+  it('grades a Blocked ruling like any other level and records its reason on the image', async () => {
     await insertItem(1, 1, 'Inquisitor');
     await insertVote(1, 11, '32', 1);
     await insertVote(1, 12, '4', 1);
 
-    expect(await ruleOnInquisitorItem(1, 32, MOD)).toEqual({ ok: true });
+    expect(
+      await ruleOnInquisitorItem(1, { level: 32, blockReason: 'RealisticMinors' }, MOD, {
+        csamReview: true,
+      })
+    ).toEqual({ ok: true });
 
-    expect(setLevel).toHaveBeenCalledWith({ id: 1, nsfwLevel: 32, userId: MOD });
+    expect(setLevel).toHaveBeenCalledWith({
+      id: 1,
+      nsfwLevel: 32,
+      reason: 'Inquisitor ruling: Realistic Minors',
+      status: 'Actioned',
+      userId: MOD,
+      csamReview: true,
+    });
     expect(await verdicts(1)).toEqual([
       { playerId: 11, verdict: 'correct' },
       { playerId: 12, verdict: 'failed' },
     ]);
   });
 
+  it.each([
+    ['Blocked without a reason', { level: 32 }, 'Pick a reason for blocking.'],
+    ['Blocked with a reason not on the list', { level: 32, blockReason: 'tos' }, 'not on the list'],
+    [
+      'a reason on a level below Blocked',
+      { level: 8, blockReason: 'RealisticMinors' },
+      'Only a Blocked',
+    ],
+  ])('refuses %s before touching the image or the item', async (_label, ruling, error) => {
+    await insertItem(1, 1, 'Inquisitor');
+    await insertVote(1, 11, '32', 1);
+
+    expect(await ruleOnInquisitorItem(1, ruling, MOD, { csamReview: true })).toEqual({
+      ok: false,
+      error: expect.stringContaining(error),
+    });
+
+    expect(setLevel).not.toHaveBeenCalled();
+    expect(await item(1)).toMatchObject({ status: 'Inquisitor', resolvedBy: null });
+    expect(await verdicts(1)).toEqual([{ playerId: 11, verdict: 'pending' }]);
+  });
+
   it.each([['Open'], ['Resolved'], ['Closed']])('refuses an item that is %s', async (status) => {
     await insertItem(1, 1, status);
     await insertVote(1, 11, '8', 1);
 
-    const outcome = await ruleOnInquisitorItem(1, 8, MOD);
+    const outcome = await ruleOnInquisitorItem(1, { level: 8 }, MOD, { csamReview: true });
 
     expect(outcome.ok).toBe(false);
     expect(setLevel).not.toHaveBeenCalled();
@@ -369,11 +456,13 @@ describe('ruleOnInquisitorItem', () => {
   it('refuses a level that is not a rating, and a second ruling on the same item', async () => {
     await insertItem(1, 1, 'Inquisitor');
 
-    expect((await ruleOnInquisitorItem(1, 3, MOD)).ok).toBe(false);
+    expect((await ruleOnInquisitorItem(1, { level: 3 }, MOD, { csamReview: true })).ok).toBe(false);
     expect(setLevel).not.toHaveBeenCalled();
 
-    expect(await ruleOnInquisitorItem(1, 4, MOD)).toEqual({ ok: true });
-    expect((await ruleOnInquisitorItem(1, 8, MOD)).ok).toBe(false);
+    expect(await ruleOnInquisitorItem(1, { level: 4 }, MOD, { csamReview: true })).toEqual({
+      ok: true,
+    });
+    expect((await ruleOnInquisitorItem(1, { level: 8 }, MOD, { csamReview: true })).ok).toBe(false);
     expect(setLevel).toHaveBeenCalledTimes(1);
   });
 
@@ -382,7 +471,9 @@ describe('ruleOnInquisitorItem', () => {
     await insertVote(1, 11, '8', 1);
     setLevel.mockRejectedValue(new Error('Image not found'));
 
-    await expect(ruleOnInquisitorItem(1, 8, MOD)).rejects.toThrow('Image not found');
+    await expect(ruleOnInquisitorItem(1, { level: 8 }, MOD, { csamReview: true })).rejects.toThrow(
+      'Image not found'
+    );
 
     expect((await item(1)).status).toBe('Inquisitor');
     expect((await verdicts(1))[0].verdict).toBe('pending');
@@ -393,9 +484,9 @@ describe('ruleOnInquisitorItem', () => {
     let finish: () => void = () => undefined;
     setLevel.mockImplementationOnce(() => new Promise<void>((resolve) => (finish = resolve)));
 
-    const first = ruleOnInquisitorItem(1, 8, MOD);
+    const first = ruleOnInquisitorItem(1, { level: 8 }, MOD, { csamReview: true });
     await vi.waitFor(() => expect(setLevel).toHaveBeenCalledTimes(1));
-    const second = await ruleOnInquisitorItem(1, 2, MOD + 1);
+    const second = await ruleOnInquisitorItem(1, { level: 2 }, MOD + 1, { csamReview: true });
 
     expect(second).toEqual({ ok: false, error: expect.stringContaining('Another moderator') });
     expect(setLevel).toHaveBeenCalledTimes(1);
@@ -413,11 +504,15 @@ describe('ruleOnInquisitorItem', () => {
       [new Date(claimedAt.getTime() + RULING_LEASE_MS).toISOString()]
     );
 
-    expect((await ruleOnInquisitorItem(1, 4, MOD, claimedAt)).ok).toBe(false);
+    expect(
+      (await ruleOnInquisitorItem(1, { level: 4 }, MOD, { now: claimedAt, csamReview: true })).ok
+    ).toBe(false);
     expect(setLevel).not.toHaveBeenCalled();
 
     const later = new Date(claimedAt.getTime() + RULING_LEASE_MS + 1);
-    expect(await ruleOnInquisitorItem(1, 4, MOD, later)).toEqual({ ok: true });
+    expect(
+      await ruleOnInquisitorItem(1, { level: 4 }, MOD, { now: later, csamReview: true })
+    ).toEqual({ ok: true });
     expect(await item(1)).toMatchObject({ status: 'Closed', resolvedBy: MOD });
   });
 
@@ -431,7 +526,9 @@ describe('ruleOnInquisitorItem', () => {
       ]);
     });
 
-    expect(await ruleOnInquisitorItem(1, 8, MOD, claimedAt)).toEqual({ ok: true });
+    expect(
+      await ruleOnInquisitorItem(1, { level: 8 }, MOD, { now: claimedAt, csamReview: true })
+    ).toEqual({ ok: true });
 
     expect(await item(1)).toMatchObject({ status: 'Closed', resolvedBy: MOD });
     expect((await verdicts(1))[0].verdict).toBe('correct');
@@ -445,14 +542,12 @@ describe('ruleOnInquisitorItem', () => {
     setLevel.mockImplementationOnce(hang).mockImplementationOnce(hang);
     const claimedAt = new Date('2030-01-01T00:00:00Z');
 
-    const first = ruleOnInquisitorItem(1, 8, MOD, claimedAt);
+    const first = ruleOnInquisitorItem(1, { level: 8 }, MOD, { now: claimedAt, csamReview: true });
     await vi.waitFor(() => expect(finish).toHaveLength(1));
-    const second = ruleOnInquisitorItem(
-      1,
-      2,
-      MOD + 1,
-      new Date(claimedAt.getTime() + RULING_LEASE_MS + 1)
-    );
+    const second = ruleOnInquisitorItem(1, { level: 2 }, MOD + 1, {
+      now: new Date(claimedAt.getTime() + RULING_LEASE_MS + 1),
+      csamReview: true,
+    });
     await vi.waitFor(() => expect(finish).toHaveLength(2));
 
     finish[0]();
@@ -471,10 +566,14 @@ describe('ruleOnInquisitorItem', () => {
     await insertItem(1, 1, 'Inquisitor');
     setLevel.mockRejectedValueOnce(new Error('Image not found'));
 
-    await expect(ruleOnInquisitorItem(1, 8, MOD)).rejects.toThrow('Image not found');
+    await expect(ruleOnInquisitorItem(1, { level: 8 }, MOD, { csamReview: true })).rejects.toThrow(
+      'Image not found'
+    );
 
     expect(await item(1)).toMatchObject({ status: 'Inquisitor', resolvedBy: null });
-    expect(await ruleOnInquisitorItem(1, 8, MOD + 1)).toEqual({ ok: true });
+    expect(await ruleOnInquisitorItem(1, { level: 8 }, MOD + 1, { csamReview: true })).toEqual({
+      ok: true,
+    });
   });
 
   it('says the rating was applied when the item cannot be closed, and the same level can be ruled again', async () => {
@@ -487,7 +586,7 @@ describe('ruleOnInquisitorItem', () => {
     `);
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     try {
-      const outcome = await ruleOnInquisitorItem(1, 8, MOD);
+      const outcome = await ruleOnInquisitorItem(1, { level: 8 }, MOD, { csamReview: true });
 
       expect(outcome).toEqual({
         ok: false,
@@ -502,7 +601,9 @@ describe('ruleOnInquisitorItem', () => {
       );
     }
 
-    expect(await ruleOnInquisitorItem(1, 8, MOD)).toEqual({ ok: true });
+    expect(await ruleOnInquisitorItem(1, { level: 8 }, MOD, { csamReview: true })).toEqual({
+      ok: true,
+    });
     expect(setLevel).toHaveBeenCalledTimes(2);
     expect((await verdicts(1))[0].verdict).toBe('correct');
   });
@@ -511,14 +612,25 @@ describe('ruleOnInquisitorItem', () => {
     await db.query(`UPDATE "Image" SET "blockedFor"='tos' WHERE id=1`);
     await insertItem(1, 1, 'Inquisitor');
 
-    const outcome = await ruleOnInquisitorItem(1, 4, MOD);
+    const outcome = await ruleOnInquisitorItem(1, { level: 4 }, MOD, { csamReview: true });
 
     expect(outcome).toEqual({ ok: false, error: expect.stringContaining('blocked') });
     expect(setLevel).not.toHaveBeenCalled();
     expect(await item(1)).toMatchObject({ status: 'Inquisitor', resolvedBy: null });
 
-    expect(await ruleOnInquisitorItem(1, 32, MOD)).toEqual({ ok: true });
-    expect(setLevel).toHaveBeenCalledWith({ id: 1, nsfwLevel: 32, userId: MOD });
+    expect(
+      await ruleOnInquisitorItem(1, { level: 32, blockReason: 'RealisticMinors' }, MOD, {
+        csamReview: true,
+      })
+    ).toEqual({ ok: true });
+    expect(setLevel).toHaveBeenCalledWith({
+      id: 1,
+      nsfwLevel: 32,
+      reason: 'Inquisitor ruling: Realistic Minors',
+      status: 'Actioned',
+      userId: MOD,
+      csamReview: true,
+    });
     expect(await item(1)).toMatchObject({ status: 'Closed', resolvedValue: '32' });
   });
 
@@ -530,7 +642,11 @@ describe('ruleOnInquisitorItem', () => {
     await insertItem(1, 1, 'Inquisitor');
     await insertVote(1, 11, '32', 1);
 
-    expect(await ruleOnInquisitorItem(1, 32, MOD)).toEqual({ ok: true });
+    expect(
+      await ruleOnInquisitorItem(1, { level: 32, blockReason: 'RealisticMinors' }, MOD, {
+        csamReview: true,
+      })
+    ).toEqual({ ok: true });
 
     expect((await verdicts(1))[0].verdict).toBe('correct');
   });

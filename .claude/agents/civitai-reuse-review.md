@@ -8,7 +8,8 @@ tools: Read, Grep, Glob, Bash
 # Reuse review — main Civitai app (`src/`)
 
 **Scope is `src/` and the packages it imports** (`packages/civitai-*`). The SvelteKit apps under `apps/`
-are reviewed by the `svelte-*-review` trio — if the diff touches those, say so and skip them.
+are reviewed by the `svelte-*-review` trio — if the diff touches those, say so and skip them. Your
+*searches* still cover `apps/*`: the existing copy is often in the other app.
 
 Read the root `CLAUDE.md` first, then `.claude/rules/server.md` (architecture map) and `.claude/rules/components.md` (frontend conventions).
 It is the only written map of this codebase.
@@ -53,6 +54,27 @@ faster than grepping for a definition you can name.
 **Grep by concept, not by the new code's name.** The duplicate is never named the same thing — that is
 why it was missed. Search for the *table*, the *column*, the *URL shape*, the Mantine component being
 wrapped.
+
+### Predicates, limiters, readers and SQL fragments: search the packages and the other app
+
+For each new predicate (a `can…`/`is…` check), rate or spend limiter, reader of a table, or SQL
+fragment, the search set must include `packages/civitai-*/src/` and `apps/*/src/lib/server/`, by shape
+(the columns or flags it reads, the table, the limit's key). A finding:
+
+- **An existing one the diff could import** and did not: "use X".
+- **An existing one in a place the new caller cannot import** (the other app's `src/`, a `$lib`):
+  copying it is still a finding. The fix is to move it into a shared package (`@civitai/shared`,
+  `@civitai/db-queries`, `@civitai/mod-utils`) and call it from both. Example: a rate limiter
+  copied from the main app into a Svelte app.
+
+### One decision, one function
+
+The same decision written out in each caller — two apps that each decide whether a moderator may see a
+row, an access check repeated in three routers — is a finding **even when every copy agrees today**:
+the next rule change will reach one of them. Grep the condition's columns and flags, not its name. The
+fix is one function in a package every caller imports (`packages/civitai-shared` unless a narrower
+package owns the domain), called from each. Name every copy with `file:line`, including copies the
+diff did not add.
 
 ## Where the existing thing usually lives
 
@@ -101,10 +123,11 @@ A new pool, a new lock, or a hand-rolled `Promise.all` batcher is a finding.
 - `EdgeMedia/` — **CLAUDE.md requires it over `next/image`.** A raw `<img>` or `next/image` in the diff
   is a finding every time.
 - `MasonryGrid/`, `MasonryColumns/`, `InView/`, `IntersectionObserver/`, `EndOfFeed/` — infinite feeds.
-- `Dialog/` — `dialogStore.trigger({ component, props })` (`dialogStore.ts`), with the dialog calling
-  `useDialogContext()`; confirms use `Dialog/Common/ConfirmDialog`; URL-routed dialogs go in
-  `routed-dialog/registry.ts`. A bare `<Modal>` with local `opened` state, or a new `@mantine/modals`
-  call, bypasses it.
+- `Dialog/` — `openDialog(() => import('…'), props)` (`openDialog.ts`), with the dialog calling
+  `useDialogContext()`; confirms use `openConfirm`, alerts `openAlert`, arbitrary content
+  `openContentDialog` (`Dialog/Common/`); URL-routed dialogs go in `routed-dialog/registry.ts` with
+  their component in `RoutedDialogProvider`. A bare `<Modal>` with local `opened` state, a new
+  per-modal opener file that only passes through, or a `@mantine/modals` call bypasses it.
 - `ImageGuard/`, `BrowsingLevel/`, `HiddenPreferences/` — NSFW/blur gating. Never re-derive this.
 - `UserAvatar/`, `CreatorCard/`, `Cards/`, `CardTemplates/`, `IconBadge/`, `UserStatBadges/`.
 - `LoginRedirect/`, `LoginPopover/`, `JoinPopover/`, `RequireMembership/`, `Gated/` — gating an action

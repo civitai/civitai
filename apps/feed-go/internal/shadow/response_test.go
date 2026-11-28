@@ -46,6 +46,52 @@ func TestCompareResponse(t *testing.T) {
 	}
 }
 
+// The REST list: ComparedHeaders plus the ETag, the CORS headers, X-Frame-Options and X-Expires, each
+// with its own noise rule. The base list (CompareResponse) never compares the extra ones.
+func TestCompareResponseHeadersREST(t *testing.T) {
+	want := []string{"cache-control", "vary", "cache-tag", "set-cookie", "x-update-required", "etag",
+		"access-control-allow-origin", "access-control-allow-headers", "access-control-allow-methods",
+		"access-control-expose-headers", "x-frame-options", "x-expires"}
+	if !reflect.DeepEqual(RESTComparedHeaders, want) {
+		t.Fatalf("RESTComparedHeaders = %v", RESTComparedHeaders)
+	}
+	if len(ComparedHeaders) != 5 {
+		t.Fatalf("building the REST list changed the base list: %v", ComparedHeaders)
+	}
+	cases := []struct {
+		name      string
+		goHeaders map[string]string
+		node      map[string]string
+		want      []string
+	}{
+		{"same etag", map[string]string{"etag": `"abc12"`}, map[string]string{"etag": `"abc12"`}, []string{}},
+		{"etag exact (case matters)", map[string]string{"etag": `"abc12"`}, map[string]string{"etag": `"ABC12"`}, []string{"header:etag/value"}},
+		{"etag only from go", map[string]string{"etag": `"a"`}, map[string]string{}, []string{"header:etag/missing-in-node"}},
+		{"allow-headers as a set", map[string]string{"access-control-allow-headers": "Authorization, Content-Type, *"},
+			map[string]string{"access-control-allow-headers": "content-type,*, authorization"}, []string{}},
+		{"allow-headers differ", map[string]string{"access-control-allow-headers": "Authorization, Content-Type, *"},
+			map[string]string{"access-control-allow-headers": "Authorization, Content-Type"}, []string{"header:access-control-allow-headers/value"}},
+		{"allow-methods as a set", map[string]string{"access-control-allow-methods": "GET, OPTIONS"},
+			map[string]string{"access-control-allow-methods": "options,get"}, []string{}},
+		{"allow-origin exact", map[string]string{"access-control-allow-origin": "*"},
+			map[string]string{"access-control-allow-origin": "https://a.example"}, []string{"header:access-control-allow-origin/value"}},
+		{"expose-headers only on node", nil, map[string]string{"access-control-expose-headers": "Retry-After"},
+			[]string{"header:access-control-expose-headers/missing-in-go"}},
+		{"x-frame-options case-insensitive", map[string]string{"x-frame-options": "DENY"}, map[string]string{"x-frame-options": "deny"}, []string{}},
+		{"x-frame-options differ", map[string]string{"x-frame-options": "DENY"}, map[string]string{"x-frame-options": "SAMEORIGIN"},
+			[]string{"header:x-frame-options/value"}},
+		{"x-expires only on node", nil, map[string]string{"x-expires": "2026-11-21T00:00:00.000Z"}, []string{"header:x-expires/missing-in-go"}},
+	}
+	for _, c := range cases {
+		if got := categories(CompareResponseHeaders(c.goHeaders, c.node, RESTComparedHeaders)); !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s: %v, want %v", c.name, got, c.want)
+		}
+	}
+	if got := CompareResponse(map[string]string{"etag": `"a"`}, map[string]string{"etag": `"b"`, "x-expires": "x"}); len(got) != 0 {
+		t.Fatalf("the base list compared a REST header: %v", categories(got))
+	}
+}
+
 // Integers past 2^53 compare exactly: as float64, 9007199254740993 reads as 9007199254740992, so the
 // old compare called them equal. Large integers that differ by one compare unequal at any size the
 // relative tolerance would have equated, too; a float and its integer spelling still match.

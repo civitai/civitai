@@ -9,6 +9,7 @@
   import { connectSignals, onSignal } from '$lib/signals';
   import { BUZZ_UPDATE_SIGNAL } from '$lib/signal-events';
   import { buzzBalance } from '$lib/buzz-balance.svelte';
+  import { setElementsUi } from '$lib/elements-ui';
   import type { LayoutData } from './$types';
 
   let { data, children }: { data: LayoutData; children: import('svelte').Snippet } = $props();
@@ -43,6 +44,9 @@
       // eslint-disable-next-line svelte/no-unused-svelte-ignore -- eslint-plugin-svelte 2 can't see <script> ignores
       // svelte-ignore state_referenced_locally — civitaiUrl is env-derived, constant for the session
       dataPolicyUrl: `${data.civitaiUrl}/content/training/data-policy`,
+      // eslint-disable-next-line svelte/no-unused-svelte-ignore -- eslint-plugin-svelte 2 can't see <script> ignores
+      // svelte-ignore state_referenced_locally — the session user is fixed for the page's life
+      userId: data.userId,
     },
     hrefFor,
     navigate: (loc, opts) => goto(hrefFor(loc), opts?.refreshAll ? { invalidateAll: true } : undefined),
@@ -53,8 +57,13 @@
     generateUrl: ({ air, workflowId, name }) =>
       `${data.civitaiUrl}/generate?${new URLSearchParams({ air, workflowId, name })}`,
     publishUrl: (req) => `${data.civitaiUrl}${PUBLISH_PATH}?${publishSearchParams(req)}`,
-    modelPageUrl: ({ modelId }) => `${data.civitaiUrl}/models/${modelId}`,
+    publishVersionUrl: (req) =>
+      `${data.civitaiUrl}${PUBLISH_PATH}?${publishSearchParams({ ...req, asVersion: true })}`,
+    modelPageUrl: ({ modelId, modelVersionId }) =>
+      `${data.civitaiUrl}/models/${modelId}${modelVersionId ? `?modelVersionId=${modelVersionId}` : ''}`,
   });
+
+  setElementsUi(() => data.elementsUi);
 
   // Open the shared signals connection once per tab and keep the header balance live: a `buzz:update` fires
   // whenever the user spends or earns, so we re-read the authoritative balance. Best-effort — everything

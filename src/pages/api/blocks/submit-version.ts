@@ -6,7 +6,7 @@ import {
   submitVersionSchema,
 } from '~/server/schema/blocks/publish-request.schema';
 import { isAppBlocksAuthorEnabled, isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
-import { SUBMIT_RATE_LIMIT, takeSubmitSlot } from '~/server/services/blocks/submit-rate-limit';
+import { sendSubmitRateLimited, takeSubmitSlot } from '~/server/services/blocks/submit-rate-limit';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 import { isAllowedOriginRequest } from '~/server/utils/origin-helpers';
 import { requireFullScopeSession } from '~/server/utils/require-full-scope-session';
@@ -90,19 +90,13 @@ export default AuthedEndpoint(
     }
 
     // Per user, as the CLI route's is per key; fails closed (`takeSubmitSlot`).
-    const slot = await takeSubmitSlot(`user:${user.id}`);
+    const slot = await takeSubmitSlot(`user:${user.id}`, user);
     if (!slot.ok && slot.reason !== 'limited') {
       res.status(503).json({ message: 'Rate limiter unavailable; please retry' });
       return;
     }
     if (!slot.ok) {
-      res.setHeader('Retry-After', String(Math.max(slot.retryAfterSeconds, 1)));
-      res.status(429).json({
-        message: 'Rate limit exceeded',
-        retryAfterSeconds: slot.retryAfterSeconds,
-        limit: SUBMIT_RATE_LIMIT.max,
-        windowSeconds: SUBMIT_RATE_LIMIT.windowSeconds,
-      });
+      sendSubmitRateLimited(res, slot);
       return;
     }
 
@@ -138,6 +132,10 @@ export default AuthedEndpoint(
         // stays absent; the service must not invent a value.
         sourceCommit: parsed.data.sourceCommit,
         sourceDirty: parsed.data.sourceDirty,
+        sdkFloorOverride: parsed.data.sdkFloorOverride,
+        // `--allow-unmerged-platform-update`: queue a bundle that lacks an unshipped staff platform
+        // update (recorded for the moderator); absent, such a bundle is refused 409.
+        allowUnmergedPlatformUpdate: parsed.data.allowUnmergedPlatformUpdate,
         // GitHub Actions OIDC token: dropped here unless `app-blocks-oidc-verified-submit` is on
         // for this submitter, so with the flag off it is never verified or stored.
         // (The verifier module is loaded only when a token was sent.)
@@ -156,6 +154,8 @@ export default AuthedEndpoint(
         status: 'pending',
         listing: result.listing ?? null,
         storageMigrationWarnings: result.storageMigrationWarnings ?? [],
+        // Never refuses: notes the developer may act on (`submitAdvisories`), `[]` when none.
+        advisories: result.advisories ?? [],
         // Only when a GitHub Actions token was verified: whether its run was stored.
         ...(result.actionsRunSourceRecorded === undefined
           ? {}
@@ -167,6 +167,15 @@ export default AuthedEndpoint(
       // Surface as 400 so the form can render them inline.
       if (err instanceof AppDeveloperTermsNotAcceptedError) {
         res.status(403).json({ message: err.message });
+        return;
+      }
+      // A bundle that lacks a staff platform update no approved version has shipped, sent without
+      // the override: 409, with each update (id, reason, by, paths) for the client to show.
+      const { isPlatformUpdateMissingRefusal } = await import(
+        '~/server/services/blocks/platform-update-bundle-check'
+      );
+      if (isPlatformUpdateMissingRefusal(err)) {
+        res.status(err.status).json({ message: err.message, code: err.code, details: err.details });
         return;
       }
       // A GitHub Actions OIDC token that failed verification: 400 (fix the pipeline) or 503 (GitHub's
@@ -186,10 +195,12 @@ export default AuthedEndpoint(
         { isStorageMigrationRefusal },
         { isStorageHookRefusal },
         { isManifestValidationRefusal },
+        { isModuleGraphRefusal },
       ] = await Promise.all([
         import('~/server/services/apps/storage-schema-migrations'),
         import('~/server/services/apps/storage-hooks'),
         import('~/server/services/blocks/manifest-submit-validation'),
+        import('~/server/services/blocks/bundle-module-graph'),
       ]);
       // A schema-migration refusal also carries the structured list (collection, pointer,
       // keyword, old → new) so a client can show each breaking change.
@@ -200,6 +211,8 @@ export default AuthedEndpoint(
         ...(isStorageHookRefusal(err) ? { storageHookErrors: err.problems } : {}),
         // A manifest the approve-time validator refuses carries every validator error.
         ...(isManifestValidationRefusal(err) ? { manifestErrors: err.errors } : {}),
+        // A module-graph refusal carries every import that would not load (importer, specifier).
+        ...(isModuleGraphRefusal(err) ? { moduleGraphErrors: err.problems } : {}),
       });
     }
   },

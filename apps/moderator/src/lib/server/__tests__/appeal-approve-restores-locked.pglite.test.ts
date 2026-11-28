@@ -8,7 +8,12 @@ import type { DB } from '@civitai/db-schema/kysely';
 import { Kysely } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Effects from '../image-moderation-effects';
+import type * as ThumbnailCache from '../thumbnail-cache';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
+import {
+  CSAM_LINK_TABLES_SQL,
+  WITHHELD_TABLES_SQL,
+} from '../../../../../../packages/civitai-shared/src/__tests__/csam-restriction-cases';
 
 const { dbHandle, chQuery, chInsert } = vi.hoisted(() => ({
   dbHandle: { current: null as unknown },
@@ -53,21 +58,34 @@ vi.mock('../tags-on-image.service', () => ({ upsertTagsOnImageNew: vi.fn(async (
 vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn() }));
 vi.mock('../cache', () => ({ bustCachedObject: vi.fn(async () => undefined) }));
 vi.mock('../image-models-reindex', () => ({
-  queueModelsForImageChildTagChanges: vi.fn(async () => undefined),
+  queueDocumentsForImageMinorChanges: vi.fn(async () => undefined),
 }));
-vi.mock('../thumbnail-cache', () => ({ invalidateThumbnails: vi.fn(async () => undefined) }));
+vi.mock('../thumbnail-cache', async (importOriginal) => ({
+  ...(await importOriginal<typeof ThumbnailCache>()),
+  invalidateThumbnails: vi.fn(async () => undefined),
+}));
 vi.mock('../clickhouse', () => ({ getClickhouse: () => ({ query: chQuery, insert: chInsert }) }));
 
-const { acceptImage, resolveImageAppeal } = await import('../image-moderation.service');
-const { queueModelsForImageChildTagChanges } = await import('../image-models-reindex');
+const { acceptImage, resolveImageAppeal, AppealRestoreRefusedError } = await import(
+  '../image-moderation.service'
+);
+const { updateImageNsfwLevel } = await import('../image-nsfw-level');
+const { resolveIngestionError, rescanStuckImages } = await import('../ingestion.service');
+const { WithheldImageError } = await import('../withheld-write');
+const { refundAppealFee, notifyAppealResolved } = await import('../image-moderation-effects');
+const { queueDocumentsForImageMinorChanges } = await import('../image-models-reindex');
+const { syncSearchIndex } = await import('../search-index');
 
 // The stand-in keeps the real function's skip of nsfwLevelLocked rows; without it the reset assertions pass vacuously.
 const SCHEMA = `
+-- The real enum, so a write that does not cast to it fails here as it would in production.
+CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
 CREATE TABLE "Image" (
   "id" INTEGER PRIMARY KEY,
+  "userId" INTEGER,
   "needsReview" TEXT,
   "blockedFor" TEXT,
-  "ingestion" TEXT,
+  "ingestion" "ImageIngestionStatus",
   "metadata" JSONB,
   "pHash" BIGINT,
   "postId" INTEGER,
@@ -80,9 +98,10 @@ ${DEFERRED_BLOCK_EFFECT_TABLE_SQL}
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
 CREATE TABLE "TagsOnImageDetails" ("imageId" INTEGER, "tagId" INTEGER, "disabled" BOOLEAN);
 CREATE TABLE "ModActivity" ("entityType" TEXT, "entityId" INTEGER, "activity" TEXT);
-CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER,
+CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER, "data" JSONB,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now(),
   PRIMARY KEY ("entityType", "entityId", "type"));
-CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "email" TEXT, "username" TEXT);
+CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "email" TEXT, "username" TEXT, "deletedAt" TIMESTAMP(3));
 CREATE TABLE "Appeal" (
   "id" SERIAL PRIMARY KEY,
   "userId" INTEGER NOT NULL,
@@ -110,7 +129,10 @@ let db: PGlite;
 
 beforeEach(async () => {
   chQuery.mockReset();
-  chQuery.mockResolvedValue({ json: async () => [{ hash: PHASH, reason: 'TOS' }] });
+  // The CSAM-entry lookup finds none; the live-row read finds the TOS entry.
+  chQuery.mockImplementation(async ({ query }: { query: string }) => ({
+    json: async () => (query.includes("= 'CSAM'") ? [] : [{ hash: PHASH, reason: 'TOS' }]),
+  }));
   chInsert.mockClear();
   db = await freshPglite();
   await db.exec(SCHEMA);
@@ -146,6 +168,7 @@ const unblocklisted = () =>
 
 const approve = () =>
   resolveImageAppeal({
+    csamReview: true,
     imageId: IMAGE_ID,
     status: 'Approved',
     resolvedReason: 'misclassified',
@@ -169,8 +192,23 @@ describe('approving an appeal on a rating-locked Blocked image', () => {
     expect(unblocklisted()).toEqual([{ hash: PHASH, reason: 'TOS', disabled: true }]);
   });
 
+  it('still refunds and notifies when the blocklist check fails, leaving the entry in place', async () => {
+    chQuery.mockImplementation(async ({ query }: { query: string }) => {
+      if (query.includes("= 'CSAM'")) throw new Error('Socket hang up');
+      return { json: async () => [{ hash: PHASH, reason: 'TOS' }] };
+    });
+    vi.mocked(refundAppealFee).mockClear();
+    vi.mocked(notifyAppealResolved).mockClear();
+
+    await expect(approve()).resolves.toBeDefined();
+
+    expect(unblocklisted()).toEqual([]);
+    expect(refundAppealFee).toHaveBeenCalledTimes(1);
+    expect(notifyAppealResolved).toHaveBeenCalledTimes(1);
+  });
+
   it('restores the same row acceptImage does', async () => {
-    await acceptImage({ imageId: IMAGE_ID, userId: 2 });
+    await acceptImage({ csamReview: true, imageId: IMAGE_ID, userId: 2 });
     const accepted = await imageRow();
     await db.query(
       `UPDATE "Image" SET "needsReview" = 'appeal', "blockedFor" = 'moderated', "ingestion" = 'Blocked',
@@ -188,9 +226,199 @@ describe('approving an appeal on a rating-locked Blocked image', () => {
   });
 });
 
+describe('approving an appeal on an image an account deletion blocked', () => {
+  it.each([
+    ['minor', 'minor'],
+    ['poi', 'poi'],
+    // The appeal is what the approval settles; a dismissed csam review is not put back.
+    ['appeal', null],
+    ['csam', null],
+    ['not-a-review', null],
+  ])('a recorded %s leaves the review flag %s, and the breadcrumbs go', async (review, flag) => {
+    await db.query(
+      `UPDATE "Image" SET "metadata" = jsonb_build_object(
+         'accountDeletionPriorIngestion', 'Scanned',
+         'accountDeletionPriorBlockedFor', NULL,
+         'accountDeletionPriorNeedsReview', $2::text,
+         'keep', 1)
+       WHERE "id" = $1`,
+      [IMAGE_ID, review]
+    );
+
+    await approve();
+
+    const { rows } = await db.query<{
+      needsReview: string | null;
+      ingestion: string;
+      metadata: unknown;
+    }>(`SELECT "needsReview", "ingestion", "metadata" FROM "Image" WHERE "id" = $1`, [IMAGE_ID]);
+    expect(rows[0]).toEqual({ needsReview: flag, ingestion: 'Scanned', metadata: { keep: 1 } });
+  });
+});
+
+// Policy: LIFT_WHILE_OWNER_DELETED in @civitai/shared/account-deletion-grace: a deleted owner's image is never served.
+describe('approving an appeal while the image owner is deleted', () => {
+  const OWNER_ID = 7;
+  const activities = async () =>
+    (
+      await db.query<{ activity: string }>(
+        `SELECT "activity" FROM "ModActivity" WHERE "entityId" = $1 AND "activity" IN ('review', 'bulkRemove', 'reviewOwnerDeleted')`,
+        [IMAGE_ID]
+      )
+    ).rows.map((r) => r.activity);
+  beforeEach(() => vi.mocked(syncSearchIndex).mockClear());
+  const seed = async (deletedAt: string | null) => {
+    await db.query(`INSERT INTO "User" ("id", "deletedAt") VALUES ($1, $2)`, [OWNER_ID, deletedAt]);
+    await db.query(
+      `UPDATE "Image" SET "userId" = $2, "nsfwLevel" = 4, "metadata" = jsonb_build_object(
+         'accountDeletionPriorIngestion', 'Blocked',
+         'accountDeletionPriorBlockedFor', 'moderated',
+         'accountDeletionPriorNeedsReview', 'minor',
+         -- The grace block's recorded rating, a moderator's lock: it outlives the lift.
+         'accountDeletionPriorNsfwLevel', 4,
+         'accountDeletionPriorNsfwLevelLocked', true,
+         'keep', 1)
+       WHERE "id" = $1`,
+      [IMAGE_ID, OWNER_ID]
+    );
+    await db.query(
+      `INSERT INTO "JobQueue" ("type", "entityType", "entityId", "createdAt") VALUES ('BlockedImageDelete', 'Image', $1, '2026-01-01')`,
+      [IMAGE_ID]
+    );
+  };
+  const row = async () =>
+    (
+      await db.query<{
+        ingestion: string;
+        blockedFor: string | null;
+        needsReview: string | null;
+        metadata: unknown;
+      }>(
+        `SELECT "ingestion", "blockedFor", "needsReview", "metadata" FROM "Image" WHERE "id" = $1`,
+        [IMAGE_ID]
+      )
+    ).rows[0];
+
+  it('drops a recorded Blocked rating on the lift, so the restore re-rates the row', async () => {
+    await seed('2026-11-20 00:00:00');
+    await db.query(
+      `UPDATE "Image" SET "metadata" = "metadata" || '{"accountDeletionPriorNsfwLevel": 32}' WHERE "id" = $1`,
+      [IMAGE_ID]
+    );
+
+    await acceptImage({ csamReview: true, imageId: IMAGE_ID, userId: 2 });
+
+    const { metadata } = (await row()) as { metadata: Record<string, unknown> };
+    expect(metadata).not.toHaveProperty('accountDeletionPriorNsfwLevel');
+    expect(metadata).not.toHaveProperty('accountDeletionPriorNsfwLevelLocked');
+    // Control: the lift was recorded.
+    expect(metadata).toMatchObject({ accountDeletionPriorIngestion: 'Scanned' });
+  });
+
+  it('keeps it Blocked, recorded as Scanned for an account restore, and settles the appeal', async () => {
+    await seed('2026-11-20 00:00:00');
+
+    await expect(approve()).resolves.toBeDefined();
+
+    expect(await row()).toEqual({
+      ingestion: 'Blocked',
+      blockedFor: 'moderated',
+      needsReview: null,
+      metadata: {
+        keep: 1,
+        accountDeletionPriorIngestion: 'Scanned',
+        accountDeletionPriorBlockedFor: null,
+        accountDeletionPriorNeedsReview: 'minor',
+        accountDeletionPriorNsfwLevel: 4,
+        accountDeletionPriorNsfwLevelLocked: true,
+      },
+    });
+    const { rows } = await db.query<{ status: string }>(`SELECT "status" FROM "Appeal"`);
+    expect(rows).toEqual([{ status: 'Approved' }]);
+    // The rating lock stays and the purge clock starts again; the pHash leaves the blocklist.
+    expect(await imageRow()).toMatchObject({ nsfwLevel: 32, nsfwLevelLocked: true });
+    const queued = await db.query<{ fresh: boolean }>(
+      `SELECT "createdAt" > now() - interval '1 hour' AS fresh FROM "JobQueue" WHERE "entityId" = $1`,
+      [IMAGE_ID]
+    );
+    expect(queued.rows).toEqual([{ fresh: true }]);
+    expect(unblocklisted()).toEqual([{ hash: PHASH, reason: 'TOS', disabled: true }]);
+    expect(vi.mocked(syncSearchIndex).mock.calls.at(-1)?.[0]).toMatchObject({ action: 'delete' });
+  });
+
+  it('an accept also keeps it Blocked, restarts its purge clock and closes the appeal', async () => {
+    await seed('2026-11-20 00:00:00');
+
+    await acceptImage({ csamReview: true, imageId: IMAGE_ID, userId: 2 });
+
+    expect(await row()).toEqual({
+      ingestion: 'Blocked',
+      blockedFor: 'moderated',
+      needsReview: null,
+      metadata: {
+        keep: 1,
+        accountDeletionPriorIngestion: 'Scanned',
+        accountDeletionPriorBlockedFor: null,
+        accountDeletionPriorNeedsReview: 'minor',
+        accountDeletionPriorNsfwLevel: 4,
+        accountDeletionPriorNsfwLevelLocked: true,
+      },
+    });
+    expect(await imageRow()).toMatchObject({ nsfwLevel: 32, nsfwLevelLocked: true });
+    const queued = await db.query<{ fresh: boolean }>(
+      `SELECT "createdAt" > now() - interval '1 hour' AS fresh FROM "JobQueue" WHERE "entityId" = $1`,
+      [IMAGE_ID]
+    );
+    expect(queued.rows).toEqual([{ fresh: true }]);
+    const { rows } = await db.query<{ status: string }>(`SELECT "status" FROM "Appeal"`);
+    expect(rows).toEqual([{ status: 'Approved' }]);
+    expect(vi.mocked(syncSearchIndex).mock.calls.at(-1)?.[0]).toMatchObject({ action: 'delete' });
+    // No takedown activity ('review'), which the CDN sync and the purge read as a moderator removal.
+    expect(await activities()).toEqual(['reviewOwnerDeleted']);
+  });
+
+  it('an accept restores it when the owner is not deleted', async () => {
+    await seed(null);
+
+    await acceptImage({ csamReview: true, imageId: IMAGE_ID, userId: 2 });
+
+    expect(await row()).toMatchObject({ ingestion: 'Scanned', blockedFor: null });
+    expect(await activities()).toEqual(['review']);
+  });
+
+  it('restores it when the owner is not deleted', async () => {
+    await seed(null);
+
+    await approve();
+
+    expect(await row()).toEqual({
+      ingestion: 'Scanned',
+      blockedFor: null,
+      needsReview: 'minor',
+      metadata: { keep: 1 },
+    });
+  });
+});
+
+describe('approving an appeal on an image whose metadata is not an object', () => {
+  it('approves it and leaves the metadata as it was', async () => {
+    await db.query(`UPDATE "Image" SET "metadata" = 'null'::jsonb WHERE "id" = $1`, [IMAGE_ID]);
+
+    await approve();
+
+    const { rows } = await db.query<{
+      needsReview: string | null;
+      ingestion: string;
+      metadata: unknown;
+    }>(`SELECT "needsReview", "ingestion", "metadata" FROM "Image" WHERE "id" = $1`, [IMAGE_ID]);
+    expect(rows[0]).toEqual({ needsReview: null, ingestion: 'Scanned', metadata: null });
+  });
+});
+
 describe('rejecting an appeal on a rating-locked Blocked image', () => {
   it('leaves the level, the lock and the blocklist alone', async () => {
     await resolveImageAppeal({
+      csamReview: true,
       imageId: IMAGE_ID,
       status: 'Rejected',
       resolvedReason: 'violation-confirmed',
@@ -228,13 +456,13 @@ describe('approving when the moderator-only review flag holds the image', () => 
 describe('a restore that recomputes the level: models index', () => {
   it.each([
     ['an approved appeal', approve],
-    ['an accept', () => acceptImage({ imageId: IMAGE_ID, userId: 2 })],
+    ['an accept', () => acceptImage({ csamReview: true, imageId: IMAGE_ID, userId: 2 })],
   ])('%s hands the re-rated image over', async (_, restore) => {
-    vi.mocked(queueModelsForImageChildTagChanges).mockClear();
+    vi.mocked(queueDocumentsForImageMinorChanges).mockClear();
 
     await restore();
 
-    expect(queueModelsForImageChildTagChanges).toHaveBeenCalledWith({ levelImageIds: [IMAGE_ID] });
+    expect(queueDocumentsForImageMinorChanges).toHaveBeenCalledWith({ levelImageIds: [IMAGE_ID] });
   });
 });
 
@@ -255,7 +483,7 @@ describe('a restore that leaves the image with no rating', () => {
 
   it.each([
     ['an approved appeal', approve],
-    ['an accept', () => acceptImage({ imageId: IMAGE_ID, userId: 2 })],
+    ['an accept', () => acceptImage({ csamReview: true, imageId: IMAGE_ID, userId: 2 })],
   ])('%s sends it back to the scanner instead of leaving it Scanned', async (_, restore) => {
     await restore();
 
@@ -272,7 +500,7 @@ describe('a restore that leaves the image with no rating', () => {
     ).rows.length;
 
   it('an accept still rescans: its own review row is written after the rescan', async () => {
-    await acceptImage({ imageId: IMAGE_ID, userId: 2 });
+    await acceptImage({ csamReview: true, imageId: IMAGE_ID, userId: 2 });
 
     expect(await reviews()).toBe(1);
     expect(await imageRow()).toMatchObject({ ingestion: 'Rescan', nsfwLevel: 0 });
@@ -281,7 +509,7 @@ describe('a restore that leaves the image with no rating', () => {
 
   it.each([
     ['an approved appeal', approve],
-    ['an accept', () => acceptImage({ imageId: IMAGE_ID, userId: 2 })],
+    ['an accept', () => acceptImage({ csamReview: true, imageId: IMAGE_ID, userId: 2 })],
   ])('%s does not re-audit an image a moderator reviewed before', async (_, restore) => {
     await db.query(`INSERT INTO "ModActivity" VALUES ('image', $1, 'review')`, [IMAGE_ID]);
 
@@ -298,7 +526,7 @@ describe('a restore that leaves the image with no rating', () => {
     ]);
     await db.query(`INSERT INTO "TagsOnImageDetails" VALUES ($1, 5, TRUE)`, [IMAGE_ID]);
 
-    await acceptImage({ imageId: IMAGE_ID, userId: 2 });
+    await acceptImage({ csamReview: true, imageId: IMAGE_ID, userId: 2 });
 
     expect(await imageRow()).toMatchObject({ ingestion: 'Scanned', nsfwLevel: 0 });
     expect(await queued()).toBe(0);
@@ -333,5 +561,119 @@ describe('a restore that leaves the image with no rating', () => {
 
     expect(await imageRow()).toMatchObject({ ingestion: 'Scanned', nsfwLevel: 1 });
     expect(await queued()).toBe(0);
+  });
+});
+
+// The action checks the withheld rule before it writes; each write checks it again itself. Here the
+// image becomes withheld between the two: a CSAM-blocked copy lands on its url just before the
+// `nth` UPDATE of "Image" runs.
+describe('a write that races the image becoming withheld', () => {
+  const race = { nth: 0, seen: 0 };
+  const WITHHOLD = `INSERT INTO "Image" ("id", "url", "blockedFor", "ingestion") VALUES (999, 'shared', 'CSAM', 'Blocked')`;
+  // At the driver: every statement the services build reaches PGlite through `db.query`.
+  const racing = () => {
+    const query = db.query.bind(db);
+    db.query = (async (text: string, ...rest: unknown[]) => {
+      if (/^update "Image"/i.test(text) && ++race.seen === race.nth) await db.exec(WITHHOLD);
+      return query(text, ...(rest as []));
+    }) as typeof db.query;
+  };
+
+  beforeEach(async () => {
+    race.nth = 0;
+    race.seen = 0;
+    await db.exec(
+      `${CSAM_LINK_TABLES_SQL}
+       ${WITHHELD_TABLES_SQL.replace(/^CREATE TABLE "(User|TagsOnImageDetails)".*$/gm, '')}
+       ALTER TABLE "User" ADD COLUMN "meta" JSONB, ADD COLUMN "bannedAt" TIMESTAMP(3);
+       ALTER TABLE "Image" ADD COLUMN "url" TEXT, ADD COLUMN "createdAt" TIMESTAMP(3) DEFAULT now(),
+         ADD COLUMN "minor" BOOLEAN NOT NULL DEFAULT FALSE, ADD COLUMN "poi" BOOLEAN NOT NULL DEFAULT FALSE,
+         ADD COLUMN "scannedAt" TIMESTAMP(3);
+       UPDATE "Image" SET "url" = 'shared', "userId" = 7;
+       INSERT INTO "User" ("id") VALUES (7);`
+    );
+    racing();
+  });
+
+  const withheldNow = () =>
+    db.query(`SELECT 1 FROM "Image" WHERE id = 999`).then((r) => r.rows.length === 1);
+
+  it('an approval leaves it removed and the appeal Pending', async () => {
+    race.nth = 1;
+    await expect(
+      resolveImageAppeal({
+        csamReview: false,
+        imageId: IMAGE_ID,
+        status: 'Approved',
+        resolvedReason: 'misclassified',
+        userId: 2,
+      })
+    ).rejects.toBeInstanceOf(AppealRestoreRefusedError);
+
+    expect(await withheldNow()).toBe(true);
+    expect(await imageRow()).toMatchObject({ ingestion: 'Blocked', nsfwLevel: 32 });
+    const appeal = await db.query<{ status: string }>(`SELECT status FROM "Appeal"`);
+    expect(appeal.rows).toEqual([{ status: 'Pending' }]);
+  });
+
+  it('an accept leaves it removed', async () => {
+    race.nth = 1;
+    await expect(
+      acceptImage({ csamReview: false, imageId: IMAGE_ID, userId: 2, restoreRemoved: true })
+    ).rejects.toBeInstanceOf(WithheldImageError);
+
+    expect(await imageRow()).toMatchObject({ ingestion: 'Blocked', nsfwLevel: 32 });
+  });
+
+  it("an accept's level reset, after the lift, leaves the Blocked level", async () => {
+    race.nth = 2;
+    await acceptImage({ csamReview: false, imageId: IMAGE_ID, userId: 2, restoreRemoved: true });
+
+    expect(await imageRow()).toMatchObject({ nsfwLevel: 32, nsfwLevelLocked: true });
+  });
+
+  it("an accept's rescan of an unrated image, after the lift, sends nothing to the scanner", async () => {
+    await db.exec(`CREATE OR REPLACE FUNCTION update_nsfw_levels_new(ids INTEGER[]) RETURNS VOID
+      LANGUAGE SQL AS $$ SELECT $$;`);
+    race.nth = 3;
+    await acceptImage({ csamReview: false, imageId: IMAGE_ID, userId: 2, restoreRemoved: true });
+
+    expect(await imageRow()).toMatchObject({ ingestion: 'Scanned', nsfwLevel: 0 });
+    const queued = await db.query(`SELECT 1 FROM "JobQueue" WHERE "type" = 'ImageScan'`);
+    expect(queued.rows).toEqual([]);
+  });
+
+  it('a rating leaves its level', async () => {
+    race.nth = 1;
+    await expect(
+      updateImageNsfwLevel({ csamReview: false, id: IMAGE_ID, nsfwLevel: 1, userId: 2 })
+    ).rejects.toBeInstanceOf(WithheldImageError);
+
+    expect(await imageRow()).toMatchObject({ nsfwLevel: 32 });
+  });
+
+  it('an ingestion-error resolve leaves it in Error', async () => {
+    await db.exec(
+      `UPDATE "Image" SET ingestion = 'Error', "blockedFor" = NULL, "needsReview" = NULL WHERE id = ${IMAGE_ID}`
+    );
+    race.nth = 1;
+    await expect(
+      resolveIngestionError({ csamReview: false, id: IMAGE_ID, nsfwLevel: 1, userId: 2 })
+    ).rejects.toBeInstanceOf(WithheldImageError);
+
+    expect(await imageRow()).toMatchObject({ ingestion: 'Error' });
+  });
+
+  it('a stuck-image rescan leaves it Pending', async () => {
+    await db.exec(
+      `UPDATE "Image" SET ingestion = 'Pending', "blockedFor" = NULL, "nsfwLevelLocked" = FALSE,
+         "createdAt" = now() - interval '1 day' WHERE id = ${IMAGE_ID}`
+    );
+    race.nth = 1;
+    expect(await rescanStuckImages({ imageIds: [IMAGE_ID], userId: 2, viewer: undefined })).toEqual(
+      { ok: true, count: 0, skipped: 1 }
+    );
+
+    expect(await imageRow()).toMatchObject({ ingestion: 'Pending' });
   });
 });

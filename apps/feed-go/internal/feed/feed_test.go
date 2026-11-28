@@ -2,6 +2,8 @@ package feed
 
 import (
 	"encoding/json"
+	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -32,7 +34,7 @@ func TestParseFallsBackOnUnportedShapes(t *testing.T) {
 	cases := map[string]map[string]any{
 		"input-hidden":       {"hidden": true},
 		"input-username":     {"username": "x"},
-		"input-tags":         {"tags": []any{num("1")}},
+		"input-reactions":    {"reactions": []any{"Like"}},
 		"input-sort":         {"sort": "Random"},
 		"input-include":      {"include": []any{"cosmetics", "tags"}},
 		"input-cursor":       {"cursor": true},
@@ -45,8 +47,112 @@ func TestParseFallsBackOnUnportedShapes(t *testing.T) {
 		}
 	}
 	// Falsy values of unsupported keys are the same as absent.
-	if _, err := Parse(map[string]any{"hidden": false, "tags": []any{}, "username": ""}); err != nil {
+	if _, err := Parse(map[string]any{"hidden": false, "reactions": []any{}, "username": ""}); err != nil {
 		t.Fatalf("falsy keys must not fall back: %v", err)
+	}
+}
+
+// `tools` is z.number().array(): read on both image procedures, kept as sent (getAllImages binds the
+// list into its SQL as is; the feed query keeps the positive ids). Values the schema rejects are
+// Node's BAD_REQUEST (input-invalid); a number it accepts that is not an int4 falls back.
+func TestParseTools(t *testing.T) {
+	parsers := map[string]func(map[string]any) (*Input, error){
+		"Parse": Parse,
+		"ParseInfinite": func(m map[string]any) (*Input, error) {
+			in, err := ParseInfinite(m)
+			if err != nil {
+				return nil, err
+			}
+			return &in.Input, nil
+		},
+	}
+	for name, parse := range parsers {
+		for _, c := range []struct {
+			input string
+			want  []int
+		}{
+			{`{"limit":10}`, nil},
+			{`{"tools":null}`, nil},
+			{`{"tools":[]}`, []int{}},
+			{`{"tools":[42]}`, []int{42}},
+			// Order, repeats, zero and negative ids as sent.
+			{`{"tools":[7,3,7,0,-2]}`, []int{7, 3, 7, 0, -2}},
+			{`{"tools":[2147483647,-2147483648]}`, []int{2147483647, -2147483648}},
+		} {
+			in, err := parse(parseObj(t, c.input))
+			if err != nil {
+				t.Errorf("%s %s: reason %q (err %v), want it parsed", name, c.input, fallback.Reason(err), err)
+				continue
+			}
+			if !reflect.DeepEqual(in.Tools, c.want) {
+				t.Errorf("%s %s: Tools = %#v, want %#v", name, c.input, in.Tools, c.want)
+			}
+		}
+		for input, want := range map[string]string{
+			`{"tools":"42"}`:            "input-invalid",
+			`{"tools":42}`:              "input-invalid",
+			`{"tools":{"0":42}}`:        "input-invalid",
+			`{"tools":["42"]}`:          "input-invalid",
+			`{"tools":[42,null]}`:       "input-invalid",
+			`{"tools":[true]}`:          "input-invalid",
+			`{"tools":[1.5]}`:           "input-tools",
+			`{"tools":[42,2147483648]}`: "input-tools",
+			`{"tools":[-2147483649]}`:   "input-tools",
+		} {
+			if _, err := parse(parseObj(t, input)); fallback.Reason(err) != want {
+				t.Errorf("%s %s: reason %q (err %v), want %q", name, input, fallback.Reason(err), err, want)
+			}
+		}
+	}
+	// With another unported key, that key still names the fallback.
+	if _, err := Parse(parseObj(t, `{"tools":[42],"reactions":["Like"]}`)); fallback.Reason(err) != "input-reactions" {
+		t.Errorf("tools + reactions: reason %q (err %v), want input-reactions", fallback.Reason(err), err)
+	}
+}
+
+// The tools clause: getAllImagesUncaptured's EXISTS over the image's ImageTool rows, the list bound
+// once as sent, and the query's cache policy untouched (Node does not mark it personalized).
+func TestBuildToolsClause(t *testing.T) {
+	const clause = `EXISTS (
+      SELECT 1
+      FROM "ImageTool" it
+      WHERE it."imageId" = i.id
+      GROUP BY it."imageId"
+      HAVING array_agg(it."toolId" ORDER BY it."toolId") @> $`
+	base := ImagesQuery{Limit: 10, Sort: SortNewest, BrowsingLevel: 1, ModelVersionID: 9}
+	if b := base.Build(); strings.Contains(b.SQL, `"ImageTool"`) {
+		t.Fatal("no tools: the query must not read ImageTool")
+	}
+	empty := base
+	empty.Tools = []int{}
+	if b := empty.Build(); strings.Contains(b.SQL, `"ImageTool"`) {
+		t.Fatal("an empty tools list filters nothing (`!!tools?.length`)")
+	}
+	q := base
+	q.Tools = []int{7, 3, 7, 0}
+	b := q.Build()
+	i := strings.Index(b.SQL, clause)
+	if i < 0 {
+		t.Fatalf("SQL lacks the tools clause:\n%s", b.SQL)
+	}
+	rest := b.SQL[i+len(clause):]
+	end := strings.Index(rest, "::integer[]\n    )")
+	if end < 0 {
+		t.Fatalf("tools clause not closed as `$n::integer[] )`:\n%s", b.SQL)
+	}
+	n, err := strconv.Atoi(rest[:end])
+	if err != nil || n < 1 || n > len(b.Args) {
+		t.Fatalf("tools clause binds %q, not one of the %d args", rest[:end], len(b.Args))
+	}
+	if got, ok := b.Args[n-1].([]int); !ok || !reflect.DeepEqual(got, []int{7, 3, 7, 0}) {
+		t.Fatalf("tools clause binds %#v, want []int{7, 3, 7, 0} (as sent)", b.Args[n-1])
+	}
+	if strings.Count(b.SQL, `"ImageTool"`) != 1 {
+		t.Fatal("the tools clause must appear once")
+	}
+	// Same cache policy as without tools: a version gallery stays cached under its tag.
+	if b.CacheTTL != 10*time.Minute || !reflect.DeepEqual(b.CacheTags, []string{"images-modelVersion:9"}) {
+		t.Fatalf("cache policy with tools = %v %v, want 10m [images-modelVersion:9]", b.CacheTTL, b.CacheTags)
 	}
 }
 
@@ -54,16 +160,24 @@ func TestApplyDomainCap(t *testing.T) {
 	r := 4
 	in := &Input{BrowsingLevel: &r}
 	// Signed out (cap PG): R & PG = 0 -> the cap.
-	if bl, _ := in.ApplyDomainCap(1); bl != 1 {
+	if bl, _ := in.ApplyDomainCap(1, false); bl != 1 {
 		t.Fatalf("signed-out level = %d, want 1", bl)
 	}
 	// Uncapped and absent: the schema default, 31.
-	if bl, _ := (&Input{}).ApplyDomainCap(0); bl != 31 {
+	if bl, _ := (&Input{}).ApplyDomainCap(0, false); bl != 31 {
 		t.Fatalf("uncapped default = %d, want 31", bl)
 	}
 	// Capped and absent: the cap (applyDomainFeature runs before the default).
-	if bl, _ := (&Input{}).ApplyDomainCap(3); bl != 3 {
+	if bl, _ := (&Input{}).ApplyDomainCap(3, false); bl != 3 {
 		t.Fatalf("capped default = %d, want 3", bl)
+	}
+	// Both levels are held to the selectable levels before the clamp, unless a moderator sent them.
+	lv, pre := 4|32, 2|32
+	if bl, pc := (&Input{BrowsingLevel: &lv, PreCapBrowsingLevel: &pre}).ApplyDomainCap(0, false); bl != 4 || pc == nil || *pc != 2 {
+		t.Fatalf("uncapped = %d %v, want 4 2", bl, pc)
+	}
+	if bl, pc := (&Input{BrowsingLevel: &lv, PreCapBrowsingLevel: &pre}).ApplyDomainCap(0, true); bl != 4|32 || pc == nil || *pc != 2|32 {
+		t.Fatalf("uncapped, moderator = %d %v, want 36 34", bl, pc)
 	}
 }
 
@@ -79,10 +193,13 @@ func TestBuildModelVersionGalleryQuery(t *testing.T) {
 		`((irr."imageId" <= $`,
 		`(i."poi" != TRUE OR p."userId" = $`,
 		`(i."minor" != TRUE OR i."userId" = $`,
-		`(i."blockedFor" IS NULL OR i."userId" = $`,
+		`(i."blockedFor" IS NULL OR (i."userId" = $`,
+		`("i"."userId" <> $`,
 		`i."acceptableMinor" = FALSE`,
 		`(p."publishedAt" < now())`,
 		`irr."imageId" "cursorId"`,
+		`OR NOT i."modelRestricted" OR i."userId" = $`,
+		`IS NOT TRUE "restricted"`,
 	)
 	// The version filter wins over modelId: no ModelVersion join.
 	if strings.Contains(b.SQL, `mv."modelId"`) {
@@ -113,6 +230,9 @@ func TestBuildSignedOutAndOldest(t *testing.T) {
 		`interval '1 week'`)
 	if strings.Contains(b.SQL, `i."id" >=`) {
 		t.Fatal("a zero cursor adds no clause")
+	}
+	if strings.Contains(b.SQL, `OR NOT i."modelRestricted" OR`) {
+		t.Fatal("a signed-out viewer gets no restricted-image exception")
 	}
 	// Signed out: the availability carve-out binds NULL.
 	if !hasNil(b.Args) {
@@ -262,7 +382,8 @@ func TestParseGallerySettings(t *testing.T) {
 
 func TestResultValueNextCursor(t *testing.T) {
 	got, _ := superjson.Serialize((&Result{}).Value())
-	if want := `{"json":{"items":[]},"meta":{"values":{"nextCursor":["undefined"]},"v":1}}`; string(got) != want {
+	// node: JSON.stringify(superjson.serialize({nextCursor: undefined, items: []})).
+	if want := `{"json":{"nextCursor":null,"items":[]},"meta":{"values":{"nextCursor":["undefined"]},"v":1}}`; string(got) != want {
 		t.Fatalf("got %s want %s", got, want)
 	}
 	got, _ = superjson.Serialize((&Result{NextCursor: Cursor{N: 12}}).Value())
@@ -332,6 +453,15 @@ func TestBuildImagesEventDecoration(t *testing.T) {
 		}
 		if string(out) != want[img.ID] {
 			t.Errorf("image %d: got %s, want %s", img.ID, out, want[img.ID])
+		}
+	}
+}
+
+func TestBuildImageCarriesRestricted(t *testing.T) {
+	for _, restricted := range []bool{true, false} {
+		img := buildImage(RawImage{ID: 1, Restricted: restricted}, &Hydrated{}, Viewer{})
+		if v, ok := img.Wire.Get("restricted"); !ok || v != restricted {
+			t.Fatalf("restricted on the wire = %v (present %v), want %v", v, ok, restricted)
 		}
 	}
 }

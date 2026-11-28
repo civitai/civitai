@@ -1,5 +1,5 @@
 import { sql, type Kysely } from 'kysely';
-import { servableImage } from '@civitai/db/knights';
+import { postHiddenFromKnights, readWithoutJit, servableImage } from '@civitai/db/knights';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { KNIGHTS_STAGE_RANKS, KNIGHTS_STAGE_TTL_HOURS } from '@civitai/shared/new-order';
@@ -29,7 +29,11 @@ export type EnqueueRefusal =
   | 'bad-expiry'
   | 'image-not-found'
   | 'held-for-review'
-  | 'not-servable';
+  | 'not-servable'
+  | 'not-still-image'
+  | 'no-post'
+  | 'unpublished'
+  | 'private-post';
 
 export type EnqueueOptions = {
   /**
@@ -37,6 +41,20 @@ export type EnqueueOptions = {
    * arrive before the post is published.
    */
   servableOnly?: boolean;
+  /**
+   * Refuse images with no post (`no-post`), whose post is not live at `now`: a draft or a later
+   * date (`unpublished`), or whose post's availability Knights does not show (`private-post`). Scan sampling and owner
+   * ratings pass it.
+   */
+  requirePublished?: boolean;
+  /**
+   * Treat an image that ever had an item for the question, in any status, as a `duplicate`, not
+   * only one still open. Hidden-check copies do not count. Sampling passes it, so an image is
+   * sampled at most once however often it is scanned or published.
+   */
+  oncePerImage?: boolean;
+  /** Refuse anything but a still image (`not-still-image`): Knights serves only those. Owner ratings pass it. */
+  stillImagesOnly?: boolean;
 };
 
 export type EnqueueOutcome = { imageId: number } & (
@@ -60,7 +78,12 @@ export async function enqueueKnightsItems(
   db: Kysely<DB>,
   input: EnqueueInput,
   now: Date = new Date(),
-  { servableOnly = false }: EnqueueOptions = {}
+  {
+    servableOnly = false,
+    requirePublished = false,
+    oncePerImage = false,
+    stillImagesOnly = false,
+  }: EnqueueOptions = {}
 ): Promise<EnqueueOutcome[]> {
   const refuseAll = (reason: EnqueueRefusal): EnqueueOutcome[] =>
     input.items.map((item) => ({ imageId: item.imageId, outcome: 'refused', reason }));
@@ -73,26 +96,50 @@ export async function enqueueKnightsItems(
   if (!question) return refuseAll('unknown-question');
   if (!question.active) return refuseAll('inactive-question');
 
-  const images = new Map<number, { held: boolean; servable: boolean }>(
+  const images = new Map<
+    number,
+    {
+      held: boolean;
+      still: boolean;
+      servable: boolean;
+      hasPost: boolean;
+      publishesAt: Date | null;
+      hiddenPost: boolean;
+    }
+  >(
     input.items.length === 0
       ? []
       : (
-          await db
-            .selectFrom('Image as img')
-            .leftJoin('Post as p', 'p.id', 'img.postId')
-            .select((eb) => [
-              'img.id',
-              'img.needsReview',
-              'img.acceptableMinor',
-              servableImage(eb).as('servable'),
-            ])
-            .where('img.id', 'in', [...new Set(input.items.map((i) => i.imageId))])
-            .execute()
+          await readWithoutJit(db, (trx) =>
+            trx
+              .selectFrom('Image as img')
+              .leftJoin('Post as p', 'p.id', 'img.postId')
+              .select((eb) => [
+                'img.id',
+                'img.needsReview',
+                'img.acceptableMinor',
+                'img.type',
+                'p.id as postRowId',
+                'p.availability',
+                // Epoch seconds of the UTC timestamp, so the comparison does not depend on how the driver parses it.
+                sql<string | null>`extract(epoch from ${eb.ref('p.publishedAt')})`.as(
+                  'publishedEpoch'
+                ),
+                servableImage(eb).as('servable'),
+              ])
+              .where('img.id', 'in', [...new Set(input.items.map((i) => i.imageId))])
+              .execute()
+          )
         ).map((row) => [
           row.id,
           {
             held: row.needsReview !== null || row.acceptableMinor,
+            still: row.type === 'image',
             servable: Boolean(row.servable),
+            hasPost: row.postRowId !== null,
+            hiddenPost: postHiddenFromKnights(row.availability),
+            publishesAt:
+              row.publishedEpoch === null ? null : new Date(Number(row.publishedEpoch) * 1000),
           },
         ])
   );
@@ -120,7 +167,15 @@ export async function enqueueKnightsItems(
     const image = images.get(item.imageId);
     if (image === undefined) return refuse('image-not-found');
     if (image.held) return refuse('held-for-review');
+    if (stillImagesOnly && !image.still) return refuse('not-still-image');
     if (servableOnly && !image.servable) return refuse('not-servable');
+    if (requirePublished && !image.hasPost) return refuse('no-post');
+    if (
+      requirePublished &&
+      (image.publishesAt === null || image.publishesAt.getTime() > now.getTime())
+    )
+      return refuse('unpublished');
+    if (requirePublished && image.hiddenPost) return refuse('private-post');
     if (seen.has(item.imageId)) {
       outcomes[index] = { imageId: item.imageId, outcome: 'duplicate' };
       return;
@@ -160,7 +215,7 @@ export async function enqueueKnightsItems(
         SELECT 1 FROM "KnightsQueueItem" e
         WHERE e."questionKey" = ${input.questionKey}
           AND e."imageId" = v."imageId"
-          AND e."status" IN ('Open', 'Inquisitor', 'Ruling')
+          AND (${sql.lit(oncePerImage)} OR e."status" IN ('Open', 'Inquisitor', 'Ruling'))
           AND NOT e."isHiddenCheck"
       )
       ON CONFLICT DO NOTHING

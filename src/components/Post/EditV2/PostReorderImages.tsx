@@ -7,10 +7,13 @@ import { usePrevious } from '@mantine/hooks';
 import { IconArrowsMaximize, IconArrowsSort, IconCheck } from '@tabler/icons-react';
 import { isEqual } from 'lodash-es';
 import type { CSSProperties } from 'react';
+import { useRef } from 'react';
 import { BrowsingLevelBadge } from '~/components/BrowsingLevel/BrowsingLevelBadge';
 import { ImageReactionCount } from '~/components/Post/EditV2/PostImageCards/ImageReactionCount';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { WithheldMedia } from '~/components/EdgeMedia/WithheldMedia';
 import { useImageStore } from '~/store/image.store';
+import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import type { ControlledImage } from '~/components/Post/EditV2/PostEditProvider';
@@ -19,6 +22,7 @@ import {
   imageOnlyReorderIndexes,
   mergeEditorItems,
   reorderPayload,
+  withSavedPositions,
 } from '~/components/Post/EditV2/post-edit-items';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -32,6 +36,8 @@ export function PostReorderImages() {
 }
 
 const textSortableId = (id: number) => `text-${id}`;
+// By id: a blocked image reaches the editor without a url.
+const imageSortableId = (id: number) => `image-${id}`;
 
 /** Images and text items in one sortable list; a drop renumbers both to their new positions. */
 function PostReorderItems() {
@@ -47,7 +53,7 @@ function PostReorderItems() {
     texts
   );
   const sortableId = (item: (typeof items)[number]) =>
-    item.type === 'text' ? textSortableId(item.text.id) : item.image.data.url;
+    item.type === 'text' ? textSortableId(item.text.id) : imageSortableId(item.key.id);
 
   function handleDragEnd({ active, over }: DragEndEvent) {
     if (!over || active.id === over.id) return;
@@ -158,8 +164,10 @@ function PostReorderImagesOnly() {
           .sort((a, b) => (a.data.index ?? 0) - (b.data.index ?? 0));
 
         // Find indices in the sorted, filtered array (matching what's displayed)
-        const oldIndex = addedImages.findIndex((x) => x.data.url === active.id);
-        const newIndex = addedImages.findIndex((x) => x.data.url === over.id);
+        const at = (id: UniqueIdentifier) =>
+          addedImages.findIndex((x) => x.type === 'added' && imageSortableId(x.data.id) === id);
+        const oldIndex = at(active.id);
+        const newIndex = at(over.id);
 
         if (oldIndex === -1 || newIndex === -1) return storeImages;
 
@@ -189,10 +197,10 @@ function PostReorderImagesOnly() {
   return (
     <>
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-        <SortableContext items={items.map((x) => x.url)}>
+        <SortableContext items={items.map((x) => imageSortableId(x.id))}>
           <div style={{ display: 'grid', gridTemplateColumns: `repeat(3, 1fr)`, gridGap: 10 }}>
             {items.map((image) => (
-              <SortableImage key={image.id} image={image} sortableId={image.url} />
+              <SortableImage key={image.id} image={image} sortableId={imageSortableId(image.id)} />
             ))}
           </div>
         </SortableContext>
@@ -219,12 +227,16 @@ function SortableImage({ image, sortableId }: ItemProps) {
       {...listeners}
       {...attributes}
     >
-      <EdgeMedia
-        src={image.url}
-        type={image.type}
-        width={450}
-        className="object-cover object-center"
-      />
+      {image.url === null ? (
+        <WithheldMedia />
+      ) : (
+        <EdgeMedia
+          src={image.url}
+          type={image.type}
+          width={450}
+          className="object-cover object-center"
+        />
+      )}
       <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/50 opacity-0 hover:opacity-100">
         <IconArrowsMaximize
           size={48}
@@ -251,24 +263,41 @@ function SortableImage({ image, sortableId }: ItemProps) {
 export function ReorderImagesButton() {
   const queryUtils = trpc.useUtils();
   const textOn = !!useFeatureFlags().storylineText;
-  const [post, images, texts, isReordering, toggleReordering] = usePostEditStore((state) => [
-    state.post,
-    state.images,
-    state.texts,
-    state.isReordering,
-    state.toggleReordering,
-  ]);
+  const [post, images, texts, isReordering, toggleReordering, setImages, setTexts] =
+    usePostEditStore((state) => [
+      state.post,
+      state.images,
+      state.texts,
+      state.isReordering,
+      state.toggleReordering,
+      state.setImages,
+      state.setTexts,
+    ]);
 
   const { mutate, isPending: isLoading } = trpc.post.reorderImages.useMutation({
-    async onSuccess() {
+    async onSuccess(positions, { imageIds }) {
+      // The saved indexes, not the editor's guess: they differ around images the editor hides.
+      setImages((current) => withSavedPositions(current, [], positions, imageIds).images);
+      setTexts((current) => withSavedPositions([], current, positions).texts);
       await queryUtils.model.getAll.invalidate();
       await queryUtils.image.getInfinite.invalidate();
     },
+    onError(error) {
+      showErrorNotification({ title: 'Order not saved', error: new Error(error.message) });
+      // Back to the order the server still has.
+      const saved = beforeRearrange.current;
+      if (saved) {
+        setImages(() => saved.images);
+        setTexts(() => saved.texts);
+      }
+    },
   });
   const previous = usePrevious({ images, texts });
+  const beforeRearrange = useRef<{ images: typeof images; texts: typeof texts } | null>(null);
   const canReorder = !!images.every((x) => x.type === 'added');
 
   const onClick = () => {
+    if (!isReordering) beforeRearrange.current = { images, texts };
     toggleReordering();
     if (!isReordering || !previous || isEqual(previous, { images, texts }) || !post) return;
     mutate(reorderPayload({ postId: post.id, images, texts, textOn }));

@@ -15,7 +15,7 @@ import { setEnv } from '~/__tests__/mocks/env.mock';
 // The chunked upload relay (`/api/v1/image-upload/relay-chunked`). New-feature tests: the route
 // did not exist before this change, so none of these can be shown red on the pre-change tree
 // other than by the module being absent. The SESSION store is a real in-memory hash behind the
-// canonical sysRedis mock, so ownership is checked against what the route itself wrote rather
+// canonical cache-cluster mock, so ownership is checked against what the route itself wrote rather
 // than against a stubbed lookup.
 
 const {
@@ -101,7 +101,7 @@ const OTHER_USER = 8;
 const MINTED_KEY = 'server-minted-uuid';
 const UPLOAD_ID = 'multipart-upload-1';
 
-/** sysRedis hashes the route wrote, keyed by full redis key. */
+/** Cache-cluster hashes the route wrote, keyed by full redis key. */
 let hashes: Map<string, Record<string, string>>;
 let currentUser: number;
 
@@ -215,18 +215,16 @@ beforeEach(() => {
   mockRecordUploadKeyOwner.mockResolvedValue(true);
   setEnv({ UPLOAD_KEY_REFUSE_UNRECORDED: false });
 
-  redisMock.sysRedis.hSetMultiWithExpire.mockImplementation(
-    async (key: string, fields: string[]) => {
-      const hash = hashes.get(key) ?? {};
-      for (let i = 0; i < fields.length; i += 2) hash[fields[i]] = fields[i + 1];
-      hashes.set(key, hash);
-      return fields.length / 2;
-    }
-  );
-  redisMock.sysRedis.hGetAll.mockImplementation(async (key: string) => ({
+  redisMock.redis.hSetMultiWithExpire.mockImplementation(async (key: string, fields: string[]) => {
+    const hash = hashes.get(key) ?? {};
+    for (let i = 0; i < fields.length; i += 2) hash[fields[i]] = fields[i + 1];
+    hashes.set(key, hash);
+    return fields.length / 2;
+  });
+  redisMock.redis.hGetAll.mockImplementation(async (key: string) => ({
     ...(hashes.get(key) ?? {}),
   }));
-  redisMock.sysRedis.del.mockImplementation(async (key: string) => (hashes.delete(key) ? 1 : 0));
+  redisMock.redis.del.mockImplementation(async (key: string) => (hashes.delete(key) ? 1 : 0));
 });
 
 describe('chunked image-upload relay', () => {
@@ -523,11 +521,19 @@ describe('chunked image-upload relay', () => {
     });
 
     it('aborts the multipart upload when the session cannot be recorded', async () => {
-      redisMock.sysRedis.hSetMultiWithExpire.mockRejectedValueOnce(new Error('redis down'));
+      redisMock.redis.hSetMultiWithExpire.mockRejectedValueOnce(new Error('redis down'));
       const { res } = await start();
       expect(res.statusCode).toBe(500);
       expect(mockAbort).toHaveBeenCalledExactlyOnceWith({ key: MINTED_KEY, uploadId: UPLOAD_ID });
     });
+  });
+
+  it('keeps the session on the cache cluster, not in system Redis', async () => {
+    const { session } = await start();
+    await sendPart(session, 1, CHUNKED_RELAY_PIECE_BYTES);
+    expect([...hashes.keys()]).toEqual([`system:image-upload:relay-session:${session}`]);
+    expect(redisMock.sysRedis.hSetMultiWithExpire).not.toHaveBeenCalled();
+    expect(redisMock.sysRedis.hGetAll).not.toHaveBeenCalled();
   });
 
   it('abort closes the multipart upload and consumes the session', async () => {

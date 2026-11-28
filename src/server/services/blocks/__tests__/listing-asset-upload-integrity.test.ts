@@ -54,6 +54,8 @@ const { mockRead, mockWrite, mockCreateImage, mockS3Send, mockLogToAxiom } = vi.
       findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
       findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
     },
+    // The deal-file copy check: no deal file points at these images.
+    $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
     $transaction: vi.fn(async (arg: unknown) => {
       if (typeof arg === 'function') return (arg as (tx: unknown) => unknown)(db);
       return Promise.all(arg as Promise<unknown>[]);

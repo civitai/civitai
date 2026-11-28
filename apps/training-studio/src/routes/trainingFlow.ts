@@ -1,7 +1,17 @@
+import { pickAiToolkitOptions } from '@civitai/shared/training-options';
 import { findTrigger, withTrigger } from '$lib/training-trigger';
+import {
+  asNsfwRating,
+  isMatureNsfwLevel,
+  nsfwLevelLabel,
+  ratingBreakdown,
+  type NsfwRating,
+  type RatingCount,
+} from '$lib/nsfw-rating';
 export { findTrigger, promptHasTrigger, withTrigger } from '$lib/training-trigger';
 import {
   KOHYA_PARAM_FIELDS,
+  kohyaClipSkip,
   kohyaDefaults,
   kohyaFieldSupported,
   kohyaFamily,
@@ -22,6 +32,7 @@ import {
   cardsForMedia,
   findByAir,
   isCardVisible,
+  mediaCount,
   visibleVersions,
   versionPriceKey,
   ecosystemTakesSampleImages,
@@ -45,7 +56,7 @@ import {
 import type { TagExcluder } from '$lib/autolabel-exclude';
 
 export const CUSTOM_VERSION_KEY = 'custom';
-export const MAX_RUNS = 5;
+export { MAX_RUNS } from '$lib/submit-limits';
 
 let runSeq = 0;
 /** Stable client id for a run — keeps `{#each}` keyed by identity, not index (duplicate
@@ -80,6 +91,19 @@ export function labelNoun(card: ModelCard): 'tags' | 'captions' {
  *  else just its single `label`. `card.label` is always the default (first). */
 export function labelOptions(card: ModelCard): LabelType[] {
   return card.bothLabels ? [card.label, card.label === 'tag' ? 'caption' : 'tag'] : [card.label];
+}
+
+/** The label mode to carry into the Data step. The flow's `labelMode` starts as 'tag', so a first pick of a
+ *  caption-default `bothLabels` card must not inherit it; but labels already typed in the current mode, or a
+ *  pick on the same model, are kept. */
+export function labelModeForCard(
+  previous: ModelCard | null,
+  card: ModelCard,
+  current: LabelType,
+  datasetLabeled: boolean
+): LabelType {
+  if (!labelOptions(card).includes(current)) return card.label;
+  return previous?.type === card.type || datasetLabeled ? current : card.label;
 }
 
 // Trigger-word display rules, shared by the tile previews and the label editor: the trigger is only
@@ -245,9 +269,102 @@ export function recommendedCardFor(
   );
 }
 
+/** The card a Kohya run starts on for a LoRA type + media: the recommended card when Kohya trains it,
+ *  else the first available Kohya card. Undefined when no Kohya card for the media is available. */
+export function kohyaSeedCard(
+  loraTypeId: string,
+  media: Media,
+  enabledFlags: ReadonlySet<string>,
+  status?: TrainingServiceStatus | null
+): ModelCard | undefined {
+  return [
+    recommendedCardFor(loraTypeId, media, enabledFlags),
+    ...cardsForMedia(media, enabledFlags),
+  ].find((c) => cardSupportsKohya(c) && !cardUnavailability(c, enabledFlags, status));
+}
+
 export type ImgStatus = 'uploading' | 'uploaded' | 'blocked' | 'error';
 
-export type DatasetFilter = 'all' | 'labeled' | 'unlabeled' | 'mature' | 'failed';
+const STATUS_FILTERS = [
+  'all',
+  'labeled',
+  'unlabeled',
+  'mature',
+  'not-mature',
+  'not-rated',
+  'failed',
+] as const;
+/** `rating:<level>` shows the images the upload scan gave that one rating. `not-mature` and `not-rated`
+ *  are by the v2 verdict. */
+export type DatasetFilter = (typeof STATUS_FILTERS)[number] | `rating:${NsfwRating}`;
+
+export function asDatasetFilter(value: string): DatasetFilter | undefined {
+  if ((STATUS_FILTERS as readonly string[]).includes(value)) return value as DatasetFilter;
+  const rating = value.startsWith('rating:')
+    ? asNsfwRating(value.slice('rating:'.length))
+    : undefined;
+  return rating && `rating:${rating}`;
+}
+
+const ratingOfFilter = (filter: DatasetFilter) =>
+  filter.startsWith('rating:') ? asNsfwRating(filter.slice('rating:'.length)) : undefined;
+
+/** Under a `rating:` filter, whether a trainable image has that rating; undefined for any other filter. */
+export function matchesRatingFilter(img: Img, filter: DatasetFilter): boolean | undefined {
+  const rating = ratingOfFilter(filter);
+  if (!rating) return undefined;
+  return isTrainable(img) && asNsfwRating(img.nsfwLevel) === rating;
+}
+
+/** Mature by the v2 verdict when the image has one, else by its upload rating. */
+export function isImgMature(img: Img): boolean {
+  return isTrainable(img) && (img.v2Mature ?? isMatureNsfwLevel(img.nsfwLevel));
+}
+
+/** A tile's rating label: the v2 verdict when the image has one, else its upload rating. */
+export function imgRatingLabel(img: Img): string | undefined {
+  if (img.v2Mature !== undefined) return img.v2Mature ? 'Mature' : 'Not mature';
+  return nsfwLevelLabel(img.nsfwLevel);
+}
+
+/** Under a v2 filter, whether a trainable image matches it; undefined for any other filter. */
+export function matchesVerdictFilter(img: Img, filter: DatasetFilter): boolean | undefined {
+  if (filter === 'not-mature') return isTrainable(img) && img.v2Mature === false;
+  if (filter === 'not-rated') return isTrainable(img) && img.v2Mature === undefined;
+  return undefined;
+}
+
+/** Set each verdict on the image it names, in place: the Data step's label passes hold these same
+ *  objects, so a copy would orphan their results. Whether any image changed. */
+export function setVerdicts(images: Img[], verdicts: Record<string, boolean> | undefined): boolean {
+  let changed = false;
+  for (const img of images) {
+    const verdict = img.blobId !== undefined ? verdicts?.[img.blobId] : undefined;
+    if (typeof verdict !== 'boolean' || verdict === img.v2Mature) continue;
+    img.v2Mature = verdict;
+    changed = true;
+  }
+  return changed;
+}
+
+/** Apply a v2 rating answer: set its verdicts on `images` in place, and return Review's count unless
+ *  the answer says Review should keep its own (null). */
+export function applyRatingAnswer(
+  images: Img[],
+  answer: { matureCount: number | null; verdicts?: Record<string, boolean> }
+): number | undefined {
+  setVerdicts(images, answer.verdicts);
+  return answer.matureCount ?? undefined;
+}
+
+/** The rating filters to offer: each rating among the trainable images, plus the selected one at 0
+ *  once the dataset no longer has it, so the selection stays visible. */
+export function ratingChoices(images: Img[], filter: DatasetFilter): RatingCount[] {
+  const totals = ratingBreakdown(images.filter(isTrainable).map((i) => i.nsfwLevel));
+  const selected = ratingOfFilter(filter);
+  if (!selected || totals.some((r) => r.rating === selected)) return totals;
+  return [...totals, ...ratingBreakdown([selected]).map((r) => ({ ...r, count: 0 }))];
+}
 
 /** File-browser order — natural (`clip2` before `clip10`) and case-insensitive. A zip's entry order is
  *  whatever the archiver wrote (a tester reported theirs arriving sorted by video duration; their zip
@@ -282,6 +399,8 @@ export interface Img {
   blobUrl?: string;
   /** The scan's rating, when known — a mature one means Blue Buzz can't pay for a non-member's run. */
   nsfwLevel?: string;
+  /** The v2 verdict, once the server has one: it decides mature over `nsfwLevel`. */
+  v2Mature?: boolean;
   /** A block reason or upload error, shown on the tile. */
   message?: string;
   /** True while an auto-label workflow step for this image is in flight. */
@@ -304,7 +423,71 @@ export interface Img {
   caption: string;
   /** Per-image repeats: how many times this image goes into the dataset. Absent means once. */
   repeats?: number;
+  /** The add this image came in with, so Manage tags can scope an edit to it. */
+  batch?: ImgBatch;
 }
+
+export type BatchSource = 'upload' | 'zip' | 'reuse' | 'generations';
+
+/** One add to the dataset: a drop or pick, one zip, one reused dataset, one generations pick. */
+export interface ImgBatch {
+  /** Unique and increasing, also across page loads: seeded from the clock rather than a counter, so
+   *  a batch kept in a saved draft can't share an id with one added later. */
+  id: number;
+  source: BatchSource;
+  addedAt: number;
+}
+
+let lastBatchId = 0;
+export function newBatch(source: BatchSource, now = Date.now()): ImgBatch {
+  lastBatchId = Math.max(now, lastBatchId + 1);
+  return { id: lastBatchId, source, addedAt: now };
+}
+
+const BATCH_SOURCE_NAMES: Record<BatchSource, string> = {
+  upload: 'Upload',
+  zip: 'Zip import',
+  reuse: 'Reused dataset',
+  generations: 'Generations',
+};
+
+export interface BatchOption {
+  id: number;
+  label: string;
+}
+
+/** The batches still in the dataset, oldest first, each named "Upload 2 · 14 images · 3:41 PM": the
+ *  number counts that source's batches, and the time tells same-source batches apart. */
+export function datasetBatches(images: Pick<Img, 'batch'>[], media: Media): BatchOption[] {
+  const byId = new Map<number, { batch: ImgBatch; count: number }>();
+  for (const img of images) {
+    if (!img.batch) continue;
+    const entry = byId.get(img.batch.id);
+    if (entry) entry.count++;
+    else byId.set(img.batch.id, { batch: img.batch, count: 1 });
+  }
+  const perSource = new Map<BatchSource, number>();
+  return [...byId.values()]
+    .sort((a, b) => a.batch.id - b.batch.id)
+    .map(({ batch, count }) => {
+      const n = (perSource.get(batch.source) ?? 0) + 1;
+      perSource.set(batch.source, n);
+      const time = new Date(batch.addedAt).toLocaleTimeString([], {
+        hour: 'numeric',
+        minute: '2-digit',
+      });
+      return {
+        id: batch.id,
+        label: `${BATCH_SOURCE_NAMES[batch.source]} ${n} · ${mediaCount(count, media)} · ${time}`,
+      };
+    });
+}
+
+/** The images a Manage-tags edit applies to: one batch's, or the whole dataset's when `batchId` is null. */
+export const imagesInScope = <T extends Pick<Img, 'batch'>>(
+  images: T[],
+  batchId: number | null
+): T[] => (batchId === null ? images : images.filter((i) => i.batch?.id === batchId));
 
 /** Start one auto-label pass over `targets`. Each step is charged, so every target is marked tried
  *  here, at submit, rather than when its result lands — a tile whose result never maps back can't be
@@ -418,6 +601,10 @@ export interface RunParams {
   blocksToSwap: NumericInput;
   vParameterization: string;
   zeroTerminalSnr: string;
+  lrWarmupSteps: NumericInput;
+  captionDropoutRate: NumericInput;
+  rankDropout: NumericInput;
+  trainConv: boolean;
   steps: number;
   epochs: number;
   unetLr: NumericInput;
@@ -434,6 +621,11 @@ export interface RunParams {
   noiseOffset: NumericInput;
   flipAugmentation: boolean;
 }
+
+/** Review-step params editable without the refund-forfeit acknowledgement: Checkpoints (a price knob) and
+ *  the negative prompt, which only shapes the preview samples. The seed also seeds training, so it stays locked. */
+const ACK_FREE_PARAMS: ReadonlySet<keyof RunParams> = new Set(['epochs', 'negativePrompt']);
+export const paramNeedsRefundAck = (field: keyof RunParams) => !ACK_FREE_PARAMS.has(field);
 
 /** What a `type="number"` input's binding hands back: the number, or '' when cleared. Stored as-is —
  *  round-tripping through `String()` makes Svelte rewrite the field on every keystroke, and a
@@ -459,6 +651,10 @@ export const PARAM_LABELS: Record<keyof RunParams, string> = {
   blocksToSwap: 'Blocks to swap',
   vParameterization: 'V-prediction',
   zeroTerminalSnr: 'Zero terminal SNR',
+  lrWarmupSteps: 'LR warmup steps',
+  captionDropoutRate: 'Caption dropout',
+  rankDropout: 'Rank dropout',
+  trainConv: 'Train convolution layers',
   steps: 'Steps',
   epochs: 'Checkpoints',
   batchSize: 'Batch size',
@@ -484,7 +680,7 @@ export const PARAM_HELP: Record<keyof RunParams, string> = {
     'Repeats each image within a dataset epoch. The Steps field still sets the total training budget.',
   enableBucket: 'Groups images with similar aspect ratios to reduce cropping.',
   clipSkip:
-    'Text encoder layer skip for SD 1.5. Anime defaults to 2; other SD 1.5 models default to 1.',
+    'Text encoder layer skip. SD 1.5 defaults to 1 (anime 2); SDXL-family models default to 2, where 1 trains on the last layer and usually looks wrong.',
   lrSchedulerNumCycles:
     'Number of cycles for cosine_with_restarts. Other schedulers ignore this value.',
   seed: 'Random seed for training and preview samples.',
@@ -495,6 +691,14 @@ export const PARAM_HELP: Record<keyof RunParams, string> = {
     'Auto detects checkpoint metadata, including compatible NoobAI checkpoints. Override only if you know how the checkpoint was trained.',
   zeroTerminalSnr:
     'Auto detects the checkpoint training schedule. Override only if required by your checkpoint.',
+  lrWarmupSteps:
+    'Gradually raise the learning rate at the start. Available with constant learning rate. Leave blank to keep the scheduler default.',
+  captionDropoutRate:
+    'Chance of training without a caption, from 0 to 1. Leave blank to keep the model default (0.05).',
+  rankDropout:
+    'Randomly skip part of the LoRA during training to help reduce overfitting. Leave blank or use 0 to keep it off.',
+  trainConv:
+    'Train additional image-detail layers. Uses more memory. Available for SD 1.5 and SDXL-family models only; off by default.',
   steps:
     'How many optimisation steps the run makes. More steps means each image is seen more often; too many and the model memorises the dataset instead of learning it. The recommended budget for this model is {recommended}.',
   epochs:
@@ -635,13 +839,17 @@ export function defaultRunParams(run: Run, trigger = '', loraType = ''): RunPara
     negativePrompt: '',
     numRepeats: '1',
     enableBucket: true,
-    clipSkip: version.key === 'anime' ? '2' : '1',
+    clipSkip: String(version.key === 'anime' ? 2 : kohyaClipSkip(version.ecosystem)?.default ?? 1),
     lrSchedulerNumCycles: '3',
     seed: '42',
     fp8Base: true,
     blocksToSwap: '18',
     vParameterization: 'auto',
     zeroTerminalSnr: 'auto',
+    lrWarmupSteps: '',
+    captionDropoutRate: '',
+    rankDropout: '',
+    trainConv: false,
     steps: defaultStepsForRun(run),
     epochs: d.epochs,
     unetLr: String(d.unetLr),
@@ -663,10 +871,21 @@ export function defaultRunParams(run: Run, trigger = '', loraType = ''): RunPara
 }
 
 /** Which of the extra AI-Toolkit fields a run can actually use, given the dataset's label mode. */
-export function runExtraCapabilities(run: Run, labelMode: LabelType) {
-  const caps = extraParamCapabilities(runCard(run), runVersion(run), labelMode);
+export function runExtraCapabilities(
+  run: Run,
+  labelMode: LabelType,
+  params = defaultRunParams(run)
+) {
+  const caps = extraParamCapabilities(runCard(run), runVersion(run), labelMode, {
+    engine: runEngine(run),
+    lrScheduler: params.lrScheduler,
+    steps: params.steps,
+  });
   if (runEngine(run) === 'kohya' && isKohyaFlow(runVersion(run).ecosystem))
-    caps.noiseOffset = { supported: false, reason: 'Flux and Chroma do not use noise offset.' };
+    caps.noiseOffset = {
+      supported: false,
+      reason: 'Flux, Chroma and Anima do not use noise offset.',
+    };
   return caps;
 }
 
@@ -726,7 +945,13 @@ export interface ParamDeviation {
 
 /** Display form of one param value — numbers as typed, booleans as On/Off. */
 export function paramDisplay(value: NumericInput | boolean): string {
-  return typeof value === 'boolean' ? (value ? 'On' : 'Off') : String(value);
+  return typeof value === 'boolean'
+    ? value
+      ? 'On'
+      : 'Off'
+    : value === ''
+    ? 'Model default'
+    : String(value);
 }
 
 /** Two param values agree when they read as the same number (so `0.00005` equals `5e-5`), else as
@@ -749,7 +974,7 @@ export function paramDeviations(
   loraType = ''
 ): ParamDeviation[] {
   const defaults = defaultRunParams(run, trigger, loraType);
-  const caps = runExtraCapabilities(run, labelMode);
+  const caps = runExtraCapabilities(run, labelMode, params);
   const out: ParamDeviation[] = [];
   for (const field of Object.keys(defaults) as (keyof RunParams)[]) {
     if (
@@ -821,10 +1046,17 @@ export function submittedPrompts(texts: string[]): string[] {
  *  Select step won't mix them, since the two datasets don't share a shape. */
 export const runTrainsPairs = (run: Run): boolean => runCard(run).pairs === true;
 
-/** Whether `card` can join a sweep led by `primary`: one dataset feeds every run, so they must agree on
- *  its label format and on whether it is pairs. */
-export function sweepCompatible(card: ModelCard, primary: ModelCard): boolean {
-  return labelOptions(card).includes(primary.label) && !!card.pairs === !!primary.pairs;
+/** The label mode one dataset can use for every run in `cards`, or null when they can't share one. */
+export function sweepLabelMode(
+  cards: ModelCard[],
+  previous: ModelCard | null,
+  current: LabelType,
+  datasetLabeled: boolean
+): LabelType | null {
+  const lead = cards[0];
+  if (!lead || cards.some((c) => !!c.pairs !== !!lead.pairs)) return null;
+  const mode = labelModeForCard(previous, lead, current, datasetLabeled);
+  return cards.every((c) => labelOptions(c).includes(mode)) ? mode : null;
 }
 
 /** Whether a run's samples can be rendered from input images (edit LoRAs). A Custom run resolves to
@@ -934,10 +1166,30 @@ export function withFilterTags(filter: TagFilter, text: string, side: keyof TagF
   } as TagFilter;
 }
 
-/** `tags` plus the tags typed or pasted in `text`, in order, skipping any already present. */
+/** `tags` plus the tags typed or pasted in `text`, in order, skipping any already present in any casing. */
 export function withTags(tags: string[], text: string): string[] {
-  const additions = splitTags(text).filter((t) => !tags.includes(t));
+  const have = new Set(tags.map((t) => t.toLowerCase()));
+  const additions = splitTags(text).filter((t) => {
+    const key = t.toLowerCase();
+    if (have.has(key)) return false;
+    have.add(key);
+    return true;
+  });
   return additions.length ? [...tags, ...additions] : tags;
+}
+
+/** What a key does in the tag-entry box: Enter adds the typed tags, Shift+Enter keeps a newline (it splits
+ *  like a comma), and a fresh Backspace press in an empty box removes the last tag. Auto-repeat is ignored so
+ *  holding Backspace to clear the draft stops at the empty box instead of eating the assigned tags. */
+export function tagEntryKey(
+  e: Pick<KeyboardEvent, 'key' | 'shiftKey' | 'isComposing' | 'keyCode' | 'repeat'>,
+  draft: string,
+  tagCount: number
+): 'commit' | 'removeLast' | null {
+  // keyCode 229: Safari reports the Enter that confirms an IME conversion with isComposing false.
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) return 'commit';
+  if (e.key === 'Backspace' && !e.repeat && draft === '' && tagCount > 0) return 'removeLast';
+  return null;
 }
 
 /** labelString's inverse — one definition so a mode round-trip can't corrupt labels. */
@@ -988,17 +1240,9 @@ function num(value: NumericInput, fallback: NumericInput): number {
   return Number.isFinite(n) ? n : Number(fallback);
 }
 
-/** One confirm covers every run of a sweep: they train on the same dataset. */
-export function stampMature(
-  runs: TrainingRunPayload[],
-  matureAck: boolean,
-  matureCount: number
-): TrainingRunPayload[] {
-  return runs.map((run) => ({
-    ...run,
-    ...(matureAck ? { matureAck: true } : {}),
-    meta: { ...run.meta, matureCount },
-  }));
+/** Every run of a sweep trains on the same dataset, so each carries its mature count. */
+export function stampMature(runs: TrainingRunPayload[], matureCount: number): TrainingRunPayload[] {
+  return runs.map((run) => ({ ...run, meta: { ...run.meta, matureCount } }));
 }
 
 export function runTrainingParams(
@@ -1009,7 +1253,7 @@ export function runTrainingParams(
   loraType = ''
 ) {
   const version = runVersion(run);
-  const caps = runExtraCapabilities(run, labelMode);
+  const caps = runExtraCapabilities(run, labelMode, params);
   const tags = caps.shuffleTokens.supported;
   const defaults = defaultRunParams(run, trigger, loraType);
   const d = {
@@ -1058,7 +1302,25 @@ export function runTrainingParams(
           },
         }
       : {}),
+    ...pickAiToolkitOptions(
+      {
+        engine: runEngine(run),
+        ecosystem: version.ecosystem,
+        lrScheduler: params.lrScheduler,
+        steps: params.steps,
+      },
+      {
+        lrWarmupSteps: optionalNumber(params.lrWarmupSteps),
+        captionDropoutRate: optionalNumber(params.captionDropoutRate),
+        rankDropout: optionalNumber(params.rankDropout),
+        trainConv: params.trainConv,
+      }
+    ),
   };
+}
+
+function optionalNumber(value: NumericInput | undefined): number | undefined {
+  return value === undefined || value === '' ? undefined : Number(value);
 }
 
 export function buildTrainingRuns(

@@ -1,3 +1,4 @@
+import { serverCopyTablesSql } from '@civitai/db-queries/test/image-uses';
 import { PGlite } from '@electric-sql/pglite';
 import type { Prisma } from '@prisma/client';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -36,6 +37,7 @@ import { tagRouter } from '~/server/routers/tag.router';
 import { imageResourcesCache, imageTagsCache } from '~/server/redis/caches';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { withModeratorRightsFor } from '~/server/auth/full-user-credential';
 
 // assertImageVisibleToViewer reads through Kysely, not Prisma's `$queryRaw`. Its statements get the
 // answers this file's `$queryRaw` fakes give, without counting as `$queryRaw` calls (answerLike).
@@ -59,11 +61,13 @@ beforeAll(async () => {
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
     CREATE TYPE "Availability" AS ENUM ('Public', 'Unsearchable', 'Private', 'EarlyAccess');
     CREATE TYPE "CollectionContributorPermission" AS ENUM ('VIEW', 'ADD', 'ADD_REVIEW', 'MANAGE');
+    CREATE TABLE "ServiceDealReviewImage" ("reviewId" int NOT NULL, "imageId" int NOT NULL);
     CREATE TABLE "Image" (
-      id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, "nsfwLevel" int DEFAULT 1,
+      id int PRIMARY KEY, minor boolean NOT NULL DEFAULT false, "userId" int NOT NULL, "postId" int, "nsfwLevel" int DEFAULT 1,
       "needsReview" text, "blockedFor" text, ingestion "ImageIngestionStatus" DEFAULT 'Scanned',
       "nsfwLevelLocked" boolean DEFAULT false, metadata jsonb NOT NULL DEFAULT '{}',
-      "scanJobs" jsonb, "acceptableMinor" boolean NOT NULL DEFAULT false
+      "scanJobs" jsonb, "acceptableMinor" boolean NOT NULL DEFAULT false,
+      "modelRestricted" boolean NOT NULL DEFAULT false
     );
     CREATE TABLE "Post" (
       id int PRIMARY KEY, "userId" int NOT NULL, "publishedAt" timestamp,
@@ -71,7 +75,7 @@ beforeAll(async () => {
     );
     CREATE TABLE "Article" (
       id int PRIMARY KEY, "coverId" int, status text, "publishedAt" timestamp, ingestion text,
-      "bannerId" int
+      "bannerId" int, availability "Availability" DEFAULT 'Public', "userId" int
     );
     CREATE TABLE "CollectionContributor" (
       "collectionId" int, "userId" int, permissions "CollectionContributorPermission"[]
@@ -81,6 +85,8 @@ beforeAll(async () => {
     );
     CREATE TABLE "BountyEntry" (id int PRIMARY KEY, "bountyId" int NOT NULL, "userId" int);
     CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
+    ${serverCopyTablesSql};
+    ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS url text;
   `);
   const raw = pgliteRaw(db);
   (dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockImplementation(
@@ -142,12 +148,26 @@ const STRANGER: User = { id: VIEWER };
 const SELF: User = { id: OWNER };
 const MOD: User = { id: VIEWER, isModerator: true };
 
-function callerFor(user: User) {
+type Credential = {
+  tokenScope: bigint;
+  apiKeyId: number | null;
+  apiKeyType?: 'User';
+  subject?: { type: 'apiKey'; id: number };
+};
+const SESSION: Credential = { tokenScope: TokenScope.Full, apiKeyId: null };
+const keyOf = (tokenScope: bigint): Credential => ({
+  tokenScope,
+  apiKeyId: 7,
+  apiKeyType: 'User',
+  subject: { type: 'apiKey', id: 7 },
+});
+
+function callerFor(user: User, credential: Credential = SESSION) {
   return imageRouter.createCaller({
-    user,
+    // As createContext builds it: the viewer read through the request's credential.
+    user: withModeratorRightsFor(user, credential),
     acceptableOrigin: true,
-    tokenScope: TokenScope.Full,
-    apiKeyId: null,
+    ...credential,
     req: { headers: {} },
     res: { setHeader: () => undefined },
     cache: { edgeTTL: 0 },
@@ -156,9 +176,9 @@ function callerFor(user: User) {
   } as never);
 }
 
-async function sees(user: User, id = 1) {
+async function sees(user: User, id = 1, credential?: Credential) {
   try {
-    const data = await callerFor(user).getDetail({ id });
+    const data = await callerFor(user, credential).getDetail({ id });
     expect(data.resources).toEqual([
       { id: 5, modelVersion: { id: 5, name: 'v1' }, detected: true },
     ]);
@@ -187,7 +207,12 @@ const HIDDEN: Array<[string, Parameters<typeof seed>[0]]> = [
   ['rated Blocked', { image: { '"nsfwLevel"': '32' } }],
   ['unrated', { image: { '"nsfwLevel"': '0' } }],
   ['flagged acceptableMinor', { image: { '"acceptableMinor"': 'true' } }],
-  ['awaiting review', { image: { '"needsReview"': `'minor'` } }],
+  [
+    'rated R on a restricted base model',
+    { image: { '"nsfwLevel"': '4', '"modelRestricted"': 'true' } },
+  ],
+  // Another review state, not one of the held ones below: the owner keeps it.
+  ['awaiting review', { image: { '"needsReview"': `'poi'` } }],
   ['in an unpublished post', { post: { '"publishedAt"': 'NULL' } }],
   ['in a Private post', { post: { availability: `'Private'` } }],
   ['with no post', { post: null }],
@@ -212,6 +237,25 @@ describe('image.getDetail visibility', () => {
     expect(await sees(MOD)).toBe(true);
   });
 
+  it.each(['csam', 'minor'])(
+    'an image held for %s review answers to its owner and a moderator, and to nobody else',
+    async (hold) => {
+      await seed({ image: { '"needsReview"': `'${hold}'` } });
+      expect(await sees(SELF)).toBe(true);
+      expect(await sees(MOD)).toBe(true);
+      expect(await sees(STRANGER)).toBe(false);
+      expect(await sees(ANON)).toBe(false);
+      // The owner's view needs a session or a full-access key: a scoped key gets the hold.
+      expect(await sees(SELF, 1, keyOf(TokenScope.MediaRead))).toBe(false);
+      expect(await sees(SELF, 1, keyOf(TokenScope.Full))).toBe(true);
+      // The owner is the session user: naming the owner in the input opens nothing.
+      for (const user of [STRANGER, ANON]) {
+        const asOwner = callerFor(user).getDetail({ id: 1, userId: OWNER } as never);
+        await expect(asOwner).rejects.toMatchObject({ code: 'NOT_FOUND' });
+      }
+    }
+  );
+
   it('a stranger the owner blocked gets NOT_FOUND; a moderator is not block-checked', async () => {
     await seed();
     vi.mocked(amIBlockedByUser).mockResolvedValue(true);
@@ -231,13 +275,23 @@ describe('image.getDetail visibility', () => {
   });
 });
 
+describe('image.getDetail for a moderator on an API key', () => {
+  it.each(HIDDEN)(
+    'an image %s is NOT_FOUND on a scoped key, and answers on a full-scope key',
+    async (_, state) => {
+      await seed(state);
+      expect(await sees(MOD, 1, keyOf(TokenScope.MediaRead))).toBe(false);
+      expect(await sees(MOD, 1, keyOf(TokenScope.Full))).toBe(true);
+    }
+  );
+});
+
 describe('tag.getVotableTags on an image', () => {
-  function tagCallerFor(user: User) {
+  function tagCallerFor(user: User, credential: Credential = SESSION) {
     return tagRouter.createCaller({
-      user,
+      user: withModeratorRightsFor(user, credential),
       acceptableOrigin: true,
-      tokenScope: TokenScope.Full,
-      apiKeyId: null,
+      ...credential,
       req: { headers: {} },
       res: { setHeader: () => undefined },
       cache: { edgeTTL: 0 },
@@ -246,9 +300,9 @@ describe('tag.getVotableTags on an image', () => {
     } as never);
   }
 
-  async function seesTags(user: User, id = 1) {
+  async function seesTags(user: User, id = 1, credential?: Credential) {
     try {
-      const tags = await tagCallerFor(user).getVotableTags({ type: 'image', id });
+      const tags = await tagCallerFor(user, credential).getVotableTags({ type: 'image', id });
       expect(tags.map((t) => t.name)).toEqual(['tag']);
       return true;
     } catch (e) {
@@ -275,6 +329,20 @@ describe('tag.getVotableTags on an image', () => {
       await seed(state);
       expect(await seesTags(SELF)).toBe(true);
       expect(await seesTags(MOD)).toBe(true);
+    }
+  );
+
+  it.each(['csam', 'minor'])(
+    'an image held for %s review returns tags to its owner and a moderator, and to nobody else',
+    async (hold) => {
+      await seed({ image: { '"needsReview"': `'${hold}'` } });
+      expect(await seesTags(SELF)).toBe(true);
+      expect(await seesTags(MOD)).toBe(true);
+      expect(await seesTags(STRANGER)).toBe(false);
+      expect(await seesTags(ANON)).toBe(false);
+      // The owner's view needs a session or a full-access key: a scoped key gets the hold.
+      expect(await seesTags(SELF, 1, keyOf(TokenScope.MediaRead))).toBe(false);
+      expect(await seesTags(SELF, 1, keyOf(TokenScope.Full))).toBe(true);
     }
   );
 

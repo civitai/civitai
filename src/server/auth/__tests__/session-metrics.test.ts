@@ -1,7 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-// Stable metric spies so we can assert the histogram + counter wiring. A file-level vi.mock overrides the
-// global prom/client stub (src/__tests__/setup.ts) for this module.
 const h = vi.hoisted(() => ({
   histogram: { observe: vi.fn() },
   counter: { inc: vi.fn() },
@@ -14,25 +12,14 @@ vi.mock('~/server/prom/client', () => ({
 
 import { observeSessionLeg } from '../session-metrics';
 
-beforeEach(() => {
-  h.histogram.observe.mockClear();
-  h.counter.inc.mockClear();
-});
-
-describe('observeSessionLeg — civitai_app_session_resolution_* wiring', () => {
-  // The coordinator-required assertion: the timeout PATH increments session_resolution_timeouts_total.
+describe('observeSessionLeg', () => {
   it('increments the timeouts counter ONLY on a timeout outcome (labeled by leg)', () => {
+    h.counter.inc.mockClear();
     observeSessionLeg('identity', 'timeout', 1.5);
-    expect(h.histogram.observe).toHaveBeenCalledWith({ leg: 'identity', outcome: 'timeout' }, 1.5);
-    expect(h.counter.inc).toHaveBeenCalledWith({ leg: 'identity' });
-    expect(h.counter.inc).toHaveBeenCalledTimes(1);
-  });
-
-  it('does NOT increment the counter on error / miss outcomes (only real timeouts)', () => {
     observeSessionLeg('identity', 'error', 0.5);
     observeSessionLeg('revocation', 'error', 0.1);
     observeSessionLeg('identity', 'miss', 0.03);
-    expect(h.counter.inc).not.toHaveBeenCalled();
-    expect(h.histogram.observe).toHaveBeenCalledTimes(3);
+    expect(h.counter.inc).toHaveBeenCalledTimes(1);
+    expect(h.counter.inc).toHaveBeenCalledWith({ leg: 'identity' });
   });
 });

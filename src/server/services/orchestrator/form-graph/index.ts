@@ -54,10 +54,10 @@ import { createAceAudioInput } from './ace.handler';
 import { createMiniMaxMusicInput } from './minimax-music.handler';
 import { createYuE2Input } from './yue2.handler';
 import { createSoniloInput } from './sonilo.handler';
+import { createSeedAudioInput } from './seed-audio.handler';
 import {
   createPolyGenInput,
   createTripoInput,
-  createHunyuan3dInput,
   createPixal3dInput,
   createTrellis2Input,
 } from './model3d.handler';
@@ -114,10 +114,10 @@ export { createAceAudioInput } from './ace.handler';
 export { createMiniMaxMusicInput } from './minimax-music.handler';
 export { createYuE2Input } from './yue2.handler';
 export { createSoniloInput } from './sonilo.handler';
+export { createSeedAudioInput } from './seed-audio.handler';
 export {
   createPolyGenInput,
   createTripoInput,
-  createHunyuan3dInput,
   createPixal3dInput,
   createTrellis2Input,
 } from './model3d.handler';
@@ -313,14 +313,14 @@ function createStep(
     case 'Sonilo':
       return createSoniloInput(data, handlerCtx);
 
+    case 'SeedAudio':
+      return createSeedAudioInput(data, handlerCtx);
+
     case 'PolyGen':
       return createPolyGenInput(data, handlerCtx);
 
     case 'Tripo':
       return createTripoInput(data, handlerCtx);
-
-    case 'Hunyuan3D':
-      return createHunyuan3dInput(data, handlerCtx);
 
     case 'Pixal3D':
       return createPixal3dInput(data, handlerCtx);

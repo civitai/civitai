@@ -7,6 +7,8 @@ import type {
   ArticleMetadata,
 } from '~/server/schema/article.schema';
 import { unpublishArticleById, upsertArticle } from '~/server/services/article.service';
+import { reportListedViewerOf } from '~/server/utils/report-listed-viewer';
+import { actsAsModerator } from '~/server/utils/image-media-visibility';
 import { getCategoryTags } from '~/server/services/system-cache';
 import {
   throwAuthorizationError,
@@ -62,7 +64,9 @@ export const upsertArticleHandler = async ({
       isOfficial: official,
       bannerImage: banner,
       userId: ctx.user.id,
-      isModerator: ctx.user.isModerator,
+      // As getArticleById reads it, so a save keeps what that read withheld from this editor.
+      isModerator: actsAsModerator(ctx),
+      reportListedViewer: reportListedViewerOf(ctx),
       scanContent,
     });
 

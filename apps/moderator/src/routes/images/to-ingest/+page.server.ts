@@ -11,6 +11,7 @@ import {
   MAX_RESCAN_PER_REQUEST,
   RECENT_PENDING_DAYS,
 } from '$lib/server/ingestion.service';
+import { withheldRow, withheldRows } from '$lib/server/retracted-media';
 
 const querySchema = z.object({
   cursor: z.coerce.number().int().positive().optional().catch(undefined),
@@ -18,7 +19,7 @@ const querySchema = z.object({
   view: z.enum(['recent', 'stuck']).catch('recent'),
 });
 
-export const load: PageServerLoad = async ({ url }) => {
+export const load: PageServerLoad = async ({ url, locals }) => {
   const { cursor, limit, view } = parseQuery(url, querySchema);
   const [{ items, nextCursor }, total, health] = await Promise.all([
     getImagesPendingIngestion({ cursor, limit, view }),
@@ -27,7 +28,16 @@ export const load: PageServerLoad = async ({ url }) => {
   ]);
   return {
     wide: true,
-    images: items,
+    images: await withheldRows(
+      items,
+      locals.user,
+      'to-ingest',
+      (i) => i.id,
+      (i) => ({
+        ...withheldRow(i),
+        metadata: null,
+      })
+    ),
     nextCursor,
     total,
     health,
@@ -45,8 +55,12 @@ export const actions: Actions = {
     const imageIds =
       form.get('all') === 'true' ? undefined : parseIdList(String(form.get('imageIds') ?? ''));
 
-    const result = await rescanStuckImages({ imageIds, userId: locals.user.id });
+    const result = await rescanStuckImages({
+      imageIds,
+      userId: locals.user.id,
+      viewer: locals.user,
+    });
     if (!result.ok) return fail(400, { error: result.error });
-    return { success: true, count: result.count };
+    return { success: true, count: result.count, skipped: result.skipped };
   },
 };

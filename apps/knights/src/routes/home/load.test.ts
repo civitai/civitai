@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { LATEST_UPDATE_ID } from '$lib/server/whats-new/entries';
 
 const getPlayerStatus = vi.hoisted(() => vi.fn());
 const getDailyStatus = vi.hoisted(() => vi.fn());
@@ -21,12 +22,18 @@ vi.mock('$lib/server/rail-runtime', () => ({ railFor }));
 const seenStore = vi.hoisted(() => ({ get: vi.fn(), set: vi.fn() }));
 vi.mock('$lib/server/seen-runtime', () => ({ seenStore }));
 
+const stored = vi.hoisted(() => ({ value: {} as Record<string, unknown> }));
+vi.mock('$lib/server/settings/runtime', () => ({ storedSettings: async () => stored.value }));
+const moderatorStats = vi.hoisted(() => vi.fn());
+vi.mock('$lib/server/inquisitor/context', () => ({ moderatorStats }));
+
 const { load, actions } = await import('./+page.server');
 const run = () =>
   load({ locals: { user: { id: 7, username: 'Sir' } } } as never) as Promise<Record<string, any>>;
 
 beforeEach(() => {
   vi.resetAllMocks();
+  stored.value = {};
   playerRow.value = { rankType: 'Knight', exp: 10, startAt: new Date('2026-03-14T00:00:00Z') };
   getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 12 });
   getDailyStatus.mockResolvedValue({ streak: 12 });
@@ -85,6 +92,44 @@ describe('home load', () => {
     });
     expect(findRecap).not.toHaveBeenCalled();
     expect(railFor).not.toHaveBeenCalled();
+  });
+});
+
+describe('home: the Inquisitor', () => {
+  const asModerator = () =>
+    load({ locals: { user: { id: 7, username: 'Sir', isModerator: true } } } as never) as Promise<
+      Record<string, any>
+    >;
+  const STATS = { votesThisWeek: 48, waiting: 312, waitingMore: false, agreementRate: 0.91 };
+
+  it("gives a moderator the Inquisitor's stats in place of their career while the queue is on", async () => {
+    stored.value = { inquisitorQueue: true };
+    moderatorStats.mockResolvedValue(STATS);
+    const page = await asModerator();
+    expect(page).toMatchObject({
+      inquisitor: { stats: STATS },
+      player: null,
+      status: null,
+      recap: null,
+    });
+    expect(moderatorStats).toHaveBeenCalledWith(expect.anything(), { moderatorId: 7, now: NOW });
+    expect(getPlayerStatus).not.toHaveBeenCalled();
+    expect(findRecap).not.toHaveBeenCalled();
+  });
+
+  it('still renders when the stats cannot be read', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    stored.value = { inquisitorQueue: true };
+    moderatorStats.mockRejectedValue(new Error('down'));
+    expect((await asModerator()).inquisitor).toEqual({ stats: null });
+    vi.restoreAllMocks();
+  });
+
+  it('gives a moderator their own career while the queue is off', async () => {
+    stored.value = { inquisitorQueue: false };
+    const page = await asModerator();
+    expect(page).toMatchObject({ inquisitor: null, status: { rank: 'Knight' } });
+    expect(moderatorStats).not.toHaveBeenCalled();
   });
 });
 
@@ -159,6 +204,7 @@ describe("home: what's new", () => {
       level: 12,
       guide: false,
       whatsNew: true,
+      updatesSeen: LATEST_UPDATE_ID,
     });
   });
 

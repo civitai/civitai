@@ -10,7 +10,9 @@ import {
   getOwnTriggerWords,
 } from '~/server/services/model-sfw-face.service';
 import type { SfwFaceVerdict } from '~/server/services/model-sfw-face.service';
+import type { NotifyTextScanRatingRaisedArgs } from '~/server/services/text-scan/notify';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
+import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 import { backoffDelay } from '~/utils/backoff';
 
 const QUEUE = 'com-face-recheck';
@@ -171,8 +173,16 @@ async function removeComFace(
     reason,
     ...(detail && { detail }),
   };
+  let notice: NotifyTextScanRatingRaisedArgs | null = null;
   const removed = await dbWrite.$transaction(async (tx) => {
     const updated = await tx.$executeRaw(comFaceRemovalSql(modelId, coverId, marker));
+    if (updated) {
+      // Imported here: the action reaches services that import this module.
+      const { applyComFaceHeldVerdict } = await import(
+        '~/server/services/text-scan/actions/model-nsfw'
+      );
+      notice = await applyComFaceHeldVerdict(tx, modelId);
+    }
     if (updated)
       await tx.modActivity.create({
         data: {
@@ -183,7 +193,13 @@ async function removeComFace(
       });
     return updated > 0;
   });
-  if (removed) await finishRemoval(modelId);
+  // The notice follows the level refresh, as in upsertModel, and is sent even when the refresh
+  // throws: a retry does not re-apply the verdict.
+  try {
+    if (removed) await finishRemoval(modelId);
+  } finally {
+    if (notice) await faceLossNotice.send([notice]);
+  }
   return removed;
 }
 
@@ -216,14 +232,66 @@ function recordIntent(
   });
 }
 
-/** Drops the cover's safe bits from the model's level, which is what takes it off .com. */
+/** Drops the cover's safe bits from the model's level, which is what takes it off .com. Rethrows
+ *  after queueing the level job, so the re-check retry still runs. */
 async function finishRemoval(modelId: number) {
   // Imported here: the level service pulls in search.
   const { updateModelNsfwLevels } = await import('~/server/services/nsfwLevels.service');
-  await updateModelNsfwLevels([modelId]);
+  try {
+    await updateModelNsfwLevels([modelId]);
+  } catch (error) {
+    const { enqueueJobs } = await import('~/server/services/job-queue.service');
+    await enqueueJobs([
+      { entityId: modelId, entityType: EntityType.Model, type: JobQueueType.UpdateNsfwLevel },
+    ]).catch(() => null);
+    logToAxiom({
+      type: 'error',
+      name: 'com-face-recheck',
+      message: 'com face removed; level refresh queued',
+      modelId,
+      error: (error as Error).message,
+    });
+    throw error;
+  }
   // Imported here: model-version.service imports this module.
   const { bustPublicModelResponseCache } = await import('~/server/services/model-version.service');
   await bustPublicModelResponseCache(modelId);
+  await rescanTextAfterFaceLoss(modelId);
+}
+
+/** The owner's rating notice for a held verdict the removal applied, sent after commit. Swapped by
+ *  tests; imported lazily, as the action reaches services that import this module. */
+export const faceLossNotice = {
+  send: async (notices: NotifyTextScanRatingRaisedArgs[]) => {
+    const { notifyComFaceHeldVerdictApplied } = await import(
+      '~/server/services/text-scan/actions/model-nsfw'
+    );
+    await notifyComFaceHeldVerdictApplied(notices);
+  },
+};
+
+/** Swapped by tests. Imported lazily: the scan reaches services that import this module. */
+export const faceLossRescan = {
+  loadSubmit: () => import('~/server/services/text-scan/submit'),
+};
+
+/**
+ * Scans the model's text again past the unchanged-text skip: the text scan may have left an R+
+ * listing unrated on the strength of a .com face that is now gone. Never throws.
+ */
+export async function rescanTextAfterFaceLoss(modelId: number) {
+  try {
+    const { scanEntityInBackground } = await faceLossRescan.loadSubmit();
+    scanEntityInBackground({ entityType: 'Model', entityId: modelId, force: true });
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'com-face-recheck',
+      message: 'text rescan after face loss failed',
+      modelId,
+      error: (error as Error).message,
+    });
+  }
 }
 
 /** A model whose face the re-check removed waits here, after a listing edit, for one restore check. */

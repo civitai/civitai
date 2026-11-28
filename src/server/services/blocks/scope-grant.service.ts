@@ -48,6 +48,7 @@ import {
   isConsentExemptScope,
 } from '~/shared/constants/block-scope.constants';
 import { newAppUserScopeGrantId } from '~/server/utils/app-block-ids';
+import { isMissingColumnError } from '~/server/services/blocks/missing-table-error';
 
 /**
  * The one scope in the vocabulary that can spend the viewer's Buzz, and therefore the
@@ -79,51 +80,8 @@ import { newAppUserScopeGrantId } from '~/server/utils/app-block-ids';
  */
 export const CONSENT_SPEND_SCOPE = 'ai:write:budgeted';
 
-/**
- * True for the ONE Prisma failure that means "this deploy is running ahead of its
- * migration": P2022 — the column named in the query does not exist in the database.
- *
- * Migrations in this project are applied BY HAND, per environment, so the image and
- * the schema are not deployed atomically and `buzz_budget_per_day` — or, since the
- * per-scope revoke landed, `revoked_scopes` / `revoked_scopes_at` — can legitimately
- * be absent from a database the current code is talking to. Every OTHER Prisma error
- * — connection loss, timeout, constraint violation — must still propagate: a bare
- * `catch` here would swallow real DB failures and silently return "no budget", which
- * is the fail-OPEN this whole feature exists to prevent.
- *
- * Narrow by CODE, not by message text. The message is a human string that upstream
- * is free to reword; the code is the contract.
- *
- * 🔴 `meta.code` IS CHECKED, AND IT WAS NOT — WHICH MADE EVERY TOLERANCE IN THIS MODULE
- * CONDITIONAL ON THE PRISMA ENGINE VERSION. `app-listing-source-repo.service.ts` carries a
- * same-named predicate that also matches `42703` and either code under `meta`, and its docblock
- * says why in words: 42703 "reaches us on a `$queryRaw` path **and is also what Prisma reports
- * in `meta.code` for some engine versions**" — on the TYPED client, which is all this module
- * uses. Its tests pin both shapes. This copy matched a bare `code === 'P2022'` only, so on such
- * an engine version: `readGrantRow`'s narrow retry never fires and the read 500s instead of
- * degrading to "nothing revoked", `revokeScopes` throws a raw 500 instead of
- * `PRECONDITION_FAILED` + `CONSENT_REVOKE_UNAVAILABLE_MESSAGE`, and `unrevokeData`'s whole
- * pre-migration branch is unreachable. Found by round-10 review, after this branch took the
- * predicate's consumers from **2 to 6 repo-wide (1 to 4 in this module)** — I did not write it, but
- * I multiplied what depends on it. ⚠️ An earlier draft said "2 to 4", which pairs the repo-wide
- * BEFORE with the in-module AFTER; either population is defensible, one of each is not.
- *
- * ⚠️ TWO COPIES OF ONE RULE, DELIBERATELY NOT CONSOLIDATED HERE. The sibling is in another
- * service with its own docblock and tests; unifying them is the right end state and is a
- * separate change. Closing condition: one exported predicate, both modules importing it, the
- * sibling's tests still green. Until then, a change to either MUST be mirrored — the narrow copy
- * is what produced the gap above, and a divergence regenerates it.
- */
-export function isMissingColumnError(err: unknown): boolean {
-  if (!err || typeof err !== 'object') return false;
-  const e = err as { code?: unknown; meta?: unknown };
-  if (e.code === 'P2022' || e.code === '42703') return true;
-  if (e.meta && typeof e.meta === 'object') {
-    const metaCode = (e.meta as { code?: unknown }).code;
-    if (metaCode === '42703' || metaCode === 'P2022') return true;
-  }
-  return false;
-}
+// The one "column does not exist" predicate (P2022 / 42703, by code): `missing-table-error.ts`.
+export { isMissingColumnError };
 
 /**
  * ONCE PER PROCESS, not once per deploy and not once globally — this is a
@@ -608,6 +566,13 @@ function logMissingConfirmWithinLimitColumn(site: string, err: unknown): void {
  * also require the live daily limit. Its own select with its own missing-column branch:
  * `isMissingColumnError` matches ANY missing column, so this column in a shared grant select
  * would switch off the limit or the revoke before the migration lands.
+ *
+ * 🔴 LIFETIME: DELIBERATELY THE GRANT ROW'S, LIKE THE SPEND GRANT BESIDE IT (a product decision,
+ * not an oversight). An uninstall does not touch the grant row, so it leaves the opt-in. A
+ * consent that includes spending clears it, and installing or subscribing again is one: after a
+ * reinstall the daily limit is back and the opt-in is not. The viewer's opt-out clears it too.
+ * The other clearing writes are pinned by the `confirm_within_limit_max_job is cleared` tests in
+ * `scope-grant.service.test.ts`.
  */
 export async function readConfirmWithinLimit(
   userId: number,

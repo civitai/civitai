@@ -21,6 +21,9 @@ export type CutoverEntityType = Exclude<
   | 'ServiceOffering'
   | 'PostText'
   | 'ModelRules'
+  | 'AppDoc'
+  | 'ServiceDealReview'
+  | 'ServiceDealReviewReply'
 >;
 
 type ClavataTarget = {

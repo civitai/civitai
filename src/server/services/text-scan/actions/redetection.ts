@@ -3,8 +3,9 @@ import { LOCK_REVIEW_KIND } from '@civitai/shared/lock-review';
 import { dbWrite } from '~/server/db/client';
 import { randomUUID } from 'node:crypto';
 import { delIfValue } from '~/server/redis/atomic';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { logToAxiom } from '~/server/logging/client';
+import { trackModActivity } from '~/server/services/moderator.service';
 import {
   dropRedetection,
   flagModelMinor,
@@ -20,6 +21,7 @@ import {
   type TextScanFlagLabel,
   type TextScanRedetection,
 } from '~/server/services/text-scan/flag-snapshot';
+import { boundedClusterCall } from '~/server/utils/cluster-window-count';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
@@ -106,7 +108,7 @@ const stale = () =>
 
 const LOCK_SECONDS = 120;
 const lockKey = (modelId: number, label: TextScanFlagLabel) =>
-  `${REDIS_SYS_KEYS.TEXT_SCAN.REDETECTION_LOCK}:${modelId}:${label}` as const;
+  `${REDIS_KEYS.TEXT_SCAN.REDETECTION_LOCK}:${modelId}:${label}` as const;
 
 // A keep runs for seconds across several writes, and the queue keeps listing the row meanwhile.
 // One resolution per model and label at a time; the lock expires on its own if the process dies.
@@ -119,15 +121,18 @@ export async function withResolutionLock<T>(
   const key = lockKey(modelId, label);
   // Per request, so a slow request whose lock expired cannot free the one a newer request now holds.
   const token = randomUUID();
-  const acquired = await sysRedis
-    .set(key, token, { NX: true, EX: LOCK_SECONDS })
+  const acquired = await boundedClusterCall('withResolutionLock', () =>
+    redis.set(key, token, { NX: true, EX: LOCK_SECONDS })
+  )
     .then((reply) => !!reply)
     .catch(() => true);
   if (!acquired) throw throwBadRequestError('This flag is being resolved. Reload and try again.');
   try {
     return await run();
   } finally {
-    await delIfValue(sysRedis, key, token).catch(() => null);
+    await boundedClusterCall('withResolutionLock.release', () =>
+      delIfValue(redis, key, token)
+    ).catch(() => null);
   }
 }
 
@@ -176,6 +181,29 @@ async function resolve({
   const detection = model ? getTextScanRedetection(model.meta, label) : null;
   if (!model || !detection || detection.textHash !== textHash) throw stale();
 
+  // The label is already set, so closing the lead changes nothing on the model: this row is the only
+  // record that a moderator ruled on it. The drop has landed and nothing retries it (a retry reads
+  // stale), so a failed insert is logged, not thrown.
+  const trackClosed = async () => {
+    try {
+      await trackModActivity(userId, {
+        entityType: 'model',
+        entityId: modelId,
+        activity: `textScanRedetection:closed:${label}`,
+      });
+    } catch (error) {
+      logToAxiom({
+        name: 'text-scan',
+        type: 'error',
+        message: 'closed lead activity not recorded',
+        entityType: 'Model',
+        entityId: modelId,
+        moderatorId: userId,
+        payload: { label, error: error instanceof Error ? error.message : String(error) },
+      });
+    }
+  };
+
   // promptIds are logged so a decision can be joined to the prompt versions that produced the verdict.
   const logDecision = (decision: 'kept' | 'dismissed' | 'closed') =>
     logToAxiom({
@@ -207,6 +235,7 @@ async function resolve({
       throw throwBadRequestError('A keep of this flag is unfinished. Retry Keep to complete it.');
     if (model[label]) {
       if (!(await dropRedetection({ modelId, label, textHash }))) throw stale();
+      await trackClosed();
       logDecision('closed');
       return 'closed';
     }
@@ -219,6 +248,7 @@ async function resolve({
   // Flagged by another route since: there is nothing left to apply.
   if (model[label] && !ownEntry) {
     if (!(await dropRedetection({ modelId, label, textHash }))) throw stale();
+    await trackClosed();
     logDecision('closed');
     return 'closed';
   }

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { CSAM_HOLD_REASON } from '$lib/scan-labels';
 
 /** A vote runs the hold and majority-block sweeps with the real paths, and a refused vote does not. */
 
@@ -15,8 +16,12 @@ const {
   getOpenFlaggerVersions,
   isControlFlaggerVersion,
   itemForToken,
+  itemWithheld,
+  skipCard,
 } = vi.hoisted(() => ({
+  skipCard: vi.fn(),
   itemForToken: vi.fn(),
+  itemWithheld: vi.fn(),
   getVotedItemOwner: vi.fn(),
   claimNext: vi.fn(),
   getCounters: vi.fn(),
@@ -43,6 +48,8 @@ vi.mock('$lib/server/scan-label.service', () => ({
   getVotedItemOwner,
   isControlFlaggerVersion,
   itemForToken,
+  itemWithheld,
+  skipCard,
 }));
 
 const { actions, load } = await import('../scan-labels/+page.server');
@@ -70,6 +77,7 @@ beforeEach(() => {
   applyMajorityBlocks.mockResolvedValue({ blocked: [], failed: [] });
   getVotedItemOwner.mockResolvedValue(OWNER);
   itemForToken.mockResolvedValue(5);
+  itemWithheld.mockResolvedValue(false);
 });
 
 describe('vote action', () => {
@@ -244,6 +252,17 @@ describe('vote action', () => {
     expect(castVote).not.toHaveBeenCalled();
   });
 
+  it('refuses a vote on an item whose image became withheld after the claim, recording nothing', async () => {
+    itemWithheld.mockResolvedValue(true);
+    const result = (await actions.vote(event({ token: TOKEN, block: '0' }))) as {
+      status: number;
+      data: { error: string };
+    };
+    expect(result.status).toBe(409);
+    expect(itemWithheld).toHaveBeenCalledWith(5, false);
+    expect(castVote).not.toHaveBeenCalled();
+  });
+
   it('tells a page from before the claim token to reload, recording nothing', async () => {
     const result = (await actions.vote(event({ itemId: '5', block: '0' }))) as {
       status: number;
@@ -262,6 +281,41 @@ describe('vote action', () => {
     expect(applyCsamHolds).not.toHaveBeenCalled();
     expect(applyMajorityBlocks).not.toHaveBeenCalled();
     expect(getVotedItemOwner).not.toHaveBeenCalled();
+  });
+
+  it.each(['not-open', 'released', 'full'] as const)(
+    'tells a moderator their CSAM hold did not land when the vote is refused (%s)',
+    async (reason) => {
+      castVote.mockResolvedValue({ ok: false, reason });
+      const hold = event({ token: TOKEN, block: '1', reason: CSAM_HOLD_REASON });
+      const result = (await actions.vote(hold)) as { status: number; data: { error: string } };
+      expect(result.status).toBe(409);
+      expect(result.data.error).toMatch(/CSAM hold was not recorded/);
+      // Control: any other refused vote keeps its own message.
+      const keep = (await actions.vote(event({ token: TOKEN, block: '0' }))) as {
+        data: { error: string };
+      };
+      expect(keep.data.error).not.toMatch(/CSAM hold/);
+    }
+  );
+
+  it('tells a moderator their CSAM hold did not land when the card is refused before the vote', async () => {
+    const hold = () => event({ token: TOKEN, block: '1', reason: CSAM_HOLD_REASON });
+    itemForToken.mockResolvedValueOnce(null);
+    const notYours = (await actions.vote(hold())) as { data: { error: string } };
+    expect(notYours.data.error).toMatch(/CSAM hold was not recorded/);
+    itemWithheld.mockResolvedValueOnce(true);
+    const withheld = (await actions.vote(hold())) as { data: { error: string } };
+    expect(withheld.data.error).toMatch(/CSAM hold was not recorded/);
+    expect(castVote).not.toHaveBeenCalled();
+  });
+
+  // A repeat of a hold that landed (a second tab, a retry) must not say it was not recorded.
+  it('does not tell a moderator a hold that landed was refused', async () => {
+    castVote.mockResolvedValue({ ok: false, reason: 'already-voted' });
+    const hold = event({ token: TOKEN, block: '1', reason: CSAM_HOLD_REASON });
+    const result = (await actions.vote(hold)) as { data: { error: string } };
+    expect(result.data.error).toMatch(/already voted/);
   });
 });
 
@@ -284,7 +338,10 @@ describe('load', () => {
     const data = await open('?day=2026-10-12&version=control-sample%402026-10-17');
 
     expect(isControlFlaggerVersion).toHaveBeenCalledWith('control-sample@2026-10-17');
-    expect(claimNext).toHaveBeenCalledWith(7, { day: '2026-10-12', flaggerVersion: undefined });
+    expect(claimNext).toHaveBeenCalledWith(
+      { userId: 7, csamReview: false },
+      { day: '2026-10-12', flaggerVersion: undefined }
+    );
     expect(getCounters).toHaveBeenCalledWith(7, { day: '2026-10-12', flaggerVersion: undefined });
     expect(data.version).toBe('');
   });
@@ -323,7 +380,29 @@ describe('load', () => {
 
     const data = await open('?version=scan%401');
 
-    expect(claimNext).toHaveBeenCalledWith(7, { day: undefined, flaggerVersion: 'scan@1' });
+    expect(claimNext).toHaveBeenCalledWith(
+      { userId: 7, csamReview: false },
+      { day: undefined, flaggerVersion: 'scan@1' }
+    );
     expect(data.version).toBe('scan@1');
+  });
+});
+
+describe('skip action', () => {
+  it('releases the card’s claim and records no vote', async () => {
+    skipCard.mockResolvedValue(true);
+    expect(await actions.skip(event({ token: TOKEN }))).toEqual({ skipped: true });
+    expect(skipCard).toHaveBeenCalledExactlyOnceWith(TOKEN, 7);
+    expect(castVote).not.toHaveBeenCalled();
+  });
+
+  it('refuses a token that released nothing, so the page says so before it reloads', async () => {
+    skipCard.mockResolvedValue(false);
+    expect(await actions.skip(event({ token: TOKEN }))).toMatchObject({ status: 409 });
+  });
+
+  it('refuses a malformed token without touching the claim', async () => {
+    expect(await actions.skip(event({ token: 'nope' }))).toMatchObject({ status: 400 });
+    expect(skipCard).not.toHaveBeenCalled();
   });
 });

@@ -60,6 +60,7 @@ const SURFACES: Record<string, number> = {
   'src/server/services/article.service.ts': 3,
   'src/server/services/blocks/app-listing-assets.service.ts': 2,
   'src/server/services/blocks/app-listing-review.service.ts': 1,
+  'src/server/services/blocks/app-review-thread.service.ts': 1,
   'src/server/services/blocks/block-post.service.ts': 1,
   'src/server/services/blocks/offsite-listing.service.ts': 4,
   'src/server/services/blurb.service.ts': 2,
@@ -71,7 +72,8 @@ const SURFACES: Record<string, number> = {
   'src/server/services/creator-announcement.service.ts': 1,
   'src/server/services/creator-mystery-pack.service.ts': 1,
   'src/server/services/creator-service-deal-file.service.ts': 2,
-  'src/server/services/creator-service-deal.service.ts': 2,
+  'src/server/services/creator-service-deal-review.service.ts': 1,
+  'src/server/services/creator-service-deal.service.ts': 3,
   'src/server/services/creator-service.service.ts': 1,
   'src/server/services/creator-shop-pack.service.ts': 2,
   'src/server/services/creator-shop.service.ts': 2,
@@ -151,6 +153,7 @@ const EXPECTED_WRITERS: Record<string, Record<string, number>> = {
     updateListingScreenshotCaption: 1,
   },
   'src/server/services/blocks/app-listing-review.service.ts': { upsertAppListingReview: 1 },
+  'src/server/services/blocks/app-review-thread.service.ts': { postReviewMessage: 1 },
   'src/server/services/blocks/block-post.service.ts': { previewBlockPost: 1 },
   'src/server/services/blocks/offsite-listing.service.ts': {
     submitExternalListing: 1,
@@ -173,10 +176,12 @@ const EXPECTED_WRITERS: Record<string, Record<string, number>> = {
     requestServiceDealAttachment: 1,
     requestServiceDealUpload: 1,
   },
+  // `assertReviewText` is the check every writer of a review's comment or reply calls.
+  'src/server/services/creator-service-deal-review.service.ts': { assertReviewText: 1 },
   // `assertDealText` is the shared check every deal-event comment writer calls.
   'src/server/services/creator-service-deal.service.ts': {
     assertDealText: 1,
-    requestServiceDeal: 1,
+    requestServiceDeal: 2,
   },
   'src/server/services/creator-service.service.ts': { upsertServiceOffering: 1 },
   'src/server/services/creator-shop-pack.service.ts': {

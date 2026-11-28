@@ -1,4 +1,5 @@
 import { sql, type Kysely } from 'kysely';
+import { ReportStatus } from '@civitai/db-schema/enums';
 import type { DB } from '@civitai/db-schema/kysely';
 
 // A removal that repeats the reason an image's approved appeal overturned does not take effect on one
@@ -87,6 +88,47 @@ export function overturnedRemovalLabel(
 }
 
 /**
+ * The ModActivity row on an image removed on a likeness request. Both apps write it; the main app's
+ * appeal-decision-records sweep deletes the image's appeal training copies by it.
+ */
+export const LIKENESS_REQUEST_ACTIVITY = 'likenessRequest';
+
+/**
+ * Writes the likeness mark with `insert`, retrying a failure with backoff. Never throws: the removal
+ * has committed and its other effects must run. `onGiveUp` gets the last error once every try failed;
+ * the caller counts and logs it there (with no image id), since the copies stay until it is re-marked.
+ */
+export async function writeLikenessMark(
+  insert: () => Promise<unknown>,
+  onGiveUp: (error: unknown, tries: number) => void,
+  { tries = 3, backoffMs = 200 }: { tries?: number; backoffMs?: number } = {}
+): Promise<boolean> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await insert();
+      return true;
+    } catch (e) {
+      if (attempt >= tries) {
+        onGiveUp(e, tries);
+        return false;
+      }
+      await new Promise((resolve) => setTimeout(resolve, backoffMs * 2 ** (attempt - 1)));
+    }
+  }
+}
+
+/**
+ * Reasons that say nothing about what the image showed: 'other' is a catch-all, and a likeness
+ * request says who asked. Two removals filed under them cannot be told apart.
+ */
+const UNCOMPARABLE_REASONS: ReadonlySet<string> = new Set(['other', 'likenessRequest']);
+
+/** The reasons `isSameRemovalReason` can tell apart, out of an app's violation list. */
+export function comparableReasons(violationTypes: readonly string[]): ReadonlySet<string> {
+  return new Set(violationTypes.filter((v) => !UNCOMPARABLE_REASONS.has(v)));
+}
+
+/**
  * Whether a new removal repeats the overturned one. A reason not in `knownReasons` (none chosen, a
  * catch-all, free text, or the lookup failed) cannot be shown to differ, so it counts as the same.
  */
@@ -99,6 +141,12 @@ export function isSameRemovalReason(
   if (!requested || !knownReasons.has(requested)) return true;
   return overturned === requested;
 }
+
+/**
+ * The report statuses a removal may action. `Unactioned` is a moderator's decision to leave the
+ * item up, so a later removal, held or not, leaves that report as it is.
+ */
+export const OPEN_REPORT_STATUSES = [ReportStatus.Pending, ReportStatus.Processing] as const;
 
 export type RemovalRequest = {
   imageId: number;

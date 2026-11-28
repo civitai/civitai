@@ -286,7 +286,7 @@
       },
       "packed": "3gADp2ltYWdlSWTNH16obm90Rm91bmTDqGNhY2hlZEF01v9qL+gU"
     },
-    "packed:caches:profile-pictures:v3:1001": {
+    "packed:caches:profile-pictures:v4:1001": {
       "value": {
         "id": 8901,
         "name": null,
@@ -308,7 +308,7 @@
       },
       "packed": "3gAMomlkzSLFpG5hbWXAo3VybNkkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDA4OTAxqW5zZndMZXZlbAGkaGFzaLJVR09MREVOUFJPRklMRTg5MDGmdXNlcklkzQPpqWluZ2VzdGlvbqdTY2FubmVkpHR5cGWlaW1hZ2Wld2lkdGjNAgCmaGVpZ2h0zQIAqG1ldGFkYXRh3gACpXdpZHRozQIApmhlaWdodM0CAKhjYWNoZWRBdNb/ai/oFA=="
     },
-    "packed:caches:profile-pictures:v3:1002": {
+    "packed:caches:profile-pictures:v4:1002": {
       "value": {
         "userId": 1002,
         "notFound": true,
@@ -500,6 +500,7 @@
         "minor": false,
         "poi": false,
         "acceptableMinor": false,
+        "restricted": false,
         "_resources": [
           {
             "modelVersionId": 6001,
@@ -558,6 +559,7 @@
         "minor": false,
         "poi": false,
         "acceptableMinor": false,
+        "restricted": false,
         "_resources": [
           {
             "modelVersionId": 6001,
@@ -612,6 +614,7 @@
         "minor": false,
         "poi": false,
         "acceptableMinor": false,
+        "restricted": false,
         "_resources": [
           {
             "modelVersionId": 6001,
@@ -666,6 +669,7 @@
         "minor": false,
         "poi": false,
         "acceptableMinor": false,
+        "restricted": false,
         "_resources": [
           {
             "modelVersionId": 6001,
@@ -720,6 +724,7 @@
         "minor": false,
         "poi": false,
         "acceptableMinor": false,
+        "restricted": false,
         "_resources": [],
         "_meta": "{\"prompt\": \"golden hidden prompt\"}"
       }
@@ -766,6 +771,14 @@
       {
         "id": 6401,
         "modelId": 5005
+      },
+      {
+        "id": 6501,
+        "modelId": 5006
+      },
+      {
+        "id": 6701,
+        "modelId": 5007
       }
     ],
     "models": [
@@ -803,6 +816,22 @@
       },
       {
         "id": 5005,
+        "userId": 1002,
+        "mode": null,
+        "minor": false,
+        "sfwOnly": false,
+        "galleryLevel": null
+      },
+      {
+        "id": 5006,
+        "userId": 1001,
+        "mode": null,
+        "minor": false,
+        "sfwOnly": false,
+        "galleryLevel": null
+      },
+      {
+        "id": 5007,
         "userId": 1002,
         "mode": null,
         "minor": false,
@@ -905,6 +934,12 @@
       {
         "id": 1004,
         "username": "mod_four",
+        "image": null,
+        "deletedAt": null
+      },
+      {
+        "id": -1,
+        "username": "golden_system",
         "image": null,
         "deletedAt": null
       }
@@ -1253,6 +1288,23 @@
         }
       ],
       "metadata": {}
+    },
+    "writes": {
+      "packed:caches:image-meta:8004": {
+        "value": {
+          "id": 8004,
+          "meta": {
+            "Size": "832x1216",
+            "seed": 9007199254740,
+            "prompt": "golden synthetic prompt four"
+          },
+          "cachedAt": {
+            "$date": "2026-06-15T12:00:00.000Z"
+          }
+        },
+        "packed": "3gADomlkzR9EpG1ldGHeAAOkU2l6Zag4MzJ4MTIxNqRzZWVky0KgYk3S8agApnByb21wdLxnb2xkZW4gc3ludGhldGljIHByb21wdCBmb3VyqGNhY2hlZEF01v9qL+lA",
+        "ex": 18000
+      }
     }
   }
 }

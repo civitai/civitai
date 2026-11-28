@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterEach, onTestFinished, vi } from 'vitest';
 import { generateKeyPairSync } from 'crypto';
 import { createSessionSigner, type SessionSigner } from '../sign';
 import { createAuthVerifier } from '../verify';
@@ -135,6 +135,13 @@ describe('createRevocationCheck deadline and reporting', () => {
     expect(Date.now() - started).toBeLessThan(1000);
   });
 
+  it('a per-call timeoutMs replaces the configured deadline for that read only', async () => {
+    const check = createRevocationCheck({ redis: hung, timeoutMs: 5000 });
+    const started = Date.now();
+    expect(await check(claims, { timeoutMs: 25 })).toBe(false);
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+
   it('a store error is reported as an error; an answered read as a hit', async () => {
     const onError = vi.fn();
     const onOutcome = vi.fn();
@@ -211,5 +218,121 @@ describe('createRevocationCheck deadline and reporting', () => {
       },
     });
     expect(await check(claims)).toBe(false);
+  });
+});
+
+// civitai/civitai#10695: one retry after a fast connection-level error, none after the deadline;
+// an elevated session whose read still failed is unconfirmed.
+describe('createRevocationCheck retry and confirmElevated', () => {
+  const claimsOf = () => ({ jti: 'j1', sub: '7', signedAt: Date.now() } as never);
+  const revokedStore = store({ [SESSION_REGISTRY_KEYS.tokenState]: { j1: 'invalid' } });
+  type Step = 'read' | 'reset' | 'readonly' | 'closed' | 'other-error' | 'timeout' | 'breaker-open';
+  // `bound` answers each read from `plan` in turn: `read` lets it through, anything else rejects.
+  const planned = (plan: Step[]) => {
+    let calls = 0;
+    const bound = (read: Promise<boolean>) => {
+      const step = plan[calls++] ?? 'read';
+      if (step === 'read') return read;
+      read.catch(() => {});
+      if (step === 'reset')
+        return Promise.reject(Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' }));
+      if (step === 'closed') return Promise.reject(new Error('The client is closed'));
+      if (step === 'readonly')
+        return Promise.reject(new Error("READONLY You can't write against a read only replica."));
+      if (step === 'other-error') return Promise.reject(new Error('WRONGTYPE Operation'));
+      return Promise.reject(Object.assign(new Error(step), { reason: step }));
+    };
+    return { bound, calls: () => calls };
+  };
+  // markerCache off where the store holds a revocation: a rejected read still runs and would record it.
+  const checkOver = (
+    redis: SessionRegistryRedis,
+    plan: Step[],
+    onError = vi.fn(),
+    retryCooldownMs?: number
+  ) => {
+    const p = planned(plan);
+    const check = createRevocationCheck({
+      redis: () => redis,
+      bound: p.bound,
+      markerCache: false,
+      retryDelayMs: () => 0,
+      retryCooldownMs,
+      onError,
+    });
+    return { check, calls: p.calls, onError };
+  };
+
+  it.each<Step>(['reset', 'readonly'])(
+    'retries a %s once and answers from the store, with no degraded verdict',
+    async (first) => {
+      const { check, calls, onError } = checkOver(revokedStore, [first, 'read']);
+      const a = claimsOf();
+      expect(await check(a)).toBe(true);
+      expect(calls()).toBe(2);
+      expect(onError).not.toHaveBeenCalled();
+      expect(await check.confirmElevated(a)).toBe('ok');
+    }
+  );
+
+  it.each<Step>(['timeout', 'breaker-open', 'closed', 'other-error'])(
+    'does not retry after a %s',
+    async (first) => {
+      const { check, calls, onError } = checkOver(store(), [first, 'read']);
+      const a = claimsOf();
+      expect(await check(a)).toBe(false);
+      expect(calls()).toBe(1);
+      expect(onError).toHaveBeenCalledWith(
+        expect.any(Error),
+        expect.any(String),
+        a,
+        'allow_unknown'
+      );
+      expect(await check.confirmElevated(a)).toBe('unavailable');
+    }
+  );
+
+  it('allows unknown after two fast errors, and leaves the session unconfirmed', async () => {
+    const { check, calls, onError } = checkOver(store(), ['reset', 'reset']);
+    const a = claimsOf();
+    expect(await check(a)).toBe(false);
+    expect(calls()).toBe(2);
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(await check.confirmElevated(a)).toBe('unavailable');
+  });
+
+  it('stops retrying for the cool-down after a retry fails, then retries again', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    const { check, calls } = checkOver(
+      store(),
+      ['reset', 'reset', 'reset', 'reset', 'read'],
+      vi.fn(),
+      50
+    );
+    await check(claimsOf());
+    expect(calls()).toBe(2);
+    await check(claimsOf());
+    expect(calls()).toBe(3);
+    vi.setSystemTime(Date.now() + 60);
+    expect(await check(claimsOf())).toBe(false);
+    expect(calls()).toBe(5);
+  });
+
+  it('leaves claims it never checked unconfirmed', async () => {
+    const { check } = checkOver(store(), ['read']);
+    await check(claimsOf());
+    expect(await check.confirmElevated(claimsOf())).toBe('unavailable');
+  });
+
+  it("keeps a failed read unconfirmed when another request's read of the same token answers", async () => {
+    const { check } = checkOver(revokedStore, ['reset', 'reset', 'read']);
+    const a = claimsOf();
+    const b = claimsOf();
+    expect(await check(a)).toBe(false);
+    expect(await check(b)).toBe(true);
+    expect(await check.confirmElevated(a)).toBe('unavailable');
   });
 });

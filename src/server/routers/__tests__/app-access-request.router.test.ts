@@ -2,10 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as AppAccessRequestService from '~/server/services/app-access-request.service';
 import { OnboardingSteps } from '~/server/common/enums';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
-import {
-  APP_ACCESS_WHAT_TO_BUILD_TOO_LONG,
-  APP_ACCESS_WHAT_TO_BUILD_TOO_SHORT,
-} from '~/server/schema/app-access-request.schema';
+import { APP_ACCESS_WHAT_TO_BUILD_TOO_LONG } from '~/server/schema/app-access-request.schema';
 
 /**
  * `appAccessRequest.*` through the REAL router and middleware: who may call what, and what the
@@ -81,10 +78,11 @@ describe('sign-in is required', () => {
 });
 
 describe('submit', () => {
-  it('passes the CALLER’s id with the trimmed text, and nothing else', async () => {
+  // The CALLER's session user: the service reads the auto-approve flag with it, per user.
+  it('passes the CALLER’s session user with the trimmed text, and nothing else', async () => {
     await asRequester().submit({ whatToBuild: `  ${IDEA}  ` });
     expect(service.submit).toHaveBeenCalledWith({
-      userId: REQUESTER_ID,
+      user: requester,
       input: { whatToBuild: IDEA },
     });
   });
@@ -98,32 +96,36 @@ describe('submit', () => {
       appBuilderApproved: true,
     } as never);
     expect(service.submit).toHaveBeenCalledWith({
-      userId: REQUESTER_ID,
+      user: requester,
       input: { whatToBuild: IDEA },
     });
+    expect(service.submit.mock.calls[0][0].user.id).toBe(REQUESTER_ID);
   });
 
-  it.each([
-    ['too short', 'a game', APP_ACCESS_WHAT_TO_BUILD_TOO_SHORT],
-    [
-      'only whitespace past the minimum',
-      `short idea${' '.repeat(30)}`,
-      APP_ACCESS_WHAT_TO_BUILD_TOO_SHORT,
-    ],
-    ['too long', 'x'.repeat(2001), APP_ACCESS_WHAT_TO_BUILD_TOO_LONG],
-  ])('refuses %s with BAD_REQUEST and its message', async (_label, whatToBuild, message) => {
+  it('refuses too long with BAD_REQUEST and its message', async () => {
     const error = await asRequester()
-      .submit({ whatToBuild })
+      .submit({ whatToBuild: 'x'.repeat(2001) })
       .catch((e: unknown) => e);
     expect(error).toMatchObject({ code: 'BAD_REQUEST' });
-    expect(String((error as Error).message)).toContain(message);
+    expect(String((error as Error).message)).toContain(APP_ACCESS_WHAT_TO_BUILD_TOO_LONG);
     expect(service.submit).not.toHaveBeenCalled();
   });
 
-  it('accepts the boundaries: 20 characters and 2000 characters', async () => {
-    await asRequester().submit({ whatToBuild: 'y'.repeat(20) });
+  // The answer is OPTIONAL: a request is one click.
+  it.each([
+    ['an empty answer', { whatToBuild: '' }, ''],
+    ['only whitespace', { whatToBuild: '   ' }, ''],
+    ['no answer at all', {}, ''],
+    ['a short answer', { whatToBuild: ' a game ' }, 'a game'],
+  ])('🔴 accepts %s, as the trimmed (possibly empty) text', async (_label, input, stored) => {
+    await asRequester().submit(input as never);
+    expect(service.submit).toHaveBeenCalledTimes(1);
+    expect(service.submit.mock.calls[0][0].input).toEqual({ whatToBuild: stored });
+  });
+
+  it('accepts the upper boundary: 2000 characters', async () => {
     await asRequester().submit({ whatToBuild: 'z'.repeat(2000) });
-    expect(service.submit).toHaveBeenCalledTimes(2);
+    expect(service.submit).toHaveBeenCalledTimes(1);
   });
 });
 

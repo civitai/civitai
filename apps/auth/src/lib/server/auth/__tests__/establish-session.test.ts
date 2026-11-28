@@ -7,12 +7,16 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const h = vi.hoisted(() => ({
   mintSessionToken: vi.fn(async () => 'minted-token'),
-  trackToken: vi.fn(async () => {}),
+  trackToken: vi.fn(async () => undefined),
   verifyToken: vi.fn(),
-  linkAccount: vi.fn(async () => {}),
+  linkAccount: vi.fn(async () => undefined),
   getOrCreateDeviceId: vi.fn(() => 'device-xyz'),
 }));
 
+// No user rows: the account checks at each mint pass, as for an ordinary account.
+vi.mock('$lib/server/db/db', async () => ({
+  db: (await import('../../../../test/kysely-fake')).createKyselyFake({}),
+}));
 // Spread the real module and override only the signer: a hand-listed export list couples this test to
 // session.ts's whole transitive graph, and silently breaks the moment that graph grows (it did — `cookiePrefix`,
 // pulled in via pending-authz.ts). The real cookie helpers are pure env reads, so they need no stubbing.
@@ -34,6 +38,7 @@ vi.mock('../device', () => ({
 }));
 
 import { establishSession } from '../session';
+import { markUnconfirmedSession } from '../unconfirmed-session';
 import type * as CivitaiAuth from '@civitai/auth';
 import type { SessionUser } from '@civitai/auth';
 import type { Cookies } from '@sveltejs/kit';
@@ -103,6 +108,43 @@ describe('establishSession 2nd-account detection', () => {
     await establishSession(cookies, user(200));
 
     expect(h.linkAccount).toHaveBeenCalledWith('device-xyz', 200, undefined, expect.anything());
+  });
+
+  it("signs in during a store outage as a new sign-in, without the unconfirmed prior session's family", async () => {
+    const prior = { sub: '200', jti: 'j', sid: 'family-a' };
+    markUnconfirmedSession(prior as never);
+    h.verifyToken.mockResolvedValue(prior);
+    const cookies = makeCookies({ 'civ-token': 'prior-session-for-200' });
+
+    await establishSession(cookies, user(200));
+
+    expect(cookies._store.get('civ-token')).toBe('minted-token');
+    const [payload] = h.mintSessionToken.mock.calls[0] as unknown as [Record<string, unknown>];
+    expect(payload.sid).not.toBe('family-a');
+  });
+
+  it('takes no device-record proof or principal from an unconfirmed prior session', async () => {
+    const prior = { sub: '100', jti: 'j1', sid: 'family-a' };
+    markUnconfirmedSession(prior as never);
+    h.verifyToken.mockResolvedValue(prior);
+
+    await establishSession(makeCookies({ 'civ-token': 'prior-session-for-100' }), user(200));
+
+    const [, , principal, records] = h.linkAccount.mock.calls[0] as unknown as [
+      string,
+      number,
+      number | undefined,
+      { proofFamily?: string } | undefined
+    ];
+    expect(principal).toBeUndefined();
+    expect(records?.proofFamily).toBeUndefined();
+  });
+
+  it("joins a confirmed prior session's family on a fresh sign-in", async () => {
+    h.verifyToken.mockResolvedValue({ sub: '200', jti: 'j', sid: 'family-a' });
+    await establishSession(makeCookies({ 'civ-token': 'prior-session-for-200' }), user(200));
+    const [payload] = h.mintSessionToken.mock.calls[0] as unknown as [Record<string, unknown>];
+    expect(payload.sid).toBe('family-a');
   });
 
   it('reads the prior session BEFORE overwriting the cookie (re-login as same user passes own id)', async () => {

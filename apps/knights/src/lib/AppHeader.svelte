@@ -7,7 +7,7 @@
   import Icon from './Icon.svelte';
   import PrimaryNav from './PrimaryNav.svelte';
   import RankBadge from './RankBadge.svelte';
-  import RecapButton from './RecapButton.svelte';
+  import WhatsNewButton from './WhatsNewButton.svelte';
   import FeedbackDialog from './FeedbackDialog.svelte';
   import RestartCareerDialog from './RestartCareerDialog.svelte';
   import { rankPill } from './chrome';
@@ -24,10 +24,11 @@
     isPlayer = false,
     feedbackOpen = false,
     status,
-    recapUnseen = false,
+    hasUpdates = false,
     goldPerBuzz,
     ladder,
     badges,
+    inquisitor = false,
   }: {
     player: PlayerBadge | null;
     /** Keys this player's sound setting in the browser. */
@@ -38,12 +39,13 @@
     isPlayer?: boolean;
     feedbackOpen?: boolean;
     status?: PlayerStatus;
-    /** Today's recap has not been seen: the recap button wears a dot. */
-    recapUnseen?: boolean;
+    /** There are "What's new" entries for this player: the header shows their button. */
+    hasUpdates?: boolean;
     goldPerBuzz: number;
     ladder: LadderRow[];
     /** Rank badge image addresses by rank; a rank without one shows the crest. */
     badges: { small: Record<string, string> };
+    inquisitor?: boolean;
   } = $props();
 
   let open = $state(false);
@@ -59,6 +61,7 @@
     ...(shopOpen ? [{ href: '/shop', label: 'Shop', icon: 'coins' as const }] : []),
     { href: '/leaderboard', label: 'Leaderboard', icon: 'crown' as const },
     { href: '/codex', label: 'Codex', icon: 'book-open' as const },
+    ...(isPlayer ? [{ href: '/settings', label: 'Settings', icon: 'settings' as const }] : []),
   ]);
 
   async function toggle() {
@@ -106,14 +109,18 @@
     <span class="wordmark">Knights</span>
   </a>
 
-  <PrimaryNav />
+  <PrimaryNav {inquisitor} />
 
-  {#if status}
+  {#if inquisitor}
+    <span class="inquisitor-pill"><Icon name="scale" size={16} />Inquisitor</span>
+  {:else if status}
     <HeaderStats {status} {goldPerBuzz} {shopOpen} {ladder} />
   {/if}
 
   {#if player}
-    <RecapButton unseen={recapUnseen} />
+    {#if !inquisitor && hasUpdates}
+      <WhatsNewButton />
+    {/if}
     <div class="account" bind:this={wrapper} {onfocusout}>
       <button
         type="button"
@@ -126,7 +133,9 @@
       >
         <span class="portrait">
           <Avatar src={player.avatarUrl} name={player.username} size={32} />
-          {#if status}
+          {#if inquisitor}
+            <span class="rank-badge"><RankBadge rank="Inquisitor" size={16} /></span>
+          {:else if status}
             <span class="rank-badge"><RankBadge rank={status.rank} src={badges.small[status.rank]} size={16} /></span>
           {/if}
         </span>
@@ -253,6 +262,23 @@
     display: inline-flex;
     width: 36px;
     height: 34px;
+  }
+  .inquisitor-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    box-sizing: border-box;
+    height: 36px;
+    padding: 0 12px;
+    border: 1px solid var(--io-gold-muted);
+    border-radius: 999px;
+    background: var(--io-bg);
+    color: var(--io-parchment);
+    font: 600 13px/1.2 var(--io-font-ui);
+    white-space: nowrap;
+  }
+  .inquisitor-pill :global(svg) {
+    color: var(--io-gold);
   }
   .rank-badge {
     position: absolute;
@@ -424,7 +450,7 @@
       right: 16px;
     }
   }
-  /* Narrow phones: the wordmark has no room beside gold, level, recap and the avatar; the shield stays as the Home link. */
+  /* Narrow phones: the wordmark has no room beside gold, level, "What's new" and the avatar; the shield stays as the Home link. */
   @media (max-width: 27.5rem) {
     .brand {
       flex: none;

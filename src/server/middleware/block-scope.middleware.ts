@@ -1,6 +1,8 @@
 import { decodeProtectedHeader, jwtVerify } from 'jose';
+import { isBrowsingLevelClaim } from '@civitai/auth/browsing-level-claim';
 import type { NextApiHandler, NextApiRequest, NextApiResponse } from 'next';
 import { env } from '~/env/server';
+import type { BearerCredential } from '~/server/auth/full-user-credential';
 import {
   blockClaimsAppLabel,
   blockRequestResult,
@@ -12,6 +14,8 @@ import {
   type AppBlockEndpoint,
 } from '~/server/metrics/app-block-runtime.metrics';
 import { isAppBlocksRuntimeEnabled } from '~/server/services/app-blocks-flag';
+import { sessionHostDomains, sessionHostKind } from '~/server/services/blocks/dev-tunnel-session';
+import { previewHostHash } from '~/server/services/blocks/preview-session-host';
 import { resolveRestApprovalVerdict } from '~/server/services/blocks/block-approval.service';
 import { BlockRevocation } from '~/server/services/block-revocation.service';
 import {
@@ -34,6 +38,7 @@ import {
   BLOCK_TOKEN_AUDIENCE,
   BLOCK_TOKEN_ISSUER,
   DEV_TOKEN_LIFETIME_SECONDS,
+  RUNNER_TOKEN_LIFETIME_SECONDS,
   getBlockTokenVerificationKeysByKid,
 } from '~/server/services/block-token.service';
 import {
@@ -215,6 +220,18 @@ export interface BlockTokenClaims {
    * an owner, which is the wrong direction for a guard to fail in.
    */
   privateRunAudience?: PrivateRunAudience;
+  /**
+   * `'runner'` on a token minted for a recipe runner acting on a user's offline grant.
+   * Such a token may only submit a workflow: `verifyBlockToken` refuses it unless the
+   * caller opts in with `admitRunner`, and only `submitWorkflow` does.
+   */
+  mintOrigin?: 'runner';
+  /** The recipe run a runner token was minted for; present exactly when `mintOrigin` is. */
+  runId?: string;
+  /** The run authorization a runner token spends under; present exactly when `mintOrigin` is. */
+  authorizationId?: string;
+  /** The single run id or standing trigger id the mint derived `runId` from; likewise. */
+  runKey?: string;
 }
 
 /**
@@ -580,7 +597,8 @@ export interface WithBlockScopeOpts {
    * per-app OauthClient.allowedScopes bit) with no security value. They need a
    * token ONLY for its signed `maxBrowsingLevel` claim — the authoritative
    * maturity ceiling source — NOT for authorization. Token validity + the
-   * clamp (resolveCatalogBrowsingLevel, fail-closed SFW) is the whole authority
+   * clamp (the viewer's level held to the domain cap,
+   * resolveCatalogViewerBrowsingLevel, fail-closed PG) is the whole authority
    * surface; the scope gate would add nothing.
    */
   requiredScope?: string;
@@ -829,12 +847,54 @@ export const _internalsForTests = {
   },
 };
 
+// Preview origins. An app running in a dev tunnel (`dev-<hex>.<APPS_DOMAIN>`) or an App Assistant
+// direct preview (a session host under APP_ASSISTANT_PREVIEW_DOMAIN) has its own origin, minted
+// per session, which is never in the allowlist above. Such an origin is allowed while the session
+// it names is live, by an exact lookup of the platform's own session record
+// (`isActiveSessionHost`), never by a domain suffix. As for every other allowed origin, CORS only
+// lets the frame READ the answer: the request still needs a bearer token the middleware verifies,
+// and no credentials header is sent.
+
+async function sessionOriginAllowed(norm: string): Promise<boolean> {
+  let host: string;
+  try {
+    const u = new URL(norm);
+    // A session is only ever served over https on its bare host (no port).
+    if (u.protocol !== 'https:' || u.port) return false;
+    host = u.hostname;
+  } catch {
+    return false;
+  }
+  // `isActiveSessionHost` checks the host's shape before any read, so an arbitrary origin (these
+  // routes also serve browser integrations) costs no Redis call.
+  try {
+    const { isActiveSessionHost } = await import('~/server/services/blocks/dev-tunnel.service');
+    return await isActiveSessionHost(host);
+  } catch {
+    return false;
+  }
+}
+
 async function originAllowed(origin: string | undefined): Promise<boolean> {
   if (!origin) return false;
   const norm = normalizeOrigin(origin);
   if (!norm) return false;
   const set = await getAllowedOriginsAsync();
-  return set.has(norm);
+  if (set.has(norm)) return true;
+  return sessionOriginAllowed(norm);
+}
+
+/**
+ * An origin as a log line may carry it: a direct-preview session host is that session's
+ * credential, so it is logged only as `previewHostHash`; any other origin as it is.
+ */
+function loggableOrigin(origin: string): string {
+  const norm = normalizeOrigin(origin);
+  if (!norm) return origin;
+  const host = new URL(norm).hostname;
+  return sessionHostKind(host, sessionHostDomains()) === 'direct'
+    ? `<preview session ${previewHostHash(host)}>`
+    : origin;
 }
 
 // Bounded LRU of origins we've already warned about, so a flood of unique
@@ -852,15 +912,15 @@ function rememberWarnedOrigin(origin: string) {
 }
 
 // `Retry-After` is not a CORS-safelisted response header; a cross-origin block can't read a
-// 429's wait unless it is exposed. `Deprecation` and `Link` likewise: the document store's
-// deprecated per-tally routes announce themselves with them (`LEGACY_TALLY_HEADERS`), and an SDK
-// can only warn about what it can read.
+// 429's wait unless it is exposed. `Deprecation` and `Link` likewise, so a block route that
+// deprecates itself (RFC 9745) can be read by an SDK.
 const BLOCK_CORS_EXPOSE_HEADERS = 'Retry-After, Deprecation, Link';
 
 /**
  * Sets block-CORS headers when the origin is in the allowlist (union of
  * `BLOCK_ALLOWED_ORIGINS` env CSV + every approved OauthClient's
- * `allowedOrigins[]` — W11 dynamic-lookup landed 2026-05-30).
+ * `allowedOrigins[]` — W11 dynamic-lookup landed 2026-05-30), or when it is the
+ * host of a live dev-tunnel / direct-preview session (`sessionOriginAllowed`).
  *
  * Returns `'handled'` ONLY when we've fully handled the request (block-origin preflight).
  * In every other case — including OPTIONS from origins we don't recognize —
@@ -925,7 +985,9 @@ async function setBlockCors(
     if (rememberWarnedOrigin(origin)) {
       // eslint-disable-next-line no-console
       console.warn(
-        `[block-scope] rejected CORS preflight from origin "${origin}" — not in OauthClient.allowedOrigins (cache may be stale up to 60s)`
+        `[block-scope] rejected CORS preflight from origin "${loggableOrigin(
+          origin
+        )}" — not in OauthClient.allowedOrigins and not a live preview session (cache may be stale up to 60s)`
       );
     }
   }
@@ -964,9 +1026,18 @@ const MAX_TOKEN_AGE_DEFAULT_SECONDS = 15 * 60; // 15min — production/all non-d
 // (block-token.service.ts DEV_TOKEN_LIFETIME_SECONDS) so the verify cap can
 // never silently desync from the lifetime the signer actually stamps.
 const MAX_TOKEN_AGE_DEV_SECONDS = DEV_TOKEN_LIFETIME_SECONDS;
+const MAX_TOKEN_AGE_RUNNER_SECONDS = RUNNER_TOKEN_LIFETIME_SECONDS;
 const MAX_TOKEN_AGE_CLOCK_TOLERANCE_SECONDS = 30;
 
-export async function verifyBlockToken(token: string): Promise<BlockTokenClaims | null> {
+export interface VerifyBlockTokenOptions {
+  /** Accept a `mintOrigin: 'runner'` token. Only `submitWorkflow` passes it. */
+  admitRunner?: boolean;
+}
+
+export async function verifyBlockToken(
+  token: string,
+  options: VerifyBlockTokenOptions = {}
+): Promise<BlockTokenClaims | null> {
   // L-VERIFY: require a kid and verify against exactly that one key. The
   // signer (BlockTokenService.sign) has stamped a `kid` (sha256 of the key
   // modulus) on every block token since the first App Blocks commit
@@ -1044,17 +1115,12 @@ export async function verifyBlockToken(token: string): Promise<BlockTokenClaims 
       // unintended (wider) maturity. (Consumers ALSO fail closed on absence;
       // this is the upstream belt that keeps a malformed claim from ever
       // reaching them.) Same for the advisory `domain` string.
-      if (
-        claims.maxBrowsingLevel !== undefined &&
-        // A non-negative integer: an all-bits value like -1 would widen to every level.
-        !(Number.isInteger(claims.maxBrowsingLevel) && claims.maxBrowsingLevel >= 0)
-      ) {
+      if (claims.maxBrowsingLevel !== undefined && !isBrowsingLevelClaim(claims.maxBrowsingLevel)) {
         return null;
       }
       if (
         claims.viewerBrowsingLevel !== undefined &&
-        // A non-negative integer: an all-bits value like -1 would pass AND-ing unchanged.
-        !(Number.isInteger(claims.viewerBrowsingLevel) && claims.viewerBrowsingLevel >= 0)
+        !isBrowsingLevelClaim(claims.viewerBrowsingLevel)
       ) {
         return null;
       }
@@ -1121,16 +1187,46 @@ export async function verifyBlockToken(token: string): Promise<BlockTokenClaims 
         // (b) Must be a member of the closed set.
         if (!isPrivateRunAudience(claims.privateRunAudience)) return null;
       }
+      if (
+        claims.mintOrigin === undefined &&
+        (claims.runId !== undefined ||
+          claims.authorizationId !== undefined ||
+          claims.runKey !== undefined)
+      ) {
+        return null;
+      }
+      if (claims.mintOrigin !== undefined) {
+        // Runner tokens carry none of the dev/review/private-run/anonymous markers.
+        if (claims.mintOrigin !== 'runner') return null;
+        if (options.admitRunner !== true) return null;
+        if (claims.sub === ANON_SUBJECT) return null;
+        if (typeof claims.runId !== 'string' || claims.runId === '') return null;
+        if (typeof claims.authorizationId !== 'string' || claims.authorizationId === '')
+          return null;
+        if (typeof claims.runKey !== 'string' || claims.runKey === '') return null;
+        if (
+          claims.dev !== undefined ||
+          claims.reviewRunForReal !== undefined ||
+          claims.privateRun !== undefined
+        ) {
+          return null;
+        }
+      }
       // Per-token-type max-age belt (replaces the global maxTokenAge). `exp`
       // already enforced the real lifetime in jwtVerify; this re-checks the age
       // against the type-specific cap so a signer bug emitting a too-long `exp`
       // is still caught. FAIL-SAFE TO THE SHORTER CAP: only an explicit
-      // `dev === true` (validated boolean above) gets the 4h cap; absent /
-      // false / anything-else → the 15min cap.
+      // `dev === true` (validated boolean above) gets the 4h cap and only
+      // `mintOrigin === 'runner'` the runner cap; absent / false / anything-else
+      // → the 15min cap.
       const nowSeconds = Math.floor(Date.now() / 1000);
       const ageSeconds = nowSeconds - claims.iat;
       const ageCapSeconds =
-        claims.dev === true ? MAX_TOKEN_AGE_DEV_SECONDS : MAX_TOKEN_AGE_DEFAULT_SECONDS;
+        claims.dev === true
+          ? MAX_TOKEN_AGE_DEV_SECONDS
+          : claims.mintOrigin === 'runner'
+          ? MAX_TOKEN_AGE_RUNNER_SECONDS
+          : MAX_TOKEN_AGE_DEFAULT_SECONDS;
       if (ageSeconds > ageCapSeconds + MAX_TOKEN_AGE_CLOCK_TOLERANCE_SECONDS) {
         return null;
       }
@@ -1428,8 +1524,9 @@ async function resolveDevTunnelHubClaims(args: {
   userId: number;
   clientId: string;
   apiKeyId: number;
+  credential: BearerCredential & { apiKeyId: number };
 }): Promise<BlockTokenClaims | null> {
-  const { userId, clientId, apiKeyId } = args;
+  const { userId, clientId, apiKeyId, credential } = args;
   const [{ parseDevTunnelClientId, scopesCoveredByConsent }, { getActiveDevTunnel }, { dbRead }] =
     await Promise.all([
       import('~/server/services/blocks/dev-tunnel-oauth.service'),
@@ -1467,7 +1564,12 @@ async function resolveDevTunnelHubClaims(args: {
   const source = dev
     ? tunnel.grantedScopes ?? []
     : clampTunnelDeclaredScopes(owned!.approvedScopes ?? []);
-  const scopes = scopesCoveredByConsent(source, consent.scope);
+  const { narrowBlockScopesToCredential } = await import('~/server/auth/bearer-scope-tighten');
+  const scopes = await narrowBlockScopesToCredential(
+    'dev-tunnel-hub-token',
+    credential,
+    scopesCoveredByConsent(source, consent.scope)
+  );
   const manifestBudget = owned
     ? parseManifestBuzzBudget((owned.manifest as { page?: unknown } | null)?.page)
     : undefined;
@@ -1496,10 +1598,13 @@ async function resolveDevTunnelHubClaims(args: {
 
 const EPHEMERAL_APP_ID_PREFIX = 'ephemeral-';
 
+/** A hub OAuth token of a suspended app block's own client. */
+const HUB_TOKEN_REFUSED = 'refused' as const;
+
 async function resolveHubTokenClaims(
   bearer: string,
   req: NextApiRequest
-): Promise<BlockTokenClaims | null> {
+): Promise<BlockTokenClaims | typeof HUB_TOKEN_REFUSED | null> {
   const { getSessionFromBearerToken } = await import('~/server/auth/bearer-token');
   const session = await getSessionFromBearerToken(bearer);
   if (!session || session.subject.type !== 'oauth') return null;
@@ -1518,7 +1623,21 @@ async function resolveHubTokenClaims(
     manifest: unknown;
     approvedScopes: string[];
   } | null;
-  if (!block) return resolveDevTunnelHubClaims({ userId, clientId, apiKeyId: session.apiKeyId });
+  if (!block) {
+    const devClaims = await resolveDevTunnelHubClaims({
+      userId,
+      clientId,
+      apiKeyId: session.apiKeyId,
+      credential: session,
+    });
+    if (devClaims) return devClaims;
+    // A suspended app's token is refused here rather than handed on as an ordinary OAuth session.
+    const suspended = await dbRead.appBlock.findFirst({
+      where: { appId: clientId, status: 'suspended' },
+      select: { id: true },
+    });
+    return suspended ? HUB_TOKEN_REFUSED : null;
+  }
 
   const { getGrantedScopes, partitionByConsent } = await import(
     '~/server/services/blocks/scope-grant.service'
@@ -1528,12 +1647,19 @@ async function resolveHubTokenClaims(
     scopes?: unknown;
     page?: { buzzBudgetPerGen?: unknown };
   };
-  // `apps:storage:import` is never carried, and its grant ledger is never read or pruned here: the
-  // storage route refuses an import on any hub token (`import_hub_token`).
-  const declared = effectiveBlockScopes(manifest, block.approvedScopes)
-    .filter(isKnownBlockScope)
-    .filter((s) => s !== 'apps:storage:import');
-  const scopes = partitionByConsent(declared, granted).signable;
+  // `apps:storage:import` is carried exactly when the viewer's scope ledger grants it, like every
+  // consent-gated scope. That is not the import's grant: the storage route still reads the
+  // per-source grant on every import call and refuses without one (`resolveImportAccess`). The
+  // per-source grant ledger is never read or pruned here; there is no prompt to withhold it for.
+  const declared = effectiveBlockScopes(manifest, block.approvedScopes).filter(isKnownBlockScope);
+  // The token's own bits were fixed when it was minted from the viewer's consent; a grant made
+  // since reaches it when the host re-mints (`onConsentGranted`).
+  const { narrowBlockScopesToCredential } = await import('~/server/auth/bearer-scope-tighten');
+  const scopes = await narrowBlockScopesToCredential(
+    'hub-token',
+    session,
+    partitionByConsent(declared, granted).signable
+  );
 
   const { getRequestDomainColor, isHostForColor } = await import('~/server/utils/server-domain');
   const { viewerEffectiveBrowsingLevel } = await import(
@@ -1622,13 +1748,14 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
     // that point — the approval verdict, the required-scope check, context binding, the
     // handler and the invocation audit row — must see the narrowed set, which is the whole
     // reason the strip happens here rather than at each gate.
-    let claims = isJwt
+    const resolved = isJwt
       ? await verifyBlockToken(bearer)
       : env.APP_BLOCK_OAUTH_TOKENS_ENABLED
       ? await resolveHubTokenClaims(bearer, req)
       : null;
+    let claims = resolved === HUB_TOKEN_REFUSED ? null : resolved;
     if (!claims) {
-      if (!isJwt) return handler(req, res);
+      if (!isJwt && resolved !== HUB_TOKEN_REFUSED) return handler(req, res);
       sendRefusal(req, res, opts, {
         kind: 'invalid_token',
         status: 401,
@@ -2337,6 +2464,10 @@ export const KNOWN_STATIC_ENDPOINT_SEGMENTS = new Set([
   // `/api/v1/blocks/sub-listings/mine` — the caller's own store items.
   'mine',
   'models',
+  // `/api/v1/blocks/moderation/reports` — the report moderation API
+  // (`doc-store-report-api.ts`). Both segments static: the collection, key and import
+  // source ride the POST body.
+  'moderation',
   'poll',
   // `/api/v1/blocks/resource-intent` — the Jev resource-intent primitive. Static:
   // the prompt and every parameter ride the POST body, so there is no `:seg`
@@ -2350,6 +2481,7 @@ export const KNOWN_STATIC_ENDPOINT_SEGMENTS = new Set([
   'query',
   'quota',
   'report',
+  'reports',
   'set',
   'shared-storage',
   // `/api/v1/blocks/storage/…` — the document store, one optional catch-all route. Only

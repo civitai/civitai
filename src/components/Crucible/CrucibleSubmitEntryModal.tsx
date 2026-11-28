@@ -37,14 +37,18 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import type { GeneratorMediaCandidate } from '~/components/EntrySubmit/GeneratorMediaPicker';
 import {
   GeneratorMediaPicker,
-  useGeneratorSelectionStore,
+  generatorSelectionStore,
+  useGeneratorSelection,
 } from '~/components/EntrySubmit/GeneratorMediaPicker';
 import { InViewLoader } from '~/components/InView/InViewLoader';
+import { NextLink } from '~/components/NextLink/NextLink';
+import { canAddManualResources } from '~/utils/manual-image-resources';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { CONTEST_BANNED_MESSAGE } from '~/shared/constants/contest-ban.constants';
 import { useIsContestBanned } from '~/hooks/useIsContestBanned';
 import { useMediaUpload } from '~/hooks/useMediaUpload';
 import {
+  clipDisplaySeconds,
   clipLengthAllowed,
   CRUCIBLE_ENTRIES_CLOSED_MESSAGE,
   CRUCIBLE_ENTRY_WARNING_PERCENT,
@@ -70,6 +74,7 @@ import { Flags } from '~/shared/utils/flags';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import clsx from 'clsx';
 import { formatDate } from '~/utils/date-helpers';
+import { RESTRICTED_IMAGE_REASON } from '~/shared/utils/restricted-image';
 
 /**
  * Props for the CrucibleSubmitEntryModal
@@ -153,6 +158,8 @@ function ImageCard({
   isAlreadySubmitted,
   isChecking,
   overlayLabel,
+  addModelHref,
+  onLeave,
 }: {
   image: {
     id: number;
@@ -169,6 +176,9 @@ function ImageCard({
   isAlreadySubmitted: boolean;
   isChecking: boolean;
   overlayLabel?: string;
+  /** Where the entrant adds a model detection missed: off-site media loses its metadata. */
+  addModelHref?: string;
+  onLeave: () => void;
 }) {
   const disabled = !isValid || isAlreadySubmitted;
 
@@ -315,6 +325,18 @@ function ImageCard({
                   </span>
                 </div>
               ))}
+              {addModelHref && (
+                <NextLink
+                  href={addModelHref}
+                  className="text-[0.7rem] text-blue-400 underline"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onLeave();
+                  }}
+                >
+                  Used a required model? Add it to your post with + Resource
+                </NextLink>
+              )}
             </div>
           )}
 
@@ -393,8 +415,8 @@ export default function CrucibleSubmitEntryModal({
   const countAutoSubmitFailure = () =>
     setAutoSubmit((prev) => prev && { ...prev, failed: prev.failed + 1 });
 
-  const generatorSelected = useGeneratorSelectionStore((state) => state.selected);
-  const deselectAllGenerator = useGeneratorSelectionStore((state) => state.deselectAll);
+  const generatorSelected = useGeneratorSelection();
+  const deselectAllGenerator = generatorSelectionStore.actions.clear;
 
   const createEntryPostMutation = trpc.crucible.createEntryPost.useMutation();
   const addImageMutation = trpc.post.addImage.useMutation({
@@ -637,12 +659,20 @@ export default function CrucibleSubmitEntryModal({
     const eligibilityPending = ineligibleReasons === undefined;
     const isRecentEnough = !ineligibleReasons?.includes('created-before-start');
     const levelAllowedByModels = !ineligibleReasons?.includes('required-model-level');
+    const levelAllowedByLicense = !ineligibleReasons?.includes('restricted-model');
     const hasNoResources = !!ineligibleReasons?.includes('no-resources');
     const usesRequiredModel =
       !hasNoResources && !ineligibleReasons?.includes('missing-required-resource');
     const usesAllowedBaseModel =
       !hasNoResources && !ineligibleReasons?.includes('wrong-base-model');
     const requiresBaseModel = allowedBaseModels.length > 0;
+    const missingModel =
+      !eligibilityPending &&
+      ((requiresResources && !usesRequiredModel) || (requiresBaseModel && !usesAllowedBaseModel));
+    const addModelHref =
+      missingModel && image.postId && canAddManualResources(image)
+        ? `/posts/${image.postId}/edit`
+        : undefined;
     const requiredModelLabel = allowedResourceNames?.length
       ? `Uses ${allowedResourceNames.join(' or ')}`
       : 'Uses a required model';
@@ -692,10 +722,12 @@ export default function CrucibleSubmitEntryModal({
       },
       {
         label: 'Content level',
-        passes: isCompatibleNsfw && levelAllowedByModels,
+        passes: isCompatibleNsfw && levelAllowedByModels && levelAllowedByLicense,
         passText: `${imageNsfwLabel} content`,
         failReason: !isCompatibleNsfw
           ? `${imageNsfwLabel} content (requires ${requiredNsfwLabel})`
+          : !levelAllowedByLicense
+          ? `${imageNsfwLabel} content (${RESTRICTED_IMAGE_REASON})`
           : `${imageNsfwLabel} content (a required model allows only PG and PG-13)`,
       },
       ...(maxClipSeconds
@@ -703,10 +735,12 @@ export default function CrucibleSubmitEntryModal({
             {
               label: 'Clip length',
               passes: isShortEnough,
-              passText: clipSeconds ? formatDuration(clipSeconds) : 'Within the limit',
-              failReason: `${formatDuration(Math.ceil(clipSeconds ?? 0))} (max ${formatDuration(
-                maxClipSeconds
-              )})`,
+              passText: clipSeconds
+                ? formatDuration(clipDisplaySeconds(clipSeconds, maxClipSeconds))
+                : 'Within the limit',
+              failReason: `${formatDuration(
+                clipDisplaySeconds(clipSeconds ?? 0, maxClipSeconds)
+              )} (max ${formatDuration(maxClipSeconds)})`,
             },
           ]
         : []),
@@ -724,6 +758,7 @@ export default function CrucibleSubmitEntryModal({
         (!requiresResources || usesRequiredModel) &&
         (!requiresBaseModel || usesAllowedBaseModel),
       isAlreadySubmitted,
+      addModelHref,
       isChecking:
         eligibilityPending &&
         !isAlreadySubmitted &&
@@ -738,10 +773,9 @@ export default function CrucibleSubmitEntryModal({
         : !isCompatibleNsfw
         ? `Content level mismatch (${imageNsfwLabel} ${noun}, requires ${requiredNsfwLabel})`
         : !isShortEnough
-        ? // Ceiling, so a 120.01s clip against a 120s limit does not render both as "2:00".
-          `Too long (${formatDuration(Math.ceil(clipSeconds ?? 0))}, max ${formatDuration(
-            maxClipSeconds as number
-          )})`
+        ? `Too long (${formatDuration(
+            clipDisplaySeconds(clipSeconds ?? 0, maxClipSeconds ?? null)
+          )}, max ${formatDuration(maxClipSeconds as number)})`
         : !levelAllowedByModels
         ? 'A required model allows only PG and PG-13'
         : !isRecentEnough
@@ -1118,8 +1152,14 @@ export default function CrucibleSubmitEntryModal({
                 <>
                   <div className="grid grid-cols-4 gap-3 sm:grid-cols-5">
                     {images.map((image) => {
-                      const { isValid, isAlreadySubmitted, isChecking, criteria, message } =
-                        validateImage(image);
+                      const {
+                        isValid,
+                        isAlreadySubmitted,
+                        isChecking,
+                        criteria,
+                        message,
+                        addModelHref,
+                      } = validateImage(image);
                       const isSelected = selectedImages.includes(image.id);
 
                       return (
@@ -1139,6 +1179,8 @@ export default function CrucibleSubmitEntryModal({
                           onClick={() => toggleImage(image.id)}
                           isAlreadySubmitted={isAlreadySubmitted}
                           isChecking={isChecking}
+                          addModelHref={addModelHref}
+                          onLeave={handleClose}
                           overlayLabel={
                             image.ingestion === ImageIngestionStatus.Error ? message : undefined
                           }

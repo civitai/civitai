@@ -217,20 +217,22 @@ describe('stage consensus and escalation', () => {
     expect(await itemRow(id)).toMatchObject({ status: 'Resolved', resolvedValue: '4' });
   });
 
-  it('hands a Paladin split at four votes to the moderators and applies nothing', async () => {
+  it('re-rates a Paladin split at four votes to the higher tied level, not the moderators', async () => {
     await players('Paladin', 1, 4);
     await image(10);
     const id = await item(10, { minRank: 'Paladin' });
 
-    expect(await voteAll(1, id, ['4', '8', '4', '8'])).toBe('inquisitor');
+    expect(await voteAll(1, id, ['4', '8', '4', '8'])).toBe('resolved');
     expect(await itemRow(id)).toMatchObject({
-      status: 'Inquisitor',
-      minRank: 'Inquisitor',
+      status: 'Resolved',
+      minRank: 'Paladin',
       questionKey: Q,
-      escalationReason: 'no-consensus',
+      resolvedValue: '8',
+      reason: 'no-consensus-rerate',
+      escalationReason: null,
     });
-    expect(applyConsensus).not.toHaveBeenCalled();
-    expect((await verdicts(id)).every((v) => v.verdict === 'pending')).toBe(true);
+    expect(applyConsensus).toHaveBeenCalledTimes(1);
+    expect((await verdicts(id)).every((v) => v.verdict === 'inconclusive')).toBe(true);
   });
 
   it('counts only the votes cast at the item stage, and grades the earlier ones at the end', async () => {
@@ -254,7 +256,7 @@ describe('stage consensus and escalation', () => {
     expect(graded.every((v) => v.verdict === 'correct')).toBe(true);
   });
 
-  it('walks Knight, Templar, Paladin and out to the moderators one stage at a time', async () => {
+  it('walks Knight, Templar, Paladin one stage at a time and re-rates a split at the last', async () => {
     await players('Knight', 1, 10);
     for (let u = 21; u < 27; u++) await active(u, 'Templar');
     for (let u = 41; u < 45; u++) await active(u, 'Paladin');
@@ -264,8 +266,8 @@ describe('stage consensus and escalation', () => {
     expect(await voteAll(1, id, SPLIT10)).toBe('escalated');
     expect(await voteAll(21, id, ['1', '2', '4', '1', '2', '4'])).toBe('escalated');
     expect(await itemRow(id)).toMatchObject({ minRank: 'Paladin' });
-    expect(await voteAll(41, id, ['4', '8', '4', '8'])).toBe('inquisitor');
-    expect(await itemRow(id)).toMatchObject({ status: 'Inquisitor' });
+    expect(await voteAll(41, id, ['4', '8', '4', '8'])).toBe('resolved');
+    expect(await itemRow(id)).toMatchObject({ status: 'Resolved', reason: 'no-consensus-rerate' });
     expect((await verdicts(id)).map((v) => v.stage)).toEqual([
       ...Array(10).fill('Knight'),
       ...Array(6).fill('Templar'),
@@ -288,6 +290,7 @@ describe('stage consensus and escalation', () => {
       toInquisitor: 0,
       extended: 0,
       expired: 0,
+      rerated: 0,
     });
     expect(await itemRow(id)).toMatchObject({
       minRank: 'Templar',
@@ -313,7 +316,11 @@ describe('feed serving rules', () => {
     ]);
 
     expect(await feedIds(1, { now: hoursAfter(23) })).toEqual([escalated, normal]);
-    expect(await feedIds(1, { now: hoursAfter(25) })).toEqual([normal, escalated]);
+    // Once its priority lapses it is a priority-3 item; a draw below the priority-1 share serves priority 1 first.
+    expect(await feedIds(1, { now: hoursAfter(25), random: () => 0.5 })).toEqual([
+      normal,
+      escalated,
+    ]);
   });
 
   it('never serves an image the player already judged for the question', async () => {

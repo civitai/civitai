@@ -29,7 +29,7 @@ import (
 // integSeedImages resets the 2_101_xxx image fixture. Every column of image 2101001 holds a distinct,
 // recognisable value, so a scan that swaps two columns shows up as a wrong field.
 //
-//	2101001 post 2101501 (owner 2101901, Unsearchable) video, poi, blockedFor set — the full-row image
+//	2101001 post 2101501 (owner 2101901, Unsearchable) video, poi, blockedFor AiNotVerified — the full-row image
 //	2101002 post 2101501 owner 2101901          type image
 //	2101003 post 2101501 user 2101902           tagged 2101801 (enabled)
 //	2101004 post 2101501 user 2101902           minor
@@ -38,6 +38,9 @@ import (
 //	2101007 post 2101504 (user 2101902)         blockedFor set
 //	2101008 post 2101503 (user 2101902, Private)
 //	2101009 post 2101504 (user 2101902)         txt2img
+//
+// 2101001's block is the one that leaves its owner the media (ownerMediaAllowed), so its owner still
+// reads it through the owner shapes below; the owner rule itself is TestIntegrationOwnerBlockedMedia's.
 //
 // Resources: 2101001 and 2101009 used version 2101601, 2101005 version 2101602; both versions belong
 // to model 2101651. Every other image column passes every global filter of the image query, so a
@@ -60,7 +63,7 @@ func integSeedImages(t *testing.T, pool *pgxpool.Pool) {
 		  VALUES (2101001, 'integ-name', 'integ-url', 2101901, '2021-01-02 03:04:05.006',
 		    '{"civitaiResources": [], "extra": {"remixOfId": 2101077}}', 'integ-hash', 853, 641, 'video',
 		    '{"integKey": "integ-metadata"}', 2, 2101501, NULL, false, 7, '2021-05-06 07:08:09.010', 'integ/mime',
-		    'Scanned', 'integ-blocked-for', false, true, false);
+		    'Scanned', 'AiNotVerified', false, true, false);
 		INSERT INTO "Image" (id, url, "userId", type, "nsfwLevel", "postId", ingestion, minor, poi, "blockedFor", "generationProcess") VALUES
 		  (2101002, 'integ-u2', 2101901, 'image', 2, 2101501, 'Scanned', false, false, NULL, NULL),
 		  (2101003, 'integ-u3', 2101902, 'video', 2, 2101501, 'Scanned', false, false, NULL, NULL),
@@ -84,7 +87,7 @@ func integRun(t *testing.T, pool *pgxpool.Pool, q ImagesQuery) []RawImage {
 	if err != nil {
 		t.Fatalf("query: %v\n%s", err, b.SQL)
 	}
-	out, err := scanRows(rows)
+	out, err := scanRows(rows, b.Collection)
 	if err != nil {
 		t.Fatalf("scan: %v\n%s", err, b.SQL)
 	}
@@ -154,7 +157,7 @@ var integFullRow = RawImage{
 	Hash: integS("integ-hash"), HideMeta: false, HasMeta: true, HasPositivePrompt: false, OnSite: integB(true),
 	RemixOfID: json.RawMessage(`2101077`), CreatedAt: integTime("2021-01-02 03:04:05.006"),
 	SortAt: integTime("2021-05-06 07:08:09.010"), MimeType: integS("integ/mime"), Type: "video",
-	Metadata: json.RawMessage(`{"integKey":"integ-metadata"}`), Ingestion: "Scanned", BlockedFor: integS("integ-blocked-for"),
+	Metadata: json.RawMessage(`{"integKey":"integ-metadata"}`), Ingestion: "Scanned", BlockedFor: integS("AiNotVerified"),
 	ScannedAt: integTimeP("2021-05-06 07:08:09.010"), NeedsReview: nil, UserID: 2101901, PostID: 2101501,
 	PostTitle: integS("integ-post-title"), Index: integI(7), PublishedAt: integTimeP("2021-03-04 05:06:07.008"),
 	UnpublishedAt: integS("integ-unpublished-at"), ModelVersionID: integI(2101601), Model3DID: integI(2101701),
@@ -299,6 +302,50 @@ func TestIntegrationInfiniteScopes(t *testing.T) {
 	post.Cursor = 7 // inclusive on the index
 	if got, want := integIDs(integRun(t, pool, post)), []int{2101001}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("post from index 7 = %v, want %v", got, want)
+	}
+}
+
+// getAllImages' `tools` clause against the real schema: an image holding EVERY listed tool (order
+// and repeats in the list do not matter), never one with no tool row, and the cache policy of the
+// query it joins unchanged. Tool ids live in 2_102_0xx.
+func TestIntegrationToolsFilter(t *testing.T) {
+	pool := integtest.Postgres(t)
+	integSeedImages(t, pool)
+	integtest.Exec(t, pool, `
+		DELETE FROM "ImageTool" WHERE "imageId" BETWEEN 2101000 AND 2101999;
+		INSERT INTO "ImageTool" ("imageId", "toolId") VALUES
+		  (2101001, 2102001), (2101001, 2102002),
+		  (2101002, 2102002),
+		  (2101003, 2102003), (2101003, 2102002), (2101003, 2102001),
+		  (2101009, 2102004);`)
+	mod := ImagesQuery{IDs: integAllIDs, Limit: 20, IsModerator: true, BrowsingLevel: browsing.AllLevels}
+	for _, c := range []struct {
+		name  string
+		tools []int
+		want  []int
+	}{
+		// Positive control: without the filter the moderator sees all nine.
+		{"no tools", nil, []int{2101009, 2101008, 2101007, 2101006, 2101005, 2101004, 2101003, 2101002, 2101001}},
+		{"one tool", []int{2102002}, []int{2101003, 2101002, 2101001}},
+		{"all of two", []int{2102001, 2102002}, []int{2101003, 2101001}},
+		{"all of three, out of order", []int{2102003, 2102001, 2102002}, []int{2101003}},
+		{"a repeated tool", []int{2102002, 2102002}, []int{2101003, 2101002, 2101001}},
+		{"a tool and one nobody holds with it", []int{2102004, 2102001}, []int{}},
+		{"a zero id (bound as sent)", []int{0}, []int{}},
+	} {
+		q := mod
+		q.Tools = c.tools
+		if got := integIDs(integRun(t, pool, q)); !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s: %v, want %v", c.name, got, c.want)
+		}
+	}
+	// On a version gallery the query stays cached under the version's tag.
+	version := ImagesQuery{ModelVersionID: 2101601, Limit: 20, IsModerator: true, BrowsingLevel: browsing.AllLevels, Tools: []int{2102001}}
+	if b := version.Build(); b.CacheTTL != 10*time.Minute || !reflect.DeepEqual(b.CacheTags, []string{"images-modelVersion:2101601"}) {
+		t.Fatalf("version gallery with tools: CacheTTL %v tags %v, want 10m / [images-modelVersion:2101601]", b.CacheTTL, b.CacheTags)
+	}
+	if got, want := integIDs(integRun(t, pool, version)), []int{2101001}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("version gallery with tools = %v, want %v (2101009 used the version but holds another tool)", got, want)
 	}
 }
 
@@ -654,7 +701,7 @@ func TestIntegrationGalleryPromotions(t *testing.T) {
 		ts(-24*time.Hour), ts(-8*24*time.Hour), live))
 	ctx := integtest.Ctx(t)
 
-	rows, err := g.LiveGalleryPromotions(ctx, 2104001, now.Add(-maxRun))
+	rows, err := g.LiveGalleryPromotions(ctx, 2104001, now.Add(-MaxPromotionRun))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -740,5 +787,26 @@ func TestIntegrationAddonSource(t *testing.T) {
 		if got := a.Addons(ctx); !reflect.DeepEqual(got, browsing.DefaultAddons) {
 			t.Fatalf("%q = %+v, want the defaults", bad, got)
 		}
+	}
+}
+
+func TestIntegrationSortAtFirstVisible(t *testing.T) {
+	pool := integtest.Postgres(t)
+	integtest.Exec(t, pool, `
+		DELETE FROM "Image" WHERE id BETWEEN 2109000 AND 2109999;
+		DELETE FROM "Post" WHERE id BETWEEN 2109000 AND 2109999;
+		INSERT INTO "Post" (id, "userId", "publishedAt") VALUES (2109501, 2109901, '2021-01-01 00:00:00');
+		INSERT INTO "Image" (id, url, "userId", "postId", "nsfwLevel", ingestion, "createdAt", "scannedAt", "firstVisibleAt") VALUES
+		  (2109001, 'integ-url', 2109901, 2109501, 1, 'Scanned', '2021-01-01 00:00:00', '2021-01-01 00:00:00', '2021-01-04 00:00:00'),
+		  (2109002, 'integ-url', 2109901, 2109501, 1, 'Scanned', '2020-12-31 00:00:00', '2021-01-02 00:00:00', NULL);`)
+
+	rows := integRun(t, pool, ImagesQuery{IDs: []int{2109001, 2109002}, Limit: 5, IsModerator: true, BrowsingLevel: browsing.AllLevels})
+	got := map[int]string{}
+	for _, r := range rows {
+		got[r.ID] = r.SortAt.UTC().Format(time.RFC3339)
+	}
+	want := map[int]string{2109001: "2021-01-04T00:00:00Z", 2109002: "2021-01-02T00:00:00Z"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("sortAt = %v, want %v", got, want)
 	}
 }

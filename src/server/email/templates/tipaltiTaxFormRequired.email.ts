@@ -1,5 +1,5 @@
 import { createEmail } from '~/server/email/templates/base.email';
-import { simpleEmailWithTemplate } from '~/server/email/templates/util';
+import { renderEmailCallout, simpleEmailWithTemplate } from '~/server/email/templates/util';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 
 type TipaltiTaxFormRequiredData = {
@@ -8,6 +8,8 @@ type TipaltiTaxFormRequiredData = {
 };
 
 export const tipaltiTaxFormRequiredEmail = createEmail({
+  template: 'tipaltiTaxFormRequired',
+  mailClass: 'transactional',
   header: ({ email }: TipaltiTaxFormRequiredData) => ({
     subject: `Action required: update your tax information to keep receiving payments`,
     to: email,
@@ -15,14 +17,18 @@ export const tipaltiTaxFormRequiredEmail = createEmail({
   html({ username }: TipaltiTaxFormRequiredData) {
     const greeting = username ? `Hi ${username},` : 'Hi,';
     return simpleEmailWithTemplate({
+      icon: '📝',
+      accent: 'red',
+      eyebrow: 'Action required',
       header: 'Tax information needed for your Civitai payouts',
       body: `
         <p>${greeting}</p>
-        <p>
-          Our payments provider (Tipalti) has flagged your account as
+        ${renderEmailCallout(
+          `Our payments provider (Tipalti) has flagged your account as
           <strong>not payable</strong> because of missing or invalid tax information.
-          Until this is resolved, we are not able to send you any further withdrawals.
-        </p>
+          Until this is resolved, we are not able to send you any further withdrawals.`,
+          { accent: 'red' }
+        )}
         <p>
           Please head over to your Tipalti setup page and complete or re-submit your tax forms
           (W-9, W-8BEN, etc.) so we can resume your payouts.

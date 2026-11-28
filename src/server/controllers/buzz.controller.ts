@@ -35,7 +35,6 @@ import { chargeWasDeclined, paymentOutcomeUnknown } from '~/server/services/buzz
 import { getEntityCollaborators } from '~/server/services/entity-collaborator.service';
 import { logToAxiom } from '~/server/logging/client';
 import { claimTipIdempotency } from '~/server/utils/block-tip-rate-limit';
-import { getImageById } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { updateEntityMetric } from '~/server/utils/metric-helpers';
@@ -47,6 +46,7 @@ import {
   throwInsufficientFundsError,
 } from '../utils/errorHandling';
 import { DEFAULT_PAGE_SIZE } from '../utils/pagination-helpers';
+import { memorializedAmong } from '~/server/services/memorial.service';
 
 export function getUserAccountHandler({ ctx }: { ctx: ProtectedContext }) {
   try {
@@ -200,8 +200,17 @@ export async function createBuzzTipTransactionHandler({
     if ((entityType === 'Post' || entityType === 'Image') && entityId) {
       // May have contributros, check this...
       const collaboratorEntityType = EntityType.Post; // For the time being, only this is supported.
-      const collaboratorEntityId =
-        entityType === 'Post' ? entityId : (await getImageById({ id: entityId }))?.postId;
+      let image: { postId: number | null; poi: boolean } | null = null;
+      if (entityType === 'Image') {
+        // primary: a check guarding a write; a just-flagged POI image must not be tippable.
+        image = await dbWrite.image.findUnique({
+          where: { id: entityId },
+          select: { postId: true, poi: true },
+        });
+      }
+      // Same rule as the image reaction bars, which hide the tip on a POI image.
+      if (image?.poi) throw throwBadRequestError('This image cannot receive tips');
+      const collaboratorEntityId = entityType === 'Post' ? entityId : image?.postId;
 
       if (collaboratorEntityId && collaboratorEntityType) {
         const collaborators = await getEntityCollaborators({
@@ -233,6 +242,11 @@ export async function createBuzzTipTransactionHandler({
       if (bannedUsers.length > 0) {
         throw throwBadRequestError('One or more target users are banned');
       }
+
+      if ((await memorializedAmong(targetUserIds)).size)
+        throw throwBadRequestError(
+          'One or more target users are memorialized and cannot receive tips.'
+        );
     }
 
     const amount = Math.floor(input.amount / targetUserIds.length);

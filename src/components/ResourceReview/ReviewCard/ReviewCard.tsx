@@ -146,10 +146,18 @@ export function ReviewCard({
         >
           {full ? (
             <ContentClamp maxHeight={300}>
-              <RenderHtml html={review.details} withProfanityFilter />
+              <RenderHtml
+                html={review.details}
+                maskedHtml={review.maskedDetails}
+                withProfanityFilter
+              />
             </ContentClamp>
           ) : (
-            <RenderHtml html={review.details} withProfanityFilter />
+            <RenderHtml
+              html={review.details}
+              maskedHtml={review.maskedDetails}
+              withProfanityFilter
+            />
           )}
         </div>
       )}

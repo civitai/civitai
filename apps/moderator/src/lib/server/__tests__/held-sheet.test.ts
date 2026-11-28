@@ -50,7 +50,10 @@ const {
     redis,
     getSessionUserById: vi.fn(async (_id: number) => null as unknown),
     verifyToken: vi.fn(async (_token: string) => null as unknown),
-    isRevoked: vi.fn(async (_claims: unknown) => false),
+    isRevoked: Object.assign(
+      vi.fn(async (_claims: unknown) => false),
+      { confirmElevated: vi.fn(async (_claims: unknown) => 'ok' as string) }
+    ),
     guardCheck: vi.fn(async (_cookie: string, _url: string, _opts?: unknown) => ({} as unknown)),
     loadPageAccessGrants: vi.fn(async () => ({})),
     applyGrants: vi.fn((_grants: unknown) => {}),
@@ -62,7 +65,11 @@ vi.mock('$lib/server/db', async () => {
   const { capturingDb } = await import('../../../test/capture-sql');
   return { dbRead: capturingDb([], []), dbWrite: capturingDb([], []) };
 });
-vi.mock('$lib/server/redis', () => ({ getSysRedis: () => redis }));
+// The held sheet keeps its codes and sessions on the cache cluster (`getRedis`). System Redis is
+// a separate spy over the same fake, so a held-sheet path that reached it would still work here
+// and is caught by the test that asserts it is never called.
+const getSysRedis = vi.hoisted(() => vi.fn());
+vi.mock('$lib/server/redis', () => ({ getRedis: () => redis, getSysRedis }));
 vi.mock('$lib/server/auth', () => ({
   guard: { check: guardCheck },
   isRevoked,
@@ -156,12 +163,14 @@ async function signIn(): Promise<string> {
 }
 
 beforeEach(() => {
+  getSysRedis.mockImplementation(() => redis);
   process.env.HELD_SHEET_CALLBACK_URL = CALLBACK;
   store.clear();
   vi.clearAllMocks();
   verifyToken.mockResolvedValue(CLAIMS);
   getSessionUserById.mockResolvedValue({ ...MOD });
   isRevoked.mockResolvedValue(false);
+  isRevoked.confirmElevated.mockResolvedValue('ok');
 });
 afterEach(() => vi.useRealTimers());
 
@@ -302,6 +311,13 @@ describe('auth/exchange', () => {
     );
   });
 
+  it('keeps the code and the session on the cache cluster, never in system Redis', async () => {
+    const res = await exchangePost({ code: await issue(), code_verifier: VERIFIER });
+    expect(res.status).toBe(204);
+    expect([...store.keys()]).toEqual([expect.stringMatching(/^app:held-sheet:session:/)]);
+    expect(getSysRedis).not.toHaveBeenCalled();
+  });
+
   it('refuses a replayed code', async () => {
     const code = await issue();
     expect((await exchangePost({ code, code_verifier: VERIFIER })).status).toBe(204);
@@ -438,6 +454,7 @@ describe('hook: the sheet cookie', () => {
   it.each([
     ['login', { status: 'login', redirect: 'https://hub.test/login', reason: 'unavailable' }],
     ['reauth', { status: 'reauth', authorize: 'https://hub.test/a', reason: 'unavailable' }],
+    ['unconfirmed (civitai/civitai#10695)', { status: 'unavailable' }],
   ])(
     'answers 503 when the web session cannot be resolved, without using or clearing the sheet (%s)',
     async (_n, web) => {
@@ -603,6 +620,18 @@ describe('hook: the sheet cookie', () => {
     isRevoked.mockResolvedValue(true);
     expect((await run('/api/held-media/7', `__Secure-held_sheet=${token}`)).res.status).toBe(401);
     expect(isRevoked).toHaveBeenCalledWith(WEB);
+  });
+
+  // civitai/civitai#10695: a moderator request whose revocation read failed is refused, session kept.
+  it('answers 503 and keeps the sheet cookie when the revocation read is unconfirmed', async () => {
+    const token = await signIn();
+    isRevoked.confirmElevated.mockResolvedValue('unavailable');
+    const { res, resolve } = await run('/api/held-media/7', `__Secure-held_sheet=${token}`);
+    expect(res.status).toBe(503);
+    expect(res.headers.get('set-cookie')).toBeNull();
+    expect(resolve).not.toHaveBeenCalled();
+    isRevoked.confirmElevated.mockResolvedValue('ok');
+    expect((await run('/api/held-media/7', `__Secure-held_sheet=${token}`)).res.status).toBe(299);
   });
 
   it('expires after 15 idle minutes, and each fetch restarts the clock', async () => {

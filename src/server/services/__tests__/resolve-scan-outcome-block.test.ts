@@ -61,15 +61,19 @@ function writtenColumns() {
   for (const [, column, n] of stmt.text.matchAll(/"(\w+)" = \$(\d+)/g)) {
     columns[column] = stmt.values[Number(n) - 1];
   }
+  // A flag the scan only adds: its value is what it ORs in.
+  for (const [, column, n] of stmt.text.matchAll(/"(\w+)" = "\1" OR \$(\d+)/g)) {
+    columns[column] = stmt.values[Number(n) - 1];
+  }
   // The scan's value is the ELSE arm of the stored-CSAM guard.
   for (const [, column, n] of stmt.text.matchAll(
-    /"(\w+)" = CASE WHEN "blockedFor" = 'CSAM' THEN [^$]*?ELSE \$(\d+)/g
+    /"(\w+)" = CASE WHEN EXISTS \([^$]*?'csam'\s*\) THEN [^$]*?ELSE \$(\d+)/g
   )) {
     columns[column] = stmt.values[Number(n) - 1];
   }
   // nsfwLevel's ELSE arm follows a locked-rating arm that carries a parameter of its own.
   const level = stmt.text.match(
-    /"nsfwLevel" = CASE WHEN "blockedFor" = 'CSAM' THEN \d+[\s\S]*?ELSE \$(\d+)/
+    /"nsfwLevel" = CASE WHEN EXISTS \([^$]*?'csam'\s*\) THEN \d+[\s\S]*?ELSE \$(\d+)/
   );
   if (level) columns.nsfwLevel = stmt.values[Number(level[1]) - 1];
   // The verdict is the ELSE arm of the NotFound guard (ingestionAfterVerdictSql) inside it.

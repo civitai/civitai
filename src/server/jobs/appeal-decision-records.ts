@@ -1,3 +1,5 @@
+import { LIKENESS_REQUEST_ACTIVITY } from '@civitai/db-queries/image-removal-confirmation';
+import { BLOCKED_IMAGE_RETENTION_DAYS } from '@civitai/shared/job-queue';
 import { newS3Client } from '~/utils/s3-client-factory';
 import type { S3Client } from '@aws-sdk/client-s3';
 import { DeleteObjectsCommand, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
@@ -9,6 +11,7 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { instrumentB2Client } from '~/server/prom/b2-put.metrics';
+import { immediateRemovalSql } from '~/server/utils/image-removal-mode';
 import { createJob } from './job';
 
 /** Upkeep for "AppealDecisionRecord" (see the `appeal_decision_record` trigger migration). */
@@ -17,6 +20,7 @@ import { createJob } from './job';
 const REMOVAL_LABEL_WINDOW = Prisma.raw(`make_interval(days => 30)`);
 const RESTORED_LEVEL_WINDOW = Prisma.raw(`make_interval(days => 90)`);
 const RECORD_RETENTION = Prisma.raw(`make_interval(years => 2)`);
+const ERASURE_GRACE = Prisma.raw(`make_interval(days => ${BLOCKED_IMAGE_RETENTION_DAYS})`);
 const BATCH = 5000;
 
 // Training labels this job appends; the sweep removes any whose image becomes excluded.
@@ -56,35 +60,74 @@ const ineligibleRecord = (r: Prisma.Sql) => {
   )`;
 };
 
-/**
- * Deletes ineligible records, the training labels this job wrote for any excluded image (with or
- * without a record), and expired records, then their training objects.
- */
-export async function sweepExcludedRecords(store?: AppealTrainingStore | null) {
-  const r = Prisma.raw('r');
-  const reportedOwners = await reportedOwnerHashes();
-  const [{ swept, labels, keys }] = await dbWrite.$queryRaw<
-    { swept: number; labels: number; keys: string[] }[]
-  >`
+/** Written by `/api/mod/user/delete`, the erasure endpoint, and not by self-serve deletion. */
+const ERASURE_ACTIVITY = 'deleteAccount';
+
+/** By appeal, or by owner hash for a record whose appeal row is gone. */
+const ownersRecord = (r: Prisma.Sql, userIds: number[]) => Prisma.sql`(
+  ${r}."ownerHash" = ANY(${ownerHashesOf(userIds)}::text[])
+  OR EXISTS (
+    SELECT 1 FROM "Appeal" a WHERE a.id = ${r}."appealId" AND a."userId" = ANY(${userIds}::int[])
+  )
+)`;
+
+// Keyed on the request, never on a moderator's realPerson call: those records are copied on purpose.
+const requestRemovedRecord = (r: Prisma.Sql) => Prisma.sql`(
+  ${r}."removalLabel" = ${ViolationType.LikenessRequest}
+  OR EXISTS (
+    SELECT 1 FROM "ModActivity" m
+    WHERE m."entityType" = 'image' AND m."entityId" = ${r}."imageId"
+      AND m.activity = ${LIKENESS_REQUEST_ACTIVITY}
+  )
+)`;
+
+/** Deletes matching records and the training labels this job wrote for their images. */
+async function deleteRecords(where: Prisma.Sql, alsoLabelWhere: Prisma.Sql = Prisma.sql`false`) {
+  const [row] = await dbWrite.$queryRaw<{ swept: number; labels: number; keys: string[] }[]>`
     WITH removed AS (
-      DELETE FROM "AppealDecisionRecord" r
-      WHERE ${ineligibleRecord(r)} OR r."ownerHash" = ANY(${reportedOwners}::text[])
+      DELETE FROM "AppealDecisionRecord" r WHERE ${where}
       RETURNING r."imageUrl", r."trainingObjectKey"
     ),
     labels AS (
       DELETE FROM training_labels tl
       WHERE tl.source = ${CORRECTION_SOURCE}
-        AND (
-          tl.url IN (SELECT "imageUrl" FROM removed)
-          OR EXISTS (
-            SELECT 1 FROM "Image" li WHERE li.url = tl.url AND ${excludedImageRow(Prisma.raw('li'))}
-          )
-        )
+        AND (tl.url IN (SELECT "imageUrl" FROM removed) OR ${alsoLabelWhere})
       RETURNING 1
     )
     SELECT (SELECT count(*) FROM removed)::int AS swept, (SELECT count(*) FROM labels)::int AS labels,
       ARRAY(SELECT "trainingObjectKey" FROM removed WHERE "trainingObjectKey" IS NOT NULL) AS keys
   `;
+  return row;
+}
+
+/**
+ * Removes an erased account's records and their training objects, rows first. The nightly sweep
+ * removes the same records by the account's `deleteAccount` audit row, when that row was written.
+ */
+export async function removeErasedOwnerRecords(userId: number, store?: AppealTrainingStore | null) {
+  const { swept, keys } = await deleteRecords(ownersRecord(Prisma.raw('r'), [userId]));
+  return {
+    removed: swept,
+    objects: await discardTrainingObjects(store, keys, appealOwnerHash(userId)),
+  };
+}
+
+/**
+ * Deletes ineligible records, records of erased accounts and of request-removed images, the training
+ * labels this job wrote for any excluded image (with or without a record), and expired records, then
+ * their training objects.
+ */
+export async function sweepExcludedRecords(store?: AppealTrainingStore | null) {
+  const r = Prisma.raw('r');
+  const reportedOwners = await reportedOwnerHashes();
+  const erasedOwners = await erasedOwnerIds();
+  const { swept, labels, keys } = await deleteRecords(
+    Prisma.sql`${ineligibleRecord(r)} OR r."ownerHash" = ANY(${reportedOwners}::text[])
+      OR ${ownersRecord(r, erasedOwners)} OR ${requestRemovedRecord(r)}`,
+    Prisma.sql`EXISTS (
+      SELECT 1 FROM "Image" li WHERE li.url = tl.url AND ${excludedImageRow(Prisma.raw('li'))}
+    )`
+  );
   const expiredRows = await dbWrite.$queryRaw<{ key: string | null }[]>`
     DELETE FROM "AppealDecisionRecord" WHERE "createdAt" < now() - ${RECORD_RETENTION}
     RETURNING "trainingObjectKey" AS key
@@ -190,19 +233,56 @@ const forgetOrphanKey = (key: string) => dbWrite.$executeRaw`
 const ownerHash = (key: string, userId: number) =>
   createHmac('sha256', key).update(String(userId)).digest('hex');
 
-async function reportedOwnerHashes() {
+/** A training object key, opaque in logs. */
+const keyHash = (key: string) =>
+  createHmac('sha256', env.APPEAL_OWNER_HASH_KEY ?? 'appeal-training-key')
+    .update(key)
+    .digest('hex')
+    .slice(0, 16);
+
+/** An error message with any training object key in it replaced by its hash. */
+const withKeysHashed = (message: string, keys: string[]) =>
+  keys.reduce((text, key) => text.split(key).join(keyHash(key)), message);
+
+/** The opaque owner id records carry, for logs that must not name an erased account. */
+export const appealOwnerHash = (userId: number) => ownerHashesOf([userId])[0] ?? null;
+
+/** Without the key no record carries a hash, so there is nothing to match. */
+function ownerHashesOf(userIds: number[]) {
   const key = env.APPEAL_OWNER_HASH_KEY;
-  if (!key) return [];
+  return key ? userIds.map((userId) => ownerHash(key, userId)) : [];
+}
+
+async function reportedOwnerHashes() {
+  if (!env.APPEAL_OWNER_HASH_KEY) return [];
   const owners = await dbWrite.$queryRaw<{ userId: number }[]>`
     SELECT DISTINCT "userId" FROM "CsamReport" WHERE "userId" IS NOT NULL
   `;
-  return owners.map((o) => ownerHash(key, o.userId));
+  return ownerHashesOf(owners.map((o) => o.userId));
+}
+
+/**
+ * Accounts deleted through the moderator endpoint that stay deleted: at once for an immediate
+ * removal, otherwise once the grace
+ * a restore can undo has passed. A restore clears `deletedAt`.
+ */
+async function erasedOwnerIds() {
+  const owners = await dbWrite.$queryRaw<{ userId: number }[]>`
+    SELECT DISTINCT m."entityId" AS "userId" FROM "ModActivity" m
+    LEFT JOIN "User" u ON u.id = m."entityId"
+    WHERE m."entityType" = 'user' AND m.activity = ${ERASURE_ACTIVITY} AND m."entityId" IS NOT NULL
+      AND (u.id IS NULL OR (u."deletedAt" IS NOT NULL AND (
+        ${immediateRemovalSql(Prisma.raw('u'))} OR u."deletedAt" <= now() - ${ERASURE_GRACE}
+      )))
+  `;
+  return owners.map((o) => o.userId);
 }
 
 /** Deletes training objects; keys it could not delete are kept for the next sweep to retry. */
 async function discardTrainingObjects(
   store: AppealTrainingStore | null | undefined,
-  keys: string[]
+  keys: string[],
+  owner?: string | null
 ) {
   keys = [...new Set(keys)];
   if (!keys.length) return 0;
@@ -218,8 +298,11 @@ async function discardTrainingObjects(
     logToAxiom({
       type: 'error',
       name: JOB_LOG_NAME,
-      message: 'Could not delete training objects; queued for retry',
-      details: { keys, error: (e as Error).message },
+      // A key names its appeal and image, so only its hash is logged; the queue holds the key.
+      message: `Could not delete training objects; queued for retry${
+        owner ? ` (owner ${owner})` : ''
+      }`,
+      details: { keys: keys.map(keyHash), error: withKeysHashed((e as Error).message, keys) },
     });
     await dbWrite.$executeRaw`
       INSERT INTO "AppealTrainingObjectDeletion" (key)
@@ -293,15 +376,47 @@ const COPY_LABELS: string[] = [
   ViolationType.Spam,
 ];
 const RATED_COPY_LABELS: string[] = [ViolationType.RealPerson, 'poi'];
+const SCANNER_COPY_RATINGS: string[] = ['pg', 'pg13', 'pg-13'];
 
-// Anything not listed, or with an unknown rating, is not copied.
-const copyableRecord = (r: Prisma.Sql) => Prisma.sql`coalesce(
-  ${r}."removalLabel" = ANY(${COPY_LABELS}::text[])
+/** `TagSource.SpineRating` as `get_tag_on_image_attributes` packs it (migration 20271208140000). */
+const SPINE_RATING_SOURCE_CODE = 10;
+/**
+ * Whether a `TagsOnImageNew` row is a rating the image scan stored: its `SpineRating` source code,
+ * or any automated source-0 row. Rows written before the scan sources had codes packed every one of
+ * them as source 0, so a legacy Hive or AiRecognition label is read as a rating too: the copy rule
+ * then skips the record, and a downvote never deletes it (both fail closed).
+ */
+export const isScannerRatingRow = (row: Prisma.Sql) => Prisma.sql`(
+  ((${row}.attributes >> 12)::integer & 15) = ${SPINE_RATING_SOURCE_CODE}
   OR (
-    ${r}."removalLabel" = ANY(${RATED_COPY_LABELS}::text[])
-    AND ${r}."removalNsfw" IN ('None', 'Soft')
-    AND ${r}."aiNsfwLevel" IN (1, 2)
-  ),
+    ((${row}.attributes >> 12)::integer & 15) = 0
+    AND ((${row}.attributes >> 11)::integer & 1) = 1
+  )
+)`;
+
+/** The ratings the image scan stored for an image, as tag names. */
+const scannerRatingsOf = (imageId: Prisma.Sql) => Prisma.sql`
+  SELECT sg.name FROM "TagsOnImageNew" st JOIN "Tag" sg ON sg.id = st."tagId"
+  WHERE st."imageId" = ${imageId}
+    AND ${isScannerRatingRow(Prisma.sql`st`)}`;
+
+/** Rated by the scan, and every rating it stored for the image is in `SCANNER_COPY_RATINGS`. */
+const scannerRatedForCopy = (r: Prisma.Sql) => Prisma.sql`(
+  SELECT count(*) > 0 AND bool_and(s.name = ANY(${SCANNER_COPY_RATINGS}::text[]))
+  FROM (${scannerRatingsOf(Prisma.sql`${r}."imageId"`)}) s
+)`;
+
+// Anything not listed, with no scanner rating, or removed on a likeness request is not copied.
+const copyableRecord = (r: Prisma.Sql) => Prisma.sql`coalesce(
+  (
+    ${r}."removalLabel" = ANY(${COPY_LABELS}::text[])
+    OR (
+      ${r}."removalLabel" = ANY(${RATED_COPY_LABELS}::text[])
+      AND ${r}."removalNsfw" IN ('None', 'Soft')
+      AND ${scannerRatedForCopy(r)}
+    )
+  )
+  AND NOT ${requestRemovedRecord(r)},
   false
 )`;
 
@@ -363,8 +478,13 @@ export function createAppealTrainingStore({
             Delete: { Objects: keys.slice(i, i + 1000).map((Key) => ({ Key })), Quiet: true },
           })
         );
+        // Codes only: a key names its appeal and image, and this message is logged.
         if (Errors?.length)
-          throw new Error(`delete failed: ${Errors.map((e) => e.Key).join(', ')}`);
+          throw new Error(
+            `delete failed for ${Errors.length} objects: ${[
+              ...new Set(Errors.map((e) => e.Code ?? 'unknown')),
+            ].join(', ')}`
+          );
       }
     },
   };

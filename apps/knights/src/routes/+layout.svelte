@@ -6,17 +6,23 @@
   import AppHeader from '$lib/AppHeader.svelte';
   import WhatsNewDialog from '$lib/WhatsNewDialog.svelte';
   import type { PlayerStatus } from '$lib/server/player-status';
-  import type { WhatsNew } from '$lib/whats-new';
+  import { updatesCopy, type WhatsNew } from '$lib/whats-new';
   import { provideWhatsNew } from '$lib/whats-new-dismiss.svelte';
+  import { provideUpdates } from '$lib/updates.svelte';
   import { provideVotesSent } from '$lib/votes-sent.svelte';
+  import { provideLiveStatus } from '$lib/live-status.svelte';
   import type { LayoutData } from './$types';
 
   let { data, children }: { data: LayoutData; children: import('svelte').Snippet } = $props();
 
   // A page that loads the player's status (play keeps it live) hands it to the header through page.data; every other page
   // gets the layout's copy, so the header is the same on each of them.
+  const live = provideLiveStatus();
   let status = $derived(
-    (page.data.status as PlayerStatus | null | undefined) ?? data.headerStats?.status ?? undefined
+    live.current ??
+      (page.data.status as PlayerStatus | null | undefined) ??
+      data.headerStats?.status ??
+      undefined
   );
   // /play reads the votes it has in flight from this context.
   provideVotesSent();
@@ -35,6 +41,20 @@
     userId: () => data.userId,
     path: () => page.url.pathname,
   });
+  // Entries the player has not seen open once by themselves on /home and /play, never over another dialog: the launch
+  // dialog, the content warning, or /play's rating guide and rank-up. They wait for the load after those close. The
+  // header button opens them at any time.
+  let otherDialogDue = $derived(
+    !!whatsNew ||
+      page.data.needsConsent === true ||
+      page.data.showGuide === true ||
+      (page.data.progress as { kind?: string } | null | undefined)?.kind === 'rank'
+  );
+  const updates = provideUpdates({
+    updates: () => data.updates,
+    userId: () => data.userId,
+    autoOpen: () => (page.route.id === '/home' || page.route.id === '/play') && !otherDialogDue,
+  });
   let fit = $derived(page.route.id === '/play');
 </script>
 
@@ -50,10 +70,11 @@
       isPlayer={data.isPlayer}
       feedbackOpen={data.feedbackOpen}
       {status}
-      recapUnseen={data.recapUnseen}
+      hasUpdates={!!data.updates}
       goldPerBuzz={data.goldPerBuzz}
       ladder={data.ladder}
       badges={data.badges}
+      inquisitor={data.inquisitor}
     />
     <main>
       {@render children()}
@@ -61,6 +82,11 @@
   </div>
   {#if whatsNew && whatsNewDialog.showing}
     <WhatsNewDialog copy={whatsNew} onclose={whatsNewDialog.close} />
+  {:else if data.updates && updates.open}
+    <WhatsNewDialog
+      copy={updatesCopy(data.updates.entries, updates.unseen)}
+      onclose={updates.close}
+    />
   {/if}
 {/if}
 

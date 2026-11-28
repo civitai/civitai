@@ -17,6 +17,8 @@ import {
   takedownServiceOffering,
 } from '$lib/server/service-offering-takedown.service';
 import { isServiceOfferingTakedownReason } from '@civitai/shared/service-offering-takedown';
+import { getReportedServiceReviews } from '$lib/server/service-review-reports.service';
+import { serviceReviewActions } from './service-review-actions.server';
 import { canAccess } from '$lib/server/access';
 import { loadReportQueue } from '$lib/server/report-queue-load';
 import { reportStatusActions } from '$lib/server/report-queue-actions';
@@ -27,20 +29,21 @@ import { reportEntityForSlug, reportPath, ReportStatus } from '$lib/reports';
 // (`/reports/image`, the image queues' card grid); a static route wins over this one, so none of those
 // slugs reaches here. Articles, chats, collections, bounties and bounty entries share the same layout at
 // `/reports/[queue=entityQueue]`, whose matcher outranks this plain param.
-export const load: PageServerLoad = async ({ params, url }) => {
+export const load: PageServerLoad = async ({ params, url, locals }) => {
   const type = reportEntityForSlug(params.slug);
   if (!type) error(404, 'Unknown report type');
 
   const queue = await loadReportQueue(type, url);
   const entityIds = queue.items.flatMap((r) => (r.entityId != null ? [r.entityId] : []));
   const reportIds = queue.items.map((r) => r.id);
-  const [games, storylines, storylineHolds, deletedStorylines, serviceOfferings] =
+  const [games, storylines, storylineHolds, deletedStorylines, serviceOfferings, serviceReviews] =
     await Promise.all([
       type === 'gameFrameGame' ? getGameMirrors(entityIds) : [],
       type === 'storyline' ? getReportedStorylines(entityIds) : [],
       type === 'storyline' ? getStorylineReportHolds(reportIds) : [],
       type === 'storyline' ? getDeletedReportStorylines(reportIds) : [],
       type === 'serviceOffering' ? getReportedServiceOfferings(entityIds) : [],
+      type === 'serviceOffering' ? getReportedServiceReviews(reportIds, locals.user) : new Map(),
     ]);
 
   return {
@@ -51,12 +54,15 @@ export const load: PageServerLoad = async ({ params, url }) => {
     storylineHolds,
     deletedStorylines,
     serviceOfferings,
+    // Keyed by report id: only a review report is in it.
+    serviceReviews: Object.fromEntries(serviceReviews),
   };
 };
 
 // The page's route tier is gated in hooks.server.ts; actions on a type with its own tier re-check it here with canAccess.
 export const actions: Actions = {
   ...reportStatusActions(),
+  ...serviceReviewActions,
   /**
    * Delists the reported game on Game Frame, then sets the report Actioned (which pays the reporters).
    * The report is only touched once Game Frame says the game is down, so a failed call leaves it open.

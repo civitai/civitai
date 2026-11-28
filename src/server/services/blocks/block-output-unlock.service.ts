@@ -91,7 +91,7 @@ export const OUTPUT_UNLOCK_READ_BACK_FAILED_MESSAGE =
   "The unlock went through, but we couldn't load the output. Check again in a few minutes.";
 
 /**
- * The write got no response (our timeout): it may still land. Not retryable from here: the
+ * The write got no response (our timeout) or a 5xx: it may still land. Not retryable from here: the
  * workflow's lock is KEPT until its TTL, so a retry is refused as in progress until then.
  */
 export const OUTPUT_UNLOCK_MAY_BE_PENDING_MESSAGE =
@@ -132,10 +132,9 @@ function outputAt(
   position: number,
   view: OutputUnlockView = NO_SERVING
 ): { snapshot: BlockWorkflowSnapshot; output: BlockWorkflowOutput | undefined } {
-  const decided = snapshotAt(workflow, { ...ceiling, serving: view.serving, mint: null });
-  const shown = view.mint
-    ? snapshotAt(workflow, { ...ceiling, serving: view.serving, mint: view.mint })
-    : decided;
+  const rules = { ...ceiling, serving: view.serving, servingUnknown: view.servingUnknown };
+  const decided = snapshotAt(workflow, { ...rules, mint: null });
+  const shown = view.mint ? snapshotAt(workflow, { ...rules, mint: view.mint }) : decided;
   return { snapshot: shown, output: decided.outputs?.[position] };
 }
 
@@ -146,7 +145,10 @@ function snapshotAt(workflow: Workflow, view: BlockOutputView): BlockWorkflowSna
 }
 
 /** `resolveBlockOutputView(claims)` without its ceiling: the serving rules and mint. */
-export type OutputUnlockView = Pick<BlockOutputView, 'serving' | 'mint'>;
+export type OutputUnlockView = Pick<
+  BlockOutputView,
+  'serving' | 'servingUnknown' | 'anonymous' | 'mint'
+>;
 const NO_SERVING: OutputUnlockView = { serving: false, mint: null };
 
 /** Shown, or unlockable by paying: either way the viewer could see it under that ceiling. */
@@ -191,6 +193,10 @@ export function planBlockOutputUnlock(
   if (!output) {
     throw new TRPCError({ code: 'BAD_REQUEST', message: `output ${position} does not exist` });
   }
+  // No serve decision, or a viewer judged as signed out: nothing is offered for pay.
+  if (view.servingUnknown || view.anonymous) {
+    return { kind: 'unavailable', position, message: OUTPUT_UNLOCK_CANNOT_SHOW_MESSAGE };
+  }
   if (isUnrestrictedOutput(output)) return { kind: 'not-restricted', position, snapshot };
   if ('pending' in output) {
     return { kind: 'unavailable', position, message: pendingOutputMessage(position) };
@@ -199,18 +205,16 @@ export function planBlockOutputUnlock(
     return { kind: 'unavailable', position, message: OUTPUT_UNLOCK_BLOCKED_MESSAGE };
   }
   if (output.reason === 'pool') {
-    // With serving on, the lifted output must itself be usable: a never-rated engine's video or
-    // an `na` output is restricted the moment it is released, so it is never offered for pay.
-    if (view.serving) {
-      const lifted = outputAt(
-        { ...workflow, allowMatureContent: true },
-        blockOutputCeilingFromClaims(claims),
-        position,
-        { serving: true, mint: null }
-      ).output;
-      if (!lifted || !isUnrestrictedOutput(lifted)) {
-        return { kind: 'unavailable', position, message: OUTPUT_UNLOCK_CANNOT_SHOW_MESSAGE };
-      }
+    // The lifted output must itself be usable: a never-rated engine's video or an `na` output
+    // is restricted the moment it is released, serving on or off, so it is never offered for pay.
+    const lifted = outputAt(
+      { ...workflow, allowMatureContent: true },
+      blockOutputCeilingFromClaims(claims),
+      position,
+      { serving: view.serving, mint: null }
+    ).output;
+    if (!lifted || !isUnrestrictedOutput(lifted)) {
+      return { kind: 'unavailable', position, message: OUTPUT_UNLOCK_CANNOT_SHOW_MESSAGE };
     }
     const list = (workflow.transactions as { list?: unknown } | null | undefined)?.list;
     const unlockBuzz = unlockPriceFromTransactions(Array.isArray(list) ? list : []);
@@ -249,14 +253,14 @@ export function planBlockOutputUnlock(
 export type OutputUnlockDeps = {
   /** The viewer's own orchestrator read of the workflow (their token, so another's 404s). */
   readWorkflow: () => Promise<Workflow>;
-  /** `assertUnlockAllowed`: the site-level refusal (green domain, mature content off). */
+  /** `assertUnlockAllowed`: the site-level refusal (green domain). */
   assertUnlockAllowed: () => void;
   /** `assertUnlockReleasesOutput`: the orchestrator would release something for the charge. */
   assertUnlockReleasesOutput: () => Promise<void>;
   /**
    * `allowMatureContent: true` at the orchestrator, bounded (`liftWorkflowMatureRestriction`).
    * The orchestrator's Yellow balance check (its 403) is `insufficient-funds`; no response at
-   * all (our timeout) is `no-response`, the write possibly still in flight; any other failure
+   * all (our timeout) or a 5xx is `no-response`, the write possibly still in flight; any other failure
    * throws.
    */
   liftRestriction: () => Promise<{ outcome: 'lifted' | 'insufficient-funds' | 'no-response' }>;
@@ -267,6 +271,22 @@ export type OutputUnlockDeps = {
    * path; the reply already reports the charge.
    */
   warnChargedNotReleased: (entry: ChargedNotReleased) => void;
+  /**
+   * A WARN for support: the write got no response or a 5xx, so whether the viewer was charged is
+   * unknown, and the reply says nothing was charged. Never an error path.
+   */
+  warnOutcomeUnknown: (entry: OutcomeUnknown) => void;
+};
+
+/** One unlock whose charge is unknown, as `warnOutcomeUnknown` records it. */
+export type OutcomeUnknown = {
+  userId: number;
+  workflowId: string;
+  position: number;
+  /** The price the orchestrator may have taken. */
+  unlockBuzz: number;
+  /** The output's browsing level when the unlock was planned. */
+  plannedLevel: number | null;
 };
 
 /** One charged-but-not-released unlock, as `warnChargedNotReleased` records it. */
@@ -324,9 +344,9 @@ export type OutputUnlockResult = {
   /**
    * `unlocked`: the output now carries a url. `not-restricted`: it already did (a retry after a
    * success lands here), nothing was charged. `not-released`: the orchestrator accepted the
-   * unlock (its swap stands) but the output is still restricted at this token's ceiling;
-   * `message` says why. `refused`: the orchestrator refused the yellow charge (the viewer's
-   * Yellow balance is short); `message` says so. `unavailable`: the write got no response, so it
+   * unlock (its swap stands) but the output is still restricted at this token's ceiling, or
+   * reading it back after the charge failed; `message` says which. `refused`: the orchestrator refused the yellow charge (the viewer's
+   * Yellow balance is short); `message` says so. `unavailable`: the write got no response or a 5xx, so it
    * may still land; the lock is kept until its TTL and `message` says to check back.
    */
   outcome: 'unlocked' | 'not-restricted' | 'not-released' | 'refused' | 'unavailable';
@@ -389,6 +409,17 @@ export async function unlockBlockOutput(
     const lifted = await deps.liftRestriction();
     if (lifted.outcome === 'no-response') {
       keepLock = true;
+      try {
+        deps.warnOutcomeUnknown({
+          userId: request.viewerUserId,
+          workflowId: request.workflowId,
+          position: request.position,
+          unlockBuzz: total,
+          plannedLevel: levelAt(fresh, request.position),
+        });
+      } catch {
+        // A record for support; it must not change the viewer's reply.
+      }
       return {
         outcome: 'unavailable',
         snapshot: plan.snapshot,

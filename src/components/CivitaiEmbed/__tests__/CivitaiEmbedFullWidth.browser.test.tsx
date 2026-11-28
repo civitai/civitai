@@ -15,7 +15,6 @@ import type { EmbedImage } from '~/components/CivitaiEmbed/CivitaiEmbedProvider'
 // The real ImageGuard2 decides; only the media it chooses between are stand-ins.
 const settings = vi.hoisted(() => ({ browsingLevel: 1, blurNsfw: false }));
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 9 }) }));
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsModule>()),
   useFeatureFlags: () => ({ canViewNsfw: true }),
@@ -35,11 +34,27 @@ vi.mock('~/components/Image/Providers/ImagesProvider', async (importOriginal) =>
 }));
 vi.mock('~/components/Dialog/RoutedDialogLink', async (importOriginal) => ({
   ...(await importOriginal<typeof RoutedDialogLinkModule>()),
-  RoutedDialogLink: ({ children }: { children: React.ReactNode }) => <a href="#">{children}</a>,
+  RoutedDialogLink: ({
+    children,
+    'aria-label': ariaLabel,
+  }: {
+    children: React.ReactNode;
+    'aria-label'?: string;
+  }) => (
+    <a href="#" aria-label={ariaLabel}>
+      {children}
+    </a>
+  ),
 }));
 vi.mock('~/components/EdgeMedia/EdgeMedia', async (importOriginal) => ({
   ...(await importOriginal<typeof EdgeMediaModule>()),
-  EdgeMedia2: ({ src }: { src: string }) => <div data-testid="edge-media" data-src={src} />,
+  EdgeMedia2: ({ src, videoProps }: { src: string; videoProps?: { keepPlaying?: boolean } }) => (
+    <div
+      data-testid="edge-media"
+      data-src={src}
+      data-keep-playing={videoProps?.keepPlaying ? 'true' : undefined}
+    />
+  ),
 }));
 vi.mock('~/components/ImageHash/ImageHash', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageHashModule>()),
@@ -66,7 +81,8 @@ function renderFull(type: 'image' | 'video') {
   return renderWithProviders(
     <BrowsingLevelProvider>
       <FullWidthMedia item={{ type: 'image', id: media(type).id }} data={media(type)} />
-    </BrowsingLevelProvider>
+    </BrowsingLevelProvider>,
+    { user: { id: 9 } }
   );
 }
 
@@ -100,5 +116,29 @@ describe('the full-width view of a mature item', () => {
 
     await expect.element(page.getByTestId('edge-media')).toBeInTheDocument();
     expect(page.getByTestId('media-hash').elements()).toHaveLength(0);
+  });
+});
+
+describe('the full-width view of a video', () => {
+  beforeEach(() => (settings.browsingLevel = NsfwLevel.PG | NsfwLevel.R));
+
+  test('a video embed opts in to keep playing once started', async () => {
+    renderFull('video');
+    await expect
+      .element(page.getByTestId('edge-media'))
+      .toHaveAttribute('data-keep-playing', 'true');
+  });
+
+  test('the viewer opens from a labelled icon link, not a text link', async () => {
+    renderFull('video');
+    const open = page.getByRole('link', { name: 'Open in viewer' });
+    await expect.element(open).toBeInTheDocument();
+    await expect.element(open).not.toHaveTextContent('Open');
+  });
+
+  test('an image has no corner link', async () => {
+    renderFull('image');
+    await expect.element(page.getByTestId('edge-media')).toBeInTheDocument();
+    expect(page.getByRole('link', { name: 'Open in viewer' }).elements()).toHaveLength(0);
   });
 });

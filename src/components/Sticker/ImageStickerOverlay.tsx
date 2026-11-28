@@ -32,10 +32,13 @@ const ARM_AT = 0.6;
 export function ImageStickerOverlay({
   imageId,
   wearsHat = false,
+  isVideo = false,
 }: {
   imageId: number;
   /** The image wears an event hat, which the owner's peek toggle must not sit under. */
   wearsHat?: boolean;
+  /** A video draws its own controls along the bottom edge. */
+  isVideo?: boolean;
 }) {
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
@@ -145,6 +148,7 @@ export function ImageStickerOverlay({
               viewerId={currentUser?.id}
               treatment={treatment}
               takenCorners={wearsHat ? EVENT_HAT_CORNERS : undefined}
+              isVideo={isVideo}
               // Every time they arrive on screen (Justin, 2026-08-12) — hence
               // `armed`, which tracks intersection rather than mount, because the
               // carousel mounts a slide long before anyone looks at it and keeps it
@@ -174,7 +178,9 @@ export function ImageStickerOverlay({
           {isPlacing && <DraftStickerLayer />}
         </div>
       )}
-      {isPlacing && video && <StickerMotionEditor video={video} />}
+      {isPlacing && video && (
+        <StickerMotionEditor video={video} autoTrack={features.stickerAutoTrack} />
+      )}
     </div>
   );
 }

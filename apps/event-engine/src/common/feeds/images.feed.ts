@@ -171,7 +171,7 @@ async function createDocuments(
         i."height",
         i."hash",
         i."hideMeta",
-        GREATEST(p."publishedAt", i."scannedAt", i."createdAt") as "sortAt",
+        image_sort_at(p."publishedAt", i."scannedAt", i."createdAt", i."firstVisibleAt") as "sortAt",
         i."type",
         i."userId",
         i."needsReview",
@@ -1045,7 +1045,6 @@ async function populateDocuments(
   const shouldFetchTags = includeTags || includeTagIds;
 
   // Fetch data in parallel with proper typing for conditional fetches
-  type ProfilePictureData = Awaited<ReturnType<typeof ctx.cache.fetch<'profilePictures'>>>;
   type UserCosmeticData = Awaited<ReturnType<typeof ctx.cache.fetch<'userCosmetics'>>>;
   type ImageTagIdsData = Awaited<ReturnType<typeof ctx.cache.fetch<'imageTagIds'>>>;
   type TagDataType = Awaited<ReturnType<typeof ctx.cache.fetch<'tagData'>>>;
@@ -1056,7 +1055,6 @@ async function populateDocuments(
   const [
     metricsData,
     usersData,
-    profilePicturesData,
     userCosmeticsData,
     imageCosmeticsData,
     imageMetaData,
@@ -1066,9 +1064,6 @@ async function populateDocuments(
   ] = await Promise.all([
     ctx.metric.fetch(imageIds),
     ctx.cache.fetch('userData', userIds),
-    include.includes('profilePictures')
-      ? ctx.cache.fetch('profilePictures', userIds)
-      : (Promise.resolve({}) as Promise<ProfilePictureData>),
     include.includes('cosmetics')
       ? ctx.cache.fetch('userCosmetics', userIds)
       : (Promise.resolve({}) as Promise<UserCosmeticData>),
@@ -1148,7 +1143,6 @@ async function populateDocuments(
       image: userData.image ?? null,
       deletedAt: userData.deletedAt ?? null,
       cosmetics: userCosmeticsArray,
-      profilePicture: profilePicturesData[doc.userId] ?? null,
     };
 
     // Reactions

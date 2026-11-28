@@ -28,8 +28,6 @@ import type * as TrpcMod from '~/utils/trpc';
  * scaffold): only the ambient tRPC client and useCurrentUser are stubbed.
  */
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
   // FeatureFlagsProvider (in PageBlockHost's real render graph) statically
@@ -199,7 +197,12 @@ const baseProps = {
  * from a genuine zero, so nothing is asserted until the channel has been proven
  * to carry traffic.
  */
-async function mountAndCaptureInit(overrides: Partial<typeof baseProps> = {}) {
+async function mountAndCaptureInit(
+  overrides: Partial<typeof baseProps> & {
+    tokenKind?: 'block' | 'oauth';
+    appData?: { url: string; slug: string };
+  } = {}
+) {
   await renderWithProviders(
     <PageBlockHost
       {...baseProps}
@@ -226,6 +229,65 @@ describe('PageBlockHost BLOCK_INIT — capabilities', () => {
     const { posts, init } = await mountAndCaptureInit();
     expect(init.capabilities).toContain('workflowMedia:v1');
     posts.stop();
+  });
+});
+
+describe('PageBlockHost BLOCK_INIT — blockErrors:v1, only where the host collects errors', () => {
+  test('🔴 the review preview lists blockErrors:v1, so a new SDK sends it non-fatal errors', async () => {
+    const { posts, init } = await mountAndCaptureInit({
+      surface: 'review-preview' as BlockHostSurface,
+    });
+    expect(init.capabilities).toEqual(['workflowMedia:v1', 'blockErrors:v1']);
+    // …without turning the review app's document store local: that is the dev tunnel's signal.
+    expect(init).not.toHaveProperty('storageMode');
+    posts.stop();
+  });
+
+  test('the public run surface does not: a published app is never asked for them', async () => {
+    const { posts, init } = await mountAndCaptureInit({ surface: 'page-run' as BlockHostSurface });
+    expect(init.capabilities).toEqual(['workflowMedia:v1']);
+    posts.stop();
+  });
+});
+
+describe('PageBlockHost — the block’s BLOCK_READY and BLOCK_ERROR reach the mounter', () => {
+  test('🔴 onBlockReady gets the BLOCK_READY payload (the SDK name and version); onBlockError every report', async () => {
+    const onBlockReady = vi.fn();
+    const onBlockError = vi.fn();
+    await renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        surface="review-preview"
+        onBlockReady={onBlockReady}
+        onBlockError={onBlockError}
+        onConsentGranted={vi.fn()}
+        onRetryToken={vi.fn()}
+      />
+    );
+    await vi.waitFor(() => {
+      if (!iframeEl().contentWindow) throw new Error('not mounted yet');
+    });
+    // The channel is live: the host has posted BLOCK_INIT, so its listeners are attached.
+    const posts = listenForHostPosts();
+    await vi.waitFor(() => {
+      if (posts.of('BLOCK_INIT').length === 0) throw new Error('listener saw no BLOCK_INIT');
+    });
+    posts.stop();
+    postFromBlock('BLOCK_READY', { height: 0, sdkName: 'sdk', sdkVersion: '0.29.0' });
+    postFromBlock('BLOCK_ERROR', {
+      message: 'late failure',
+      fatal: false,
+      source: 'console',
+      at: 7,
+    });
+    await vi.waitFor(() => expect(onBlockError).toHaveBeenCalledTimes(1));
+    expect(onBlockReady).toHaveBeenCalledWith({ height: 0, sdkName: 'sdk', sdkVersion: '0.29.0' });
+    expect(onBlockError).toHaveBeenCalledWith({
+      message: 'late failure',
+      fatal: false,
+      source: 'console',
+      at: 7,
+    });
   });
 });
 
@@ -497,6 +559,53 @@ describe('PageBlockHost BLOCK_INIT — storageMode is set from the SURFACE', () 
     expect(init.token.scopes.filter((s) => s.startsWith('apps:storage'))).toEqual([]);
     expect(init.token.scopes).toContain('ai:write');
     expect(init).not.toHaveProperty('storageMode');
+    posts.stop();
+  });
+});
+
+describe('PageBlockHost BLOCK_INIT — appData is the mint decision, forwarded on page-run only', () => {
+  // `slug` equals baseProps.blockId; the URL is distinct from every other fixture value.
+  const SERVICE = { url: 'https://records.example.test/v2', slug: 'lanternfish-studio' };
+
+  test('🔴 page-run with a block token forwards { url, slug } as given', async () => {
+    const { posts, init } = await mountAndCaptureInit({
+      surface: 'page-run',
+      tokenKind: 'block',
+      appData: SERVICE,
+    });
+    expect(init.appData).toEqual({
+      url: 'https://records.example.test/v2',
+      slug: 'lanternfish-studio',
+    });
+    posts.stop();
+  });
+
+  test('page-run without a decision from the mint: the key is ABSENT', async () => {
+    const { posts, init } = await mountAndCaptureInit({
+      surface: 'page-run',
+      tokenKind: 'block',
+    });
+    expect(init).not.toHaveProperty('appData');
+    posts.stop();
+  });
+
+  test('private-run with the same decision: the key is ABSENT', async () => {
+    const { posts, init } = await mountAndCaptureInit({
+      surface: 'private-run',
+      tokenKind: 'block',
+      appData: SERVICE,
+    });
+    expect(init).not.toHaveProperty('appData');
+    posts.stop();
+  });
+
+  test('an OAuth token with the same decision: the key is ABSENT', async () => {
+    const { posts, init } = await mountAndCaptureInit({
+      surface: 'page-run',
+      tokenKind: 'oauth',
+      appData: SERVICE,
+    });
+    expect(init).not.toHaveProperty('appData');
     posts.stop();
   });
 });

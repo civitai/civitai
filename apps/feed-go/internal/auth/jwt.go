@@ -27,6 +27,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/civitai/civitai/apps/feed-go/internal/clock"
 )
 
 // SessionCookieBase is SESSION_COOKIE_BASE in packages/civitai-auth/src/constants.ts.
@@ -226,11 +228,22 @@ func jitter(d time.Duration) time.Duration {
 // ErrInvalid is returned for any token that is not a valid session.
 var ErrInvalid = errors.New("invalid session token")
 
+// now is the key set's clock (refetch pacing, staleness): the wall clock unless a test sets Now. It
+// paces this process, so eval mode's frozen clock never reaches it (a frozen pace would never refetch).
 func (v *Verifier) now() time.Time {
 	if v.Now != nil {
 		return v.Now()
 	}
 	return time.Now()
+}
+
+// tokenNow is the instant a token's times (exp, nbf, signedAt, iat0) are read at: clock.Now (eval
+// mode's FEED_GO_EVAL_NOW, else the wall clock) unless a test sets Now.
+func (v *Verifier) tokenNow() time.Time {
+	if v.Now != nil {
+		return v.Now()
+	}
+	return clock.Now()
 }
 
 // Verify checks signature, issuer, expiry, purpose and lineage. It does NOT check revocation.
@@ -280,7 +293,7 @@ func (v *Verifier) Verify(ctx context.Context, token string) (*Claims, error) {
 }
 
 func (v *Verifier) checkClaims(c *Claims) error {
-	now := v.now()
+	now := v.tokenNow()
 	nowSec := float64(now.UnixMilli()) / 1000
 	if v.Issuer != "" && c.Iss != v.Issuer {
 		return ErrInvalid
@@ -439,8 +452,10 @@ func p256PublicKey(x, y []byte) (*ecdsa.PublicKey, error) {
 	return ecdsa.ParseUncompressedPublicKey(elliptic.P256(), point)
 }
 
-// TokenFromCookieHeader extracts a cookie's value from a raw Cookie header, URL-decoding it as
-// readCookie() in verify.ts does.
+// TokenFromCookieHeader extracts a cookie's value from a raw Cookie header as the `cookie` package's
+// parse() (Next's req.cookies, which getHubSession reads) does: the first part with that name wins,
+// even when its value is empty; a value starting with `"` loses its first and last character; the value
+// is then URL-decoded, and kept raw when it does not decode.
 func TokenFromCookieHeader(header, name string) string {
 	for _, part := range strings.Split(header, ";") {
 		idx := strings.IndexByte(part, '=')
@@ -449,6 +464,13 @@ func TokenFromCookieHeader(header, name string) string {
 		}
 		if strings.TrimSpace(part[:idx]) == name {
 			val := strings.TrimSpace(part[idx+1:])
+			if strings.HasPrefix(val, `"`) {
+				// parse()'s value.slice(1, -1): a lone `"` becomes "".
+				if len(val) < 2 {
+					return ""
+				}
+				val = val[1 : len(val)-1]
+			}
 			if dec, err := urlDecode(val); err == nil {
 				return dec
 			}

@@ -17,6 +17,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 	"github.com/civitai/civitai/apps/feed-go/internal/integtest"
 )
 
@@ -245,6 +246,15 @@ func TestIntegrationModelPageFilters(t *testing.T) {
 	integWant(t, "poi owner", integIDs(integPage(t, pool, PageQuery{Take: 10, Sort: SortHighestRated, BrowsingLevel: 1, DisablePoi: true, ViewerID: 3101901})),
 		[]int{3101001, 3101002})
 	integWant(t, "minor", integIDs(integPage(t, pool, PageQuery{Take: 10, Sort: SortHighestRated, BrowsingLevel: 1, DisableMinor: true})), []int{3101002})
+	// A taken-down model is its owner's and moderators' alone (modelNotWithheldSql).
+	integtest.Exec(t, pool, `UPDATE "ModelMetric" SET mode = 'TakenDown' WHERE "modelId" = 3101002`)
+	takenDown := func(viewer int, mod bool) []int {
+		return integIDs(integPage(t, pool, PageQuery{Take: 10, Sort: SortHighestRated, BrowsingLevel: 1, ViewerID: viewer, IsModerator: mod}))
+	}
+	integWant(t, "taken down, signed out", takenDown(0, false), []int{3101001})
+	integWant(t, "taken down, another viewer", takenDown(3101901, false), []int{3101001})
+	integWant(t, "taken down, its owner", takenDown(3101902, false), []int{3101001, 3101002})
+	integWant(t, "taken down, a moderator", takenDown(3101903, true), []int{3101001, 3101002, 3101004})
 }
 
 // The lookups next to the page query: paid-access gates, a tag by name (citext).
@@ -260,10 +270,50 @@ func TestIntegrationModelLookups(t *testing.T) {
 		t.Fatalf("gates %+v", gates)
 	}
 	for name, want := range map[string]int{"INTEG-ANIME": 3101801, "integ-anime": 3101801, "nope-" + strconv.Itoa(3101): 0} {
-		id, err := tagIDByName(integtest.Ctx(t), pool, name)
+		id, _, err := hydrate.TagIDByName(integtest.Ctx(t), pool, name)
 		if err != nil || id != want {
 			t.Fatalf("tag %q: %d %v, want %d", name, id, err, want)
 		}
+	}
+}
+
+// Hide Paid keeps a gated model that has a free Published version (freePublishedVersionExistsSql): with
+// a free Public version always, with a free Private one only while private models are shown; a free
+// Draft or a version under its own live gate never counts. The seed's two gated models each start with
+// one gated version, so both are hidden until a free version is added.
+func TestIntegrationModelHidePaidFreeVersion(t *testing.T) {
+	pool := integtest.Postgres(t)
+	integSeedModels(t, pool)
+	page := func(hidePrivate bool) []int {
+		return integIDs(integPage(t, pool, PageQuery{Take: 10, Sort: SortHighestRated, BrowsingLevel: 1, HidePaid: true, HidePrivate: hidePrivate}))
+	}
+	integWant(t, "only gated versions, private hidden", page(true), []int{})
+	integWant(t, "only gated versions, private shown", page(false), []int{})
+	// 3101001: a free Public version. 3101002: a free Private one, a free Draft, and one more gated.
+	integtest.Exec(t, pool, `
+		INSERT INTO "ModelVersion" (id, "modelId", "baseModel", status, availability) VALUES
+		  (3101611, 3101001, 'SDXL 1.0', 'Published', 'Public'),
+		  (3101612, 3101002, 'Pony', 'Published', 'Private'),
+		  (3101613, 3101002, 'Pony', 'Draft', 'Public'),
+		  (3101614, 3101002, 'Pony', 'Published', 'Public');
+		INSERT INTO "PaidAccess" ("entityType", "entityId", "ownerId", "endsAt", "timeframeDays") VALUES
+		  ('ModelVersion', 3101614, 3101902, NULL, NULL);
+	`)
+	integWant(t, "free versions, private hidden", page(true), []int{3101001})
+	integWant(t, "free versions, private shown", page(false), []int{3101001, 3101002})
+	// An expired gate is no gate: 3101002's paid Public version is free once its window ends.
+	integtest.Exec(t, pool, `UPDATE "PaidAccess" SET "endsAt" = '2020-01-01 00:00:00' WHERE "entityId" = 3101614`)
+	integWant(t, "expired gate, private hidden", page(true), []int{3101001, 3101002})
+
+	// The gate read carries each gated model's gated version ids (the expired gate's version is not one).
+	gated, err := paidAccessGates(integtest.Ctx(t), pool, []int{3101001, 3101002, 3101003})
+	if err != nil {
+		t.Fatal(err)
+	}
+	integWant(t, "gated versions of 3101001", gated[3101001].versionIDs, []int{3101601})
+	integWant(t, "gated versions of 3101002", gated[3101002].versionIDs, []int{3101602})
+	if len(gated) != 2 || gated[3101001].deadline == nil || gated[3101002].deadline != nil {
+		t.Fatalf("gates %+v: want two models, 3101001 timed, 3101002 permanent", gated)
 	}
 }
 
@@ -359,4 +409,73 @@ func TestIntegrationModelPageCollection(t *testing.T) {
 	integWant(t, "page 1 cursors", integCursors(page1), []string{"50|10|3101001", "50|10|3101002"})
 	integWant(t, "page 2", integIDs(integPage(t, pool, PageQuery{Take: 1, Sort: SortHighestRated, BrowsingLevel: 31, CollectionID: 3102002, Cursor: "50|10|3101002"})),
 		[]int{3101002})
+}
+
+// The official pin's id filters against the real schema, on every base-model path and without one,
+// composed with the other filters and with a split keyset cursor (each branch carries them).
+func TestIntegrationModelPageOfficialPinFilters(t *testing.T) {
+	pool := integtest.Postgres(t)
+	integSeedModels(t, pool)
+	integWant(t, "only, one base model", integIDs(integPage(t, pool, PageQuery{Take: 5, Sort: SortHot, BrowsingLevel: 31,
+		BaseModels: []string{"Pony"}, OnlyModelIDs: []int{3101005, 3101003, 3101999}})), []int{3101005})
+	integWant(t, "exclude, one base model", integIDs(integPage(t, pool, PageQuery{Take: 5, Sort: SortHot, BrowsingLevel: 31,
+		BaseModels: []string{"Pony"}, ExcludeModelIDs: []int{3101001}})), []int{3101005})
+	integWant(t, "only, several base models", integIDs(integPage(t, pool, PageQuery{Take: 5, Sort: SortHot, BrowsingLevel: 1,
+		BaseModels: []string{"Pony", "SDXL 1.0"}, OnlyModelIDs: []int{3101001}})), []int{3101001})
+	integWant(t, "exclude, several base models", integIDs(integPage(t, pool, PageQuery{Take: 5, Sort: SortHot, BrowsingLevel: 1,
+		BaseModels: []string{"Pony", "SDXL 1.0"}, ExcludeModelIDs: []int{3101001}})), []int{3101002})
+	// The private 3101004 stays out: neither filter relaxes the private-model filter.
+	integWant(t, "only, no base model", integIDs(integPage(t, pool, PageQuery{Take: 5, Sort: SortHighestRated, BrowsingLevel: 1,
+		OnlyModelIDs: []int{3101002, 3101004}})), []int{3101002})
+	integWant(t, "exclude, from a cursor", integIDs(integPage(t, pool, PageQuery{Take: 5, Sort: SortHot, BrowsingLevel: 31,
+		Cursor: "9|3101001", ExcludeModelIDs: []int{3101002}})), []int{3101001, 3101005})
+}
+
+// The `ids` and `followed` filters (DESIGN.md §15.2.4) against Postgres: ids in the sort's order
+// whatever order they were sent in, from a cursor too; a follow list of one owner; `1 = 0` for none.
+func TestIntegrationModelPageIDsAndFollowed(t *testing.T) {
+	pool := integtest.Postgres(t)
+	integSeedModels(t, pool)
+	integWant(t, "ids", integIDs(integPage(t, pool, PageQuery{Take: 5, Sort: SortHighestRated, BrowsingLevel: 1,
+		IDs: []int{3101002, 3101001, 3101999}})), []int{3101001, 3101002})
+	integWant(t, "ids, from a cursor", integIDs(integPage(t, pool, PageQuery{Take: 5, Sort: SortHot, BrowsingLevel: 31,
+		Cursor: "9|3101001", IDs: []int{3101005, 3101001}})), []int{3101001, 3101005})
+	// 3101902's Archived, Private and Draft models stay out: the feed's own filters still apply.
+	integWant(t, "followed", integIDs(integPage(t, pool, PageQuery{Take: 5, Sort: SortHighestRated, BrowsingLevel: 1,
+		ViewerID: 3101903, Followed: true, FollowedUserIDs: []int{3101902}})), []int{3101002})
+	integWant(t, "followed, nobody", integIDs(integPage(t, pool, PageQuery{Take: 5, Sort: SortHighestRated, BrowsingLevel: 1,
+		ViewerID: 3101903, Followed: true})), []int{})
+}
+
+// A published range (DESIGN.md §15.2.9) against Postgres: the seed's published models (3101001 and
+// 3101002, both published 2026-06-02 00:00) are in a range that holds that day and out of one that
+// ends the day before (the end bound is the midnight after the last day, exclusive) or starts the day
+// after; the CTE's type filter, a split cursor and each base-model path keep the feed's own filters.
+// Then `newCreators` (§15.2.8): a board holding 3101902 keeps its one published public model, an
+// empty board (`1 = 0`) none.
+func TestIntegrationModelPagePublishedRangeAndNewCreators(t *testing.T) {
+	pool := integtest.Postgres(t)
+	integSeedModels(t, pool)
+	day := func(d int) time.Time { return time.Date(2026, 6, d, 0, 0, 0, 0, time.UTC) }
+	ranged := func(q PageQuery, from, to int) []int {
+		q.PublishedGte, q.PublishedLt = day(from), day(to+1)
+		return integIDs(integPage(t, pool, q))
+	}
+	base := PageQuery{Take: 10, Sort: SortHighestRated, BrowsingLevel: 1}
+	integWant(t, "the publish day", ranged(base, 2, 2), []int{3101001, 3101002})
+	integWant(t, "a month around it", ranged(base, 1, 30), []int{3101001, 3101002})
+	integWant(t, "ends the day before", ranged(base, 1, 1), []int{})
+	integWant(t, "starts the day after", ranged(base, 3, 3), []int{})
+	lora := base
+	lora.Types = []string{"LORA"}
+	integWant(t, "a type", ranged(lora, 2, 2), []int{3101002})
+	integWant(t, "a split cursor", ranged(PageQuery{Take: 10, Sort: SortHot, BrowsingLevel: 31, Cursor: "9|3101001"}, 2, 2), []int{3101001, 3101002})
+	integWant(t, "one base model", ranged(PageQuery{Take: 10, Sort: SortHighestRated, BrowsingLevel: 31, BaseModels: []string{"Pony"}}, 2, 2), []int{3101001})
+	integWant(t, "several base models, Newest", ranged(PageQuery{Take: 10, Sort: SortNewest, BrowsingLevel: 1, BaseModels: []string{"Pony", "SDXL 1.0"}}, 2, 2), []int{3101001, 3101002})
+	integWant(t, "several base models, aggregate", ranged(PageQuery{Take: 10, Sort: SortHighestRated, BrowsingLevel: 1, BaseModels: []string{"Pony", "SDXL 1.0"}}, 2, 2), []int{3101001, 3101002})
+
+	integWant(t, "a board", integIDs(integPage(t, pool, PageQuery{Take: 10, Sort: SortHighestRated, BrowsingLevel: 1,
+		NewCreators: true, NewCreatorUserIDs: []int{3101902, 3101999}})), []int{3101002})
+	integWant(t, "an empty board", integIDs(integPage(t, pool, PageQuery{Take: 10, Sort: SortHighestRated, BrowsingLevel: 1,
+		NewCreators: true})), []int{})
 }

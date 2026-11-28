@@ -2,7 +2,9 @@ import { fail, redirect } from '@sveltejs/kit';
 import { findRecap, getDailyStatus } from '$lib/server/daily/daily.service';
 import { db } from '$lib/server/db';
 import { joinOrder } from '$lib/server/join.service';
-import { getPlayerStatus } from '$lib/server/player-status';
+import { moderatorStats } from '$lib/server/inquisitor/context';
+import { inquisitorQueueOpen } from '$lib/server/inquisitor/mode';
+import { requestPlayerStatus } from '$lib/server/request-reads';
 import { queueDeps } from '$lib/server/queue/runtime';
 import { railFor } from '$lib/server/rail-runtime';
 import { consented, requireMember } from '$lib/server/membership';
@@ -11,7 +13,7 @@ import { seenStore } from '$lib/server/seen-runtime';
 import { isReturningPlayer, whatsNewCopy } from '$lib/whats-new';
 import type { Actions, PageServerLoad } from './$types';
 
-// The recap card and the fervor position are extras: a failed read leaves them out instead of failing the home page.
+// The recap card, the fervor position and the Inquisitor's stats are extras: a failed read leaves them out instead of failing the home page.
 const optional = <T>(what: string, read: () => Promise<T>): Promise<T | null> =>
   Promise.resolve()
     .then(read)
@@ -21,6 +23,24 @@ const optional = <T>(what: string, read: () => Promise<T>): Promise<T | null> =>
     });
 
 export const load: PageServerLoad = async ({ locals }) => {
+  if (await inquisitorQueueOpen(locals.user)) {
+    return {
+      username: locals.user.username ?? null,
+      player: null,
+      status: null,
+      daily: null,
+      recap: null,
+      fervorPosition: null,
+      whatsNew: null,
+      needsConsent: false,
+      inquisitor: {
+        stats: await optional('inquisitor stats', () =>
+          moderatorStats(db, { moderatorId: locals.user.id, now: queueDeps.now() })
+        ),
+      },
+    };
+  }
+
   const player = await db
     .selectFrom('NewOrderPlayer')
     .select(['rankType', 'exp', 'startAt'])
@@ -28,7 +48,7 @@ export const load: PageServerLoad = async ({ locals }) => {
     .executeTakeFirst();
 
   // The status and the Watch streak also feed the header's stat pills through page data.
-  const status = player ? await getPlayerStatus(db, locals.user.id) : null;
+  const status = player ? await requestPlayerStatus(db, locals) : null;
   const now = queueDeps.now();
   const playerId = locals.user.id;
   // The recap card replaces the daily popup: yesterday's verdicts, read whether or not they were already seen. The page marks
@@ -56,6 +76,7 @@ export const load: PageServerLoad = async ({ locals }) => {
     whatsNew:
       status && !needsConsent && seen?.whatsNew ? whatsNewCopy(isReturningPlayer(status)) : null,
     needsConsent,
+    inquisitor: null,
   };
 };
 

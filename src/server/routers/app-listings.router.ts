@@ -68,11 +68,16 @@ import {
   republishOwnListingSchema,
   resetListingToPendingSchema,
   resolveReportSchema,
+  retryConnectOfflineCutSchema,
   setListingOfficialSchema,
   setListingVisibilityAsModeratorSchema,
   unpublishOwnListingSchema,
 } from '~/server/schema/blocks/offsite-moderation.schema';
 import { messageAppOwnerSchema } from '~/server/schema/blocks/app-moderator-message.schema';
+import {
+  postReviewMessageSchema,
+  reviewThreadSubjectSchema,
+} from '~/server/schema/blocks/app-review-thread.schema';
 import {
   listSubListingQueueSchema,
   moderateSubListingSchema,
@@ -91,8 +96,8 @@ import {
   isListingAudienceFloor,
   type ListingAudienceFloor,
 } from '~/shared/utils/app-listing-visibility';
+import { enforceAppBlocksAuthorFlag } from '~/server/trpc/app-blocks-author.middleware';
 import {
-  isAppBlocksAuthorEnabled,
   isAppBlocksEnabled,
   resolveStoreVisibilityScope,
   resolveViewerAudienceFloor,
@@ -100,6 +105,8 @@ import {
 } from '~/server/services/app-blocks-flag';
 import {
   appDeveloperProcedure,
+  guardedProcedure,
+  isFlagProtected,
   middleware,
   moderatorProcedure,
   protectedProcedure,
@@ -108,13 +115,18 @@ import {
 } from '~/server/trpc';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
 import type { Context } from '~/server/createContext';
-import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
+import { actsAsModerator } from '~/server/utils/image-media-visibility';
 
 /** Moderator authority on the listing editor needs a session or full-access key, never an app-scoped token. */
-const actsAsModerator = (ctx: Context) => !!ctx.user?.isModerator && isSessionOrFullUserKey(ctx);
 const listingEditorUser = (ctx: Context) => ({ ...ctx.user!, isModerator: actsAsModerator(ctx) });
 import { isRedCapableHost } from '~/server/utils/server-domain';
 import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
+import {
+  appRateLimitMeta,
+  rateLimitedTrpcError,
+  rateLimitMetaOfServiceError,
+} from '~/server/utils/app-rate-limit';
+import { usageLimits } from '~/shared/constants/usage-limits';
 
 /**
  * App Store Listings (W13) — asset pipeline + off-site submission router (NEW
@@ -138,31 +150,6 @@ import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 const enforceAppBlocksFlag = middleware(async ({ ctx, next }) => {
   if (await isAppBlocksEnabled({ user: ctx.user })) return next();
   throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
-});
-
-/**
- * AUTHOR flag gate (P3a) — the WIDENED gate for the creator asset-CRUD procs +
- * the off-site submit/withdraw/my-submissions procs. Evaluated WITH the caller's
- * context against `app-blocks-author` (`isAppBlocksAuthorEnabled`: mod floor +
- * the `app-dev-testers` cohort segment), so an app-dev-tester may manage their
- * OWN listing's assets + submit off-site apps — while the SERVICE-layer owner
- * check still bounds every mutation to the caller's own listings. This REPLACES
- * the mod-only `enforceAppBlocksFlag` (`isAppBlocksEnabled`) on those procs;
- * mods still pass via the author floor. Fail-CLOSED: absent flag / Flipt-down →
- * mods only. (The mod-only `backfillAssets` proc keeps `enforceAppBlocksFlag`.)
- */
-const enforceAppBlocksAuthorFlag = middleware(async ({ ctx, next }) => {
-  // Every attachment below is `protectedProcedure.use(...)`, so `isAuthed` has already
-  // run and `ctx.user` is non-null at runtime — but this is a bare `middleware`, whose
-  // ctx type does not carry that narrowing. `isAppBlocksAuthorEnabled` REQUIRES a
-  // subject (a capability has nothing to authorize without one), so the compiler makes
-  // this refusal mandatory rather than optional. Keep it: it is also what makes the
-  // middleware safe if it is ever attached to a `publicProcedure`.
-  if (!ctx.user) {
-    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps authoring is not enabled' });
-  }
-  if (await isAppBlocksAuthorEnabled({ user: ctx.user })) return next();
-  throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps authoring is not enabled' });
 });
 
 /**
@@ -423,6 +410,13 @@ function mapSubListingError(err: unknown): TRPCError {
   if (err instanceof TRPCError) return err;
   if (err instanceof Error && err.name === 'SubListingError') {
     const status = (err as { status?: unknown }).status;
+    // Every 429 the service raises carries its meta (`subListingRateLimited`).
+    if (status === 429) {
+      return rateLimitedTrpcError(
+        rateLimitMetaOfServiceError(err) ?? appRateLimitMeta('apps.store-item-writes', 60),
+        err.message
+      );
+    }
     const code =
       status === 403
         ? 'FORBIDDEN'
@@ -430,8 +424,6 @@ function mapSubListingError(err: unknown): TRPCError {
         ? 'NOT_FOUND'
         : status === 409
         ? 'CONFLICT'
-        : status === 429
-        ? 'TOO_MANY_REQUESTS'
         : status === 503
         ? 'SERVICE_UNAVAILABLE'
         : 'BAD_REQUEST';
@@ -459,6 +451,16 @@ function mapSubListingError(err: unknown): TRPCError {
  * Replaces the previous blanket `BAD_REQUEST + (err as Error).message`, which both
  * mis-coded typed failures and leaked raw infra messages to moderators.
  */
+/**
+ * After an off-site decision lands, tear down any agent review of that request (connect lane).
+ * Fire-and-forget and never rejects: the decision is the response, the teardown is hygiene.
+ */
+function teardownConnectAgentReviewAfterDecision(publishRequestId: string): Promise<void> {
+  return import('~/server/services/blocks/connect-agent-review.service')
+    .then((m) => m.teardownConnectAgentReview(publishRequestId))
+    .catch(() => undefined);
+}
+
 function mapOffsiteError(err: unknown): TRPCError {
   if (err instanceof TRPCError) return err;
   if (err instanceof Error && err.name === 'PublishRequestHeldError')
@@ -473,10 +475,24 @@ function mapOffsiteError(err: unknown): TRPCError {
       // fourth spelling of the same code→TRPCError table, and the shapes that drift
       // between such copies are exactly the ones nobody re-reads (an unmapped code
       // silently becomes BAD_REQUEST).
-      err.name === 'AppModeratorMessageError') &&
+      err.name === 'AppModeratorMessageError' ||
+      // The review reply thread (NOT_FOUND, INVALID_TEXT, BLOCKED_LINK, BLOCKED_CONTENT).
+      err.name === 'AppReviewThreadError') &&
     typeof (err as { code?: unknown }).code === 'string'
   ) {
     const code = (err as { code?: unknown }).code as string;
+    // 🔴 An exhausted quota must NOT fall through to the BAD_REQUEST default.
+    // BAD_REQUEST reads to a caller as "your input was wrong" and carries no
+    // retry semantics, so a mod who hit the hourly ceiling would be told to fix
+    // a message that is fine. TOO_MANY_REQUESTS (with the refusal's meta) is the
+    // honest answer and is what the sibling mod-only limiter
+    // (`blocks.retriggerBuild`) already returns.
+    if (code === 'RATE_LIMITED') {
+      return rateLimitedTrpcError(
+        rateLimitMetaOfServiceError(err) ?? appRateLimitMeta('apps.moderator-messages', 60),
+        err.message
+      );
+    }
     const trpcCode =
       code === 'NOT_FOUND'
         ? 'NOT_FOUND'
@@ -484,13 +500,6 @@ function mapOffsiteError(err: unknown): TRPCError {
         ? 'FORBIDDEN'
         : code === 'ALREADY_REPORTED'
         ? 'CONFLICT'
-        : // 🔴 An exhausted quota must NOT fall through to the BAD_REQUEST default.
-        // BAD_REQUEST reads to a caller as "your input was wrong" and carries no
-        // retry semantics, so a mod who hit the hourly ceiling would be told to fix
-        // a message that is fine. TOO_MANY_REQUESTS is the honest code and is what
-        // the sibling mod-only limiter (`blocks.retriggerBuild`) already returns.
-        code === 'RATE_LIMITED'
-        ? 'TOO_MANY_REQUESTS'
         : // 🔴 MAPPED EXPLICITLY even though it lands on the same TRPC code as the
         // default. The default is a FALLTHROUGH, and this table's own note above warns
         // that an unmapped code silently becomes BAD_REQUEST — so an entry here is the
@@ -511,6 +520,15 @@ function mapOffsiteError(err: unknown): TRPCError {
     cause: err,
   });
 }
+
+/**
+ * The reply thread on an app review decision. Every read and write of `app_review_messages` is
+ * behind the `appReviewReplies` flag (the table is applied by hand), checked here before the
+ * service is loaded. Who may read or post is the service's participant check: the request's
+ * developer side, or a moderator; anyone else gets NOT_FOUND.
+ */
+const reviewThreadProcedure = protectedProcedure.use(isFlagProtected('appReviewReplies'));
+const reviewThreadModeratorProcedure = moderatorProcedure.use(isFlagProtected('appReviewReplies'));
 
 export const appListingsRouter = router({
   /**
@@ -758,15 +776,13 @@ export const appListingsRouter = router({
    */
   submitExternalListing: appDeveloperProcedure
     .use(
-      rateLimit({
+      rateLimit(
         // A row-creating write reachable by non-mod dev-testers — heavier than
         // the store reads, so a conservative hourly cap throttles draft-spam /
         // slug-squat. The per-user PENDING cap in the service bounds the standing
         // orphan-draft count; this bounds the submit RATE.
-        limit: 10,
-        period: 3600,
-        errorMessage: 'Too many submissions — slow down.',
-      })
+        usageLimits('apps.listing-submits')
+      )
     )
     .input(submitExternalListingSchema)
     .mutation(async ({ ctx, input }) => {
@@ -810,6 +826,7 @@ export const appListingsRouter = router({
           cause: err,
         });
       }
+      void teardownConnectAgentReviewAfterDecision(input.publishRequestId);
       // 🔴 `outcome` is NOT decoration. `'removed'` means this withdraw closed the review
       // of a formerly-LIVE listing, which leaves it delisted and only a moderator can put
       // it back; `'deleted'` merely discarded a draft. The UI must be able to say which,
@@ -873,13 +890,7 @@ export const appListingsRouter = router({
    */
   updateListing: appDeveloperProcedure
     .meta(listingMediaCliScope)
-    .use(
-      rateLimit({
-        limit: 30,
-        period: 3600,
-        errorMessage: 'Too many edits — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.listing-edits')))
     .input(updateListingSchema)
     .mutation(async ({ ctx, input }) => {
       if (!ctx.user) throw throwAuthorizationError('Not authenticated');
@@ -938,6 +949,7 @@ export const appListingsRouter = router({
           listingId: input.listingId,
           userId: ctx.user.id,
           isModerator: actsAsModerator(ctx),
+          readOnly: input.readOnly,
         });
       } catch (err) {
         throw mapOffsiteError(err);
@@ -967,13 +979,7 @@ export const appListingsRouter = router({
    */
   updateRevisionDraft: appDeveloperProcedure
     .meta(listingMediaCliScope)
-    .use(
-      rateLimit({
-        limit: 30,
-        period: 3600,
-        errorMessage: 'Too many edits — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.listing-edits')))
     .input(updateRevisionDraftSchema)
     .mutation(async ({ ctx, input }) => {
       if (!ctx.user) throw throwAuthorizationError('Not authenticated');
@@ -1019,7 +1025,7 @@ export const appListingsRouter = router({
   getMyListingForApp: appDeveloperProcedure
     .meta(listingMediaCliScope)
     .use(
-      rateLimit({
+      rateLimit(
         // A READ limit, shaped like this router's other reads (`getAppDetail`,
         // `listAvailable`, `listReviews` are all 60/60) rather than like the hourly
         // write caps — it must not interrupt authoring. The media editor invalidates
@@ -1027,10 +1033,8 @@ export const appListingsRouter = router({
         // (a screenshot batch + icon + cover + reorders) is well under a refetch a
         // second; the CLI calls it once per `app listing`. 60/60 clears both with
         // room, while turning an unbounded enumeration into a metered one.
-        limit: 60,
-        period: 60,
-        errorMessage: 'Too many listing lookups — slow down.',
-      })
+        usageLimits('apps.listing-lookups')
+      )
     )
     .input(getMyListingForAppSchema)
     .query(async ({ ctx, input }) => {
@@ -1085,13 +1089,7 @@ export const appListingsRouter = router({
    */
   submitListingRevision: appDeveloperProcedure
     .meta(listingMediaCliScope)
-    .use(
-      rateLimit({
-        limit: 20,
-        period: 3600,
-        errorMessage: 'Too many revision submissions — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.listing-revision-submits')))
     .input(submitListingRevisionSchema)
     .mutation(async ({ ctx, input }) => {
       if (!ctx.user) throw throwAuthorizationError('Not authenticated');
@@ -1119,13 +1117,7 @@ export const appListingsRouter = router({
    */
   persistAssetImage: appDeveloperProcedure
     .meta(listingMediaCliScope)
-    .use(
-      rateLimit({
-        limit: 60,
-        period: 3600,
-        errorMessage: 'Too many image uploads — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.image-uploads')))
     .input(persistListingAssetImageSchema)
     .mutation(async ({ ctx, input }) => {
       if (!ctx.user) throw throwAuthorizationError('Not authenticated');
@@ -1146,13 +1138,7 @@ export const appListingsRouter = router({
    * (~30/hr) — it triggers an outbound fetch per call.
    */
   fetchListingMetaFromUrl: appDeveloperProcedure
-    .use(
-      rateLimit({
-        limit: 30,
-        period: 3600,
-        errorMessage: 'Too many preview lookups — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.listing-previews')))
     .input(fetchListingMetaSchema)
     .query(async ({ input }) => {
       const { fetchListingMeta } = await import('~/server/services/blocks/listing-meta.service');
@@ -1170,13 +1156,7 @@ export const appListingsRouter = router({
    * CF upload per call). Ownership is bound to the caller.
    */
   ingestAssetFromUrl: appDeveloperProcedure
-    .use(
-      rateLimit({
-        limit: 30,
-        period: 3600,
-        errorMessage: 'Too many image imports — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.image-imports')))
     .input(ingestListingAssetFromUrlSchema)
     .mutation(async ({ ctx, input }) => {
       if (!ctx.user) throw throwAuthorizationError('Not authenticated');
@@ -1197,13 +1177,7 @@ export const appListingsRouter = router({
    */
   ingestAssetFromDataUri: appDeveloperProcedure
     .meta(listingMediaCliScope)
-    .use(
-      rateLimit({
-        limit: 30,
-        period: 3600,
-        errorMessage: 'Too many image imports — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.image-imports')))
     .input(ingestListingAssetFromDataUriSchema)
     .mutation(async ({ ctx, input }) => {
       if (!ctx.user) throw throwAuthorizationError('Not authenticated');
@@ -1447,8 +1421,9 @@ export const appListingsRouter = router({
       const { approveExternalRequest } = await import(
         '~/server/services/blocks/offsite-listing.service'
       );
+      let approved;
       try {
-        return await approveExternalRequest({
+        approved = await approveExternalRequest({
           publishRequestId: input.publishRequestId,
           reviewerUserId: ctx.user.id,
           approvalNotes: input.approvalNotes,
@@ -1460,6 +1435,8 @@ export const appListingsRouter = router({
       } catch (err) {
         throw mapOffsiteError(err);
       }
+      void teardownConnectAgentReviewAfterDecision(input.publishRequestId);
+      return approved;
     }),
 
   /**
@@ -1491,6 +1468,7 @@ export const appListingsRouter = router({
       } catch (err) {
         throw mapOffsiteError(err);
       }
+      void teardownConnectAgentReviewAfterDecision(input.publishRequestId);
       return { ok: true };
     }),
 
@@ -1513,14 +1491,12 @@ export const appListingsRouter = router({
    */
   reportListing: protectedProcedure
     .use(
-      rateLimit({
+      rateLimit(
         // Report-spam guard (mirrors the submit rate-limit idiom). The DB
         // one-open-report-per-(listing,reporter) partial-unique bounds duplicate
         // reports; this bounds the report RATE across listings.
-        limit: 20,
-        period: 3600,
-        errorMessage: 'Too many reports — slow down.',
-      })
+        usageLimits('apps.listing-reports')
+      )
     )
     .input(reportListingSchema)
     .mutation(async ({ ctx, input }) => {
@@ -1615,6 +1591,32 @@ export const appListingsRouter = router({
   }),
 
   /**
+   * MOD retry the offline-access cut of a taken-down connect listing ("Retry cut" on an
+   * `offline-cut-failed` history row). Same boundary as `delistListing`: `moderatorProcedure`
+   * plus the inner `isModerator` recheck, the actor bound to `ctx.user.id`. The service refuses
+   * unless the flag is on, the listing is still taken down, and no other approved listing on the
+   * client declares offline access (`retryConnectOfflineCut`).
+   */
+  retryConnectOfflineCut: moderatorProcedure
+    .input(retryConnectOfflineCutSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Retrying an offline access cut is restricted to moderators');
+      }
+      const { retryConnectOfflineCut } = await import(
+        '~/server/services/blocks/offsite-moderation.service'
+      );
+      try {
+        return await retryConnectOfflineCut({
+          appListingId: input.appListingId,
+          moderatorUserId: ctx.user.id,
+        });
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
+    }),
+
+  /**
    * MOD send the app's OWNER a free-text message, delivered as a notification.
    *
    * The only mod action here that changes no listing state — it exists because the
@@ -1652,6 +1654,80 @@ export const appListingsRouter = router({
         throw mapOffsiteError(err);
       }
     }),
+
+  /** REVIEW THREAD: the submission header its developer side sees (no user ids). */
+  getReviewThreadSubject: reviewThreadProcedure
+    .input(reviewThreadSubjectSchema)
+    .query(async ({ ctx, input }) => {
+      const { getReviewThreadSubject } = await import(
+        '~/server/services/blocks/app-review-thread.service'
+      );
+      try {
+        return await getReviewThreadSubject({
+          subjectId: input.subjectId,
+          viewer: { userId: ctx.user.id, isModerator: actsAsModerator(ctx) },
+        });
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
+    }),
+
+  /** REVIEW THREAD: the messages, oldest first, for the developer side or a moderator. */
+  listReviewMessages: reviewThreadProcedure
+    .input(reviewThreadSubjectSchema)
+    .query(async ({ ctx, input }) => {
+      const { listReviewMessages } = await import(
+        '~/server/services/blocks/app-review-thread.service'
+      );
+      try {
+        return await listReviewMessages({
+          subjectId: input.subjectId,
+          viewer: { userId: ctx.user.id, isModerator: actsAsModerator(ctx) },
+        });
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
+    }),
+
+  /**
+   * REVIEW THREAD: post a message; the other side is notified (`routeReply`). The flag is checked
+   * before the rate limit, so nothing is counted while the feature is off. `rateLimit()` skips
+   * moderators, so it caps developers only; a moderator's reply goes to the developer side of one
+   * request, which is the bound on a moderator.
+   */
+  postReviewMessage: guardedProcedure
+    .use(isFlagProtected('appReviewReplies'))
+    .use(rateLimit(usageLimits('apps.review-replies')))
+    .input(postReviewMessageSchema)
+    .mutation(async ({ ctx, input }) => {
+      const { postReviewMessage } = await import(
+        '~/server/services/blocks/app-review-thread.service'
+      );
+      try {
+        return await postReviewMessage({
+          input,
+          viewer: { userId: ctx.user.id, isModerator: actsAsModerator(ctx) },
+        });
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
+    }),
+
+  /** MOD: threads whose latest message is a developer's that went to no one (the queue badge). */
+  countRepliesAwaitingQueue: reviewThreadModeratorProcedure.query(async () => {
+    const { countRepliesAwaitingQueue } = await import(
+      '~/server/services/blocks/app-review-thread.service'
+    );
+    return { count: await countRepliesAwaitingQueue() };
+  }),
+
+  /** MOD: threads whose latest message is a developer's, oldest first (the queue's Replies tab). */
+  listRepliesAwaitingModerator: reviewThreadModeratorProcedure.query(async () => {
+    const { listRepliesAwaitingModerator } = await import(
+      '~/server/services/blocks/app-review-thread.service'
+    );
+    return listRepliesAwaitingModerator();
+  }),
 
   /**
    * MOD relist a removed listing (removed → approved), DUAL-KIND — the inverse of
@@ -1858,13 +1934,7 @@ export const appListingsRouter = router({
    * via `mapOffsiteError`.
    */
   unpublishOwnListing: appDeveloperProcedure
-    .use(
-      rateLimit({
-        limit: 30,
-        period: 3600,
-        errorMessage: 'Too many listing changes — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.listing-changes')))
     .input(unpublishOwnListingSchema)
     .mutation(async ({ ctx, input }) => {
       if (!ctx.user) throw throwAuthorizationError('Not authenticated');
@@ -1887,13 +1957,7 @@ export const appListingsRouter = router({
    * NOT_TRANSITIONABLE→BAD_REQUEST).
    */
   republishOwnListing: appDeveloperProcedure
-    .use(
-      rateLimit({
-        limit: 30,
-        period: 3600,
-        errorMessage: 'Too many listing changes — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.listing-changes')))
     .input(republishOwnListingSchema)
     .mutation(async ({ ctx, input }) => {
       if (!ctx.user) throw throwAuthorizationError('Not authenticated');
@@ -2033,33 +2097,55 @@ export const appListingsRouter = router({
   /** Unified store listing over BOTH kinds — approved rows, keyset-paginated. */
   listAvailable: publicProcedure
     .use(enforceAppListingsReadFlag)
-    .use(
-      rateLimit({
-        limit: 60,
-        period: 60,
-        errorMessage: 'Too many marketplace requests — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.marketplace-reads')))
     .input(listAppListingsSchema)
     .query(async ({ ctx, input }) => {
       const { scope, floor } = applyStoreGates(ctx, 'trpc-list');
       if (scope === 'none') {
         return { items: [], nextCursor: undefined };
       }
-      const { listAvailableListings } = await import(
-        '~/server/services/blocks/app-listing.service'
+      const { DB_READS, listStoreGrid, storeGridRequest } = await import(
+        '~/server/services/blocks/app-index-search.service'
       );
-      return listAvailableListings(input, {
+      // A failure to load the read-model module leaves the page on the database.
+      const readModel = await import(
+        '~/server/services/blocks/app-listings-read-model-shadow.service'
+      ).catch(() => null);
+      // The sub-listing opt-in and the index switch meet the viewer's flags there.
+      const [opts, routing] = storeGridRequest(input, {
+        features: ctx.features,
         redCapable: isRedCapableRequest(ctx),
         scope,
         floor,
         viewer: listingViewerFromCtx(ctx),
-        // Opt-in AND flag: a `ListingCard`-only caller (the related rail) must never receive a
-        // `SubListingCard` just because the viewer has the flag.
-        includeSubListings:
-          input.includeSubListings === true && !!ctx.features?.appStoreSubListings,
         viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
       });
+      // Behind `app-listings-read-model`. At `serve`, a page the index does not search is read from
+      // the listings read model when it can answer this viewer, else from the database. At
+      // `shadow`, the page the database served is asked of the read model, with the same options,
+      // off the response path (never awaited, never throws into the request).
+      // The mode is resolved once, so serving and shadowing cannot see two different answers.
+      const mode = readModel?.listingReadModelMode('grid');
+      const page = await listStoreGrid(
+        input,
+        opts,
+        routing,
+        readModel
+          ? {
+              ...DB_READS,
+              gridPage: (i, o) =>
+                readModel.serveListingPage(
+                  'grid',
+                  i,
+                  o,
+                  () => DB_READS.listAvailableListings(i, o),
+                  mode
+                ),
+            }
+          : DB_READS
+      );
+      readModel?.shadowListingPage('grid', input, opts, page, mode);
+      return page;
     }),
 
   /**
@@ -2079,13 +2165,7 @@ export const appListingsRouter = router({
    */
   listMyApps: protectedProcedure
     .use(enforceAppListingsReadFlag)
-    .use(
-      rateLimit({
-        limit: 60,
-        period: 60,
-        errorMessage: 'Too many marketplace requests — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.marketplace-reads')))
     .query(async ({ ctx }) => {
       const { scope, floor } = applyStoreGates(ctx, 'trpc-my-apps');
       if (scope === 'none') {
@@ -2110,13 +2190,7 @@ export const appListingsRouter = router({
    */
   hideMyApp: protectedProcedure
     .use(enforceAppListingsReadFlag)
-    .use(
-      rateLimit({
-        limit: 60,
-        period: 60,
-        errorMessage: 'Too many requests — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.hidden-apps')))
     .input(myAppsHideInputSchema)
     .mutation(async ({ ctx, input }) => {
       // The same dark-store refusal as `listMyApps`, read straight off the gate's ctx: not
@@ -2134,13 +2208,7 @@ export const appListingsRouter = router({
    */
   unhideMyApp: protectedProcedure
     .use(enforceAppListingsReadFlag)
-    .use(
-      rateLimit({
-        limit: 60,
-        period: 60,
-        errorMessage: 'Too many requests — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.hidden-apps')))
     .input(myAppsHideInputSchema)
     .mutation(async ({ ctx, input }) => {
       // The same dark-store refusal as `listMyApps`, read straight off the gate's ctx: not
@@ -2181,13 +2249,7 @@ export const appListingsRouter = router({
    * remediation, sending a maintainer to reconcile orphaned level changes that cannot exist.
    */
   setListingVisibility: appDeveloperProcedure
-    .use(
-      rateLimit({
-        limit: 30,
-        period: 3600,
-        errorMessage: 'Too many visibility changes — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.listing-visibility-changes')))
     .input(setListingVisibilitySchema)
     .mutation(async ({ ctx, input }) => {
       if (!ctx.user) throw throwAuthorizationError('Not authenticated');
@@ -2267,13 +2329,7 @@ export const appListingsRouter = router({
    */
   getDeveloperTrackRecord: publicProcedure
     .use(enforceAppListingsReadFlag)
-    .use(
-      rateLimit({
-        limit: 60,
-        period: 60,
-        errorMessage: 'Too many marketplace requests — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.marketplace-reads')))
     .input(getDeveloperTrackRecordSchema)
     .query(async ({ ctx, input }): Promise<DeveloperTrackRecord | null> => {
       const { scope, floor } = applyStoreGates(ctx, 'trpc-track-record');
@@ -2302,13 +2358,7 @@ export const appListingsRouter = router({
    */
   listForks: publicProcedure
     .use(enforceAppListingsReadFlag)
-    .use(
-      rateLimit({
-        limit: 60,
-        period: 60,
-        errorMessage: 'Too many marketplace requests — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.marketplace-reads')))
     .input(listListingForksSchema)
     .query(async ({ ctx, input }): Promise<ListingForksPage | null> => {
       const { isAppBlocksForkEnabled } = await import('~/server/services/app-blocks-flag');
@@ -2383,13 +2433,7 @@ export const appListingsRouter = router({
   /** Per-listing public detail, by EXACTLY ONE of slug or id (approved only). */
   getAppDetail: publicProcedure
     .use(enforceAppListingsReadFlag)
-    .use(
-      rateLimit({
-        limit: 60,
-        period: 60,
-        errorMessage: 'Too many marketplace requests — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.marketplace-reads')))
     .input(getAppListingDetailSchema)
     .query(async ({ ctx, input }) => {
       const { scope, floor } = applyStoreGates(ctx, 'trpc-detail');
@@ -2417,13 +2461,7 @@ export const appListingsRouter = router({
    */
   getAppHiddenState: publicProcedure
     .use(enforceAppListingsReadFlag)
-    .use(
-      rateLimit({
-        limit: 60,
-        period: 60,
-        errorMessage: 'Too many marketplace requests — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.marketplace-reads')))
     .input(getAppListingDetailSchema)
     .query(async ({ ctx, input }) => {
       const { scope, floor } = applyStoreGates(ctx, 'trpc-detail');
@@ -2441,13 +2479,7 @@ export const appListingsRouter = router({
 
   getAppCard: publicProcedure
     .use(enforceAppListingsReadFlag)
-    .use(
-      rateLimit({
-        limit: 60,
-        period: 60,
-        errorMessage: 'Too many marketplace requests — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.marketplace-reads')))
     .input(getAppListingDetailSchema)
     .query(async ({ ctx, input }) => {
       const { scope, floor } = applyStoreGates(ctx, 'trpc-detail');
@@ -2506,13 +2538,7 @@ export const appListingsRouter = router({
    */
   upsertReview: protectedProcedure
     .use(enforceAppListingsWriteFlag)
-    .use(
-      rateLimit({
-        limit: 30,
-        period: 60,
-        errorMessage: 'Too many review submissions — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.review-submits')))
     .input(upsertAppListingReviewSchema)
     .mutation(async ({ ctx, input }) => {
       if (!ctx.user) throw throwAuthorizationError('Not authenticated');
@@ -2545,13 +2571,7 @@ export const appListingsRouter = router({
   /** PUBLIC: keyset-paginated reviews for a listing (newest-first, mod-filtered). */
   listReviews: publicProcedure
     .use(enforceAppListingsReadFlag)
-    .use(
-      rateLimit({
-        limit: 60,
-        period: 60,
-        errorMessage: 'Too many review requests — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.review-reads')))
     .input(listAppListingReviewsSchema)
     .query(async ({ ctx, input }) => {
       const scope = applyStoreScope(ctx, 'trpc-reviews');

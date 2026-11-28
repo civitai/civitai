@@ -2,13 +2,15 @@ import { createHash } from 'node:crypto';
 import { json } from '@sveltejs/kit';
 import { db } from '$lib/server/db';
 import { openItem, type ItemRef } from '$lib/server/feed-token';
-import { getPlayerStatus } from '$lib/server/player-status';
+import { getRankAndSmites } from '$lib/server/player-status';
+import { playerPrefs } from '$lib/server/player-prefs';
+import { yesNoConfig } from '$lib/server/yesno/runtime';
 import { queueDeps } from '$lib/server/queue/runtime';
-import { lockoutFor } from '$lib/server/vote-limits/runtime';
+import { pauseFor } from '$lib/server/vote-limits/runtime';
 import { feedSecret } from '$lib/server/smites/runtime';
 import { skipStore } from '$lib/server/skip-runtime';
 import { skippedFor } from '$lib/server/skips';
-import { getStanding } from '$lib/server/standing';
+import { requestStanding } from '$lib/server/request-reads';
 import { consented } from '$lib/server/membership';
 import { BUFFER_TARGET, MAX_EXCLUDED, type PickedItem } from '../optimistic';
 import { pickItem } from '../next-item.server';
@@ -22,22 +24,22 @@ const NOTHING = () => reply([]);
  * The item after the ones named in `after`, which the player has not finished voting on: what the page shows the moment
  * a vote is sent, while the vote itself posts in the background. Served only when the real feed would serve an item (not
  * muted, not paced, no reset pending); otherwise the page waits for the vote like any other. It reads and records nothing.
- * `count` asks for up to BUFFER_TARGET (10) items in order, each picked as if the ones before it were already judged. The
+ * `count` asks for up to BUFFER_TARGET (3) items in order, each picked as if the ones before it were already judged. The
  * roll for hidden checks and yes/no questions comes from the named items (and the ones picked before it), so asking
  * again changes nothing and no two positions share a roll.
  */
 export const GET: RequestHandler = async ({ url, locals }) => {
   const userId = locals.user.id;
   const [status, { muted }] = await Promise.all([
-    getPlayerStatus(db, userId),
-    getStanding(db, userId),
+    getRankAndSmites(db, userId),
+    requestStanding(db, locals),
   ]);
   if (!status || muted || status.rank === 'Acolyte' || status.smites >= status.maxSmites)
     return NOTHING();
   if (!(await consented(userId))) return NOTHING();
 
   const now = queueDeps.now();
-  if (!locals.user.isModerator && (await lockoutFor(db, userId, now))) return NOTHING();
+  if (!locals.user.isModerator && (await pauseFor(db, userId, now))) return NOTHING();
 
   const secret = feedSecret();
   const named = url.searchParams
@@ -59,6 +61,10 @@ export const GET: RequestHandler = async ({ url, locals }) => {
   const wanted = Number.parseInt(url.searchParams.get('count') ?? '1', 10);
   const count = Math.min(Math.max(Number.isFinite(wanted) ? wanted : 1, 1), BUFFER_TARGET);
 
+  // Read once for the whole refill, not once per item.
+  const { playerDefault } = await yesNoConfig();
+  const yesNoOn = (await playerPrefs(db, userId, playerDefault)).yesNo;
+
   const items: PickedItem[] = [];
   const taken = [...named];
   const picked: number[] = [];
@@ -78,7 +84,8 @@ export const GET: RequestHandler = async ({ url, locals }) => {
       leaveOut,
       digest.readUInt32BE(0),
       [...ahead, ...picked],
-      [...handedOut, ...taken.slice(named.length)]
+      [...handedOut, ...taken.slice(named.length)],
+      yesNoOn
     );
     const ref = next && openItem(secret, userId, next.item.id);
     if (!next || !ref || taken.some((t) => t.kind === ref.kind && t.id === ref.id)) break;

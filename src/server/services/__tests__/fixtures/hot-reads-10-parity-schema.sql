@@ -83,6 +83,7 @@ CREATE TABLE "hot_reads_10_parity"."Image" (
   "generationProcess" "hot_reads_10_parity"."ImageGenerationProcess",
   "postId"            INTEGER,
   "needsReview"       TEXT,
+  "modelRestricted"   BOOLEAN                                          NOT NULL DEFAULT false,
   "hideMeta"          BOOLEAN                                          NOT NULL DEFAULT false,
   "scannedAt"         TIMESTAMP(3),
   "ingestion"         "hot_reads_10_parity"."ImageIngestionStatus"     NOT NULL DEFAULT 'Pending',
@@ -133,6 +134,12 @@ SELECT
     WHEN (("attributes" >> 12) & 15) = 4 THEN 'Computed'::"hot_reads_10_parity"."TagSource"
     WHEN (("attributes" >> 12) & 15) = 5 THEN 'ImageHash'::"hot_reads_10_parity"."TagSource"
     WHEN (("attributes" >> 12) & 15) = 6 THEN 'MinorDetection'::"hot_reads_10_parity"."TagSource"
+    WHEN (("attributes" >> 12) & 15) = 7 THEN 'Clavata'::"hot_reads_10_parity"."TagSource"
+    WHEN (("attributes" >> 12) & 15) = 8 THEN 'Hive'::"hot_reads_10_parity"."TagSource"
+    WHEN (("attributes" >> 12) & 15) = 9 THEN 'HiveDemographics'::"hot_reads_10_parity"."TagSource"
+    WHEN (("attributes" >> 12) & 15) = 10 THEN 'SpineRating'::"hot_reads_10_parity"."TagSource"
+    WHEN (("attributes" >> 12) & 15) = 11 THEN 'AiRecognition'::"hot_reads_10_parity"."TagSource"
+    WHEN (("attributes" >> 12) & 15) = 12 THEN 'AnimeRecognition'::"hot_reads_10_parity"."TagSource"
     ELSE 'User'::"hot_reads_10_parity"."TagSource"
   END AS source,
   CASE WHEN ("attributes" >> 11) & 1 = 1 THEN TRUE ELSE FALSE END AS automated,

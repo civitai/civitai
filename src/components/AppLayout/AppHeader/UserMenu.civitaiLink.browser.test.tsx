@@ -28,9 +28,6 @@ import { makeTrpcProxy } from '../../../../test/trpcProxyStub';
 
 const { state } = vi.hoisted(() => ({ state: { buzzSpendPop: false } }));
 
-vi.mock('~/hooks/useCurrentUser', () => ({
-  useCurrentUser: () => ({ id: 1, username: 'tester', isModerator: false }),
-}));
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ canWrite: true, userMenuV2: false, buzzSpendPop: state.buzzSpendPop }),
 }));
@@ -54,7 +51,8 @@ describe.each([false, true])('legacy user menu, buzzSpendPop %s', (buzzSpendPop)
     renderWithProviders(
       <ContainerProvider containerName="main">
         <UserMenu />
-      </ContainerProvider>
+      </ContainerProvider>,
+      { user: { id: 1, username: 'tester', isModerator: false } }
     );
     await userEvent.click(page.getByLabelText(/Account menu/));
     await expect.element(page.getByText('Download Link App').first()).toBeInTheDocument();

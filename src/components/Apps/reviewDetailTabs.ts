@@ -22,7 +22,8 @@ import { parseReportHash } from '~/components/Apps/agentReviewReport';
  * for most submissions on ONE screen — the agentic review's finding counts, the requested permissions
  * with their justifications, the running app and its store art — so a routine approve needs no
  * tab at all. The other tabs are the evidence behind each signal, in the order a moderator
- * digs: the code, then the permissions in full, the manifest, the AI report, the preview.
+ * digs: the code, then the permissions in full, the manifest, the AI report, the preview, and
+ * the console of errors the running preview reported, and the App Assistant sessions that built it.
  *
  * (`permissions` led before this; it is still one click away and still deep-linkable as
  * `?tab=permissions`. The reason it led — scopes and their justifications were buried at the
@@ -35,9 +36,27 @@ export const REVIEW_DETAIL_TAB_VALUES = [
   'manifest',
   'agent',
   'preview',
+  'console',
+  'sessions',
 ] as const;
 
-export type ReviewDetailTab = (typeof REVIEW_DETAIL_TAB_VALUES)[number];
+/**
+ * Tabs shown only behind a flag, appended after the base set. `conversation` is the reply thread
+ * with the submission's developer, rendered only while `features.appReviewReplies` is on; with
+ * it off, `?tab=conversation` resolves to the default like any unknown value.
+ */
+export const REVIEW_DETAIL_FLAGGED_TAB_VALUES = ['conversation'] as const;
+
+export type ReviewDetailTab =
+  | (typeof REVIEW_DETAIL_TAB_VALUES)[number]
+  | (typeof REVIEW_DETAIL_FLAGGED_TAB_VALUES)[number];
+
+/** The tabs this viewer gets, in render order. */
+export function reviewDetailTabsFor(opts: { replies: boolean }): readonly ReviewDetailTab[] {
+  return opts.replies
+    ? [...REVIEW_DETAIL_TAB_VALUES, ...REVIEW_DETAIL_FLAGGED_TAB_VALUES]
+    : REVIEW_DETAIL_TAB_VALUES;
+}
 
 /** The tab a bare `/apps/review/<id>` opens on. */
 export const DEFAULT_REVIEW_DETAIL_TAB: ReviewDetailTab = 'overview';
@@ -58,12 +77,17 @@ export const REVIEW_DETAIL_TAB_LABELS: Record<ReviewDetailTab, string> = {
   manifest: 'Manifest',
   agent: 'AI report',
   preview: 'Preview',
+  console: 'Console',
+  sessions: 'Build sessions',
+  conversation: 'Conversation',
 };
 
-export function isReviewDetailTab(value: unknown): value is ReviewDetailTab {
-  return (
-    typeof value === 'string' && (REVIEW_DETAIL_TAB_VALUES as readonly string[]).includes(value)
-  );
+/** Is `value` one of `tabs` (the base set unless told otherwise)? */
+export function isReviewDetailTab(
+  value: unknown,
+  tabs: readonly ReviewDetailTab[] = REVIEW_DETAIL_TAB_VALUES
+): value is ReviewDetailTab {
+  return typeof value === 'string' && (tabs as readonly string[]).includes(value);
 }
 
 /**
@@ -91,10 +115,10 @@ export function isReviewDetailTab(value: unknown): value is ReviewDetailTab {
  */
 export function resolveReviewDetailTab(
   raw: unknown,
-  opts: { hash?: string } = {}
+  opts: { hash?: string; tabs?: readonly ReviewDetailTab[] } = {}
 ): ReviewDetailTab {
   const first = Array.isArray(raw) ? raw[0] : raw;
-  if (isReviewDetailTab(first)) return first;
+  if (isReviewDetailTab(first, opts.tabs)) return first;
   const hash = opts.hash;
   if (typeof hash === 'string' && parseReportHash(hash).tab) return 'agent';
   return DEFAULT_REVIEW_DETAIL_TAB;

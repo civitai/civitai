@@ -1,10 +1,10 @@
+import { serverCopyTablesSql } from '@civitai/db-queries/test/image-uses';
 import { PGlite } from '@electric-sql/pglite';
 import { TRPCError } from '@trpc/server';
 import type { Mock } from 'vitest';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as prom from '~/server/prom/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 
@@ -77,11 +77,14 @@ beforeAll(async () => {
   await holder.db.exec(`
     CREATE TABLE "Image" ("id" serial PRIMARY KEY, "userId" integer NOT NULL, "url" text NOT NULL);
     CREATE TABLE "ShopArtworkKeyOwner" (key text PRIMARY KEY, "userId" integer NOT NULL);
+    ${serverCopyTablesSql};
   `);
 });
 
 beforeEach(async () => {
-  await holder.db.exec(`TRUNCATE "Image", "ShopArtworkKeyOwner"`);
+  await holder.db.exec(
+    `TRUNCATE "Image", "ShopArtworkKeyOwner", "ServiceDealReviewImage", "ServiceDealFileEntry", "ServiceDealFile"`
+  );
   holder.issued = [];
   holder.logDown = false;
   holder.logHangs = false;
@@ -210,33 +213,15 @@ describe('assertClientKeysIssuedToCaller', () => {
     expect(await outcome(KEY, BEFORE)).toBe('accepted');
   });
 
-  it('accepts a key with no record before the cutoff when the upload request log cannot be read, and says so', async () => {
+  it('accepts a key with no record before the cutoff when the upload request log cannot be read', async () => {
     holder.logDown = true;
-    const before = outcomeCount('request_log_unavailable_accepted');
-    loggingMock.logToAxiom.mockClear();
-
     expect(await outcome(KEY, BEFORE)).toBe('accepted');
-
-    expect(outcomeCount('request_log_unavailable_accepted')).toBe(before + 1);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'upload-key-unrecorded',
-        keys: KEY,
-        reason: 'request_log_unavailable',
-      })
-    );
   });
 
   it('refuses a key before the cutoff when neither the issue record nor the request log can be read', async () => {
     holder.logDown = true;
     redisMock.redis.mGet.mockRejectedValue(new Error('down'));
-    const accepted = outcomeCount('request_log_unavailable_accepted');
-    const refused = outcomeCount('request_log_unavailable');
-
     expect(await outcome(KEY, BEFORE)).toBe('refused');
-
-    expect(outcomeCount('request_log_unavailable_accepted')).toBe(accepted);
-    expect(outcomeCount('request_log_unavailable')).toBe(refused + 1);
   });
 
   it('refuses a key recorded to another user while the request log is down, beside an unrecorded one', async () => {
@@ -256,42 +241,9 @@ describe('assertClientKeysIssuedToCaller', () => {
 
   it('refuses a key with no record after the cutoff when the upload request log cannot be read', async () => {
     holder.logDown = true;
-    const before = outcomeCount('request_log_unavailable');
     expect(await outcome(KEY, AFTER)).toBe('refused');
-    expect(outcomeCount('request_log_unavailable')).toBe(before + 1);
     redisMock.redis.mGet.mockRejectedValue(new Error('down'));
     expect(await outcome(KEY, AFTER)).toBe('refused');
-  });
-
-  it('counts and logs an unrecorded key as such while the upload request log answers', async () => {
-    const counts = () =>
-      [
-        'unrecorded_accepted',
-        'unrecorded_refused',
-        'request_log_unavailable_accepted',
-        'request_log_unavailable',
-      ].map(outcomeCount);
-    const [accepted, refused, logAccepted, logRefused] = counts();
-    loggingMock.logToAxiom.mockClear();
-
-    expect(await outcome(KEY, BEFORE)).toBe('accepted');
-    expect(loggingMock.logToAxiom).toHaveBeenCalledExactlyOnceWith(
-      expect.not.objectContaining({ reason: expect.anything() })
-    );
-    expect(await outcome(KEY, AFTER)).toBe('refused');
-
-    expect(counts()).toEqual([accepted + 1, refused + 1, logAccepted, logRefused]);
-  });
-
-  it('logs why the upload request log could not be read', async () => {
-    holder.logDown = true;
-    loggingMock.logToAxiom.mockClear();
-
-    await outcome(KEY, AFTER);
-
-    expect(loggingMock.logToAxiom).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ type: 'error', name: 'upload-key-owner', error: 'unavailable' })
-    );
   });
 
   it('treats an upload request log that does not answer in 2s as unreadable', async () => {
@@ -376,6 +328,87 @@ describe('assertClientKeysIssuedToCaller', () => {
 
   it('accepts a url with no upload key', async () => {
     expect(await outcome('https://example.com/picture.png')).toBe('accepted');
+  });
+});
+
+describe("a service review copy's key", () => {
+  const MODERATOR = 9;
+  const OWN_KEY = '22222222-2222-4222-8222-222222222222';
+  const full = (key: string) => `https://cdn.example/x/${key}/original=true`;
+  const articleUsable = (url: string) =>
+    assertClientImageUrlsUsable({ urls: [url], userId: CALLER, shopArtwork: false }).then(
+      () => 'accepted',
+      (e: unknown) => {
+        if (e instanceof TRPCError && e.code === 'BAD_REQUEST') return 'refused';
+        throw e;
+      }
+    );
+
+  beforeEach(async () => {
+    // The buyer's review copy, stored bare, and an ordinary upload of theirs.
+    await holder.db.exec(`
+      INSERT INTO "Image" ("userId", url) VALUES (${CALLER}, '${KEY}'), (${CALLER}, '${OWN_KEY}');
+      INSERT INTO "ServiceDealReviewImage" ("reviewId", "imageId")
+        SELECT 1, id FROM "Image" WHERE url = '${KEY}';
+    `);
+  });
+
+  it('is refused as a new image to its own buyer, in any form the url carries it', async () => {
+    for (const url of [KEY, KEY.toUpperCase(), full(KEY)]) {
+      expect(await outcome(url, BEFORE)).toBe('refused');
+      expect(await articleUsable(url)).toBe('refused');
+    }
+  });
+
+  it('is refused even when its key was issued to the buyer', async () => {
+    await recordUploadKeyOwner(KEY, CALLER);
+    expect(await outcome(KEY, BEFORE)).toBe('refused');
+  });
+
+  it("is reported as not the caller's to every reader of the issue records", async () => {
+    const issuers = await keyIssuers({ urls: [full(KEY)], userId: CALLER, now: BEFORE });
+    expect(issuers.issuedToOthers).toEqual([KEY]);
+  });
+
+  it('is refused to a moderator too, before unrecorded keys are refused', async () => {
+    await expect(
+      assertClientKeysIssuedToCaller({ urls: [KEY], userId: MODERATOR, now: BEFORE })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+  });
+
+  it("leaves the buyer's ordinary own upload usable (control)", async () => {
+    expect(await outcome(OWN_KEY, AFTER)).toBe('accepted');
+    expect(await outcome(full(OWN_KEY), AFTER)).toBe('accepted');
+    expect(await articleUsable(full(OWN_KEY))).toBe('accepted');
+  });
+});
+
+describe("a deal file's scan copy key", () => {
+  // The seller's copy of their own delivery file, as a profile picture or any new image would name it.
+  const COPY_KEY = '33333333-3333-4333-8333-333333333333';
+  const OWN_KEY = '44444444-4444-4444-8444-444444444444';
+  const givenCopy = (pointed: boolean) =>
+    holder.db.exec(`
+      INSERT INTO "Image" ("userId", url) VALUES (${CALLER}, '${COPY_KEY}'), (${CALLER}, '${OWN_KEY}');
+      INSERT INTO "ServiceDealFileEntry" ("imageId", "scanKey")
+        SELECT ${pointed ? 'id' : 'NULL'}, url FROM "Image" WHERE url = '${COPY_KEY}';
+    `);
+
+  it.each([true, false])(
+    'is refused to its own seller, even when issued to them (pointer written: %s)',
+    async (pointed) => {
+      await givenCopy(pointed);
+      await recordUploadKeyOwner(COPY_KEY, CALLER);
+      expect(await outcome(COPY_KEY, BEFORE)).toBe('refused');
+      expect(await outcome(`https://cdn.example/x/${COPY_KEY}/original=true`, BEFORE)).toBe(
+        'refused'
+      );
+    }
+  );
+
+  it("leaves the seller's ordinary own upload usable (control)", async () => {
+    await givenCopy(true);
+    expect(await outcome(OWN_KEY, AFTER)).toBe('accepted');
   });
 });
 

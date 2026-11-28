@@ -5,6 +5,7 @@ import {
   withThrottleRetry,
   type Sleep,
 } from '@civitai/email';
+import { escapeHtml } from '@civitai/shared/html-escape';
 import { sql, type Kysely } from 'kysely';
 import { env } from '$env/dynamic/private';
 import { pauseSends, readBrake } from './brake';
@@ -18,6 +19,12 @@ export function hashAddress(address: string) {
 
 export const DEFAULT_NOTICE_FROM = 'Civitai DMCA <notices@civitai.com>';
 export const DEFAULT_NOTICE_REPLY_TO = 'dmca@civitai.com';
+/** The sender for the forms that are not DMCA. */
+export const PLAIN_NOTICE_FROM = 'Civitai <notices@civitai.com>';
+const DMCA_PROCESSES = new Set(['dmca-notice', 'dmca-counter-notice']);
+/** Who a process's notices come from: the DMCA sender only for the two DMCA forms. */
+export const noticeFrom = (processKey: string, dmcaFrom: string) =>
+  DMCA_PROCESSES.has(processKey) ? dmcaFrom : PLAIN_NOTICE_FROM;
 // Above the size of the backlog batch, so the batch can't trip it by itself.
 export const DEFAULT_HOURLY_CEILING = 400;
 
@@ -54,6 +61,8 @@ export type SendDeps = {
   from: string;
   replyTo: string;
   hourlyCeiling: number;
+  /** Fills what the stored snapshot holds back (a link token) into the outgoing text only. */
+  fillBody?: (body: string) => string;
 };
 
 export function defaultSendDeps(): Omit<SendDeps, 'holdsLock'> {
@@ -67,16 +76,18 @@ export function defaultSendDeps(): Omit<SendDeps, 'holdsLock'> {
     alert: async (message) => {
       const to = env.MODERATION_ALERT_EMAIL;
       if (!to) return;
-      await sendEmailStrict({ to, subject: 'Case notices paused', html: `<p>${message}</p>` });
+      await sendEmailStrict({
+        to,
+        subject: 'Case notices paused',
+        html: `<p>${message}</p>`,
+        tags: { template: 'caseNoticesPausedAlert', mailClass: 'transactional' },
+      });
     },
     from: env.CASES_NOTICE_FROM || DEFAULT_NOTICE_FROM,
     replyTo: env.CASES_NOTICE_REPLY_TO || DEFAULT_NOTICE_REPLY_TO,
     hourlyCeiling: Number(env.CASES_SEND_HOURLY_CEILING) || DEFAULT_HOURLY_CEILING,
   };
 }
-
-const escapeHtml = (s: string) =>
-  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
 /** A verbatim plain-text body, shown as written. */
 const plainToHtml = (text: string) =>
@@ -118,6 +129,21 @@ export async function sendNotice(noticeId: number, deps: SendDeps): Promise<Send
     return 'ceiling';
   }
 
+  // A filed case's notice goes from its process's sender and back to its form's mailbox, so a TAKE IT
+  // DOWN reply in a batch lands where its 48-hour clock is watched. Imported cases have no definition
+  // and keep the configured sender; a definition without a mailbox keeps the configured Reply-To.
+  const sender = await deps.db
+    .selectFrom('case_notice as n')
+    .innerJoin('case_record as c', 'c.id', 'n.case_id')
+    .leftJoin('process_definition_version as v', 'v.id', 'c.definition_version_id')
+    .select([
+      'c.process_key as processKey',
+      'v.id as definitionVersionId',
+      sql<string | null>`v.definition->>'mailbox'`.as('mailbox'),
+    ])
+    .where('n.id', '=', noticeId)
+    .executeTakeFirst();
+
   const row = await deps.db
     .updateTable('case_notice')
     .set({ status: 'sending', attempted_at: sql`now()`, error: null })
@@ -136,7 +162,8 @@ export async function sendNotice(noticeId: number, deps: SendDeps): Promise<Send
       .execute();
     return 'unsendable';
   }
-  const { recipient_address: to, body_snapshot: body } = row;
+  const { recipient_address: to } = row;
+  const body = deps.fillBody ? deps.fillBody(row.body_snapshot) : row.body_snapshot;
 
   if (hashAddress(to) !== row.address_hash) {
     await deps.db
@@ -153,11 +180,12 @@ export async function sendNotice(noticeId: number, deps: SendDeps): Promise<Send
       () =>
         deps.send({
           to,
-          from: deps.from,
-          replyTo: deps.replyTo,
+          from: sender?.definitionVersionId ? noticeFrom(sender.processKey, deps.from) : deps.from,
+          replyTo: sender?.mailbox || deps.replyTo,
           subject: row.subject_snapshot,
           text: body,
           html: plainToHtml(body),
+          tags: { template: 'caseNotice', mailClass: 'transactional' },
         }),
       deps.sleep ? { sleep: deps.sleep } : {}
     ));

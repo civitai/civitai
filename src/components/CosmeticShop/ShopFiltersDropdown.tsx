@@ -16,6 +16,7 @@ import { getDisplayName } from '~/utils/string-helpers';
 import React, { useCallback, useEffect, useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
 import { PACK_FILTER_VALUE } from '~/server/schema/creator-shop.schema';
 import type { ShopFilterType } from '~/server/schema/creator-shop.schema';
@@ -40,9 +41,13 @@ export function ShopFiltersDropdown({ filters, setFilters, availableTypes }: Pro
   const colorScheme = useComputedColorScheme('dark');
   const mobile = useIsMobile();
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
 
   const types: ShopFilterType[] = availableTypes ?? [
-    ...(Object.values(CosmeticType) as CosmeticType[]),
+    // Sidebar backgrounds only show on the redesigned profile.
+    ...(Object.values(CosmeticType) as CosmeticType[]).filter(
+      (type) => features.profileRedesign || type !== CosmeticType.SidebarBackground
+    ),
     PACK_FILTER_VALUE,
   ];
 

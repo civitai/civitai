@@ -40,11 +40,18 @@ let db: PGlite;
 
 async function seedImage(
   id: number,
-  o: { level?: number; published?: boolean; ingestion?: string; needsReview?: string } = {}
+  o: {
+    level?: number;
+    published?: boolean;
+    ingestion?: string;
+    needsReview?: string;
+    availability?: string;
+  } = {}
 ) {
-  await db.query(`INSERT INTO "Post" ("id","publishedAt") VALUES ($1,$2)`, [
+  await db.query(`INSERT INTO "Post" ("id","publishedAt","availability") VALUES ($1,$2,$3)`, [
     id,
     o.published === false ? null : '2020-01-01',
+    o.availability ?? 'Public',
   ]);
   await db.query(
     `INSERT INTO "Image" ("id","url","type","nsfwLevel","ingestion","needsReview","postId") VALUES ($1,$2,'image',$3,$4,$5,$1)`,
@@ -101,12 +108,21 @@ const row = async (id: number) =>
 
 beforeAll(async () => {
   db = await freshPglite();
-  await db.exec(`CREATE TABLE "Post" ("id" INTEGER PRIMARY KEY, "publishedAt" TIMESTAMP);
+  await db.exec(`CREATE TABLE "Post" ("id" INTEGER PRIMARY KEY, "publishedAt" TIMESTAMP, "availability" TEXT NOT NULL DEFAULT 'Public');
     CREATE TABLE "Image" (
       "id" INTEGER PRIMARY KEY, "url" TEXT NOT NULL, "name" TEXT, "type" TEXT NOT NULL DEFAULT 'image',
       "nsfwLevel" INTEGER NOT NULL DEFAULT 0, "ingestion" TEXT NOT NULL DEFAULT 'Scanned',
-      "blockedFor" TEXT, "needsReview" TEXT, "acceptableMinor" BOOLEAN NOT NULL DEFAULT false, "postId" INTEGER
-    );`);
+      "blockedFor" TEXT, "needsReview" TEXT, "acceptableMinor" BOOLEAN NOT NULL DEFAULT false, "postId" INTEGER,
+      "poi" BOOLEAN NOT NULL DEFAULT false,
+      "minor" BOOLEAN NOT NULL DEFAULT false
+    );
+    ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS "tosViolation" BOOLEAN NOT NULL DEFAULT false, ADD COLUMN IF NOT EXISTS "userId" INTEGER;
+    ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "modelVersionId" INTEGER;
+    CREATE TABLE "User" (id INTEGER PRIMARY KEY, "deletedAt" TIMESTAMP, "bannedAt" TIMESTAMP, muted BOOLEAN NOT NULL DEFAULT false);
+    CREATE TABLE "Model" (id INTEGER PRIMARY KEY, status TEXT NOT NULL, availability TEXT NOT NULL, "deletedAt" TIMESTAMP);
+    CREATE TABLE "ModelVersion" (id INTEGER PRIMARY KEY, "modelId" INTEGER NOT NULL, status TEXT NOT NULL, availability TEXT NOT NULL);
+    CREATE TABLE "CsamReport" (id SERIAL PRIMARY KEY, "userId" INTEGER, images JSONB NOT NULL DEFAULT '[]', details JSONB);
+    CREATE TABLE "ImageCdnModeratorDelete" ("imageId" INTEGER PRIMARY KEY, url TEXT NOT NULL, "csamReview" BOOLEAN NOT NULL DEFAULT true);`);
   await db.exec(
     readFileSync(path.join(MIGRATIONS, '20261210120000_knights_v2_tables', 'migration.sql'), 'utf8')
   );
@@ -163,6 +179,16 @@ describe('addCoreImage', () => {
     expect(await row(id)).toMatchObject({ pool: 'hiddenCheck', source: 'harvested' });
   });
 
+  it('refuses an image that is a mod-confirmed skill check, and leaves it in that pool', async () => {
+    await seedImage(1);
+    const id = await seedRef(1, { pool: 'skillCheck', source: 'inquisitor' });
+
+    const result = await addCoreImage({ imageId: 1, level: 4, explanation: 'why' });
+
+    expect(result).toMatchObject({ ok: false, error: expect.stringContaining('skill check') });
+    expect(await row(id)).toMatchObject({ pool: 'skillCheck', source: 'inquisitor' });
+  });
+
   it('refuses an image that is already an active core item', async () => {
     await seedImage(1);
     await seedRef(1, { source: 'core', explanation: 'why' });
@@ -199,6 +225,14 @@ describe('addCoreImage', () => {
     expect(await addCoreImage({ imageId: 1, level: 4, explanation: 'why' })).toMatchObject({
       ok: false,
       error: expect.stringContaining('review hold'),
+    });
+  });
+
+  it('refuses an image on a Private post, saying so', async () => {
+    await seedImage(1, { availability: 'Private' });
+    expect(await addCoreImage({ imageId: 1, level: 4, explanation: 'why' })).toMatchObject({
+      ok: false,
+      error: 'Image 1 is on a post whose availability Knights does not show.',
     });
   });
 

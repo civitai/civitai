@@ -1,5 +1,5 @@
 import { Node } from '@tiptap/core';
-import { imageWidthAttribute } from '~/shared/tiptap/image-width';
+import { imageAlignAttribute, imageWidthAttribute } from '~/shared/tiptap/image-width';
 
 export const EdgeMediaNode = Node.create({
   name: 'media',
@@ -19,6 +19,7 @@ export const EdgeMediaNode = Node.create({
         default: null,
       },
       size: imageWidthAttribute,
+      align: imageAlignAttribute,
     };
   },
 

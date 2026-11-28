@@ -139,7 +139,7 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
       <div className="flex flex-col gap-4 p-5">
         {data.details && (
           <div className="text-[15px] leading-6 text-dark-9 dark:text-dark-0">
-            <RenderHtml html={data.details} withProfanityFilter />
+            <RenderHtml html={data.details} maskedHtml={data.maskedDetails} withProfanityFilter />
           </div>
         )}
         <div className="flex flex-col gap-2">

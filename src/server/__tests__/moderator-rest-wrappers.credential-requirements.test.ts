@@ -26,7 +26,9 @@ vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
 }));
 
 const { ModEndpoint } = await import('~/server/utils/endpoint-helpers');
-const { defineModeratorEndpoint } = await import('~/server/utils/moderator-endpoint');
+const { defineModeratorEndpoint, defineModeratorStreamEndpoint } = await import(
+  '~/server/utils/moderator-endpoint'
+);
 
 type Handler = (req: NextApiRequest, res: NextApiResponse) => Promise<unknown>;
 
@@ -34,6 +36,9 @@ const modEndpointHandler = vi.fn(async (_req: NextApiRequest, res: NextApiRespon
   res.status(200).json({ ok: true });
 });
 const moderatorEndpointHandler = vi.fn(async () => ({ ok: true }));
+const moderatorStreamHandler = vi.fn(async ({ res }: { res: NextApiResponse }) => {
+  res.status(200).json({ ok: true });
+});
 
 const wrappers: {
   name: string;
@@ -56,12 +61,20 @@ const wrappers: {
     inner: moderatorEndpointHandler,
     notModerator: 403,
   },
+  {
+    name: 'defineModeratorStreamEndpoint',
+    handler: defineModeratorStreamEndpoint('test.credentialProbeStream', {
+      handler: moderatorStreamHandler,
+    }) as unknown as Handler,
+    inner: moderatorStreamHandler,
+    notModerator: 403,
+  },
 ];
 
 const MODERATOR = { id: 4242, username: 'mod', isModerator: true, bannedAt: null, permissions: [] };
 const MEMBER = { ...MODERATOR, isModerator: false };
 
-const nonOauthKey = (apiKeyType: string | undefined, tokenScope: number, user = MODERATOR) => ({
+const nonOauthKey = (apiKeyType: string | undefined, tokenScope: bigint, user = MODERATOR) => ({
   user,
   apiKeyId: 11,
   ...(apiKeyType ? { apiKeyType } : {}),
@@ -69,8 +82,8 @@ const nonOauthKey = (apiKeyType: string | undefined, tokenScope: number, user = 
   tokenScope,
   buzzLimit: null,
 });
-const personalKey = (tokenScope: number, user = MODERATOR) => nonOauthKey('User', tokenScope, user);
-const oauthToken = (apiKeyType: string, tokenScope: number) => ({
+const personalKey = (tokenScope: bigint, user = MODERATOR) => nonOauthKey('User', tokenScope, user);
+const oauthToken = (apiKeyType: string, tokenScope: bigint) => ({
   user: MODERATOR,
   apiKeyId: 12,
   apiKeyType,

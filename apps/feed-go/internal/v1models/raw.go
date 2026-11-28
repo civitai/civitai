@@ -33,9 +33,11 @@ type RawInput struct {
 	DisablePoi     bool
 	DisableMinor   bool
 	ExcludedTagIDs []int
-	TargetUserID   int // the `username` filter's resolved user, 0 = none
-	Types          []string
-	BaseModels     []string
+	// TagID is the `tag` filter's tag as the replica named it (nil: no filter, or a name no tag has).
+	TagID        *int
+	TargetUserID int // the `username` filter's resolved user, 0 = none
+	Types        []string
+	BaseModels   []string
 	// BaseModelMetrics is the `base-model-feed-metrics` flag (read only with BaseModels).
 	BaseModelMetrics bool
 	Sort             string
@@ -45,6 +47,8 @@ type RawInput struct {
 	EarlyAccess      bool
 	BrowsingLevel    int
 	Now              time.Time
+	// misses: the cache misses computed instead of falling back (Deps.misses).
+	misses missServe
 }
 
 // usesBaseModelMetrics is getModelsRaw's useBaseModelMetrics.
@@ -334,6 +338,12 @@ func RawQuery(in *RawInput) (string, []any, error) {
       WHERE tom."modelId" = m."id"
         AND tom."tagId" IN (`).sub(sqlJoinArgs(uniqueInts(in.ExcludedTagIDs), ",")).raw(`)
     )`))
+	}
+	if in.TagID != nil {
+		and = append(and, sqlRaw(`EXISTS (
+            SELECT 1 FROM "TagsOnModels" tom
+            WHERE tom."modelId" = m."id" AND tom."tagId" = `).arg(*in.TagID).raw(`
+          )`))
 	}
 	if in.TargetUserID != 0 {
 		and = append(and, sqlRaw(`mm."userId" = `).arg(in.TargetUserID))

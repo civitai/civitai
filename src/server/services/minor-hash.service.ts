@@ -7,6 +7,7 @@ import { constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
+import { queueDocumentsForImageMinorChanges } from '~/server/services/image-models-reindex.service';
 import {
   MINOR_FLAG_SNAPSHOT_KEY,
   MINOR_LOCKED_PROPERTIES,
@@ -394,18 +395,26 @@ const reviewMatchSameUploader = Prisma.sql`bool_or(EXISTS (
   SELECT 1 FROM minor_src s WHERE s.hash = mfh.hash AND s."userId" = m."userId"
 ))`;
 
+/**
+ * The ids of the models on the minor file-match review queue, as a query; `where` (over `m`)
+ * narrows the models it reads. Shared with the nsfw lock backfill, which skips these models.
+ */
+export function pendingMinorHashMatchIdsSql(where: Prisma.Sql = Prisma.sql`TRUE`): Prisma.Sql {
+  return Prisma.sql`
+    WITH ${minorSrcCte}
+    SELECT m.id ${reviewMatchFrom} AND ${where}
+    GROUP BY m.id
+    HAVING NOT ${reviewMatchSameUploader}
+  `;
+}
+
 /** Whether the model is on the minor file-match review queue, waiting for a moderator. */
 export async function hasPendingMinorHashMatch(
   modelId: number,
   db: Pick<typeof dbRead, '$queryRaw'> = dbRead
 ): Promise<boolean> {
   const [row] = await db.$queryRaw<{ pending: boolean }[]>`
-    WITH ${minorSrcCte}
-    SELECT EXISTS (
-      SELECT 1 ${reviewMatchFrom} AND m.id = ${modelId}
-      GROUP BY m.id
-      HAVING NOT ${reviewMatchSameUploader}
-    ) AS pending
+    SELECT EXISTS (${pendingMinorHashMatchIdsSql(Prisma.sql`m.id = ${modelId}`)}) AS pending
   `;
   return row?.pending === true;
 }
@@ -1301,6 +1310,7 @@ export async function rollbackMinorHashAutoFlags({
           ids: row.prevMinorImageIds,
           action: SearchIndexUpdateQueueAction.Update,
         });
+        await queueDocumentsForImageMinorChanges({ minorImageIds: row.prevMinorImageIds });
       }
 
       report.rolledBack++;

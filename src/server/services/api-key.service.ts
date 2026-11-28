@@ -13,23 +13,36 @@ import type {
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { generateKey, generateSecretHash } from '~/server/utils/key-generator';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
+import {
+  apiKeyScopeColumns,
+  readApiKeyScope,
+  TokenScope,
+} from '~/shared/constants/token-scope.constants';
 import { bustBuzzLimitCache, deleteAuthSubject } from '~/server/http/orchestrator/api-key-spend';
 import { revokeCivitaiUserTokens } from '~/server/services/orchestrator/civitai';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { evictCachedApiKeys } from '~/server/auth/api-key-principal-cache';
 import { revokeLinksOfRevokedCredentials } from '~/server/services/download-link/download-link.store';
 import { revokeReviewBatchesOfKeys } from '~/server/services/review-batch/review-batch.store';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import {
+  DOCS_API_KEY_LIVE_CAP,
+  DOCS_API_KEY_NAME_PREFIX,
+  isDocsApiKey,
+} from '~/shared/constants/docs-api-key.constants';
 
-export function getApiKey({ id, userId }: GetAPIKeyInput & { userId: number }) {
-  return dbRead.apiKey.findFirst({
+export async function getApiKey({ id, userId }: GetAPIKeyInput & { userId: number }) {
+  const key = await dbRead.apiKey.findFirst({
     where: { id, userId },
     select: {
       tokenScope: true,
+      tokenScopeWide: true,
       user: { select: simpleUserSelect },
     },
   });
+  // The scope as a number: this is a tRPC response, whose scope fields stay JSON numbers.
+  return key && { user: key.user, tokenScope: Number(readApiKeyScope(key)) };
 }
 
 export async function getUserApiKeys({
@@ -46,13 +59,21 @@ export async function getUserApiKeys({
     select: {
       id: true,
       tokenScope: true,
+      tokenScopeWide: true,
       name: true,
       createdAt: true,
       lastUsedAt: true,
       buzzLimit: true,
+      expiresAt: true,
     },
   });
-  return keys.filter((x) => x.name !== generationServiceCookie.name);
+  // The scope as a number: this is a tRPC response, whose scope fields stay JSON numbers.
+  return keys
+    .filter((x) => x.name !== generationServiceCookie.name)
+    .map(({ tokenScopeWide, ...key }) => ({
+      ...key,
+      tokenScope: Number(readApiKeyScope({ tokenScope: key.tokenScope, tokenScopeWide })),
+    }));
 }
 
 export async function addApiKey(
@@ -64,7 +85,14 @@ export async function addApiKey(
     maxAge,
     type,
     key = generateKey(),
-  }: AddAPIKeyInput & { userId: number; maxAge?: number; type?: ApiKeyType; key?: string },
+  }: Omit<AddAPIKeyInput, 'tokenScope'> & {
+    /** Omitted: the column default, `TokenScope.Full`. */
+    tokenScope?: bigint;
+    userId: number;
+    maxAge?: number;
+    type?: ApiKeyType;
+    key?: string;
+  },
   date = new Date()
 ) {
   const secret = generateSecretHash(key);
@@ -72,7 +100,7 @@ export async function addApiKey(
 
   await dbWrite.apiKey.create({
     data: {
-      tokenScope,
+      ...(tokenScope === undefined ? {} : apiKeyScopeColumns(tokenScope)),
       buzzLimit: buzzLimit ?? undefined,
       name,
       userId,
@@ -141,7 +169,7 @@ export async function setApiKeyBuzzLimit({
 
 const AI_SERVICES_SCOPES = TokenScope.AIServicesRead | TokenScope.AIServicesWrite;
 
-type MintApiKeyArgs = AddAPIKeyInput & { userId: number; maxAge?: number; type?: ApiKeyType };
+type MintApiKeyArgs = Parameters<typeof addApiKey>[0];
 
 /** Read from the primary: a ban must stop the next mint, not the one after the session cache expires. */
 export async function assertAccountOpenForMint(userId: number, refusalMessage?: string) {
@@ -213,6 +241,9 @@ const revokeLinksOfRevokedApiKeys = async (ids: number[]) => {
   await revokeReviewBatchesOfKeys(ids);
 };
 
+/** At most this many orchestrator token-cache expiries in flight per `deleteApiKeys` call. */
+export const ORCHESTRATOR_REVOKE_CONCURRENCY = 10;
+
 /**
  * Delete the API keys matching `where` and evict them from the bearer-path cache, which is keyed by
  * the stored hash — so the hashes are read first. Use this, not `apiKey.deleteMany`, for any delete
@@ -231,8 +262,12 @@ export async function deleteApiKeys(where: Prisma.ApiKeyWhereInput) {
   await evictCachedApiKeys(rows.map((row) => row.key));
   await revokeLinksOfRevokedApiKeys(rows.map((row) => row.id));
   // The orchestrator caches keys for auth too. revokeCivitaiUserTokens swallows its own errors.
+  // Bounded: a client-wide delete (a connect app's takedown) can reach many users at once.
   const userIds = [...new Set(rows.map((row) => row.userId))];
-  await Promise.all(userIds.map((userId) => revokeCivitaiUserTokens({ userId })));
+  await limitConcurrency(
+    userIds.map((userId) => () => revokeCivitaiUserTokens({ userId })),
+    ORCHESTRATOR_REVOKE_CONCURRENCY
+  );
   return result;
 }
 
@@ -315,21 +350,36 @@ export async function forgetGenerationToken(userId: number) {
 }
 
 /**
- * Expires the user's generation credentials: every System key and every app token carrying an
- * AI Services scope. Other app tokens, personal keys and the site session are left alone. The next
- * generation call that is allowed mints afresh.
+ * Expires the user's generation credentials: every System key, every developer docs key and every
+ * app token carrying an AI Services scope. Other app tokens, personal keys and the site session are
+ * left alone. The next generation call that is allowed mints afresh.
  */
 export async function expireGenerationCredentials(userId: number) {
   const now = new Date();
   const rows = await dbWrite.apiKey.findMany({
-    where: { userId, type: { in: ['System', 'Access', 'Refresh'] } },
-    select: { id: true, key: true, type: true, tokenScope: true, expiresAt: true },
+    where: {
+      userId,
+      OR: [
+        { type: { in: ['System', 'Access', 'Refresh'] } },
+        { type: 'User', name: { startsWith: DOCS_API_KEY_NAME_PREFIX } },
+      ],
+    },
+    select: {
+      id: true,
+      key: true,
+      name: true,
+      type: true,
+      tokenScope: true,
+      tokenScopeWide: true,
+      expiresAt: true,
+    },
   });
   const matched = rows.filter(
     (row) =>
       row.type === 'System' ||
+      isDocsApiKey(row) ||
       ((row.type === 'Access' || row.type === 'Refresh') &&
-        (row.tokenScope & AI_SERVICES_SCOPES) !== 0)
+        (readApiKeyScope(row) & AI_SERVICES_SCOPES) !== 0n)
   );
   const live = matched.filter((row) => !row.expiresAt || row.expiresAt > now);
   if (live.length) {
@@ -362,4 +412,51 @@ export async function deleteApiKey({ id, userId }: DeleteAPIKeyInput & { userId:
   }
 
   return result;
+}
+
+/**
+ * Before a developer docs key named `name` is minted: removes the user's expired docs keys of that
+ * name and, past the live cap, the oldest live ones, so the new key leaves at most the cap live.
+ */
+export async function pruneDocsApiKeys({
+  userId,
+  name,
+  date = new Date(),
+}: {
+  userId: number;
+  name: string;
+  date?: Date;
+}) {
+  // primary: the rows chosen here are deleted next.
+  const rows = await dbWrite.apiKey.findMany({
+    where: { userId, type: 'User', name },
+    select: {
+      id: true,
+      name: true,
+      type: true,
+      tokenScope: true,
+      tokenScopeWide: true,
+      expiresAt: true,
+    },
+  });
+  const docsKeys = rows.filter(isDocsApiKey);
+  const kept = docsKeys
+    .filter((row) => row.expiresAt! > date)
+    .sort((a, b) => b.id - a.id)
+    .slice(0, DOCS_API_KEY_LIVE_CAP - 1)
+    .map((row) => row.id);
+  const removed = docsKeys.map((row) => row.id).filter((id) => !kept.includes(id));
+  if (!removed.length) return { removed };
+  await deleteApiKeys({ userId, id: { in: removed } });
+  // As `deleteApiKey`: the orchestrator drops each key's spend record.
+  for (const id of removed) {
+    deleteAuthSubject({ userId, subject: { type: 'apiKey', id } }).catch((err) => {
+      logToAxiom({
+        type: 'oauth.delete-subject.failed',
+        message: `delete-subject failed for apiKey ${id} user ${userId}`,
+        error: safeError(err),
+      });
+    });
+  }
+  return { removed };
 }

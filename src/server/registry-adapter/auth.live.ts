@@ -1,5 +1,6 @@
 import { getBearerTokenUser, getSessionFromBearerToken } from '~/server/auth/bearer-token';
 import type { VerifyToken } from '~/server/registry-adapter/auth';
+import { parseClientIdList } from '~/server/registry-adapter/auth';
 import {
   DEFAULT_HUB_ISSUER,
   createHubJwtVerifier,
@@ -25,6 +26,12 @@ export const verifyOpaqueCivitaiToken: VerifyToken = async (token) => {
   }
   return {
     subject: `user:${session.user.id}/client:${session.subject.id}`,
+    userId: session.user.id,
+    clientId: session.subject.id,
+    // The key's stored scope: bits the site issued, so there is no unknown name to read.
+    scope: session.tokenScope,
+    // An opaque token is presented by its own client; no one acts on its behalf.
+    actor: null,
     user: session.user,
     expiresAt: session.expiresAt,
   };
@@ -37,7 +44,18 @@ export type CivitaiTokenConfig = {
   issuer?: string;
   /** The hub's JWKS (AUTH_JWKS_URI); default `{issuer}/.well-known/jwks.json`. */
   jwksUri?: string;
+  /**
+   * The OAuth clients whose service tokens this source accepts (REGISTRY_ADAPTER_SERVICE_CLIENTS,
+   * {@link parseServiceClients}); default none.
+   */
+  serviceClients?: ReadonlySet<string>;
 };
+
+/**
+ * REGISTRY_ADAPTER_SERVICE_CLIENTS: an OAuth client-id list ({@link parseClientIdList}). Unset or
+ * empty is no client, so no service token is accepted.
+ */
+export const parseServiceClients = parseClientIdList;
 
 /**
  * The site's verification of a registry token: a hub access token issued for this source
@@ -49,7 +67,12 @@ export function createCivitaiTokenVerifier(config: CivitaiTokenConfig): VerifyTo
   return routeVerifyToken({
     opaque: verifyOpaqueCivitaiToken,
     jwt: createHubJwtVerifier(
-      { issuer, jwksUri, audience: config.resource || undefined },
+      {
+        issuer,
+        jwksUri,
+        audience: config.resource || undefined,
+        serviceClients: config.serviceClients,
+      },
       { loadUser: getBearerTokenUser }
     ),
   });

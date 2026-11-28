@@ -116,8 +116,8 @@ export const DEV_TOKEN_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<string>([
   // publishes under is the developer's own, into their own namespace.
   'apps:storage',
   'apps:storage:publish',
-  // `apps:storage:import` is excluded: the storage route refuses `?from=` on any dev or hub
-  // token (`resolveImportAccess`), so carrying it here would only be refused there.
+  // `apps:storage:import` is excluded: the storage route refuses `?from=` on any dev token
+  // (`resolveImportAccess`), so carrying it here would only be refused there.
   // collections:* — INCLUDED in the dev allowlists (both this bearer path and the
   // tunnel path below). Unlike apps:storage:shared:* (deliberately withheld pre-
   // approval because a pre-approval app's storage NAMESPACE is synthetic and could
@@ -424,7 +424,7 @@ export const REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new
  */
 export function clampDevScopes(opts: {
   scopeSource: string[];
-  oauthAllowed: number | null;
+  oauthAllowed: bigint | null;
   requestedScopes?: string[];
   /** MAY this context spend? (credential bit, or a runtime gate.) Required. */
   spendEntitled: boolean;

@@ -10,6 +10,7 @@ import {
 } from '@tabler/icons-react';
 import type { ForwardRefExoticComponent, RefAttributes } from 'react';
 import type { CreatorShopSectionKey } from '~/server/schema/creator-shop.schema';
+import { slugit } from '~/utils/string-helpers';
 import { creatorShopSectionKeys } from '~/server/schema/creator-shop.schema';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 
@@ -56,6 +57,19 @@ export const storefrontSectionKeys = (
     .filter((s) => s.visible && isSectionAvailable(s.key, features))
     .map((s) => s.key);
 
+type StorefrontShop = { settings: { sections?: SectionSetting[] | null } } | null | undefined;
+
+/** Whether the shop's settings show the Services section, offerings aside. */
+export const storefrontServicesSectionShown = (shop: StorefrontShop, features: FeatureAccess) =>
+  !!shop && storefrontSectionKeys(shop.settings.sections, features).includes('services');
+
+/** Whether the storefront renders its Services section: an Active offering, and the section shown. */
+export const storefrontShowsServices = (
+  shop: StorefrontShop,
+  activeServiceCount: number,
+  features: FeatureAccess
+) => activeServiceCount > 0 && storefrontServicesSectionShown(shop, features);
+
 /** The storefront section's element id, so a link can jump to it. */
 export const storefrontSectionId = (key: CreatorShopSectionKey) => `shop-${key}`;
 
@@ -65,3 +79,21 @@ export const serviceCardId = (offeringId: number) => `service-${offeringId}`;
 /** An offering's card on its seller's storefront. */
 export const serviceStorefrontHref = (username: string, offeringId: number) =>
   `/user/${username}/shop#${serviceCardId(offeringId)}`;
+
+/** An offering's own page. */
+export const servicePageHref = (offeringId: number, title: string) =>
+  `/services/${offeringId}/${slugit(title)}`;
+
+/** Where a card links: the offering's page behind `creatorServicesNext`, else its storefront card. */
+export const serviceHref = ({
+  username,
+  offering,
+  next,
+}: {
+  username: string;
+  offering: { id: number; title: string };
+  next: boolean;
+}) =>
+  next
+    ? servicePageHref(offering.id, offering.title)
+    : serviceStorefrontHref(username, offering.id);

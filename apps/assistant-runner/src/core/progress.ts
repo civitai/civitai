@@ -48,6 +48,11 @@ export class ProgressWriter {
     this.#charged = (this.#charged ?? 0) + buzz;
   }
 
+  /** What this writer's model calls were charged in all (this pass only); `undefined` until one was. */
+  get chargedSoFar(): number | undefined {
+    return this.#charged;
+  }
+
   save(messages: ModelMessage[]): void {
     this.#pending = messages;
     this.#running ??= this.#drain();

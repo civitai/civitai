@@ -1,17 +1,22 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
   import { cn } from '@civitai/ui/utils.js';
+  import DecisionUnavailable from './DecisionUnavailable.svelte';
 
   /** The action area of a detail pane: the decision buttons, then the reason line, then a hint. */
   let {
     buttons,
+    unavailable = [],
     fields,
     picker,
     problem,
     hint,
     compact = false,
   }: {
-    buttons: Snippet;
+    /** Gets the id of the unavailable-reasons line: a disabled button points `aria-describedby` at it. */
+    buttons: Snippet<[reasonId: string]>;
+    /** Why a decision button is disabled, one entry per button. */
+    unavailable?: (string | null | undefined)[];
     /** The second line: the reason and note a decision button submits with. */
     fields?: Snippet;
     /** The numbered reason list a decision key opens, above the reason line. */
@@ -23,6 +28,9 @@
      *  Pair with `InlineReasonFields`' `compact`. */
     compact?: boolean;
   } = $props();
+
+  const uid = $props.id();
+  const reasonId = `${uid}-unavailable`;
 </script>
 
 <!-- Container query, not viewport: the same bar sits in a wide pane (CSAM, ratings) or a narrow
@@ -33,7 +41,7 @@
       ? 'grid grid-cols-2 gap-1.5 [&>button]:h-auto [&>button]:min-h-8 [&>button]:w-full [&>button]:justify-start [&>button]:py-1.5 [&>button]:text-left [&>button]:leading-tight [&>button]:whitespace-normal'
       : 'flex flex-wrap items-center gap-2'}
   >
-    {@render buttons()}
+    {@render buttons(reasonId)}
   </div>
   {#if picker}{@render picker()}{/if}
   {#if fields}
@@ -41,6 +49,7 @@
       {@render fields()}
     </div>
   {/if}
+  <DecisionUnavailable id={reasonId} reasons={unavailable} />
   {#if problem}<p role="alert" class="m-0 text-xs text-red-300">{problem}</p>{/if}
   {#if hint}
     <p class={cn('m-0 text-[11px] text-dark-2', compact && 'line-clamp-2')} title={compact ? hint : undefined}>

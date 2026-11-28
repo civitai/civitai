@@ -80,6 +80,10 @@ import { CollapsibleCard } from '~/components/Image/DetailV2/CollapsibleCard';
 import { ImageDetailPostCard } from '~/components/Image/DetailV2/ImageDetailPostCard';
 import { ImageContestCollectionDetails } from '~/components/Image/DetailV2/ImageContestCollectionDetails';
 import { ImageDetailCarousel } from '~/components/Image/DetailV2/ImageDetailCarousel';
+import {
+  ReviewWorkImageDetail,
+  type ReviewWork,
+} from '~/components/Image/DetailV2/ReviewWorkImageDetail';
 import { isImageDetailPoiHidden } from '~/components/Image/DetailV2/image-detail-main-media';
 import { ImageExternalMeta } from '~/components/Image/DetailV2/ImageExternalMeta';
 import { ImageGenerationData } from '~/components/Image/DetailV2/ImageGenerationData';
@@ -122,11 +126,14 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { DELETE_AFTER_REVIEW_MESSAGE } from '~/shared/constants/delete-after-review.constants';
 import { Availability, CollectionType, EntityType } from '~/shared/utils/prisma/enums';
 import { RemixMenu, isRemixMenuVisible } from '~/components/Image/Remix/RemixMenu';
+import { useRemixTrayClearanceRef } from '~/store/remix-tray-clearance.store';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { AdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
 import { ClientOnlySection } from '~/components/ClientOnlySection/ClientOnlySection';
+import { RESTRICTED_IMAGE_REASON } from '~/shared/utils/restricted-image';
 
 const PREFETCH_THRESHOLD = 5;
 
@@ -268,10 +275,34 @@ function ImageDetail2Content({ deferredSsr }: { deferredSsr?: boolean }) {
     { enabled: !!image?.id }
   );
   const deferredShell = useSsrDeferredShell(deferredSsr);
+  const trayClearanceRef = useRemixTrayClearanceRef();
 
   if (!image) return <NotFound />;
   // Avoid showing POI images to non-mods non owners.
   if (isImageDetailPoiHidden(image, currentUser)) return <NotFound />;
+  // Only `image.get` carries it; a feed item never does.
+  const reviewWork = 'reviewWork' in image ? (image.reviewWork as ReviewWork | null) : null;
+  if (reviewWork)
+    return (
+      <ReviewWorkImageDetail
+        image={image}
+        reviewWork={reviewWork}
+        close={close}
+        shareUrl={imageShareUrl}
+        stage={
+          <ImageDetailCarousel
+            images={images}
+            items={items}
+            textUserId={image.user.id}
+            videoRef={videoRef}
+            connect={connect}
+            onSettle={handleSettle}
+            loop={false}
+            {...navigation}
+          />
+        }
+      />
+    );
 
   const actualCollection = collection || collectionItems[0]?.collection;
   const forcedBrowsingLevel = actualCollection?.metadata?.forcedBrowsingLevel;
@@ -291,6 +322,8 @@ function ImageDetail2Content({ deferredSsr }: { deferredSsr?: boolean }) {
   const handleSidebarToggle = () => setSidebarOpen((o) => !o);
 
   const isOwner = currentUser?.id === image.user.id;
+  // Only `image.get` carries it; a feed item never does.
+  const deleteAfterReview = 'deleteAfterReview' in image && !!image.deleteAfterReview;
   const canRemix = isRemixMenuVisible(image);
 
   const IconChevron = !active ? IconChevronUp : IconChevronDown;
@@ -557,24 +590,27 @@ function ImageDetail2Content({ deferredSsr }: { deferredSsr?: boolean }) {
                               <DownloadImage src={image.url} type={image.type} name={image.name}>
                                 {({ onClick: download, isLoading: downloading, progress }) => (
                                   <>
-                                    <LegacyActionIcon
-                                      {...sharedActionIconProps}
-                                      className={clsx(
-                                        sharedActionIconProps.className,
-                                        '@max-md:hidden'
-                                      )}
-                                      onClick={download}
-                                      loading={downloading && progress === 0}
-                                    >
-                                      {downloading && progress > 0 && (
-                                        <RingProgress
-                                          size={36}
-                                          sections={[{ value: progress, color: 'blue' }]}
-                                          thickness={4}
-                                        />
-                                      )}
-                                      {!downloading && <IconDownload {...sharedIconProps} />}
-                                    </LegacyActionIcon>
+                                    {/* `url` is null when the media is withheld from this viewer. */}
+                                    {!!image.url && (
+                                      <LegacyActionIcon
+                                        {...sharedActionIconProps}
+                                        className={clsx(
+                                          sharedActionIconProps.className,
+                                          '@max-md:hidden'
+                                        )}
+                                        onClick={download}
+                                        loading={downloading && progress === 0}
+                                      >
+                                        {downloading && progress > 0 && (
+                                          <RingProgress
+                                            size={36}
+                                            sections={[{ value: progress, color: 'blue' }]}
+                                            thickness={4}
+                                          />
+                                        )}
+                                        {!downloading && <IconDownload {...sharedIconProps} />}
+                                      </LegacyActionIcon>
+                                    )}
                                     <ShareButton
                                       url={imageShareUrl}
                                       title={title}
@@ -600,7 +636,7 @@ function ImageDetail2Content({ deferredSsr }: { deferredSsr?: boolean }) {
                                       image={image}
                                       additionalMenuItems={
                                         <>
-                                          {narrowStage && (
+                                          {narrowStage && !!image.url && (
                                             <Menu.Item
                                               leftSection={<IconDownload size={14} stroke={1.5} />}
                                               onClick={download}
@@ -738,6 +774,8 @@ function ImageDetail2Content({ deferredSsr }: { deferredSsr?: boolean }) {
                     spurious 34px gap — over-payment, which is a defect here in
                     exactly the way under-payment is. */}
                 <div
+                  // Collapsed, this row is the bottom bar the Remix tray must not cover.
+                  ref={!active ? trayClearanceRef : undefined}
                   className={`@max-md:shadow-topper flex items-center justify-between rounded-md p-3 @md:hidden ${
                     !active ? '@max-md:pb-[calc(0.75rem+var(--safe-area-inset-bottom-unpaid))]' : ''
                   }`}
@@ -816,18 +854,24 @@ function ImageDetail2Content({ deferredSsr }: { deferredSsr?: boolean }) {
                         label="Posted to 3D Model"
                       />
                     )}
-                    {!text && image.needsReview && isOwner && (
+                    {!text && (deleteAfterReview || image.needsReview) && isOwner && (
                       <AlertWithIcon
                         icon={<IconAlertTriangle />}
                         color="yellow"
                         iconColor="yellow"
                         title={
-                          image.needsReview === 'appeal' ? 'Under appeal' : 'Flagged for review'
+                          deleteAfterReview
+                            ? 'Deletion pending'
+                            : image.needsReview === 'appeal'
+                            ? 'Under appeal'
+                            : 'Flagged for review'
                         }
                         radius={0}
                         px="md"
                       >
-                        {image.needsReview === 'appeal'
+                        {deleteAfterReview
+                          ? DELETE_AFTER_REVIEW_MESSAGE
+                          : image.needsReview === 'appeal'
                           ? `Your appeal has been submitted, but the image will remain hidden until it's reviewed by our moderators.`
                           : `This image won't be visible to other users until it's reviewed by our moderators.`}
                       </AlertWithIcon>
@@ -848,6 +892,23 @@ function ImageDetail2Content({ deferredSsr }: { deferredSsr?: boolean }) {
                       </AlertWithIcon>
                     )}
                     {!text && isOwner && <OwnerBlockedImageNotice image={image} />}
+                    {!text &&
+                      (isOwner || currentUser?.isModerator) &&
+                      'restricted' in image &&
+                      image.restricted === true && (
+                        <AlertWithIcon
+                          icon={<IconAlertTriangle />}
+                          color="orange"
+                          iconColor="orange"
+                          title="Restricted"
+                          radius={0}
+                          px="md"
+                        >
+                          {isOwner
+                            ? `Hidden from everyone else, because ${RESTRICTED_IMAGE_REASON}. You still see it on pages built for you, such as your profile.`
+                            : `Hidden from feeds, galleries and search (its uploader still sees it where the page is built for them), because ${RESTRICTED_IMAGE_REASON}. Moderators can still open it by id.`}
+                        </AlertWithIcon>
+                      )}
                     {!text && image.poi && (
                       <AlertWithIcon icon={<IconInfoCircle />} color="blue" iconColor="blue">
                         <Text>

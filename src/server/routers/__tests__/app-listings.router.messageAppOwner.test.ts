@@ -78,6 +78,7 @@ import {
   MOD_MESSAGE_BODY_MIN,
   MOD_MESSAGE_SUBJECT_MAX,
 } from '~/server/schema/blocks/app-moderator-message.schema';
+import { rateLimitMetaOf } from '~/server/utils/rate-limit-error';
 
 function modMessageErr(code: string, message: string): Error {
   return Object.assign(new Error(message), { name: 'AppModeratorMessageError', code });
@@ -189,7 +190,15 @@ describe('authorization — one case per role, and the service never runs on a r
     // Assert by absence: the mod gate is the whole trust boundary here, exactly as it
     // is for `claimListing`. A sibling that let a user message an owner would be a
     // user-to-user DM with the platform's moderation framing on it.
-    expect(procs.filter((p) => /message/i.test(p))).toEqual(['messageAppOwner']);
+    //
+    // The review reply thread's two procedures also match, and are NOT that sibling: they are
+    // participant-gated to ONE request's developer side and moderators (a non-participant gets
+    // NOT_FOUND), so a developer can reach only Civitai App Review, never another user.
+    expect(procs.filter((p) => /message/i.test(p)).sort()).toEqual([
+      'listReviewMessages',
+      'messageAppOwner',
+      'postReviewMessage',
+    ]);
   });
 });
 
@@ -204,6 +213,33 @@ describe('error mapping', () => {
     await expect(caller.messageAppOwner(INPUT)).rejects.toMatchObject({
       code: 'TOO_MANY_REQUESTS',
       message: expect.stringContaining('900'),
+    });
+  });
+
+  it('RATE_LIMITED answers with the meta the service error carries', async () => {
+    const rateLimit = {
+      retryAfterSeconds: 900,
+      retryAt: '2026-01-01T00:15:00.000Z',
+      id: 'apps.moderator-messages',
+      kind: 'abuse',
+    };
+    mockMessageAppOwner.mockRejectedValueOnce(
+      Object.assign(modMessageErr('RATE_LIMITED', 'Too many moderator messages'), { rateLimit })
+    );
+    const caller = appListingsRouter.createCaller(fakeCtx(mod) as never);
+    const refused = await caller.messageAppOwner(INPUT).catch((e: unknown) => e);
+    expect(refused).toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+    expect(rateLimitMetaOf(refused)).toEqual(rateLimit);
+  });
+
+  it('RATE_LIMITED with no meta of its own still answers the id and a retry', async () => {
+    mockMessageAppOwner.mockRejectedValueOnce(modMessageErr('RATE_LIMITED', 'Too many'));
+    const caller = appListingsRouter.createCaller(fakeCtx(mod) as never);
+    const refused = await caller.messageAppOwner(INPUT).catch((e: unknown) => e);
+    expect(rateLimitMetaOf(refused)).toMatchObject({
+      retryAfterSeconds: 60,
+      id: 'apps.moderator-messages',
+      kind: 'abuse',
     });
   });
 

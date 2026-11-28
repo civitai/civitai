@@ -1,0 +1,12 @@
+/* The row of answer pills, shared by the player game and the moderators' inquisitor queue (`AnswerPill.svelte`). */
+.answer-row {
+  display: flex;
+  flex: 1 1 auto;
+  gap: 8px;
+  min-width: 0;
+}
+@media (max-width: 40rem) {
+  .answer-row {
+    gap: 6px;
+  }
+}

@@ -7,6 +7,7 @@ import type * as ImageDetailProviderModule from '~/components/Image/Detail/Image
 import type * as HatTurfDetailProviderModule from '~/components/HatTurf/detail/HatTurfDetailProvider';
 
 import '~/styles/globals.css';
+import { RemixTrayView } from '~/components/Image/Remix/RemixTray';
 
 // Layout test: the REAL reaction pills in the real footer row, beside a fixed-width sticker bar.
 const ctx = vi.hoisted(() => ({ active: false, hats: true, hideReactions: false }));
@@ -264,12 +265,15 @@ import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvi
 import { ImageDetail2 } from '~/components/Image/DetailV2/ImageDetail2';
 import { renderAtViewport } from '../../../../test/geometry-setup';
 
-async function renderDetail(width: number) {
+async function renderDetail(
+  width: number,
+  { pageHeight = 844, beside }: { pageHeight?: number; beside?: ReactNode } = {}
+) {
   const PHONE = { width, height: 844 };
   await renderAtViewport(
     // The app theme adds an `accent` palette the tip badge reads.
     <MantineProvider theme={{ colors: { accent: DEFAULT_THEME.colors.orange } }}>
-      <div style={PHONE}>
+      <div style={{ ...PHONE, height: pageHeight }} data-testid="phone-page">
         <TurfSummaryContext.Provider
           value={{
             event: 'birthday2026',
@@ -289,6 +293,7 @@ async function renderDetail(width: number) {
           </HatTurfCardProvider>
         </TurfSummaryContext.Provider>
       </div>
+      {beside}
     </MantineProvider>,
     PHONE
   );
@@ -306,6 +311,7 @@ afterEach(() => {
   cleanup();
   ctx.hats = true;
   ctx.hideReactions = false;
+  ctx.active = false;
 });
 
 /** Each digit of every count in the reaction row, against the label that clips it. */
@@ -462,5 +468,76 @@ describe.each([480, 600, 768, 900, 1023, 1024, 1100])('image detail at %ipx', (w
     await renderDetail(width);
     await vi.waitFor(() => expect(allDrawn('[data-testid="sticker-bar"]')).toHaveLength(1));
     expect(tipControls().length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe('the Remix tray on a 390px image page', () => {
+  test('floats above the bottom bar, which sits above the footer, not over its chevron', async () => {
+    // As on prod: the page ends above the footer, so the bar is not at the viewport bottom.
+    await renderDetail(390, {
+      pageHeight: 750,
+      beside: <RemixTrayView runs={[]} inProgress={0} ready={2} onDismiss={() => undefined} />,
+    });
+    const chevron = await vi.waitFor(() => {
+      const el = q('image-detail-chevron');
+      expect(el).not.toBeNull();
+      return el!.getBoundingClientRect();
+    });
+    const pill = () =>
+      document.querySelector('[aria-label^="Remix runs:"]')!.getBoundingClientRect();
+    // POSITIVE CONTROL (globals.css sets --footer-height: 45px): the tray's footer offset alone lands it on the bar's row.
+    const footerOffsetTop = 844 - (45 + 72) - pill().height;
+    expect(footerOffsetTop).toBeLessThan(chevron.bottom);
+    expect(footerOffsetTop + pill().height).toBeGreaterThan(chevron.top);
+    await vi.waitFor(() => expect(pill().bottom).toBeLessThanOrEqual(chevron.top));
+  });
+
+  test('follows the bar up when something mounts below the page after it measured', async () => {
+    await renderDetail(390, {
+      beside: <RemixTrayView runs={[]} inProgress={0} ready={2} onDismiss={() => undefined} />,
+    });
+    await vi.waitFor(() => expect(q('image-detail-chevron')).not.toBeNull());
+    await vi.waitFor(() =>
+      expect(document.querySelector('[aria-label^="Remix runs:"]')).not.toBeNull()
+    );
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    // An ad bar mounting under the page: the bar moves up, keeping its own size.
+    q('phone-page')!.style.height = '750px';
+    const chevron = await vi.waitFor(() => {
+      const rect = q('image-detail-chevron')!.getBoundingClientRect();
+      // POSITIVE CONTROL: the bar really moved up into the tray's footer-offset row.
+      expect(rect.top).toBeLessThan(844 - 45 - 72);
+      return rect;
+    });
+    const pill = () =>
+      document.querySelector('[aria-label^="Remix runs:"]')!.getBoundingClientRect();
+    await vi.waitFor(() => expect(pill().bottom).toBeLessThanOrEqual(chevron.top));
+  });
+
+  // The footer offset: --footer-height (45px) + 4.5rem, from the viewport bottom.
+  const FOOTER_OFFSET_BOTTOM = 844 - 45 - 72;
+  const tray = <RemixTrayView runs={[]} inProgress={0} ready={2} onDismiss={() => undefined} />;
+  const pillBottom = () =>
+    Math.round(
+      document.querySelector('[aria-label^="Remix runs:"]')!.getBoundingClientRect().bottom
+    );
+
+  test('stays at its footer offset on desktop, where the phone bar is not drawn', async () => {
+    await renderDetail(1100, { beside: tray });
+    await vi.waitFor(() =>
+      expect(document.querySelector('[aria-label^="Remix runs:"]')).not.toBeNull()
+    );
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    expect(pillBottom()).toBe(FOOTER_OFFSET_BOTTOM);
+  });
+
+  test('stays at its footer offset while the sheet is expanded and the bar is at the top', async () => {
+    ctx.active = true;
+    await renderDetail(390, { pageHeight: 750, beside: tray });
+    await vi.waitFor(() =>
+      expect(document.querySelector('[aria-label^="Remix runs:"]')).not.toBeNull()
+    );
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    expect(pillBottom()).toBe(FOOTER_OFFSET_BOTTOM);
   });
 });

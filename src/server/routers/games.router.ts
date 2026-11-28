@@ -164,6 +164,7 @@ export const gamesRouter = router({
           playerId: ctx.user.id,
           chTracker: ctx.track,
           isModerator: ctx.user.isModerator,
+          csamReview: !!ctx.features?.csamReports,
         })
       ),
     resetCareer: guardedProcedure

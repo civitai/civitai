@@ -1,8 +1,11 @@
+import { isBrowsingLevelClaim } from '@civitai/auth/browsing-level-claim';
 import type { Workflow } from '@civitai/orchestration-client';
 import { isUnratedOutput } from '~/shared/orchestrator/workflow-data';
 import { NsfwLevel } from '~/server/common/enums';
 import {
   allowMatureContentForCeiling,
+  IMAGE_RATING_LADDER,
+  NSFW_LEVEL_BY_IMAGE_RATING,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { resolveViewerBrowsingLevel } from '~/server/services/blocks/block-viewer-ceiling';
@@ -20,7 +23,7 @@ import type {
  * both it still reports the output `available` with a url that does not serve the
  * real media (an image serves blurred, a video does not serve at all):
  *   - the SITE asked for it: an SFW app's submit sends `allowMatureContent: false`
- *     (`blockOutputClamp`, from the token's `maxBrowsingLevel`), and a base model that
+ *     (`outputRestrictions`, from the token's `maxBrowsingLevel`), and a base model that
  *     restricts mature output adds `nsfwLevel: 'pg13'`;
  *   - the PAYING POOL caused it: a submit that sent no `allowMatureContent` has it set
  *     at charge time from the Buzz account that paid (the orchestrator's mature-content
@@ -57,7 +60,8 @@ import type {
  *   1c. A NEVER-RATED VIDEO ENGINE's unrated output (`opts.unratedDelivered`):
  *      `{ url }` whatever the ceiling — the site's rule (`NEVER_RATED_VIDEO_ECOSYSTEMS`
  *      in `workflow-data.ts`): the provider moderates its own output. A rating that
- *      does arrive on one goes through rules 2-6 as usual.
+ *      does arrive on one goes through rules 2-6 as usual. Every app-facing read then
+ *      restricts the video anyway (`applyServingRules` / `applyServingOffRules`).
  *   2. A rating this module does not know: restricted, `'ceiling'` (fail closed).
  *   3. Above the output ceiling ({@link blockOutputCeilingFromClaims}: the viewer's
  *      level, floored at PG-13 for a signed-in viewer, cut to the domain ceiling):
@@ -177,7 +181,7 @@ function workflowCap(workflow: BlockOutputWorkflowFacts): BlockWorkflowOutputRat
     : undefined;
 }
 
-const PENDING: BlockWorkflowOutput = { pending: true };
+export const PENDING: BlockWorkflowOutput = { pending: true };
 const BLOCKED: BlockWorkflowOutput = { blocked: true };
 const KNOWN_TYPES: ReadonlySet<string> = new Set(['image', 'video', 'audio', 'model3d']);
 
@@ -215,11 +219,7 @@ export function blockOutputCeilingFromClaims(claims: {
 }): BlockOutputCeiling {
   const viewer = claims.viewerBrowsingLevel;
   const flooredForSignedInViewer =
-    typeof claims.sub === 'string' &&
-    USER_SUB_RE.test(claims.sub) &&
-    typeof viewer === 'number' &&
-    Number.isInteger(viewer) &&
-    viewer >= 0;
+    typeof claims.sub === 'string' && USER_SUB_RE.test(claims.sub) && isBrowsingLevelClaim(viewer);
   return {
     maxBrowsingLevel: resolveViewerBrowsingLevel(
       flooredForSignedInViewer
@@ -258,7 +258,7 @@ const restricted = (reason: 'pool' | 'ceiling' | 'unrated'): BlockWorkflowOutput
   reason,
 });
 
-const RATING_ORDER: readonly BlockWorkflowOutputRating[] = ['pg', 'pg13', 'r', 'x', 'xxx'];
+const RATING_ORDER: readonly BlockWorkflowOutputRating[] = IMAGE_RATING_LADDER;
 
 const MATURE_RATINGS: ReadonlySet<BlockWorkflowOutputRating> = new Set<BlockWorkflowOutputRating>([
   'r',
@@ -280,13 +280,8 @@ const RATING_BY_SPELLING: ReadonlyMap<string, BlockWorkflowOutputRating> = new M
   ['xxx', 'xxx'],
 ]);
 
-const LEVEL_BY_RATING: Readonly<Record<BlockWorkflowOutputRating, number>> = {
-  pg: NsfwLevel.PG,
-  pg13: NsfwLevel.PG13,
-  r: NsfwLevel.R,
-  x: NsfwLevel.X,
-  xxx: NsfwLevel.XXX,
-};
+const LEVEL_BY_RATING: Readonly<Record<BlockWorkflowOutputRating, number>> =
+  NSFW_LEVEL_BY_IMAGE_RATING;
 
 /** Every rating's bit, PG through XXX. */
 const ALL_RATINGS_FLAG = NsfwLevel.PG | NsfwLevel.PG13 | NsfwLevel.R | NsfwLevel.X | NsfwLevel.XXX;

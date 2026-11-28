@@ -7,6 +7,7 @@
   import MetaChip from '$lib/components/minor-flags/MetaChip.svelte';
   import OwnerGroupChip from '$lib/components/model-rule-holds/OwnerGroupChip.svelte';
   import TriageRow from '$lib/components/triage/TriageRow.svelte';
+  import CoverThumb from '$lib/components/triage/CoverThumb.svelte';
   import TriageShell from '$lib/components/triage/TriageShell.svelte';
   import { LINK_CLASS, plural, shortAge } from '$lib/format';
   import {
@@ -182,15 +183,21 @@
       href={state.href}
       selected={state.selected}
       title={row.modelName ?? `Model #${row.modelId}`}
-      coverUrl={row.coverImages[0]?.url}
+      coverUrl={row.coverImages[0]?.type === 'video' ? row.coverImages[0].url : undefined}
       coverType={row.coverImages[0]?.type}
       meta={shortAge(row.createdAt)}
       verdict={state.verdict ?? alsoDecided.get(row.id)}
       error={state.error}
       onselect={state.select}
     >
-      {#snippet coverIcon()}
-        <IconFileText aria-hidden="true" />
+      {#snippet coverMedia()}
+        {#if row.coverImages[0]}
+          <CoverThumb image={row.coverImages[0]} />
+        {:else}
+          <div class="grid size-full place-items-center text-dark-2 [&_svg]:size-[18px]">
+            <IconFileText aria-hidden="true" />
+          </div>
+        {/if}
       {/snippet}
       {#snippet badges()}
         <span class="block w-full truncate text-xs text-dark-0">{subjectsOf(row.rules)}</span>

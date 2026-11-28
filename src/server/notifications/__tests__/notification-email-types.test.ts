@@ -5,7 +5,8 @@ import { DEFAULT_PUSH_TYPES } from '~/server/notifications/push.constants';
 import {
   emailNotificationTypeList,
   isOptInNotification,
-  notificationProcessors,
+  notificationSettingGroups,
+  systemEmailNotificationTypes,
 } from '~/server/notifications/utils.notifications';
 
 const dealTypes = Object.values(serviceDealNotificationTypes);
@@ -19,13 +20,33 @@ describe('email notification types', () => {
     expect(sorted(emailNotificationTypes)).toEqual(sorted(emailNotificationTypeList));
   });
 
-  it('only the Creator Services deal notifications send email', () => {
-    expect(sorted(emailNotificationTypeList)).toEqual(sorted(dealTypes));
+  it('only the Creator Services deal and app-review notifications send email', () => {
+    expect(sorted(emailNotificationTypeList)).toEqual(
+      sorted([
+        ...dealTypes,
+        'app-block-approved',
+        'app-block-rejected',
+        'app-listing-rejected',
+        'app-listing-reset-to-pending',
+        'app-access-request-approved',
+        'app-access-request-declined',
+        'app-platform-update-approved',
+        'app-platform-update-rejected',
+        'app-review-reply-to-moderator',
+        'app-review-reply-to-developer',
+      ])
+    );
   });
 
-  it('every email type has a control the user can turn off', () => {
+  // Toggleable types get their Email box beside the on-site control; types with no on-site
+  // toggle get an email-only box. One of the two, never neither and never both.
+  it('every email type has exactly one email control the user can turn off', () => {
+    const perTypeControls = new Set(
+      Object.values(notificationSettingGroups).flatMap((rows) => rows.map((row) => row.type))
+    );
+    const emailOnlyControls = new Set(systemEmailNotificationTypes.map((row) => row.type));
     for (const type of emailNotificationTypeList) {
-      expect(notificationProcessors[type]?.toggleable, type).not.toBe(false);
+      expect(perTypeControls.has(type) !== emailOnlyControls.has(type), type).toBe(true);
       expect(isOptInNotification(type), type).toBe(false);
     }
   });

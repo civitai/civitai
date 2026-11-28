@@ -37,11 +37,12 @@ const (
 	KeyBasicUsers      = "packed:caches:basic-users"
 	KeyUserCosmetics   = "packed:caches:user-cosmetics"
 	KeyCosmetics       = "packed:caches:cosmetics2"
-	KeyProfilePictures = "packed:caches:profile-pictures:v3"
+	KeyProfilePictures = "packed:caches:profile-pictures:v4"
 	KeyImageFrames     = "packed:caches:cosmetics2:Image"
 	KeyImageEvents     = "packed:caches:cosmetics2:event:v2:Image"
 	KeyThumbnails      = "packed:caches:thumbnails"
 	KeyTagIDs          = "packed:caches:tag-ids-for-images"
+	KeyImageTags       = "packed:caches:image-tags"
 )
 
 // TTLs (CacheTTL in src/server/common/constants.ts) for the caches that serve stale entries.
@@ -98,6 +99,25 @@ func Pick(m map[string]any, keys ...string) superjson.Object {
 		}
 	}
 	return obj
+}
+
+// PickOrdered is Pick over an ordered record (Entry.Ordered): the given keys, in order, a key absent
+// from o skipped. Each value is o's own (already wire values), so a nested object keeps the key order
+// it was decoded with.
+func PickOrdered(o superjson.Object, keys ...string) superjson.Object {
+	obj := make(superjson.Object, 0, len(keys))
+	for _, k := range keys {
+		if v, ok := o.Get(k); ok {
+			obj = append(obj, superjson.Field{Key: k, Val: v})
+		}
+	}
+	return obj
+}
+
+// ObjectField is o's member k (nil when absent), the m[k] read of an ordered record.
+func ObjectField(o superjson.Object, k string) any {
+	v, _ := o.Get(k)
+	return v
 }
 
 // Int reads a msgpack/JSON number as an int.

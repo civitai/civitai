@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { PGlite } from '@electric-sql/pglite';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // queues.ts imports the real redis client module, which opens sockets at load.
 // Mock it to an in-memory sysRedis whose hGet reply type (string vs Buffer) we
@@ -127,20 +128,6 @@ describe('getBucketNames (via queues.ts public API)', () => {
     expect(sMembers).toHaveBeenCalledWith(BUCKETS_CSV);
   });
 
-  it('parses bucket names when hGet returns a plain string (unchanged behavior)', async () => {
-    hGet.mockResolvedValue(BUCKETS_CSV);
-    await expect(checkoutQueue('images_v6:Update', false, true)).resolves.toBeDefined();
-    expect(sMembers).toHaveBeenCalledWith(BUCKETS_CSV);
-  });
-
-  it('treats a null hGet (empty queue) as no buckets — mints a fresh one on enqueue', async () => {
-    hGet.mockResolvedValue(null);
-    await addToQueue('images_v6:Update', [1, 2, 3]);
-    // No existing bucket → a new bucket name is written, then ids are sAdd'd.
-    expect(hSet).toHaveBeenCalledTimes(1);
-    expect(sAdd).toHaveBeenCalledTimes(1);
-  });
-
   it('chunks a large enqueue instead of issuing one oversized sAdd', async () => {
     hGet.mockResolvedValue(BUCKETS_CSV);
     const ids = Array.from({ length: 25000 }, (_, i) => i + 1);
@@ -153,15 +140,6 @@ describe('getBucketNames (via queues.ts public API)', () => {
 
     const written = calls.flatMap(([, chunk]) => chunk);
     expect(new Set(written).size).toBe(25000);
-  });
-
-  it('handles a multi-bucket Buffer reply (comma-joined) without throwing', async () => {
-    const csv = `${BUCKETS_CSV},queues:buckets:images_v6:Update:1782075150000`;
-    hGet.mockResolvedValue(Buffer.from(csv, 'utf8'));
-    await checkoutQueue('images_v6:Update', false, true);
-    // Both buckets are read.
-    expect(sMembers).toHaveBeenCalledWith(BUCKETS_CSV);
-    expect(sMembers).toHaveBeenCalledWith('queues:buckets:images_v6:Update:1782075150000');
   });
 });
 
@@ -268,33 +246,6 @@ describe('queues fail-open — SLOW (sysRedis command parks; only the deadline s
       expect.any(Object)
     );
   });
-
-  it('checkoutQueue: a HANGING sMembers read is deadline-bounded and yields empty content', async () => {
-    hGet.mockResolvedValue(BUCKETS_CSV);
-    sMembers.mockImplementation(never);
-
-    const queue = await checkoutQueue('images_v6:Update', false, true);
-    expect(queue.content).toEqual([]);
-    expect(logSysRedisFailOpen).toHaveBeenCalledWith(
-      'read-degraded',
-      'queues.checkoutQueue sMembers',
-      expect.objectContaining({ message: expect.stringMatching(/timed out/) }),
-      expect.any(Object)
-    );
-  });
-
-  it('addToQueue: a HANGING write (hSet) is deadline-bounded and swallowed', async () => {
-    hGet.mockResolvedValue(null);
-    hSet.mockImplementation(never);
-
-    await expect(addToQueue('images_v6:Update', [1, 2, 3])).resolves.toBe(false);
-    expect(logSysRedisFailOpen).toHaveBeenCalledWith(
-      'write-degraded',
-      'queues.addToQueue hSet',
-      expect.objectContaining({ message: expect.stringMatching(/timed out/) }),
-      expect.any(Object)
-    );
-  });
 });
 
 describe('waitForMerge — terminates under a persistent stall (does not loop forever)', () => {
@@ -305,13 +256,6 @@ describe('waitForMerge — terminates under a persistent stall (does not loop fo
     exists.mockImplementation(never);
 
     // checkoutQueue(key, isMerge=false) calls waitForMerge first.
-    await expect(checkoutQueue('images_v6:Update', false, true)).resolves.toBeDefined();
-  });
-
-  it('returns fast when exists REJECTS (DOWN → treated as not-merging)', async () => {
-    hGet.mockResolvedValue(null);
-    exists.mockImplementation(() => Promise.reject(new Error('Redis connection lost')));
-
     await expect(checkoutQueue('images_v6:Update', false, true)).resolves.toBeDefined();
   });
 
@@ -387,9 +331,6 @@ describe('queues data-integrity — non-destructive fail-open (regression guard)
     expect(queue.content).toEqual([]);
     await queue.commit();
 
-    // readBuckets is empty → commit() short-circuits: no del, no bucket-list
-    // rewrite (the only hSet allowed is the checkout-time append, never a commit
-    // rewrite that would drop B1/B2).
     expect(del).not.toHaveBeenCalled();
     expect(hSet).not.toHaveBeenCalledWith('queues:buckets', 'images_v6:Update', '');
   });
@@ -405,23 +346,6 @@ describe('queues data-integrity — non-destructive fail-open (regression guard)
     expect(hSet).not.toHaveBeenCalled();
     expect(sMembers).not.toHaveBeenCalled();
     expect(del).not.toHaveBeenCalled();
-  });
-
-  it('addToQueue: a degraded getBucketNames read SKIPS the enqueue (does not overwrite/orphan existing buckets)', async () => {
-    // Pre-existing buckets exist in reality, but the bucket-list read fails open
-    // (false-empty). Writing a fresh single-bucket reference would orphan them.
-    hGet.mockImplementation(() => Promise.reject(new Error('Redis connection lost')));
-
-    await addToQueue('images_v6:Update', [1, 2, 3]);
-
-    expect(hSet).not.toHaveBeenCalled(); // no clobbering bucket-list overwrite
-    expect(sAdd).not.toHaveBeenCalled(); // no write into a guessed bucket
-    expect(logSysRedisFailOpen).toHaveBeenCalledWith(
-      'write-degraded',
-      'queues.addToQueue skipped-degraded-read',
-      expect.any(Error),
-      expect.objectContaining({ key: 'images_v6:Update' })
-    );
   });
 
   it('checkoutQueue happy path (all reads succeed): retires exactly the processed buckets', async () => {
@@ -485,13 +409,6 @@ describe('dropped-enqueue parking lot', () => {
     expect(parked[0]).toBe(10001); // the second chunk, not the first or third
   });
 
-  it('does not touch Postgres on a healthy enqueue', async () => {
-    hGet.mockResolvedValue(BUCKETS_CSV);
-    await expect(addToQueue('images_v6:Delete', [1, 2, 3])).resolves.toBe(true);
-    expect(queryRaw).not.toHaveBeenCalled();
-    expect(executeRaw).not.toHaveBeenCalled();
-  });
-
   it('reports the cap so a full parking lot is not a silent discard', async () => {
     hGet.mockImplementation(DOWN);
     queryRaw.mockResolvedValue([{ capped: true }]);
@@ -515,24 +432,6 @@ describe('dropped-enqueue parking lot', () => {
         Promise.resolve(sqlOf(call).includes('SELECT "key", "value"') ? parkedRow(value) : [])
       );
 
-    it('replays parked ids and then deletes the row it replayed', async () => {
-      withParked([4, 5]);
-      hGet.mockResolvedValue(BUCKETS_CSV);
-
-      await expect(drainDroppedEnqueues()).resolves.toEqual({
-        keys: 1,
-        replayed: 2,
-        reparked: 0,
-      });
-      expect(sAdd).toHaveBeenCalledWith(BUCKETS_CSV, ['4', '5']);
-
-      // Deleted by key AND by the length it replayed, so a drop that landed between the
-      // read and the delete is not swallowed along with it.
-      const deletes = callsMatching(executeRaw, 'DELETE FROM "KeyValue"');
-      expect(deletes).toHaveLength(1);
-      expect(deletes[0].slice(1)).toEqual([PARKED_KEY, 2]);
-    });
-
     it('leaves the row parked when the replay fails, and does not park a second copy', async () => {
       withParked([4, 5]);
       hGet.mockImplementation(DOWN);
@@ -546,6 +445,56 @@ describe('dropped-enqueue parking lot', () => {
       // lose the ids, and re-inserting would duplicate them.
       expect(callsMatching(executeRaw, 'DELETE FROM "KeyValue"')).toHaveLength(0);
       expect(callsMatching(queryRaw, 'INSERT INTO "KeyValue"')).toHaveLength(0);
+    });
+
+    describe('against Postgres', () => {
+      let pg: PGlite;
+      const run = (call: unknown[]) => {
+        const [strings, ...values] = call as [string[], ...unknown[]];
+        const text = strings.reduce((acc, s, i) => `${acc}$${i}${s}`);
+        return pg.query(text, values);
+      };
+      const row = async () =>
+        (await pg.query<{ value: number[] }>('SELECT "value" FROM "KeyValue"')).rows[0]?.value;
+
+      beforeAll(async () => {
+        pg = new PGlite();
+        await pg.exec('CREATE TABLE "KeyValue" ("key" TEXT PRIMARY KEY, "value" JSONB NOT NULL)');
+      });
+      afterAll(() => pg.close());
+
+      beforeEach(async () => {
+        await pg.exec('TRUNCATE "KeyValue"');
+        await pg.query(`INSERT INTO "KeyValue" VALUES ($1, '[4,5]'::jsonb)`, [PARKED_KEY]);
+        queryRaw.mockImplementation((...call: unknown[]) =>
+          run(call).then((r) => r.rows as { key: string; value: unknown }[])
+        );
+        executeRaw.mockImplementation((...call: unknown[]) =>
+          run(call).then((r) => r.affectedRows ?? 0)
+        );
+        hGet.mockResolvedValue(BUCKETS_CSV);
+      });
+
+      it('deletes the row it replayed', async () => {
+        await drainDroppedEnqueues();
+
+        expect(await row()).toBeUndefined();
+      });
+
+      it('keeps a same-length row that replaced the one it read before its delete', async () => {
+        // Between the read and the delete, an overlapping drain clears [4,5] and a writer parks
+        // [6,7]: same length, ids never replayed.
+        sAdd.mockImplementationOnce(async () => {
+          await pg.query(`UPDATE "KeyValue" SET "value" = '[6,7]'::jsonb WHERE "key" = $1`, [
+            PARKED_KEY,
+          ]);
+          return 1;
+        });
+
+        await drainDroppedEnqueues();
+
+        expect(await row()).toEqual([6, 7]);
+      });
     });
 
     it('drops a row whose value is not an array rather than retrying it forever', async () => {

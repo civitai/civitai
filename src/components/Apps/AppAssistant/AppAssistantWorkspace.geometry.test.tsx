@@ -1,6 +1,7 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { MantineThemeProvider } from '@mantine/core';
-import { ModalsProvider } from '@mantine/modals';
+import { DialogProvider } from '~/components/Dialog/DialogProvider';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import type { ChatTool } from '@civitai/components-chat/civitai-chat';
 import type * as TrpcMod from '~/utils/trpc';
 import type * as TokenMod from '~/components/Apps/AppAssistant/assistantToken';
@@ -116,9 +117,10 @@ const tabs = () => document.querySelector('.mantine-SegmentedControl-root');
 
 async function mount(viewport: { width: number; height: number }) {
   await renderAtViewport(
-    <ModalsProvider>
+    <>
       <AppAssistantWorkspace canPreview sandboxUrl={BASE} />
-    </ModalsProvider>,
+      <DialogProvider />
+    </>,
     viewport
   );
   await vi.waitFor(() => expect(pane('chat')).not.toBeNull());
@@ -176,6 +178,9 @@ beforeEach(() => {
   m.list = [];
   m.state = 'running';
 });
+
+// Each test renders its own DialogProvider; the store is global, so empty it between tests.
+afterEach(() => dialogStore.closeAll());
 
 describe.each(NARROW)('App Assistant at $width px (narrow)', (viewport) => {
   test('with no app, the chat fills the width and there is no Chat/Preview switch', async () => {
@@ -333,9 +338,10 @@ describe.each([
       // The site's own theme, whose popovers render in place (no portal), as on civitai.com.
       await renderAtViewport(
         <MantineThemeProvider theme={siteTheme}>
-          <ModalsProvider>
+          <>
             <AppAssistantWorkspace canPreview sandboxUrl={BASE} />
-          </ModalsProvider>
+            <DialogProvider />
+          </>
         </MantineThemeProvider>,
         viewport
       );

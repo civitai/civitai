@@ -7,7 +7,14 @@ import { createQueueDb } from '../../../test/pglite-kysely';
 import { seedImage, seedPlayer as seedPlayerRow } from '../../../test/seed';
 import { enqueueItem, ensureVotePartitions } from '../queue/queue.service';
 import { typeOf, type NotifyKind } from './config';
-import { BatchRejected, sendNotifications, type NotificationBatch } from './notify.service';
+import {
+  BatchRejected,
+  plannable,
+  runIncomplete,
+  sendNotifications,
+  type NotificationBatch,
+  type NotifyResult,
+} from './notify.service';
 
 const Q = 'knights.image.nsfwLevel';
 const TODAY = '2026-12-17';
@@ -272,6 +279,40 @@ describe('sendNotifications', () => {
     expect(received().size).toBe(0);
   });
 
+  it('is silent when the only open item is an image the player posted', async () => {
+    await seedPlayer(pg, 1);
+    await seedPlayer(pg, 2);
+    await seedImage(pg, 7, { userId: 1 });
+    await enqueueItem(db, { questionKey: Q, imageId: 7, source: 'test', expiresAt: null }, at(1));
+    const { run, received } = runner();
+
+    await run(at(12));
+
+    expect([...received().keys()]).toEqual([2]);
+  });
+
+  it.each([
+    ['held for review', `UPDATE "Image" SET "needsReview"='minor' WHERE id=7`],
+    ['blocked', `UPDATE "Image" SET "blockedFor"='tos' WHERE id=7`],
+  ])(
+    'is silent when the only open item is an image the gate no longer serves (%s)',
+    async (_, change) => {
+      await seedPlayer(pg, 1);
+      await seedImage(pg, 7);
+      await seedImage(pg, 8);
+      await enqueueItem(db, { questionKey: Q, imageId: 7, source: 'test', expiresAt: null }, at(1));
+      await pg.query(change);
+      const { run, received } = runner();
+
+      await run(at(12));
+      expect(received().size).toBe(0);
+
+      await enqueueItem(db, { questionKey: Q, imageId: 8, source: 'test', expiresAt: null }, at(1));
+      await run(at(13));
+      expect([...received().keys()]).toEqual([1]);
+    }
+  );
+
   it('picks the best type: verdicts over the streak warning over new images', async () => {
     for (const id of [1, 2, 3]) {
       await seedPlayer(pg, id);
@@ -287,6 +328,97 @@ describe('sendNotifications', () => {
     expect(received().get(1)).toEqual(['verdicts']);
     expect(received().get(2)).toEqual(['streak']);
     expect(received().get(3)).toEqual(['new-images']);
+  });
+
+  describe('when the players for one type cannot be looked up', () => {
+    const statementTimeout = () =>
+      Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' });
+
+    async function seedOneOfEach() {
+      for (const id of [1, 2, 3]) await seedPlayer(pg, id);
+      await seedSettledVote(1);
+      await seedStreak(2);
+      await enqueueImage();
+    }
+
+    it('sends every type when every lookup succeeds', async () => {
+      await seedOneOfEach();
+      const { run, received } = runner();
+
+      const result = await run(at(21));
+
+      expect(Object.fromEntries(received())).toEqual({
+        1: ['verdicts'],
+        2: ['streak'],
+        3: ['new-images'],
+      });
+      expect(result.unplanned).toEqual([]);
+    });
+
+    it('still sends verdicts and streak warnings when the new-images lookup times out', async () => {
+      await seedOneOfEach();
+      const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      // Only the new-images lookup opens transactions while planning; its first one fails.
+      vi.spyOn(db, 'transaction').mockImplementationOnce(
+        () =>
+          ({
+            execute: async () => {
+              throw statementTimeout();
+            },
+          } as never)
+      );
+      const { run, received } = runner();
+
+      const result = await run(at(21));
+
+      expect(Object.fromEntries(received())).toEqual({ 1: ['verdicts'], 2: ['streak'] });
+      expect(result.unplanned).toEqual(['new-images']);
+      expect(logged).toHaveBeenCalledWith(
+        'knights: could not plan new-images notifications (57014)',
+        expect.objectContaining({ code: '57014' })
+      );
+    });
+
+    // A player the failed lookup would have found must not spend the day's slot on a lesser type.
+    it('plans nothing below a failed streak lookup', () => {
+      vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+      expect(
+        plannable([
+          ['verdicts', { status: 'fulfilled', value: [1] }],
+          ['streak', { status: 'rejected', reason: statementTimeout() }],
+          ['new-images', { status: 'fulfilled', value: [2, 3] }],
+        ])
+      ).toEqual({ found: [[1], [], []], unplanned: ['streak', 'new-images'] });
+    });
+
+    it('plans nothing at all when the verdicts lookup fails', () => {
+      vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+      expect(
+        plannable([
+          ['verdicts', { status: 'rejected', reason: statementTimeout() }],
+          ['streak', { status: 'fulfilled', value: [2] }],
+          ['new-images', { status: 'fulfilled', value: [3] }],
+        ])
+      ).toEqual({ found: [[], [], []], unplanned: ['verdicts', 'streak', 'new-images'] });
+    });
+
+    it('reports the run as incomplete when a type could not be planned', () => {
+      const clean: NotifyResult = {
+        sent: { verdicts: 1, streak: 1, 'new-images': 1 },
+        failed: 0,
+        unconfirmed: 0,
+        halted: false,
+        confirmFailed: 0,
+        skipped: false,
+        accessUnknown: false,
+        unplanned: [],
+      };
+
+      expect(runIncomplete(clean)).toBe(false);
+      expect(runIncomplete({ ...clean, unplanned: ['new-images'] })).toBe(true);
+    });
   });
 
   it('skips a type the player turned off and falls back to the next best', async () => {

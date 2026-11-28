@@ -24,6 +24,7 @@ import type {
 } from '~/server/schema/blocks/offsite-listing.schema';
 import type * as S3Utils from '~/utils/s3-utils';
 import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
+import { rateLimitMetaOf } from '~/server/utils/rate-limit-error';
 // Publish paths here run as a developer who accepted the App Developer Terms; a test that needs the
 // refusal overrides the stub.
 vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOriginal) => ({
@@ -230,10 +231,10 @@ const CALLER = 42;
 const OTHER = 99;
 const CLIENT_ID = 'oauth-client-1';
 // Ceiling generous enough for the tests' requestedScopes (0 by default → subset of any).
-const CEILING = 0xffff;
+const CEILING = 0xffffn;
 
 function ownedClient(
-  overrides: Partial<{ id: string; userId: number; allowedScopes: number }> = {}
+  overrides: Partial<{ id: string; userId: number; allowedScopes: bigint }> = {}
 ) {
   return { id: CLIENT_ID, userId: CALLER, allowedScopes: CEILING, ...overrides };
 }
@@ -246,7 +247,7 @@ const validInput: SubmitExternalListingInput = {
   // Merged model: every external app links its own OAuth client. A zero requested-scope
   // mask + empty justifications is the minimal valid disclosure.
   connectClientId: CLIENT_ID,
-  requestedScopes: 0,
+  requestedScopes: 0n,
   scopeJustifications: {},
 };
 
@@ -314,7 +315,8 @@ describe('submitExternalListing', () => {
       connectClientId: CLIENT_ID,
       // SERVER-DERIVED from the client's allowedScopes (CEILING), not the input's
       // requestedScopes:0. The disclosed set is always the client's allowed set.
-      connectRequestedScopes: CEILING,
+      // The int4 column holds it as a number.
+      connectRequestedScopes: Number(CEILING),
       connectScopeJustifications: {},
       appBlockId: null,
       contentRating: 'g',
@@ -440,11 +442,22 @@ describe('submitExternalListing', () => {
 
   it('per-user pending cap: AT the cap → TOO_MANY_REQUESTS, no write', async () => {
     mockRead.appListingPublishRequest.count.mockResolvedValue(MAX_PENDING_OFFSITE_SUBMISSIONS);
-    await expect(
-      submitExternalListing({ input: validInput, userId: CALLER })
-    ).rejects.toMatchObject({
+    const refused = await submitExternalListing({ input: validInput, userId: CALLER }).catch(
+      (e: unknown) => e
+    );
+    expect(refused).toMatchObject({
       code: 'TOO_MANY_REQUESTS',
       message: expect.stringContaining('pending'),
+    });
+    // A standing product allowance: its counts, and no window or reset time.
+    expect(rateLimitMetaOf(refused)).toEqual({
+      retryAfterSeconds: 3600,
+      retryAt: expect.any(String),
+      id: 'apps.offsite-pending',
+      kind: 'product',
+      limit: 10,
+      used: 10,
+      remaining: 0,
     });
     // The count is scoped to the caller's pending offsite requests (on the replica).
     expect(mockRead.appListingPublishRequest.count).toHaveBeenCalledWith({
@@ -902,7 +915,13 @@ describe('approveExternalRequest', () => {
       expect.objectContaining({
         type: 'app-listing-approved',
         userId: CALLER,
-        details: expect.objectContaining({ slug: 'cool-app', listingId: 'apl_1' }),
+        // The approved request (its reviewer is the byline) and the note; never the reviewer id.
+        attribution: { kind: 'moderator', requestId: 'alpr_1' },
+        details: expect.objectContaining({
+          slug: 'cool-app',
+          listingId: 'apl_1',
+          approvalNote: 'looks good',
+        }),
       })
     );
   });
@@ -1416,6 +1435,7 @@ describe('rejectExternalRequest', () => {
       expect.objectContaining({
         type: 'app-listing-rejected',
         userId: CALLER,
+        attribution: { kind: 'moderator', requestId: 'alpr_1' },
         details: expect.objectContaining({ slug: 'cool-app', reason: REASON }),
       })
     );

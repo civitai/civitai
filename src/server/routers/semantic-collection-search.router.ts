@@ -3,6 +3,7 @@ import { rateLimit } from '~/server/middleware.trpc';
 import { semanticCollectionSearchSchema } from '~/server/schema/semantic-collection-search.schema';
 import { searchSemanticCollections } from '~/server/services/semantic-collection-search.service';
 import { isFlagProtected, publicProcedure, router } from '~/server/trpc';
+import { refuseProfaneSearch } from '~/server/utils/refuse-profane-search';
 
 export const semanticCollectionSearchRouter = router({
   search: publicProcedure
@@ -17,6 +18,7 @@ export const semanticCollectionSearchRouter = router({
       ])
     )
     .input(semanticCollectionSearchSchema)
+    .use(refuseProfaneSearch)
     .query(async ({ input, ctx }) => {
       const started = Date.now();
       const result = await searchSemanticCollections({ input, ctx, track: ctx.track });

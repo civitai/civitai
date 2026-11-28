@@ -1,11 +1,17 @@
 import { TRPCError } from '@trpc/server';
+import { FLIPT_FEATURE_FLAGS, readFliptBoolean } from '~/server/flipt/client';
 import { toPublicApiVersionFlags } from '~/shared/constants/model-version-flags.constants';
 import {
   coverageAudience,
   coveragePairForUser,
 } from '~/server/services/generation/coverage-source';
 
-import { licensingFeeBlockedFor, paidAccessBlockedFor } from '@civitai/buzz';
+import {
+  licensingFeeBlockedFor,
+  lockedLicensingFeeRefusal,
+  paidAccessBlockedFor,
+  percentOfComputeFeeRefusal,
+} from '@civitai/buzz';
 import { recordPricingSlot, releasePricingSlot } from '~/server/services/pricing-slot.service';
 import {
   assertMonetizationWrite,
@@ -19,7 +25,10 @@ import { logToAxiom } from '~/server/logging/client';
 import { getFeatureFlagsLazy, userTiers } from '~/server/services/feature-flags.service';
 import type { SessionUser } from '~/types/session';
 import type { BaseModelType } from '~/server/common/constants';
-import type { LicensingSourceRejection } from '~/server/schema/model-version.schema';
+import type {
+  GetModelVersionsByIdsInput,
+  LicensingSourceRejection,
+} from '~/server/schema/model-version.schema';
 import {
   type BaseModel,
   DEPRECATED_BASE_MODELS,
@@ -29,6 +38,7 @@ import {
   baseModelLicenses,
   constants,
   hasAdditionalLicensePermissions,
+  isNonCommercialBaseModel,
 } from '~/server/common/constants';
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { eventEngine } from '~/server/events';
@@ -66,7 +76,9 @@ import {
   earlyAccessModelVersionsOnTimeframe,
   earlyAccessPurchase,
   getModelVersionRunStrategies,
+  getExplorationPromptsById,
   getVersionById,
+  getVersionsByIds,
   getWorkflowIdFromModelVersion,
   modelVersionDonationGoal,
   modelVersionGeneratedImagesOnTimeframe,
@@ -98,6 +110,11 @@ import {
 } from '~/server/utils/errorHandling';
 import { assertNoFailedScanFiles } from '~/server/utils/failed-scan';
 import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
+import { ownerOrModeratorViewer } from '~/server/auth/full-user-credential';
+import {
+  canViewModelVersion,
+  getViewableModelVersionIds,
+} from '~/server/services/model-version-visibility.service';
 import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 import { resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 import {
@@ -112,7 +129,7 @@ import { dbRead, dbWrite } from '../db/client';
 import { getOwnerMetricPrivacyDefaultsForEditor } from '~/server/services/creator-membership.service';
 import { getMetaMetricVisibility } from '~/server/utils/model-metric-privacy';
 import { modelFileSelect } from '../selectors/modelFile.selector';
-import { getFilesByEntity } from '../services/file.service';
+import { getDownloadFilename, getFilesByEntity } from '../services/file.service';
 import { createFile } from '../services/model-file.service';
 import { getLinkedFileData } from '~/server/services/linked-file-data.service';
 import { assertBountyEntryFileUrlAllowed } from '~/server/utils/model-file-url-bound';
@@ -120,7 +137,10 @@ import { getResourceData } from './../services/generation/generation.service';
 import { env } from '~/env/server';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { assertBaseModelAttestations } from '~/server/services/base-model-attestation.service';
-import { assertTrainingSourcePublishable } from '~/server/services/orchestrator/training/publish-from-workflow';
+import {
+  assertTrainingSourcePublishable,
+  stampPublishedTrainingRuns,
+} from '~/server/services/orchestrator/training/publish-from-workflow';
 import { assertNotCrossOwnerDuplicate } from '~/server/services/duplicate-model-hash.service';
 import { updateTrainingWorkflowRecords } from '~/server/services/training.service';
 import { unpublishLiveModelForLiteralRules } from '~/server/services/text-scan/actions/model-rules';
@@ -128,14 +148,48 @@ import { checkModelRulesLiteralHold } from '~/server/services/text-scan/model-ru
 import { scanModelAndRules } from '~/server/services/text-scan/submit';
 import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 import { isDefined } from '~/utils/type-guards';
-import { isRemovedWithOwner } from '~/server/utils/legal-hold';
 
-export const getModelVersionRunStrategiesHandler = ({ input: { id } }: { input: GetByIdInput }) => {
+// A version the viewer may not see reads as one that does not exist: no rows, or NOT_FOUND.
+const canViewVersion = async (id: number, ctx: Context) =>
+  (await getViewableModelVersionIds([id], ownerOrModeratorViewer(ctx))).has(id);
+
+export const getModelVersionRunStrategiesHandler = async ({
+  input: { id },
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: Context;
+}) => {
   try {
-    return getModelVersionRunStrategies({ modelVersionId: id });
+    if (!(await canViewVersion(id, ctx))) return [];
+    return await getModelVersionRunStrategies({ modelVersionId: id });
   } catch (e) {
     throw throwDbError(e);
   }
+};
+
+export const getVersionsByIdsHandler = ({
+  input,
+  ctx,
+}: {
+  input: GetModelVersionsByIdsInput;
+  ctx: Context;
+}) =>
+  getVersionsByIds({
+    ...input,
+    browsingLevel: getRequestBrowsingLevel(ctx),
+    viewer: ownerOrModeratorViewer(ctx),
+  });
+
+export const getExplorationPromptsHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: Context;
+}) => {
+  if (!(await canViewVersion(input.id, ctx))) return [];
+  return getExplorationPromptsById(input);
 };
 
 export type ModelVersionById = AsyncReturnType<typeof getModelVersionHandler>;
@@ -148,10 +202,13 @@ const loadModelVersion = async ({
   input,
   ctx,
   forceWriteDb,
+  publicRead,
 }: {
   input: GetModelVersionSchema;
   ctx: Context;
   forceWriteDb: boolean;
+  /** The public read: a version the viewer may not see by its status is not found. */
+  publicRead: boolean;
 }) => {
   const { id, withFiles } = input;
 
@@ -170,6 +227,7 @@ const loadModelVersion = async ({
         steps: true,
         clipSkip: true,
         status: true,
+        publishedAt: true,
         createdAt: true,
         trainingDetails: true,
         trainingStatus: true,
@@ -180,6 +238,7 @@ const loadModelVersion = async ({
         licensingFee: true,
         licensingFeeType: true,
         licensingFeeSettlementCurrency: true,
+        licensingFeeLocked: true,
         licensingSourceVersionId: true,
         flags: true,
         meta: true,
@@ -227,8 +286,27 @@ const loadModelVersion = async ({
         },
       },
     });
-    if (version && !canViewPoiModel(version.model.poi, version.model.user.id, ctx.user))
-      throw throwNotFoundError(`No version with id ${input.id}`);
+    const ownerViewer = ownerOrModeratorViewer(ctx);
+    const hidden =
+      !!version &&
+      (publicRead
+        ? !(await canViewModelVersion(
+            {
+              id: version.id,
+              status: version.status as ModelStatus,
+              publishedAt: version.publishedAt,
+              availability: version.availability,
+              model: {
+                userId: version.model.user.id,
+                status: version.model.status as ModelStatus,
+                availability: version.model.availability,
+                poi: version.model.poi,
+              },
+            },
+            ownerViewer
+          ))
+        : !canViewPoiModel(version.model.poi, version.model.user.id, ownerViewer));
+    if (hidden) throw throwNotFoundError(`No version with id ${input.id}`);
 
     // Separate linked components from regular recommended resources
     const isLinkedComponent = (settings: unknown): settings is LinkedComponentSettings =>
@@ -330,7 +408,7 @@ const loadModelVersion = async ({
       })
     )[id];
     const isOwnerOrMod =
-      !!ctx?.user && (ctx.user.id === version.model.user.id || !!ctx.user.isModerator);
+      !!ownerViewer && (ownerViewer.id === version.model.user.id || !!ownerViewer.isModerator);
     const eaDonationGoal =
       paidAccess && isOwnerOrMod
         ? (await getOwnerDonationGoals('ModelVersion', [id]))[id] ?? null
@@ -368,8 +446,23 @@ const loadModelVersion = async ({
       baseModel: version.baseModel as BaseModel,
       baseModelType: version.baseModelType as BaseModelType,
       trainingDetails: version.trainingDetails as TrainingDetailsObj | undefined,
-      files: version.files as unknown as Array<
-        Omit<ModelFileModel, 'metadata'> & { metadata: FileMetadata }
+      // Training data keeps its own public view (the router's strip); other non-Public files are the
+      // owner's and moderators'. Only they get downloadName, which the editor shows in place of a
+      // trainer blob id: it is built from the real model name, which a .com face hides.
+      files: (isOwnerOrMod
+        ? version.files?.map((file) => ({
+            ...file,
+            downloadName: getDownloadFilename({
+              model,
+              modelVersion: version,
+              file,
+              versionFiles: version.files,
+            }),
+          }))
+        : version.files?.filter(
+            (file) => file.visibility === 'Public' || file.type === 'Training Data'
+          )) as unknown as Array<
+        Omit<ModelFileModel, 'metadata'> & { metadata: FileMetadata; downloadName?: string }
       >,
       settings: version.settings as RecommendedSettingsSchema | undefined,
       recommendedResources: generationResources,
@@ -384,7 +477,7 @@ const loadModelVersion = async ({
 export const getModelVersionHandler = async (params: {
   input: GetModelVersionSchema;
   ctx: Context;
-}) => loadModelVersion({ ...params, forceWriteDb: false });
+}) => loadModelVersion({ ...params, forceWriteDb: false, publicRead: true });
 
 // Owner-only entry point. Always reads from the primary DB so freshly-mutated
 // files / linked components are visible regardless of replication lag. The
@@ -393,7 +486,12 @@ export const getModelVersionHandler = async (params: {
 export const getModelVersionForEditHandler = async (params: {
   input: GetModelVersionSchema;
   ctx: Context;
-}) => loadModelVersion({ ...params, forceWriteDb: true });
+}) => {
+  // The router's ownership guard reads the user alone; the owner's editor view also needs a
+  // session or a full-access key.
+  if (!ownerOrModeratorViewer(params.ctx)) throw throwAuthorizationError();
+  return loadModelVersion({ ...params, forceWriteDb: true, publicRead: false });
+};
 
 export const toggleNotifyEarlyAccessHandler = async ({
   input,
@@ -476,7 +574,9 @@ export const upsertModelVersionHandler = async ({
           select: {
             usageControl: true,
             licensingFee: true,
+            licensingFeeType: true,
             licensingFeeSettlementCurrency: true,
+            licensingFeeLocked: true,
             licensingSourceVersionId: true,
             baseModel: true,
           },
@@ -492,9 +592,15 @@ export const upsertModelVersionHandler = async ({
       throw throwBadRequestError(`${input.baseModel} is not available for new models yet`);
     }
     const storedUsageControl = storedVersion?.usageControl;
+    // A stored Internal/External control is the service's to judge (assertOwnerUsageControlChange); the
+    // gate coercing it to Download would turn an unrelated owner edit into a refused change.
+    const storedIsModeratorManaged =
+      storedUsageControl === ModelUsageControl.InternalGeneration ||
+      storedUsageControl === ModelUsageControl.ExternalGeneration;
     const grantsGenerationOnly =
       input.usageControl !== ModelUsageControl.Download &&
-      (!updatesExistingVersion || storedUsageControl !== ModelUsageControl.Generation);
+      (!updatesExistingVersion ||
+        (storedUsageControl !== ModelUsageControl.Generation && !storedIsModeratorManaged));
 
     if (grantsGenerationOnly) {
       const requestedUsageControl = input.usageControl;
@@ -534,12 +640,13 @@ export const upsertModelVersionHandler = async ({
       });
     }
 
-    if (input.usageControl === ModelUsageControl.InternalGeneration && !ctx.user.isModerator) {
-      throw throwBadRequestError('Only moderators can manage internal generation models');
-    }
-
-    if (input.usageControl === ModelUsageControl.ExternalGeneration && !ctx.user.isModerator) {
-      throw throwBadRequestError('Only moderators can manage external generation models');
+    // Updates are judged against the stored control in upsertModelVersion, so an owner can resubmit a
+    // moderator-set value unchanged.
+    if (!updatesExistingVersion && !ctx.user.isModerator) {
+      if (input.usageControl === ModelUsageControl.InternalGeneration)
+        throw throwBadRequestError('Only moderators can manage internal generation models');
+      if (input.usageControl === ModelUsageControl.ExternalGeneration)
+        throw throwBadRequestError('Only moderators can manage external generation models');
     }
 
     // Denied/Paused are moderation decisions. Updates are judged against the stored value in
@@ -607,6 +714,25 @@ export const upsertModelVersionHandler = async ({
 
     // The service migrates the price onto the surviving tier; nothing to reject here.
 
+    // A null type means "keep the stored one", as an omitted one does: written through, it would turn a
+    // staff-set percent into Buzz per image.
+    if (input.licensingFeeType === null) input.licensingFeeType = undefined;
+    // Fails closed: an unreadable flag refuses, since a percent charged early is charged as Buzz per image.
+    if (
+      input.licensingFeeType === LicensingFeeType.PercentOfCompute &&
+      storedVersion?.licensingFeeType !== LicensingFeeType.PercentOfCompute &&
+      (await readFliptBoolean(FLIPT_FEATURE_FLAGS.LICENSING_FEE_PERCENT_OF_COMPUTE)) !== true
+    )
+      throw throwBadRequestError('Percentage license fees are not available yet.');
+    const percentRefusal = percentOfComputeFeeRefusal({
+      isModerator: !!ctx.user.isModerator,
+      requestedType: input.licensingFeeType,
+      storedType: storedVersion?.licensingFeeType,
+      fee: input.licensingFee !== undefined ? input.licensingFee : storedFee,
+      storedFee,
+    });
+    if (percentRefusal) throw throwBadRequestError(percentRefusal);
+
     if (input.licensingFee != null && input.licensingFee > 0) {
       const hadExistingFee = storedFee > 0;
       if (!ctx.features.licensingFee && !ctx.user.isModerator && !hadExistingFee) {
@@ -619,9 +745,32 @@ export const upsertModelVersionHandler = async ({
       ) {
         throw throwBadRequestError('Cash settlement is restricted; please contact support.');
       }
-      if (!input.licensingFeeType) input.licensingFeeType = LicensingFeeType.PerImageBuzz;
+      if (!input.licensingFeeType)
+        input.licensingFeeType = storedVersion?.licensingFeeType ?? LicensingFeeType.PerImageBuzz;
       if (!input.licensingFeeSettlementCurrency)
         input.licensingFeeSettlementCurrency = LicensingFeeSettlementCurrency.Buzz;
+    }
+
+    // Skipped when a policy clear (POI/private owner, a version already on a non-commercial base model)
+    // strips the fee: refusing it would strand the owner's save. Keyed on the STORED base model, so an
+    // owner cannot clear a locked fee by choosing a non-commercial one.
+    if (policyKeepsFee && !isNonCommercialBaseModel(storedVersion?.baseModel)) {
+      const lockRefusal = lockedLicensingFeeRefusal({
+        isModerator: !!ctx.user.isModerator,
+        locked: storedVersion?.licensingFeeLocked,
+        stored: {
+          fee: storedFee,
+          type: storedVersion?.licensingFeeType ?? null,
+          currency: storedVersion?.licensingFeeSettlementCurrency ?? null,
+        },
+        next: {
+          // The service clears the fee on a non-commercial base model even when the write omits it.
+          fee: isNonCommercialBaseModel(input.baseModel) ? 0 : input.licensingFee,
+          type: input.licensingFeeType,
+          currency: input.licensingFeeSettlementCurrency,
+        },
+      });
+      if (lockRefusal) throw throwBadRequestError(lockRefusal);
     }
 
     // Set when the block below repairs the payload, so the audit can attribute the change to the rule
@@ -678,7 +827,7 @@ export const upsertModelVersionHandler = async ({
         // `'not-a-root'`, which silently clears a legitimate source with no error to the creator.
         dbWrite.licensingRoot.findUnique({
           where: { modelVersionId: input.licensingSourceVersionId },
-          select: { baseModel: true, modelType: true },
+          select: { baseModel: true, modelType: true, restricted: true },
         }),
         // 🔴 The model this save LANDS the version on, which is `input.modelId` — always, on a create
         // and on an update alike. `modelId` is not destructured in `upsertModelVersion`, so it rides
@@ -718,6 +867,10 @@ export const upsertModelVersionHandler = async ({
         ? 'model-not-found'
         : destinationModel.type !== source.modelType
         ? 'model-type-mismatch'
+        : source.restricted &&
+          !ctx.user.isModerator &&
+          input.licensingSourceVersionId !== storedVersion?.licensingSourceVersionId
+        ? 'restricted-root'
         : null;
       if (rejectedReason) {
         // A coercion leaves no trace in the row it corrected, so emit the deciding branch. This is
@@ -897,8 +1050,7 @@ export const publishModelVersionHandler = async ({
     if (
       !ctx.user.isModerator &&
       (constants.modPublishOnlyStatuses.includes(version.status) ||
-        constants.modPublishOnlyStatuses.includes(version.model.status) ||
-        isRemovedWithOwner(version.model.meta))
+        constants.modPublishOnlyStatuses.includes(version.model.status))
     ) {
       throw throwAuthorizationError('You are not authorized to publish this model version');
     }
@@ -908,6 +1060,7 @@ export const publishModelVersionHandler = async ({
       meta: version.model.meta as ModelMeta | null,
       ownerId: version.model.userId,
       callerId: ctx.user.id,
+      versionIds: [input.id],
     });
     await assertNotCrossOwnerDuplicate({
       versionId: input.id,
@@ -983,6 +1136,16 @@ export const publishModelVersionHandler = async ({
         type: 'published',
         entityType: 'modelVersion',
         entityId: updatedVersion.id,
+      });
+      // A version added from a Training Studio run names the run itself; the model's own run (if
+      // any) was back-linked when the model was published. A scheduled publish is not stamped, as
+      // on the model path.
+      await stampPublishedTrainingRuns({
+        ownerId: version.model.userId,
+        callerId: ctx.user.id,
+        modelId: version.modelId,
+        modelMeta: undefined,
+        versions: [{ id: updatedVersion.id, meta: version.meta }],
       });
     }
 
@@ -1234,8 +1397,16 @@ export const modelVersionGeneratedImagesOnTimeframeHandler = async ({
 };
 
 // Only available for SD 1.5 and SDXL 1.0 models for now
-export async function getVersionLicenseHandler({ input }: { input: GetByIdInput }) {
+export async function getVersionLicenseHandler({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: Context;
+}) {
   try {
+    if (!(await canViewVersion(input.id, ctx)))
+      throw throwNotFoundError(`No version with id ${input.id}`);
     const version = await getVersionById({
       id: input.id,
       select: {
@@ -1320,14 +1491,17 @@ export const modelVersionDonationGoalHandler = async ({
   ctx: Context;
 }) => {
   try {
+    if (!(await canViewVersion(input.id, ctx)))
+      throw throwNotFoundError(`No model version with id ${input.id}`);
+    const viewer = ownerOrModeratorViewer(ctx);
     // `await` is load-bearing: without it the rejected promise escapes this
     // try/catch (so a Prisma error bypassed the P2025→NOT_FOUND mapping in
     // throwDbError and surfaced as INTERNAL_SERVER_ERROR). The service now also
     // throws NOT_FOUND at the source, so this is belt-and-suspenders.
     return await modelVersionDonationGoal({
       ...input,
-      userId: ctx.user?.id,
-      isModerator: ctx.user?.isModerator,
+      userId: viewer?.id,
+      isModerator: viewer?.isModerator,
     });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -1335,7 +1509,14 @@ export const modelVersionDonationGoalHandler = async ({
   }
 };
 
-export async function getModelVersionOwnerHandler({ input }: { input: GetByIdInput }) {
+export async function getModelVersionOwnerHandler({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: Context;
+}) {
+  if (!(await canViewVersion(input.id, ctx))) throw throwNotFoundError();
   // No Kysely row (a missing version, or an orphaned model or user) runs the Prisma read, so a
   // missing version is still NOT_FOUND and an orphan still throws as Prisma throws.
   const version =
@@ -1455,8 +1636,7 @@ export async function publishPrivateModelVersionHandler({
   if (
     !ctx.user.isModerator &&
     (constants.modPublishOnlyStatuses.includes(version.status) ||
-      constants.modPublishOnlyStatuses.includes(version.model.status) ||
-      isRemovedWithOwner(version.model.meta))
+      constants.modPublishOnlyStatuses.includes(version.model.status))
   ) {
     throw throwAuthorizationError('You are not authorized to publish this model version');
   }
@@ -1466,6 +1646,7 @@ export async function publishPrivateModelVersionHandler({
     meta: version.model.meta as ModelMeta | null,
     ownerId: version.model.userId,
     callerId: ctx.user.id,
+    versionIds: [version.id],
   });
   assertBaseModelAttestations({ versions: [version] });
 

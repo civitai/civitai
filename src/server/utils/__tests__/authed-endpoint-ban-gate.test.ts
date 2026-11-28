@@ -21,6 +21,7 @@ vi.mock('@civitai/auth', async (importOriginal) => ({
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 
 const API_DIR = join(process.cwd(), 'src/pages/api');
+const SERVED_API_DIR = join(process.cwd(), 'src/server/api-routes');
 
 /**
  * Routes a banned account may still call, each for a reason a moderator signed off on. Adding a route
@@ -48,11 +49,13 @@ function routeFiles(dir: string): string[] {
   });
 }
 
-const sources = routeFiles(API_DIR).map((path) => ({
-  route: relative(API_DIR, path).split('\\').join('/'),
-  path,
-  source: readFileSync(path, 'utf8'),
-}));
+const sources = [API_DIR, SERVED_API_DIR].flatMap((dir) =>
+  routeFiles(dir).map((path) => ({
+    route: relative(dir, path).split('\\').join('/'),
+    path,
+    source: readFileSync(path, 'utf8'),
+  }))
+);
 const authedRoutes = sources.filter(({ source }) =>
   /\b(Authed|Orchestrator)Endpoint\(/.test(source)
 );
@@ -173,6 +176,9 @@ describe('the approved routes still serve a banned session', () => {
 describe('every authed API route refuses a banned session', () => {
   it('finds the authed routes', () => {
     expect(gatedRoutes.length).toBeGreaterThanOrEqual(33);
+    expect(sources.filter(({ path }) => path.startsWith(SERVED_API_DIR)).length).toBeGreaterThan(
+      100
+    );
   });
 
   it.each(gatedRoutes.map(({ route, path }) => [route, path]))(

@@ -1,9 +1,8 @@
 import { Badge, Button, Group, Skeleton, Stack, Text } from '@mantine/core';
 import { Popover } from '~/components/MantineOverlays';
 import { IconArrowsMove } from '@tabler/icons-react';
-import dynamic from 'next/dynamic';
 import type { ReactNode } from 'react';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openDialog } from '~/components/Dialog/openDialog';
 import { teamRosterHref } from '~/components/Events/event-promos';
 import { useEventPromos } from '~/components/Events/useEventPromos';
 import { useTeamColor } from '~/components/Events/events.utils';
@@ -18,10 +17,6 @@ import type { RouterOutput } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-const PlaceHatModal = dynamic(() => import('~/components/Events/ScoredEvent/PlaceHatModal'), {
-  ssr: false,
-});
-
 /** The content a worn event decoration sits on. */
 export type EventDecorationEntity = { entityType: CosmeticEntity; entityId: number };
 
@@ -29,8 +24,8 @@ type WornHat = NonNullable<RouterOutput['event']['getWornHat']>;
 
 /**
  * The popover a click on a card's hat opens: which hat it is, who wears it, what it has earned on
- * this content, and a way to the event. Its read waits for the first open, so a feed of hatted
- * cards costs no request.
+ * every piece of content it has been worn on, and a way to the event. Its read waits for the first open, so a
+ * feed of hatted cards costs no request.
  */
 export function WornHatPopover({
   event,
@@ -109,6 +104,12 @@ export function WornHatPopover({
             {definition?.eventLinkLabel ?? 'See the event'}
           </Button>
           <TeamRostersButton event={event} onClick={() => onChange(false)} />
+          {/* Totals are kept per hat, not per content: a moved hat brings what it earned before. */}
+          {data?.topicId && (
+            <Text size="xs" c="dimmed" ta="center" data-testid="hat-stats-scope">
+              This hat&apos;s totals from everywhere it has been worn
+            </Text>
+          )}
           {data?.team && (
             <Text size="xs" c="dimmed" ta="center">
               Scores for Team {data.team} while it&apos;s worn
@@ -163,7 +164,11 @@ function WornHatDetails({
           h.placedOn.entityId === wornOn.entityId
       );
       if (!mineHere) throw new Error('This hat has already moved.');
-      dialogStore.trigger({ component: PlaceHatModal, props: { event, hat: mineHere, myHats } });
+      openDialog(() => import('~/components/Events/ScoredEvent/PlaceHatModal'), {
+        event,
+        hat: mineHere,
+        myHats,
+      });
     } catch (error) {
       showErrorNotification({ title: "Couldn't move this hat", error: error as Error });
     }

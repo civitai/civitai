@@ -35,7 +35,7 @@ func TestParseList(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := ListInput{
-		Limit: 5, Page: 3, Sort: SortNewest, Period: "Week", PeriodMode: "stats", Types: []string{"LORA", "DoRA"},
+		Limit: 5, Page: 3, Sort: SortNewest, SortNamed: true, Period: "Week", PeriodMode: "stats", Types: []string{"LORA", "DoRA"},
 		// postgresSlugify: the first space an underscore, then every non-word character dropped.
 		BaseModels: []string{"Pony"}, Username: "artist_onex", Nsfw: true, PrimaryFileOnly: true, EarlyAccess: true,
 		IDs: []int{1, 2},
@@ -51,34 +51,103 @@ func TestParseList(t *testing.T) {
 	}
 
 	for raw, want := range map[string]string{
-		"query=golden":            "v1-models-query",
-		"tag=x":                   "v1-models-tag",
-		"favorites=false":         "v1-models-authed-only",
-		"hidden=1":                "v1-models-authed-only",
-		"supportsGeneration=true": "v1-models-supportsGeneration",
-		"browsingLevel=31":        "v1-models-browsingLevel",
-		"limit=0":                 "v1-models-limit",
-		"limit=101":               "v1-models-limit",
-		"limit=1.5":               "v1-models-input-number",
-		"limit=1&limit=2":         "v1-models-input-number",
-		"page=0":                  "v1-models-input-number",
-		"page=11&limit=100":       "v1-models-page-limit",
-		"sort=Recently%20Added":   "v1-models-sort",
-		"sort=Best":               "v1-models-sort",
-		"sort=Newest&sort=Oldest": "v1-models-input-duplicate",
-		"period=Hour":             "v1-models-input-enum",
-		"periodMode=x":            "v1-models-input-enum",
-		"types=Lora":              "v1-models-input-enum",
-		"status=Live":             "v1-models-input-enum",
-		"nsfw=maybe":              "v1-models-input-bool",
-		"nsfw=1&nsfw=0":           "v1-models-input-duplicate",
-		"ids=1,x":                 "v1-models-ids",
-		"cursor=a&cursor=b":       "v1-models-input-duplicate",
-		"username=a&username=b":   "v1-models-input-duplicate",
-		"a=%zz":                   "v1-models-query-encoding",
+		// A repeated key is an array, which the schema refuses.
+		"query=&query=":  "v1-models-query",
+		"query=&query=x": "v1-models-query",
+		// A text query: `query && page` is a 400; a cursor is the search offset, read here only as
+		// decimal digits; a lone empty baseModels value is dropped by the schema, not here. Each is the
+		// one text query reason.
+		"query=a&page=2":                   "v1-models-query",
+		"query=a&cursor=1.5":               "v1-models-query",
+		"query=a&cursor=-1":                "v1-models-query",
+		"query=a&cursor=1e2":               "v1-models-query",
+		"query=a&cursor=%205":              "v1-models-query",
+		"query=a&cursor=1234567890":        "v1-models-query",
+		"query=a&baseModels=":              "v1-models-query",
+		"query=a&baseModels=x&baseModels=": "v1-models-query",
+		"query=%ED%A0%80":                  "v1-models-query-encoding",
+		"tag=caf%C3%A9":                    "v1-models-tag",
+		"tag=a&tag=b":                      "v1-models-input-duplicate",
+		"tagname=x":                        "v1-models-tagname",
+		"tag=x&tagname=x":                  "v1-models-tagname",
+		"favorites=false":                  "v1-models-authed-only",
+		"hidden=1":                         "v1-models-authed-only",
+		"supportsGeneration=true":          "v1-models-supportsGeneration",
+		"browsingLevel=31":                 "v1-models-browsingLevel",
+		"limit=0":                          "v1-models-limit",
+		"limit=101":                        "v1-models-limit",
+		"limit=1.5":                        "v1-models-input-number",
+		"limit=1&limit=2":                  "v1-models-input-number",
+		"page=0":                           "v1-models-input-number",
+		"page=11&limit=100":                "v1-models-page-limit",
+		"sort=Recently%20Added":            "v1-models-sort",
+		"sort=Best":                        "v1-models-sort",
+		"sort=Newest&sort=Oldest":          "v1-models-input-duplicate",
+		"period=Hour":                      "v1-models-input-enum",
+		"periodMode=x":                     "v1-models-input-enum",
+		"types=Lora":                       "v1-models-input-enum",
+		"status=Live":                      "v1-models-input-enum",
+		"nsfw=maybe":                       "v1-models-input-bool",
+		"nsfw=1&nsfw=0":                    "v1-models-input-duplicate",
+		"ids=1,x":                          "v1-models-ids",
+		"cursor=a&cursor=b":                "v1-models-input-duplicate",
+		"username=a&username=b":            "v1-models-input-duplicate",
+		"a=%zz":                            "v1-models-query-encoding",
 	} {
 		if _, err := ParseList(raw); reason(err) != want {
 			t.Errorf("%s: reason %q (%v), want %q", raw, reason(err), err, want)
+		}
+	}
+	// An empty `query` is falsy: the database path, the key kept for nextPage (where QS.stringify's
+	// skipEmptyString drops it). With `page` it is no 400 (`query && page`).
+	for _, raw := range []string{"query=", "query", "limit=5&query=&foo=bar", "query=&page=2&limit=5"} {
+		in, err := ParseList(raw)
+		if err != nil {
+			t.Errorf("%s: %v (%s)", raw, err, reason(err))
+			continue
+		}
+		found := false
+		for _, p := range in.Query {
+			found = found || p.Key == "query"
+		}
+		if !found {
+			t.Errorf("%s: the query key is not kept for nextPage: %+v", raw, in.Query)
+		}
+	}
+	// A truthy `query` (a blank included: no trim) is the text search: its text, the cursor as its
+	// offset, and whether `sort` was named (the schema default is never sent to the search).
+	for raw, want := range map[string]ListInput{
+		"query=golden":                 {Text: "golden"},
+		"query=%20":                    {Text: " "},
+		"query=+":                      {Text: " "},
+		"limit=5&query=a":              {Text: "a"},
+		"query=a&cursor=007":           {Text: "a", TextOffset: 7},
+		"query=a&cursor=":              {Text: "a"},
+		"query=a&sort=Highest%20Rated": {Text: "a", SortNamed: true},
+		"query=a&page=11&limit=100":    {}, // the 429 is decided first
+	} {
+		in, err := ParseList(raw)
+		if want.Text == "" {
+			if reason(err) != "v1-models-page-limit" {
+				t.Errorf("%s: %v, want v1-models-page-limit", raw, err)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("%s: %v (%s)", raw, err, reason(err))
+			continue
+		}
+		if in.Text != want.Text || in.TextOffset != want.TextOffset || in.SortNamed != want.SortNamed {
+			t.Errorf("%s: text %q offset %d sortNamed %v, want %+v", raw, in.Text, in.TextOffset, in.SortNamed, want)
+		}
+	}
+	// `tag` is read; an empty one is no filter (`tagname ?? tag` is falsy).
+	for raw, want := range map[string]string{"tag=character": "character", "tag=Some%20Tag": "Some Tag", "tag=": ""} {
+		in, err := ParseList(raw)
+		if err != nil {
+			t.Errorf("%s: %v (%s)", raw, err, reason(err))
+		} else if in.Tag != want {
+			t.Errorf("%s: tag %q, want %q", raw, in.Tag, want)
 		}
 	}
 	// A cursor lifts the paging guard: `page && !cursor`.
@@ -338,36 +407,36 @@ func TestResolveFileName(t *testing.T) {
 		files   []nameFile
 		want    []string
 	}{
-		{nameModel{"Model 5001", "Checkpoint"}, nameVersion{name: "v6001"}, []nameFile{
+		{nameModel{name: "Model 5001", typ: "Checkpoint"}, nameVersion{name: "v6001"}, []nameFile{
 			f(1, "model.safetensors", "Model", "full", "fp32", ""), f(2, "golden_pruned.safetensors", "Model", nil, nil, ""),
 			f(3, "config.yaml", "Config", nil, nil, ""), f(4, "model.safetensors", "Model", "pruned", "fp16", ""),
 		}, []string{"model5001_v6001_full_fp32.safetensors", "golden_pruned.safetensors", "config.yaml", "model5001_v6001_pruned_fp16.safetensors"}},
-		{nameModel{"BB Bunny", "Checkpoint"}, nameVersion{name: "BB Bunny v2"}, []nameFile{
+		{nameModel{name: "BB Bunny", typ: "Checkpoint"}, nameVersion{name: "BB Bunny v2"}, []nameFile{
 			f(1, "model.safetensors", "Model", nil, nil, ""), f(2, "01HZX3J8K9M2N4P6Q7R8S9T0VW.safetensors", "Model", nil, nil, ""),
 		}, []string{"bbBunny_v2_1.safetensors", "bbBunny_v2_2.safetensors"}},
-		{nameModel{"Lora Thing", "LORA"}, nameVersion{name: "v1"}, []nameFile{
+		{nameModel{name: "Lora Thing", typ: "LORA"}, nameVersion{name: "v1"}, []nameFile{
 			f(1, "model.safetensors", "Model", nil, nil, ""), f(2, "mylora.safetensors", "Model", nil, nil, ""),
 		}, []string{"model.safetensors", "mylora.safetensors"}},
-		{nameModel{"Lora Thing", "LORA"}, nameVersion{name: "v1"}, []nameFile{
+		{nameModel{name: "Lora Thing", typ: "LORA"}, nameVersion{name: "v1"}, []nameFile{
 			f(1, "01HZX3J8K9M2N4P6Q7R8S9T0VW.safetensors", "Model", nil, nil, ""),
 		}, []string{"loraThing_v1.safetensors"}},
-		{nameModel{"Embed", "TextualInversion"}, nameVersion{name: "v1", trainedWords: []string{"golden token"}}, []nameFile{
+		{nameModel{name: "Embed", typ: "TextualInversion"}, nameVersion{name: "v1", trainedWords: []string{"golden token"}}, []nameFile{
 			f(1, "embed.pt", "Model", nil, nil, ""), f(2, "neg.pt", "Negative", nil, nil, ""),
 		}, []string{"golden token.pt", "golden token-neg.pt"}},
-		{nameModel{"Embed", "TextualInversion"}, nameVersion{name: "v1"}, []nameFile{f(1, "embed.pt", "Model", nil, nil, "")}, []string{"embed.pt"}},
-		{nameModel{"Data Model", "Checkpoint"}, nameVersion{name: "v3"}, []nameFile{f(1, "stuff.zip", "Training Data", nil, nil, "")}, []string{"dataModel_v3_trainingData.zip"}},
-		{nameModel{"Inpaint Model", "Checkpoint"}, nameVersion{name: "v1 Inpainting"}, []nameFile{f(1, "model-inpainting.safetensors", "Model", nil, nil, "")}, []string{"model-inpainting.safetensors"}},
-		{nameModel{"Pix Model", "Checkpoint"}, nameVersion{name: "instruct pix2pix v1"}, []nameFile{f(1, "model.instruct-pix2pix.ckpt", "Model", nil, nil, "")}, []string{"model.instruct-pix2pix.ckpt"}},
-		{nameModel{"TE Model", "Checkpoint"}, nameVersion{name: "v1"}, []nameFile{f(1, "text_encoder.safetensors", "Text Encoder", nil, nil, "")}, []string{"teModel_v1_txt.safetensors"}},
-		{nameModel{"VAE Model", "Checkpoint"}, nameVersion{name: "v1"}, []nameFile{f(1, "vae.safetensors", "VAE", nil, nil, "")}, []string{"vae.safetensors"}},
-		{nameModel{"Dup", "Checkpoint"}, nameVersion{name: "v1"}, []nameFile{
+		{nameModel{name: "Embed", typ: "TextualInversion"}, nameVersion{name: "v1"}, []nameFile{f(1, "embed.pt", "Model", nil, nil, "")}, []string{"embed.pt"}},
+		{nameModel{name: "Data Model", typ: "Checkpoint"}, nameVersion{name: "v3"}, []nameFile{f(1, "stuff.zip", "Training Data", nil, nil, "")}, []string{"dataModel_v3_trainingData.zip"}},
+		{nameModel{name: "Inpaint Model", typ: "Checkpoint"}, nameVersion{name: "v1 Inpainting"}, []nameFile{f(1, "model-inpainting.safetensors", "Model", nil, nil, "")}, []string{"model-inpainting.safetensors"}},
+		{nameModel{name: "Pix Model", typ: "Checkpoint"}, nameVersion{name: "instruct pix2pix v1"}, []nameFile{f(1, "model.instruct-pix2pix.ckpt", "Model", nil, nil, "")}, []string{"model.instruct-pix2pix.ckpt"}},
+		{nameModel{name: "TE Model", typ: "Checkpoint"}, nameVersion{name: "v1"}, []nameFile{f(1, "text_encoder.safetensors", "Text Encoder", nil, nil, "")}, []string{"teModel_v1_txt.safetensors"}},
+		{nameModel{name: "VAE Model", typ: "Checkpoint"}, nameVersion{name: "v1"}, []nameFile{f(1, "vae.safetensors", "VAE", nil, nil, "")}, []string{"vae.safetensors"}},
+		{nameModel{name: "Dup", typ: "Checkpoint"}, nameVersion{name: "v1"}, []nameFile{
 			f(1, "model.safetensors", "Model", nil, nil, ""), f(2, "model.safetensors", "Model", nil, nil, ""), f(3, "model.safetensors", "Model", nil, nil, ""),
 		}, []string{"dup_v1_1.safetensors", "dup_v1_2.safetensors", "dup_v1_3.safetensors"}},
-		{nameModel{"Dup", "Checkpoint"}, nameVersion{name: "v1"}, []nameFile{
+		{nameModel{name: "Dup", typ: "Checkpoint"}, nameVersion{name: "v1"}, []nameFile{
 			f(1, "model.safetensors", "Model", nil, nil, `Custom "Name"%41.safetensors`), f(2, "weird\u200bname.safetensors", "Model", nil, nil, ""),
 		}, []string{"Custom _Name__41.safetensors", "weirdname.safetensors"}},
-		{nameModel{"Other", "Checkpoint"}, nameVersion{name: "v1"}, []nameFile{f(1, "thing.bin", "Mystery Type", nil, nil, "")}, []string{"thing.bin"}},
-		{nameModel{"Same", "Checkpoint"}, nameVersion{name: "Same"}, []nameFile{f(1, "model.safetensors", "Model", nil, nil, "")}, []string{"same.safetensors"}},
+		{nameModel{name: "Other", typ: "Checkpoint"}, nameVersion{name: "v1"}, []nameFile{f(1, "thing.bin", "Mystery Type", nil, nil, "")}, []string{"thing.bin"}},
+		{nameModel{name: "Same", typ: "Checkpoint"}, nameVersion{name: "Same"}, []nameFile{f(1, "model.safetensors", "Model", nil, nil, "")}, []string{"same.safetensors"}},
 	} {
 		for i, file := range c.files {
 			got, err := resolveFileName(c.model, c.version, file, c.files)
@@ -377,7 +446,7 @@ func TestResolveFileName(t *testing.T) {
 		}
 	}
 	// A name the scheme must strip a non-ASCII model name from is not read here.
-	if _, err := resolveFileName(nameModel{"Ünï", "Checkpoint"}, nameVersion{name: "Ünï v1"},
+	if _, err := resolveFileName(nameModel{name: "Ünï", typ: "Checkpoint"}, nameVersion{name: "Ünï v1"},
 		f(1, "model.safetensors", "Model", nil, nil, ""), nil); reason(err) != "v1-models-filename" {
 		t.Errorf("non-ASCII strip: %v", err)
 	}

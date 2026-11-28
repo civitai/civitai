@@ -20,7 +20,7 @@ import { createPgliteHarness, type Harness } from './doc-store.harness';
 /**
  * A shared document PUT that changes nothing is free behind `app-blocks-storage-unchanged-writes-free`:
  * no shared-write budget token, no moderation scan, nothing written. End to end, as
- * `doc-store-api.publish.test.ts` drives it: a REAL signed block token → the REAL route → the REAL
+ * `doc-store-api.contract.test.ts` drives it: a REAL signed block token → the REAL route → the REAL
  * document store on an embedded Postgres (RLS on, the content-levels migration applied). Replaced
  * at the boundary only: the Postgres rows the resolver reads, Redis (an in-memory map plus the Lua
  * harness for the token-bucket script), the session hub, the App Blocks and Flipt flags, and the
@@ -50,19 +50,22 @@ const SHADOW_FLAG = 'app-blocks-shared-data-moderation';
 const ENFORCE_FLAG = 'app-blocks-shared-data-moderation-enforce';
 const UNCHANGED_FLAG = 'app-blocks-storage-unchanged-writes-free';
 const LEVELS_FLAG = 'app-blocks-shared-doc-levels';
+const VIEWER_KEYED_OPEN_FLAG = 'app-blocks-storage-viewer-keyed-open';
 vi.mock('~/server/flipt/client', async (importOriginal) => {
   const real = await importOriginal<typeof FliptClient>();
   const isFlipt = async (flag: string, entityId?: string, context?: unknown) => {
     if (flag === SHADOW_FLAG) return false;
     if (flag === ENFORCE_FLAG) return true;
     if (flag === LEVELS_FLAG) return h.levelsFlag;
+    if (flag === VIEWER_KEYED_OPEN_FLAG) return true;
     if (flag === UNCHANGED_FLAG) {
       h.unchangedFlagEntities.push(entityId);
       return h.unchangedFlag;
     }
     return real.isFlipt(flag, entityId, context as never);
   };
-  return { ...real, isFlipt };
+  // The levels flag is read through `readFliptBoolean` (`doc-levels.ts` fails closed on `null`).
+  return { ...real, isFlipt, readFliptBoolean: isFlipt };
 });
 vi.mock('~/server/services/app-blocks-flag', async (importOriginal) => ({
   ...(await importOriginal<typeof AppBlocksFlag>()),
@@ -117,9 +120,19 @@ import { BlockTokenService } from '~/server/services/block-token.service';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { createDocStore } from '~/server/services/apps/doc-store';
 import { OnboardingSteps } from '~/server/common/enums';
-import { parseManifestStorage } from '~/shared/constants/block-storage.constants';
 import storageRoute from '~/pages/api/v1/blocks/storage/[[...path]]';
-import promClient from 'prom-client';
+import internalStorageRoute from '~/pages/api/internal/blocks/storage/[[...path]]';
+import { envMock } from '~/__tests__/mocks/env.mock';
+import { BlockRevocation } from '~/server/services/block-revocation.service';
+import { ensureRegisterAppBlockRuntimeMetrics } from '~/server/metrics/app-block-runtime.metrics';
+import {
+  APP_DATA_SIG_HEADER,
+  APP_DATA_TS_HEADER,
+  appDataRegionLine,
+  signAppDataRequest,
+} from '~/server/services/apps/app-data-signature';
+import { getApiRegionBlock } from '~/server/middleware/api-request-policy';
+import { getRegion } from '~/server/utils/region-blocking';
 import { DOC_STORE_PRIVATE_WRITE_RATE_LIMIT_MAX } from '~/server/utils/shared-storage-rate-limit';
 
 void loggingMock;
@@ -165,14 +178,14 @@ type AppRow = { id: string; appId: string; blockId: string; status: string; mani
 let apps: AppRow[] = [];
 let appSeq = 0;
 
-function freshApp(): AppRow {
+function freshApp(manifest: unknown = MANIFEST): AppRow {
   appSeq += 1;
   const row = {
     id: `apb_UNCH${appSeq}`,
     appId: `appblk-unch${appSeq}`,
     blockId: `unchanged-${appSeq}`,
     status: 'approved',
-    manifest: MANIFEST,
+    manifest,
   };
   apps.push(row);
   return row;
@@ -369,17 +382,6 @@ async function indexRows(app: AppRow, key: string) {
   );
 }
 
-/** `civitai_app_block_doc_store_unchanged_writes_total` for one app (0 when never counted). */
-async function freeWrites(app: AppRow): Promise<number> {
-  const metric = promClient.register.getSingleMetric(
-    'civitai_app_block_doc_store_unchanged_writes_total'
-  ) as
-    | { get(): Promise<{ values: { labels: Record<string, string>; value: number }[] }> }
-    | undefined;
-  const values = metric ? (await metric.get()).values : [];
-  return values.find((v) => v.labels.app_block_id === app.id)?.value ?? 0;
-}
-
 /** The per-viewer `write` fixed-window counter (private writes, DELETEs), or null if never spent. */
 const writeBucket = (app: AppRow, uid = V1) =>
   kv.get(`${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:docs-write:${app.id}:u:${uid}`)?.value ?? null;
@@ -429,12 +431,6 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
-
-describe('fixture', () => {
-  it('the manifest is one the parser accepts in full', () => {
-    expect(parseManifestStorage(MANIFEST).errors).toEqual([]);
-  });
-});
 
 describe('flag on: a shared put that changes nothing', () => {
   it('spends no shared-write token, runs no scan, writes nothing, and answers as the write did', async () => {
@@ -664,19 +660,6 @@ describe('flag on: the free path is throttled and counted', () => {
     // None of the free puts spent the shared-write budget.
     expect(sharedBudget(A)).toEqual(SHARED_AFTER_ONE_WRITE);
   });
-
-  it('every free put is counted for its app, and nothing else is', async () => {
-    const A = freshApp();
-    const t = await mint(A, V1);
-    const start = await freeWrites(A);
-    await expectOk(put(t, 'k1', { n: 1 }));
-    expect(await freeWrites(A)).toBe(start);
-    await expectOk(put(t, 'k1', { n: 1 }));
-    await expectOk(put(t, 'k1', { n: 1 }));
-    expect(await freeWrites(A)).toBe(start + 2);
-    await expectOk(put(t, 'k1', { n: 2 }));
-    expect(await freeWrites(A)).toBe(start + 2);
-  });
 });
 
 describe('a body equal to an OLDER version is a change', () => {
@@ -764,5 +747,622 @@ describe('scope: shared puts only', () => {
       201
     );
     expect(h.unchangedFlagEntities).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The signed internal route app-data-go forwards writes to (apps/app-data-go/WRITES-DESIGN.md,
+// build step 1): the REAL page, the REAL signature front, the REAL block-token middleware and
+// handler, the same store. Kept in this file because it already holds the whole world the public
+// route needs, so driving both routes side by side costs no new mock.
+// ---------------------------------------------------------------------------
+
+const SIGNING_KEY = 'internal-route-test-key-5521-abcdefghij';
+const VOTE_MANIFEST = {
+  scopes: SCOPES,
+  storage: {
+    collections: {
+      ...MANIFEST.storage.collections,
+      clips: { ...MANIFEST.storage.collections.clips, marks: ['vote'] },
+    },
+  },
+};
+
+type Routed = Reply & { headers: Record<string, unknown> };
+
+/** One request to a storage page: the public one, or the internal one, signed or not. */
+async function send(opts: {
+  internal: boolean;
+  token: string;
+  method: string;
+  path: string;
+  query?: Record<string, string>;
+  body?: unknown;
+  /** Internal only: sign the request (default true). */
+  signed?: boolean;
+  /** Region headers, sent and (internal) signed. */
+  region?: Record<string, string>;
+  /** Headers added AFTER signing (a tampered forward). */
+  unsigned?: Record<string, string>;
+}): Promise<Routed> {
+  const segments = opts.path.split('/').filter(Boolean);
+  const text = opts.body === undefined ? '' : JSON.stringify(opts.body);
+  const qs = opts.query ? new URLSearchParams(opts.query).toString() : '';
+  const prefix = opts.internal ? '/api/internal/blocks/storage' : '/api/v1/blocks/storage';
+  const target = `${prefix}${opts.path}`;
+  const headers: Record<string, string> = {
+    authorization: `Bearer ${opts.token}`,
+    ...(opts.region ?? {}),
+  };
+  if (opts.internal && opts.signed !== false) {
+    const timestamp = String(Math.floor(Date.now() / 1000));
+    headers[APP_DATA_TS_HEADER] = timestamp;
+    headers[APP_DATA_SIG_HEADER] = signAppDataRequest(SIGNING_KEY, {
+      method: opts.method,
+      path: target,
+      query: qs,
+      timestamp,
+      body: Buffer.from(text),
+      region: appDataRegionLine(opts.region ?? {}) ?? '',
+    });
+  }
+  Object.assign(headers, opts.unsigned ?? {});
+  const req = Object.assign(Readable.from(text ? [Buffer.from(text)] : []), {
+    method: opts.method,
+    url: qs ? `${target}?${qs}` : target,
+    query: { ...(segments.length ? { path: segments } : {}), ...(opts.query ?? {}) },
+    headers,
+    socket: { remoteAddress: '198.51.100.9' },
+  }) as unknown as NextApiRequest;
+  const resHeaders: Record<string, unknown> = {};
+  let body: unknown;
+  const res = {
+    statusCode: 0,
+    status(code: number) {
+      res.statusCode = code;
+      return res;
+    },
+    json(payload: unknown) {
+      body = payload;
+      return res;
+    },
+    // The region gate answers with `statusCode` + `end(body)`, as the proxy's block does.
+    end(chunk?: unknown) {
+      if (typeof chunk === 'string') body = JSON.parse(chunk);
+      return res;
+    },
+    send: () => res,
+    setHeader(k: string, v: unknown) {
+      resHeaders[k.toLowerCase()] = v;
+      return res;
+    },
+    getHeader: (k: string) => resHeaders[k.toLowerCase()],
+    removeHeader: () => res,
+    writeHead: () => res,
+    on: () => res,
+  };
+  const route = opts.internal ? internalStorageRoute : storageRoute;
+  await route(req, res as unknown as NextApiResponse);
+  return { status: res.statusCode, body, headers: resHeaders };
+}
+
+/** Every document-store rate bucket the app's viewer has spent (read, write, report). */
+const docBuckets = (app: AppRow) =>
+  [...kv.keys()].filter((k) => k.includes(':docs-') && k.includes(`:${app.id}:`)).sort();
+
+/** A private document's row, or undefined. */
+async function draftRow(app: AppRow, key: string) {
+  const [r] = await harness.raw(
+    `SELECT seq::int AS seq, record_id FROM appdata.doc
+       WHERE app_id = $1 AND ns = 'prod' AND coll = 'drafts' AND key = $2`,
+    [app.id, key]
+  );
+  return r as { seq: number; record_id: string } | undefined;
+}
+
+/** `app_storage_requests_total` for one app, as `op/via/viewer/token_kind -> value`. */
+async function viaCounts(app: AppRow): Promise<Record<string, number>> {
+  const { values } = await ensureRegisterAppBlockRuntimeMetrics().appStorageRequestsTotal.get();
+  return Object.fromEntries(
+    values
+      .filter((v) => v.labels.app === app.id)
+      .map((v) => [
+        `${v.labels.op}/${v.labels.via}/${v.labels.viewer}/${v.labels.token_kind}`,
+        v.value,
+      ])
+  );
+}
+
+describe('the signed internal route', () => {
+  beforeEach(() => envMock.set({ APP_DATA_WRITES_SIGNING_KEY: SIGNING_KEY }));
+  afterEach(() => envMock.set({ APP_DATA_WRITES_SIGNING_KEY: undefined }));
+
+  it('is off while APP_DATA_WRITES_SIGNING_KEY is unset: 404 service_route_off, nothing written', async () => {
+    envMock.set({ APP_DATA_WRITES_SIGNING_KEY: undefined });
+    const A = freshApp();
+    const t = await mint(A, V1);
+    const r = await send({
+      internal: true,
+      token: t,
+      method: 'PUT',
+      path: '/drafts/absent-1',
+      query: { from: A.blockId },
+      body: { data: { n: 11 } },
+    });
+    expect(r.status).toBe(404);
+    expect((r.body as { code: string }).code).toBe('service_route_off');
+    expect(await draftRow(A, 'absent-1')).toBeUndefined();
+  });
+
+  it('without a valid signature never reaches the chain: 401, nothing written, nothing charged', async () => {
+    const A = freshApp();
+    const t = await mint(A, V1);
+    const r = await send({
+      internal: true,
+      signed: false,
+      token: t,
+      method: 'PUT',
+      path: '/drafts/unsigned-1',
+      query: { from: A.blockId },
+      body: { data: { n: 12 } },
+    });
+    expect(r.status).toBe(401);
+    expect(r.body).toEqual({
+      code: 'service_signature',
+      message: 'invalid service signature',
+      error: 'invalid service signature',
+    });
+    expect(await draftRow(A, 'unsigned-1')).toBeUndefined();
+    expect(writeBucket(A)).toBeNull();
+    // Positive control: the same request, signed, lands.
+    await expectOk(
+      send({
+        internal: true,
+        token: t,
+        method: 'PUT',
+        path: '/drafts/unsigned-1',
+        query: { from: A.blockId },
+        body: { data: { n: 12 } },
+      })
+    );
+    expect(await draftRow(A, 'unsigned-1')).toBeDefined();
+  });
+
+  it("a private put answers the row's seq and recordId; the public route answers neither", async () => {
+    const A = freshApp();
+    const t = await mint(A, V1);
+    const viaService = await expectOk(
+      send({
+        internal: true,
+        token: t,
+        method: 'PUT',
+        path: '/drafts/seq-1',
+        query: { from: A.blockId },
+        body: { data: { n: 21 } },
+      })
+    );
+    const stored = await draftRow(A, 'seq-1');
+    expect(viaService.body).toMatchObject({
+      key: 'seq-1',
+      data: { n: 21 },
+      version: 1,
+      seq: stored?.seq,
+      recordId: stored?.record_id,
+    });
+    expect(typeof (viaService.body as { recordId: unknown }).recordId).toBe('string');
+    expect(await lastSeq(A)).toBe(stored?.seq);
+
+    const direct = await expectOk(
+      call({ token: t, method: 'PUT', path: '/drafts/seq-2', body: { data: { n: 22 } } })
+    );
+    expect(Object.keys(direct.body as object)).not.toContain('seq');
+    expect(Object.keys(direct.body as object)).not.toContain('recordId');
+  });
+
+  it('a shared create answers seq, recordId and its timestamps', async () => {
+    const A = freshApp();
+    const t = await mint(A, V1);
+    const r = await expectOk(
+      send({
+        internal: true,
+        token: t,
+        method: 'POST',
+        path: '/clips',
+        query: { from: A.blockId },
+        body: { data: { char: 'Q', score: 31 } },
+      }),
+      201
+    );
+    const b = r.body as { key: string; seq: number; recordId: string; createdAt: string };
+    expect(b.seq).toBe(await lastSeq(A));
+    expect(b.seq).toBeGreaterThan(0);
+    expect(typeof b.recordId).toBe('string');
+    expect(Number.isNaN(Date.parse(b.createdAt))).toBe(false);
+    expect((await row(A, b.key))?.seq).toBe(b.seq);
+  });
+
+  it("a delete answers its tombstone's seq and the key it removed; a delete that removed nothing answers none", async () => {
+    const A = freshApp();
+    const t = await mint(A, V1);
+    const put1 = await expectOk(
+      send({
+        internal: true,
+        token: t,
+        method: 'PUT',
+        path: '/drafts/del-1',
+        query: { from: A.blockId },
+        body: { data: { n: 41 } },
+      })
+    );
+    const del = await expectOk(
+      send({
+        internal: true,
+        token: t,
+        method: 'DELETE',
+        path: '/drafts/del-1',
+        query: { from: A.blockId },
+      })
+    );
+    // The key: what the overlay hides. For an `@me` delete it is the derived key, which the
+    // caller never sent, so the answer is the only place it learns it.
+    expect(del.body).toEqual({ deleted: true, seq: await lastSeq(A), key: 'del-1' });
+    expect((del.body as { seq: number }).seq).toBeGreaterThan((put1.body as { seq: number }).seq);
+    const again = await expectOk(
+      send({
+        internal: true,
+        token: t,
+        method: 'DELETE',
+        path: '/drafts/del-1',
+        query: { from: A.blockId },
+      })
+    );
+    expect(again.body).toEqual({ deleted: false });
+  });
+
+  it('🔴 an `@me` put and delete are served there, and the delete answers the DERIVED key it removed, never the raw path segment', async () => {
+    envMock.set({
+      APP_DATA_WRITES_SIGNING_KEY: SIGNING_KEY,
+      APP_STORAGE_VIEWER_KEY_SECRET: 'unchanged-viewer-key-secret-7d31',
+    });
+    const PARENT = 'post-6152';
+    const A = freshApp({
+      scopes: SCOPES,
+      storage: {
+        collections: {
+          ...MANIFEST.storage.collections,
+          likes: { visibility: 'shared', write: 'own', keyedBy: 'parent+viewer' },
+        },
+      },
+    });
+    const t = await mint(A, V1);
+    try {
+      await expectOk(
+        send({
+          internal: true,
+          token: t,
+          method: 'PUT',
+          path: `/likes/@me/${PARENT}`,
+          query: { from: A.blockId },
+          body: { data: { n: 61 } },
+        })
+      );
+      // The key the store holds the document at: the parent, a colon, a 26-character digest.
+      const stored = await harness.raw(
+        `SELECT key FROM appdata.doc WHERE app_id = $1 AND ns = 'prod' AND coll = 'likes'`,
+        [A.id]
+      );
+      expect(stored.length).toBe(1);
+      const derived = (stored[0] as { key: string }).key;
+      expect(derived).toMatch(/^post-6152:[a-z2-7]{26}$/);
+      const del = await expectOk(
+        send({
+          internal: true,
+          token: t,
+          method: 'DELETE',
+          path: `/likes/@me/${PARENT}`,
+          query: { from: A.blockId },
+        })
+      );
+      expect(del.body).toEqual({ deleted: true, seq: await lastSeq(A), key: derived });
+      expect((del.body as { key: string }).key).not.toBe(PARENT);
+      expect((del.body as { key: string }).key).not.toBe('@me');
+      // The read of the same document is not a route there: reads stay on the streams.
+      const read = await send({
+        internal: true,
+        token: t,
+        method: 'GET',
+        path: `/likes/@me/${PARENT}`,
+        query: { from: A.blockId },
+      });
+      expect(read.status).toBe(404);
+      expect((read.body as { code: string }).code).toBe('not_found');
+    } finally {
+      envMock.set({ APP_STORAGE_VIEWER_KEY_SECRET: undefined });
+    }
+  });
+
+  it('the public route answers a delete exactly `{ deleted: true }`: no seq, no key', async () => {
+    const A = freshApp();
+    const t = await mint(A, V1);
+    await expectOk(
+      call({ token: t, method: 'PUT', path: '/drafts/del-pub-7', body: { data: { n: 47 } } })
+    );
+    const del = await expectOk(call({ token: t, method: 'DELETE', path: '/drafts/del-pub-7' }));
+    expect(del.body).toEqual({ deleted: true });
+  });
+
+  // docs/app-storage-generic-core.md, rollout step 5: the tally PATCH was removed, on both routes,
+  // even on a collection whose manifest still declares a mark. The internal route serves only the
+  // writes, so its 405 names PUT and DELETE; the public one also names GET.
+  it('PATCH is no route on either route: 405, nothing written', async () => {
+    const A = freshApp(VOTE_MANIFEST);
+    const t = await mint(A, V1);
+    const created = await expectOk(
+      send({
+        internal: true,
+        token: t,
+        method: 'POST',
+        path: '/clips',
+        query: { from: A.blockId },
+        body: { data: { char: 'M', score: 51 } },
+      }),
+      201
+    );
+    const key = (created.body as { key: string }).key;
+    const seqBefore = await lastSeq(A);
+    const internal = await send({
+      internal: true,
+      token: t,
+      method: 'PATCH',
+      path: `/clips/${key}`,
+      query: { from: A.blockId },
+      body: { $mark: 'vote' },
+    });
+    const direct = await send({
+      internal: false,
+      token: t,
+      method: 'PATCH',
+      path: `/clips/${key}`,
+      body: { $mark: 'vote' },
+    });
+    expect([internal.status, internal.headers.allow, direct.status, direct.headers.allow]).toEqual([
+      405,
+      'PUT, DELETE',
+      405,
+      'GET, PUT, DELETE',
+    ]);
+    expect([
+      (internal.body as { code: string }).code,
+      (direct.body as { code: string }).code,
+    ]).toEqual(['method_not_allowed', 'method_not_allowed']);
+    expect(await lastSeq(A)).toBe(seqBefore);
+  });
+
+  it('a revoked token is refused on the internal route exactly as on the public route', async () => {
+    const A = freshApp();
+    const t = await mint(A, V1);
+    await BlockRevocation.revokeInstance(`bki_${A.id}`);
+    const direct = await call({
+      token: t,
+      method: 'PUT',
+      path: '/drafts/rev-1',
+      body: { data: { n: 61 } },
+    });
+    const viaService = await send({
+      internal: true,
+      token: t,
+      method: 'PUT',
+      path: '/drafts/rev-1',
+      query: { from: A.blockId },
+      body: { data: { n: 61 } },
+    });
+    // The refusal is the middleware's (a 403), not the signature's, on both.
+    expect(direct.status).toBe(403);
+    expect({ status: viaService.status, body: viaService.body }).toEqual(direct);
+    expect(await draftRow(A, 'rev-1')).toBeUndefined();
+  });
+
+  it('refuses an import 501 not_supported_here before anything is charged; its own app is served', async () => {
+    const A = freshApp();
+    const B = freshApp();
+    const t = await mint(A, V1);
+    const r = await send({
+      internal: true,
+      token: t,
+      method: 'PUT',
+      path: '/drafts/imp-1',
+      query: { from: B.blockId },
+      body: { data: { n: 71 } },
+    });
+    expect(r.status).toBe(501);
+    expect(r.body).toEqual({
+      code: 'not_supported_here',
+      message: 'imports are not served on this route',
+      error: 'imports are not served on this route',
+    });
+    // Nothing charged: no read bucket (the import's own charge, `charge('read', own, req)` just
+    // below the refusal in the handler), no write bucket, no other document-store bucket.
+    expect(
+      kv.get(`${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:docs-read:${A.id}:u:${V1}`)
+    ).toBeUndefined();
+    expect(writeBucket(A)).toBeNull();
+    expect(docBuckets(A)).toEqual([]);
+    expect(await draftRow(A, 'imp-1')).toBeUndefined();
+    expect(await draftRow(B, 'imp-1')).toBeUndefined();
+    // `from` naming the token's own app is an own call.
+    await expectOk(
+      send({
+        internal: true,
+        token: t,
+        method: 'PUT',
+        path: '/drafts/imp-1',
+        query: { from: A.blockId },
+        body: { data: { n: 71 } },
+      })
+    );
+    expect(await draftRow(A, 'imp-1')).toBeDefined();
+  });
+
+  it('serves writes and info only: a read is no route there', async () => {
+    const A = freshApp();
+    const t = await mint(A, V1);
+    await expectOk(
+      call({ token: t, method: 'PUT', path: '/drafts/rd-1', body: { data: { n: 81 } } })
+    );
+    for (const path of ['/drafts/rd-1', '/drafts']) {
+      const r = await send({
+        internal: true,
+        token: t,
+        method: 'GET',
+        path,
+        query: { from: A.blockId },
+      });
+      expect(r.status, path).toBe(404);
+      expect((r.body as { code: string }).code, path).toBe('not_found');
+    }
+    const info = await expectOk(
+      send({ internal: true, token: t, method: 'GET', path: '', query: { from: A.blockId } })
+    );
+    expect(Object.keys(info.body as object).sort()).toEqual(['collections', 'limits', 'usage']);
+  });
+
+  it('applies the API region block to the signed region, exactly as the proxy does on the public route', async () => {
+    const A = freshApp();
+    const t = await mint(A, V1);
+    // What the public route's proxy (`apiRegionBlockMiddleware`) answers a request from GB: the
+    // same decision function on the same headers. Positive control: GB is blocked here.
+    const expected = getApiRegionBlock(getRegion({ headers: { 'cf-ipcountry': 'GB' } } as never));
+    expect(expected).not.toBeNull();
+    const blocked = await send({
+      internal: true,
+      token: t,
+      method: 'PUT',
+      path: '/drafts/geo-1',
+      query: { from: A.blockId },
+      region: { 'cf-ipcountry': 'GB' },
+      body: { data: { n: 101 } },
+    });
+    expect({ status: blocked.status, body: blocked.body }).toEqual({
+      status: expected?.status,
+      body: JSON.parse(expected?.body ?? 'null'),
+    });
+    expect(blocked.headers['content-type']).toBe(expected?.contentType);
+    expect(await draftRow(A, 'geo-1')).toBeUndefined();
+    expect(docBuckets(A)).toEqual([]);
+    // The UK override header the edge sets is part of the same decision.
+    const uk = await send({
+      internal: true,
+      token: t,
+      method: 'PUT',
+      path: '/drafts/geo-1',
+      query: { from: A.blockId },
+      region: { 'cf-ipcountry': 'FR', 'x-isuk': 'true' },
+      body: { data: { n: 101 } },
+    });
+    expect(uk.status).toBe(expected?.status);
+    // An allowed region is served.
+    await expectOk(
+      send({
+        internal: true,
+        token: t,
+        method: 'PUT',
+        path: '/drafts/geo-1',
+        query: { from: A.blockId },
+        region: { 'cf-ipcountry': 'US', 'cf-region-code': 'TX' },
+        body: { data: { n: 101 } },
+      })
+    );
+  });
+
+  it('a region header changed after signing is a signature mismatch, not a region decision', async () => {
+    const A = freshApp();
+    const t = await mint(A, V1);
+    const r = await send({
+      internal: true,
+      token: t,
+      method: 'PUT',
+      path: '/drafts/geo-2',
+      query: { from: A.blockId },
+      region: { 'cf-ipcountry': 'GB' },
+      unsigned: { 'cf-ipcountry': 'US' },
+      body: { data: { n: 102 } },
+    });
+    expect(r.status).toBe(401);
+    expect((r.body as { code: string }).code).toBe('service_signature');
+    expect(await draftRow(A, 'geo-2')).toBeUndefined();
+  });
+
+  it('refuses a named major that is not the current one 409 stale_major; the current one is served', async () => {
+    const A = freshApp();
+    const t = await mint(A, V1);
+    const stale = await send({
+      internal: true,
+      token: t,
+      method: 'PUT',
+      path: '/drafts/maj-1',
+      query: { from: A.blockId, major: '7' },
+      body: { data: { n: 111 } },
+    });
+    expect(stale.status).toBe(409);
+    expect(stale.body).toMatchObject({ code: 'stale_major', details: { currentMajor: 1 } });
+    expect(await draftRow(A, 'maj-1')).toBeUndefined();
+    await expectOk(
+      send({
+        internal: true,
+        token: t,
+        method: 'PUT',
+        path: '/drafts/maj-1',
+        query: { from: A.blockId, major: '1' },
+        body: { data: { n: 111 } },
+      })
+    );
+    const bad = await send({
+      internal: true,
+      token: t,
+      method: 'PUT',
+      path: '/drafts/maj-2',
+      query: { from: A.blockId, major: 'v1' },
+      body: { data: { n: 112 } },
+    });
+    expect(bad.status).toBe(400);
+    // The public route takes no major at all.
+    const direct = await send({
+      internal: false,
+      token: t,
+      method: 'PUT',
+      path: '/drafts/maj-3',
+      query: { major: '1' },
+      body: { data: { n: 113 } },
+    });
+    expect(direct.status).toBe(400);
+  });
+
+  it('counts each request by via, and creates the other via at 0', async () => {
+    const A = freshApp();
+    const t = await mint(A, V1);
+    await expectOk(
+      send({
+        internal: true,
+        token: t,
+        method: 'PUT',
+        path: '/drafts/via-1',
+        query: { from: A.blockId },
+        body: { data: { n: 91 } },
+      })
+    );
+    expect(await viaCounts(A)).toEqual({
+      'put/service/signed_in/app': 1,
+      'put/direct/signed_in/app': 0,
+    });
+    await expectOk(
+      call({ token: t, method: 'PUT', path: '/drafts/via-2', body: { data: { n: 92 } } })
+    );
+    await expectOk(call({ token: t, method: 'GET', path: '/drafts/via-2' }));
+    expect(await viaCounts(A)).toEqual({
+      'put/service/signed_in/app': 1,
+      'put/direct/signed_in/app': 1,
+      'get/direct/signed_in/app': 1,
+      'get/service/signed_in/app': 0,
+    });
   });
 });

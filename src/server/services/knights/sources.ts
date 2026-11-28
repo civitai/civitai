@@ -1,17 +1,29 @@
-import { sql } from 'kysely';
 import {
   KNIGHTS_NSFW_LEVEL_QUESTION,
   knightsSourcesMaxOpen,
   parseKnightsSourcesConfig,
   type KnightsSourcesConfig,
 } from '@civitai/shared/new-order';
+import { countOpenServableKnightItems } from '@civitai/db/knights';
 import { kyselyRead, kyselyWrite } from '~/server/db/kyselyDb';
-import { logToAxiom } from '~/server/logging/client';
+import { logToAxiom, safeError } from '~/server/logging/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
-import { enqueueKnightsItems } from '~/server/services/knights/enqueue.service';
+import {
+  enqueueKnightsItems,
+  type EnqueueOptions,
+} from '~/server/services/knights/enqueue.service';
+import {
+  KNIGHTS_OWNER_RATING_ENQUEUE_OPTIONS,
+  KNIGHTS_SAMPLE_ENQUEUE_OPTIONS,
+  KNIGHTS_SOURCE_OWNER_RATING,
+  KNIGHTS_SOURCE_SCAN_SAMPLE,
+  knightsSampleDraw,
+  offerImagesToKnights,
+  scopeFilter,
+  type KnightsSampleScope,
+} from '~/server/services/knights/sampling';
 
-export const KNIGHTS_SOURCE_SCAN_SAMPLE = 'scan-sample';
-export const KNIGHTS_SOURCE_OWNER_RATING = 'owner-rating';
+export { KNIGHTS_SOURCE_OWNER_RATING, KNIGHTS_SOURCE_SCAN_SAMPLE };
 
 export { parseKnightsSourcesConfig, type KnightsSourcesConfig };
 
@@ -41,8 +53,16 @@ export function clearKnightsSourcesConfigCache() {
   slowCountLoggedUntil = 0;
 }
 
-/** Called from the image-scan result path; must never block it. */
+/** Called from the image-scan result path; must never block it. A read that times out counts as off. */
 export async function getKnightsSourcesConfig(): Promise<KnightsSourcesConfig> {
+  return (await readKnightsSourcesConfig()) ?? OFF;
+}
+
+/**
+ * The switch, or null when the read timed out: unknown, not off. A failed read throws. The publish sweep keeps its cursor
+ * on null instead of moving past a window it never sampled.
+ */
+export async function readKnightsSourcesConfig(): Promise<KnightsSourcesConfig | null> {
   if (cached && cached.expiresAt > Date.now()) return cached.config;
 
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -55,7 +75,7 @@ export async function getKnightsSourcesConfig(): Promise<KnightsSourcesConfig> {
       timedOut,
     ]);
     // Don't cache the timeout: it would turn sampling off for a full TTL.
-    if (raw === TIMED_OUT) return OFF;
+    if (raw === TIMED_OUT) return null;
     const config = parseKnightsSourcesConfig(raw);
     cached = { config, expiresAt: Date.now() + CONFIG_TTL_MS };
     return config;
@@ -65,26 +85,13 @@ export async function getKnightsSourcesConfig(): Promise<KnightsSourcesConfig> {
 }
 
 /**
- * Open Knight-stage rating items, counted only up to `limit` so the read stays short on the (status, minRank, ...) index. Yes/no
- * questions share the queue table but not this intake, so they are left out: an imported backlog must not stop sampling. The result is
- * cached for a minute whenever the query lands. A failure is not cached and pauses counting for `OPEN_COUNT_BACKOFF_MS`.
+ * Open servable Knight-stage rating items (`countOpenServableKnightItems`), counted only up to `limit`. Yes/no questions share
+ * the queue table but not this intake: an imported backlog must not stop sampling. Cached for a minute whenever the query
+ * lands; a failure is not cached and pauses counting for `OPEN_COUNT_BACKOFF_MS`.
  */
 function startOpenCount(limit: number): Promise<number | null> {
-  const read: Promise<number | null> = kyselyRead
-    .selectFrom(
-      kyselyRead
-        .selectFrom('KnightsQueueItem')
-        .select(sql<number>`1`.as('one'))
-        .where('status', '=', 'Open')
-        .where('minRank', '=', 'Knight')
-        .where('questionKey', '=', KNIGHTS_NSFW_LEVEL_QUESTION)
-        .limit(limit)
-        .as('open')
-    )
-    .select((eb) => eb.fn.countAll<string>().as('n'))
-    .executeTakeFirstOrThrow()
-    .then((row) => {
-      const open = Number(row.n);
+  const read: Promise<number | null> = countOpenServableKnightItems(kyselyRead, limit)
+    .then((open) => {
       if (openCountRead === read)
         openCount = { open, limit, expiresAt: Date.now() + OPEN_COUNT_TTL_MS };
       return open;
@@ -144,16 +151,22 @@ async function enqueueFromSource(
   type: string,
   source: string,
   item: { imageId: number; priority: 1 | 2 | 3 },
+  options: EnqueueOptions,
   shouldEnqueue: (config: KnightsSourcesConfig) => boolean | Promise<boolean>
 ): Promise<void> {
   try {
     const config = await getKnightsSourcesConfig();
     if (!config.enabled || !(await shouldEnqueue(config))) return;
-    await enqueueKnightsItems(kyselyWrite, {
-      source,
-      questionKey: KNIGHTS_NSFW_LEVEL_QUESTION,
-      items: [item],
-    });
+    await enqueueKnightsItems(
+      kyselyWrite,
+      {
+        source,
+        questionKey: KNIGHTS_NSFW_LEVEL_QUESTION,
+        items: [item],
+      },
+      undefined,
+      options
+    );
   } catch (error) {
     logToAxiom(
       { type, imageId: item.imageId, error: (error as Error).message },
@@ -162,17 +175,22 @@ async function enqueueFromSource(
   }
 }
 
+/**
+ * Samples a scanned image whose post is already live; one on a draft or scheduled post is refused (`unpublished`) and
+ * left to the publish sweep (`sampleNewlyLivePostsForKnights`), which samples it when the post goes live.
+ */
 export function queueScanSampleForKnights(
   { imageId, nsfw }: { imageId: number; nsfw: boolean },
-  random: () => number = Math.random
+  draw: (imageId: number) => number = knightsSampleDraw
 ): Promise<void> {
   return enqueueFromSource(
     'knights-v2-scan-sample-error',
     KNIGHTS_SOURCE_SCAN_SAMPLE,
     { imageId, priority: nsfw ? 2 : 1 },
+    KNIGHTS_SAMPLE_ENQUEUE_OPTIONS,
     // Only sampling is throttled: owner ratings below always enqueue.
     async (config) =>
-      random() < (nsfw ? config.nsfwRate : config.sfwRate) && !(await overIntakeCap(config))
+      draw(imageId) < (nsfw ? config.nsfwRate : config.sfwRate) && !(await overIntakeCap(config))
   );
 }
 
@@ -181,6 +199,27 @@ export function queueOwnerRatingForKnights(imageId: number): Promise<void> {
     'knights-v2-owner-rating-error',
     KNIGHTS_SOURCE_OWNER_RATING,
     { imageId, priority: 1 },
+    KNIGHTS_OWNER_RATING_ENQUEUE_OPTIONS,
     () => true
   );
+}
+
+/**
+ * Call once the write that took a post (or images) out of Private has committed; callers need not wait on it. Never throws:
+ * a failure is logged and the images stay unoffered.
+ */
+export async function queueLeftPrivateForKnights(scope: KnightsSampleScope): Promise<void> {
+  try {
+    const config = await getKnightsSourcesConfig();
+    await offerImagesToKnights(kyselyWrite, { scope, now: new Date(), config });
+  } catch (error) {
+    logToAxiom(
+      {
+        type: 'knights-v2-left-private-error',
+        ids: scopeFilter(scope).ids.slice(0, 20),
+        error: safeError(error),
+      },
+      'knights-v2-sources'
+    );
+  }
 }

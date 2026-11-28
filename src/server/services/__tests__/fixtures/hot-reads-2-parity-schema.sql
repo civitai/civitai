@@ -22,6 +22,7 @@ CREATE TYPE "hot_reads_2_parity"."CommercialUse" AS ENUM ('None', 'Image', 'Rent
 CREATE TYPE "hot_reads_2_parity"."ModelModifier" AS ENUM ('Archived', 'TakenDown');
 CREATE TYPE "hot_reads_2_parity"."Availability" AS ENUM ('Public', 'Unsearchable', 'Private', 'EarlyAccess');
 CREATE TYPE "hot_reads_2_parity"."TrainingStatus" AS ENUM ('Pending', 'Submitted', 'Paused', 'Denied', 'Processing', 'InReview', 'Failed', 'Approved', 'Expired');
+CREATE TYPE "hot_reads_2_parity"."LicensingFeeType" AS ENUM ('PerImageBuzz', 'PercentOfCompute');
 CREATE TYPE "hot_reads_2_parity"."ModelUsageControl" AS ENUM ('Download', 'Generation', 'InternalGeneration', 'ExternalGeneration');
 CREATE TYPE "hot_reads_2_parity"."ScanResultCode" AS ENUM ('Pending', 'Success', 'Danger', 'Error');
 CREATE TYPE "hot_reads_2_parity"."ModelFileVisibility" AS ENUM ('Sensitive', 'Private', 'Public');
@@ -103,7 +104,9 @@ CREATE TABLE "hot_reads_2_parity"."Image" (
   "metadata"  JSONB                                       NOT NULL DEFAULT '{}',
   "nsfwLevel" INTEGER                                     NOT NULL DEFAULT 0,
   "ingestion" "hot_reads_2_parity"."ImageIngestionStatus" NOT NULL DEFAULT 'Pending',
-  "needsReview" TEXT
+  "needsReview" TEXT,
+  "modelRestricted" BOOLEAN NOT NULL DEFAULT false,
+  "blockedFor" TEXT
 );
 
 CREATE TABLE "hot_reads_2_parity"."Model" (
@@ -195,7 +198,8 @@ CREATE TABLE "hot_reads_2_parity"."ModelVersion" (
   "usageControl"    "hot_reads_2_parity"."ModelUsageControl"  NOT NULL DEFAULT 'Download',
   "flags"           INTEGER                                   NOT NULL DEFAULT 0,
   "generatorLoaded" BOOLEAN                                   NOT NULL DEFAULT false,
-  "licensingFee"    DECIMAL(10, 2)
+  "licensingFee"    DECIMAL(10, 2),
+  "licensingFeeType" "hot_reads_2_parity"."LicensingFeeType"   DEFAULT 'PerImageBuzz'
 );
 
 CREATE TABLE "hot_reads_2_parity"."ModelVersionMetric" (

@@ -21,24 +21,24 @@ beforeEach(() => {
 });
 
 describe('registerFliptSnapshotStore', () => {
-  it('registers a store over sysRedis, keyed by the Flipt environment, with a 24h TTL', async () => {
+  it('registers a store on the cache cluster, keyed by the Flipt environment, with a 24h TTL', async () => {
     registerFliptSnapshotStore();
     const store = registered.store!;
     expect(store).toBeDefined();
 
-    redisMock.sysRedis.get.mockResolvedValue(null);
+    redisMock.redis.get.mockResolvedValue(null);
     await store.save({ savedAt: 5_000, etag: '"e"', data: { flags: [] } }, true);
 
-    const writes = redisMock.sysRedis.set.mock.calls.map(([key, , opts]: unknown[]) => [key, opts]);
+    const writes = redisMock.redis.set.mock.calls.map(([key, , opts]: unknown[]) => [key, opts]);
     expect(writes).toEqual([
       ['system:flipt:snapshot:civitai-app', { PX: 86_400_000 }],
       ['system:flipt:snapshot:civitai-app:meta', { PX: 86_400_000 }],
     ]);
   });
 
-  it('reads the stored snapshot back through the sysRedis read deadline', async () => {
+  it('reads the stored snapshot back from the cache cluster', async () => {
     registerFliptSnapshotStore();
-    redisMock.sysRedis.get.mockResolvedValue(
+    redisMock.redis.get.mockResolvedValue(
       JSON.stringify({ savedAt: 5_000, etag: null, data: { flags: [] } })
     );
 
@@ -47,29 +47,58 @@ describe('registerFliptSnapshotStore', () => {
       etag: null,
       data: { flags: [] },
     });
-    expect(redisMock.sysRedis.get).toHaveBeenCalledWith('system:flipt:snapshot:civitai-app');
-    expect(redisMock.withSysReadDeadline).toHaveBeenCalledTimes(1);
+    expect(redisMock.redis.get).toHaveBeenCalledWith('system:flipt:snapshot:civitai-app');
+    expect(redisMock.sysRedis.get).not.toHaveBeenCalled();
   });
 
-  // Invariant guard: save() reads the meta key through the same kv.get, so a stalled sysRedis
+  it('gives up on a read that does not answer after one second', async () => {
+    vi.useFakeTimers();
+    try {
+      registerFliptSnapshotStore();
+      redisMock.redis.get.mockImplementation((() => new Promise(() => undefined)) as never);
+
+      let settled = false;
+      const load = registered.store!.load().finally(() => {
+        settled = true;
+      });
+      load.catch(() => undefined);
+      await vi.advanceTimersByTimeAsync(999);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(load).rejects.toThrow();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // Invariant guard: save() reads the meta key through the same kv.get, so a stalled cluster
   // bounds it with the same deadline as load().
-  it("save()'s meta read also goes through the sysRedis read deadline", async () => {
-    registerFliptSnapshotStore();
-    redisMock.sysRedis.get.mockResolvedValue(null);
+  it("save()'s meta read also gives up after one second", async () => {
+    vi.useFakeTimers();
+    try {
+      registerFliptSnapshotStore();
+      redisMock.redis.get.mockImplementation((() => new Promise(() => undefined)) as never);
 
-    await registered.store!.save({ savedAt: 5_000, etag: '"e"', data: { flags: [] } }, true);
-
-    expect(redisMock.sysRedis.get).toHaveBeenCalledTimes(1);
-    expect(redisMock.sysRedis.get).toHaveBeenCalledWith('system:flipt:snapshot:civitai-app:meta');
-    expect(redisMock.withSysReadDeadline).toHaveBeenCalledTimes(1);
+      const save = registered.store!.save(
+        { savedAt: 5_000, etag: '"e"', data: { flags: [] } },
+        true
+      );
+      save.catch(() => undefined);
+      await vi.advanceTimersByTimeAsync(1_000);
+      await expect(save).rejects.toThrow();
+      expect(redisMock.redis.get).toHaveBeenCalledWith('system:flipt:snapshot:civitai-app:meta');
+      expect(redisMock.redis.set).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('a non-default environment gets its own key', async () => {
     process.env.FLIPT_ENVIRONMENT = 'spoke-env';
     registerFliptSnapshotStore();
-    redisMock.sysRedis.get.mockResolvedValue(null);
+    redisMock.redis.get.mockResolvedValue(null);
     await registered.store!.load();
-    expect(redisMock.sysRedis.get).toHaveBeenCalledWith('system:flipt:snapshot:spoke-env');
+    expect(redisMock.redis.get).toHaveBeenCalledWith('system:flipt:snapshot:spoke-env');
   });
 
   it('FLIPT_SNAPSHOT_MAX_AGE_MS=0 registers nothing (no reads, no writes)', () => {

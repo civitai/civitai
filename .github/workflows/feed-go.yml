@@ -4,7 +4,7 @@ name: feed-go
 # shadow only of `image.getInfinite`, `model.getAll` and `GET /api/v1/images`; see apps/feed-go/DESIGN.md). It is not a pnpm workspace member (no package.json), so none of the
 # Node suites see it: apps.yml's typecheck and suite ledgers enumerate apps by package.json.
 # This workflow is its only gate: gofmt, vet, the unit tests with coverage floors, the integration
-# tests and a build of the binary (job `test`); golangci-lint (`lint`); govulncheck (`vuln`); go.mod
+# tests and a build of the image's two binaries, feed-go and feed-eval (job `test`); golangci-lint (`lint`); govulncheck (`vuln`); go.mod
 # tidiness and module checksums (`mod`); a run of every fuzz target for a fixed number of
 # executions (`fuzz`); and an allocs/op regression gate on the benchmarks against the merge-base
 # (`bench`). The gate scripts live in apps/feed-go/ci.
@@ -19,7 +19,19 @@ name: feed-go
 # (`Package unit tests`). The workflow also triggers on packages/civitai-flipt/parity/** for it.
 #
 # A draft PR skips this job, as in apps.yml, unless it carries the `full-ci` label; full-ci.yml
-# dispatches this workflow when the label is added. A push to `main` is unfiltered.
+# dispatches this workflow when the label is added to a draft PR (on a ready PR, the PR's own run
+# here is not draft-gated, so nothing is dispatched).
+# A push to `main` has its own `push` paths filter below, and no draft gate.
+#
+# ── THE 2-HOUR MAIN BATCH: fuzz, govulncheck, go.mod tidy, benchmarks ─────────────────────
+#
+# `vuln`, `mod`, `fuzz` and `bench` no longer run on pull requests or on a push: across 59 recent
+# runs on PRs and `main` they caught nothing the PR's own `test` and `lint` did not. They run on a
+# dispatch: the 2-hour batch on `main` (lint.yml's `batch-suites` job dispatches this workflow with
+# `batch: true` when a path below changed since the last green batch), a hand dispatch, or the
+# `full-ci` label's dispatch on a draft. A batch dispatch runs ONLY those jobs (`test`, `lint`, `flipt-parity`
+# already ran on the push), and a red one turns the `Batch suites (main batch)` commit status red,
+# which opens a CI-watch item naming the commit range; nothing bisects it automatically.
 on:
   pull_request:
     branches: [main, release]
@@ -35,19 +47,31 @@ on:
       - 'packages/civitai-flipt/parity/**'
       - '.github/workflows/feed-go.yml'
   workflow_dispatch:
+    inputs:
+      # Set by the main batch (lint.yml, `batch-suites`): run only the batch jobs (see the header).
+      batch:
+        description: Run only the batch jobs (fuzz, govulncheck, go.mod tidy, benchmarks). Set by the main batch.
+        type: boolean
+        default: false
+      # Set by the main batch: the commit the last green batch verified. The benchmarks compare
+      # HEAD against it, so a batch's allocs/op gate covers every merge since that batch.
+      base:
+        description: Commit the benchmarks compare against (default the merge-base with main, or HEAD^1 on main).
+        type: string
+        default: ''
 
 permissions:
   contents: read
 
 concurrency:
-  group: feed-go-${{ github.event_name == 'workflow_dispatch' && format('dispatch-{0}', github.ref) || github.ref }}
+  group: feed-go-${{ github.event_name == 'workflow_dispatch' && inputs.batch && format('batch-{0}', github.run_id) || github.event_name == 'workflow_dispatch' && format('dispatch-{0}', github.ref) || github.ref }}
   cancel-in-progress: true
 
 jobs:
   test:
     name: feed-go vet + test + build
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')
+    if: (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) && !inputs.batch
     timeout-minutes: 20
     services:
       postgres:
@@ -73,7 +97,12 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: apps/feed-go/go.mod
-          cache-dependency-path: apps/feed-go/go.sum
+          cache: false
+
+      # setup-go's cache is off: it saves on every ref. Restore-only here, same key.
+      - uses: ./.github/actions/go-cache-restore
+        with:
+          dependency-path: apps/feed-go/go.sum
 
       - name: gofmt
         run: |
@@ -222,8 +251,24 @@ jobs:
           [ "$feed" -ge 12 ]
           [ "$models" -ge 5 ]
 
+      # Both binaries the image ships (apps/feed-go/Dockerfile), built as it builds them. The help
+      # path's exit code is cmd/feed-eval's own unit test; this does not see the image's layout.
+      # feed-go's `--version` must be package.json's version (read here by jq, a second parser,
+      # against ci/version.sh's sed), never "dev": it is the X-Feed-Go-Version header.
       - name: go build
-        run: CGO_ENABLED=0 go build -trimpath -o /tmp/feed-go ./cmd/feed-go
+        run: |
+          set -euo pipefail
+          version="$(sh ci/version.sh package.json)"
+          CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${version}" -o /tmp/feed-go ./cmd/feed-go
+          CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /tmp/feed-eval ./cmd/feed-eval
+          ls -l /tmp/feed-go /tmp/feed-eval
+          want="$(jq -r .version package.json)"
+          got="$(/tmp/feed-go --version)"
+          echo "feed-go --version: ${got} (package.json: ${want})"
+          if [ -z "$want" ] || [ "$want" = null ] || [ "$got" != "$want" ]; then
+            echo "::error::feed-go --version is '${got}', want package.json's '${want}'"
+            exit 1
+          fi
 
       - name: Redis Cluster logs
         if: failure()
@@ -232,6 +277,9 @@ jobs:
       - name: ClickHouse logs
         if: failure()
         run: docker logs feedgo-clickhouse 2>&1 | tail -n 80
+
+      # Last, so the build cache holds what the steps above built. Saves only on `main`.
+      - uses: ./.github/actions/go-cache-save
 
   # Node <-> Go Flipt parity (packages/civitai-flipt/parity/README.md). Offline: every client reads
   # parity/snapshot.json through an in-process fetcher or transport; the network is used only to
@@ -247,7 +295,7 @@ jobs:
   flipt-parity:
     name: Flipt Node/Go parity
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')
+    if: (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) && !inputs.batch
     timeout-minutes: 15
     defaults:
       run:
@@ -261,7 +309,12 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: packages/civitai-flipt/parity/go/go.mod
-          cache-dependency-path: packages/civitai-flipt/parity/go/go.sum
+          cache: false
+
+      # setup-go's cache is off: it saves on every ref. Restore-only here, same key.
+      - uses: ./.github/actions/go-cache-restore
+        with:
+          dependency-path: packages/civitai-flipt/parity/go/go.sum
 
       - name: gofmt + vet + go.mod tidy
         run: |
@@ -341,10 +394,13 @@ jobs:
           done
           exit $status
 
+      # Last, so the build cache holds what the steps above built. Saves only on `main`.
+      - uses: ./.github/actions/go-cache-save
+
   lint:
     name: feed-go golangci-lint
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')
+    if: (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) && !inputs.batch
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
@@ -352,7 +408,12 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: apps/feed-go/go.mod
-          cache-dependency-path: apps/feed-go/go.sum
+          cache: false
+
+      # setup-go's cache is off: it saves on every ref. Restore-only here, same key.
+      - uses: ./.github/actions/go-cache-restore
+        with:
+          dependency-path: apps/feed-go/go.sum
 
       # Configuration: apps/feed-go/.golangci.yml (v2 format; it also lints the integration tier). Any
       # finding fails the step.
@@ -360,13 +421,18 @@ jobs:
         # golangci/golangci-lint-action v9.3.0
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a
         with:
+          # Restores everywhere; saves only on a push / dispatch / schedule run on `main`.
+          skip-save-cache: ${{ !(contains(fromJSON('["push", "workflow_dispatch", "schedule"]'), github.event_name) && github.ref == 'refs/heads/main') }}
           version: v2.15.0
           working-directory: apps/feed-go
+
+      # Last, so the build cache holds what the steps above built. Saves only on `main`.
+      - uses: ./.github/actions/go-cache-save
 
   vuln:
     name: feed-go govulncheck
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')
+    if: github.event_name == 'workflow_dispatch'
     timeout-minutes: 15
     defaults:
       run:
@@ -381,7 +447,12 @@ jobs:
         with:
           go-version: '1.26'
           check-latest: true
-          cache-dependency-path: apps/feed-go/go.sum
+          cache: false
+
+      # setup-go's cache is off: it saves on every ref. Restore-only here, same key.
+      - uses: ./.github/actions/go-cache-restore
+        with:
+          dependency-path: apps/feed-go/go.sum
 
       # Exits non-zero when a vulnerability is REACHABLE from this module's code (symbol-level);
       # advisories in modules or packages it never calls are listed but do not fail the step.
@@ -390,10 +461,13 @@ jobs:
           go version
           go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 -tags integration ./...
 
+      # Last, so the build cache holds what the steps above built. Saves only on `main`.
+      - uses: ./.github/actions/go-cache-save
+
   mod:
     name: feed-go go.mod tidy + verify
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')
+    if: github.event_name == 'workflow_dispatch'
     timeout-minutes: 10
     defaults:
       run:
@@ -404,7 +478,12 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: apps/feed-go/go.mod
-          cache-dependency-path: apps/feed-go/go.sum
+          cache: false
+
+      # setup-go's cache is off: it saves on every ref. Restore-only here, same key.
+      - uses: ./.github/actions/go-cache-restore
+        with:
+          dependency-path: apps/feed-go/go.sum
 
       # `go mod tidy -diff` changes nothing and exits non-zero (printing the diff) when go.mod/go.sum
       # are not tidy; `go mod verify` checks the downloaded modules against go.sum.
@@ -417,6 +496,9 @@ jobs:
       - name: go mod verify
         run: go mod verify
 
+      # Last, so the build cache holds what the steps above built. Saves only on `main`.
+      - uses: ./.github/actions/go-cache-save
+
   # Each fuzz target for a fixed number of executions, one at a time (`-fuzz` takes one target in one
   # package). A fixed count, not a time budget: -fuzztime in seconds can end in a "context deadline
   # exceeded" failure with no crasher, and makes coverage depend on runner speed. Their seed corpora (testdata/fuzz/<Target>
@@ -426,7 +508,7 @@ jobs:
   fuzz:
     name: feed-go fuzz
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')
+    if: github.event_name == 'workflow_dispatch'
     timeout-minutes: 25
     defaults:
       run:
@@ -444,10 +526,14 @@ jobs:
       FUZZ_TARGETS: >-
         internal/auth:FuzzTokenFromCookieHeader:170000
         internal/auth:FuzzVerify:95000
+        internal/devalue:FuzzRoundTrip:200000
+        internal/devalue:FuzzString:600000
+        internal/evalcorpus:FuzzStrip:100000
         internal/feed:FuzzParse:180000
         internal/feed:FuzzParseInfinite:140000
         internal/hydrate:FuzzMetaEntry:150000
         internal/hydrate:FuzzUnpack:230000
+        internal/hydrate:FuzzUnpackMatchesOracle:80000
         internal/modelfeed:FuzzParse:210000
         internal/shadow:FuzzCompare:420000
         internal/shadow:FuzzCompareJSON:620000
@@ -462,7 +548,12 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: apps/feed-go/go.mod
-          cache-dependency-path: apps/feed-go/go.sum
+          cache: false
+
+      # setup-go's cache is off: it saves on every ref. Restore-only here, same key.
+      - uses: ./.github/actions/go-cache-restore
+        with:
+          dependency-path: apps/feed-go/go.sum
 
       - name: The fuzz targets are the listed set
         run: |
@@ -511,6 +602,9 @@ jobs:
           path: apps/feed-go/internal/*/testdata/fuzz/
           if-no-files-found: ignore
 
+      # Last, so the build cache holds what the steps above built. Saves only on `main`.
+      - uses: ./.github/actions/go-cache-save
+
   # Benchmarks on the PR head and on its merge-base, `-benchmem -count=6`, compared with benchstat
   # (report only: ns/op on a shared runner is noise). The gate is allocs/op only (deterministic):
   # ci/allocs_gate.py fails a benchmark whose every head sample exceeds every base sample by > 5%
@@ -519,8 +613,12 @@ jobs:
   bench:
     name: feed-go benchmarks (allocs/op gate)
     runs-on: ubuntu-latest
-    # PRs only: the allocs/op compare needs a PR base, and a push to main has none.
-    if: github.event_name == 'pull_request' && (!github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci'))
+    # Dispatch only (see the header). The base is the `base` input when one is given (the main batch
+    # passes the newest GREEN batch commit, even after a red batch, so the gate covers every merge
+    # since then; the job summary names the base and why),
+    # else the merge-base with main (a branch dispatch: the PR's own base), else HEAD^1 (a dispatch
+    # on main without `base`: the last merge alone).
+    if: github.event_name == 'workflow_dispatch'
     timeout-minutes: 25
     defaults:
       run:
@@ -535,17 +633,34 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: apps/feed-go/go.mod
-          cache-dependency-path: apps/feed-go/go.sum
+          cache: false
 
-      # The merge-base with the PR's target branch (the parent if HEAD is already the merge-base).
-      - name: Check out the merge-base
+      # setup-go's cache is off: it saves on every ref. Restore-only here, same key.
+      - uses: ./.github/actions/go-cache-restore
+        with:
+          dependency-path: apps/feed-go/go.sum
+
+      # The `base` input, else the merge-base with main (the parent if HEAD is already the merge-base).
+      # Through env: `base` is free text, and is checked to be a commit before it is used.
+      - name: Check out the base
         env:
-          BASE_BRANCH: ${{ github.base_ref || 'main' }}
+          BASE_INPUT: ${{ inputs.base }}
         run: |
           set -euo pipefail
-          git fetch --no-tags origin "$BASE_BRANCH"
-          base=$(git merge-base "origin/$BASE_BRANCH" HEAD)
-          if [ "$base" = "$(git rev-parse HEAD)" ]; then base=$(git rev-parse HEAD^1); fi
+          git fetch --no-tags origin main
+          if [ -n "$BASE_INPUT" ]; then
+            base=$(git rev-parse --verify --quiet "${BASE_INPUT}^{commit}") \
+              || { echo "::error::base input is not a commit in this repository: $BASE_INPUT"; exit 1; }
+            why="the base input (the main batch passes its last green batch commit)"
+          else
+            base=$(git merge-base origin/main HEAD)
+            why="no base input: the merge-base with main"
+          fi
+          if [ "$base" = "$(git rev-parse HEAD)" ]; then
+            base=$(git rev-parse HEAD^1)
+            why="$why, which is HEAD, so HEAD^1: only the last merge is compared"
+          fi
+          echo "Benchmark base: $(git rev-parse --short "$base") ($why)" >> "$GITHUB_STEP_SUMMARY"
           echo "head $(git rev-parse HEAD), base $base"
           git worktree add --detach "$RUNNER_TEMP/base" "$base"
 
@@ -565,17 +680,22 @@ jobs:
           set -euo pipefail
           go run golang.org/x/perf/cmd/benchstat@v0.0.0-20261009192801-be2c69fb417e \
             base="$RUNNER_TEMP/base.txt" head="$RUNNER_TEMP/head.txt" | tee "$RUNNER_TEMP/benchstat.txt"
-          { echo '### feed-go benchstat (base = merge-base)'; echo '```'; cat "$RUNNER_TEMP/benchstat.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          { echo "### feed-go benchstat (base = $(git -C "$RUNNER_TEMP/base" rev-parse --short HEAD))"; echo '```'; cat "$RUNNER_TEMP/benchstat.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
       - name: allocs/op gate
         run: |
           set -euo pipefail
-          # Positive control: every benchmark produced its 6 samples (11 benchmarks: superjson Serialize,
+          # Positive control: every benchmark produced its 6 samples (20 benchmarks: superjson Serialize,
           # SerializeBuffer, SerializeColdStart/page and SerializeColdStart/owned-small, hydrate Unpack,
-          # TagIDs and HydratePage/pipelined, feed BuildImages, shadow Compare/golden, Compare/page50
-          # and CompareJSON). A filter or build change that drops benchmarks would otherwise pass as "no
-          # regression"; raise the count with each new benchmark.
+          # TagIDs, HydratePage/pipelined and UnpackCache/{model-data,tag-ids,follows}, feed BuildImages,
+          # server Route/{as-posts,infinite,model-getall} and DevaluePayload/{as-posts,infinite,
+          # model-getall}, shadow Compare/golden, Compare/page50 and CompareJSON). A filter or build
+          # change that drops benchmarks would otherwise pass as "no regression"; raise the count with
+          # each new benchmark.
           samples=$(grep -c ' allocs/op' "$RUNNER_TEMP/head.txt" || true)
           echo "head samples with allocs/op: $samples"
-          [ "$samples" -ge 66 ]
+          [ "$samples" -ge 120 ]
           python3 ci/allocs_gate.py "$RUNNER_TEMP/base.txt" "$RUNNER_TEMP/head.txt"
+
+      # Last, so the build cache holds what the steps above built. Saves only on `main`.
+      - uses: ./.github/actions/go-cache-save

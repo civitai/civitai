@@ -15,7 +15,7 @@ import {
 
 export interface OauthConsentMirror {
   clientId: string;
-  scope: number;
+  scope: bigint;
 }
 
 /**
@@ -45,11 +45,11 @@ export interface OauthConsentMirror {
  * Module-private on purpose: the only legitimate consumers are in this file. Export
  * it again and the seed becomes someone else's invariant to break.
  */
-function blockScopesToOauthScope(scopes: Iterable<string>): number {
-  let scope = 0;
+function blockScopesToOauthScope(scopes: Iterable<string>): bigint {
+  let scope = 0n;
   for (const s of scopes) {
     const bit = BLOCK_SCOPE_TO_OAUTH_BIT[s];
-    if (typeof bit === 'number') scope |= bit;
+    if (typeof bit === 'bigint') scope |= bit;
   }
   return scope;
 }
@@ -166,7 +166,7 @@ export async function syncOauthConsentFromGrant(opts: {
 export async function writeOauthConsent(opts: {
   userId: number;
   clientId: string;
-  scope: number;
+  scope: bigint;
   buzzLimit: BuzzLimit | null;
 }): Promise<void> {
   const { userId, clientId, scope, buzzLimit } = opts;

@@ -1,11 +1,15 @@
+import { serverCopyTablesSql } from '@civitai/db-queries/test/image-uses';
 import { PGlite } from '@electric-sql/pglite';
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as DbLagHelpers from '~/server/db/db-lag-helpers';
 import type * as RedisCaches from '~/server/redis/caches';
 import type * as ImageService from '~/server/services/image.service';
-import { ARTICLE_CONTENT_IMAGE_UNAVAILABLE_MESSAGE } from '~/server/services/image-url-ownership';
+import {
+  ARTICLE_CONTENT_IMAGE_UNAVAILABLE_MESSAGE,
+  UNRECORDED_KEYS_ACCEPTED_UNTIL,
+} from '~/server/services/image-url-ownership';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -63,6 +67,7 @@ beforeAll(async () => {
     );
     CREATE TABLE "ItemDefinition" ("id" integer PRIMARY KEY, "imageUrl" text);
     CREATE TABLE "ImageCdnShopTakedown" (url text, "shopItemId" integer, PRIMARY KEY (url, "shopItemId"));
+    ${serverCopyTablesSql};
     CREATE TABLE "Image" ("id" serial PRIMARY KEY, "userId" integer NOT NULL, "url" text NOT NULL);
     INSERT INTO "Cosmetic" (id, data) VALUES (1, '{"url":"${SHOP_KEY}"}');
     INSERT INTO "CosmeticShopItem" (id, "cosmeticId") VALUES (9, 1);
@@ -71,6 +76,11 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
+  // The content keys have no issue record; pin the clock inside the window that accepts them.
+  vi.useFakeTimers({
+    toFake: ['Date'],
+    now: UNRECORDED_KEYS_ACCEPTED_UNTIL.getTime() - 86_400_000,
+  });
   createManyAndReturn.mockClear();
   enqueueImageIngestion.mockClear();
   // The shop-key and image-ownership lookups run on PGlite; the other raw queries get fixed answers.
@@ -82,8 +92,7 @@ beforeEach(() => {
     const sql = Array.isArray(strings) ? strings.join('') : '';
     if (sql.includes('unnest(') || sql.includes('FROM "Image" WHERE url = ANY('))
       return pgliteRaw(db).queryRaw(strings, ...values);
-    // The owner's legal-hold read: not held.
-    return Promise.resolve(sql.includes(' AS held') ? [{ held: false }] : []);
+    return Promise.resolve([]);
   }) as never);
   dbMock.dbWrite.article.create.mockResolvedValue({ id: 1, userId: 7, content: '' } as never);
   dbMock.dbWrite.$transaction.mockImplementation(((cb: (tx: unknown) => unknown) =>
@@ -92,6 +101,10 @@ beforeEach(() => {
       image: { findMany: async () => [], createManyAndReturn },
       imageConnection: { upsert: vi.fn(), findMany: async () => [], deleteMany: vi.fn() },
     })) as never);
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe('linkArticleContentImages', () => {
@@ -111,39 +124,6 @@ describe('linkArticleContentImages', () => {
       images.map((image: { url: string }) => image.url)
     );
     expect(queued).toEqual([SHOP_KEY, FREE_KEY]);
-  });
-});
-
-describe('linkArticleContentImages orphan cleanup', () => {
-  // An article saved before shop keys were refused can hold one as the author's own image row.
-  it('never offers for deletion an orphaned image whose key shop artwork uses', async () => {
-    const orphans = [
-      { id: 5, url: SHOP_KEY },
-      { id: 6, url: FREE_KEY },
-    ];
-    dbMock.dbWrite.$transaction.mockImplementation(((cb: (tx: unknown) => unknown) =>
-      cb({
-        $queryRaw: pgliteRaw(db).queryRaw,
-        image: {
-          findMany: async ({ where }: { where: { id?: unknown } }) => (where.id ? orphans : []),
-          createManyAndReturn,
-        },
-        imageConnection: {
-          upsert: vi.fn(),
-          findMany: async () => orphans.map((orphan) => ({ imageId: orphan.id })),
-          deleteMany: vi.fn(),
-        },
-        serviceOffering: { findMany: async () => [] },
-      })) as never);
-
-    const { orphanedImageIds } = await linkArticleContentImages({
-      articleId: 1,
-      content: '<p>both images removed</p>',
-      userId: 7,
-      ownerId: 7,
-    });
-
-    expect(orphanedImageIds).toEqual([6]);
   });
 });
 

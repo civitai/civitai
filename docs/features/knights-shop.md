@@ -1,6 +1,6 @@
 # Knights of New Order: the gold shop
 
-Code: `apps/knights/src/lib/server/shop`, `apps/knights/src/routes/shop` (shop) and `routes/shop/inventory`. Main-app side: `src/pages/api/mod/knights/shop/{membership,cosmetics}.ts`, `src/server/services/knights/shop.service.ts` and `grantBuzzPurchaseMembership` in `src/server/services/subscriptions.service.ts`. Prices live in data. Gold is anchored at 400 gold = 1 Buzz (`CONVERSION.goldPerBuzz`, which the header's Buzz value reads). Prices are entered from the moderator page; the launch catalog is kept in HQ, not here.
+Code: `apps/knights/src/lib/server/shop`, `apps/knights/src/routes/shop` (shop) and `routes/shop/inventory`. Main-app side: `src/server/api-routes/mod/knights/shop/{membership,cosmetics}.ts`, `src/server/services/knights/shop.service.ts` and `grantBuzzPurchaseMembership` in `src/server/services/subscriptions.service.ts`. Prices live in data. Gold is anchored at 400 gold = 1 Buzz (`CONVERSION.goldPerBuzz`, which the header's Buzz value reads). Prices are entered from the moderator page; the launch catalog is kept in HQ, not here.
 
 ## Data and deploy
 
@@ -54,7 +54,7 @@ Knights never writes `equippedAt`. `POST /api/mod/knights/shop/cosmetics` (`x-we
 
 ## Switches and entry points
 
-`KNIGHTS_SHOP_DISABLED=true` (also `1`, `yes`, `on`) closes the shop and hides its entry points (header gold popover "Visit the shop", the avatar menu and home tile "Shop"); `/shop` then says it is not open. `KNIGHTS_CONVERSION_DISABLED` keeps its meaning for Buzz packs only. The restart-career dialog now lists "Gold you have not yet spent".
+The "Shop closed" switch saved on the moderator Config page, else `KNIGHTS_SHOP_DISABLED=true` (also `1`, `yes`, `on`), closes the shop ([game settings](knights-sources.md#game-settings)) and hides its entry points (header gold popover "Visit the shop", the avatar menu and home tile "Shop"); `/shop` then says it is not open. `KNIGHTS_CONVERSION_DISABLED` keeps its meaning for Buzz packs only. The restart-career dialog now lists "Gold you have not yet spent".
 
 ## Layout and try-on (SH1, SH5)
 

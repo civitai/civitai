@@ -4,7 +4,7 @@ import type { BrowsingSettingsAddon } from '~/shared/constants/browsing-settings
 import {
   DEFAULT_BROWSING_SETTINGS_ADDONS,
   resolveBrowsingSettingsAddons,
-  resolveStrictestPoiMinor,
+  resolveStrictestAddons,
 } from '~/shared/constants/browsing-settings-addons';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
@@ -44,9 +44,9 @@ const shapes: [string, BrowsingSettingsAddon[]][] = [
   ],
 ];
 
-describe('resolveStrictestPoiMinor', () => {
+describe('resolveStrictestAddons', () => {
   it.each(shapes)('is never looser than any client level for %s', (_label, data) => {
-    const server = resolveStrictestPoiMinor(data, allBrowsingLevelsFlag);
+    const server = resolveStrictestAddons(data, allBrowsingLevelsFlag);
     for (const level of clientLevels(allBrowsingLevelsFlag)) {
       const client = resolveBrowsingSettingsAddons(data, level);
       if (client.disablePoi) expect(server.disablePoi).toBe(true);
@@ -59,15 +59,16 @@ describe('resolveStrictestPoiMinor', () => {
     'is stricter than one resolution at all levels for %s',
     (_l, data) => {
       expect(resolveBrowsingSettingsAddons(data, allBrowsingLevelsFlag).disablePoi).toBe(false);
-      expect(resolveStrictestPoiMinor(data, allBrowsingLevelsFlag).disablePoi).toBe(true);
+      expect(resolveStrictestAddons(data, allBrowsingLevelsFlag).disablePoi).toBe(true);
     }
   );
 
   it('resolves nothing for a moderator', () => {
     for (const [, data] of shapes)
-      expect(resolveStrictestPoiMinor(data, allBrowsingLevelsFlag, { isModerator: true })).toEqual({
+      expect(resolveStrictestAddons(data, allBrowsingLevelsFlag, { isModerator: true })).toEqual({
         disablePoi: false,
         disableMinor: false,
+        excludedTagIds: [],
       });
   });
 });

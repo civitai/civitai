@@ -1,11 +1,12 @@
 import { TRPCError } from '@trpc/server';
 import type { ConsumerBlobPresignResponse } from '@civitai/orchestration-client';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_KEYS, redis } from '~/server/redis/client';
+import { takeClusterWindowCount } from '~/server/utils/cluster-window-count';
+import { throwAppRateLimited, utcDayReset } from '~/server/utils/app-rate-limit';
 import { getConsumerBlobUploadUrlService } from '~/server/services/orchestrator/consumerBlobUpload';
+import { resolveUserAppLimit } from '~/server/services/blocks/user-app-caps.service';
 import {
-  MEDIA_UPLOAD_BATCH_DAILY_BYTES,
-  MEDIA_UPLOAD_BATCH_DAILY_ITEMS,
   MEDIA_UPLOAD_BATCH_RETENTION_MS,
   MEDIA_UPLOAD_BATCH_UNAVAILABLE_ERROR,
   mediaUploadBatchQuotaError,
@@ -113,14 +114,21 @@ export async function reserveMediaUploadBatchQuota(
   now: Date = new Date()
 ): Promise<() => Promise<void>> {
   const day = now.toISOString().slice(0, 10);
-  const base = REDIS_SYS_KEYS.BLOCKS.MEDIA_UPLOAD_BATCH_DAILY;
+  // The viewer's daily quota, from the registry (a KeyValue override, else the code defaults).
+  const [dailyItems, dailyBytes] = await Promise.all([
+    resolveUserAppLimit('apps.media-upload-daily-items', userId),
+    resolveUserAppLimit('apps.media-upload-daily-bytes', userId),
+  ]);
+  const base = REDIS_KEYS.BLOCKS.MEDIA_UPLOAD_BATCH_DAILY;
   const itemsKey = `${base}:items:${userId}:${day}` as const;
   const bytesKey = `${base}:bytes:${userId}:${day}` as const;
   const charged: Array<[typeof itemsKey | typeof bytesKey, number]> = [];
   const release = async () => {
     for (const [key, amount] of charged) {
       try {
-        await sysRedis.decrBy(key, amount);
+        await takeClusterWindowCount('releaseMediaUploadBatchQuota', key, QUOTA_KEY_TTL_S, {
+          by: -amount,
+        });
       } catch {
         // Best-effort: a counter left high refuses early, never admits more.
       }
@@ -129,12 +137,12 @@ export async function reserveMediaUploadBatchQuota(
   let itemTotal: number;
   let byteTotal: number;
   try {
-    itemTotal = await sysRedis.incrBy(itemsKey, items);
+    itemTotal = await redis.incrBy(itemsKey, items);
     charged.push([itemsKey, items]);
-    if (itemTotal === items) await sysRedis.expire(itemsKey, QUOTA_KEY_TTL_S);
-    byteTotal = await sysRedis.incrBy(bytesKey, bytes);
+    if (itemTotal === items) await redis.expire(itemsKey, QUOTA_KEY_TTL_S);
+    byteTotal = await redis.incrBy(bytesKey, bytes);
     charged.push([bytesKey, bytes]);
-    if (byteTotal === bytes) await sysRedis.expire(bytesKey, QUOTA_KEY_TTL_S);
+    if (byteTotal === bytes) await redis.expire(bytesKey, QUOTA_KEY_TTL_S);
   } catch (err) {
     await release();
     throw new TRPCError({
@@ -143,9 +151,22 @@ export async function reserveMediaUploadBatchQuota(
       cause: err,
     });
   }
-  if (itemTotal > MEDIA_UPLOAD_BATCH_DAILY_ITEMS || byteTotal > MEDIA_UPLOAD_BATCH_DAILY_BYTES) {
+  if (itemTotal > dailyItems || byteTotal > dailyBytes) {
     await release();
-    throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message: mediaUploadBatchQuotaError() });
+    // `used` is the day's usage before this batch, which the release just gave back.
+    const itemsOver = itemTotal > dailyItems;
+    const { retryAfterSeconds, resetAt } = utcDayReset(now.getTime());
+    throwAppRateLimited(
+      itemsOver ? 'apps.media-upload-daily-items' : 'apps.media-upload-daily-bytes',
+      retryAfterSeconds,
+      mediaUploadBatchQuotaError(dailyItems, dailyBytes),
+      {
+        limit: itemsOver ? dailyItems : dailyBytes,
+        used: itemsOver ? itemTotal - items : byteTotal - bytes,
+        windowSeconds: 24 * 60 * 60,
+        resetAt,
+      }
+    );
   }
   return release;
 }

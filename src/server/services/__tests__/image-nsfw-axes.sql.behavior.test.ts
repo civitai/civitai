@@ -69,8 +69,20 @@ beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
+    -- The scan write re-checks the owner's ban and holds (empty here, so nothing is kept).
+    CREATE TABLE "User" (id int PRIMARY KEY, "bannedAt" timestamp(3));
+    CREATE TABLE "CsamReport" (
+      id serial PRIMARY KEY,
+      "userId" int,
+      details jsonb NOT NULL DEFAULT '{}',
+      images jsonb NOT NULL DEFAULT '[]',
+      "reportSentAt" timestamp(3),
+      "archivedAt" timestamp(3)
+    );
+    CREATE TABLE "ModActivity" (id serial PRIMARY KEY, "entityType" text, "entityId" int, activity text, "createdAt" timestamp(3) DEFAULT now());
     CREATE TABLE "Image" (
       id int PRIMARY KEY,
+      "userId" int,
       "nsfwLevelLocked" boolean NOT NULL DEFAULT false,
       "updatedAt" timestamp(3),
       "pHash" bigint,
@@ -84,6 +96,10 @@ beforeAll(async () => {
       metadata jsonb,
       "scanJobs" jsonb
     );
+    CREATE TYPE "EntityType" AS ENUM ('Image');
+    -- Read by a blocking scan's write: a pending appeal keeps its review.
+    CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected');
+    CREATE TABLE "Appeal" ("entityType" "EntityType", "entityId" int, status "AppealStatus");
   `);
   await holder.db.exec(migration);
 });
@@ -411,7 +427,7 @@ describe('the nsfwAxes write never changes the scan', () => {
       ['the verdict', false, 'Scanned', null],
       ['the legacy blocked branch', true, 'Blocked', 'Pending'],
     ])(
-      'writes %s without the axes, and logs it, with the flag on',
+      'writes %s without the axes, with the flag on',
       async (_, blocked, outcomeIngestion, rowIngestion) => {
         await holder.db.query(
           `INSERT INTO "Image" (id, ingestion, "scanJobs") VALUES ($1, 'Pending', '{"workflowId":"wf-0"}')`,
@@ -429,10 +445,6 @@ describe('the nsfwAxes write never changes the scan', () => {
           ingestion: rowIngestion ?? outcomeIngestion,
           workflowId: 'wf-1',
         });
-        expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-          expect.objectContaining({ name: 'image-nsfw-axes', imageId: ID, workflowId: 'wf-1' }),
-          'webhooks'
-        );
       }
     );
   });

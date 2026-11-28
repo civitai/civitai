@@ -33,8 +33,6 @@ import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.sche
 
 const WIDE: [number, number] = [1440, 900];
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-
 // `importOriginal` SPREAD, not a wholesale replacement (local-rules/
 // no-wholesale-module-mock): a hand-written factory silently breaks every importer
 // the day the real module grows an export it omits, and here that surfaces as

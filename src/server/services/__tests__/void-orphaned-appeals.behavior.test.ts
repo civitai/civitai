@@ -55,7 +55,6 @@ import {
   closeAppealsOnDeletedModel,
   getAppealExcludedIds,
   canAppealOwnImage,
-  isAppealBlockedByHoldMarker,
   isImageAppealRefused,
   ROUTED_APPEAL_REVIEW_DAYS,
   voidOrphanedAppeals,
@@ -89,7 +88,7 @@ const APPEALS: [number, number, string, number, string, string | null, string | 
   [17, 27, 'Model', 1009, 'Pending', null, null], // hard-deleted model sharing a reported image's id: quiet
   [18, 28, 'Model', 2018, 'Pending', null, 'appeal-28-1'], // model soft-deleted by its owner
   [19, 29, 'Model', 2019, 'Pending', null, 'appeal-29-1'], // model soft-deleted by a moderator: quiet
-  [20, 30, 'Image', 1020, 'Pending', null, 'appeal-30-1'], // like 2; appellant under a hold marker
+  [20, 30, 'Image', 1020, 'Pending', null, 'appeal-30-1'], // like 2; appellant named on a CSAM report
 ];
 
 beforeAll(async () => {
@@ -100,16 +99,13 @@ beforeAll(async () => {
     CREATE TABLE "User" (id int PRIMARY KEY, "deletedAt" timestamp(3));
     CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int NOT NULL, "blockedFor" text, "needsReview" text);
     CREATE TABLE "CsamQueueSetAside" ("imageId" int PRIMARY KEY, outcome text NOT NULL);
-    CREATE TABLE "EvidenceHold" (id serial PRIMARY KEY, "userId" int NOT NULL, "releaseAt" timestamp(3));
     CREATE TABLE "ModActivity" (
       id serial PRIMARY KEY, "userId" int, activity text NOT NULL, "entityType" text, "entityId" int
     );
     CREATE TABLE "Model" (id int PRIMARY KEY, "deletedAt" timestamp(3), "deletedBy" int);
     CREATE TABLE "Report" (id int PRIMARY KEY, reason text NOT NULL);
     CREATE TABLE "UserReport" ("userId" int NOT NULL, "reportId" int NOT NULL);
-    -- Stand in for the hold-marker view and its kept-image record, which the appeal checks read.
-    CREATE TABLE "EvidenceHeldUser" ("userId" int PRIMARY KEY, "heldUntil" timestamp(3));
-    CREATE TABLE "EvidenceHoldImage" ("imageId" int PRIMARY KEY, "userId" int NOT NULL);
+    -- The CSAM report table the appeal checks read.
     CREATE TABLE "CsamReport" (
       id int PRIMARY KEY, "userId" int, images jsonb NOT NULL DEFAULT '[]', details jsonb NOT NULL DEFAULT '{}'
     );
@@ -156,10 +152,9 @@ beforeEach(async () => {
   holder.afterPick = null;
   holder.clickhouse = 'normal';
   await holder.db.exec(`
-    TRUNCATE "User", "Image", "Model", "Report", "UserReport", "CsamReport", "EvidenceHeldUser", "Appeal",
-      "CsamQueueSetAside", "EvidenceHold", "ModActivity";
+    TRUNCATE "User", "Image", "Model", "Report", "UserReport", "CsamReport", "Appeal",
+      "CsamQueueSetAside", "ModActivity";
     INSERT INTO "User" (id, "deletedAt") SELECT g, NULL FROM generate_series(11, 30) g;
-    INSERT INTO "EvidenceHeldUser" ("userId") VALUES (30);
     UPDATE "User" SET "deletedAt" = now() WHERE id = 26;
     INSERT INTO "Image" (id, "userId", "blockedFor") VALUES
       (1003, 13, NULL),
@@ -174,7 +169,8 @@ beforeEach(async () => {
     INSERT INTO "CsamReport" (id, "userId", images) VALUES
       (1, NULL, '[{"id": 1009}]'),
       (2, NULL, '[1010]'),
-      (3, 21, '[]');
+      (3, 21, '[]'),
+      (4, 30, '[]');
   `);
   for (const [id, userId, entityType, entityId, status, removedAt, fee] of APPEALS)
     await holder.db.query(
@@ -437,7 +433,7 @@ describe('voidOrphanedAppeals against Postgres', () => {
 
   describe('an appeal on an image dismissed from the CSAM review queue', () => {
     // 41 is past the deadline from its filing, 42 a day short; 43's image is flagged but not
-    // dismissed; 44 and 45 match the owner check.
+    // dismissed; 44 matches the owner check, 45 does not.
     beforeEach(async () => {
       await holder.db.exec(`
         INSERT INTO "Image" (id, "userId", "needsReview", "blockedFor") VALUES
@@ -446,7 +442,6 @@ describe('voidOrphanedAppeals against Postgres', () => {
           (1045, 15, 'csam', 'moderated');
         INSERT INTO "CsamQueueSetAside" ("imageId", outcome) VALUES
           (1041, 'Dismissed'), (1042, 'Dismissed'), (1044, 'Dismissed'), (1045, 'Dismissed');
-        INSERT INTO "EvidenceHold" ("userId", "releaseAt") VALUES (15, now() - interval '1 day');
       `);
       await holder.db.query(
         `INSERT INTO "Appeal" (id, "userId", "entityType", "entityId", status, "createdAt", "updatedAt",
@@ -530,19 +525,12 @@ describe('voidOrphanedAppeals against Postgres', () => {
     it('closes and refunds without a notice when the owner check matches', async () => {
       await voidOrphanedAppeals();
 
-      for (const [id, fee] of [
-        [44, 'appeal-21-44'],
-        [45, 'appeal-15-45'],
-      ] as const)
-        expect(await seenBy(id, fee)).toMatchObject({
-          status: 'Void',
-          notices: [],
-          refunded: true,
-        });
-      expect(await withheldRows()).toEqual([
-        { entityId: 1044, userId: null },
-        { entityId: 1045, userId: null },
-      ]);
+      expect(await seenBy(44, 'appeal-21-44')).toMatchObject({
+        status: 'Void',
+        notices: [],
+        refunded: true,
+      });
+      expect(await withheldRows()).toEqual([{ entityId: 1044, userId: null }]);
     });
 
     it('refunds every one it closed when writing a log row fails', async () => {
@@ -577,9 +565,12 @@ describe('voidOrphanedAppeals against Postgres', () => {
           INSERT INTO "User" (id, "deletedAt") VALUES (19, now()) ON CONFLICT (id) DO UPDATE SET "deletedAt" = now();
           INSERT INTO "Image" (id, "userId", "needsReview", "blockedFor") VALUES
             (1046, 16, 'csam', 'CSAM'), (1047, 17, 'csam', 'moderated'), (2047, 17, NULL, 'CSAM'),
-            (1048, 18, 'csam', 'moderated'), (1049, 19, 'csam', 'moderated');
+            (1048, 18, 'csam', 'moderated'), (1049, 19, 'csam', 'moderated'),
+            (1050, 20, 'csam', 'moderated'), (2050, 20, NULL, 'TOS,csam'),
+            (1051, 21, 'csam', 'moderated'), (2051, 21, NULL, 'TOS,Moderated');
           INSERT INTO "CsamQueueSetAside" ("imageId", outcome) VALUES
-            (1046, 'Dismissed'), (1047, 'Dismissed'), (1048, 'Dismissed'), (1049, 'Dismissed');
+            (1046, 'Dismissed'), (1047, 'Dismissed'), (1048, 'Dismissed'), (1049, 'Dismissed'),
+            (1050, 'Dismissed'), (1051, 'Dismissed');
           INSERT INTO "Report" (id, reason) VALUES (9048, 'CSAM');
           INSERT INTO "UserReport" ("userId", "reportId") VALUES (18, 9048);
         `);
@@ -589,7 +580,9 @@ describe('voidOrphanedAppeals against Postgres', () => {
              (46, 16, 'Image', 1046, 'Pending', now() - make_interval(days => $1, mins => 1), now(), 'appeal-16-46'),
              (47, 17, 'Image', 1047, 'Pending', now() - make_interval(days => $1, mins => 1), now(), 'appeal-17-47'),
              (48, 18, 'Image', 1048, 'Pending', now() - make_interval(days => $1, mins => 1), now(), 'appeal-18-48'),
-             (49, 19, 'Image', 1049, 'Pending', now() - make_interval(days => $1, mins => 1), now(), 'appeal-19-49')`,
+             (49, 19, 'Image', 1049, 'Pending', now() - make_interval(days => $1, mins => 1), now(), 'appeal-19-49'),
+             (50, 20, 'Image', 1050, 'Pending', now() - make_interval(days => $1, mins => 1), now(), 'appeal-20-50'),
+             (51, 21, 'Image', 1051, 'Pending', now() - make_interval(days => $1, mins => 1), now(), 'appeal-21-51')`,
           [ROUTED_APPEAL_REVIEW_DAYS]
         );
       });
@@ -611,6 +604,13 @@ describe('voidOrphanedAppeals against Postgres', () => {
         expect(await seenBy(41, 'appeal-12-41')).toMatchObject({ refunded: true });
       });
 
+      it('reads a CSAM block inside a comma list as one, and a list without one as not', async () => {
+        await voidOrphanedAppeals();
+
+        expect(await seenBy(50, 'appeal-20-50')).toMatchObject({ notices: [], refunded: false });
+        expect(await seenBy(51, 'appeal-21-51')).toMatchObject({ refunded: true });
+      });
+
       it('refunds a deleted appellant without a notice', async () => {
         await voidOrphanedAppeals();
 
@@ -623,11 +623,11 @@ describe('voidOrphanedAppeals against Postgres', () => {
     });
 
     it('holds every notice when the check itself fails', async () => {
-      await holder.db.exec(`ALTER TABLE "EvidenceHold" RENAME TO "EvidenceHold_gone"`);
+      await holder.db.exec(`ALTER TABLE "CsamReport" RENAME TO "CsamReport_gone"`);
       try {
         await voidOrphanedAppeals();
       } finally {
-        await holder.db.exec(`ALTER TABLE "EvidenceHold_gone" RENAME TO "EvidenceHold"`);
+        await holder.db.exec(`ALTER TABLE "CsamReport_gone" RENAME TO "CsamReport"`);
       }
 
       expect((await seenBy(41, 'appeal-12-41')).notices).toEqual([]);
@@ -748,29 +748,6 @@ describe('getAppealExcludedIds against Postgres', () => {
 
     expect([...images].sort()).toEqual([1009, 1010]);
     expect([...users].sort()).toEqual([21, 23, 24, 30]);
-  });
-});
-
-describe('isAppealBlockedByHoldMarker against Postgres', () => {
-  it('blocks an owner under a hold marker and an image a hold kept, and nothing else', async () => {
-    await holder.db.exec(`
-      INSERT INTO "EvidenceHeldUser" ("userId") VALUES (61);
-      INSERT INTO "EvidenceHoldImage" ("imageId", "userId") VALUES (9001, 62);
-    `);
-    try {
-      expect(await isAppealBlockedByHoldMarker({ imageId: 9000, userId: 61 })).toBe(true);
-      expect(await isAppealBlockedByHoldMarker({ imageId: 9001, userId: 63 })).toBe(true);
-      // The control: neither the owner nor the image.
-      expect(await isAppealBlockedByHoldMarker({ imageId: 9000, userId: 63 })).toBe(false);
-    } finally {
-      await holder.db.exec(`TRUNCATE "EvidenceHeldUser", "EvidenceHoldImage"`);
-    }
-  });
-
-  it('blocks when the check cannot be read', async () => {
-    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([] as never);
-
-    expect(await isAppealBlockedByHoldMarker({ imageId: 9000, userId: 63 })).toBe(true);
   });
 });
 

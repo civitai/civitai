@@ -3,6 +3,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { BlockedReason } from '~/server/common/enums';
+import { blockedForNamesCsam } from '@civitai/shared/csam-blocked-for';
 import { PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
 
 /**
@@ -119,8 +120,13 @@ const { removeBlockedImages } = await import('~/server/jobs/image-ingestion');
 
 /** The ids carried by a `Prisma.join(...)` fragment, which arrives as one interpolated value. */
 function joinedIds(values: unknown[]): number[] {
+  // The first fragment that binds anything: `csamBlockedSql()` is a fragment that binds nothing.
   const frag = values.find(
-    (v) => !!v && typeof v === 'object' && Array.isArray((v as { values?: unknown }).values)
+    (v) =>
+      !!v &&
+      typeof v === 'object' &&
+      Array.isArray((v as { values?: unknown }).values) &&
+      (v as { values: unknown[] }).values.length > 0
   ) as { values: number[] } | undefined;
   return frag?.values ?? [];
 }
@@ -158,12 +164,12 @@ function candidates(within: (deletedAt: Date) => boolean, direction: 'asc' | 'de
 }
 
 async function runQuery(strings: TemplateStringsArray, ...values: unknown[]) {
-  // The legal-hold lookup arrives as one `Prisma.sql` value rather than a template.
+  // Some reads arrive as one `Prisma.sql` value rather than a template.
   const sql = Array.isArray(strings)
     ? strings.join('?')
     : (strings as unknown as { sql: string }).sql;
 
-  // remove-blocked-images: users under a legal hold. None in this fixture.
+  // No CSAM reports in this fixture.
   if (sql.includes('FROM "CsamReport"')) return [];
 
   // remove-blocked-images: its two queue reads, each passed as one `Prisma.sql` value.
@@ -208,7 +214,7 @@ async function runQuery(strings: TemplateStringsArray, ...values: unknown[]) {
   }
 
   // remove-deleted-user-images: the hide branch. Bindings, in order: the blocked nsfwLevel, the
-  // kept CSAM reason, the blockedFor reason, the two metadata keys, the id list, userId, userId.
+  // CSAM test (`csamBlockedSql()`), the blockedFor reason, the two metadata keys, the id list, userId, userId.
   //
   // The metadata key is taken from the BINDING, never from the constant imported at the top of
   // this file, so what the grace pass writes is what the restore path is later asserted against.
@@ -218,9 +224,9 @@ async function runQuery(strings: TemplateStringsArray, ...values: unknown[]) {
   // job splits on is the positive `ModActivity` lookup routed below. Left in place because the key
   // is still the restore path's own breadcrumb; do not re-read it as the retraction discriminator.
   if (sql.includes('UPDATE "Image"') && sql.includes("SET ingestion = 'Blocked'")) {
-    const [, kept, blockedFor, priorIngestionKey, priorBlockedForKey] = values as [
+    const [, , blockedFor, priorIngestionKey, priorBlockedForKey] = values as [
       number,
-      string,
+      unknown,
       string,
       string,
       string
@@ -235,15 +241,11 @@ async function runQuery(strings: TemplateStringsArray, ...values: unknown[]) {
         [priorBlockedForKey]: img.blockedFor,
       };
       img.ingestion = 'Blocked';
-      if (img.blockedFor !== kept) img.blockedFor = blockedFor;
+      if (!blockedForNamesCsam(img.blockedFor)) img.blockedFor = blockedFor;
       touched.push({ id: img.id, postId: img.postId });
     }
     return touched;
   }
-
-  // The legal-hold marker objects (`holdMarkerViewExists` / `holdMarkerTableExists`): both exist, as
-  // on prod. The marker holds nobody (below).
-  if (sql.includes('SELECT to_regclass(')) return [{ present: true }];
 
   // remove-deleted-user-images: does the account still own anything the grace pass has not hidden?
   if (sql.includes('AS "hasPending"')) {
@@ -262,11 +264,13 @@ async function runQuery(strings: TemplateStringsArray, ...values: unknown[]) {
   // remove-deleted-user-images: the two worklists. Fresh is ascending and bounded below by the
   // high-water mark; backlog is descending and bounded above by its cursor and by that mark.
   if (sql.includes('CROSS JOIN LATERAL')) {
+    // The bounds are the statement's dates; the mode and hold arrive as nested fragments.
+    const dates = values.filter((v): v is Date => v instanceof Date);
     if (sql.includes('ORDER BY u."deletedAt" DESC')) {
-      const [cursor, freshMark] = values as [Date, Date];
+      const [cursor, freshMark] = dates;
       return candidates((d) => d <= cursor && d < freshMark, 'desc');
     }
-    const freshMark = values[0] as Date;
+    const freshMark = dates[0];
     return candidates((d) => d >= freshMark, 'asc');
   }
 
@@ -297,14 +301,6 @@ async function runQuery(strings: TemplateStringsArray, ...values: unknown[]) {
       .map((i) => ({ id: i.id, needsReview: i.needsReview }));
   }
 
-  // remove-blocked-images: the blocked images of users under a legal hold.
-  if (sql.includes('FROM "Image"') && sql.includes('"userId" = ANY')) {
-    const owners = (values.find(Array.isArray) as number[] | undefined) ?? [];
-    return store.images
-      .filter((i) => owners.includes(i.userId) && i.ingestion === 'Blocked')
-      .map((i) => ({ id: i.id }));
-  }
-
   // remove-blocked-images: the batch fetch, scoped to the ids that survived the queue exclusion.
   if (sql.includes('FROM "Image"') && sql.includes('id = ANY')) {
     const ids = (values.find(Array.isArray) as number[] | undefined) ?? [];
@@ -312,11 +308,6 @@ async function runQuery(strings: TemplateStringsArray, ...values: unknown[]) {
       .filter((i) => ids.includes(i.id) && i.ingestion === 'Blocked')
       .map((i) => ({ id: i.id, userId: i.userId, blockedFor: i.blockedFor }));
   }
-
-  // remove-blocked-images: owners under a hold marker or any other account hold. This fixture
-  // holds no one.
-  if (sql.includes('FROM "EvidenceHeldUser"')) return [];
-  if (sql.includes('SELECT c."userId" FROM')) return [];
 
   throw new Error(`unrouted query in fixture: ${sql.replace(/\s+/g, ' ').trim().slice(0, 160)}`);
 }
@@ -362,7 +353,7 @@ const ctx = {} as Parameters<typeof removeBlockedImages.run>[0];
 function retractionFor(id: number) {
   const call = mockDeleteImages.mock.calls.find((c) => (c[0] as number[]).includes(id));
   if (!call) return undefined;
-  return Boolean((call[2] as { retractPublicBlobs?: boolean } | undefined)?.retractPublicBlobs);
+  return Boolean((call[1] as { retractPublicBlobs?: boolean } | undefined)?.retractPublicBlobs);
 }
 
 beforeEach(() => {

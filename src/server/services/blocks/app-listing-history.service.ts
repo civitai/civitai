@@ -1,8 +1,17 @@
 import { TRPCError } from '@trpc/server';
 
 import { dbRead } from '~/server/db/client';
+import {
+  decisionReviewer,
+  type DecisionReviewer,
+  type DecisionReviewerRow as ReviewerRow,
+} from '~/server/notifications/app-review-attribution';
+import { reviewUserChipSelect } from '~/server/selectors/review-user-chip.selector';
 import { latestBuildAttemptSignals } from '~/server/services/blocks/build-attempts.service';
 import type { BuildAttemptSignals } from '~/shared/constants/app-block-build.constants';
+import { redactDeployDetailForAuthor } from '~/shared/utils/review-boot-check';
+import { staffSubmissionOf, type StaffSubmission } from '~/shared/utils/publish-request-on-behalf';
+import { isDecidedReviewStatus } from '~/shared/utils/app-review-thread';
 import {
   canonicalOwnerWhereBranches,
   listingEditorRole,
@@ -76,6 +85,8 @@ export type ListingHistoryEntry = {
   reviewedAt: Date | null;
   rejectionReason: string | null;
   approvalNotes: string | null;
+  /** Who decided it — see {@link DecisionReviewer}. `null` on an undecided entry. */
+  reviewer: DecisionReviewer | null;
   /** Author-written note, on `listing` entries only. */
   changelog: string | null;
   /** `building | deploying | live | failed`, on `version` entries only. */
@@ -113,6 +124,18 @@ export type ListingHistoryEntry = {
    * authorization boundary: the procs are still the gate and are unchanged.
    */
   canWithdraw: boolean;
+  /**
+   * A `version` entry Civitai staff submitted on the owner's behalf (a platform update): who
+   * filed it, for the "Staff submission" label. `null` for every other entry.
+   */
+  staffSubmission: StaffSubmission | null;
+  /**
+   * May THIS caller open the review conversation on this request? Server-computed for the same
+   * reason as `canWithdraw`: the thread admits the app's current OWNER only (and moderators, on
+   * their own review surface), so an accepted editor, who sees this history, would otherwise be
+   * offered a link that can only answer "not found". Decided requests only.
+   */
+  canConverse: boolean;
 };
 
 /** Hard cap. An app with more history than this is pathological, not paginated. */
@@ -224,12 +247,27 @@ export function authorFailureDetail(row: {
   deployState: string | null;
   deployDetail: string | null;
 }): string | null {
-  return isAuthorFailure(row) ? row.deployDetail : null;
+  // Through the one author-facing redaction too: an approved+failed row carries a build failure,
+  // not a review preview's boot check, but nothing an author reads may skip it.
+  return isAuthorFailure(row) ? redactDeployDetailForAuthor(row.deployDetail) : null;
 }
 
 /** An approved version whose build or deploy failed: the one row the failure fields describe. */
 function isAuthorFailure(row: { status: string; deployState: string | null }): boolean {
   return row.status === 'approved' && row.deployState === 'failed';
+}
+
+/**
+ * Whether the caller is offered the review conversation on a history entry: a decided request,
+ * and the caller is the listing's current owner, which is who `reviewThreadDeveloperUserId`
+ * puts on the thread for every request this history lists (each is for this listing, or its
+ * first version under its slug and submitted by this owner).
+ */
+export function canConverseOnHistoryEntry(
+  status: string,
+  role: 'owner' | 'editor' | null | undefined
+): boolean {
+  return role === 'owner' && isDecidedReviewStatus(status);
 }
 
 /**
@@ -279,6 +317,7 @@ export async function listListingHistory(opts: {
         rejectionReason: true,
         approvalNotes: true,
         changelog: true,
+        reviewedBy: { select: reviewUserChipSelect },
       },
     }),
     blockWhere
@@ -298,6 +337,8 @@ export async function listListingHistory(opts: {
             deployState: true,
             deployDetail: true,
             deployUpdatedAt: true,
+            fileSummary: true,
+            reviewedBy: { select: reviewUserChipSelect },
           },
         })
       : Promise.resolve([]),
@@ -324,6 +365,7 @@ export async function listListingHistory(opts: {
         rejectionReason: string | null;
         approvalNotes: string | null;
         changelog: string | null;
+        reviewedBy: ReviewerRow;
       }) => ({
         id: r.id,
         source: 'listing' as const,
@@ -333,12 +375,15 @@ export async function listListingHistory(opts: {
         reviewedAt: r.reviewedAt,
         rejectionReason: r.rejectionReason,
         approvalNotes: r.approvalNotes,
+        reviewer: decisionReviewer(r.status, r.reviewedBy),
         changelog: r.changelog,
         deployState: null,
         deployDetail: null,
         buildSignals: null,
         deployUpdatedAt: null,
         canWithdraw: canWithdrawRequest(r.status, r.submittedByUserId, opts.userId),
+        staffSubmission: null,
+        canConverse: canConverseOnHistoryEntry(r.status, access.role),
       })
     ),
     ...blockRequests.map(
@@ -354,6 +399,8 @@ export async function listListingHistory(opts: {
         deployState: string | null;
         deployDetail: string | null;
         deployUpdatedAt: Date | null;
+        fileSummary?: unknown;
+        reviewedBy: ReviewerRow;
       }) => ({
         id: r.id,
         source: 'version' as const,
@@ -363,12 +410,15 @@ export async function listListingHistory(opts: {
         reviewedAt: r.reviewedAt,
         rejectionReason: r.rejectionReason,
         approvalNotes: r.approvalNotes,
+        reviewer: decisionReviewer(r.status, r.reviewedBy),
         changelog: null,
         deployState: r.deployState,
         deployDetail: authorFailureDetail(r),
         buildSignals: isAuthorFailure(r) ? signalsById.get(r.id) ?? null : null,
         deployUpdatedAt: r.deployUpdatedAt,
         canWithdraw: canWithdrawRequest(r.status, r.submittedByUserId, opts.userId),
+        staffSubmission: staffSubmissionOf(r.fileSummary),
+        canConverse: canConverseOnHistoryEntry(r.status, access.role),
       })
     ),
   ];
@@ -395,7 +445,14 @@ export type OrphanedSubmission = {
   reviewedAt: Date | null;
   rejectionReason: string | null;
   approvalNotes: string | null;
+  reviewer: DecisionReviewer | null;
   canWithdraw: boolean;
+  /**
+   * Whether the review conversation is offered: a decided request whose slug no listing holds.
+   * A slug another user's listing now holds puts nobody on the thread's developer side
+   * (`reviewThreadDeveloperUserId`), so the link would only answer "not found".
+   */
+  canConverse: boolean;
 };
 
 /** Display bound on the orphan group. It is a tail, not a browsable archive. */
@@ -489,20 +546,29 @@ export async function listMyOrphanedSubmissions(opts: {
       reviewedAt: true,
       rejectionReason: true,
       approvalNotes: true,
+      reviewedBy: { select: reviewUserChipSelect },
     },
   });
   if (rows.length === 0) return [];
 
   const slugs = [...new Set(rows.map((r: { slug: string }) => r.slug))];
-  const ownedWithSlug = await dbRead.appListing.findMany({
-    where: {
-      slug: { in: slugs },
-      revisionOfId: null,
-      OR: canonicalOwnerWhereBranches(opts.userId),
-    },
-    select: { slug: true },
-  });
+  const [ownedWithSlug, listedWithSlug] = await Promise.all([
+    dbRead.appListing.findMany({
+      where: {
+        slug: { in: slugs },
+        revisionOfId: null,
+        OR: canonicalOwnerWhereBranches(opts.userId),
+      },
+      select: { slug: true },
+    }),
+    // Any owner: a slug someone else's listing holds closes the thread to this submitter.
+    dbRead.appListing.findMany({
+      where: { slug: { in: slugs }, revisionOfId: null },
+      select: { slug: true },
+    }),
+  ]);
   const ownedSlugs = new Set(ownedWithSlug.map((l: { slug: string }) => l.slug));
+  const listedSlugs = new Set(listedWithSlug.map((l: { slug: string }) => l.slug));
 
   return (
     rows
@@ -519,6 +585,7 @@ export async function listMyOrphanedSubmissions(opts: {
           reviewedAt: Date | null;
           rejectionReason: string | null;
           approvalNotes: string | null;
+          reviewedBy: ReviewerRow;
         }) => ({
           id: r.id,
           slug: r.slug,
@@ -528,9 +595,11 @@ export async function listMyOrphanedSubmissions(opts: {
           reviewedAt: r.reviewedAt,
           rejectionReason: r.rejectionReason,
           approvalNotes: r.approvalNotes,
+          reviewer: decisionReviewer(r.status, r.reviewedBy),
           // Always the submitter here, by construction — but routed through the SAME helper
           // the app-keyed entries use, so the pending-only half of the rule has one home.
           canWithdraw: canWithdrawRequest(r.status, opts.userId, opts.userId),
+          canConverse: isDecidedReviewStatus(r.status) && !listedSlugs.has(r.slug),
         })
       )
   );

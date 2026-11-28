@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import path from 'node:path';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as EndpointHelpers from '~/server/utils/endpoint-helpers';
 
 /**
@@ -62,8 +62,9 @@ vi.mock('~/server/services/moderator-grants', () => ({
   hasModeratorGrant: (...a: unknown[]) => hasModeratorGrant(...a),
 }));
 
-import handler from '~/pages/api/mod/user/delete';
-import { LegalHoldError, LegalHoldUnconfirmedError } from '~/server/services/legal-hold.service';
+import { Prisma } from '@prisma/client';
+import handler from '~/server/api-routes/mod/user/delete';
+import { appealOwnerHash } from '~/server/jobs/appeal-decision-records';
 import {
   GENERIC_SERVER_ERROR_MESSAGE,
   REST_ERROR_CODE,
@@ -188,6 +189,7 @@ describe('user.delete — it delegates, it does not reimplement', () => {
       removeImages: false,
       // Defaulted, not absent: support-led erasure keeps app data unless it asks.
       removeAppData: false,
+      actorId: 990000007,
     });
     expect(body).toEqual({ deleted: true, userId: TARGET, auditRecorded: true });
   });
@@ -205,6 +207,7 @@ describe('user.delete — it delegates, it does not reimplement', () => {
       removeModels: undefined,
       removeImages: false,
       removeAppData: true,
+      actorId: 990000007,
     });
   });
 
@@ -233,6 +236,7 @@ describe('user.delete — it delegates, it does not reimplement', () => {
       // Defaulted, not absent — see the grace-period case below.
       removeImages: false,
       removeAppData: false,
+      actorId: 990000007,
     });
   });
 
@@ -471,7 +475,7 @@ describe('user.delete — API keys', () => {
   // The refusals here come from `defineModeratorEndpoint`'s credential rule, pinned in
   // `moderator-rest-wrappers.credential-requirements.test.ts`. These cases hold this route to it.
   const MODERATOR = { id: 990000007, isModerator: true, permissions: [], bannedAt: null };
-  const asBearer = (tokenScope: number) => {
+  const asBearer = (tokenScope: bigint) => {
     bearerSession.value = { user: MODERATOR, ...PERSONAL_KEY, tokenScope };
     return call({ userId: TARGET, username: NAME }, { authorization: 'Bearer key' });
   };
@@ -543,51 +547,8 @@ describe('user.delete — the retry path, after a deletion reported as failed', 
   });
 });
 
-describe('user.delete — an account under a legal hold', () => {
-  it('refuses with the neutral text and records no deletion', async () => {
-    deleteUser.mockRejectedValueOnce(new LegalHoldError());
-
-    const { status, body } = await call({ userId: TARGET, username: NAME });
-
-    expect(status).toBe(403);
-    expect(body).toMatchObject({ message: 'Account under legal hold; contact Legal.' });
-    expect(trackModActivity).not.toHaveBeenCalled();
-    expect(mockUserActivity).not.toHaveBeenCalled();
-  });
-
-  /** The moderator app's body reader and refusal texts, loaded by path across the app boundary. */
-  const moderatorSide = async () => {
-    const lib = path.resolve(__dirname, '../../../../../..', 'apps/moderator/src/lib');
-    const { restErrorReason } = (await import(
-      /* @vite-ignore */ `${lib}/server/rest-error-reason.ts`
-    )) as { restErrorReason: (body: unknown, status: number) => string | null };
-    const texts = (await import(/* @vite-ignore */ `${lib}/legal-hold.ts`)) as Record<
-      string,
-      string
-    >;
-    return { restErrorReason, ...texts };
-  };
-
-  it.each([
-    ['a hold', () => new LegalHoldError(), 'LEGAL_HOLD_REFUSAL'],
-    [
-      'a hold status it could not read',
-      () => new LegalHoldUnconfirmedError(),
-      'HOLD_UNKNOWN_REFUSAL',
-    ],
-  ])('refuses %s with the text the moderator app maps it by', async (_, error, refusal) => {
-    deleteUser.mockRejectedValueOnce(error());
-    const moderator = await moderatorSide();
-
-    const { status, body } = await call({ userId: TARGET, username: NAME });
-
-    expect(status).toBe(403);
-    expect(moderator[refusal]).toEqual(expect.any(String));
-    expect(moderator.restErrorReason(body, status)).toBe(moderator[refusal]);
-  });
-
-  // THE CONTROL: any other failure is not reported as a hold.
-  it('does not dress up another failure as a hold', async () => {
+describe('user.delete — a failed deletion', () => {
+  it('answers 500 with the generic error body', async () => {
     deleteUser.mockRejectedValueOnce(new Error('boom'));
 
     const { status, body } = await call({ userId: TARGET, username: NAME });
@@ -596,5 +557,74 @@ describe('user.delete — an account under a legal hold', () => {
     expect(body).toEqual(
       restErrorBody(REST_ERROR_CODE.INTERNAL_SERVER_ERROR, GENERIC_SERVER_ERROR_MESSAGE)
     );
+  });
+});
+
+describe('user.delete — appeal training copies', () => {
+  // The record delete is the one statement against "AppealDecisionRecord"; the behavior tests in
+  // appeal-training-copy.behavior.test.ts run it against a real database.
+  const recordDeletes = () =>
+    vi
+      .mocked(dbMock.dbWrite.$queryRaw)
+      .mock.calls.map(([strings, ...values]) =>
+        Prisma.sql(strings as unknown as readonly string[], ...values)
+      )
+      .filter((sql) => sql.text.includes('DELETE FROM "AppealDecisionRecord"'));
+  const appealFailures = () =>
+    vi
+      .mocked(loggingMock.logToAxiom)
+      .mock.calls.map(([entry]) => entry as { name?: string; message?: string })
+      .filter((entry) => entry.name === 'mod-delete-appeal-copies-failed');
+  const deleted = [{ swept: 0, labels: 0, keys: [] }];
+
+  it("removes an immediately erased account's appeal records once the account is deleted", async () => {
+    const order: string[] = [];
+    deleteUser.mockImplementationOnce(async () => (order.push('deleteUser'), {}));
+    vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation(
+      (async () => (order.push('appeal'), deleted)) as never
+    );
+
+    expect(
+      (await call({ userId: String(TARGET), username: NAME, removeImages: true })).status
+    ).toBe(200);
+    const [sql, ...more] = recordDeletes();
+    expect(more).toEqual([]);
+    expect(sql.values).toContainEqual([TARGET]);
+    expect(order).toEqual(['deleteUser', 'appeal']);
+    expect(appealFailures()).toEqual([]);
+  });
+
+  it('does not touch them when the deletion is refused', async () => {
+    expect(
+      (await call({ userId: String(TARGET), username: 'someone_else', removeImages: true })).status
+    ).toBe(400);
+    expect(recordDeletes()).toEqual([]);
+  });
+
+  it('leaves them to the nightly sweep for a grace deletion, which a restore can undo', async () => {
+    expect(
+      (await call({ userId: String(TARGET), username: NAME, removeImages: false })).status
+    ).toBe(200);
+    expect(recordDeletes()).toEqual([]);
+  });
+
+  it('still reports the erasure when the cleanup fails, and logs the owner hash, not the id', async () => {
+    setEnv({ APPEAL_OWNER_HASH_KEY: 'test-owner-hash-key' });
+    vi.mocked(dbMock.dbWrite.$queryRaw).mockRejectedValue(new Error('db down'));
+
+    const { status, body } = await call({
+      userId: String(TARGET),
+      username: NAME,
+      removeImages: true,
+    });
+
+    expect(status).toBe(200);
+    expect(body).toEqual({ deleted: true, userId: TARGET, auditRecorded: true });
+    const hash = appealOwnerHash(TARGET);
+    expect(hash).toMatch(/^[0-9a-f]{16,}$/);
+    expect(appealFailures()).toEqual([
+      expect.objectContaining({ message: `owner ${hash}: db down` }),
+    ]);
+    expect(JSON.stringify(appealFailures())).not.toContain(String(TARGET));
   });
 });

@@ -21,3 +21,4 @@ export {
 } from './personalDataExport.email';
 export { klein9bNoticeEmail } from './klein9bNotice.email';
 export { notificationEmail } from './notification.email';
+export { missedNotificationsDigestEmail } from './missedNotificationsDigest.email';

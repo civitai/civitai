@@ -1,3 +1,4 @@
+import { MIN_MANAGED_PROFANITY_ENTRIES } from '@civitai/mod-utils/profanity/word-rules';
 // FIXED order — this is the tab order, not an alphabetical sort; changing it moves tabs under
 // people. (Blocklist.type is a plain string column — no shared DB enum to import.)
 export const BLOCKLIST_TYPES = [
@@ -13,6 +14,7 @@ export const BLOCKLIST_TYPES = [
   'AppProtectedBrandTerm',
   'SemanticSearchPoiRefuse',
   'SemanticSearchMinorSafe',
+  'ProfanityWord',
 ] as const;
 
 /** The semantic search query rule types, read by the main app's query audit. */
@@ -64,7 +66,7 @@ export const BLOCKLIST_DESCRIPTIONS: Partial<Record<BlocklistType, string>> = {
     'Same as Prompt Benign Phrase, but matched against the negative prompt — e.g. "mature content". Use for boilerplate negatives that trip the minor audit.' +
     PHRASE_GAP_RULE,
   ProfanityBenignWord:
-    'Single words that innocently contain a profanity token — "spreadsheet" contains "spread", "cockpit" contains "cock". The whole word is exempted from the profanity filter. One word per entry — an entry with a space or punctuation in it can never match, so it is refused. This list REPLACES the one shipped with the site (it was seeded from it), so removing an entry here really does remove it. Applies to search; the generation gate still uses the shipped list.' +
+    'Single words that innocently contain a profanity token — "spreadsheet" contains "spread", "cockpit" contains "cock". The whole word is exempted from the profanity filter. One word per entry — an entry with a space or punctuation in it can never match, so it is refused. This list REPLACES the one shipped with the site (it was seeded from it), so removing an entry here really does remove it. Applies wherever the managed profanity list does; the re-audit of recorded generation prompts keeps the shipped list.' +
     ' A few tokens are also exempt in code regardless of this list, because' +
     " obscenity's own patterns match them more broadly than the word they stand for (see LIBRARY_OVERMATCH_TOKENS)." +
     ' That exemption covers flagging, not the censoring of already-published text, and cannot be changed from here.',
@@ -79,6 +81,13 @@ export const BLOCKLIST_DESCRIPTIONS: Partial<Record<BlocklistType, string>> = {
     ' for everyone but moderators, and refused for moderators. Matched as whole words, plurals' +
     ' included, case-insensitive. Use the dry run below to check a query; changes apply within a few' +
     ' minutes.',
+  ProfanityWord:
+    'Words the profanity filter flags on civitai.com: masked in comments, reviews and chat, refused in search, and checked by model and bounty auto-NSFW and app shared-data moderation. The generation gate does not use it; the orchestrator rates prompts. This list REPLACES the one shipped with the site (it was seeded from it), so removing an entry really removes it.' +
+    " It is the only source: the filter library's own built-in English words do not apply alongside it, so a word missing here is not blocked." +
+    ` It must keep at least ${MIN_MANAGED_PROFANITY_ENTRIES} usable entries: a removal below that is refused, and a list below it is ignored in favour of the shipped one.` +
+    ' Matching is inside words too, so a short entry can mask parts of many ordinary words: an entry needs at least 4 letters, or 3 with | at its start or end or when it is on the shipped list; wrap it in | (as in |word|) to match it only as a whole word.' +
+    ' Entries are publicly readable, like the shipped list: never add names, handles or other personal details.' +
+    ' Server checks pick up a change within a few minutes. A model or bounty an entry marked NSFW stays marked after the entry is removed.',
   AppProtectedBrandTerm:
     'Brand, product and company names that flag an app. The agent review flags a submission whose' +
     ' name or slug contains one (look-alike spellings included) and sends it to the normal review' +

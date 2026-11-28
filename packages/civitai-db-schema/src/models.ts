@@ -56,7 +56,7 @@ export type ModelVersionSponsorshipSettingsType = "FixedPrice" | "Bidding";
 
 export type ModelVersionMonetizationType = "PaidAccess" | "PaidEarlyAccess" | "PaidGeneration" | "CivitaiClubOnly" | "MySubscribersOnly" | "Sponsored";
 
-export type LicensingFeeType = "PerImageBuzz";
+export type LicensingFeeType = "PerImageBuzz" | "PercentOfCompute";
 
 export type LicensingFeeSettlementCurrency = "Buzz" | "Cash";
 
@@ -108,13 +108,13 @@ export type PartnerPricingModel = "Duration" | "PerImage";
 
 export type ApiKeyType = "System" | "User" | "Access" | "Refresh" | "Worker";
 
-export type CommentEntityType = "model" | "image" | "post" | "article" | "review" | "bounty" | "bountyEntry" | "comicChapter" | "challenge" | "model3d" | "model3dReview" | "appListing" | "crucible" | "storyline" | "postText";
+export type CommentEntityType = "model" | "image" | "post" | "article" | "review" | "bounty" | "bountyEntry" | "comicChapter" | "challenge" | "model3d" | "model3dReview" | "appListing" | "crucible" | "storyline" | "postText" | "featurePage";
 
 export type TagEngagementType = "Hide" | "Follow" | "Allow";
 
 export type DomainColor = "red" | "green" | "blue" | "all";
 
-export type CosmeticType = "Badge" | "NamePlate" | "ContentDecoration" | "ProfileDecoration" | "ProfileBackground" | "Sticker" | "ChatTheme" | "CardDecoration";
+export type CosmeticType = "Badge" | "NamePlate" | "ContentDecoration" | "ProfileDecoration" | "ProfileBackground" | "Sticker" | "ChatTheme" | "CardDecoration" | "SidebarBackground";
 
 export type CosmeticSource = "Trophy" | "Purchase" | "Event" | "Membership" | "Claim";
 
@@ -186,7 +186,7 @@ export type PurchasableRewardUsage = "SingleUse" | "MultiUse";
 
 export type EntityType = "Image" | "Post" | "Article" | "Bounty" | "BountyEntry" | "ModelVersion" | "Model" | "Collection" | "Comment" | "CommentV2" | "CommentV3" | "User" | "UserProfile" | "ResourceReview" | "ChatMessage" | "Model3D" | "Storyline";
 
-export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty" | "ModerationRequest" | "BlockedImageDelete" | "ImageScan" | "ReplacedImageDelete" | "ImageStorageDelete" | "CdnAccessSync" | "ImageCdnPersistRetry" | "CsamArchive";
+export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty" | "ModerationRequest" | "BlockedImageDelete" | "ImageScan" | "ReplacedImageDelete" | "ImageStorageDelete" | "ImageDelete" | "CdnAccessSync" | "ImageCdnPersistRetry" | "CsamArchive" | "PendingDelete";
 
 export type VaultItemStatus = "Pending" | "Stored" | "Failed";
 
@@ -242,7 +242,7 @@ export type ComicGenre = "Action" | "Adventure" | "Comedy" | "Drama" | "Fantasy"
 
 export type UserRestrictionStatus = "Pending" | "Upheld" | "Overturned" | "AccountDeleted";
 
-export type StrikeReason = "BlockedContent" | "RealisticMinorContent" | "CSAMContent" | "TOSViolation" | "HarassmentContent" | "ProhibitedContent" | "ManualModAction" | "Scam";
+export type StrikeReason = "BlockedContent" | "RealisticMinorContent" | "CSAMContent" | "TOSViolation" | "HarassmentContent" | "ProhibitedContent" | "ManualModAction" | "Scam" | "Copyright";
 
 export type StrikeStatus = "Active" | "Expired" | "Voided";
 
@@ -274,11 +274,13 @@ export type ServiceOfferingIngestionStatus = "Pending" | "Scanned" | "Blocked" |
 
 export type ServicePreviewKind = "Image" | "Video" | "SampleOutputs" | "None";
 
+export type ServiceLicensePreset = "Personal" | "CommercialCredit" | "CommercialNoCredit" | "Custom";
+
 export type ServiceBuzzType = "yellow" | "blue" | "green";
 
 export type ServiceDealStatus = "Requested" | "Accepted" | "Delivered" | "InRevision" | "Completed" | "Declined" | "Expired" | "CancellationRequested" | "Cancelled" | "Disputed";
 
-export type ServiceDealEventType = "Requested" | "Accepted" | "Declined" | "Expired" | "Delivered" | "RevisionRequested" | "Completed" | "CancellationRequested" | "CancellationAccepted" | "CancellationDeclined" | "Cancelled" | "Disputed" | "DisputeResolved" | "DeadlineExtended" | "Held" | "Released" | "Refunded";
+export type ServiceDealEventType = "Requested" | "Accepted" | "Declined" | "Expired" | "Delivered" | "RevisionRequested" | "Completed" | "CancellationRequested" | "CancellationAccepted" | "CancellationDeclined" | "Cancelled" | "Disputed" | "DisputeResolved" | "DeadlineExtended" | "Held" | "Released" | "Refunded" | "ReviewedHappy";
 
 export type ServiceDealFileKind = "Preview" | "Final" | "Attachment";
 
@@ -289,6 +291,8 @@ export type ServiceDealFileScanStatus = "Pending" | "Passed" | "Failed" | "NotSc
 export type ServiceDisputeResolution = "Refund" | "Release";
 
 export type ServiceDealLeg = "Hold" | "Release" | "Fee" | "Refund";
+
+export type ServiceDealReviewVerdict = "Happy" | "NotQuite";
 
 export type UserHubSourceType = "User" | "Model" | "ModelVersion" | "Collection" | "Tag";
 
@@ -734,6 +738,7 @@ export interface User {
   blockGoodPurchasesAsAppOwner?: BlockGoodPurchase[];
   blockGoodEntitlements?: BlockGoodEntitlement[];
   publishRequestsSubmitted?: AppBlockPublishRequest[];
+  appAssistantSessionLinks?: AppAssistantSessionLink[];
   publishRequestsReviewed?: AppBlockPublishRequest[];
   blockScopeInvocations?: BlockScopeInvocation[];
   appUserScopeGrants?: AppUserScopeGrant[];
@@ -745,6 +750,7 @@ export interface User {
   appListingReportsReported?: AppListingReport[];
   appListingReportsResolved?: AppListingReport[];
   appListingModerationEvents?: AppListingModerationEvent[];
+  appReviewMessagesAuthored?: AppReviewMessage[];
   appSubListingsAuthored?: AppSubListing[];
   appSubListingsModerated?: AppSubListing[];
   appCollaboratorSeats?: AppCollaborator[];
@@ -1124,6 +1130,7 @@ export interface ModelVersionShowcaseItem {
   source: string;
   position: number | null;
   excluded: boolean;
+  removed: boolean;
   addedById: number;
   createdAt: Date;
 }
@@ -1185,6 +1192,9 @@ export interface ModelVersion {
   licensingFee: Decimal | null;
   licensingFeeType: LicensingFeeType | null;
   licensingFeeSettlementCurrency: LicensingFeeSettlementCurrency | null;
+  licensingFeeMarkup: Decimal | null;
+  licensingFeeLocked: boolean;
+  licensingFeePaidByInvoice: boolean;
   licensingSourceVersionId: number | null;
   licensingSource?: ModelVersion | null;
   monetization?: ModelVersionMonetization | null;
@@ -1221,6 +1231,7 @@ export interface LicensingRoot {
   modelVersionId: number;
   modelVersion?: ModelVersion;
   isDefault: boolean;
+  restricted: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -1455,6 +1466,7 @@ export interface Report {
   gameFrameGame?: GameFrameGameReport | null;
   serviceOffering?: ServiceOfferingReport | null;
   postText?: PostTextReport | null;
+  serviceDealReview?: ServiceDealReviewReport | null;
   gameFrameReceipts?: GameFrameReportReceipt[];
 }
 
@@ -1533,24 +1545,6 @@ export interface ComicProjectReport {
   comicProject?: ComicProject;
   reportId: number;
   report?: Report;
-}
-
-export interface HeldResourceReview {
-  id: number;
-  modelId: number;
-  modelVersionId: number;
-  userId: number;
-  rating: number;
-  recommended: boolean;
-  details: string | null;
-  exclude: boolean;
-  nsfw: boolean;
-  tosViolation: boolean;
-  metadata: JsonValue | null;
-  createdAt: Date;
-  updatedAt: Date;
-  heldAt: Date;
-  holdReasons: string[];
 }
 
 export interface ResourceReview {
@@ -1749,6 +1743,7 @@ export interface Image {
   minor: boolean;
   poi: boolean;
   acceptableMinor: boolean;
+  modelRestricted: boolean;
   reports?: ImageReport[];
   reactions?: ImageReaction[];
   tags?: TagsOnImageDetails[];
@@ -1763,6 +1758,8 @@ export interface Image {
   connections?: ImageConnection[];
   UserProfile?: UserProfile[];
   userProfileSfwCover?: UserProfile[];
+  userProfileBackground?: UserProfile[];
+  userProfileSfwBackground?: UserProfile[];
   announcementCovers?: Announcement[];
   clubCover?: Club[];
   clubHeader?: Club[];
@@ -1797,6 +1794,7 @@ export interface Image {
   crucibles?: Crucible[];
   crucibleHeroes?: Crucible[];
   serviceOfferingCovers?: ServiceOffering[];
+  serviceDealReviewImage?: ServiceDealReviewImage | null;
   crucibleEntries?: CrucibleEntry[];
   storylineCovers?: Storyline[];
   storylineHeroes?: Storyline[];
@@ -2216,6 +2214,7 @@ export interface AppAccessRequest {
   reviewedAt: Date | null;
   reviewedById: number | null;
   reviewedBy?: User | null;
+  reviewSource: string | null;
 }
 
 export interface ApiKey {
@@ -2223,6 +2222,7 @@ export interface ApiKey {
   key: string;
   name: string;
   tokenScope: number;
+  tokenScopeWide: bigint | null;
   userId: number;
   user?: User;
   createdAt: Date;
@@ -2245,7 +2245,7 @@ export interface OauthClient {
   redirectUris: string[];
   allowedOrigins: string[];
   grants: string[];
-  allowedScopes: number;
+  allowedScopes: bigint;
   isConfidential: boolean;
   accessMode: string;
   skipConsent: boolean;
@@ -2438,6 +2438,8 @@ export interface AppBlockPublishRequest {
   deployUpdatedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
+  assistantTrace?: AppPublishRequestTrace | null;
+  reviewMessages?: AppReviewMessage[];
 }
 
 export interface AppBlockBuildAttempt {
@@ -2451,6 +2453,48 @@ export interface AppBlockBuildAttempt {
   failedStep: string | null;
   failedReason: string | null;
   failureClass: string | null;
+  createdAt: Date;
+}
+
+export interface AppAssistantSessionLink {
+  id: number;
+  userId: number;
+  user?: User;
+  conversationId: string;
+  appSlug: string;
+  firstSeenAt: Date;
+  lastSeenAt: Date;
+  turnCount: number;
+  lastModel: string | null;
+  buzzTotal: number;
+  lastRunId: string | null;
+}
+
+export interface AppPublishRequestTrace {
+  id: number;
+  publishRequestId: string;
+  publishRequest?: AppBlockPublishRequest;
+  slug: string;
+  userId: number;
+  conversationIds: string[];
+  snapshots: JsonValue;
+  signals: JsonValue;
+  signalsVersion: number;
+  snapshotError: string | null;
+  createdAt: Date;
+}
+
+export interface AppReviewMessage {
+  id: number;
+  publishRequestId: string | null;
+  publishRequest?: AppBlockPublishRequest | null;
+  listingPublishRequestId: string | null;
+  listingPublishRequest?: AppListingPublishRequest | null;
+  authorUserId: number | null;
+  author?: User | null;
+  authorRole: string;
+  body: string;
+  recipientUserId: number | null;
   createdAt: Date;
 }
 
@@ -2585,6 +2629,7 @@ export interface AppListingPublishRequest {
   changelog: string | null;
   createdAt: Date;
   updatedAt: Date;
+  reviewMessages?: AppReviewMessage[];
 }
 
 export interface AppListingReport {
@@ -2682,10 +2727,20 @@ export interface AppReviewAgentReport {
   priorReportId: string | null;
   priorReport?: AppReviewAgentReport | null;
   nextReports?: AppReviewAgentReport[];
+  civitaiCheck?: AppReviewAgentReportCheck | null;
   tokenUsage: JsonValue | null;
   costUsd: Decimal | null;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface AppReviewAgentReportCheck {
+  reportId: string;
+  report?: AppReviewAgentReport;
+  publishRequestId: string;
+  checks: JsonValue;
+  fingerprint: string;
+  createdAt: Date;
 }
 
 export interface BlockUserSettings {
@@ -2982,7 +3037,7 @@ export interface OauthConsent {
   user?: User;
   clientId: string;
   client?: OauthClient;
-  scope: number;
+  scope: bigint;
   buzzLimit: JsonValue | null;
   createdAt: Date;
   updatedAt: Date;
@@ -3145,6 +3200,49 @@ export interface AnswerMetric {
   commentCount: number;
 }
 
+export interface FeaturePageTopic {
+  id: number;
+  urn: string;
+  kind: string;
+  createdAt: Date;
+}
+
+export interface FeaturePageCommentMirror {
+  commentId: number;
+  userId: number;
+  requestId: string;
+  urn: string | null;
+  goneCause: string | null;
+  version: number;
+  pushedState: string | null;
+  pushedDigest: string | null;
+  platformDigest: string | null;
+  pendingDigest: string | null;
+  pushAttempts: number;
+  scanAttempts: number;
+  scanHash: string | null;
+  editRequestIds: string[];
+  postAttemptedAt: Date | null;
+  postSeq: number;
+  goneAt: Date | null;
+  subjectMissingAt: Date | null;
+  contentAt: Date;
+  removeWantedAt: Date | null;
+  restrictedAt: Date | null;
+  scanHiddenAt: Date | null;
+  scanHiddenVersion: number | null;
+  scanHideReportId: number | null;
+  modHideSentAt: Date | null;
+  modHideOrigin: string | null;
+  liftGrantedAt: Date | null;
+  liftGrantedBy: number | null;
+  liftGrantedVersion: number | null;
+  nextPushAt: Date | null;
+  leaseUntil: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface CommentTopic {
   entityType: CommentEntityType;
   entityId: number;
@@ -3174,6 +3272,7 @@ export interface CommentV3 {
   deletedAt: Date | null;
   tosViolation: boolean;
   hidden: boolean;
+  hiddenAt: Date | null;
   locked: boolean;
   pinnedAt: Date | null;
   reactionCount: number;
@@ -4280,52 +4379,6 @@ export interface PersonalDataExport {
   requestedAt: Date | null;
 }
 
-export interface EvidenceHold {
-  id: number;
-  userId: number;
-  csamReportId: number | null;
-  role: string;
-  reportSentAt: Date | null;
-  releaseAt: Date | null;
-  extendedUntil: Date | null;
-  extensionRequestedBy: string | null;
-  extensionReference: string | null;
-  reason: string;
-  createdAt: Date;
-  createdById: number | null;
-  releasedAt: Date | null;
-  releasedById: number | null;
-  releaseReason: string | null;
-}
-
-export interface EvidenceHoldImage {
-  imageId: number;
-  userId: number;
-  postId: number | null;
-  keptAt: Date;
-  priorIngestion: string | null;
-  priorBlockedFor: string | null;
-  priorNsfwLevel: number | null;
-}
-
-export interface EvidenceHoldPost {
-  postId: number;
-  userId: number;
-  title: string | null;
-  detail: string | null;
-  createdAt: Date | null;
-  publishedAt: Date | null;
-  modelVersionId: number | null;
-  collectionId: number | null;
-  metadata: JsonValue | null;
-  keptAt: Date;
-}
-
-export interface EvidenceHeldUser {
-  userId: number;
-  heldUntil: Date | null;
-}
-
 export interface Link {
   id: number;
   url: string;
@@ -5020,6 +5073,7 @@ export interface ScanLabelClaim {
   userId: number;
   expiresAt: Date;
   token: string | null;
+  releasedAt: Date | null;
 }
 
 export interface ScanLabelCopyObject {
@@ -5259,6 +5313,7 @@ export interface KnightsQueueItem {
   noEffect: string | null;
   meta: JsonValue | null;
   voteCount: number;
+  verdictLabelledValue: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -5292,6 +5347,23 @@ export interface KnightsPlayer {
   recapDismissedFor: Date | null;
   startAtSeen: Date | null;
   recapPopupOptOut: boolean;
+  yesNoQuestions: boolean | null;
+  hiddenTagGroups: string[];
+}
+
+export interface KnightsUnsure {
+  id: bigint;
+  playerId: number;
+  itemId: number | null;
+  yesNoReferenceId: number | null;
+  questionKey: string;
+  imageId: number;
+  createdAt: Date;
+}
+
+export interface KnightsLegacyPlayerDay {
+  playerId: number;
+  day: Date;
 }
 
 export interface KnightsPlayerDay {
@@ -5339,6 +5411,28 @@ export interface KnightsReferenceImage {
   failures: number;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface KnightsInquisitorReview {
+  id: number;
+  queueItemId: number;
+  imageId: number;
+  questionKey: string;
+  consensusValue: string;
+  status: string;
+  confirmedValue: string | null;
+  claimedBy: number | null;
+  claimExpiresAt: Date | null;
+  createdAt: Date;
+  closedAt: Date | null;
+  checkedAt: Date | null;
+}
+
+export interface KnightsInquisitorVote {
+  reviewId: number;
+  moderatorId: number;
+  answer: string;
+  createdAt: Date;
 }
 
 export interface KnightsYesNoReference {
@@ -6159,6 +6253,13 @@ export interface UserProfile {
   profileSectionsSettings: JsonValue;
   showcaseItems: JsonValue;
   showcaseSections: JsonValue;
+  backgroundImageId: number | null;
+  backgroundImage?: Image | null;
+  sfwBackgroundImageId: number | null;
+  sfwBackgroundImage?: Image | null;
+  pageTheme: JsonValue | null;
+  pinnedItems: JsonValue;
+  about: string | null;
 }
 
 export interface BountyStat {
@@ -7133,16 +7234,28 @@ export interface ServiceOffering {
   deliveryDays: number;
   revisionsIncluded: number;
   maxOpenDeals: number | null;
+  licensePreset: ServiceLicensePreset | null;
+  licenseCustomText: string | null;
+  licenseAllowResale: boolean;
   status: ServiceOfferingStatus;
   removedReason: string | null;
   removedDetails: string | null;
   removedAt: Date | null;
   removedById: number | null;
   sellerAffirmation: JsonValue | null;
+  allowReviewWork: boolean;
+  requestForm: JsonValue | null;
+  requestFormVersion: number;
+  fromPrice: number | null;
+  happyCount: number;
+  reviewCount: number;
+  happySortKey: number;
   createdAt: Date;
   updatedAt: Date;
   deals?: ServiceDeal[];
   reports?: ServiceOfferingReport[];
+  reviews?: ServiceDealReview[];
+  reviewReports?: ServiceDealReviewReport[];
 }
 
 export interface ServiceOfferingReport {
@@ -7167,12 +7280,21 @@ export interface ServiceDeal {
   revisionsUsed: number;
   deliveryDays: number;
   previewKind: ServicePreviewKind;
+  licensePreset: ServiceLicensePreset | null;
+  licenseCustomText: string | null;
+  licenseAllowResale: boolean;
+  licenseAgreedAt: Date | null;
+  buyerDisclosureVersion: string | null;
+  buyerDisclosureLines: string[];
   maxNsfwLevel: number;
   status: ServiceDealStatus;
   heldAt: Date | null;
   settledAt: Date | null;
   chatId: number | null;
   requestText: string;
+  formVersion: number | null;
+  formAnswers: JsonValue | null;
+  priceBreakdown: JsonValue | null;
   requestedAt: Date;
   acceptedAt: Date | null;
   dueAt: Date | null;
@@ -7189,9 +7311,11 @@ export interface ServiceDeal {
   disputeResolvedById: number | null;
   closedAt: Date | null;
   closeReason: string | null;
+  reviewEnabledAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
   events?: ServiceDealEvent[];
+  review?: ServiceDealReview | null;
   files?: ServiceDealFile[];
   transactions?: ServiceDealTransaction[];
   disputeReviews?: ServiceDisputeReview[];
@@ -7214,6 +7338,50 @@ export interface ServiceDisputeReview {
   createdAt: Date;
 }
 
+export interface ServiceDealReview {
+  id: number;
+  dealId: number;
+  deal?: ServiceDeal;
+  offeringId: number;
+  offering?: ServiceOffering;
+  sellerId: number;
+  buyerId: number;
+  verdict: ServiceDealReviewVerdict;
+  comment: string | null;
+  scanStatus: ServiceOfferingIngestionStatus;
+  scanWorkflowId: string | null;
+  publishedAt: Date | null;
+  editableUntil: Date;
+  sellerReply: string | null;
+  sellerReplyAt: Date | null;
+  sellerReplyScanStatus: ServiceOfferingIngestionStatus | null;
+  sellerReplyScanWorkflowId: string | null;
+  hiddenAt: Date | null;
+  hiddenById: number | null;
+  createdAt: Date;
+  updatedAt: Date;
+  images?: ServiceDealReviewImage[];
+  reports?: ServiceDealReviewReport[];
+}
+
+export interface ServiceDealReviewReport {
+  reportId: number;
+  report?: Report;
+  serviceDealReviewId: number;
+  serviceDealReview?: ServiceDealReview;
+  serviceOfferingId: number;
+  serviceOffering?: ServiceOffering;
+}
+
+export interface ServiceDealReviewImage {
+  reviewId: number;
+  review?: ServiceDealReview;
+  imageId: number;
+  image?: Image;
+  sourceFileId: number | null;
+  sourceFile?: ServiceDealFile | null;
+}
+
 export interface ServiceDealEvent {
   id: number;
   dealId: number;
@@ -7224,6 +7392,15 @@ export interface ServiceDealEvent {
   comment: string | null;
   reasonCode: string | null;
   createdAt: Date;
+}
+
+export interface ServiceDealFilePurge {
+  id: number;
+  fileId: number;
+  dealId: number;
+  size: number;
+  etag: string | null;
+  purgedAt: Date;
 }
 
 export interface ServiceDealFile {
@@ -7254,10 +7431,13 @@ export interface ServiceDealFile {
   deliveryKey: string | null;
   deliverySize: number | null;
   repackedAt: Date | null;
+  scannedEtag: string | null;
+  scannedVersionId: string | null;
   attestedAt: Date | null;
   removedAt: Date | null;
   createdAt: Date;
   entries?: ServiceDealFileEntry[];
+  reviewImages?: ServiceDealReviewImage[];
 }
 
 export interface ServiceDealFileEntry {
@@ -7274,6 +7454,7 @@ export interface ServiceDealFileEntry {
   scanStatus: ServiceDealFileScanStatus;
   failReason: string | null;
   createdAt: Date;
+  copyDeleteStartedAt: Date | null;
 }
 
 export interface ServiceDealTransaction {

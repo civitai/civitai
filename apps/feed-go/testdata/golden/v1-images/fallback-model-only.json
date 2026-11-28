@@ -1,6 +1,6 @@
 {
   "name": "fallback-model-only",
-  "description": "A `modelId` without a version takes the legacy Postgres path.",
+  "description": "A `modelId` without a version with FEED_GO_V1_IMAGES_SERVE_MODEL_ONLY off: the shape falls back as before its port.",
   "now": "2026-06-15T12:00:00.000Z",
   "config": {
     "imageLocation": "https://image.example.test/golden"
@@ -47,6 +47,14 @@
       {
         "id": 6401,
         "modelId": 5005
+      },
+      {
+        "id": 6501,
+        "modelId": 5006
+      },
+      {
+        "id": 6701,
+        "modelId": 5007
       }
     ],
     "models": [
@@ -84,6 +92,22 @@
       },
       {
         "id": 5005,
+        "userId": 1002,
+        "mode": null,
+        "minor": false,
+        "sfwOnly": false,
+        "galleryLevel": null
+      },
+      {
+        "id": 5006,
+        "userId": 1001,
+        "mode": null,
+        "minor": false,
+        "sfwOnly": false,
+        "galleryLevel": null
+      },
+      {
+        "id": 5007,
         "userId": 1002,
         "mode": null,
         "minor": false,
@@ -186,6 +210,12 @@
       {
         "id": 1004,
         "username": "mod_four",
+        "image": null,
+        "deletedAt": null
+      },
+      {
+        "id": -1,
+        "username": "golden_system",
         "image": null,
         "deletedAt": null
       }

@@ -1,4 +1,4 @@
-import { Badge, Card, Grid, Group, Stack, Text } from '@mantine/core';
+import { Badge, Card, Grid, Group, Spoiler, Stack, Text } from '@mantine/core';
 import { IconAlertTriangle, IconKey } from '@tabler/icons-react';
 import {
   ManifestScopeRow,
@@ -7,32 +7,34 @@ import {
   ReviewPreviewSection,
   type OnsiteReviewSelection,
 } from '~/components/Apps/OnsiteReviewModal';
-import { ReviewListingMedia } from '~/components/Apps/ReviewListingMedia';
+import { ReviewConsoleSummary } from '~/components/Apps/ReviewConsole';
+import { ReviewListingMediaLive } from '~/components/Apps/ReviewListingMediaLive';
 import { groupBlockScopes } from '~/components/Apps/listingPermissions';
 import { manifestScopes } from '~/components/Apps/reviewQueueSignals';
 import { appDisplayName } from '~/shared/utils/app-display-name';
 
 /**
  * The review page's OVERVIEW tab — the default — composing the decision signals for one
- * submission on ONE screen: the agentic review's finding counts, the requested permissions (sensitive
- * ones with the developer's justification), the running app, and the store art.
+ * submission on ONE screen: what the app says it is (tagline + description, from the manifest),
+ * the agentic review's findings, the requested permissions (sensitive ones with the developer's
+ * justification), the running app, and the store art.
  *
- * 🔴 EVERY PIECE IS THE SHARED ONE. The AI finding counts are `ReviewAgentSection variant="summary"` (its
+ * 🔴 EVERY PIECE IS THE SHARED ONE. The AI findings are `ReviewAgentSection variant="summary"` (its
  * gate included), the sensitive rows are `ManifestScopeRow`, the preview is
  * `ReviewPreviewSection`, the art is `ReviewListingMedia`. The other tabs are the evidence
  * behind each signal; nothing here is a second implementation of them.
- *
- * Layout: two columns from `md` — signals left, the app right — so at a 1124×1305 window the
- * AI findings, the permissions, the art and the live app all sit above the fold with the action
- * bar. One column below `md`, app first after the AI findings.
+
  */
 export function ReviewOverviewPanel({
   selection,
   onOpenTab,
 }: {
   selection: NonNullable<OnsiteReviewSelection>;
-  /** Switch the page to another tab (the AI findings card's "Full report", "All permissions"). */
-  onOpenTab?: (tab: 'agent' | 'permissions') => void;
+  /**
+   * Switch the page to another tab (the AI findings card's "Full report", "All permissions",
+   * the console line's "Open console").
+   */
+  onOpenTab?: (tab: 'agent' | 'permissions' | 'console') => void;
 }) {
   const { request } = selection;
   const manifest = (request.manifest ?? {}) as Record<string, unknown>;
@@ -46,6 +48,9 @@ export function ReviewOverviewPanel({
       role="region"
       aria-label="Submission overview"
     >
+      <Grid.Col span={12}>
+        <ManifestDescription manifest={manifest} />
+      </Grid.Col>
       <Grid.Col span={{ base: 12, md: 5 }}>
         <Stack gap="md">
           <ReviewAgentSection
@@ -57,7 +62,10 @@ export function ReviewOverviewPanel({
             manifest={manifest}
             onOpenAll={onOpenTab && (() => onOpenTab('permissions'))}
           />
-          <ReviewListingMedia
+          <ReviewListingMediaLive
+            // The re-rate pickers and live levels (moderators): see `ReviewListingMediaLive`.
+            listingId={request.appListingId ?? null}
+            approveListingId={request.approveRating?.listingId ?? null}
             slug={request.slug}
             name={appDisplayName(request.manifest, request.slug)}
             iconUrl={request.iconUrl ?? null}
@@ -68,9 +76,54 @@ export function ReviewOverviewPanel({
         </Stack>
       </Grid.Col>
       <Grid.Col span={{ base: 12, md: 7 }}>
-        <ReviewPreviewSection selection={selection} frameHeight={REVIEW_PREVIEW_OVERVIEW_HEIGHT} />
+        <Stack gap="md">
+          {/* The running app's error count, and a crash's reason, without opening the Console.
+              Renders nothing until the preview reports one. */}
+          <ReviewConsoleSummary onOpen={onOpenTab && (() => onOpenTab('console'))} />
+          <ReviewPreviewSection
+            selection={selection}
+            frameHeight={REVIEW_PREVIEW_OVERVIEW_HEIGHT}
+          />
+        </Stack>
       </Grid.Col>
     </Grid>
+  );
+}
+
+/**
+ * The tagline and description the developer wrote — the store's own words for the app, which go
+ * live on approve. Rendered as text (never markdown or HTML): the manifest is author-controlled.
+ */
+function ManifestDescription({ manifest }: { manifest: Record<string, unknown> }) {
+  const tagline = typeof manifest.tagline === 'string' ? manifest.tagline.trim() : '';
+  const description = typeof manifest.description === 'string' ? manifest.description.trim() : '';
+  return (
+    <Card withBorder p="sm" data-testid="apps-review-overview-description">
+      <Stack gap={4}>
+        {tagline && (
+          <Text size="sm" fw={600} data-testid="apps-review-overview-tagline">
+            {tagline}
+          </Text>
+        )}
+        {description ? (
+          <Spoiler maxHeight={96} showLabel="Show more" hideLabel="Show less">
+            <Text
+              size="sm"
+              style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
+              data-testid="apps-review-overview-description-text"
+            >
+              {description}
+            </Text>
+          </Spoiler>
+        ) : (
+          <Text size="xs" c="dimmed" fs="italic">
+            {tagline
+              ? 'No description in the manifest.'
+              : 'No tagline or description in the manifest.'}
+          </Text>
+        )}
+      </Stack>
+    </Card>
   );
 }
 

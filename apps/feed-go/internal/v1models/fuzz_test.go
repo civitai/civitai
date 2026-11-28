@@ -55,7 +55,7 @@ func FuzzResolveFileName(f *testing.F) {
 			{id: 2, hasID: true, name: name, typ: fileType, size: "pruned"},
 		}
 		for _, file := range files {
-			got, err := resolveFileName(nameModel{model, modelType}, nameVersion{name: version, trainedWords: []string{name}}, file, files)
+			got, err := resolveFileName(nameModel{name: model, typ: modelType}, nameVersion{name: version, trainedWords: []string{name}}, file, files)
 			if err != nil {
 				if fallback.Reason(err) == "" {
 					t.Fatalf("a non-fallback error %v", err)

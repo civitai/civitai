@@ -14,6 +14,7 @@ export type { AuthVerifier, AuthVerifierConfig, AccessTokenJwtVerifierConfig } f
 // Server-side consumer→hub clients (each file's header has the detail). All hub interaction goes through these,
 // so app code never hand-rolls a hub fetch.
 export { createSessionClient } from './session-client'; // token→user + invalidate/refresh
+export { refusesMemorializedSession } from './memorialized';
 export type { SessionClient, SessionClientConfig, SessionResolution } from './session-client';
 export { createDeviceAccountClient } from './device-client'; // multi-account switching (cookie-forwarded)
 export type { DeviceAccountClient, DeviceAccount } from './device-client';
@@ -21,8 +22,10 @@ export { createSessionTokenClient } from './session-token-client'; // rolling re
 export type { SessionTokenClient, RefreshFailure } from './session-token-client';
 export { createImpersonationClient } from './impersonation-client'; // moderator impersonate / exit
 export { probeInternalParity } from './hub'; // does the hub accept this app's service credential
+export { hubBaseUrl, hubFetch } from './hub';
 export type { ImpersonationClient, ImpersonationResult } from './impersonation-client';
 export { createSpokeGuard } from './spoke-guard'; // framework-agnostic first-party app session+role gate
+export { createSlotTally, type SlotCounts } from './slot-tally';
 export {
   MODERATION_ACCOUNT_USERNAME,
   isModerationAccountUser,
@@ -40,6 +43,7 @@ export {
   spokeCallback,
   spokeAuthorizeUrl,
   spokeReauthResponse,
+  spokeUnavailableResponse,
   spokeSessionCookies,
   isNavigationRequest,
   withSetCookies,
@@ -50,16 +54,19 @@ export {
   clearPostLoginMarker,
   loginRetryCookie,
   clearLoginRetryCookie,
-  otherSlotExpiries,
   SESSION_REAUTH_HEADER,
 } from './spoke-signin'; // a first-party app's own sign-in routes
 export type { SpokeSignInEvent, SpokeSignInOptions, SpokeCallbackOptions } from './spoke-signin';
 export {
   createRevocationCheck,
   DEFAULT_REVOCATION_READ_TIMEOUT_MS,
+  REVOCATION_RETRY_COOLDOWN_MS,
   revocationReadTimeoutMs,
 } from './revocation-check';
 export type {
+  ElevatedRevocationVerdict,
+  RevocationCheck,
+  RevocationCheckCallOptions,
   RevocationCheckConfig,
   RevocationDegradedVerdict,
   RevocationFailureReason,
@@ -76,8 +83,13 @@ export {
 } from './first-party-bridge'; // framework-agnostic first-party login bridge (spoke side)
 export type { AuthorizeRedirect, FirstPartyCallbackResult } from './first-party-bridge';
 export { createSessionSigner, maybeCreateSessionSigner } from './sign';
-export { ACCESS_TOKEN_JWT_TYP } from './sign';
-export type { SessionSigner, SessionSignerConfig, AccessTokenJwtClaims } from './sign';
+export { ACCESS_TOKEN_JWT_TYP, BLOCK_EXCHANGE_TOKEN_KIND } from './sign';
+export type {
+  SessionSigner,
+  SessionSignerConfig,
+  AccessTokenJwtClaims,
+  BlockExchangeBinding,
+} from './sign';
 export { createAuthMiddleware } from './middleware';
 export type { AuthMiddlewareConfig } from './middleware';
 export {
@@ -105,7 +117,14 @@ export {
   legacySessionCookieName,
   allCookieNames,
   sessionCookieMode,
+  siteCookieMode,
   legacyCookieReadEnabled,
+  hostOnlySite,
+  otherSlotExpiries,
+  siteCookieHeader,
+  siteCookieJar,
+  cookiePairName,
+  expireCookie,
   hostSessionCookieName,
   hostDeviceCookieName,
   sessionCookieNameForSlot,
@@ -114,6 +133,7 @@ export {
   readDeviceId,
   rollSlot,
   parseCookieHeader,
+  registrableDomain,
   type CookieSlot,
   type CookieRead,
   type CookieReadOptions,

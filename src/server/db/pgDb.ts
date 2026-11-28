@@ -5,7 +5,7 @@ import { getClient, type AugmentedPool } from '~/server/db/db-helpers';
 import { env } from '~/env/server';
 import { createLogger } from '~/utils/logging';
 
-const log = createLogger('pgDb', 'blue');
+const log = createLogger('pgDb', 'blue', { forward: false });
 
 declare global {
   // eslint-disable-next-line no-var, vars-on-top

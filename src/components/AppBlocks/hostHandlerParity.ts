@@ -124,9 +124,16 @@ export interface MessageSpec {
   /**
    * Top-level keys of an ERROR reply (a reply with a top-level `error` string), `requestId` left
    * out. It uses the same `?` notation and always lists `error`. A host-specific error variant
-   * can add fields, such as storage's `value: null` or a shared write's `rateLimit`. The fields
+   * can add fields, such as storage's `value: null` or a shared update's `ok: false`. The fields
    * it adds are marked `?`, because the shared dispatcher's NACK (`buildBridgeNackReply`) is a
    * bare `{ requestId, error }`.
+   *
+   * Every error reply may also carry `rateLimit` (`UNIVERSAL_ERROR_KEYS`): a host spreads
+   * `rateLimitReplyFields(err)` into each error built from a caught server error, so the key is
+   * accepted on any type without being listed here. A list may still name it. The workflow
+   * family (`'none'`, below) reports a refusal inside its snapshot, so its meta rides there:
+   * `snapshot.rateLimit`, set by `failureSnapshot` / `pollFailureSnapshot` from the same
+   * `rateLimitReplyFields(err)`, and by the server on a shed poll or cancel.
    *
    * `'none'` means the host never sends a top-level `error` for this type. That covers two
    * cases. The workflow family reports failure INSIDE the success shape: a `snapshot` whose
@@ -602,8 +609,9 @@ export const INVENTORY = {
   OPEN_IMAGE_UPLOAD: {
     request: true,
     reply: 'IMAGE_UPLOAD_RESULT',
-    replyKeys: ['selected?'],
-    errorKeys: ['error'],
+    // `shared` is present only on replies to a `share: true` request (see PageBlockHost).
+    replyKeys: ['selected?', 'shared?'],
+    errorKeys: ['error', 'shared?'],
     IframeHost:
       'host-mediated image upload is a page-only affordance today; the model slot has no such surface',
     PageBlockHost: 'required',
@@ -829,7 +837,9 @@ export const INVENTORY = {
   // UNSANDBOXED top frame + triggers the browser download (a sandboxed block has
   // no `allow-downloads`). Three variants: an origin-allowlisted OWN-output `url`,
   // a cross-user `imageId` routed through the gated per-viewer read, or block-made
-  // `bytes` classified by content (image / JSON / text, or a validated .zip). PAGE-ONLY
+  // `bytes` classified by content (image / JSON / text, a .zip validated by
+  // @civitai/app-sdk/save-zip, or a binary glTF / FBX 3D model checked by
+  // @civitai/app-sdk/save-model3d — each the one copy, shared with the SDK's mock host). PAGE-ONLY
   // affordance today (the paid-output apps — gen-matrix / custom-generators /
   // model-benchmarking — are all page apps), so N/A for the model host, mirroring
   // the GET_IMAGES_BY_IDS / PUBLISH_GENERATION_OUTPUTS page-only exemption.
@@ -1039,8 +1049,15 @@ export function parseDeclaredKeys(declared: readonly string[]): {
 }
 
 /**
+ * Keys any error reply may carry whatever its type's `errorKeys` list says: the standard
+ * rate-limit meta a host forwards from a refused server call (`bridgeRateLimit.ts`).
+ */
+export const UNIVERSAL_ERROR_KEYS: readonly string[] = ['rateLimit'];
+
+/**
  * Compare one reply payload a host sent for `type` with what INVENTORY declares for it
  * (`replyKeys` / `errorKeys`). It checks the top-level key set only, never the value types.
+ * An error reply may also carry the `UNIVERSAL_ERROR_KEYS`.
  */
 export function checkReplyKeys(type: InventoryType, payload: unknown): ReplyKeysCheck {
   const spec: MessageSpec = INVENTORY[type];
@@ -1060,7 +1077,8 @@ export function checkReplyKeys(type: InventoryType, payload: unknown): ReplyKeys
       problems: [`${type}: the reply has a top-level \`error\`, but errorKeys is 'none'`],
     };
   }
-  const { required, optional } = parseDeclaredKeys(declared);
+  const { required, optional: listed } = parseDeclaredKeys(declared);
+  const optional = outcome === 'error' ? [...listed, ...UNIVERSAL_ERROR_KEYS] : listed;
   const problems: string[] = [];
   for (const k of required) {
     if (!keys.includes(k)) problems.push(`${type}: ${field} requires \`${k}\`; the reply lacks it`);

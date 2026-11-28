@@ -49,9 +49,11 @@ vi.mock('~/components/CreatorShop/Services/ServiceOfferingMenu', () => ({
 vi.mock('~/components/CreatorShop/Services/deals/ServiceRequestModal', () => ({
   ServiceRequestModal: () => null,
 }));
-vi.mock('~/hooks/useDomainColor', async (importOriginal) => ({
+// The storefront reads the domain and creatorServicesNext from the flag context, which these
+// static renders do not mount.
+vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<object>()),
-  useDomainColor: () => 'green',
+  useFeatureFlags: () => ({ isGreen: true, creatorServicesNext: false }),
 }));
 
 const { ServicesSection } = await import('~/components/CreatorShop/Storefront/ServicesSection');
@@ -96,4 +98,29 @@ describe("seller's own services card footer", () => {
       }
     }
   );
+});
+
+// The profile sidebar's Services button links to `/shop#shop-services`; the section mounts only
+// once its offerings load, after the router's own hash scroll has run.
+describe('opened on #shop-services', () => {
+  afterEach(() => {
+    history.replaceState(null, '', location.pathname + location.search);
+    vi.restoreAllMocks();
+  });
+
+  test.each([
+    ['#shop-services', 1],
+    ['#shop-featured', 0],
+  ])('with hash %s the section scrolls itself into view %i time(s)', async (hash, calls) => {
+    history.replaceState(null, '', hash);
+    const scroll = vi.spyOn(Element.prototype, 'scrollIntoView');
+    await renderAtViewport(
+      <ServicesSection ownerUserId={SELLER} username="seller" shopPublished />,
+      { width: 1440, height: 900 }
+    );
+    const section = document.getElementById('shop-services');
+    expect(section, 'services section not rendered').not.toBeNull();
+    const onSection = scroll.mock.contexts.filter((el) => el === section);
+    expect(onSection).toHaveLength(calls);
+  });
 });

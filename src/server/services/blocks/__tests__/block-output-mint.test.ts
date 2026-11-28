@@ -8,7 +8,8 @@ import type { BlockOutputWorkflowFacts } from '~/server/services/blocks/block-ou
 // the route side of each parity row runs the real `judgeTicket`.
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
-  isFlipt: async (flag: string) => flag === 'app-blocks-workflow-media-serve',
+  ensureFliptInitialized: async () => undefined,
+  isFliptSync: (flag: string) => flag === 'app-blocks-workflow-media-serve',
 }));
 vi.mock('~/server/auth/session-client', () => ({
   sessionClient: { getSessionUserById: async (id: number) => ({ id, tier: 'free' }) },
@@ -25,7 +26,9 @@ const { snapshotFromWorkflow, projectAppWorkflowWithPositions, BLOCK_STEP_NAME }
 const { blockOutputCeilingFromClaims, classifyBlockOutput } = await import(
   '~/server/services/blocks/block-output-restriction'
 );
-const { mintBlockOutput } = await import('~/server/services/blocks/block-output-mint');
+const { mintBlockOutput, applyServingRules, applyServingOffRules } = await import(
+  '~/server/services/blocks/block-output-mint'
+);
 const { openBlockMediaRef, openBlockMediaTicket, sealBlockMediaTicket } = await import(
   '~/server/services/blocks/block-media-token'
 );
@@ -260,9 +263,26 @@ describe('🔴 the poll and the route agree on what serving hides', () => {
     expect(snap.outputs).toStrictEqual([{ restricted: true, reason: 'unrated' }]);
   });
 
-  it('CONTROL: with serving off the never-rated video is delivered, as on the site', () => {
+  it('with serving off the never-rated video is restricted too, with no url', () => {
     const snap = snapshotFromWorkflow(wf([videoStep(video('k1', null), 'kling')]), OFF);
-    expect(snap.imageUrls).toStrictEqual([blobUrl('k1')]);
+    expect(snap.outputs).toStrictEqual([{ restricted: true, reason: 'unrated' }]);
+    expect(JSON.stringify(snap)).not.toContain('orch.example');
+  });
+
+  it('with serving off an unrated video from a rated engine is held, for an all-ratings viewer too', () => {
+    const snap = snapshotFromWorkflow(wf([videoStep(video('w0', null), 'wan')]), OFF);
+    expect(snap.outputs).toStrictEqual([{ pending: true }]);
+    expect(JSON.stringify(snap)).not.toContain('orch.example');
+  });
+
+  it('with serving off a RATED video from a never-rated engine is restricted too', () => {
+    const snap = snapshotFromWorkflow(wf([videoStep(video('k2', 'pg'), 'kling')]), OFF);
+    expect(snap.outputs).toStrictEqual([{ restricted: true, reason: 'unrated' }]);
+  });
+
+  it('CONTROL: with serving off a rated video from a rated engine keeps its url', () => {
+    const snap = snapshotFromWorkflow(wf([videoStep(video('w1', 'pg'), 'wan')]), OFF);
+    expect(snap.imageUrls).toStrictEqual([blobUrl('w1')]);
   });
 
   it('CONTROL: a rated video from an engine that is rated gets a ticket the route serves', async () => {
@@ -283,9 +303,36 @@ describe('🔴 the poll and the route agree on what serving hides', () => {
     ).toStrictEqual({ state: 'hidden', reason: 'unrated' });
   });
 
-  it('CONTROL: with serving off `na` is delivered as before', () => {
+  it('with serving off `na` is restricted too', () => {
     const snap = snapshotFromWorkflow(wf([textToImage([image('n1', 'na')])]), OFF);
-    expect(snap.outputs).toStrictEqual([{ url: blobUrl('n1') }]);
+    expect(snap.outputs).toStrictEqual([{ restricted: true, reason: 'unrated' }]);
+    expect(JSON.stringify(snap)).not.toContain('orch.example');
+  });
+
+  it('with serving off an unrated image is held, for an all-ratings viewer too', () => {
+    const snap = snapshotFromWorkflow(wf([textToImage([image('u0', null)])]), OFF);
+    expect(snap.outputs).toStrictEqual([{ pending: true }]);
+    expect(JSON.stringify(snap)).not.toContain('orch.example');
+  });
+
+  it('CONTROL: with serving off a rated image keeps its url', () => {
+    const snap = snapshotFromWorkflow(wf([textToImage([image('r0', 'pg')])]), OFF);
+    expect(snap.imageUrls).toStrictEqual([blobUrl('r0')]);
+  });
+
+  it('with serving off an output of an unknown blob type is restricted, as with serving on', () => {
+    const shown = { url: blobUrl('u1') } as const;
+    const slot = { url: blobUrl('u1'), type: 'movie', nsfwLevel: null };
+    expect(applyServingOffRules(shown, slot, { neverRatedVideoStep: false })).toStrictEqual({
+      restricted: true,
+      reason: 'unrecognised_url',
+    });
+  });
+
+  it("CONTROL: with serving off the owner's `na` audio keeps its url", () => {
+    const AUDIO = { url: blobUrl('a1'), type: 'audio', nsfwLevel: 'na' };
+    const shown = { url: blobUrl('a1') } as const;
+    expect(applyServingOffRules(shown, AUDIO, { neverRatedVideoStep: false })).toStrictEqual(shown);
   });
 
   it('the floor: a PG-only viewer is shown PG-13 on the poll, and the ticket serves it', async () => {
@@ -422,5 +469,75 @@ describe('parity: classifyBlockOutput and deriveOutputGate over one fixture tabl
       fetched.state === 'redirect' ? 'visible' : fetched.state === 'pending' ? 'pending' : 'hidden';
 
     expect({ poll, route }).toStrictEqual({ poll: row.poll, route: row.route });
+  });
+});
+
+describe('🔴 no serve decision: every media output is restricted, never a raw url', () => {
+  const UNKNOWN = { ...OFF, servingUnknown: true as const };
+
+  it('a PG image is restricted as unrecognised_url, with no url anywhere in the snapshot', () => {
+    const snap = snapshotFromWorkflow(wf([textToImage([image('pg0', 'pg')])]), UNKNOWN);
+    expect(snap.outputs?.[0]).toStrictEqual({ restricted: true, reason: 'unrecognised_url' });
+    expect(snap.imageUrls ?? []).toStrictEqual([]);
+    expect(JSON.stringify(snap)).not.toContain('orch.example');
+  });
+
+  it('a never-rated engine video, delivered unrated with serving off, is restricted too', () => {
+    const snap = snapshotFromWorkflow(wf([videoStep(video('v0', null), 'kling')]), UNKNOWN);
+    expect(snap.outputs?.[0]).toStrictEqual({ restricted: true, reason: 'unrecognised_url' });
+    expect(JSON.stringify(snap)).not.toContain('orch.example');
+  });
+
+  it('CONTROL: the same PG image with serving off carries its url', () => {
+    const snap = snapshotFromWorkflow(wf([textToImage([image('pg0', 'pg')])]), OFF);
+    expect(snap.imageUrls).toStrictEqual([blobUrl('pg0')]);
+  });
+});
+
+describe('owner-only media rated `na`: the poll keeps it, every other read refuses it', () => {
+  const AUDIO = { url: blobUrl('a0'), type: 'audio', nsfwLevel: 'na' };
+  const shown = { url: blobUrl('a0') } as const;
+  const step = { neverRatedVideoStep: false };
+
+  it("the owner's poll keeps it", () => {
+    expect(applyServingRules(shown, AUDIO, step, { forOwner: true })).toStrictEqual(shown);
+  });
+
+  it('a publish, post or persist read (not for the owner) refuses it as unrated', () => {
+    expect(applyServingRules(shown, AUDIO, step)).toStrictEqual({
+      restricted: true,
+      reason: 'unrated',
+    });
+  });
+
+  it('CONTROL: an `na` image is refused even to its owner', () => {
+    expect(
+      applyServingRules(shown, { ...AUDIO, type: 'image' }, step, { forOwner: true })
+    ).toStrictEqual({ restricted: true, reason: 'unrated' });
+  });
+});
+
+describe('🔴 an anonymous mint (no session): tickets judge the viewer as signed out', () => {
+  const ANON = {
+    maxBrowsingLevel: NsfwLevel.PG,
+    serving: true,
+    mint: { userId: VIEWER, appBlockId: APP, anonymous: true as const },
+  };
+
+  it('a PG image ticket carries the anonymous claim and the anonymous level', () => {
+    const snap = snapshotFromWorkflow(wf([textToImage([image('pg0', 'pg')])]), ANON);
+    const out = snap.outputs?.[0] as { url: string };
+    const ticket = openBlockMediaTicket(ticketOf(out.url));
+    expect(ticket).toMatchObject({
+      viewerId: VIEWER,
+      viewerBrowsingLevel: NsfwLevel.PG,
+      anonymous: true,
+    });
+  });
+
+  it('CONTROL: a signed-in mint carries no anonymous claim', () => {
+    const snap = snapshotFromWorkflow(wf([textToImage([image('pg0', 'pg')])]), SERVING);
+    const out = snap.outputs?.[0] as { url: string };
+    expect(openBlockMediaTicket(ticketOf(out.url))?.anonymous).toBeUndefined();
   });
 });

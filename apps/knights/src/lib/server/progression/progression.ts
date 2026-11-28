@@ -58,19 +58,30 @@ export async function pendingXpOf(db: Executor, playerId: number): Promise<numbe
 }
 
 /**
- * Distinct UTC days since the career began on which the player cast a vote. `KnightsPlayerDay` has one row per
- * player per day, so this is a count over at most a few hundred rows on its primary key, not over the vote ledger.
- * The day of a reset counts, even for votes cast before it.
+ * Distinct UTC days since the career began on which the player cast a vote, in this game (`KnightsPlayerDay`) or the
+ * original one (`KnightsLegacyPlayerDay`); a day played in both counts once. Both have one row per player per day, so
+ * this is a count over at most a few hundred rows on their primary keys, not over the vote ledger. The day of a reset
+ * counts, even for votes cast before it.
  */
 export async function daysPlayedOf(db: Executor, playerId: number): Promise<number> {
-  const { n } = await db
+  const since = sql<string>`COALESCE((SELECT "startAt"::date FROM "NewOrderPlayer" WHERE "userId" = ${playerId}), 'epoch')`;
+  const days = db
     .selectFrom('KnightsPlayerDay as d')
-    .select(sql<string>`count(*)`.as('n'))
+    .select('d.day')
     .where('d.playerId', '=', playerId)
     .where('d.votes', '>', 0)
-    .where(
-      sql<SqlBool>`d."day" >= COALESCE((SELECT "startAt"::date FROM "NewOrderPlayer" WHERE "userId" = d."playerId"), 'epoch')`
+    .where(sql<SqlBool>`d."day" >= ${since}`)
+    .union(
+      db
+        .selectFrom('KnightsLegacyPlayerDay as l')
+        .select('l.day')
+        .where('l.playerId', '=', playerId)
+        .where(sql<SqlBool>`l."day" >= ${since}`)
     )
+    .as('days');
+  const { n } = await db
+    .selectFrom(days)
+    .select(sql<string>`count(*)`.as('n'))
     .executeTakeFirstOrThrow();
   return Number(n);
 }
@@ -220,7 +231,7 @@ export async function payOutVotes(
       await grantRankBadges(trx, playerId, earned);
       metrics.rankUp(earned, playerId);
     }
-    if (total.correct > 0) await workOffSmites(trx, playerId, now);
+    if (total.correct > 0) await workOffSmites(trx, playerId, now, total.correct);
     if (total.xp > 0) xp.push({ playerId, xp: total.xp });
   }
   return { votes: votes.length, xp };

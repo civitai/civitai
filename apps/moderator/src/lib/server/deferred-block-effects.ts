@@ -1,7 +1,9 @@
 import { sql } from '@civitai/db/kysely';
 import { isFeedbackCaptureOwner } from '@civitai/shared/feedback-capture';
+import { blockedForNamesCsam } from '@civitai/shared/csam-blocked-for';
 import type { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
+import { OPEN_REPORT_STATUSES } from '@civitai/db-queries/image-removal-confirmation';
 import { violationUserMessage } from '$lib/violations';
 import { ReportStatus } from '$lib/reports';
 import { dbWrite } from './db';
@@ -66,7 +68,7 @@ export async function dropDeferredBlockEffects(
 
 /**
  * Owners whose notice is not sent. Read on the primary; a failed read returns all of them. The main
- * app's twin is `usersWithNoticeWithheld`; a different set from its `accountHoldSql`, on purpose.
+ * app's twin is `usersWithNoticeWithheld`.
  */
 async function ownersWithNoticeWithheld(ownerIds: number[]): Promise<Set<number>> {
   if (!ownerIds.length) return new Set();
@@ -76,8 +78,6 @@ async function ownersWithNoticeWithheld(ownerIds: number[]): Promise<Set<number>
       UNION
       SELECT u.id FROM "CsamReport" c, unnest(${ownerIds}::int[]) AS u(id)
       WHERE c.details ->> 'secondaryUserId' = u.id::text
-      UNION
-      SELECT "userId" FROM "EvidenceHold" WHERE "userId" = ANY(${ownerIds}::int[])
     `.execute(dbWrite);
     return new Set(rows.map((r) => r.userId));
   } catch (e) {
@@ -137,7 +137,7 @@ export async function fireDeferredBlockEffects(
   }
   const reported = await imagesInCsamReport(images.map((i) => i.id));
   // Removed for CSAM since the block: as at the block itself, nothing fires.
-  for (const i of images) if (i.blockedFor === 'CSAM') reported.add(i.id);
+  for (const i of images) if (blockedForNamesCsam(i.blockedFor)) reported.add(i.id);
   for (const id of reported)
     await log({ type: 'warning', name: DEFERRED_NOTICE_LOG.skipped, imageId: id });
   images = images.filter((i) => !reported.has(i.id));
@@ -191,7 +191,7 @@ export async function fireDeferredBlockEffects(
         .selectFrom('ImageReport as ir')
         .innerJoin('Report as r', 'r.id', 'ir.reportId')
         .select(['ir.imageId', 'r.id'])
-        .where('r.status', 'in', [ReportStatus.Pending, ReportStatus.Processing])
+        .where('r.status', 'in', OPEN_REPORT_STATUSES)
         .where((eb) =>
           eb.or(
             scoped.map((c) =>
@@ -220,6 +220,7 @@ export async function fireDeferredBlockEffects(
         status: ReportStatus.Actioned,
         userId: moderatorId,
         noRewardFor: owner == null ? [] : [owner],
+        fromStatuses: OPEN_REPORT_STATUSES,
       });
     } catch {
       await log({ type: 'error', name: DEFERRED_NOTICE_LOG.effectFailed, imageId, reportId: id });

@@ -74,11 +74,12 @@ export async function searchSemanticCollections({
     items: [] as HydratedCollection[],
     nextCursor: undefined,
     correctedQuery: undefined,
+    refused: false as boolean,
   };
   let browsingLevel = resolveSemanticBrowsingLevel(
     input.browsingLevel,
     user,
-    await isNonModClampOn()
+    await isNonModClampOn(user)
   );
   const [hidden, addonData] = await Promise.all([
     getAllHiddenForUser({ userId: user?.id }),
@@ -122,6 +123,7 @@ export async function searchSemanticCollections({
   // Refused before any search: the audit may run it after the response, for its row only.
   if (queryRefused)
     return audit.refused(
+      'refused_query',
       none,
       browsingLevel,
       refusedTextCandidates(candidateSource, {
@@ -186,6 +188,11 @@ export async function searchSemanticCollections({
 
   audit.candidates(search.state.first);
   if (search.state.refused)
-    return audit.refused(none, browsingLevel, async () => search.state.first ?? { ids: [] });
+    return audit.refused(
+      'refused_correction',
+      none,
+      browsingLevel,
+      async () => search.state.first ?? { ids: [] }
+    );
   return audit.done({ ...page, correctedQuery: search.state.correctedQuery }, browsingLevel);
 }

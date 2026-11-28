@@ -1,13 +1,11 @@
 import type { PromptHighlightCategory } from '@civitai/mod-utils/prompt-audit';
+import {
+  CSAM_REVIEW_FLAG,
+  type ImageReviewType as AnyImageReviewType,
+} from '@civitai/shared/image-review-types';
 
-export type ImageReviewType =
-  | 'minor'
-  | 'poi'
-  | 'tag'
-  | 'newUser'
-  | 'modRule'
-  | 'remixSource'
-  | 'csam';
+/** The review queues; appeals have their own. */
+export type ImageReviewType = Exclude<AnyImageReviewType, 'appeal'>;
 
 export const IMAGE_REVIEW_SLUGS = [
   'minor',
@@ -23,7 +21,7 @@ export type ImageReviewSlug = (typeof IMAGE_REVIEW_SLUGS)[number];
 export const IMAGE_VIEW_SLUGS = [...IMAGE_REVIEW_SLUGS, 'csam', 'reported', 'appeals'] as const;
 export type ImageViewSlug = (typeof IMAGE_VIEW_SLUGS)[number];
 
-const IMAGE_REVIEW_REASONS: Record<ImageReviewType | 'appeal', string> = {
+const IMAGE_REVIEW_REASONS: Record<AnyImageReviewType, string> = {
   minor: 'The scan, the prompt, an attached resource or a collection AI review suggested a minor.',
   poi: 'The scan, the prompt, an attached resource, or a bounty it belongs to or was entered into suggested a real person.',
   tag: 'An applied tag sends images to review.',
@@ -50,9 +48,8 @@ export function reviewHighlightCategories(
   return ['minor', 'young', 'age', 'poi', 'blocked'];
 }
 
-/** The one review flag a block keeps: only its own queue, a filed report or an explicit unblock
- *  clears it. */
-export const FLAG_KEPT_THROUGH_BLOCK = 'csam' satisfies ImageReviewType;
+/** The one review flag a block keeps: only its own queue's accept or a filed report clears it. */
+export const FLAG_KEPT_THROUGH_BLOCK = CSAM_REVIEW_FLAG;
 
 /**
  * Removed, with only that flag left to rule on. Accepting would put the image back live and

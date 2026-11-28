@@ -54,6 +54,9 @@ async function statementFor(
   extra: { pending?: boolean; reviewCollectionId?: number; userId?: number }
 ) {
   await getAllImages({
+    // The session views the feed grants a session or full-access key.
+    asModerator: true,
+    asOwner: true,
     limit: 20,
     period: 'AllTime',
     periodMode: 'stats',
@@ -106,9 +109,17 @@ describe("a collection review's image read", () => {
       { pending: true, reviewCollectionId: COLLECTION }
     );
     expect(text).toMatch(/i\."needsReview" IS NULL OR i\."userId" = \$\d+/);
-    expect(text).toMatch(/i\."blockedFor" IS NULL OR i\."userId" = \$\d+/);
+    expect(text).toMatch(/i\."blockedFor" IS NULL OR \(i\."userId" = \$\d+ AND /);
     expect(text).toMatch(/i\."ingestion" != 'Blocked'/);
     expect(text).toMatch(/p\."availability" != \$\d+/);
+  });
+
+  // The owner's Restricted notice reads it; no viewer exception, so the uploader's row reads true.
+  it('returns whether each image is restricted, the same for every viewer', async () => {
+    const { text } = await statementFor({ id: REVIEWER }, { pending: true });
+    expect(text).toMatch(
+      /\(\(i\."nsfwLevel" & \$\d+\) = 0 OR NOT i\."modelRestricted"\) IS NOT TRUE AS "restricted"/
+    );
   });
 
   it('opens unrated images only inside the rating check, not past the other filters', async () => {
@@ -117,8 +128,9 @@ describe("a collection review's image read", () => {
       { pending: true, reviewCollectionId: COLLECTION }
     );
     // The arm is the last OR inside the clause that starts with the rating check, so every other
-    // AND-ed filter still applies to the images it lets through.
-    const start = text.indexOf('((i."nsfwLevel" & $');
+    // AND-ed filter still applies to the images it lets through. Searched from the WHERE: the SELECT
+    // carries a `restricted` column with the same opening.
+    const start = text.indexOf('((i."nsfwLevel" & $', text.indexOf('WHERE'));
     expect(start, 'no rating clause in the read').toBeGreaterThan(-1);
     let depth = 0;
     let end = start;
@@ -201,6 +213,9 @@ describe("a collection's image feed", () => {
     vi.clearAllMocks();
     queryWithTimeoutMock.mockRejectedValue(new Error('stop here'));
     await getAllImages({
+      // The session views the feed grants a session or full-access key.
+      asModerator: true,
+      asOwner: true,
       limit: 20,
       period: 'AllTime',
       periodMode: 'stats',

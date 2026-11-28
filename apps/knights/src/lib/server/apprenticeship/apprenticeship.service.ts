@@ -1,15 +1,18 @@
+import { createHash } from 'node:crypto';
 import { sql, type Kysely, type SqlBool, type Transaction } from 'kysely';
 import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
 import { getLevelProgression } from '../progression/levels';
 import { grantAcolyteLevelGold } from './level-gold';
 import type { DB } from '@civitai/db-schema/kysely';
-import { REFERENCE_POOL, REFERENCE_SOURCE, servableImage } from '@civitai/db/knights';
+import { readWithoutJit, REFERENCE_POOL, REFERENCE_SOURCE } from '@civitai/db/knights';
+import { servableImage } from '../image-gate';
 import { utc } from '@civitai/db/kysely';
 import { metrics } from '../metrics';
 import { grantRankBadges } from '../progression/badges';
 import { mirrorXp, type XpMirror } from '../progression/legacy-exp';
 import type { QuestionOption } from '../queue/queue.service';
 import { servableReferences } from '../reference';
+import { answeredImageServable, failClosed } from '../skill-check/eligible';
 import { ACOLYTE_WRONG_ANSWER_SMITE, BASE_SMITE_SIZE, SMITES } from '../smites/config';
 import {
   activeSmiteCount,
@@ -20,7 +23,7 @@ import {
 } from '../smites/smites.service';
 import { YESNO_ANSWERS } from '../yesno/keys';
 import { answerImageJoin, answerQuestionKey, pairPrompt } from './answer-snapshot';
-import { APPRENTICE } from './config';
+import { APPRENTICE, type ApprenticeSettings } from './config';
 import {
   accuracyOf,
   chooseSource,
@@ -38,6 +41,10 @@ export type ApprenticeDeps = {
   mirrorXp?: XpMirror;
   /** Starts the career reset an answer's third smite makes due; without it the tick does. */
   resetPlayer?: ResetDeps['resetPlayer'];
+  /** Without it, smites are on. */
+  settings?: () => ApprenticeSettings | Promise<ApprenticeSettings>;
+  /** Share of image slots that serve a mod-confirmed skill check; must match the `getApprentice` that served the item. */
+  skillCheckRate?: number;
 };
 
 export type ItemKind = 'rating' | 'yesno';
@@ -121,37 +128,39 @@ export async function getApprenticeProgress(db: Executor, playerId: number) {
 }
 
 async function progressOf(db: Executor, playerId: number): Promise<ApprenticeProgress> {
-  const answered = Number(
-    (
-      await answersOf(db, playerId)
-        .select(sql<string>`count(*)`.as('n'))
-        .executeTakeFirstOrThrow()
-    ).n
-  );
+  return (await standingOf(db, playerId)).progress;
+}
+
+async function standingOf(
+  db: Executor,
+  playerId: number
+): Promise<{ progress: ApprenticeProgress; checkpointPending: boolean }> {
   const latest = answersOf(db, playerId)
     .select('a.correct')
     .orderBy('a.id', 'desc')
     .limit(APPRENTICE.window)
     .as('w');
-  const totals = await db
+  const row = await db
     .selectFrom(latest)
     .select([
+      answersOf(db, playerId)
+        .select(sql<string>`count(*)`.as('n'))
+        .as('answered'),
+      answersOf(db, playerId)
+        .select(sql<boolean>`a."checkpointSeenAt" IS NULL`.as('open'))
+        .orderBy('a.id', 'desc')
+        .limit(1)
+        .as('lastOpen'),
       sql<string>`count(*)`.as('graded'),
       sql<string>`count(*) filter (where w.correct)`.as('correct'),
     ])
     .executeTakeFirstOrThrow();
-  const window: Window = { graded: Number(totals.graded), correct: Number(totals.correct) };
-  return { answered, ...window, accuracy: accuracyOf(window) };
-}
-
-async function checkpointPending(db: Executor, playerId: number, answered: number) {
-  if (!isCheckpoint(answered)) return false;
-  const last = await answersOf(db, playerId)
-    .select('a.checkpointSeenAt')
-    .orderBy('a.id', 'desc')
-    .limit(1)
-    .executeTakeFirst();
-  return !!last && last.checkpointSeenAt === null;
+  const answered = Number(row.answered);
+  const window: Window = { graded: Number(row.graded), correct: Number(row.correct) };
+  return {
+    progress: { answered, ...window, accuracy: accuracyOf(window) },
+    checkpointPending: isCheckpoint(answered) && row.lastOpen === true,
+  };
 }
 
 /**
@@ -181,33 +190,45 @@ async function ratingOptions(db: Executor): Promise<{ prompt: string; options: Q
   return { prompt: question.prompt, options: question.options as QuestionOption[] };
 }
 
+/** `core` and `harvested` are the trials pool split by source; `skill` is the mod-confirmed skill-check pool. */
+type RatingSource = 'core' | 'harvested' | 'skill';
+
 async function nextRating(
   db: Executor,
   playerId: number,
   position: number,
-  core: boolean
+  from: RatingSource
 ): Promise<NextItem | null> {
-  const row = await servableReferences(db, REFERENCE_POOL.trials)
-    .where('r.questionKey', '=', KNIGHTS_NSFW_LEVEL_QUESTION)
-    .where('r.source', core ? '=' : '<>', REFERENCE_SOURCE.core)
-    .where(
-      seenBy(playerId, 'referenceId', {
-        id: 'r.id',
-        imageId: 'r.imageId',
-        questionKey: 'r.questionKey',
-      })
-    )
-    .select(['r.id', 'r.imageId', 'r.answer', 'img.url as imageKey', 'img.width', 'img.height'])
-    .orderBy(shuffled(playerId, position, 'r.id'))
-    .limit(1)
-    .executeTakeFirst();
+  const [row, question] = await Promise.all([
+    readWithoutJit(db, (trx) =>
+      servableReferences(trx, [
+        from === 'skill' ? REFERENCE_POOL.skillCheck : REFERENCE_POOL.trials,
+      ])
+        .where('r.questionKey', '=', KNIGHTS_NSFW_LEVEL_QUESTION)
+        .$if(from !== 'skill', (qb) =>
+          qb.where('r.source', from === 'core' ? '=' : '<>', REFERENCE_SOURCE.core)
+        )
+        .where(
+          seenBy(playerId, 'referenceId', {
+            id: 'r.id',
+            imageId: 'r.imageId',
+            questionKey: 'r.questionKey',
+          })
+        )
+        .select(['r.id', 'r.imageId', 'r.answer', 'img.url as imageKey', 'img.width', 'img.height'])
+        .orderBy(shuffled(playerId, position, 'r.id'))
+        .limit(1)
+        .executeTakeFirst()
+    ),
+    ratingOptions(db),
+  ]);
   if (!row) return null;
   return {
     kind: 'rating',
     referenceId: row.id,
     imageId: row.imageId,
     questionKey: KNIGHTS_NSFW_LEVEL_QUESTION,
-    ...(await ratingOptions(db)),
+    ...question,
     version: null,
     imageKey: row.imageKey,
     width: row.width,
@@ -221,36 +242,38 @@ async function nextYesNo(
   playerId: number,
   position: number
 ): Promise<NextItem | null> {
-  const row = await db
-    .selectFrom('KnightsYesNoReference as y')
-    .innerJoin('KnightsQuestion as q', 'q.key', 'y.questionKey')
-    .innerJoin('Image as img', 'img.id', 'y.imageId')
-    .innerJoin('Post as p', 'p.id', 'img.postId')
-    .where('y.active', '=', true)
-    .where('q.active', '=', true)
-    .where('q.kind', '=', 'bool')
-    .where(servableImage)
-    .where(
-      seenBy(playerId, 'yesNoReferenceId', {
-        id: 'y.id',
-        imageId: 'y.imageId',
-        questionKey: 'y.questionKey',
-      })
-    )
-    .select([
-      'y.id',
-      'y.imageId',
-      'y.answer',
-      'y.questionKey',
-      pairPrompt.as('prompt'),
-      sql<string>`y."updatedAt"::text`.as('version'),
-      'img.url as imageKey',
-      'img.width',
-      'img.height',
-    ])
-    .orderBy(shuffled(playerId, position, 'y.id'))
-    .limit(1)
-    .executeTakeFirst();
+  const row = await readWithoutJit(db, (trx) =>
+    trx
+      .selectFrom('KnightsYesNoReference as y')
+      .innerJoin('KnightsQuestion as q', 'q.key', 'y.questionKey')
+      .innerJoin('Image as img', 'img.id', 'y.imageId')
+      .innerJoin('Post as p', 'p.id', 'img.postId')
+      .where('y.active', '=', true)
+      .where('q.active', '=', true)
+      .where('q.kind', '=', 'bool')
+      .where(servableImage)
+      .where(
+        seenBy(playerId, 'yesNoReferenceId', {
+          id: 'y.id',
+          imageId: 'y.imageId',
+          questionKey: 'y.questionKey',
+        })
+      )
+      .select([
+        'y.id',
+        'y.imageId',
+        'y.answer',
+        'y.questionKey',
+        pairPrompt.as('prompt'),
+        sql<string>`y."updatedAt"::text`.as('version'),
+        'img.url as imageKey',
+        'img.width',
+        'img.height',
+      ])
+      .orderBy(shuffled(playerId, position, 'y.id'))
+      .limit(1)
+      .executeTakeFirst()
+  );
   if (!row) return null;
   return {
     kind: 'yesno',
@@ -267,8 +290,20 @@ async function nextYesNo(
   };
 }
 
-/** The item this player is on: the same one until it is answered. Null when nothing is left to show. */
-async function findNext(db: Executor, playerId: number): Promise<NextItem | null> {
+/** A fixed roll per (player, position) in [0, 1): the same until the player answers, so a reload serves the same item. */
+const skillRoll = (playerId: number, position: number) =>
+  createHash('sha256').update(`${playerId}:${position}:skill-check`).digest().readUInt32BE(0) /
+  0x1_0000_0000;
+
+/**
+ * The item this player is on: the same one until it is answered. Null when nothing is left to show. An image slot is a
+ * mod-confirmed skill check at `skillCheckRate` (the Knights' skill-check rate), when one is left for the player.
+ */
+async function findNext(
+  db: Executor,
+  playerId: number,
+  skillCheckRate = 0
+): Promise<NextItem | null> {
   // Every answer the player ever gave, not just this career's: the no-repeat rule spans resets too.
   const position = Number(
     (
@@ -279,18 +314,40 @@ async function findNext(db: Executor, playerId: number): Promise<NextItem | null
         .executeTakeFirstOrThrow()
     ).n
   );
-  const [core, rating, yesNo] = await Promise.all([
-    nextRating(db, playerId, position, true),
-    nextRating(db, playerId, position, false),
+  const [core, yesNo] = await Promise.all([
+    nextRating(db, playerId, position, 'core'),
     nextYesNo(db, playerId, position),
   ]);
+  const yesNoSlot = position % APPRENTICE.yesNoEvery === APPRENTICE.yesNoEvery - 1;
+  if (
+    skillCheckRate > 0 &&
+    !(yesNoSlot && yesNo) &&
+    skillRoll(playerId, position) < skillCheckRate
+  ) {
+    // The mod-confirmed pool's safety reads fail closed: unreadable, the slot serves another image.
+    const skill = await failClosed(
+      db,
+      'acolyte-serve',
+      () => nextRating(db, playerId, position, 'skill'),
+      null
+    );
+    if (skill) return skill;
+  }
+  // Harvested references only once the player has answered every core one.
+  const rating = core ? null : await nextRating(db, playerId, position, 'harvested');
   const source: Source | null = chooseSource({
     position,
     core: !!core,
     rating: !!rating,
     yesNo: !!yesNo,
   });
-  return source === 'core' ? core : source === 'rating' ? rating : source === 'yesno' ? yesNo : null;
+  return source === 'core'
+    ? core
+    : source === 'rating'
+    ? rating
+    : source === 'yesno'
+    ? yesNo
+    : null;
 }
 
 const labelOf = (options: QuestionOption[], value: string) =>
@@ -301,26 +358,30 @@ async function buildCheckpoint(
   playerId: number,
   progress: ApprenticeProgress
 ): Promise<Checkpoint> {
-  const rows = await answersOf(db, playerId)
-    .leftJoin('KnightsReferenceImage as r', 'r.id', 'a.referenceId')
-    .leftJoin('KnightsYesNoReference as y', 'y.id', 'a.yesNoReferenceId')
-    .leftJoin('Image as img', (join) => join.on(answerImageJoin))
-    .leftJoin('Post as p', 'p.id', 'img.postId')
-    .select((eb) => [
-      'a.id',
-      answerQuestionKey.as('questionKey'),
-      'a.answer',
-      'a.correctAnswer',
-      'a.correct',
-      sql<string | null>`COALESCE(r."explanation", y."explanation")`.as('explanation'),
-      'img.url as imageKey',
-      'img.width',
-      'img.height',
-      servableImage(eb).as('servable'),
-    ])
-    .orderBy('a.id', 'desc')
-    .limit(APPRENTICE.checkpointEvery)
-    .execute();
+  const rows = await readWithoutJit(db, async (trx) => {
+    const read = (skillChecks: 'checked' | 'hidden') =>
+      answersOf(trx, playerId)
+        .leftJoin('KnightsReferenceImage as r', 'r.id', 'a.referenceId')
+        .leftJoin('KnightsYesNoReference as y', 'y.id', 'a.yesNoReferenceId')
+        .leftJoin('Image as img', (join) => join.on(answerImageJoin))
+        .leftJoin('Post as p', 'p.id', 'img.postId')
+        .select((eb) => [
+          'a.id',
+          answerQuestionKey.as('questionKey'),
+          'a.answer',
+          'a.correctAnswer',
+          'a.correct',
+          sql<string | null>`COALESCE(r."explanation", y."explanation")`.as('explanation'),
+          'img.url as imageKey',
+          'img.width',
+          'img.height',
+          answeredImageServable(eb as never, skillChecks).as('servable'),
+        ])
+        .orderBy('a.id', 'desc')
+        .limit(APPRENTICE.checkpointEvery)
+        .execute();
+    return (await failClosed(trx, 'recap', () => read('checked'), null)) ?? (await read('hidden'));
+  });
   const { options } = await ratingOptions(db);
   const missed = rows
     .filter((row) => !row.correct)
@@ -347,23 +408,29 @@ async function buildCheckpoint(
   };
 }
 
-export async function getApprentice(db: Kysely<DB>, playerId: number): Promise<ApprenticeView> {
-  const player = await db
-    .selectFrom('NewOrderPlayer')
-    .select('rankType')
-    .where('userId', '=', playerId)
-    .executeTakeFirst();
+export async function getApprentice(
+  db: Kysely<DB>,
+  playerId: number,
+  { skillCheckRate = 0 }: { skillCheckRate?: number } = {}
+): Promise<ApprenticeView> {
+  const [player, { progress, checkpointPending }] = await Promise.all([
+    db
+      .selectFrom('NewOrderPlayer')
+      .select('rankType')
+      .where('userId', '=', playerId)
+      .executeTakeFirst(),
+    standingOf(db, playerId),
+  ]);
   if (player && player.rankType !== 'Acolyte') return { kind: 'not-acolyte' };
 
-  const progress = await progressOf(db, playerId);
-  if (await checkpointPending(db, playerId, progress.answered)) {
+  if (checkpointPending) {
     return {
       kind: 'checkpoint',
       checkpoint: await buildCheckpoint(db, playerId, progress),
       progress,
     };
   }
-  const next = await findNext(db, playerId);
+  const next = await findNext(db, playerId, skillCheckRate);
   if (!next) return { kind: 'exhausted', progress };
   const { correctAnswer: _hidden, imageId: _image, ...item } = next;
   return { kind: 'question', item, progress };
@@ -383,6 +450,7 @@ export async function answerApprentice(
 ): Promise<AnswerResult> {
   const { userId, kind, referenceId, version, answer } = input;
   const now = deps.now();
+  const smites = (await deps.settings?.())?.smites ?? true;
 
   const result = await db.transaction().execute(async (trx): Promise<TxResult> => {
     // The player row lock serialises one player's answers, so the item check below and the insert cannot interleave.
@@ -398,11 +466,10 @@ export async function answerApprentice(
       return { status: 'rejected', reason: 'reset-pending' };
     }
 
-    const before = await progressOf(trx, userId);
-    if (await checkpointPending(trx, userId, before.answered)) {
+    if ((await standingOf(trx, userId)).checkpointPending) {
       return { status: 'rejected', reason: 'checkpoint-pending' };
     }
-    const current = await findNext(trx, userId);
+    const current = await findNext(trx, userId, deps.skillCheckRate ?? 0);
     if (!current || current.kind !== kind || current.referenceId !== referenceId) {
       return { status: 'rejected', reason: 'not-current' };
     }
@@ -470,7 +537,7 @@ export async function answerApprentice(
       }
     }
     let resetDue = false;
-    if (!correct && (await wrongSinceLastSmite(trx, userId)) >= APPRENTICE.smiteWrong) {
+    if (smites && !correct && (await wrongSinceLastSmite(trx, userId)) >= APPRENTICE.smiteWrong) {
       const active = await issueSmite(trx, {
         playerId: userId,
         reason: ACOLYTE_WRONG_ANSWER_SMITE,
@@ -529,8 +596,7 @@ export async function acknowledgeCheckpoint(
   playerId: number,
   now: Date
 ): Promise<void> {
-  const progress = await progressOf(db, playerId);
-  if (!(await checkpointPending(db, playerId, progress.answered))) return;
+  if (!(await standingOf(db, playerId)).checkpointPending) return;
   const last = await answersOf(db, playerId)
     .select('a.id')
     .orderBy('a.id', 'desc')

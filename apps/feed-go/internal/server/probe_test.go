@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/vmihailenco/msgpack/v5"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
@@ -51,7 +52,7 @@ func cacheState(r *testkit.Redis) map[string]string {
 type goldenProbeCase struct {
 	dir, procedure string
 	min            int
-	setup          func(*testing.T, *goldenFixture) *goldenEnv
+	setup          func(testing.TB, *goldenFixture) *goldenEnv
 	serve          func(*Server, context.Context, *http.Request) (*computed, error)
 	request        func(context.Context, ShadowRequest) (*http.Request, error)
 	// required: the caches the emptied-cache comparison must reach as would_miss.
@@ -68,9 +69,37 @@ var goldenProbeCases = []goldenProbeCase{
 	{"as-posts", Procedure, goldenMinAsPosts, goldenSetup, (*Server).compute, SyntheticRequest,
 		[]string{hydrate.CacheMetrics, CacheSessionUser, CacheGallerySettings}, []string{hydrate.CacheTagIDs, hydrate.CacheImageFrames}, true},
 	{"infinite", ProcedureInfinite, goldenMinInfinite, goldenSetup, (*Server).computeInfinite, SyntheticInfiniteRequest,
-		[]string{hydrate.CacheMetrics}, []string{hydrate.CacheTagIDs}, true},
+		[]string{hydrate.CacheMetrics, CacheNewCreators}, []string{hydrate.CacheTagIDs}, true},
 	{"model-getall", ProcedureModelGetAll, goldenMinModels, goldenSetupModels, (*Server).computeModelGetAll, SyntheticModelGetAllRequest,
-		[]string{hydrate.CacheUserCosmetics, CacheModelData}, []string{CacheModelFrames, CacheModelDecorations, hydrate.CacheTagIDs}, false},
+		[]string{hydrate.CacheUserCosmetics, CacheNewCreators}, []string{CacheModelData, CacheModelTags, CacheModelFrames, CacheModelDecorations, hydrate.CacheTagIDs,
+			CacheOfficialModels}, false},
+	// GET /api/v1/images: the probe runs the public route's compute (a session is handed back there),
+	// under hydrate.WithPresence as model.getAll's does. The golden server reads no ClickHouse and no
+	// image-resource-use-write flag, so a cold metric hash or image-resources entry falls back.
+	{"v1-images", ProbeV1Images, goldenMinV1, goldenSetup,
+		func(s *Server, ctx context.Context, r *http.Request) (*computed, error) {
+			return s.v1ImagesCompute(true)(ctx, r)
+		},
+		SyntheticV1Request, []string{hydrate.CacheMetrics, CacheImageResources}, nil, false},
+}
+
+// goldenShadowRequest is the sample a Node sampler sends for fx: its REST query and path for a REST
+// fixture (one with a path), else its tRPC input.
+func goldenShadowRequest(fx *goldenFixture, headers map[string]string) ShadowRequest {
+	if fx.Request.Path != "" {
+		return ShadowRequest{Input: fx.Request.Query, Path: fx.Request.Path, Headers: headers}
+	}
+	return ShadowRequest{Input: fx.Request.Input, Headers: headers}
+}
+
+// goldenServeFallback is the reason the public route falls back on fx with ("" = served): the
+// fixture's own (the shadow's), except that the public images route hands a signed-in request back
+// before computing it (v1ImagesServeOnly).
+func goldenServeFallback(gc goldenProbeCase, fx *goldenFixture) string {
+	if gc.procedure == ProbeV1Images && fx.Request.Session != nil {
+		return "v1-images-session-cookie"
+	}
+	return fx.Expect.Fallback
 }
 
 // The registry holds exactly the procedures the golden cases cover (a new registration needs its
@@ -99,7 +128,8 @@ func runGoldenProbe(t *testing.T, env *goldenEnv, fx *goldenFixture, procedure s
 		t.Fatal("the golden hydrator has no presence check")
 	}
 	rec := &hydrate.PresenceProbe{Checker: checker}
-	err := probes[procedure].run(env.server, context.Background(), ProbeRequest{Input: fx.Request.Input, Headers: env.headers}, rec)
+	sr := goldenShadowRequest(fx, env.headers)
+	_, err := probes[procedure].run(env.server, context.Background(), ProbeRequest{Input: sr.Input, Path: sr.Path, Headers: sr.Headers}, rec)
 	result, missed := classifyProbe(err, rec.Misses(), rec.Raced(), checker.MissReason)
 	return result, missed, err
 }
@@ -124,7 +154,7 @@ func probeGoldenDir(t *testing.T, gc goldenProbeCase) {
 	expected := map[string]bool{}
 	for _, path := range goldenFiles(t, gc.dir, gc.min) {
 		fx := goldenLoad(t, path)
-		switch want := fx.Expect.Fallback; {
+		switch want := goldenServeFallback(gc, fx); {
 		case want == "":
 			expected[ProbeWouldServe] = true
 		case missReasonCache(want) != "":
@@ -141,7 +171,7 @@ func probeGoldenDir(t *testing.T, gc goldenProbeCase) {
 				t.Fatalf("the probe wrote to the cache:\n before %v\n after  %v", before, after)
 			}
 			seen[result]++
-			want := fx.Expect.Fallback
+			want := goldenServeFallback(gc, fx)
 			switch c := missReasonCache(want); {
 			case want == "":
 				if result != ProbeWouldServe {
@@ -208,6 +238,12 @@ func goldenKeyCache(key string) string {
 	if key == feed.BlockedTagsKey {
 		return CacheBlockedTags
 	}
+	if key == hydrate.KeyOfficialModels {
+		return CacheOfficialModels
+	}
+	if strings.HasPrefix(key, feed.NewCreatorsKey+":") {
+		return CacheNewCreators
+	}
 	m := goldenPerIDKey.FindStringSubmatch(key)
 	if m == nil {
 		return ""
@@ -227,6 +263,10 @@ func goldenKeyCache(key string) string {
 		return CacheModelDecorations
 	case hydrate.KeyVersionImages:
 		return CacheVersionImages
+	case hydrate.KeyImageResources:
+		return CacheImageResources
+	case hydrate.KeyImageMeta:
+		return CacheImageMeta
 	}
 	for _, c := range hydrate.PageCaches {
 		if c.Key == m[1] {
@@ -252,7 +292,7 @@ func probeAgreesOnEachCacheMiss(t *testing.T, gc goldenProbeCase) {
 	serveCompared := map[string]int{}
 	for _, path := range goldenFiles(t, gc.dir, gc.min) {
 		fx := goldenLoad(t, path)
-		if fx.Expect.Fallback != "" {
+		if goldenServeFallback(gc, fx) != "" {
 			continue
 		}
 		byCache := map[string][]string{}
@@ -274,7 +314,7 @@ func probeAgreesOnEachCacheMiss(t *testing.T, gc goldenProbeCase) {
 					}
 				}
 				served := gc.setup(t, &cold)
-				r, err := gc.request(context.Background(), ShadowRequest{Input: cold.Request.Input, Headers: served.headers})
+				r, err := gc.request(context.Background(), goldenShadowRequest(&cold, served.headers))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -579,8 +619,21 @@ func probeBody(t *testing.T, fx *goldenFixture, headers map[string]string, start
 	return strings.NewReader(string(b))
 }
 
+// goFirst is a series' value. On feed_go_gofirst_total, labels that name no viewer read the sum over
+// every viewer of the endpoint (GoFirstViewers): the probe's count whatever its viewer class.
 func goFirst(t *testing.T, reg *prometheus.Registry, name string, labels map[string]string) float64 {
 	t.Helper()
+	if _, ok := labels["viewer"]; name == "feed_go_gofirst_total" && !ok {
+		sum := 0.0
+		for _, viewer := range GoFirstViewers(labels[EndpointLabel]) {
+			withViewer := map[string]string{"viewer": viewer}
+			for k, v := range labels {
+				withViewer[k] = v
+			}
+			sum += goFirst(t, reg, name, withViewer)
+		}
+		return sum
+	}
 	v, _ := metricValue(t, reg, name, labels)
 	return v
 }
@@ -713,7 +766,7 @@ func TestProbeModelGetAllComputedFrameMiss(t *testing.T) {
 		before := cacheState(env.cache)
 		checker := env.server.Deps.Hydrator.(hydrate.PresenceChecker)
 		rec := &hydrate.PresenceProbe{Checker: checker}
-		err := probes[ProcedureModelGetAll].run(env.server, context.Background(), ProbeRequest{Input: cold.Request.Input, Headers: env.headers}, rec)
+		_, err := probes[ProcedureModelGetAll].run(env.server, context.Background(), ProbeRequest{Input: cold.Request.Input, Headers: env.headers}, rec)
 		result, missed := classifyProbe(err, rec.Misses(), nil, checker.MissReason)
 		if !slices.Contains(missed, CacheModelFrames) {
 			t.Fatalf("compute %v: missed %v, want model-frames reported", withCompute, missed)
@@ -835,7 +888,7 @@ func TestProbeModelGetAllComputedShowcaseMiss(t *testing.T) {
 		before := cacheState(env.cache)
 		checker := env.server.Deps.Hydrator.(hydrate.PresenceChecker)
 		rec := &hydrate.PresenceProbe{Checker: checker}
-		err := probes[ProcedureModelGetAll].run(env.server, context.Background(), ProbeRequest{Input: cold.Request.Input, Headers: env.headers}, rec)
+		_, err := probes[ProcedureModelGetAll].run(env.server, context.Background(), ProbeRequest{Input: cold.Request.Input, Headers: env.headers}, rec)
 		result, missed := classifyProbe(err, rec.Misses(), nil, checker.MissReason)
 		if !slices.Contains(missed, "version-images") {
 			t.Fatalf("compute %v: missed %v (err %v), want version-images reported", withCompute, missed, err)
@@ -891,7 +944,7 @@ func TestProbeModelGetAllComputedDecorationMiss(t *testing.T) {
 		before := cacheState(env.cache)
 		checker := env.server.Deps.Hydrator.(hydrate.PresenceChecker)
 		rec := &hydrate.PresenceProbe{Checker: checker}
-		err := probes[ProcedureModelGetAll].run(env.server, context.Background(), ProbeRequest{Input: cold.Request.Input, Headers: env.headers}, rec)
+		_, err := probes[ProcedureModelGetAll].run(env.server, context.Background(), ProbeRequest{Input: cold.Request.Input, Headers: env.headers}, rec)
 		result, missed := classifyProbe(err, rec.Misses(), nil, checker.MissReason)
 		if !slices.Contains(missed, "model-decorations") {
 			t.Fatalf("compute %v: missed %v, want model-decorations reported", withCompute, missed)
@@ -967,13 +1020,95 @@ func TestProbeHandlerRejectsAndDrops(t *testing.T) {
 	}
 }
 
+// A probe's go-first count lands under its request's viewer class (feedViewerClass, as the
+// endpoint's compute reports it), so the go-first share reads for signed-out viewers alone, input
+// fallbacks included (read for the label though serving stops before the session); a probe whose
+// viewer cannot be resolved (a bearer token) lands under unknown. Each class is probed a different number of times, so a label swapped or
+// pinned to one value moves the counts.
+func TestProbeCountsGoFirstByViewer(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	m := NewMetrics(reg)
+	probe := func(dir string, setup func(testing.TB, *goldenFixture) *goldenEnv, procedure, fixture string, times int) {
+		t.Helper()
+		fx := goldenLoad(t, filepath.Join(goldenDir, dir, fixture+".json"))
+		env := setup(t, fx)
+		env.server.Metrics = m
+		env.server.Log = slog.New(slog.NewTextHandler(io.Discard, nil))
+		for range times {
+			env.server.probe(context.Background(), probes[procedure], ProbeRequest{Input: fx.Request.Input, Headers: env.headers})
+		}
+	}
+	probe("as-posts", goldenSetup, Procedure, "version-signed-out-most-reactions", 1)
+	probe("as-posts", goldenSetup, Procedure, "version-signed-in-blue-newest", 2)
+	probe("as-posts", goldenSetup, Procedure, "fallback-bearer-token", 3)
+	// An input fallback, taken before serving reads the session: the probe still reads the viewer for
+	// its label, signed out (anon) and signed in (user) alike.
+	probe("as-posts", goldenSetup, Procedure, "fallback-random-sort", 6)
+	probe("infinite", goldenSetup, ProcedureInfinite, "fallback-published-only-off", 7)
+	probe("infinite", goldenSetup, ProcedureInfinite, "global-moderator-oldest", 4)
+	probe("model-getall", goldenSetupModels, ProcedureModelGetAll, "base-models-multi-signed-in", 5)
+
+	want := map[string]map[string]float64{
+		EndpointAsPosts:     {FeedViewerAnon: 1 + 6, FeedViewerUser: 2, GoFirstViewerUnknown: 3},
+		EndpointInfinite:    {FeedViewerModerator: 4, FeedViewerUser: 7},
+		EndpointModelGetAll: {FeedViewerUser: 5},
+		EndpointV1Images:    {},
+	}
+	for e, byViewer := range want {
+		for _, v := range []string{"anon", "crawler", "banned", "user", "moderator", "unknown"} {
+			n := 0.0
+			for _, r := range []string{ProbeWouldServe, ProbeWouldMiss, ProbeRaced, ProbeUnsupported, ProbeError} {
+				n += goFirst(t, reg, "feed_go_gofirst_total", map[string]string{"feed_endpoint": e, "result": r, "viewer": v})
+			}
+			if n != byViewer[v] {
+				t.Errorf("feed_go_gofirst_total{feed_endpoint=%q,viewer=%q} = %v, want %v", e, v, n, byViewer[v])
+			}
+		}
+	}
+	// The input fallbacks are unsupported probes under their viewer.
+	for _, c := range []struct {
+		endpoint, viewer string
+		want             float64
+	}{{EndpointAsPosts, FeedViewerAnon, 6}, {EndpointInfinite, FeedViewerUser, 7}} {
+		if n := goFirst(t, reg, "feed_go_gofirst_total", map[string]string{"feed_endpoint": c.endpoint, "result": ProbeUnsupported, "viewer": c.viewer}); n != c.want {
+			t.Errorf("feed_go_gofirst_total{feed_endpoint=%q,result=\"unsupported\",viewer=%q} = %v, want %v", c.endpoint, c.viewer, n, c.want)
+		}
+	}
+}
+
+// Every go-first result starts at 0 under every viewer its endpoint reports (GoFirstViewers): the five
+// tRPC feed classes and unknown on the tRPC feeds, unknown alone on GET /api/v1/images.
+func TestGoFirstViewerSeriesAreSeeded(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	m := NewMetrics(reg)
+	results := []string{"would_serve", "would_miss", "raced", "unsupported", "error"}
+	viewers := map[string][]string{
+		"as-posts":     {"anon", "crawler", "banned", "user", "moderator", "unknown"},
+		"infinite":     {"anon", "crawler", "banned", "user", "moderator", "unknown"},
+		"model-getall": {"anon", "crawler", "banned", "user", "moderator", "unknown"},
+		"v1-images":    {"unknown"},
+	}
+	if n, want := testutil.CollectAndCount(m.GoFirst), 3*5*6+5; n != want {
+		t.Fatalf("feed_go_gofirst_total has %d series at construction, want %d", n, want)
+	}
+	for e, vs := range viewers {
+		for _, r := range results {
+			for _, v := range vs {
+				if n, found := metricValue(t, reg, "feed_go_gofirst_total", map[string]string{"feed_endpoint": e, "result": r, "viewer": v}); !found || n != 0 {
+					t.Errorf("gofirst{%s,%s,%s} = %v found=%v, want a 0 series", e, r, v, n, found)
+				}
+			}
+		}
+	}
+}
+
 func TestProbeErrors(t *testing.T) {
 	env, fx, reg := probeEnv(t)
 	s := env.server
 	req := ProbeRequest{Input: fx.Request.Input, Headers: env.headers}
 
 	// A panic in the probe: error, and counted where=probe.
-	s.probe(context.Background(), probeSpec{endpoint: EndpointAsPosts, run: func(*Server, context.Context, ProbeRequest, *hydrate.PresenceProbe) error {
+	s.probe(context.Background(), probeSpec{endpoint: EndpointAsPosts, run: func(*Server, context.Context, ProbeRequest, *hydrate.PresenceProbe) (string, error) {
 		panic("probe boom")
 	}}, req)
 	if n := goFirst(t, reg, "feed_go_gofirst_total", resultLabels(ProbeError)); n != 1 {
@@ -984,8 +1119,8 @@ func TestProbeErrors(t *testing.T) {
 	}
 
 	// A fallback that is not a cache miss: unsupported, its reason under mode=probe.
-	s.probe(context.Background(), probeSpec{endpoint: EndpointAsPosts, run: func(*Server, context.Context, ProbeRequest, *hydrate.PresenceProbe) error {
-		return fallback.New("input-sort")
+	s.probe(context.Background(), probeSpec{endpoint: EndpointAsPosts, run: func(*Server, context.Context, ProbeRequest, *hydrate.PresenceProbe) (string, error) {
+		return "", fallback.New("input-sort")
 	}}, req)
 	if n := goFirst(t, reg, "feed_go_gofirst_total", resultLabels(ProbeUnsupported)); n != 1 {
 		t.Errorf("unsupported = %v, want 1", n)
@@ -997,9 +1132,9 @@ func TestProbeErrors(t *testing.T) {
 	// A hydrator with no presence check (never in production): error, nothing run.
 	ran := false
 	s.Deps.Hydrator = struct{ feed.Hydrator }{}
-	s.probe(context.Background(), probeSpec{endpoint: EndpointAsPosts, run: func(*Server, context.Context, ProbeRequest, *hydrate.PresenceProbe) error {
+	s.probe(context.Background(), probeSpec{endpoint: EndpointAsPosts, run: func(*Server, context.Context, ProbeRequest, *hydrate.PresenceProbe) (string, error) {
 		ran = true
-		return nil
+		return "", nil
 	}}, req)
 	if ran || goFirst(t, reg, "feed_go_gofirst_total", resultLabels(ProbeError)) != 2 {
 		t.Errorf("no presence check: ran=%v error=%v, want not run and error 2", ran, goFirst(t, reg, "feed_go_gofirst_total", resultLabels(ProbeError)))

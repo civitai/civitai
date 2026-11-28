@@ -620,6 +620,7 @@ const imageRow = (type: MediaType, metadata: Record<string, unknown> | null = nu
   userId: 42,
   type,
   nsfwLevel: 1,
+  modelRestricted: false,
   metadata,
   ingestion: 'Scanned',
   createdAt: new Date(CRUCIBLE_STARTED_AT.getTime() + 60_000),
@@ -1018,9 +1019,17 @@ describe('submitEntry — maximum clip length', () => {
     await expect(submit()).resolves.toMatchObject({ id: 5 });
   });
 
+  it('accepts a clip over the maximum by no more than container padding', async () => {
+    dbMock.dbRead.image.findUnique.mockResolvedValue(
+      imageRow(MediaType.video, { duration: 120.4 })
+    );
+
+    await expect(submit()).resolves.toMatchObject({ id: 5 });
+  });
+
   it('rejects a clip over the maximum', async () => {
     dbMock.dbRead.image.findUnique.mockResolvedValue(
-      imageRow(MediaType.video, { duration: 120.01 })
+      imageRow(MediaType.video, { duration: 120.51 })
     );
 
     await expect(submit()).rejects.toThrow(/at most 2:00/);
@@ -1028,10 +1037,9 @@ describe('submitEntry — maximum clip length', () => {
   });
 
   it('does not render the clip and the limit as the SAME duration', async () => {
-    // `formatDuration` rounds, so a fractional overshoot printed "at most 2:00; this one is 2:00"
-    // — an entrant told the entry is too long and shown two identical numbers.
+    // A rejected clip must never print the same number as the limit ("at most 2:00; this one is 2:00").
     dbMock.dbRead.image.findUnique.mockResolvedValue(
-      imageRow(MediaType.video, { duration: 120.01 })
+      imageRow(MediaType.video, { duration: 120.51 })
     );
 
     await expect(submit()).rejects.toThrow(/at most 2:00; this one is 2:01/);
@@ -1309,9 +1317,6 @@ describe('submitEntry — a cancel or the end landing mid-submit', () => {
 
     expect(createMultiAccountBuzzTransaction).toHaveBeenCalledTimes(1);
     expect(refundMultiAccountTransaction).not.toHaveBeenCalled();
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'crucible-entry-post-refresh-failed', postId: 300 })
-    );
   });
 
   it('refunds a paid draft entry when its post was published or moved meanwhile', async () => {
@@ -1405,20 +1410,11 @@ describe('submitEntry — creator notification', () => {
     expect(sentDetails()).toMatchObject({ crucibleId: 1, crucibleName: null });
   });
 
-  it('logs a notification it could not send without failing the entry', async () => {
+  it('does not fail the entry when its notification cannot be sent', async () => {
     dbMock.dbRead.crucible.findUnique.mockResolvedValue(crucibleRow(MediaType.image));
     createNotification.mockRejectedValue(new Error('notifications down'));
 
     await expect(submit()).resolves.toMatchObject({ id: 5 });
-    await vi.waitFor(() =>
-      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: 'error',
-          name: 'crucible-notification-failed',
-          notificationType: 'crucible-entry-submitted',
-        })
-      )
-    );
   });
 });
 
@@ -1690,6 +1686,30 @@ describe('submitEntry — who and what may enter', () => {
     await expect(submit()).resolves.toMatchObject({ id: 5 });
   });
 
+  describe('made with a base model whose license restricts mature images', () => {
+    const enter = (nsfwLevel: number) => {
+      dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+        ...crucibleRow(MediaType.image),
+        nsfwLevel: 1 | 2 | 4,
+      });
+      dbMock.dbRead.image.findUnique.mockResolvedValue({
+        ...imageRow(MediaType.image),
+        nsfwLevel,
+        modelRestricted: true,
+      });
+      return submit();
+    };
+
+    it('refuses a mature entry', async () => {
+      await expect(enter(4)).rejects.toThrow(/doesn't allow mature images/);
+      expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
+    });
+
+    it('accepts a PG entry', async () => {
+      await expect(enter(1)).resolves.toMatchObject({ id: 5 });
+    });
+  });
+
   it('refuses a user on the contest-ban list', async () => {
     dbMock.dbRead.user.findUnique.mockResolvedValueOnce({
       meta: { contestBanDetails: { bannedAt: '2026-10-01T00:00:00.000Z' } },
@@ -1742,8 +1762,8 @@ describe('checkCrucibleEntryEligibility', () => {
   describe('once a required model is held to PG and PG-13', () => {
     const withRequiredModel = (flagged: boolean) => {
       dbMock.dbRead.image.findMany.mockResolvedValue([
-        { id: 1, createdAt: after, nsfwLevel: 1 },
-        { id: 5, createdAt: after, nsfwLevel: 4 },
+        { id: 1, createdAt: after, nsfwLevel: 1, modelRestricted: false },
+        { id: 5, createdAt: after, nsfwLevel: 4, modelRestricted: false },
       ]);
       fetchImageResources.mockResolvedValue({
         1: { resources: [{ modelVersionId: 500 }] },
@@ -1768,6 +1788,26 @@ describe('checkCrucibleEntryEligibility', () => {
 
       await expect(check([5])).resolves.toEqual([{ imageId: 5, eligible: true, reasons: [] }]);
     });
+  });
+
+  it('refuses a mature image whose base model license restricts mature images', async () => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      startAt: CRUCIBLE_STARTED_AT,
+      createdAt: CRUCIBLE_STARTED_AT,
+      allowedResources: [],
+      allowedBaseModels: [],
+    });
+    dbMock.dbRead.image.findMany.mockResolvedValue([
+      { id: 1, createdAt: after, nsfwLevel: 4, modelRestricted: true },
+      { id: 2, createdAt: after, nsfwLevel: 1, modelRestricted: true },
+      { id: 3, createdAt: after, nsfwLevel: 4, modelRestricted: false },
+    ]);
+
+    await expect(check([1, 2, 3])).resolves.toEqual([
+      { imageId: 1, eligible: false, reasons: ['restricted-model'] },
+      { imageId: 2, eligible: true, reasons: [] },
+      { imageId: 3, eligible: true, reasons: [] },
+    ]);
   });
 
   it("only looks at the caller's own images", async () => {
@@ -2100,5 +2140,66 @@ describe('submitEntry — entries close before the end', () => {
       CRUCIBLE_ENTRIES_CLOSED_MESSAGE
     );
     expect(createPost).not.toHaveBeenCalled();
+  });
+});
+
+// Music crucibles are video crucibles; the entrant declares the music model on the post when the
+// video's metadata lost it. The first case pins that a hand-added (detected: false) resource counts.
+describe('submitEntry — a music model declared on the post', () => {
+  const ACE_STEP = 2727094;
+  const aceStepAddedByHand = {
+    modelVersionId: ACE_STEP,
+    detected: false,
+    modelType: 'Checkpoint',
+    baseModel: 'ACE Audio',
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    createNotification.mockResolvedValue(undefined);
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      ...crucibleRow(MediaType.video),
+      allowedResources: [ACE_STEP],
+      allowedBaseModels: ['ACE Audio'],
+    });
+    dbMock.dbWrite.crucibleEntry.count.mockResolvedValue(0);
+    dbMock.dbRead.crucibleEntry.findFirst.mockResolvedValue(null);
+    dbMock.dbRead.image.findUnique.mockResolvedValue({ ...imageRow(MediaType.video), meta: null });
+    dbMock.dbRead.image.count.mockResolvedValue(1);
+    dbMock.dbWrite.crucibleEntry.create.mockResolvedValue({ id: 5, user: { username: 'tester' } });
+  });
+
+  it('accepts a video whose music model was added by hand', async () => {
+    fetchImageResources.mockResolvedValue({ 7: { resources: [aceStepAddedByHand] } });
+
+    await expect(submit()).resolves.toMatchObject({ id: 5 });
+  });
+
+  it('refuses the same video without it, and says to add the model on the post', async () => {
+    fetchImageResources.mockResolvedValue({});
+
+    await expect(submit()).rejects.toThrow(/no detected resources.*add it to your post/);
+    expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
+  });
+
+  it('gives no add-it hint for an on-site generation, which cannot take a resource by hand', async () => {
+    fetchImageResources.mockResolvedValue({});
+    dbMock.dbRead.image.findUnique.mockResolvedValue({
+      ...imageRow(MediaType.image),
+      meta: { civitaiResources: [{ modelVersionId: 1 }] },
+    });
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      ...crucibleRow(MediaType.image),
+      allowedResources: [12],
+    });
+
+    const error = await submit().catch((e: Error) => e);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toMatch(/no detected resources/);
+    expect((error as Error).message).not.toMatch(/\+ Resource/);
+    // The hint reads `meta` from this query; the mock ignores `select`, so pin it here.
+    expect(dbMock.dbRead.image.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ select: expect.objectContaining({ meta: true }) })
+    );
   });
 });

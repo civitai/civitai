@@ -51,13 +51,16 @@ func TestParseInfiniteFallsBack(t *testing.T) {
 		{"the hidden worn hats", map[string]any{"hideWornHats": true}, "infinite-hat-turf"},
 		{"the hidden turf hats", map[string]any{"hideTurfHats": true}, "infinite-hat-turf"},
 		{"the viewer's own hats", map[string]any{"hatTurfMine": true}, "infinite-hat-turf"},
+		{"the viewer's expired hats", map[string]any{"hatTurfExpired": true}, "infinite-hat-turf"},
 		{"userId 0", map[string]any{"userId": num("0")}, "infinite-user-zero"},
 		{"a negative userId", map[string]any{"userId": num("-1")}, "input-invalid"},
 		{"a username outside the schema", map[string]any{"username": "a-b"}, "input-invalid"},
 		{"a numeric username", map[string]any{"username": num("5")}, "input-invalid"},
 		{"a fractional postId", map[string]any{"postId": num("1.5")}, "input-invalid"},
 		{"tags not a list", map[string]any{"tags": "1"}, "input-invalid"},
-		{"a collection", map[string]any{"collectionId": num("3")}, "input-collectionId"},
+		{"a collection of id 0", map[string]any{"collectionId": num("0")}, "collection-id"},
+		{"a collection tag without a collection", map[string]any{"collectionTagId": num("3")}, "input-collectionTagId"},
+		{"Recently Added without a collection", map[string]any{"sort": "Recently Added"}, "input-sort"},
 		{"a hub", map[string]any{"hubId": num("3")}, "input-hubId"},
 		{"post ids", map[string]any{"postIds": []any{num("1")}}, "input-postIds"},
 		{"published only", map[string]any{"publishedOnly": true}, "input-publishedOnly"},
@@ -111,7 +114,7 @@ func TestInfiniteOwnScopeAndPath(t *testing.T) {
 		{InfiniteInput{PostID: 1}, true},
 		{InfiniteInput{Input: Input{ModelID: 2}}, true},
 		{InfiniteInput{Input: Input{ModelID: 2, ModelVersionID: 3}}, false},
-		{InfiniteInput{UserID: 4, Tags: []int{1}}, false},
+		{InfiniteInput{UserID: 4, Input: Input{Tags: []int{1}}}, false},
 	} {
 		if got := c.in.dbPath(); got != c.want {
 			t.Errorf("dbPath(%+v) = %v, want %v", c.in, got, c.want)
@@ -318,7 +321,7 @@ func newInfFixture(t *testing.T) *infFixture {
 			if f.pageErr != nil {
 				return nil, f.pageErr
 			}
-			return infRows(f.rows), nil
+			return infRows(f.rows, strings.Contains(sql, `JOIN ct ON ct."imageId" = i.id`)), nil
 		}},
 		{Match: `SELECT "userId", mode::text FROM "Model"`, Rows: func(args []any) (*testkit.Rows, error) {
 			var out [][]any
@@ -354,13 +357,18 @@ func newInfFixture(t *testing.T) *infFixture {
 	return f
 }
 
-// infRows is the page query's rows in scanRows' column order.
-func infRows(rows []RawImage) *testkit.Rows {
+// infRows is the page query's answer over rows; collection: the query joined a collection, so each
+// row also carries its item's note, status and adder (a row without RawImage.Collection: an ACCEPTED
+// item with neither).
+func infRows(rows []RawImage, collection bool) *testkit.Rows {
 	cols := []string{"id", "name", "url", "nsfwLevel", "width", "height", "hash", "hideMeta", "hasMeta",
 		"hasPositivePrompt", "onSite", "remixOfId", "createdAt", "sortAt", "mimeType", "type", "metadata",
 		"ingestion", "blockedFor", "scannedAt", "needsReview", "userId", "postId", "postTitle", "index",
 		"publishedAt", "unpublishedAt", "modelVersionId", "model3dId", "availability", "minor", "poi",
-		"acceptableMinor", "cursorId"}
+		"acceptableMinor", "restricted", "cursorId"}
+	if collection {
+		cols = append(cols, "collectionItemNote", "collectionItemStatus", "collectionItemAddedById")
+	}
 	ptr := func(p *int) any {
 		if p == nil {
 			return nil
@@ -380,9 +388,17 @@ func infRows(rows []RawImage) *testkit.Rows {
 		if r.PublishedAt != nil {
 			published = *r.PublishedAt
 		}
-		data = append(data, []any{r.ID, nil, strOrNil(r.URL), r.NsfwLevel, ptr(r.Width), ptr(r.Height), strOrNil(r.Hash),
+		cells := []any{r.ID, nil, strOrNil(r.URL), r.NsfwLevel, ptr(r.Width), ptr(r.Height), strOrNil(r.Hash),
 			false, true, true, nil, nil, r.SortAt, r.SortAt, nil, r.Type, meta, "Scanned", nil, nil, nil, r.UserID,
-			r.PostID, nil, ptr(r.Index), published, nil, nil, nil, r.Availability, false, false, false, cursor})
+			r.PostID, nil, ptr(r.Index), published, nil, nil, nil, r.Availability, false, false, false, false, cursor}
+		if collection {
+			item := CollectionItem{Status: "ACCEPTED"}
+			if r.Collection != nil {
+				item = *r.Collection
+			}
+			cells = append(cells, strOrNil(item.Note), item.Status, ptr(item.AddedByID))
+		}
+		data = append(data, cells)
 	}
 	return testkit.NewRows(cols, data...)
 }
@@ -458,8 +474,8 @@ func TestServeInfiniteFeedPage(t *testing.T) {
 			t.Errorf("%s missing from the wire", k)
 		}
 	}
-	if _, ok := first["baseModel"]; ok {
-		t.Error("baseModel must be undefined (omitted)")
+	if v, ok := first["baseModel"]; !ok || v != nil {
+		t.Errorf("baseModel = %v (present %v), want undefined: null plus its annotation", v, ok)
 	}
 	if a, _ := ann["items.0.baseModel"].([]any); len(a) != 1 || a[0] != "undefined" {
 		t.Fatalf("baseModel annotation = %v", ann["items.0.baseModel"])
@@ -488,7 +504,7 @@ func TestServeInfiniteFeedPage(t *testing.T) {
 }
 
 func TestServeInfiniteEmptyAnswers(t *testing.T) {
-	const handlerEmpty = `{"items":[]}|{"nextCursor":["undefined"]}`
+	const handlerEmpty = `{"items":[],"nextCursor":null}|{"nextCursor":["undefined"]}`
 	cases := []struct {
 		name     string
 		m        map[string]any
@@ -496,6 +512,8 @@ func TestServeInfiniteEmptyAnswers(t *testing.T) {
 		want     string // json|meta.values
 		trivial  bool
 		uncapped bool
+		viewer   *Viewer
+		noQuery  bool
 	}{
 		{
 			name:  "a withheld version",
@@ -519,18 +537,40 @@ func TestServeInfiniteEmptyAnswers(t *testing.T) {
 		{
 			name: "only blocked tags (index path: no source)",
 			m:    map[string]any{"tags": []any{num("5161")}},
-			want: `{"items":[]}|{"nextCursor":["undefined"]}`, trivial: true,
+			want: `{"items":[],"nextCursor":null}|{"nextCursor":["undefined"]}`, trivial: true,
 		},
 		{
 			name:  "only blocked tags (Postgres path: the handler's source)",
 			m:     map[string]any{"tags": []any{num("5161")}, "postId": num("701")},
 			setup: func(f *infFixture) {},
-			want:  `{"items":[],"source":"db"}|{"nextCursor":["undefined"]}`, trivial: true,
+			want:  `{"items":[],"nextCursor":null,"source":"db"}|{"nextCursor":["undefined"]}`, trivial: true,
+		},
+		{
+			name: "a moderator's level of unselectable bits only (Postgres path)",
+			m:    map[string]any{"postId": num("701"), "browsingLevel": num("32")},
+			want: `{"items":[],"nextCursor":null,"source":"db"}|{"nextCursor":["undefined"]}`, trivial: true,
+			uncapped: true, viewer: &Viewer{ID: 7, IsModerator: true}, noQuery: true,
+		},
+		{
+			name: "a signed-in level asks the feed at its selectable part",
+			m:    map[string]any{"limit": num("2"), "browsingLevel": num("33")},
+			setup: func(f *infFixture) {
+				f.feed.answers["levels=1&excludedTags=9901&excludePoi=1&viewerId=7&sort=reactions&limit=2"] = feedsvc.Answer{Status: 200, NextCursor: "9|9"}
+			},
+			want: `{"items":[],"nextCursor":"feed:9:9","source":"feed"}|null`, trivial: true,
+			uncapped: true, viewer: &Viewer{ID: 7},
+		},
+		{
+			name:     "a signed-in level of unselectable bits only",
+			m:        map[string]any{"limit": num("2"), "browsingLevel": num("32")},
+			want:     `{"items":[],"nextCursor":null,"source":"feed"}|{"nextCursor":["undefined"]}`,
+			trivial:  true,
+			uncapped: true, viewer: &Viewer{ID: 7},
 		},
 		{
 			name: "a shape the feed cannot express",
 			m:    map[string]any{"generation": []any{"txt2img"}},
-			want: `{"items":[],"source":"feed"}|{"nextCursor":["undefined"]}`, trivial: true,
+			want: `{"items":[],"nextCursor":null,"source":"feed"}|{"nextCursor":["undefined"]}`, trivial: true,
 		},
 		{
 			name: "a feed page with no ids keeps its cursor",
@@ -550,6 +590,7 @@ func TestServeInfiniteEmptyAnswers(t *testing.T) {
 		if c.uncapped {
 			req.Cap = 0
 		}
+		req.Viewer = c.viewer
 		j, ann, ans, err := serveInf(t, f, c.m, req)
 		if err != nil {
 			t.Errorf("%s: %v", c.name, err)
@@ -557,6 +598,9 @@ func TestServeInfiniteEmptyAnswers(t *testing.T) {
 		}
 		jb, _ := json.Marshal(j)
 		ab, _ := json.Marshal(ann)
+		if c.noQuery && len(f.sql) != 0 {
+			t.Errorf("%s: page queries %d, want none", c.name, len(f.sql))
+		}
 		if got := string(jb) + "|" + string(ab); got != c.want || ans.Trivial != c.trivial {
 			t.Errorf("%s: %s trivial=%v, want %s trivial=%v", c.name, got, ans.Trivial, c.want, c.trivial)
 		}
@@ -635,12 +679,13 @@ func TestServeInfinitePostScopeIsThePostgresPage(t *testing.T) {
 	// A NULL index on the look-ahead row is a null cursor, an index of 0 a 0.
 	c.CursorID, c.CursorNull = 0, true
 	f.rows = []RawImage{a, b, c}
-	j, _, _, err = serveInf(t, f, map[string]any{"postId": num("701"), "limit": num("2")}, InfiniteRequest{Cap: 1})
+	j, ann, _, err := serveInf(t, f, map[string]any{"postId": num("701"), "limit": num("2")}, InfiniteRequest{Cap: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v, ok := j["nextCursor"]; !ok || v != nil {
-		t.Fatalf("null index cursor = %v (present %v)", v, ok)
+	// A real null: written as null with NO ["undefined"] annotation (an undefined is null plus one).
+	if v, ok := j["nextCursor"]; !ok || v != nil || ann["nextCursor"] != nil {
+		t.Fatalf("null index cursor = %v (present %v, annotation %v)", v, ok, ann["nextCursor"])
 	}
 	c.CursorNull = false
 	f.rows = []RawImage{a, b, c}
@@ -653,12 +698,16 @@ func TestServeInfinitePostScopeIsThePostgresPage(t *testing.T) {
 	}
 	// The end of the post: no look-ahead row, an undefined cursor.
 	f.rows = []RawImage{a}
-	j, _, _, err = serveInf(t, f, map[string]any{"postId": num("701"), "limit": num("2")}, InfiniteRequest{Cap: 1})
+	j, ann, _, err = serveInf(t, f, map[string]any{"postId": num("701"), "limit": num("2")}, InfiniteRequest{Cap: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := j["nextCursor"]; ok {
-		t.Fatalf("end of post: nextCursor = %v, want undefined", j["nextCursor"])
+	// Undefined, as Node's superjson writes it: null in json plus the ["undefined"] annotation.
+	if v, ok := j["nextCursor"]; !ok || v != nil {
+		t.Fatalf("end of post: nextCursor = %v (present %v), want null", v, ok)
+	}
+	if a, _ := ann["nextCursor"].([]any); len(a) != 1 || a[0] != "undefined" {
+		t.Fatalf("end of post: nextCursor annotation = %v, want [undefined]", ann["nextCursor"])
 	}
 }
 
@@ -699,10 +748,16 @@ func TestBuildInfiniteImagesAddsTheInfiniteWireFields(t *testing.T) {
 	if len(images) != 1 {
 		t.Fatalf("images = %d", len(images))
 	}
-	keys := wireKeys(images[0].Wire)
-	tail := keys[len(keys)-4:]
-	if !reflect.DeepEqual(tail, []string{"availability", "meta", "baseModel", "judgeScore"}) {
-		t.Fatalf("appended keys = %v", tail)
+	// The Node object's key order (getAllImagesUncaptured's item under stripImageForInfiniteWire): the
+	// devalue body writes keys in this order, so it is part of the bytes. `thumbnailUrl` is the key
+	// `...feedThumbnailFields(...)` adds right after `meta` (its `nsfwLevel` overrides in place).
+	want := []string{"id", "name", "url", "nsfwLevel", "width", "height", "hash", "hasMeta", "hasPositivePrompt",
+		"onSite", "remixOfId", "createdAt", "sortAt", "type", "metadata", "ingestion", "blockedFor", "needsReview",
+		"postId", "index", "publishedAt", "modelVersionId", "model3dId", "availability", "minor", "poi", "restricted",
+		"meta", "thumbnailUrl", "modelVersionIds", "modelVersionIdsManual", "baseModel", "user", "stats", "reactions",
+		"tags", "tagIds", "cosmetic", "eventDecoration", "judgeScore"}
+	if keys := wireKeys(images[0].Wire); !reflect.DeepEqual(keys, want) {
+		t.Fatalf("keys = %v\nwant   %v", keys, want)
 	}
 	if v, _ := images[0].Wire.Get("availability"); v != "Public" {
 		t.Fatalf("availability = %v", v)
@@ -718,5 +773,47 @@ func TestBuildInfiniteImagesAddsTheInfiniteWireFields(t *testing.T) {
 	r.PublishedAt = nil
 	if got := BuildInfiniteImages([]RawImage{r}, &Hydrated{}, Viewer{ID: 99}, published); len(got) != 0 {
 		t.Fatalf("unpublished image kept: %v", got)
+	}
+}
+
+// `include: ['tags']`: the hydration is asked for the votable tags (PageRequest.Tags) and each image
+// carries what it answered, an image it answered none for `tags: undefined`; without the include the
+// hydration is not asked for them. Regression: before the port the request fell back (input-include).
+func TestServeInfiniteIncludeTags(t *testing.T) {
+	const q = "levels=1&excludedTags=9901&excludePoi=1&sort=reactions&limit=2"
+	for _, include := range []bool{true, false} {
+		f := newInfFixture(t)
+		f.feed.answers[q] = feedsvc.Answer{Status: 200, IDs: []int{11, 12}}
+		f.rows = []RawImage{infRow(11, 100), infRow(12, 100)}
+		f.hydrator.page.Tags = map[int][]any{11: {superjson.Object{{Key: "id", Val: int64(21)}, {Key: "name", Val: "red"}}}}
+		m := map[string]any{"limit": num("2")}
+		if include {
+			m["include"] = []any{"cosmetics", "tags"}
+		}
+		j, ann, _, err := serveInf(t, f, m, InfiniteRequest{Cap: 1})
+		if err != nil {
+			t.Fatalf("include %v: serve: %v (queries %v)", include, err, f.feed.queries)
+		}
+		if f.hydrator.req.Tags != include {
+			t.Fatalf("include %v: hydration asked for tags = %v", include, f.hydrator.req.Tags)
+		}
+		items := j["items"].([]any)
+		if len(items) != 2 {
+			t.Fatalf("include %v: %d items", include, len(items))
+		}
+		// The page's tags reach the wire only through the hydration's answer: the recording hydrator
+		// answers them either way, so without the include they must still be ignored.
+		tags, ok := items[0].(map[string]any)["tags"]
+		if include {
+			list, _ := tags.([]any)
+			if !ok || len(list) != 1 || list[0].(map[string]any)["name"] != "red" {
+				t.Fatalf("image 11 tags = %v, want the hydration's", tags)
+			}
+		} else if a, _ := ann["items.0.tags"].([]any); ok && tags != nil || len(a) != 1 || a[0] != "undefined" {
+			t.Fatalf("without the include: image 11 tags = %v (annotation %v), want undefined", tags, ann["items.0.tags"])
+		}
+		if a, _ := ann["items.1.tags"].([]any); len(a) != 1 || a[0] != "undefined" {
+			t.Fatalf("include %v: image 12 tags annotation = %v, want undefined", include, ann["items.1.tags"])
+		}
 	}
 }

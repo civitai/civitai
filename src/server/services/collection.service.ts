@@ -1,3 +1,8 @@
+import {
+  assertMayLoosenImages,
+  assertMayLoosenImagesAs,
+  withheldImageIds,
+} from '~/server/services/moderator-withheld.service';
 import { Prisma } from '@prisma/client';
 import { hasScanWorkflowSql } from '~/server/common/judge-rating';
 import { queueNeverScannedRescan } from '~/server/services/judge-collection-rescan.service';
@@ -33,7 +38,13 @@ import { getEntityOwnerId } from '~/server/services/entity-owner.service';
 import { logToAxiom } from '~/server/logging/client';
 import { queueCollectionMembershipUpdate } from '~/server/services/collection-index-sync';
 import { UserHubSourceType } from '~/shared/utils/prisma/enums';
-import { getDbWithoutLag, kyselyMatching, preventReplicationLag } from '~/server/db/db-lag-helpers';
+import { isRestrictedImage, RESTRICTED_IMAGE_REASON } from '~/shared/utils/restricted-image';
+import {
+  collectionItemLagId,
+  getDbWithoutLag,
+  kyselyMatching,
+  preventReplicationLag,
+} from '~/server/db/db-lag-helpers';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import { recordChallengeEntrySubmitted } from '~/server/prom/challenge.metrics';
 import {
@@ -106,6 +117,7 @@ import {
   throwInsufficientFundsError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { ownerMediaAllowed } from '~/server/common/image-block-marker';
 import {
   allBrowsingLevelsFlag,
   nsfwBrowsingLevelsFlag,
@@ -138,6 +150,10 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { assertUserChallengeAcceptingEntries } from '~/server/games/daily-challenge/challenge-entry-gate';
+import {
+  getIncompatibleEntryImageIds,
+  INCOMPATIBLE_BASE_MODEL_MESSAGE,
+} from '~/server/games/daily-challenge/challenge-resource-compat';
 import { detachPostsFromCollection } from '~/server/services/collection-post-detach';
 import { liveInviteWhere } from '~/server/services/collection-invite.utils';
 import {
@@ -146,6 +162,7 @@ import {
   isCoverWithinBrowsingLevel,
 } from '~/server/services/collection-cover-visibility';
 import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
+import { assertNotDealFileImages } from '~/server/services/deal-file-image';
 import {
   JUDGE_RATING_METADATA_KEY,
   stripBlockProvenanceMetadata,
@@ -157,10 +174,10 @@ import {
   isCollaboratorRow,
 } from '~/server/services/collection-permission.utils';
 
-// Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
+// Lazy, but not a cycle cut: the cycle guards count dynamic imports (docs/dev/import-cycles.md).
 const modelService = () => import('~/server/services/model.service');
 
-// Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
+// Lazy, but not a cycle cut: the cycle guards count dynamic imports (docs/dev/import-cycles.md).
 const articleService = () => import('~/server/services/article.service');
 
 export type CollectionContributorPermissionFlags = {
@@ -1069,6 +1086,7 @@ export const saveItemInCollections = async ({
     type,
     userId,
     isModerator,
+    csamReview = false,
     removeFromCollectionIds,
     canAccessUserChallenges,
     ...input
@@ -1077,6 +1095,7 @@ export const saveItemInCollections = async ({
   input: AddCollectionItemInput & {
     userId: number;
     isModerator?: boolean;
+    csamReview?: boolean;
     canAccessUserChallenges?: boolean;
   };
 }) => {
@@ -1136,7 +1155,15 @@ export const saveItemInCollections = async ({
   upsertCollectionItems = upsertCollectionItems.filter((c) => canWrite(c.collectionId));
   const writableCollections = collections.filter((c) => canWrite(c.id));
 
-  const existingItems = await dbRead.collectionItem.findMany({
+  // An entry this item just gained, lost or had its tag changed reads from the primary, so a stale
+  // replica row cannot unlock a tag the entry no longer holds.
+  const lagDbs = await Promise.all(
+    touchedCollectionIds.map((id) =>
+      getDbWithoutLag('collectionItem', collectionItemLagId(id, itemKey, input[itemKey]))
+    )
+  );
+  const existingItemsDb = lagDbs.includes(dbWrite) ? dbWrite : dbRead;
+  const existingItems = await existingItemsDb.collectionItem.findMany({
     where: { collectionId: { in: touchedCollectionIds }, [itemKey]: input[itemKey] },
     select: { id: true, collectionId: true, tagId: true, addedById: true, note: true },
   });
@@ -1172,6 +1199,18 @@ export const saveItemInCollections = async ({
       isModerator,
     });
   }
+
+  // Before the contest gates too: they can charge an entry fee.
+  if (
+    isModerator &&
+    input.imageId != null &&
+    upsertCollectionItems.some(
+      (upsert) =>
+        !unwrittenCollectionIds.has(upsert.collectionId) &&
+        submissionStatus(permissionsMap.get(upsert.collectionId)!) === CollectionItemStatus.ACCEPTED
+    )
+  )
+    await assertMayLoosenImages([input.imageId], { csamReview });
 
   // Check if any contest collections are involved and validate ONCE
   const contestCollections = writableCollections.filter(
@@ -1238,6 +1277,16 @@ export const saveItemInCollections = async ({
           tagId &&
           !collection.tags.some((t) => t.tag.id === tagId)
         ) {
+          throw throwBadRequestError('Provided tag is not part of this collection');
+        }
+
+        // A system tag (filterableOnly) is set by the platform, never chosen. The pickers offer an
+        // entry its current system tag back, so one is let through only for an entry in this
+        // collection already holding a system tag, which the write below keeps (`keepsTag`).
+        const storedTagId = existingItemsByCollection.get(collectionId)?.tagId;
+        const holdsSystemTag =
+          storedTagId != null && !inputTags.some((t) => t.tag.id === storedTagId);
+        if (tagId && !inputTags.some((t) => t.tag.id === tagId) && !holdsSystemTag) {
           throw throwBadRequestError('Provided tag is not part of this collection');
         }
 
@@ -1320,6 +1369,16 @@ export const saveItemInCollections = async ({
         "status" "CollectionItemStatus",
         "${Prisma.raw(itemKey)}" INTEGER,
         "tagId" INTEGER
+      )
+      -- Only no tag or one of the collection's category tags is written from here. Any other tag (a
+      -- system tag, on the collection as filterableOnly or not on it at all) only reaches this as an
+      -- entry's stored tag sent back, which the update below keeps anyway, so dropping the row writes
+      -- the same; on a stale read it stops that tag landing on a new or since-cleared entry.
+      WHERE v."tagId" IS NULL OR EXISTS (
+        SELECT 1 FROM "TagsOnCollection" tc
+        WHERE tc."collectionId" = v."collectionId"
+          AND tc."tagId" = v."tagId"
+          AND NOT tc."filterableOnly"
       )
       ON CONFLICT ("collectionId", "${Prisma.raw(itemKey)}")
         WHERE "${Prisma.raw(itemKey)}" IS NOT NULL
@@ -1404,6 +1463,19 @@ export const saveItemInCollections = async ({
   }
 
   await dbWrite.$transaction(transactions);
+  // The save has landed; a flag that cannot be written only leaves the next read on the replica.
+  await Promise.all(
+    touchedCollectionIds.map((id) =>
+      preventReplicationLag(
+        'collectionItem',
+        collectionItemLagId(id, itemKey, input[itemKey])
+      ).catch((error) =>
+        logSysRedisFailOpen('write-degraded', 'collection.saveItemInCollections', error, {
+          collectionId: id,
+        })
+      )
+    )
+  );
   if (itemKey === 'imageId') await bustContestCollectionItemsCache([input.imageId]);
 
   if (followCollectionIds.length > 0) {
@@ -1499,12 +1571,22 @@ function withStoredModeratorMetadata(
 
 export const upsertCollection = async ({
   input,
+  coverViewer,
 }: {
-  input: UpsertCollectionInput & { userId: number; isModerator?: boolean; isMember?: boolean };
+  input: UpsertCollectionInput & {
+    userId: number;
+    isModerator?: boolean;
+    isMember?: boolean;
+    /** A moderator on a session or a full-access key (`actsAsModerator`). */
+    asModerator?: boolean;
+  };
+  /** Who the editor's read showed the cover to, as for getCollectionById; the editor by default. */
+  coverViewer?: { id?: number; isModerator?: boolean };
 }) => {
   const {
     userId,
     isModerator,
+    asModerator = false,
     isMember,
     id,
     name,
@@ -1589,7 +1671,7 @@ export const upsertCollection = async ({
               imageId: currentCollection.image.id,
             },
           ],
-          { id: userId, isModerator },
+          coverViewer ?? { id: userId, isModerator },
           dbWrite
         )
       ).has(currentCollection.id);
@@ -1641,6 +1723,9 @@ export const upsertCollection = async ({
         !isModerator
       )
         throw imageUrlUnavailableError();
+      if (existingCover && existingCover.id !== currentCollection.image?.id) {
+        await assertCollectionCoverAllowed(existingCover.id, asModerator, tx);
+      }
       if (!imageId && image && !existingCover) {
         await assertClientImageUrlsUsable({ urls: [image.url], userId, db: tx });
         if (image.url !== newCoverUrl)
@@ -1996,12 +2081,40 @@ export const upsertCollection = async ({
   return collection;
 };
 
+/**
+ * Refuses an image as a collection cover: a deal file's or review's copy (`assertNotDealFileImages`),
+ * for everyone; and, outside a moderator view (`actsAsModerator`), one whose block refuses its owner
+ * the media (`ownerMediaAllowed`), since the cover serves it. The visibility checks keep an owner's
+ * blocked row, so without this an owner could set their own blocked image as a cover and have it
+ * served.
+ */
+async function assertCollectionCoverAllowed(
+  imageId: number,
+  asModerator: boolean,
+  db: Pick<Prisma.TransactionClient, 'image'> = dbWrite
+) {
+  await assertNotDealFileImages([imageId], 'used here');
+  if (asModerator) return;
+  // primary: a block from moments ago must refuse it.
+  const image = await db.image.findUnique({
+    where: { id: imageId },
+    select: { ingestion: true, blockedFor: true },
+  });
+  if (image && !ownerMediaAllowed(image))
+    throw throwBadRequestError('This image is blocked and cannot be used here.');
+}
+
 export const updateCollectionCoverImage = async ({
   input,
 }: {
-  input: UpdateCollectionCoverImageInput & { userId: number; isModerator?: boolean };
+  input: UpdateCollectionCoverImageInput & {
+    userId: number;
+    isModerator?: boolean;
+    /** A moderator on a session or a full-access key (`actsAsModerator`). */
+    asModerator?: boolean;
+  };
 }) => {
-  const { id, imageId, userId, isModerator } = input;
+  const { id, imageId, userId, isModerator, asModerator = false } = input;
   const permission = await getUserCollectionPermissionsById({
     id,
     userId,
@@ -2018,6 +2131,7 @@ export const updateCollectionCoverImage = async ({
     isModerator,
     confirmBlockOnPrimary: true,
   });
+  await assertCollectionCoverAllowed(imageId, asModerator);
 
   const updated = await dbWrite.collection.update({
     select: { id: true, image: { select: { id: true, url: true, ingestion: true, type: true } } },
@@ -2101,7 +2215,7 @@ export const getCollectionItemsByCollectionId = async ({
   coverage,
   requireRead = false,
   asModerator,
-  asOwner = true,
+  asOwner = false,
 }: {
   input: UserPreferencesInput & GetAllCollectionItemsSchema;
   // Requires user here because models service uses it
@@ -2119,9 +2233,9 @@ export const getCollectionItemsByCollectionId = async ({
    * leave it off must check read themselves.
    */
   requireRead?: boolean;
-  /** Whether the request may act as a moderator (a session or full-scope key); defaults to the user's. */
+  /** Whether the request reads with a moderator's view; default false (`credentialViews`). */
   asModerator?: boolean;
-  /** Whether the request may see the user's own unpublished and private items; default true. */
+  /** Whether the request may see the user's own unpublished and private items; default false. */
   asOwner?: boolean;
 }): Promise<CollectionItemsResult> => {
   const {
@@ -2137,7 +2251,7 @@ export const getCollectionItemsByCollectionId = async ({
 
   const userPreferencesInput = userPreferencesSchema.parse(input);
 
-  const isModerator = asModerator ?? user?.isModerator ?? false;
+  const isModerator = asModerator === true && !!user?.isModerator;
   // Ownership and contributor rights follow the user even on a scoped key: it is their own
   // collection. The item reads inside still get no owner or moderator view.
   const itemsViewer = !asOwner
@@ -2912,10 +3026,12 @@ export const updateCollectionItemsStatus = async ({
   isModerator,
   isSystem,
   rejectionDetail,
+  csamReview = false,
 }: {
   input: UpdateCollectionItemsStatusInput;
   userId: number;
   isModerator?: boolean;
+  csamReview?: boolean;
   /**
    * In-process callers (the AI review job) act as the system user, which holds no contributor row.
    * Never accept this from a tRPC input.
@@ -2928,7 +3044,8 @@ export const updateCollectionItemsStatus = async ({
    */
   rejectionDetail?: string;
 }) => {
-  const { collectionId, collectionItemIds, status, rejectionReason } = input;
+  const { collectionId, status, rejectionReason } = input;
+  let { collectionItemIds } = input;
 
   const isRejection = status === CollectionItemStatus.REJECTED;
   const persistedReason = isRejection ? rejectionReason ?? null : null;
@@ -2959,6 +3076,25 @@ export const updateCollectionItemsStatus = async ({
       throw throwAuthorizationError(
         'You do not have permissions to manage contributor item status.'
       );
+  }
+
+  // Ahead of every write, the rescan an approval queues included.
+  if (status === CollectionItemStatus.ACCEPTED && collectionItemIds.length > 0) {
+    const imageItems = await dbWrite.$queryRaw<{ id: number; imageId: number }[]>`
+      SELECT id, "imageId" FROM "CollectionItem"
+      WHERE "collectionId" = ${collectionId} AND id = ANY(${collectionItemIds}::int[])
+        AND "imageId" IS NOT NULL
+    `;
+    const imageIds = imageItems.map((item) => item.imageId);
+    if (!isSystem) await assertMayLoosenImagesAs(imageIds, { isModerator, csamReview });
+    else {
+      // The AI review accepts the rest and leaves a withheld entry as it is.
+      const withheld = await withheldImageIds(imageIds, { csamReview: false });
+      const withheldItemIds = new Set(
+        imageItems.filter((item) => withheld.has(item.imageId)).map((item) => item.id)
+      );
+      collectionItemIds = collectionItemIds.filter((id) => !withheldItemIds.has(id));
+    }
   }
 
   const collectionMetadata = collection.metadata as CollectionMetadataSchema;
@@ -3327,6 +3463,19 @@ export const validateContestCollectionEntry = async ({
     if (blocked) throw throwBadRequestError('This challenge is not available.');
   }
 
+  // No moderator exception: no one but the uploader would see the entry in the contest.
+  if (imageIds.length > 0) {
+    const entryImages = await dbRead.image.findMany({
+      where: { id: { in: imageIds } },
+      select: { nsfwLevel: true, modelRestricted: true },
+    });
+    if (entryImages.some(isRestrictedImage)) {
+      throw throwBadRequestError(
+        `This image can't be entered: ${RESTRICTED_IMAGE_REASON}. Please enter a different image.`
+      );
+    }
+  }
+
   // Block re-submitting an image a challenge judge has already scored. Removal
   // hard-deletes the CollectionItem (erasing tag/score), so the judge's comment is the
   // durable "already judged" signal — across this and every other challenge. Limited to
@@ -3629,6 +3778,13 @@ export const validateContestCollectionEntry = async ({
           "This image doesn't use a required model for this challenge. The model has to be readable from the image's own generation metadata — a resource credited by hand doesn't count. Generate on site, or re-upload the image with its metadata intact."
         );
       }
+      // Primary: a missing checkpoint row passes this check, and the fee below is never refunded.
+      const incompatible = await getIncompatibleEntryImageIds(
+        imageIds,
+        resourceChallenge.modelVersionIds,
+        dbWrite
+      );
+      if (incompatible.size > 0) throw throwBadRequestError(INCOMPATIBLE_BASE_MODEL_MESSAGE);
     }
   }
 
@@ -3717,6 +3873,7 @@ export const bulkSaveItems = async ({
     postIds = [],
     tagId,
     isModerator,
+    csamReview = false,
     canAccessUserChallenges,
   },
   permissions,
@@ -3724,6 +3881,7 @@ export const bulkSaveItems = async ({
   input: BulkSaveCollectionItemsInput & {
     userId: number;
     isModerator?: boolean;
+    csamReview?: boolean;
     canAccessUserChallenges?: boolean;
   };
   permissions: CollectionContributorPermissionFlags;
@@ -3734,6 +3892,12 @@ export const bulkSaveItems = async ({
   });
 
   if (!collection) throw throwNotFoundError('No collection with id ' + collectionId);
+  if (
+    isModerator &&
+    submissionStatus(permissions) === CollectionItemStatus.ACCEPTED &&
+    imageIds.length > 0
+  )
+    await assertMayLoosenImages(imageIds, { csamReview });
   for (const [itemKey, ids] of [
     ['imageId', imageIds],
     ['postId', postIds],
@@ -3891,6 +4055,12 @@ export const bulkSaveItems = async ({
       }));
   }
 
+  // A system tag (filterableOnly) is never written to a new entry; items already in the collection
+  // are skipped above, so a re-save carrying their current system tag still passes.
+  if (data.length > 0 && tagId && !inputTags.some((t) => t.tag.id === tagId)) {
+    throw throwBadRequestError('The tag provided is not allowed in this collection');
+  }
+
   const { count } = await dbWrite.collectionItem.createMany({ data });
   const savedImageIds = data.map((d) => d.imageId).filter(isDefined);
   await bustContestCollectionItemsCache(savedImageIds);
@@ -3974,7 +4144,7 @@ export const bulkSaveItems = async ({
 
   // Check for challenge entry prize eligibility (Contest mode collections only)
   if (collection.mode === CollectionMode.Contest && count > 0) {
-    // Import dynamically to avoid circular dependencies
+    // Dynamic import, but not a cycle cut: the cycle guards count dynamic imports (docs/dev/import-cycles.md).
     const { checkAndAwardEntryPrize } = await import(
       '~/server/games/daily-challenge/challenge-prize'
     );
@@ -4139,6 +4309,7 @@ export const removeCollectionItem = async ({
   userId,
   collectionId,
   itemId,
+  type,
   isModerator,
 }: RemoveCollectionItemInput & { userId: number; isModerator?: boolean }) => {
   const permissions = await getUserCollectionPermissionsById({
@@ -4147,21 +4318,24 @@ export const removeCollectionItem = async ({
     isModerator,
   });
 
-  if (!permissions.collectionType) {
-    throw throwNotFoundError('Unable to determine collection type');
+  // A typed collection's own type wins. A type-NULL collection holds items of every type (see
+  // `saveItemInCollections`), so a bare `itemId` is ambiguous there and the caller must name it.
+  const collectionType = permissions.collectionType ?? type;
+  if (!collectionType) {
+    throw throwBadRequestError('Item type is required to remove an item from this collection');
   }
 
   let isOwner = false;
   const tableKey =
-    permissions.collectionType === CollectionType.Model
+    collectionType === CollectionType.Model
       ? 'Model'
-      : permissions.collectionType === CollectionType.Article
+      : collectionType === CollectionType.Article
       ? 'Article'
-      : permissions.collectionType === CollectionType.Image
+      : collectionType === CollectionType.Image
       ? 'Image'
-      : permissions.collectionType === CollectionType.Post
+      : collectionType === CollectionType.Post
       ? 'Post'
-      : permissions.collectionType === CollectionType.Model3D
+      : collectionType === CollectionType.Model3D
       ? 'Model3D'
       : null;
 
@@ -4235,46 +4409,28 @@ export const removeCollectionItem = async ({
   return {
     collectionId,
     itemId,
-    type: permissions.collectionType,
+    type: collectionType,
   };
 };
 
+// Whether the caller's own collection holds their own work. The table comes from the item's id
+// field, not `Collection.type`, which is NULL on folders.
 export async function checkUserOwnsCollectionAndItem({
-  itemId,
+  item,
   collectionId,
   userId,
 }: {
-  itemId: number;
+  item: Parameters<typeof getCollectionItemOwnerId>[0];
   collectionId: number;
   userId: number;
 }) {
   const collection = await dbRead.collection.findFirst({
     where: { id: collectionId, userId },
-    select: { type: true, userId: true },
+    select: { id: true },
   });
   if (!collection) return false;
 
-  const tableKey =
-    collection.type === CollectionType.Model
-      ? 'Model'
-      : collection.type === CollectionType.Article
-      ? 'Article'
-      : collection.type === CollectionType.Image
-      ? 'Image'
-      : collection.type === CollectionType.Post
-      ? 'Post'
-      : collection.type === CollectionType.Model3D
-      ? 'Model3D'
-      : null;
-
-  if (!tableKey) throw throwNotFoundError('Unable to determine collection type');
-
-  const [item] = await dbRead.$queryRaw<{ userId: number }[]>`
-    SELECT "userId" FROM "${Prisma.raw(tableKey)}" WHERE id = ${itemId}
-  `;
-  if (!item) return false;
-
-  return item.userId === collection.userId;
+  return (await getCollectionItemOwnerId(item)) === userId;
 }
 
 export const setItemScore = async ({
@@ -4393,7 +4549,13 @@ export const setCollectionItemNsfwLevel = async ({
   collectionItemId,
   nsfwLevel,
   userId,
-}: SetCollectionItemNsfwLevelInput & { userId: number }) => {
+  isModerator,
+  csamReview = false,
+}: SetCollectionItemNsfwLevelInput & {
+  userId: number;
+  isModerator?: boolean;
+  csamReview?: boolean;
+}) => {
   const collectionItem = await getCollectionItemById({ id: collectionItemId });
 
   if (!collectionItem) {
@@ -4448,6 +4610,8 @@ export const setCollectionItemNsfwLevel = async ({
   if (image.needsReview != null)
     throw throwBadRequestError('This image is waiting for moderator review.');
   if (scanFailed(image.ingestion)) throw throwBadRequestError(SCAN_FAILED_ERROR);
+  // Both branches can send the image back through the scan.
+  await assertMayLoosenImagesAs([imageId], { isModerator, csamReview });
   if (image.ingestion !== ImageIngestionStatus.Scanned || !image.scanned) {
     const { failed } = await queueNeverScannedRescan(
       [imageId],

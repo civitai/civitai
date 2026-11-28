@@ -2,12 +2,21 @@ import { Button, Stack } from '@mantine/core';
 import { useQueryShopServices } from '~/components/CreatorShop/Services/creator-service.util';
 import { openDealsOnOffering } from '~/components/CreatorShop/Services/deals/deal-ui';
 import { useMyServiceDeals } from '~/components/CreatorShop/Services/deals/deal.util';
+import { ServiceHappyLine } from '~/components/CreatorShop/Services/ServiceHappyLine';
 import { ServiceOfferingCard } from '~/components/CreatorShop/Services/ServiceOfferingCard';
-import { sectionIcons, storefrontSectionId } from '~/components/CreatorShop/section-meta';
+import {
+  sectionIcons,
+  servicePageHref,
+  storefrontSectionId,
+} from '~/components/CreatorShop/section-meta';
 import { ServiceCardAnchor } from '~/components/CreatorShop/Storefront/ServiceCardAnchor';
 import { SectionHeader } from '~/components/CreatorShop/Storefront/SectionHeader';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { scrollIfHashed } from '~/utils/scroll-if-hashed';
+
+const scrollToServices = scrollIfHashed(`#${storefrontSectionId('services')}`);
 
 export function ServicesSection({
   ownerUserId,
@@ -20,6 +29,7 @@ export function ServicesSection({
   shopPublished: boolean;
 }) {
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const { offerings } = useQueryShopServices(ownerUserId, ownerUserId > 0);
   const isOwner = !!currentUser && currentUser.id === ownerUserId;
   // The seller's own open deals: the same list as Incoming requests on the manage page.
@@ -38,12 +48,18 @@ export function ServicesSection({
   const allOpenDealsLoaded = !hasNextPage && hiddenOffDomain === 0;
 
   return (
-    <Stack gap="md" id={storefrontSectionId('services')} className="scroll-mt-20">
+    <Stack
+      ref={scrollToServices}
+      gap="md"
+      id={storefrontSectionId('services')}
+      className="scroll-mt-20"
+    >
       <SectionHeader
         icon={sectionIcons.services}
         title="Services"
         subtitle="Commission this creator. Your Buzz is held in escrow and only released when the work is done."
       />
+      <ServiceHappyLine counts={offerings} />
       <div className="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(280px,1fr))]">
         {offerings.map((offering) => {
           const openDeal = isOwner
@@ -56,6 +72,11 @@ export function ServicesSection({
                 sellerId={ownerUserId}
                 sellerUsername={username}
                 slotsOpen={offering.slotsOpen}
+                href={
+                  features.creatorServicesNext
+                    ? servicePageHref(offering.id, offering.title)
+                    : undefined
+                }
                 canRequest={shopPublished}
                 extra={
                   openDeal && (

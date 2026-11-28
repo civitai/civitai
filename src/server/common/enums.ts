@@ -154,7 +154,6 @@ export enum SignalMessages {
   WorkflowUpdate = 'orchestrator:workflow-update',
   /** Also sent for a remix-app workflow's steps, so the remix tray need not watch every generation. */
   RemixAppUpdate = 'orchestrator:remix-app-update',
-  SchedulerDownload = 'scheduler:download',
   NotificationNew = 'notification:new',
   ResourceLoadUpdate = 'resource-load:update',
   Pong = 'pong',
@@ -247,6 +246,8 @@ export enum ViolationType {
   Hate = 'hate',
   NonAi = 'non-ai',
   Spam = 'spam',
+  /** Removed at the request of the person depicted or a rights holder (likeness, TAKE IT DOWN, DMCA). */
+  LikenessRequest = 'likenessRequest',
   Other = 'other',
 }
 
@@ -424,6 +425,7 @@ export enum BlocklistType {
   // "spread"). Suppresses a substring match from the profanity filter rather than
   // being blanked from the text — different matcher to the two phrase lists above.
   ProfanityBenignWord = 'ProfanityBenignWord',
+  ProfanityWord = 'ProfanityWord',
   // Brand names that flag an App Block whose name or slug contains one, whatever its listing
   // says — read by the agent review's impersonation check (and by the same check on an approved
   // app's listing edit). Edited by moderators at /moderator/blocklists; an empty list fails

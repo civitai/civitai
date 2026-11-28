@@ -47,12 +47,11 @@ beforeAll(async () => {
     CREATE TYPE "ChallengeIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Blocked');
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Blocked');
     CREATE TYPE "CommentEntityType" AS ENUM ('challenge', 'review');
-    CREATE TABLE "User" (id int PRIMARY KEY, username text, image text, "deletedAt" timestamp);
+    CREATE TABLE "User" (id int PRIMARY KEY, username text, image text, "deletedAt" timestamp, "profilePictureId" int);
     CREATE TABLE "ChallengeJudge" (id int PRIMARY KEY, name text, bio text, "userId" int);
     CREATE TABLE "Image" (
       id int PRIMARY KEY, poi boolean DEFAULT false, ingestion "ImageIngestionStatus",
-      "nsfwLevel" int DEFAULT 1
-    );
+      "nsfwLevel" int DEFAULT 1, url text, "needsReview" text, "blockedFor" text, "userId" int);
     CREATE TABLE "Challenge" (
       id int PRIMARY KEY, title text, theme text, invitation text, "coverImageId" int,
       "startsAt" timestamp DEFAULT now(), "endsAt" timestamp DEFAULT now(),
@@ -109,5 +108,28 @@ describe('getCompletedChallengesWithWinners visibility', () => {
 
   it('leaves out user challenges while the user-challenge flag is off', async () => {
     expect(await listed(false)).toEqual([VISIBLE]);
+  });
+
+  it('returns every challenge across two pages when end times tie', async () => {
+    await db.exec(`
+      INSERT INTO "Challenge" (id, "coverImageId", "endsAt")
+        SELECT id, 10, (SELECT "endsAt" FROM "Challenge" WHERE id = ${VISIBLE})
+        FROM generate_series(101, 120) AS ids(id);
+      INSERT INTO "ChallengeWinner" ("challengeId", place, "userId")
+        SELECT id, 1, 100 FROM generate_series(101, 120) AS ids(id);
+    `);
+
+    const input = { limit: 20, isGreen: false };
+    calls = 0;
+    const first = await getCompletedChallengesWithWinners(input);
+    expect(first.items.map((challenge) => challenge.id)).toEqual(
+      Array.from({ length: 20 }, (_, index) => 120 - index)
+    );
+    expect(first.nextCursor).toBeDefined();
+
+    calls = 0;
+    const second = await getCompletedChallengesWithWinners({ ...input, cursor: first.nextCursor });
+    expect(second.items.map((challenge) => challenge.id)).toEqual([VISIBLE]);
+    expect(second.nextCursor).toBeUndefined();
   });
 });

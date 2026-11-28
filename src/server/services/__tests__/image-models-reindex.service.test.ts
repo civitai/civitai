@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { childBrowsingTagIds } from '@civitai/shared';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
@@ -14,7 +13,8 @@ import { modelsSearchIndex } from '~/server/search-index/models.search-index';
 import { imagesForModelVersionsCache } from '~/server/services/image.service';
 import {
   queueArticlesAndComicsForImages,
-  queueModelsForImageChildTagChanges,
+  queueDocumentsForBlockedImages,
+  queueDocumentsForImageMinorChanges,
 } from '~/server/services/image-models-reindex.service';
 
 // The real index modules build a Meilisearch processor at load; only their queues are under test.
@@ -40,9 +40,6 @@ vi.mock('~/server/services/image.service', () => ({
   imagesForModelVersionsCache: { refresh: vi.fn(async () => undefined) },
 }));
 
-const CHILD_TAG = childBrowsingTagIds[0];
-const OTHER_TAG = -1;
-
 const sqlText = (strings: TemplateStringsArray) => strings.join('?');
 const queries = () =>
   dbMock.dbWrite.$queryRaw.mock.calls.map(([strings, ...values]) => ({
@@ -51,10 +48,10 @@ const queries = () =>
   }));
 const query = (table: string) => queries().find((q) => q.text.includes(table));
 
-/** Answers the child-tag check and the image -> model and -> article/comic lookups, on the primary. */
+/** Answers the minor-flag check and the image -> model and -> article/comic lookups, on the primary. */
 function arm({
   models = [] as number[],
-  childTagged = [] as number[],
+  minorFlagged = [] as number[],
   articles = [] as number[],
   comics = [] as number[],
   bounties = [] as number[],
@@ -62,12 +59,12 @@ function arm({
   dbMock.dbWrite.$queryRaw.mockImplementation((async (sql: TemplateStringsArray) => {
     const text = sqlText(sql);
     if (text.includes('"ImageConnection"')) return bounties.map((id) => ({ id }));
-    if (text.includes('"TagsOnImageNew"')) return childTagged.map((imageId) => ({ imageId }));
     if (text.includes('"Article"'))
       return [
         ...articles.map((id) => ({ kind: 'article', id })),
         ...comics.map((id) => ({ kind: 'comic', id })),
       ];
+    if (!text.includes('"Post"')) return minorFlagged.map((id) => ({ id }));
     return models.map((modelId) => ({ modelId, modelVersionId: modelId * 10 }));
   }) as never);
 }
@@ -85,11 +82,11 @@ beforeEach(() => {
   arm();
 });
 
-describe('queueModelsForImageChildTagChanges', () => {
-  it('queues the models of an image whose child tag was written, after re-reading its caches', async () => {
+describe('queueDocumentsForImageMinorChanges', () => {
+  it('queues the models of an image whose minor flag was written, after re-reading its caches', async () => {
     arm({ models: [500, 501] });
 
-    await queueModelsForImageChildTagChanges({ tagWrites: [{ imageId: 7, tagId: CHILD_TAG }] });
+    await queueDocumentsForImageMinorChanges({ minorImageIds: [7] });
 
     expect(queued()).toEqual([500, 501]);
     expect(query('"ModelVersion"')?.values[0]).toEqual([7]);
@@ -97,46 +94,60 @@ describe('queueModelsForImageChildTagChanges', () => {
     expect(imagesForModelVersionsCache.refresh).toHaveBeenCalledWith([5000, 5010]);
   });
 
-  it('queues nothing, and reads nothing, for a write of other tags only', async () => {
-    arm({ models: [500] });
+  it('queues nothing for a re-rated image without the minor flag', async () => {
+    arm({ models: [600], minorFlagged: [] });
 
-    await queueModelsForImageChildTagChanges({ tagWrites: [{ imageId: 7, tagId: OTHER_TAG }] });
+    await queueDocumentsForImageMinorChanges({ levelImageIds: [9] });
 
     expect(modelsSearchIndex.queueUpdate).not.toHaveBeenCalled();
-    expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
   });
 
-  it('queues the models of a re-rated image only while it carries a child tag', async () => {
-    arm({ models: [600], childTagged: [8] });
+  // The minor rule reads the level, so a re-rate of a minor-flagged image counts.
+  it('🔴 queues the models of a re-rated image only while it carries the minor flag', async () => {
+    arm({ models: [600], minorFlagged: [8] });
 
-    await queueModelsForImageChildTagChanges({ levelImageIds: [8, 9] });
+    await queueDocumentsForImageMinorChanges({ levelImageIds: [8, 9] });
 
-    expect(query('"TagsOnImageNew"')?.values[0]).toEqual([8, 9]);
+    expect(query(' minor')?.text).toMatch(/WHERE id = ANY\(\?::int\[\]\) AND minor\s*$/);
+    expect(query(' minor')?.values[0]).toEqual([8, 9]);
     expect(query('"ModelVersion"')?.values[0]).toEqual([8]);
-    expect(queued()).toEqual([600]);
     expect(imagesForModelVersionsCache.refresh).toHaveBeenCalledWith([6000]);
+    expect(queued()).toEqual([600]);
   });
 
-  it('queues nothing for a re-rated image without a child tag', async () => {
-    arm({ models: [600], childTagged: [] });
+  it('reads a large minor-flag write in batches', async () => {
+    arm({ models: [700] });
+    const ids = Array.from({ length: 2500 }, (_, i) => i + 1);
 
-    await queueModelsForImageChildTagChanges({ levelImageIds: [9] });
+    await queueDocumentsForImageMinorChanges({ minorImageIds: ids });
 
-    expect(modelsSearchIndex.queueUpdate).not.toHaveBeenCalled();
+    const batches = queries()
+      .filter((q) => q.text.includes('"ModelVersion"'))
+      .map((q) => (q.values[0] as number[]).length);
+    expect(batches).toEqual([1000, 1000, 500]);
+  });
+
+  it('queues a model once for an image passed as both re-rated and minor-flagged', async () => {
+    arm({ models: [700] });
+
+    await queueDocumentsForImageMinorChanges({ levelImageIds: [9], minorImageIds: [9] });
+
+    expect(query(' minor')).toBeUndefined();
+    expect(modelsSearchIndex.queueUpdate).toHaveBeenCalledTimes(1);
+    expect(queued()).toEqual([700]);
   });
 
   it('queues each model once, as an update, when several of its versions hold the images', async () => {
     dbMock.dbWrite.$queryRaw.mockImplementation((async (sql: TemplateStringsArray) =>
-      sqlText(sql).includes('"TagsOnImageNew"')
-        ? [{ imageId: 8 }]
-        : [
+      sqlText(sql).includes('"Post"')
+        ? [
             { modelId: 500, modelVersionId: 5000 },
             { modelId: 500, modelVersionId: 5001 },
-          ]) as never);
+          ]
+        : []) as never);
 
-    await queueModelsForImageChildTagChanges({ levelImageIds: [8] });
+    await queueDocumentsForImageMinorChanges({ minorImageIds: [8] });
 
-    expect(query('"TagsOnImageNew"')?.values[1]).toEqual([...childBrowsingTagIds]);
     expect(modelsSearchIndex.queueUpdate).toHaveBeenCalledWith([
       { id: 500, action: SearchIndexUpdateQueueAction.Update },
     ]);
@@ -146,7 +157,7 @@ describe('queueModelsForImageChildTagChanges', () => {
   it('queues nothing for an image on no model', async () => {
     arm({ models: [] });
 
-    await queueModelsForImageChildTagChanges({ tagWrites: [{ imageId: 7, tagId: CHILD_TAG }] });
+    await queueDocumentsForImageMinorChanges({ minorImageIds: [7] });
 
     expect(modelsSearchIndex.queueUpdate).not.toHaveBeenCalled();
   });
@@ -155,7 +166,7 @@ describe('queueModelsForImageChildTagChanges', () => {
     arm({ models: [500] });
     tagRefresh.mockRejectedValueOnce(new Error('redis down'));
 
-    await queueModelsForImageChildTagChanges({ tagWrites: [{ imageId: 7, tagId: CHILD_TAG }] });
+    await queueDocumentsForImageMinorChanges({ minorImageIds: [7] });
 
     expect(queued()).toEqual([500]);
     expect(imagesForModelVersionsCache.refresh).toHaveBeenCalledWith([5000]);
@@ -166,9 +177,7 @@ describe('queueModelsForImageChildTagChanges', () => {
     arm({ models: [500] });
     dbMock.dbWrite.$queryRaw.mockRejectedValueOnce(new Error('connection reset'));
 
-    const run = queueModelsForImageChildTagChanges({
-      tagWrites: [{ imageId: 7, tagId: CHILD_TAG }],
-    });
+    const run = queueDocumentsForImageMinorChanges({ minorImageIds: [7] });
     await vi.runAllTimersAsync();
     await run;
     vi.useRealTimers();
@@ -180,9 +189,7 @@ describe('queueModelsForImageChildTagChanges', () => {
     vi.useFakeTimers();
     dbMock.dbWrite.$queryRaw.mockRejectedValue(new Error('connection reset'));
 
-    const run = queueModelsForImageChildTagChanges({
-      tagWrites: [{ imageId: 7, tagId: CHILD_TAG }],
-    });
+    const run = queueDocumentsForImageMinorChanges({ minorImageIds: [7] });
     await vi.runAllTimersAsync();
     vi.useRealTimers();
 
@@ -194,7 +201,7 @@ describe('queueModelsForImageChildTagChanges', () => {
   it('queues the articles using the image as cover or banner, and the comics using it as cover', async () => {
     arm({ models: [500], articles: [30, 31], comics: [40] });
 
-    await queueModelsForImageChildTagChanges({ tagWrites: [{ imageId: 7, tagId: CHILD_TAG }] });
+    await queueDocumentsForImageMinorChanges({ minorImageIds: [7] });
 
     expect(query('"Article"')?.text).toMatch(/"coverId"[\s\S]*"bannerId"[\s\S]*"coverImageId"/);
     expect(idsQueuedOn(articlesSearchIndex)).toEqual([30, 31]);
@@ -202,21 +209,30 @@ describe('queueModelsForImageChildTagChanges', () => {
     expect(queued()).toEqual([500]);
   });
 
+  // The reindex is how a minor flag reaches the articles index.
+  it('queues the articles and comics of a minor-flagged image, once', async () => {
+    arm({ models: [], articles: [30], comics: [40] });
+
+    await queueDocumentsForImageMinorChanges({ minorImageIds: [7] });
+
+    expect(articlesSearchIndex.queueUpdate).toHaveBeenCalledTimes(1);
+    expect(idsQueuedOn(articlesSearchIndex)).toEqual([30]);
+    expect(idsQueuedOn(comicsSearchIndex)).toEqual([40]);
+  });
+
   it('queues the article or comic of an image on no model', async () => {
     arm({ models: [], articles: [30], comics: [40] });
 
-    await queueModelsForImageChildTagChanges({ tagWrites: [{ imageId: 7, tagId: CHILD_TAG }] });
+    await queueDocumentsForImageMinorChanges({ minorImageIds: [7] });
 
     expect(modelsSearchIndex.queueUpdate).not.toHaveBeenCalled();
     expect(idsQueuedOn(articlesSearchIndex)).toEqual([30]);
     expect(idsQueuedOn(comicsSearchIndex)).toEqual([40]);
   });
 
-  it('queues no article or comic for a write of other tags, or for an image no article or comic uses', async () => {
+  it('queues no article or comic for an image no article or comic uses', async () => {
     arm({ models: [500] });
-    await queueModelsForImageChildTagChanges({ tagWrites: [{ imageId: 7, tagId: CHILD_TAG }] });
-    arm({ articles: [30], comics: [40] });
-    await queueModelsForImageChildTagChanges({ tagWrites: [{ imageId: 7, tagId: OTHER_TAG }] });
+    await queueDocumentsForImageMinorChanges({ minorImageIds: [7] });
 
     expect(articlesSearchIndex.queueUpdate).not.toHaveBeenCalled();
     expect(comicsSearchIndex.queueUpdate).not.toHaveBeenCalled();
@@ -224,12 +240,12 @@ describe('queueModelsForImageChildTagChanges', () => {
 });
 
 describe('queueArticlesAndComicsForImages', () => {
-  it('queues the articles and comics using the images, with no child-tag check', async () => {
+  it('queues the articles and comics using the images, with no minor-flag check', async () => {
     arm({ models: [500], articles: [30], comics: [40] });
 
     await queueArticlesAndComicsForImages([7, 7, 8]);
 
-    expect(query('"TagsOnImageNew"')).toBeUndefined();
+    expect(query(' minor')).toBeUndefined();
     expect(query('"Article"')?.values[0]).toEqual([7, 8]);
     expect(idsQueuedOn(articlesSearchIndex)).toEqual([30]);
     expect(idsQueuedOn(comicsSearchIndex)).toEqual([40]);
@@ -255,15 +271,15 @@ describe('queueArticlesAndComicsForImages', () => {
   });
 });
 
-describe('queueModelsForImageChildTagChanges: collections and bounties', () => {
-  it('queues the collections and bounties showing an image whose child tag was written', async () => {
+describe('queueDocumentsForImageMinorChanges: collections and bounties', () => {
+  it('queues the collections and bounties showing an image whose minor flag was written', async () => {
     arm({ bounties: [70, 71] });
     vi.mocked(getCollectionIdsForImages).mockResolvedValueOnce({
       collectionIds: [30, 31],
       truncated: false,
     });
 
-    await queueModelsForImageChildTagChanges({ tagWrites: [{ imageId: 7, tagId: CHILD_TAG }] });
+    await queueDocumentsForImageMinorChanges({ minorImageIds: [7] });
 
     expect(getCollectionIdsForImages).toHaveBeenCalledWith(
       expect.objectContaining({ imageIds: [7], throwOnError: true })
@@ -275,13 +291,48 @@ describe('queueModelsForImageChildTagChanges: collections and bounties', () => {
     expect(query('"ImageConnection"')?.values[0]).toEqual([7]);
     expect(tagRefresh).toHaveBeenCalledWith([7]);
   });
+});
 
-  it('queues neither for a write of other tags only', async () => {
-    arm({ bounties: [70] });
+describe('queueDocumentsForBlockedImages', () => {
+  it('queues the models, bounties, collections, articles and comics showing a blocked image with no minor flag', async () => {
+    arm({ models: [5], bounties: [7], articles: [8], comics: [9] });
+    vi.mocked(getCollectionIdsForImages).mockResolvedValueOnce({
+      collectionIds: [11],
+      truncated: false,
+    } as never);
+    await queueDocumentsForBlockedImages([1]);
+    expect(queued()).toEqual([5]);
+    expect(idsQueuedOn(bountiesSearchIndex)).toEqual([7]);
+    expect(idsQueuedOn(articlesSearchIndex)).toEqual([8]);
+    expect(idsQueuedOn(comicsSearchIndex)).toEqual([9]);
+    expect(vi.mocked(enqueueCollectionRebuild)).toHaveBeenCalledWith(
+      expect.objectContaining({ collectionIds: [11] })
+    );
+    expect(vi.mocked(imagesForModelVersionsCache.refresh)).toHaveBeenCalledWith([50]);
+  });
 
-    await queueModelsForImageChildTagChanges({ tagWrites: [{ imageId: 7, tagId: OTHER_TAG }] });
+  it('reaches documents the re-rating path leaves alone (control)', async () => {
+    arm({ models: [5], bounties: [7] });
+    await queueDocumentsForImageMinorChanges({ levelImageIds: [1] });
+    expect(queued()).toEqual([]);
+    expect(idsQueuedOn(bountiesSearchIndex)).toEqual([]);
+  });
 
-    expect(getCollectionIdsForImages).not.toHaveBeenCalled();
-    expect(bountiesSearchIndex.queueUpdate).not.toHaveBeenCalled();
+  it('queues nothing for an image no document shows', async () => {
+    await queueDocumentsForBlockedImages([1]);
+    expect(queued()).toEqual([]);
+    expect(idsQueuedOn(bountiesSearchIndex)).toEqual([]);
+  });
+
+  it('reads nothing for no images', async () => {
+    await queueDocumentsForBlockedImages([]);
+    expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
+  });
+
+  it('does not throw when every attempt fails', async () => {
+    dbMock.dbWrite.$queryRaw.mockRejectedValue(new Error('db down'));
+    await expect(queueDocumentsForBlockedImages([1])).resolves.toBeUndefined();
+    // The model lookup runs once per attempt: two attempts.
+    expect(queries().filter((q) => q.text.includes('"Post"'))).toHaveLength(2);
   });
 });

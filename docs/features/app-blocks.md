@@ -117,6 +117,15 @@ A third such site has to make its own argument — see the note at the foot of
 | `apps:store:items:write`             | non-anon `sub`                          | **SENSITIVE + CONSENT-EXEMPT.** Publish the viewer's own app items as App Store sub-listing cards under the calling app (`/api/v1/blocks/sub-listings/{upsert,withdraw,mine}`). Gated per call by the parent's `app_sub_listing_parents` switch, the shared-write trust check, item authorship (a document in a shared `own`/`anyone` collection, or a legacy shared row for an app with none), the shared text-safety check, rate limits and moderator approval. In no dev or review mint allowlist. See `docs/features/app-store-sub-listings.md`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `social:react:self`                  | non-anon `sub`                          | **SENSITIVE + CONSENT-GATED.** Set or clear the viewer's reaction on an IMAGE a block endpoint served this app (`SET_ENTITY_REACTION` → `blocks.setReactionFromApp`; read: `GET_ENTITY_REACTIONS` → `blocks.getReactionsForApp`). Both require the viewer's signed-in session to be the token's `sub`. Calls the site's own reaction handler, so rewards, metrics and notifications match a click on the site, and shares the site's per-user reaction quota (`sharedKey: 'reaction:toggle'`). Requires a provenance `reactTicket` the serving endpoint (`/api/v1/blocks/images`, `/api/v1/blocks/gated-images`, `/api/v1/blocks/collections/[id]`) signed for that image, app and viewer (24h). `Like`/`Heart`/`Laugh`/`Cry` only. Set semantics: a request that matches the current state writes nothing. No per-reaction confirm — the grant is the consent. `SKIP_OAUTH_CHECK` (not `SocialWrite`). Behind its own fail-closed flag (`app-blocks-app-reactions`). Revoking the scope does not remove reactions already made                                                                                                                                                                                               |
 
+**Shared viewer uploads on the grid.** A viewer-picked `OPEN_IMAGE_UPLOAD` the app opted in to
+share for that one upload (`share: true`), after the host's dialog told the viewer it will be
+visible to the app's other viewers, carries `blockSharedUploadAppId` = that app, and every reply to
+the request echoes `shared` (`true` exactly when that stamp was written). `blocks.getImagesByIds`
+returns it to any viewer of THAT app only, once it is terminally scanned, unflagged and within the
+viewer's and the SFW (PG / PG-13) ceiling; until then it is `hidden`, to its uploader too. Another
+app never reads it, and it is not postable. A viewer-picked upload without the opt-in stays private
+and unstamped, and an app's bytes upload (`blockUploadedAppId`) is never readable here.
+
 ⚠️ **This table is NOT exhaustive and the constant is the authority.** Absent
 from it today: `apps:storage:shared:read` / `:write` (the cross-user shared
 datastore) and `collections:read:self` / `:write:self` / `:read:private`. Read
@@ -202,12 +211,12 @@ match. It is opt-in; a collection without one is not checked.
   backtrack catastrophically (`validateSubmission`). recheck analyses it with the
   `u` flag the store compiles it with (`APP_STORAGE_SCHEMA_PATTERN_FLAGS`; a setting's
   pattern has no flags), and each distinct pattern once. Not allowed on a
-  `write: "none"` collection, which has no document bodies.
+  `write: "none"` collection (read-only, see "removed tallies and publish" below).
 - **Enforcement:** the store checks every create and put (`writeDoc` in
   `doc-store.ts`), and the REST layer checks again before the ownership check, the
   trust gate, the write budget and moderation, so a refused write spends none of
   them. A put replaces the whole body, so the check always sees the resulting
-  document. Counters and marks are not checked. A refusal is 400
+  document. A refusal is 400
   `schema_violation`, and its message and `details.pointer` name the first failing
   JSON pointer into `data`.
 - **Semantics** (any other evaluator, the CLI's included, must match them):
@@ -224,6 +233,69 @@ Code: `src/shared/constants/block-storage.constants.ts` (`parseCollectionSchema`
 (`validateDocAgainstCollectionSchema`, compiled validators cached per app,
 collection and schema text). The published shape is the `storage.collections.*.schema`
 property of `public/schemas/app-block/v1.json` (`$defs.storageCollectionSchema`).
+
+### Document store: viewer-keyed documents
+
+Plan: `docs/app-storage-generic-core.md` (#10203). A shared `write: "own"` collection may declare
+`keyedBy: "viewer"` or `"parent+viewer"`: the server derives each document's key from the
+verified viewer (and a client-named parent), so each viewer has at most one document per
+(parent) key. Served at `GET|PUT|DELETE /storage/:c/@me[/:parent]`, each run as the ordinary get,
+put or delete at the derived key; a create or a write by key to such a collection is `400`
+`viewer_keyed`, and every `@me` op by an anonymous viewer is `401 sign_in_required`.
+
+- **Three gates:** submit accepts `keyedBy` because `viewerKeyedDocs` is on in
+  `APP_STORAGE_ENABLED_FEATURES` (off, it is refused as not available yet); every `@me` op is
+  `503` while `APP_STORAGE_VIEWER_KEY_SECRET`
+  is unset (no fallback key; the secret must be byte-identical in every deployment writing the same
+  database and namespace); and in production writes need the Flipt flag
+  `app-blocks-storage-viewer-keyed-open` (per app, context `{ collection }`): created default on,
+  with a closed segment listing migration targets until each is verified. An absent flag or an
+  unreachable Flipt reads as closed. Closed, `@me` writes are `403 write_policy`; reads still work.
+  `open` in `GET /storage` reports both the switch and the secret.
+- **Immutable once approved:** submit and approve refuse adding, removing or changing `keyedBy` on
+  a collection any approved version declared (`keyedByChangeErrors`).
+- **Policies:** as any shared write (publish scope, trust gate, shared-write budget, schema,
+  hook, levels, moderation), except the content scan sees the parent, never the derived key, and
+  a hook is also given `parent`.
+
+Code: `src/server/services/apps/doc-store-viewer-keyed.ts` (derivation; golden vectors in its
+test), `viewerKeyedRoute` in `doc-store-api.ts`.
+
+### Document store: removed tallies and publish
+
+Rollout step 5 of `docs/app-storage-generic-core.md`. Marks, counters, their tallies, counter
+documents (`write: "none"`) and server-side publish are removed. Votes and per-viewer entries are
+viewer-keyed documents (above); reports go through the report API
+(`POST /api/v1/blocks/moderation/reports`).
+
+- **Routes:** the removed ones answer exactly as an unknown route: `PATCH /:c/:key` is `405
+  method_not_allowed` (`Allow: GET, PUT, DELETE`), `/:c/:key/counters/:name`,
+  `/:c/:key/marks/:name`, `/_publish/:to` and `/_unpublish/:to` are `404 not_found`, except the
+  `report` mark (below). A list refuses
+  `markedBy` and `mark` as unknown parameters and `sort=counter:` / `sort=mark:` as an undeclared
+  sort field. No `Deprecation` header is sent any more; the preflight no longer allows PATCH.
+- **SDK compatibility:** every presented document still carries `counters: {}`, `marks: {}` and
+  `viewer` (`{marks: []}` signed in, `null` anonymous), because `@civitai/sdk` 0.14 through 0.32
+  refuses a document without them (`PresentedDoc` in `doc-store-api.ts`); they stay while any
+  approved app runs 0.32 or older. Info's collections carry no `counters` or `marks` (no SDK
+  release reads them there), and info keeps `rate.marksAndCountersPerMinute` at `0` (SDKs 0.14 to
+  0.32 type it as a required number).
+- **The `report` mark alias:** `PUT /:c/:key/marks/report`, which SDKs older than 0.30 send for
+  `mark(key, 'report')`, stays. It files the report through the report API's own code
+  (`fileReport`: same gates, budget, row, dedupe and moderator queue) and answers `{marked: true}`;
+  `DELETE` on it answers `400 invalid_request` "a report cannot be withdrawn", as before. Every
+  other mark name is `404`. The report API is always on (its flag is no longer read).
+- **Approved manifests that still declare them** keep parsing (the parser is unchanged, so schema
+  majors replay as before) and serving: `marks` and `counters` are inert, and a `write: "none"`
+  collection is READ-ONLY (every viewer create, put and delete is `403 write_policy`), never
+  `own`. Submit and approve still refuse one the collection did not declare in the previous
+  approved version (`deprecatedPrimitiveErrors`), and still let a collection keep what it declares,
+  so such an app can ship an unrelated version or roll back.
+- **Data:** nothing reads or writes `appdata.doc_tally` or `appdata.mark_head`; `appdata.doc_mark`
+  holds only reports. The tables are dropped by a later hand-applied migration, not by code.
+- **Schema:** `public/schemas/app-block/v1.json` marks `counters` and `marks` `deprecated` and
+  describes them, and `write: "none"`, as removed (annotations only; what validates is unchanged,
+  pinned in `manifest-storage.schema-drift.test.ts`).
 
 ## Feature flag
 
@@ -292,6 +364,10 @@ the token endpoint has resolved. Matches `@civitai/app-sdk/blocks` v1:
     username: string | null;
     signedIn?: true;                   // v2. Literally `true`; ABSENT when anon,
                                        // because an anon viewer has no object at all.
+    image?:                            // the viewer's avatar — ONLY when the token
+      | { url: string; nsfwLevel: 'pg' | 'pg13' | 'r' | 'x' | 'xxx' }
+      | { restricted: true }
+      | null;                          // carries `user:read:self`; see "Viewer avatar"
     // NOTE: moderation `status` (ban/mute) is intentionally NOT sent to the
     // iframe in this render-time payload — it's a viewer-privacy leak. A block
     // that needs a fresh, authoritative viewer (incl. `status: 'active'|'muted'`)
@@ -307,6 +383,32 @@ the token endpoint has resolved. Matches `@civitai/app-sdk/blocks` v1:
                                        // src/components/AppBlocks/blockInitFragmentGate.ts.
 }
 ```
+
+#### Viewer avatar (`viewer.image`, `/blocks/me` `image`)
+
+`GET /api/v1/blocks/me`, its twin `blocks.getMyViewer` (`useViewer()`), and
+`BLOCK_INIT.viewer.image` all carry the viewer's avatar, under the same
+`user:read:self` scope. One rule decides it, `projectBlockViewerImage`
+(`src/server/services/blocks/block-viewer-image.ts`), judged against the token's
+OUTPUT ceiling (`blockOutputCeilingFromClaims` — the ceiling a workflow output is
+restricted against) and the site's `avatarAtLevel` (`src/server/utils/public-avatar.ts`):
+
+- `{ url, nsfwLevel }` — a scanned profile picture with one known rating inside the
+  ceiling. `url` is a CDN url (320 px, single-frame WebP); `nsfwLevel` uses the
+  workflow-output vocabulary.
+- `{ restricted: true }` — rated above the ceiling (an X avatar in an SFW app), a level
+  that is not exactly one rating, not scanned yet, a scan error, or only a legacy
+  `User.image` url (never rated). No url, no rating, and deliberately no reason: telling
+  the two apart would tell an SFW app that the viewer's avatar is mature.
+- `null` — no avatar, or a picture blocked by moderation.
+
+For BLOCK_INIT the token mint computes it (`mintViewerImage` in
+`src/pages/api/v1/block-tokens/index.ts`) and both hosts forward it after a shape
+check (`projectBlockInitViewerImage`). The key is ABSENT when the token lacks
+`user:read:self` (it is not re-sent after a later consent grant — call
+`/blocks/me`), for an anonymous viewer, on the review preview, and when the read
+fails. The mint reads the avatar from the replica, so just after a viewer changes it
+BLOCK_INIT can briefly lag `/blocks/me` (which reads the primary).
 
 #### `viewer.signedIn`, and what "deprecated" means here (v2)
 
@@ -802,6 +904,12 @@ cost up to 150, your limit for this app is 500`. Unlike the platform per-app cap
   as on the platform one — so a job that reserves 5,000 and bills 200 gives back 4,800
   when it reaches a terminal state.
 
+### Private and unpublished resources
+
+An app-built step or workflow that names a Private or unpublished (not Published) version has its
+output capped at PG-13 with mature content refused, as `kind: 'textToImage'` is for any private
+generation; `checkAppStepResources` returns that cap as `capOutput`.
+
 ### Generation input images (`kind: 'textToImage'`, `kind: 'step'` and `kind: 'workflow'`)
 
 An image a generation input names must be an image stored on Civitai that has finished its
@@ -887,14 +995,18 @@ the same writer as `PERSIST_GENERATION_SOURCE`, and replies with that row instea
   through or ignores them; its source still works, and a submit before the scan finishes is
   refused with `'source-scan-pending'`.
 - **Which path.** The host asks `blockImageUpload.generationSourceUsesScannedRows`, which reads
-  the gate's own flag, after the upload. If that query fails it replies with the blob: the gate
-  stays the only authority, so this never admits an unscanned source while the flag is on.
+  the gate's own flag, after the upload. If that query fails (a pod without it, mid-rollout),
+  the host asks for the copy anyway: the copy is refused while the flag is off, so a copy that
+  succeeds is the reply, and a refused one leaves the blob. The gate stays the authority, so
+  this never admits an unscanned source while the flag is on.
 - **Gates.** The app needs `ai:write:budgeted`, the signed-in viewer must be the token's subject
-  and Apps must be on for them, as for `PERSIST_GENERATION_SOURCE`. With the flag on, an app
-  without the scope gets an upload error (never the blob). The url must be a consumer blob on the orchestrator host, as the upload returns it. The row
+  and Apps must be on for them, as for `PERSIST_GENERATION_SOURCE`. With the flag read as on, an
+  app without the scope gets an upload error (never the blob). When the query failed, any
+  refused copy (the scope, a limit) leaves the blob, which the gate refuses at submit if the
+  flag is on. The url must be a consumer blob on the orchestrator host, as the upload returns it. The row
   is the viewer's own, at a fresh key, not on the shared grid and not postable.
-- **Limits.** Shared with `PERSIST_GENERATION_SOURCE`: 60 per hour per viewer across both, at
-  most 2 in flight, plus the per-user 60/h request limit.
+- **Limits.** The same sizes as `PERSIST_GENERATION_SOURCE`'s, in buckets of its own: 60 per
+  hour per viewer and at most 2 in flight, plus the per-user 60/h request limit.
 - **Not covered.** `OPEN_MEDIA_UPLOAD_BATCH` images and `trainingData` uploads are still blobs.
   Training data is not a generation input. Batch images are refused by the gate while the flag
   is on.

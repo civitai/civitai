@@ -282,3 +282,44 @@ func TestListeners(t *testing.T) {
 		t.Fatal("listener limits")
 	}
 }
+
+// The send-duration histogram is seeded for both tables (a "none sent" table reads as a zero count,
+// not an absent series) and the queue-depth gauge reads its source at each collection.
+func TestTrackerSendAndQueueMetrics(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	m := NewMetrics(reg)
+	depth := 7
+	reg.MustRegister(TrackerQueueDepth(func() int { return depth }))
+	m.TrackerSendSeconds.WithLabelValues(beacon.TableViews).Observe(0.003)
+	const want = `
+# HELP beacon_go_tracker_queue_depth Rows waiting in the tracker queue (serve mode only); a full queue drops the row (beacon_go_tracker_writes_total{result="dropped"}).
+# TYPE beacon_go_tracker_queue_depth gauge
+beacon_go_tracker_queue_depth 7
+`
+	if err := testutil.GatherAndCompare(reg, strings.NewReader(want), "beacon_go_tracker_queue_depth"); err != nil {
+		t.Fatal(err)
+	}
+	depth = 2
+	if got := testutil.ToFloat64(TrackerQueueDepth(func() int { return depth })); got != 2 {
+		t.Fatalf("queue depth %v, want 2", got)
+	}
+	if n := testutil.CollectAndCount(m.TrackerSendSeconds); n != 2 {
+		t.Fatalf("%d send-duration series, want one per table", n)
+	}
+	counts := map[string]uint64{}
+	mfs, err := reg.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, mf := range mfs {
+		if mf.GetName() != "beacon_go_tracker_send_seconds" {
+			continue
+		}
+		for _, s := range mf.GetMetric() {
+			counts[s.GetLabel()[0].GetValue()] = s.GetHistogram().GetSampleCount()
+		}
+	}
+	if len(counts) != 2 || counts[beacon.TableViews] != 1 || counts[beacon.TablePageViews] != 0 {
+		t.Fatalf("send-duration sample counts %v, want views 1 and pageViews 0", counts)
+	}
+}

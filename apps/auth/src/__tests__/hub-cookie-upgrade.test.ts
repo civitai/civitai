@@ -1,5 +1,6 @@
 import { createHash } from 'crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as OAuthRateLimit from '$lib/server/oauth/rate-limit';
 import { makeSysRedis, type SysRedisFake } from '../test/sys-redis.fake';
 
 // The hub's move from the shared cookie slot to its host-only slot: the copy /authorize makes while the hub still
@@ -13,6 +14,7 @@ const h = vi.hoisted(() => {
     sys: undefined as unknown as SysRedisFake,
     tokens: new Map<string, Record<string, unknown>>(),
     users: new Map<number, Record<string, unknown>>(),
+    userRows: [] as Record<string, unknown>[],
     firstParty: true,
   };
 });
@@ -52,7 +54,10 @@ vi.mock('$lib/server/axiom', () => ({
   logAxiomError: vi.fn(),
   logToAxiom: vi.fn(async () => undefined),
 }));
-vi.mock('$lib/server/db/db', () => ({ db: {} }));
+// The "User" rows the account checks at each mint read; none, for an ordinary account.
+vi.mock('$lib/server/db/db', async () => ({
+  db: (await import('../test/kysely-fake')).createKyselyFake({ User: h.userRows }),
+}));
 vi.mock('$lib/server/auth/session-producer', () => ({
   getOrProduceSessionUser: async (id: number) => h.users.get(id) ?? { id },
 }));
@@ -60,7 +65,10 @@ vi.mock('$lib/server/auth/pending-authz', () => ({
   resolveAuthorizingUser: async ({ sessionUser }: { sessionUser: unknown }) => sessionUser,
   issuePendingAuthz: async () => false,
 }));
-vi.mock('$lib/server/oauth/rate-limit', () => ({ checkOAuthRateLimit: async () => true }));
+vi.mock('$lib/server/oauth/rate-limit', async (importOriginal) => ({
+  ...(await importOriginal<typeof OAuthRateLimit>()),
+  checkOAuthRateLimit: async () => true,
+}));
 vi.mock('$lib/server/oauth/audit-log', () => ({ logOAuthEvent: vi.fn() }));
 vi.mock('$lib/server/oauth/oidc-nonce', () => ({ storeOidcContext: async () => undefined }));
 vi.mock('$lib/server/oauth/access', () => ({ checkClientAccess: async () => ({ allowed: true }) }));
@@ -194,6 +202,7 @@ beforeEach(() => {
   h.sys.reset();
   h.tokens.clear();
   h.users.clear();
+  h.userRows.length = 0;
   h.firstParty = true;
   setMode('shared');
 });
@@ -214,6 +223,8 @@ const refusedAccounts = [
   ['banned', () => h.users.set(100, { id: 100, bannedAt: new Date() })],
   ['deleted', () => h.users.set(100, { id: 100, deletedAt: new Date() })],
   ['the moderation account', () => (process.env.CIVITAI_MODERATION_USER_ID = '100')],
+  // Its cached user predates the memorialization; only its row says so.
+  ['memorialized', () => h.userRows.push({ id: 100, flags: 4 })],
 ] as const;
 
 describe('/authorize copying the hub session into the host-only slot', () => {
@@ -324,6 +335,23 @@ describe('host mode: a browser arriving with only a shared-slot hub token', () =
     expect(await visit(jar({ [SHARED()]: J0 })).then((l) => l.session?.jti)).toBe(
       locals.session?.jti
     );
+  });
+
+  // Regression: moving a browser writes no family record and leaves an existing one untouched, TTL included.
+  it('the move writes no family record, and leaves one already there as it is', async () => {
+    sharedSession();
+    const moved = jar({ [SHARED()]: J0, [SHARED_DEVICE()]: 'dev-d' });
+    expect((await visit(moved)).session).toMatchObject({ sub: '100', sid: 'j0' });
+    expect(moved.get(HOST())).toBeDefined();
+    expect(h.sys.sets.has(deviceFamiliesKey('dev-d'))).toBe(false);
+
+    sharedSession({ jti: 'j1' });
+    h.sys.sets.set(deviceFamiliesKey('dev-e'), new Set(['j1', 'spoke-fam']));
+    const second = jar({ [SHARED()]: J0, [SHARED_DEVICE()]: 'dev-e' });
+    expect((await visit(second)).session).toMatchObject({ sub: '100', sid: 'j1' });
+    expect(second.get(HOST_DEVICE())).toBe('dev-e');
+    expect([...h.sys.sets.get(deviceFamiliesKey('dev-e'))!].sort()).toEqual(['j1', 'spoke-fam']);
+    expect(h.sys.ttls.has(deviceFamiliesKey('dev-e'))).toBe(false);
   });
 
   it('two tabs racing on the same token get one session', async () => {

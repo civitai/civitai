@@ -32,7 +32,12 @@ import type * as FliptModule from '~/server/flipt/client';
  */
 
 /** The external-host refusal flag; every other flag reads as it does unmocked. */
-const flags = vi.hoisted(() => ({ refuseExternal: false, refuseExternalApp: true }));
+const flags = vi.hoisted(() => ({
+  refuseExternal: false,
+  refuseExternalApp: true,
+  /** The step position rule's variant; null reads Flipt as unmocked. */
+  stepPositions: null as string | null,
+}));
 
 const h = vi.hoisted(() => ({
   authorize: vi.fn(),
@@ -78,7 +83,40 @@ vi.mock('~/server/flipt/client', async (importOriginal) => {
           flag,
           ...rest
         )) as typeof actual.isFlipt;
-  return { ...actual, isFlipt };
+  // The App Blocks source flags' read; scanned rows is pinned off so these cells stay about the
+  // workflow kind.
+  const isFliptSync = ((flag: string, ...rest: unknown[]) =>
+    flag === actual.FLIPT_FEATURE_FLAGS.APP_BLOCK_REFUSE_EXTERNAL_SOURCES
+      ? flags.refuseExternalApp
+      : flag === actual.FLIPT_FEATURE_FLAGS.APP_BLOCK_SOURCE_SCANNED_ROWS
+      ? false
+      : (actual.isFliptSync as (...a: unknown[]) => boolean | null)(
+          flag,
+          ...rest
+        )) as typeof actual.isFliptSync;
+  const readFliptBoolean = (async (flag: string, ...rest: unknown[]) =>
+    flag === actual.FLIPT_FEATURE_FLAGS.APP_BLOCK_REFUSE_EXTERNAL_SOURCES ||
+    flag === actual.FLIPT_FEATURE_FLAGS.APP_BLOCK_SOURCE_SCANNED_ROWS
+      ? isFliptSync(flag, ...(rest as []))
+      : (actual.readFliptBoolean as (...a: unknown[]) => Promise<boolean | null>)(
+          flag,
+          ...rest
+        )) as typeof actual.readFliptBoolean;
+  const getFliptVariant = ((flag: string, ...rest: unknown[]) =>
+    flag === actual.FLIPT_FEATURE_FLAGS.APP_BLOCK_STEP_POSITIONS && flags.stepPositions !== null
+      ? Promise.resolve(flags.stepPositions)
+      : (actual.getFliptVariant as (...a: unknown[]) => Promise<unknown>)(
+          flag,
+          ...rest
+        )) as typeof actual.getFliptVariant;
+  return {
+    ...actual,
+    isFlipt,
+    isFliptSync,
+    readFliptBoolean,
+    getFliptVariant,
+    ensureFliptInitialized: async () => undefined,
+  };
 });
 vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
   getOrchestratorToken: () => h.getOrchestratorToken(),
@@ -401,7 +439,14 @@ beforeEach(() => {
   // Every Civitai version a step names exists, on a base model apps may use.
   dbMock.dbRead.modelVersion.findMany.mockImplementation((async (args: {
     where: { id: { in: number[] } };
-  }) => args.where.id.in.map((id) => ({ id, baseModel: 'SDXL 1.0' }))) as never);
+  }) =>
+    args.where.id.in.map((id) => ({
+      id,
+      status: 'Published',
+      availability: 'Public',
+      model: { userId: 1 },
+      baseModel: 'SDXL 1.0',
+    }))) as never);
 });
 afterEach(() => envMock.reset());
 
@@ -515,6 +560,104 @@ describe("kind:'workflow' ESTIMATE", () => {
     expect(whatifs()).toHaveLength(0);
   });
 
+  // Media inputs take references; nothing else does (app-step-positions.ts, #9955).
+  const refAtModel = { prompt: 'a cat', model: { $ref: 'gen', path: 'output.text' } };
+  it.each([
+    [
+      'workflow estimate',
+      () =>
+        estimate(
+          body({
+            steps: [
+              { $type: 'imageGen', name: 'gen', input: GEN_INPUT },
+              { $type: 'imageGen', name: '$1', input: refAtModel },
+            ],
+          })
+        ),
+    ],
+    [
+      'workflow submit',
+      () =>
+        submit(
+          body({
+            steps: [
+              { $type: 'imageGen', name: 'gen', input: GEN_INPUT },
+              { $type: 'imageGen', name: '$1', input: refAtModel },
+            ],
+          })
+        ),
+    ],
+    [
+      'step estimate',
+      () => estimate({ kind: 'step', $type: 'imageGen', input: refAtModel, maxBuzz: 30 }),
+    ],
+    [
+      'step submit',
+      () => submit({ kind: 'step', $type: 'imageGen', input: refAtModel, maxBuzz: 30 }),
+    ],
+  ])('refuses a reference at a model input on the %s path, before pricing', async (_n, run) => {
+    await expect(run()).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining("'model'"),
+    });
+    expect(whatifs()).toHaveLength(0);
+    expect(realSubmits()).toHaveLength(0);
+  });
+
+  it('runs a chained workflow with a merge whole, under enforce', async () => {
+    await estimate(
+      body({
+        steps: [
+          { $type: 'imageGen', name: 'gen', input: GEN_INPUT },
+          { $type: 'imageUpscaler', name: '$1', input: UPSCALE_INPUT },
+          {
+            $type: 'merge',
+            name: 'all',
+            input: {
+              fields: {
+                captions: { $ref: 'gen', path: 'output.caption', reduce: 'concat' },
+                tags: { $ref: '$1', path: 'output.tags', reduce: 'push' },
+              },
+            },
+          },
+          { $type: 'imageBackgroundRemoval', input: CONVERT_INPUT },
+        ],
+      })
+    ).then((r) => expect(r.snapshot.status).not.toBe('failed'));
+    expect(whatifs()).toHaveLength(1);
+  });
+
+  // A value placed through `arguments` is a literal, so the literal resource check has to refuse
+  // another user's Private version there.
+  it("refuses another user's Private version placed through arguments", async () => {
+    dbMock.dbRead.modelVersion.findMany.mockImplementation((async (args: {
+      where: { id: { in: number[] } };
+    }) =>
+      args.where.id.in.map((id) => ({
+        id,
+        baseModel: 'SDXL 1.0',
+        status: 'Published',
+        availability: 'Private',
+        usageControl: 'Download',
+        model: { userId: VIEWER + 1 },
+      }))) as never);
+    await expect(
+      estimate(
+        body({
+          steps: [
+            {
+              $type: 'imageGen',
+              name: 'gen',
+              input: { prompt: 'a cat', model: { $ref: '$arguments', path: 'model' } },
+            },
+          ],
+          arguments: { model: 'urn:air:sdxl:checkpoint:civitai:1@555' },
+        })
+      )
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(whatifs()).toHaveLength(0);
+  });
+
   it('refuses a workflow that runs a TRAINING step before pricing it, as the submit does', async () => {
     whatifCost = { total: 20, base: 20 };
     const { snapshot } = await estimate(
@@ -550,6 +693,43 @@ describe("kind:'workflow' — refusals a block can branch on (estimate AND submi
     ['estimate', estimate],
     ['submit', submit],
   ] as const;
+
+  describe('a stored file placed through arguments, with the step position rule backed out', () => {
+    // The external-host gate is off too, so only the stored-file rule can refuse.
+    beforeEach(() => {
+      flags.stepPositions = 'off';
+      flags.refuseExternalApp = false;
+    });
+    afterEach(() => {
+      flags.stepPositions = null;
+      flags.refuseExternalApp = true;
+    });
+    const stored = 'https://acct.r2.cloudflarestorage.com/b/weights';
+    const placedAt = (key: string) =>
+      body({
+        steps: [
+          {
+            $type: 'imageGen',
+            name: 'gen',
+            input: { ...GEN_INPUT, [key]: { $ref: '$arguments', path: 'image' } },
+          },
+        ],
+        // Under a media-named argument, so only judging it where it lands can refuse it.
+        arguments: { image: stored },
+      });
+
+    it.each(paths)('🔴 %s: refuses it at a non-media input', async (_n, run) => {
+      await expect(run(placedAt('model'))).rejects.toThrow(
+        'a stored file URL is accepted only at a media input'
+      );
+      expect(h.submitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it.each(paths)('%s: accepts it at a media input', async (_n, run) => {
+      await run(placedAt('images'));
+      expect(h.submitWorkflow).toHaveBeenCalled();
+    });
+  });
 
   it.each(paths)(
     '🔴 %s: the DENYLIST runs on every step and names the step index',
@@ -971,6 +1151,9 @@ describe("kind:'workflow' SUBMIT — the money path", () => {
       }) =>
         args.where.id.in.map((id) => ({
           id,
+          status: 'Published',
+          availability: 'Public',
+          model: { userId: 1 },
           baseModel: id === 11 ? 'SDXL Turbo' : 'SDXL 1.0',
         }))) as never);
     });
@@ -996,6 +1179,36 @@ describe("kind:'workflow' SUBMIT — the money path", () => {
         expect(realSubmits()).toHaveLength(0);
       }
     );
+
+    // The check runs as the viewer, never the app owner: version 30 is the app owner's own.
+    const privateTo = (ownerId: number) =>
+      dbMock.dbRead.modelVersion.findMany.mockImplementation((async () => [
+        {
+          id: 30,
+          status: 'Published',
+          availability: 'Private',
+          model: { userId: ownerId },
+          baseModel: 'SDXL 1.0',
+        },
+      ]) as never);
+
+    it.each(paths)(
+      "%s refuses a version the viewer may not generate with, even the app owner's",
+      async (_, run) => {
+        privateTo(APP_OWNER);
+        await expect(run(naming('urn:air:sdxl:lora:civitai:1@30'))).rejects.toThrow(
+          'model version 30 is not available for generation'
+        );
+        expect(whatifs()).toHaveLength(0);
+        expect(realSubmits()).toHaveLength(0);
+      }
+    );
+
+    it('lets the viewer generate with their own Private version', async () => {
+      privateTo(VIEWER);
+      await submit(naming('urn:air:sdxl:lora:civitai:1@30'));
+      expect(realSubmits()).toHaveLength(1);
+    });
   });
 
   it('🔴 the fee is ONE resolved value: estimate = reservation = charge, under one type', async () => {
@@ -2129,22 +2342,6 @@ describe("kind:'step' / kind:'workflow' — the generation input gate", () => {
     }
   );
 
-  const hostSourcePhases = () =>
-    loggingMock.logToAxiom.mock.calls
-      .map(([data]) => data as Record<string, unknown>)
-      .filter((data) => data.reason === 'host-orchestrator-source')
-      .map((data) => data.phase);
-
-  it.each(ARMS)(
-    '%s: counts an orchestrator blob on the estimate and on the submit',
-    async (_, make) => {
-      loggingMock.logToAxiom.mockClear();
-      await estimate(make(BLOB)).catch(() => undefined);
-      await submit(make(BLOB)).catch(() => undefined);
-      expect(hostSourcePhases()).toEqual(['estimate', 'submit']);
-    }
-  );
-
   const refusedBeforeTheOrchestrator = async (b: Record<string, unknown>) => {
     const refusal = { code: 'BAD_REQUEST', message: GENERATION_IMAGE_UNAVAILABLE_MESSAGE };
     await expect(estimate(b)).rejects.toMatchObject(refusal);
@@ -2607,33 +2804,16 @@ describe('inline customComfy — the generation input gate', () => {
         redisMock.redis.mGet.mockRejectedValueOnce(new Error('redis down'));
       },
     ],
-  ])('refuses an own row-less upload (%s) before any orchestrator call', async (reason, given) => {
+  ])('refuses an own row-less upload (%s) before any orchestrator call', async (_reason, given) => {
     dbMock.dbWrite.$queryRaw.mockImplementation((async () => []) as never);
     await given();
-    loggingMock.logToAxiom.mockClear();
     const body = inline();
     (body.workflow['2'].inputs as Record<string, unknown>).text = `restyle ${OWN_KEY}`;
     await expect(submit(body)).rejects.toMatchObject({
       code: 'BAD_REQUEST',
       message: APP_SOURCE_UNUSABLE_MESSAGE,
     });
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'app-block-source-refusal', reason })
-    );
     expect(h.submitWorkflow).not.toHaveBeenCalled();
-  });
-
-  it('counts an orchestrator blob on the estimate and on the submit', async () => {
-    const blob = 'https://orchestration.civitai.com/v2/consumer/blobs/ABC123.jpeg';
-    const body = inline({ image: blob });
-    loggingMock.logToAxiom.mockClear();
-    await estimate(body).catch(() => undefined);
-    await submit(body).catch(() => undefined);
-    const phases = loggingMock.logToAxiom.mock.calls
-      .map(([data]) => data as Record<string, unknown>)
-      .filter((data) => data.reason === 'host-orchestrator-source')
-      .map((data) => data.phase);
-    expect(phases).toEqual(['estimate', 'submit']);
   });
 
   it('refuses inline image bytes in a node input at the schema', async () => {
@@ -2763,4 +2943,77 @@ describe("kind:'workflow' — accountType (the pool tried first)", () => {
       expect(counter(USER_CAP)).toBe(0);
     }
   );
+});
+
+describe('host media urls as workflow inputs', () => {
+  // A ticket-shaped value: the guard matches the sealed-token wire form, never its contents.
+  const ticketOf = (user: string) =>
+    `bm1.${user.padEnd(16, 'a')}.${'c'.repeat(40)}.${'t'.repeat(22)}`;
+  const OTHER_VIEWERS_TICKET = `https://civitai.com/api/v1/blocks/media/${ticketOf('other')}`;
+  const OWN_TICKET = `https://civitai.com/api/v1/blocks/media/${ticketOf('own')}`;
+  const upscaleOf = (image: string) =>
+    body({
+      steps: [
+        { name: 'gen', $type: 'imageGen', input: GEN_INPUT },
+        { $type: 'imageUpscaler', input: { image } },
+      ],
+    });
+
+  beforeEach(() => {
+    // Both external-source refusals off: the opaque path admits a plain Civitai page link.
+    flags.refuseExternal = false;
+    flags.refuseExternalApp = false;
+  });
+
+  it.each([
+    ["another viewer's ticket", OTHER_VIEWERS_TICKET],
+    ["the viewer's own ticket", OWN_TICKET],
+  ])('refuses %s on estimate AND submit, before any orchestrator call', async (_, url) => {
+    for (const call of [estimate, submit]) {
+      await expect(call(upscaleOf(url))).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: expect.stringContaining('persistGenerationSource'),
+      });
+    }
+    expect(whatifs()).toHaveLength(0);
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+    const refusals = loggingMock.logToAxiom.mock.calls.filter(
+      ([entry]) => (entry as { name?: string }).name === 'app-block-media-input-refused'
+    );
+    expect(refusals).toHaveLength(2);
+    // The log carries the app and phase, never the ticket.
+    expect(JSON.stringify(refusals)).not.toContain('bm1.');
+  });
+
+  it('CONTROL: with the same flags a plain Civitai page link reaches the orchestrator', async () => {
+    await estimate(upscaleOf('https://civitai.com/images/1')).catch(() => undefined);
+    expect(whatifs().length).toBeGreaterThan(0);
+  });
+
+  it("the way to chain: a persisted source (the viewer's own private image) upscales", async () => {
+    const key = 'ab12cd34-ef56-4a7b-8c9d-0e1f2a3b4c5d';
+    // What persistGenerationSource returns: the original of a private, scanned row the viewer owns.
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
+      strings.join('').includes('FROM "Image" i')
+        ? [
+            {
+              url: key,
+              userId: VIEWER,
+              visible: false,
+              blocked: false,
+              scanComplete: true,
+              scanPending: false,
+              held: false,
+            },
+          ]
+        : []) as never);
+    try {
+      await submit(
+        upscaleOf(`https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${key}/original=true`)
+      ).catch(() => undefined);
+      expect(h.submitWorkflow).toHaveBeenCalled();
+    } finally {
+      dbMock.dbWrite.$queryRaw.mockReset();
+    }
+  });
 });

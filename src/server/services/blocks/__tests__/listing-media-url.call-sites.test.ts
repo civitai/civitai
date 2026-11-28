@@ -165,6 +165,7 @@ describe('(b) the sub-listing card', () => {
     parent_cover_tos_violation: false,
     parent_cover_acceptable_minor: false,
     parent_cover_blocked_for: null,
+    parent_cover_model_restricted: false,
     parent_icon_url: 'sub-parent-icon-y6',
     parent_icon_nsfw_level: PG,
     parent_icon_ingestion: 'Scanned',
@@ -174,6 +175,7 @@ describe('(b) the sub-listing card', () => {
     parent_icon_tos_violation: false,
     parent_icon_acceptable_minor: false,
     parent_icon_blocked_for: null,
+    parent_icon_model_restricted: false,
     parent_link_template: null,
     image_url: 'sub-item-image-u8',
     image_nsfw_level: PG,
@@ -184,6 +186,7 @@ describe('(b) the sub-listing card', () => {
     image_tos_violation: false,
     image_acceptable_minor: false,
     image_blocked_for: null,
+    image_model_restricted: false,
     image_public: true,
   };
 

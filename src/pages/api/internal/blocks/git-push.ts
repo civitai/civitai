@@ -25,6 +25,7 @@ import {
   APP_DEVELOPER_TERMS_ACCEPT_PATH,
   AppDeveloperTermsNotAcceptedError,
 } from '~/shared/constants/app-developer-terms.constants';
+import { appRateLimitMeta, sendAppRateLimited } from '~/server/utils/app-rate-limit';
 
 /**
  * POST /api/internal/blocks/git-push
@@ -403,7 +404,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   }
 
   const appContext: AppContext = {
-    allowedScopes: appBlock.app.allowedScopes ?? 0,
+    allowedScopes: appBlock.app.allowedScopes ?? 0n,
     allowedOrigins: (appBlock.app.allowedOrigins ?? []).map((o: string) => o.toLowerCase()),
   };
   // `strictIssueTrackerLink: false`: a push re-validates the app's manifest, which may carry a
@@ -495,7 +496,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // Every recorded push supersedes the slug's pending request and can start a review build, so
   // bound how many a slug records per window. Past it the commit is told why and nothing is
   // recorded; the next push after the window is recorded as usual.
-  const pushSlot = await takePushReviewSlot(`slug:${slug}`);
+  const pushSlot = await takePushReviewSlot(`slug:${slug}`, null);
   if (!pushSlot.ok) {
     await setCommitStatusSafe({
       slug,
@@ -507,13 +508,17 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
         1
       )} min`,
     });
-    res.setHeader('Retry-After', String(Math.max(pushSlot.retryAfterSeconds, 1)));
-    res.status(429).json({ error: 'Too many pushes recorded for review' });
+    sendAppRateLimited(
+      res,
+      appRateLimitMeta('apps.push-review', pushSlot.retryAfterSeconds),
+      'Too many pushes recorded for review'
+    );
     return;
   }
 
+  let advisories: Awaited<ReturnType<typeof recordPendingFromPush>>['advisories'] = [];
   try {
-    await recordPendingFromPush({
+    const recorded = await recordPendingFromPush({
       slug,
       sha,
       appBlockId: appBlock.id,
@@ -521,6 +526,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       version: reviewVersion,
       pusherUserId: userIdForForgejoUsername(payload.pusher?.login ?? payload.pusher?.username),
     });
+    advisories = recorded.advisories ?? [];
   } catch (e) {
     // A refused permission hook (gate closed, or the pushed file does not match its sha256) is the
     // author's to fix, like a manifest-validation failure: say why on the commit, record nothing.
@@ -577,7 +583,22 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // "Apps build-chain rejected" embed for a normal event) was removed as
   // duplicate noise; `notifyModsOfWebhookFailure` is reserved for the
   // genuine failure stages.
-  res.status(202).json({ ok: true, slug, sha, status: 'pending-review', deployed: false });
+  // A commit that lacks a staff platform update no approved version has shipped is recorded all
+  // the same (a push is never refused for it; the moderator is shown what it left out). The
+  // pusher hears it here, as a warning on the commit.
+  const platformUpdateNote = advisories.find((a) => a.code === 'platform-update-missing');
+  if (platformUpdateNote) {
+    await setCommitStatusSafe({
+      slug,
+      sha,
+      state: 'warning',
+      context: 'civitai/platform-updates',
+      description: platformUpdateNote.message, // setCommitStatus truncates to Forgejo's 140
+    });
+  }
+  res
+    .status(202)
+    .json({ ok: true, slug, sha, status: 'pending-review', deployed: false, advisories });
 });
 
 async function setCommitStatusSafe(args: Parameters<typeof setCommitStatus>[0]): Promise<void> {

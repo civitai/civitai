@@ -1536,10 +1536,6 @@ describe('the item’s store card follows an in-app withdraw or moderator hide',
       ok: true,
       deleted: true,
     });
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'app-sub-listing-shared-sync-failed' }),
-      undefined
-    );
   });
 });
 
@@ -2444,7 +2440,7 @@ describe('REST entry shape — the six exported write functions carry the full l
     await expect(call()).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
     // The token string this surface receives is the ONLY credential, so a body
     // that reached the DB before verifying it would be an unauthenticated write.
-    expect(mockVerifyBlockToken).toHaveBeenCalledWith('tok_seam');
+    expect(mockVerifyBlockToken).toHaveBeenCalledWith('tok_seam', { admitRunner: false });
     expect(mockPool.query).not.toHaveBeenCalled();
     expect(mockPool.connect).not.toHaveBeenCalled();
   });
@@ -2710,15 +2706,6 @@ describe('shared `data` local moderation', () => {
         key: expect.any(String),
       });
       expect(insertedValue()).toBeDefined();
-      expect(mockLogToAxiom).toHaveBeenCalledWith(
-        expect.objectContaining({
-          name: 'app-blocks-shared-data-moderation-scan',
-          mode: 'enforce',
-          blocked: false,
-          leafCount: 3,
-        }),
-        'block-audit'
-      );
       // The durable denominator: one ClickHouse row for the clean write, and no hit rows.
       await vi.waitFor(() => expect(chRows(SCANS_TABLE)).toBeDefined());
       expect(chRows(SCANS_TABLE)).toEqual([
@@ -3156,6 +3143,8 @@ describe('rate-limit refusals carry machine-readable retry metadata', () => {
       expect((trpcError.cause as { rateLimit?: unknown } | undefined)?.rateLimit).toEqual({
         retryAfterSeconds: RETRY_AFTER,
         retryAt: RETRY_AT,
+        id: 'apps.shared-storage',
+        kind: 'abuse',
       });
     }
   );

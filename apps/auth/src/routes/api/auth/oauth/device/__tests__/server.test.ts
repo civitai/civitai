@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as OAuthRateLimit from '$lib/server/oauth/rate-limit';
 import { TokenScope, ALL_SCOPES } from '@civitai/auth/token-scope';
 
 /**
@@ -46,7 +47,8 @@ vi.mock('$lib/server/redis', () => ({
   getRedis: () => ({ packed: { hSet: h.hSet }, hExpire: h.hExpire }),
 }));
 
-vi.mock('$lib/server/oauth/rate-limit', () => ({
+vi.mock('$lib/server/oauth/rate-limit', async (importOriginal) => ({
+  ...(await importOriginal<typeof OAuthRateLimit>()),
   checkOAuthRateLimit: h.checkRateLimit,
 }));
 
@@ -55,14 +57,14 @@ vi.mock('$lib/server/auth/request', () => ({ getClientIp: h.getClientIp }));
 import { POST } from '../+server';
 
 /** The client's `allowedScopes` before this fix — bits 0/25/26. */
-const CLI_ALLOWED_BEFORE = 100663297;
+const CLI_ALLOWED_BEFORE = 100663297n;
 /** ...and after the AI-services widening — bits 0/14/15/16/25/26. */
-const CLI_ALLOWED_AFTER = 100777985;
+const CLI_ALLOWED_AFTER = 100777985n;
 /** What `civitai generate` needs: AIServicesRead|AIServicesWrite|BuzzRead. */
 const AI_SERVICES_REQUEST =
   TokenScope.AIServicesRead | TokenScope.AIServicesWrite | TokenScope.BuzzRead;
 
-function clientRow(allowedScopes: number, overrides: Record<string, unknown> = {}) {
+function clientRow(allowedScopes: bigint, overrides: Record<string, unknown> = {}) {
   return {
     id: 'civitai-cli',
     grants: ['authorization_code', 'refresh_token', 'urn:ietf:params:oauth:grant-type:device_code'],
@@ -82,12 +84,12 @@ function makeEvent(body: Record<string, string>) {
 }
 
 /**
- * The `scope` field the handler persisted onto the pending device code, as a number.
+ * The `scope` field the handler persisted onto the pending device code, as a bigint.
  * The handler writes TWO hashes (the device-code record and the user-code → device-code
  * index); only the first carries a record object, so it is selected by shape rather
  * than by call order.
  */
-function storedScope(): number {
+function storedScope(): bigint {
   const records = h.hSet.mock.calls
     .map((c) => c[2])
     .filter(
@@ -95,7 +97,7 @@ function storedScope(): number {
         typeof v === 'object' && v !== null && typeof (v as { scope?: unknown }).scope === 'string'
     );
   expect(records).toHaveLength(1);
-  return parseInt(records[0].scope, 10);
+  return BigInt(records[0].scope);
 }
 
 beforeEach(() => {
@@ -159,7 +161,7 @@ describe('device authorization — requested-scope validation', () => {
       makeEvent({ client_id: 'civitai-cli', scope: String(AI_SERVICES_REQUEST) })
     );
     expect(res.status).toBe(200);
-    expect(AI_SERVICES_REQUEST & TokenScope.UserRead).toBe(0); // control: it really was absent
+    expect(AI_SERVICES_REQUEST & TokenScope.UserRead).toBe(0n); // control: it really was absent
     expect(storedScope() & TokenScope.UserRead).toBe(TokenScope.UserRead);
     expect(storedScope()).toBe(AI_SERVICES_REQUEST | TokenScope.UserRead);
   });
@@ -177,17 +179,24 @@ describe('device authorization — requested-scope validation', () => {
 
   it('rejects a scope value above ALL_SCOPES', async () => {
     h.clientRow = clientRow(CLI_ALLOWED_AFTER);
-    const res = await POST(makeEvent({ client_id: 'civitai-cli', scope: String(ALL_SCOPES + 1) }));
+    const res = await POST(makeEvent({ client_id: 'civitai-cli', scope: String(ALL_SCOPES + 1n) }));
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: 'invalid_scope' }); // the bound check, no description
     expect(h.hSet).not.toHaveBeenCalled();
+  });
+
+  it('accepts AppsRead and AppDataRead (bits 31, 32) within the ceiling, keeping both bits', async () => {
+    h.clientRow = clientRow(1n | 2147483648n | 4294967296n);
+    const res = await POST(makeEvent({ client_id: 'civitai-cli', scope: '6442450944' }));
+    expect(res.status).toBe(200);
+    expect(storedScope()).toBe(6442450945n);
   });
 
   describe('issue #3681 — the civitai-cli AI-services grant, before and after', () => {
     it('the PRE-fix ceiling rejects the generate scopes (this is the reported bug)', async () => {
       h.clientRow = clientRow(CLI_ALLOWED_BEFORE);
       // Control: the request really does exceed the pre-fix ceiling.
-      expect(AI_SERVICES_REQUEST & ~CLI_ALLOWED_BEFORE).not.toBe(0);
+      expect(AI_SERVICES_REQUEST & ~CLI_ALLOWED_BEFORE).not.toBe(0n);
 
       const res = await POST(
         makeEvent({ client_id: 'civitai-cli', scope: String(AI_SERVICES_REQUEST) })

@@ -20,17 +20,26 @@ gh api repos/<owner>/<repo>/commits/$sha/check-runs -q '.total_count'
 gh run list --branch <branch> --json headSha,name,conclusion
 ```
 
-**A healthy internal PR here has 5 `Lint` check-runs at head and a `success` combined status**
-carrying `tekton / typecheck` and `tekton / fixture-bootstrap`. Two of the five are `skipped` by
-design: `Typecheck` (Tekton's covers an internal PR) and `Unit tests` (runs on `main`, on
-dispatch and on a PR with the `full-ci` label; skipped, it is one check, not six shards). With the
-`full-ci` label the `Unit tests` check expands to 6 shard check-runs (`Unit tests (1)` .. `(6)`), so
-the PR run has 10 `Lint` check-runs, one of them (`Typecheck`) skipped. Adding the label leaves a
-`Start full CI on label` check; the Lint and App suites runs it dispatches are NOT in the PR's
-checks list (`gh pr checks` lists pull_request runs only). They are on the head commit's check-runs
-and in the Actions tab, and that check's summary links them. Adding any other label leaves only a
+**A healthy internal PR here has a `success` combined status** carrying `tekton / typecheck` and
+`tekton / fixture-bootstrap`, and these `Lint` check-runs at head (the PR tier, lint.yml's header,
+"THE PER-PR TIER"): `ESLint + Prettier (changed files)`, `Typecheck test files (ratchet)`,
+`Package unit tests` and `Related unit tests + smoke (PR)`. `Typecheck` (Tekton's covers an internal
+PR), `Unit tests` and `Component + geometry tests` are `skipped` by design: the unit, component and
+geometry suites run in the main batch, on dispatch, and on a PR with the `full-ci` label (skipped,
+each is one check, not its shards). `Related unit tests + smoke (PR)` (the verdict of two shards,
+`Related unit tests + smoke (PR) (1/2)` and `(2/2)`, each of which plans for itself) runs the unit tests related to
+the PR's changes plus the smoke set (repo-scan names and the tree-scanning tests listed in `scripts/ci/smoke-scanners.txt`); when its step summary says **Deferred to batch** it
+ran the smoke set only (the change was one the import graph cannot follow, or the selection was over
+its cap), and the PR's unit coverage is the next main batch. With the `full-ci` label the
+`Unit tests` check expands to 6 shard check-runs (`Unit tests (1)` .. `(6)`) and the component
+shards run too, and `Related unit tests + smoke (PR)` is skipped. Adding the label leaves a
+`Start full CI on label` check; the Lint run it dispatches (and the batch suite runs) is NOT in the PR's
+checks list (`gh pr checks` lists pull_request runs only). Dispatched runs are on the head commit's
+check-runs and in the Actions tab, and that check's summary links them. Adding any other label leaves only a
 skipped `Start full CI on label`. A PR that touches `apps/`, `packages/` or
-the root files the app suites read also gets 1 `App suites` check-run (`App unit tests + typecheck`);
+the root files the app suites read also gets `App typecheck`, and the app suites' checks
+(`App unit tests (1/3)` .. `(3/3)` and `App unit tests`, their merged verdict) skipped: the app
+suites are batched too, and run on a PR only with the label;
 any other PR gets none, and that is by design, not a missing run (the list is the `paths:` filter in
 `.github/workflows/apps.yml`). Expect `pr-review` on top, plus a check per job of any other workflow
 the PR's paths trigger. A count of
@@ -47,10 +56,13 @@ jobs skip too. (The Windows dev-env smoke never runs on PRs; it runs on pushes t
 dispatch: `gh workflow run windows-dev-env.yml -R civitai/civitai --ref <branch>`.) That is the draft gate, not a broken run: the jobs start when the PR is
 marked ready (`gh pr ready <pr>`). To get a full verdict while it is still a draft, add the `full-ci`
 label (`gh pr edit <pr> --add-label full-ci`) — only when the change touches code the unit or
-component suites cover and the PR is near merge-ready, not on every PR. Adding it dispatches Lint (`only: all`, every job but
-ESLint) and the app suites on the branch head straight away (`.github/workflows/full-ci.yml`;
-nothing is dispatched when the PR's own run on that commit already started the unit shards; so a
-PR opened WITH the label gets the app suites only if its paths reach them). The label stays on
+component suites cover and the PR is near merge-ready, not on every PR. The label runs the batch on
+the branch: adding it dispatches Lint (`only: all`, every job but ESLint, so the unit, component
+and geometry suites) on the branch head straight away, and every main batch suite (the
+`BATCH_WORKFLOWS` list in `scripts/ci/unit-batched.mjs`, `apps.yml` among them) whose paths the PR
+reaches, ready or draft (`.github/workflows/full-ci.yml`; nothing is dispatched when the PR's own
+run on that commit already started the unit shards). The `Start full CI on label` summary says, per workflow, whether it was
+dispatched and why. The label stays on
 until the full unit suite has passed once on the PR (on some commit, not necessarily the head):
 lint.yml's `full-ci-done` job then removes it,
 so later pushes run the normal PR suites (a cancelled or red unit run leaves it on); re-add it to
@@ -81,6 +93,16 @@ one, and up to one interval plus a run plus the bisect for the status on the fir
 green only HEAD gets the status; it covers every earlier commit in the batch, which get none. To
 verify now, dispatch the gate: `gh workflow run unit-batched.yml -R civitai/civitai` (it skips when
 `main`'s head already has a verdict).
+
+**The component + geometry and app suites are batched the same way.** The same batch run (Lint
+`only: unit` as the bot on `main`) runs the component and geometry shards, and its `batch-suites`
+job dispatches `apps.yml` when the app suites' paths changed since the last green batch.
+`Component verified (main batch)` and `App tests verified (main batch)` post
+`Component tests (main batch)` and `App tests (main batch)` by the unit rules above: the re-run at
+HEAD for a flake, the first-parent bisect from that suite's last green verdict, `error` on a crash.
+`batch-suites` re-posts the app verdict with the Lint batch run as its link, so every
+`(main batch)` status on a batch commit names the same run. A push to `main` runs neither suite;
+read those statuses on the commit.
 
 ## 2. `gh pr view --json headRefOid` can hand you the previous SHA
 
@@ -178,6 +200,22 @@ suite passed, ~5 where only the two short ones did), against ~100 minutes the wa
 so ~119 job-minutes a day net. A non-draft PR run's green shard 1 does not cover geometry, which
 is report-only there; the 24 h held one dispatch where geometry was red with the PR's shard green,
 so the dispatch still runs geometry.
+
+Re-measured 2026-11-20 on the 25 latest dispatches whose `passed` job ran (~19:00 to 00:35 UTC):
+the job held a runner 157 minutes in all (6.3 a run, almost all of it polling for the PR run's
+component shards to finish). On 18 it skipped all three suites, ~348 job-minutes going by the PR
+run's own times for the jobs skipped; on 4 it waited the full 10 minutes and the component shards
+ran anyway, keeping only the two short suites' skip. Still a net saving, so the wait stays.
+
+**Dispatched workflows other than Lint** (`.github/workflows/full-ci.yml`, "ON A READY PR, LINT
+ONLY"). Over a 2026-11-20 sample (19:47 to 00:21 UTC) of the Lint and App suites jobs,
+`workflow_dispatch` runs were 29% of the job-minutes; of those, Lint 2,147 minutes (83%) and App
+suites 435 (17%). Of the 60 App suites dispatches of 2026-11-20 15:23 to 11-21 00:42 UTC, 54 came
+from the label dispatcher and 6 were started by hand (those are unaffected). Of the 54, 53 were on a
+ready PR (draft state at the dispatch from each PR's timeline), ~1,150 job-minutes that are no
+longer dispatched, and 1 on a draft, which still is. The other eight workflows were dispatched
+in the same step, so on the same PRs, and are skipped on ready PRs too; their minutes were not
+measured.
 
 **Push runs on `main`: cancel vs queue** (`concurrency` in lint.yml, apps.yml, moderator-boot.yml).
 Push runs on `main` over 2026-10-30..11-13, and a replay of the same push times with one run in

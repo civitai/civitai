@@ -1,5 +1,4 @@
 import { Prisma } from '@prisma/client';
-import { deleteUnlessHeld, modelRowHeldSql } from '~/server/services/legal-hold.service';
 import { TRPCError } from '@trpc/server';
 import { CacheTTL, constants, KEY_VALUE_KEYS } from '~/server/common/constants';
 import type { ModelFileType } from '~/server/common/constants';
@@ -174,6 +173,12 @@ export async function deleteFilesForModelVersionCache(modelVersionId: number) {
   await filesForModelVersionCache.bust(modelVersionId);
 }
 
+/** A new Training Data zip starts unrated, so it is not served before its scan rates it. */
+function notYetRated<M>(metadata: M): M {
+  const { nsfwLevel: _level, ...rest } = (metadata ?? {}) as Record<string, unknown>;
+  return { ...rest, fullyRated: false } as M;
+}
+
 export async function createFile<TSelect extends Prisma.ModelFileSelect>({
   select,
   userId,
@@ -183,6 +188,7 @@ export async function createFile<TSelect extends Prisma.ModelFileSelect>({
   if (data.overrideName !== undefined)
     data.overrideName = sanitizeOverrideName(data.overrideName, data.name) ?? undefined;
   const file = prepareFile(data);
+  if (file.type === 'Training Data') file.metadata = notYetRated(file.metadata);
   // `name` is the uploaded file name, which some model types publish as the download name.
   await throwOnBlockedUserContent([data.overrideName, data.name], {
     isModerator,
@@ -433,6 +439,7 @@ async function replaceFileContent({
   delete (metadata as Record<string, unknown>).nsfwLevel;
   delete (metadata as Record<string, unknown>).fullyRated;
   delete (metadata as Record<string, unknown>).datasetArchive;
+  if (type === 'Training Data') (metadata as Record<string, unknown>).fullyRated = false;
   const prepared = prepareFile({
     name: fields.name ?? file.name,
     url: fields.url,
@@ -460,9 +467,7 @@ async function replaceFileContent({
     if (!version) throw throwNotFoundError();
     assertVersionAcceptsNewUpload(version, file.type);
 
-    // A held owner's file is not replaced: the replace deletes the old row and its bytes.
-    const outcome = await deleteUnlessHeld(
-      tx.$executeRaw`
+    const removed = await tx.$executeRaw`
       DELETE FROM "ModelFile" mf
       USING "ModelVersion" mv, "Model" m
       WHERE mf.id = ${file.id}
@@ -470,18 +475,9 @@ async function replaceFileContent({
         AND mv.id = mf."modelVersionId"
         AND m.id = mv."modelId"
         ${isModerator ? Prisma.empty : Prisma.sql`AND m."userId" = ${userId}`}
-        AND NOT ${modelRowHeldSql()}
-    `,
-      {
-        expected: 1,
-        isModerator,
-        db: tx,
-        ownerFrom: fileOwnerSql(file.id, isModerator ? undefined : userId),
-        held: modelRowHeldSql(),
-      }
-    );
+    `;
     // Another writer replaced or removed the file since we read it.
-    if (outcome === 'short')
+    if (!removed)
       throw throwBadRequestError('ModelFile URL was modified concurrently; retry your update');
 
     const row = await tx.modelFile.create({
@@ -577,17 +573,6 @@ async function replaceFileContent({
   };
 }
 
-/** The file `id` with its model owner as `m."userId"`, for `ownerHeld`; only `userId`'s when given. */
-function fileOwnerSql(id: number, userId?: number) {
-  return Prisma.sql`
-    FROM "ModelFile" mf
-    JOIN "ModelVersion" mv ON mv.id = mf."modelVersionId"
-    JOIN "Model" m ON m.id = mv."modelId"
-    WHERE mf.id = ${id}
-    ${userId === undefined ? Prisma.empty : Prisma.sql`AND m."userId" = ${userId}`}
-  `;
-}
-
 export async function deleteFile({
   id,
   userId,
@@ -648,18 +633,13 @@ export async function deleteFile({
     );
   }
 
-  let rows: { modelVersionId: number; modelId: number; url: string }[] = [];
-  // A held owner's file is refused. Scoped to the caller's own files, so a stranger cannot tell a
-  // held file from a missing one.
-  await deleteUnlessHeld(
-    dbWrite.$queryRaw<typeof rows>`
+  const rows = await dbWrite.$queryRaw<{ modelVersionId: number; modelId: number; url: string }[]>`
     DELETE FROM "ModelFile" mf
     USING "ModelVersion" mv, "Model" m
     WHERE mf."modelVersionId" = mv.id
     AND mv."modelId" = m.id
     AND mf.id = ${id}
     ${isModerator ? Prisma.empty : Prisma.raw(`AND m."userId" = ${userId}`)}
-    AND NOT ${modelRowHeldSql()}
     ${
       // Repeats the checks above at delete time, in case the run moved on in between.
       isModerator
@@ -673,15 +653,7 @@ export async function deleteFile({
       mv.id as "modelVersionId",
       m.id as "modelId",
       mf.url as "url"
-  `.then((deleted) => (rows = deleted).length),
-    {
-      expected: 1,
-      isModerator,
-      db: dbWrite,
-      ownerFrom: fileOwnerSql(id, isModerator ? undefined : userId),
-      held: modelRowHeldSql(),
-    }
-  );
+  `;
 
   const row = rows[0];
   if (row?.modelVersionId) await deleteFilesForModelVersionCache(row.modelVersionId);

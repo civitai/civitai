@@ -19,7 +19,17 @@
 import { generateToken } from '~/utils/string-helpers';
 import { enqueueTrackEvent, flushTrackEvents } from '~/components/TrackView/trackEventBuffer';
 import { IMPRESSION_ENTITIES_MAX, IMPRESSION_SURFACES } from '~/server/schema/track.schema';
-import type { ImpressionEntityType, ImpressionSurface } from '~/server/schema/track.schema';
+import type {
+  ImpressionEntityType,
+  ImpressionSurface,
+  TrackFeedInput,
+} from '~/server/schema/track.schema';
+
+/** One page load of a feed: what the seen and click rows of its items carry. */
+export type FeedEventContext = Pick<
+  TrackFeedInput,
+  'feed' | 'page' | 'sort' | 'pageIndex' | 'filters'
+>;
 
 // 90s of coalescing. This sets the STEADY-STATE request cost: N actively
 // scrolling tabs cost N/90 requests per second, regardless of scroll speed,
@@ -46,7 +56,7 @@ const SEEN_CAP = 20_000;
 // what makes the number deduplicable at read time despite an at-least-once
 // transport.
 let sessionKey: string | null = null;
-function getSessionKey(): string {
+export function getImpressionSessionKey(): string {
   if (!sessionKey) sessionKey = generateToken(16);
   return sessionKey;
 }
@@ -63,6 +73,10 @@ const pending = new Map<
   Map<EntityKey, { entityType: ImpressionEntityType; entityId: number }>
 >();
 let pendingCount = 0;
+// Keyed by load (context object identity), so an id is deduped per load, not per session.
+const pendingSeen = new Map<FeedEventContext, Set<number>>();
+const sentSeen = new WeakMap<FeedEventContext, Set<number>>();
+let pendingSeenCount = 0;
 let timer: ReturnType<typeof setTimeout> | null = null;
 let listenersBound = false;
 
@@ -144,8 +158,34 @@ export function recordImpression(
   else scheduleTimer();
 }
 
+/** Queues an item in its feed load's seen set, flushed with impressions. */
+export function recordFeedSeen(context: FeedEventContext, entityId: number): void {
+  if (typeof window === 'undefined') return;
+  let sent = sentSeen.get(context);
+  if (!sent) sentSeen.set(context, (sent = new Set()));
+  if (sent.has(entityId)) return;
+  sent.add(entityId);
+
+  bindLifecycleListeners();
+  let ids = pendingSeen.get(context);
+  if (!ids) pendingSeen.set(context, (ids = new Set()));
+  ids.add(entityId);
+  pendingSeenCount++;
+
+  if (pendingSeenCount >= FLUSH_AT_SIZE) flushImpressions();
+  else scheduleTimer();
+}
+
+/** Drops seen ids not yet sent, for when feed events are switched off; they can be seen again. */
+export function clearPendingFeedSeen(): void {
+  for (const [context, ids] of pendingSeen) for (const id of ids) sentSeen.get(context)?.delete(id);
+  pendingSeen.clear();
+  pendingSeenCount = 0;
+}
+
 // Move everything pending into the shared telemetry buffer as one event per
-// surface (split further only if a surface exceeds the per-event cap).
+// surface (split further only if a surface exceeds the per-event cap), and feed
+// seen events grouped by load.
 //
 // `viaBeacon` reaches the shared buffer's beacon path rather than a normal fetch;
 // it is set on the tab-hide path, where a plain fetch would be cancelled.
@@ -153,15 +193,31 @@ export function flushImpressions(viaBeacon = false): void {
   clearTimer();
   // Nothing pending means nothing to deliver, and no request. This is what keeps
   // an idle or abandoned tab free: the timer is only ever armed by recording an
-  // impression, so a session that stops scrolling stops costing anything, and a
+  // impression or a seen id, so a session that stops scrolling stops costing anything, and a
   // tab switched away from with an empty buffer sends no beacon at all.
-  if (pendingCount === 0) return;
+  if (pendingCount === 0 && pendingSeenCount === 0) return;
 
   const surfaces = Array.from(pending.entries());
   pending.clear();
   pendingCount = 0;
+  const loads = Array.from(pendingSeen.entries());
+  pendingSeen.clear();
+  pendingSeenCount = 0;
 
-  const key = getSessionKey();
+  const key = getImpressionSessionKey();
+  for (const [context, idSet] of loads) {
+    const ids = Array.from(idSet);
+    for (let i = 0; i < ids.length; i += IMPRESSION_ENTITIES_MAX)
+      enqueueTrackEvent({
+        kind: 'feed',
+        data: {
+          event: 'seen',
+          sessionKey: key,
+          ...context,
+          seenIds: ids.slice(i, i + IMPRESSION_ENTITIES_MAX),
+        },
+      });
+  }
   for (const [surface, entityMap] of surfaces) {
     const entities = Array.from(entityMap.values());
     for (let i = 0; i < entities.length; i += IMPRESSION_ENTITIES_MAX) {
@@ -204,14 +260,30 @@ function bindLifecycleListeners() {
 // Test-only hooks, mirroring trackEventBuffer's. Not part of the runtime contract.
 export const __impressionBufferTestHooks = {
   pendingCount: () => pendingCount,
+  pendingSeenCount: () => pendingSeenCount,
   seenCount: () => seen.size,
   reset: () => {
     clearTimer();
     pending.clear();
     pendingCount = 0;
+    pendingSeen.clear();
+    pendingSeenCount = 0;
     seen.clear();
     sessionKey = null;
     listenersBound = false;
   },
   constants: { FLUSH_INTERVAL_MS, FLUSH_AT_SIZE, SEEN_CAP },
 };
+
+/**
+ * Whether this browser sends impression telemetry and everything counted against it: feed
+ * impressions, the app store funnel, and feed load, seen and click events. Read from the
+ * `feed-impressions` Flipt flag. One gate, so a ratio's numerator and denominator start and stop
+ * together. How much the server keeps is a separate dial: feed events are sampled per session
+ * by the `feed-events-sample-rate` Flipt variant.
+ */
+export function impressionTelemetryOn(
+  features: { feedImpressions?: boolean } | null | undefined
+): boolean {
+  return !!features?.feedImpressions;
+}

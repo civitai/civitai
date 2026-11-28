@@ -18,12 +18,13 @@ import {
   type CandidateSource,
   type GuardOutcome,
   type GuardRead,
+  MAX_CANDIDATE_LIMIT,
   type SearchCollection,
 } from '~/server/services/semantic-search-client';
 
-// collectPage asks for at most 100 ids at a time, so a request spans one or two blocks. Blocks are
-// aligned so viewers whose hydration drops different images still share them past page 1.
-export const CANDIDATE_BLOCK = 100;
+// collectPage asks for at most a block of ids at a time, so a request spans one or two blocks. Blocks
+// are aligned so viewers whose hydration drops different images still share them past page 1.
+export const CANDIDATE_BLOCK = MAX_CANDIDATE_LIMIT;
 
 type Block = { ids: number[]; correctedQuery?: string; guard?: GuardRead };
 type Read = { block: Block; hit: boolean };

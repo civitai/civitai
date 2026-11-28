@@ -93,6 +93,7 @@
         "uploadType": "Created",
         "usageControl": "Download",
         "licensingFee": null,
+        "licensingFeeType": null,
         "generatorLoaded": false,
         "metrics": [],
         "files": [],
@@ -137,6 +138,7 @@
         "licensingFee": {
           "$decimal": "0.05"
         },
+        "licensingFeeType": "PerImageBuzz",
         "generatorLoaded": false,
         "metrics": [],
         "files": [],
@@ -187,6 +189,7 @@
         "licensingFee": {
           "$decimal": "12.5"
         },
+        "licensingFeeType": "PercentOfCompute",
         "generatorLoaded": true,
         "metrics": [
           {
@@ -414,6 +417,7 @@
         "uploadType": "Created",
         "usageControl": "Download",
         "licensingFee": null,
+        "licensingFeeType": null,
         "generatorLoaded": false,
         "metrics": [
           {
@@ -486,16 +490,8 @@
       },
       "excludeFromLeaderboards": true,
       "excludeFromEventPoints": true,
-      "links": [
-        {
-          "url": "https://example.com/a",
-          "type": "Sponsorship"
-        },
-        {
-          "url": "https://example.com/b",
-          "type": "Social"
-        }
-      ],
+      "memorialized": false,
+      "links": [],
       "stats": {
         "downloadCountAllTime": 41,
         "thumbsUpCountAllTime": 47,
@@ -581,16 +577,8 @@
       },
       "excludeFromLeaderboards": true,
       "excludeFromEventPoints": true,
-      "links": [
-        {
-          "url": "https://example.com/a",
-          "type": "Sponsorship"
-        },
-        {
-          "url": "https://example.com/b",
-          "type": "Social"
-        }
-      ],
+      "memorialized": false,
+      "links": [],
       "stats": {
         "downloadCountAllTime": 41,
         "thumbsUpCountAllTime": 47,
@@ -676,16 +664,8 @@
       },
       "excludeFromLeaderboards": true,
       "excludeFromEventPoints": true,
-      "links": [
-        {
-          "url": "https://example.com/a",
-          "type": "Sponsorship"
-        },
-        {
-          "url": "https://example.com/b",
-          "type": "Social"
-        }
-      ],
+      "memorialized": false,
+      "links": [],
       "stats": {
         "downloadCountAllTime": 41,
         "thumbsUpCountAllTime": 47,
@@ -764,6 +744,7 @@
       "settings": null,
       "excludeFromLeaderboards": false,
       "excludeFromEventPoints": false,
+      "memorialized": false,
       "links": [
         {
           "url": "https://example.com/bare",
@@ -797,6 +778,7 @@
       "settings": null,
       "excludeFromLeaderboards": false,
       "excludeFromEventPoints": false,
+      "memorialized": false,
       "links": [
         {
           "url": "https://example.com/bare",

@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { TRPCError } from '@trpc/server';
 import type { EntityMetric_MetricType_Type, ReviewReactions } from '~/shared/utils/prisma/enums';
 import { NotificationCategory } from '~/server/common/enums';
 import type { ProtectedContext } from '~/server/createContext';
@@ -17,7 +18,12 @@ import { isReactionAllowedForEntity } from '~/server/schema/reaction.schema';
 import { getContestsFromEntity } from '~/server/services/collection.service';
 import { getMetricExcludedUserIds } from '~/server/services/metric-excluded-users.service';
 import { createNotification } from '~/server/services/notification.service';
-import { handleLogError, throwBadRequestError, throwDbError } from '~/server/utils/errorHandling';
+import {
+  handleLogError,
+  throwBadRequestError,
+  throwDbError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import { updateEntityMetric } from '~/server/utils/metric-helpers';
 import {
   getNsfwLevelDeprecatedReverseMapping,
@@ -37,8 +43,9 @@ import { toggleReaction } from './../services/reaction.service';
 import type { EventPointGrant } from '~/server/events/points/award';
 import { loadEvents } from '~/server/events/load-events';
 import { hasEntityAccess } from '~/server/services/common.service';
+import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
 import { assertCommentActionable } from '~/server/controllers/commentv3.controller';
-
+import { getJudgingCrucibleIdsForImage } from '~/server/services/crucible.service';
 /**
  * The exact payload `Tracker.reaction` accepts.
  *
@@ -231,9 +238,35 @@ export const toggleReactionHandler = async ({
       );
     }
 
-    if (input.entityType === 'comment') await assertCommentActionable(input.entityId, ctx);
+    if (input.entityType === 'comment') {
+      const comment = await assertCommentActionable(input.entityId, ctx);
+      // Feature Pages comments take no reactions.
+      if (comment?.entityType === 'featurePage') throw throwNotFoundError('Comment not found');
+    }
 
     if (input.entityType === 'image') {
+      const viewer = {
+        id: input.entityId,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      };
+      await assertImageVisibleToViewer(viewer).catch(async (error: unknown) => {
+        const hidden = error instanceof TRPCError && error.code === 'NOT_FOUND';
+        if (!hidden) throw error;
+        // A reaction the user already holds stays removable on an image hidden from them since.
+        if (await holdsReaction({ ...input, userId: ctx.user.id })) return;
+        // A crucible entry made from a draft post is scheduled to publish at the crucible's end;
+        // its judges react to it before then.
+        if (!ctx.features?.crucible) throw error;
+        const judgingCrucibleIds = await getJudgingCrucibleIdsForImage({
+          imageId: input.entityId,
+          viewerId: ctx.user.id,
+          isModerator: ctx.user.isModerator,
+          isGreen: !!ctx.features?.isGreen,
+        });
+        if (!judgingCrucibleIds.length) throw error;
+        await assertImageVisibleToViewer({ ...viewer, judgingCrucibleIds });
+      });
       // We are only doing this for image contests for now. Because the user
       // gets an instant feedback, this shouldn't have too bad an impact if any at all.
       const contests = await getContestsFromEntity({

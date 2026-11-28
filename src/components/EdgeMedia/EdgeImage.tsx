@@ -32,13 +32,16 @@ export const EdgeImage = forwardRef<HTMLImageElement, EdgeImageProps>(
         if (fadeIn) e.currentTarget.style.opacity = '1';
         onLoad?.(e);
       },
-      [fadeIn]
+      [fadeIn, onLoad]
     );
 
-    const handleError = useCallback((e: SyntheticEvent<HTMLImageElement, Event>) => {
-      e.currentTarget.classList.add(styles.loadError);
-      onError?.(e);
-    }, []);
+    const handleError = useCallback(
+      (e: SyntheticEvent<HTMLImageElement, Event>) => {
+        e.currentTarget.classList.add(styles.loadError);
+        onError?.(e);
+      },
+      [onError]
+    );
 
     return (
       // eslint-disable-next-line jsx-a11y/alt-text, @next/next/no-img-element

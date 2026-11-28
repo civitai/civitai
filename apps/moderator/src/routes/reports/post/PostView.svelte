@@ -11,7 +11,8 @@
   import ReportList from '$lib/components/report-queue/ReportList.svelte';
   import PostTextReportPanel from './PostTextReportPanel.svelte';
   import { FormState } from '$lib/form-state.svelte';
-  import EdgeMedia from '$lib/components/EdgeMedia.svelte';
+  import CdnOrRetractedMedia from '$lib/components/image-queue/CdnOrRetractedMedia.svelte';
+  import { RETRACTED_REFUSED } from '$lib/held-media';
   import { LINK_CLASS, dateTime, num, relativeTime } from '$lib/format';
   import {
     bulkImageManagerUrl,
@@ -196,18 +197,23 @@
                 </h3>
                 <div class="grid grid-cols-[repeat(auto-fill,minmax(110px,1fr))] gap-2">
                   {#each item.ownerRecentImages as img (img.id)}
+                    {#if img.restricted}
+                      <div class="flex aspect-square items-center justify-center rounded-md bg-dark-6 p-2 text-center text-[10px] text-dark-2">
+                        {RETRACTED_REFUSED}
+                      </div>
+                    {:else}
                     <a
                       href={imageLookupUrl(img.id)}
                       class="block overflow-hidden rounded-md bg-dark-6"
                       title={dateTime(img.createdAt)}
                     >
-                      <EdgeMedia
-                        src={img.url}
-                        type={img.type}
+                      <CdnOrRetractedMedia
+                        item={img}
                         width={220}
                         class="aspect-square w-full object-cover"
                       />
                     </a>
+                    {/if}
                   {/each}
                 </div>
               </section>

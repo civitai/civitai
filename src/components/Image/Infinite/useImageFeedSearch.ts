@@ -15,6 +15,7 @@ import type { SemanticImageSearchInput } from '~/server/schema/semantic-image-se
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
+import { pageRefusal } from '~/components/Search/search-refusal';
 
 const idleInput: SemanticImageSearchInput = { query: '', browsingLevel: 0, limit: 50 };
 
@@ -26,11 +27,11 @@ export function useImageFeedSearchQuery() {
   return normalizeFeedQuery(query.query);
 }
 
-/** The image the feed shows "more like this" for (`?similarTo=`), when this viewer has feed search. */
+/** The image the feed shows "more like this" for (`?similarTo=`), when this viewer may use it. */
 export function useImageFeedSimilarTo() {
   const features = useFeatureFlags();
   const { query } = useImageQueryParams();
-  if (!features.feedSearch) return undefined;
+  if (!features.feedSearch || !features.moreLikeThis) return undefined;
   return query.similarTo;
 }
 
@@ -104,18 +105,35 @@ export function useSearchPeriod(searching: boolean) {
   return params.period ? undefined : searchPeriodChange(read())?.write;
 }
 
-/** The images feed answered by the semantic search, in the shape the feed renders. */
-export function useSemanticImageFeed(input: SemanticImageSearchInput | undefined) {
-  const { data, ...rest } = trpc.semanticImageSearch.search.useInfiniteQuery(input ?? idleInput, {
-    enabled: !!input,
-    getNextPageParam: (lastPage) => lastPage.nextCursor,
+/** The images feed answered by the semantic search, in the shape the feed renders; `videos` searches the video index. */
+export function useSemanticImageFeed(
+  input: SemanticImageSearchInput | undefined,
+  { videos = false }: { videos?: boolean } = {}
+) {
+  const options = {
+    getNextPageParam: (lastPage: { nextCursor?: number }) => lastPage.nextCursor,
     ...withPlaceholderData({ keepPreviousData: true }),
     // The feed's retry banner and its fall-back to the plain feed drive every attempt.
     retry: 0,
     trpc: { context: { skipBatch: true }, abortOnUnmount: true },
+  };
+  // Both hooks run on every render; only the one for this feed's index is enabled.
+  const imageSearch = trpc.semanticImageSearch.search.useInfiniteQuery(input ?? idleInput, {
+    ...options,
+    enabled: !!input && !videos,
   });
+  const videoSearch = trpc.semanticImageSearch.searchVideos.useInfiniteQuery(input ?? idleInput, {
+    ...options,
+    enabled: !!input && videos,
+  });
+  const { data, ...rest } = videos ? videoSearch : imageSearch;
 
   const { items } = useFeedImageItems(data?.pages, { isRefetching: rest.isRefetching });
 
-  return { ...rest, images: items, correctedQuery: data?.pages[0]?.correctedQuery };
+  return {
+    ...rest,
+    images: items,
+    correctedQuery: data?.pages[0]?.correctedQuery,
+    serverRefusal: pageRefusal(data?.pages[0], rest.isPlaceholderData),
+  };
 }

@@ -1,6 +1,7 @@
 import { Button, Group, Select, Stack, Text, Textarea } from '@mantine/core';
-import { closeAllModals, openModal } from '@mantine/modals';
 import { useState } from 'react';
+import { openContentDialog } from '~/components/Dialog/Common/ContentDialog';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import {
   CRUCIBLE_OWNER_REMOVAL_CAP,
   CRUCIBLE_OWNER_REMOVAL_NOTE_MAX_LENGTH,
@@ -28,6 +29,7 @@ function OwnerRemoveEntryForm({
   entryFee: number;
   removalsLeft: number;
 }) {
+  const { onClose } = useDialogContext();
   const utils = trpc.useUtils();
   const [reason, setReason] = useState<CrucibleOwnerRemovalReason | null>(null);
   const [note, setNote] = useState('');
@@ -40,7 +42,7 @@ function OwnerRemoveEntryForm({
           ? `${result.refundedAmount.toLocaleString()} Buzz refunded to the entrant.`
           : 'It was a free entry, so there was nothing to refund.',
       });
-      closeAllModals();
+      onClose();
     },
     onError: (error) =>
       showErrorNotification({ title: 'Could not remove entry', error: new Error(error.message) }),
@@ -91,7 +93,7 @@ function OwnerRemoveEntryForm({
           : `${removalsLeft} of ${CRUCIBLE_OWNER_REMOVAL_CAP} removals left for this crucible.`}
       </Text>
       <Group justify="flex-end">
-        <Button variant="default" onClick={() => closeAllModals()}>
+        <Button variant="default" onClick={() => onClose()}>
           Keep it
         </Button>
         <Button
@@ -113,7 +115,7 @@ function OwnerRemoveEntryForm({
 export const openCrucibleOwnerRemoveEntryModal = (
   props: Parameters<typeof OwnerRemoveEntryForm>[0]
 ) =>
-  openModal({
+  openContentDialog({
     title: 'Remove entry',
     centered: true,
     children: <OwnerRemoveEntryForm {...props} />,

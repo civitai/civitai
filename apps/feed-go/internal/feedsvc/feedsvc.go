@@ -16,7 +16,6 @@ import (
 	"io"
 	"math"
 	"net/http"
-	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -30,6 +29,9 @@ const (
 	MaxLimit    = 200 // FEED_MAX_LIMIT
 	maxExcluded = 100
 	maxUsers    = 1000
+	// MaxFollowed is MAX_FOLLOWED (= MAX_USER_IDS, the feed service's own ceiling on userIds): a
+	// longer follow list is refused (`followed>10000`), which Node answers with an empty page.
+	MaxFollowed = 10_000
 )
 
 var sorts = map[string]string{
@@ -71,8 +73,23 @@ type Query struct {
 	PostID int
 	// UserID is the creator filter (`userId`, or the id a `username` resolved to), sent as `userIds`.
 	UserID int
-	// Tags is the input's own `tags` inclusion list (image.getInfinite's tag scope), after
-	// enforceBlockedBrowsingTags stripped the blocked ones.
+	// Followed is the mapper's `followedOn`: `followed: true` with a signed-in viewer (signed out, the
+	// search path drops the flag). FollowedUserIDs is then the viewer's follow list as
+	// getUserFollows answered it (serveImagesFromFeedService's `followedUserIds`); its positive ids
+	// are sent as `userIds`, in order. The caller answers an empty list itself (serveFromFeed's
+	// empty page), before Map.
+	Followed        bool
+	FollowedUserIDs []int
+	// FollowedSent is the input's own `followed: true`, signed in or not (the new-creators check reads
+	// it as sent).
+	FollowedSent bool
+	// NewCreators is `newCreators: true`; NewCreatorUserIDs is then the board getNewCreatorUserIds
+	// answered (serveImagesFromFeedService's `newCreatorUserIds`), its positive ids sent as `userIds`,
+	// in order. The caller answers an empty board itself (serveFromFeed's empty page), before Map.
+	NewCreators       bool
+	NewCreatorUserIDs []int
+	// Tags is the input's own `tags` inclusion list, after enforceBlockedBrowsingTags stripped the
+	// blocked ones.
 	Tags   []int
 	Sort   string
 	Period string
@@ -86,6 +103,122 @@ type Query struct {
 	HasGeneration bool
 	HasRemixOfID  bool
 	RequiringMeta bool
+	// HasPrioritizedUserIDs is a non-empty `prioritizedUserIds` (UNSUPPORTED_KEYS, before
+	// `generation`); Pending is `pending: true` (UNSUPPORTED_FLAGS, after `requiringMeta`).
+	HasPrioritizedUserIDs bool
+	Pending               bool
+	// PublishedOnly is `publishedOnly: true` (UNSUPPORTED_FLAGS, after `pending`): image.getInfinite
+	// sends it only without a `userId` (beside one it routes to Postgres, or the handler withdrew it).
+	PublishedOnly bool
+	// Techniques is the input's `techniques` as sent; the positive ids are sent (after `tools`), in
+	// order and with repeats. Unlike `tags`, a list of only impossible ids is not refused: no
+	// `techniques` is sent.
+	Techniques []int
+	// Tools is the input's `tools` as sent; the positive ids are sent, in order and with repeats.
+	Tools []int
+	// BaseModels is the input's `baseModels` as sent; the non-empty names are sent, in order and with
+	// repeats.
+	BaseModels []string
+	// Hub is a hub's resolved sources (serveImagesFromFeedService's `hubSources`, from
+	// resolveHubForFeed); nil = no `hubId`. The caller answers a hub that resolved to nothing
+	// (`hubSources: null`) itself, before Map (serveFromFeed's empty page).
+	Hub *Hub
+}
+
+// Hub is ResolvedHubSources (src/server/services/user-hub.service.ts) as mapHubSources reads it:
+// the any-of sources and the keep-out lists. Collection sources are not here: with
+// HUB_COLLECTION_SOURCES_ENABLED false the mapper never reads them.
+type Hub struct {
+	UserIDs, VersionIDs []int
+	// TagGroups are AND-groups of tag ids, ORed.
+	TagGroups                           [][]int
+	ExcludedUserIDs, ExcludedVersionIDs []int
+	ExcludedTagGroups                   [][]int
+}
+
+// MAX_HUB: the feed service's ceilings on a hub's sources and keep-out lists.
+const (
+	maxHubUsers             = 50
+	maxHubVersions          = 750
+	maxHubTagGroups         = 50
+	maxHubTagsPerGroup      = 50
+	maxHubExcludedTagGroups = 20
+)
+
+// HubRoutes are serveFromFeed's HUB_ROUTES: the feed plans that took a hub's union, or its own empty
+// page. A hub answered on any other route is a feed build that ignored the sources (`hub:route`).
+var HubRoutes = map[string]bool{"union-walk": true, "union-gather": true, "empty": true}
+
+// hubParams is mapHubSources: the hub's feed parameters and its excluded creators, or the reason the
+// mapper refuses it (every one an empty page).
+func hubParams(q Query) (params [][2]string, excludedUsers []int, reason string) {
+	h := q.Hub
+	// The feed takes one driver: a hub's sources, or a creator, an id list or a gallery.
+	if q.UserID != 0 || q.FollowedSent || q.NewCreators || len(q.PostIDs) > 0 || q.PostID != 0 || q.Model3DID != 0 {
+		return nil, nil, "hub:driver"
+	}
+	whole := func(list []int) bool { return len(positive(list)) == len(list) }
+	groupsWhole := func(groups [][]int) bool {
+		for _, g := range groups {
+			if len(g) == 0 || !whole(g) {
+				return false
+			}
+		}
+		return true
+	}
+	if !whole(h.UserIDs) || !whole(h.VersionIDs) || !groupsWhole(h.TagGroups) || !whole(h.ExcludedUserIDs) ||
+		!whole(h.ExcludedVersionIDs) || !groupsWhole(h.ExcludedTagGroups) {
+		return nil, nil, "hub:ids"
+	}
+	if len(h.UserIDs) == 0 && len(h.VersionIDs) == 0 && len(h.TagGroups) == 0 {
+		return nil, nil, "hub:none"
+	}
+	// The `hideAutoResources` / `hideManualResources` refusal beside version sources is not reachable
+	// here: withoutUnservedFilters drops both flags before the mapper runs.
+	switch {
+	case len(h.UserIDs) > maxHubUsers:
+		return nil, nil, fmt.Sprintf("hub:users>%d", maxHubUsers)
+	case len(h.VersionIDs) > maxHubVersions:
+		return nil, nil, fmt.Sprintf("hub:versions>%d", maxHubVersions)
+	case len(h.TagGroups) > maxHubTagGroups:
+		return nil, nil, fmt.Sprintf("hub:tagGroups>%d", maxHubTagGroups)
+	case len(h.ExcludedVersionIDs) > maxHubVersions:
+		return nil, nil, fmt.Sprintf("hub:excludedVersions>%d", maxHubVersions)
+	case len(h.ExcludedTagGroups) > maxHubExcludedTagGroups:
+		return nil, nil, fmt.Sprintf("hub:excludedTagGroups>%d", maxHubExcludedTagGroups)
+	}
+	for _, groups := range [][][]int{h.TagGroups, h.ExcludedTagGroups} {
+		for _, g := range groups {
+			if len(g) > maxHubTagsPerGroup {
+				return nil, nil, fmt.Sprintf("hub:tagsPerGroup>%d", maxHubTagsPerGroup)
+			}
+		}
+	}
+	if len(h.UserIDs) > 0 {
+		params = append(params, [2]string{"anyUserIds", join(h.UserIDs)})
+	}
+	if len(h.VersionIDs) > 0 {
+		params = append(params, [2]string{"anyVersionIds", join(h.VersionIDs)})
+	}
+	if len(h.TagGroups) > 0 {
+		params = append(params, [2]string{"anyTagGroups", tagGroupsParam(h.TagGroups)})
+	}
+	if len(h.ExcludedVersionIDs) > 0 {
+		params = append(params, [2]string{"excludedVersionIds", join(h.ExcludedVersionIDs)})
+	}
+	if len(h.ExcludedTagGroups) > 0 {
+		params = append(params, [2]string{"excludedTagGroups", tagGroupsParam(h.ExcludedTagGroups)})
+	}
+	return params, h.ExcludedUserIDs, ""
+}
+
+// tagGroupsParam is `groups.map((g) => g.join(',')).join(';')`.
+func tagGroupsParam(groups [][]int) string {
+	parts := make([]string, len(groups))
+	for i, g := range groups {
+		parts[i] = join(g)
+	}
+	return strings.Join(parts, ";")
 }
 
 // Refusal is why a Query cannot be sent to the feed. Rejected refusals are answered by Node with a
@@ -167,9 +300,34 @@ func (p *params) set(k, v string) {
 func (p *params) encode() string {
 	parts := make([]string, len(p.keys))
 	for i, k := range p.keys {
-		parts[i] = url.QueryEscape(k) + "=" + url.QueryEscape(p.vals[k])
+		parts[i] = formEncode(k) + "=" + formEncode(p.vals[k])
 	}
 	return strings.Join(parts, "&")
+}
+
+// formEncode is URLSearchParams' application/x-www-form-urlencoded byte serializer (WHATWG URL): the
+// UTF-8 bytes, ASCII alphanumerics and `*-._` kept, a space as `+`, every other byte as `%XX`. It
+// differs from url.QueryEscape only on `*` (kept here) and `~` (escaped here), which a free-text
+// value such as a base model name can hold. Go's JSON decoding already turned an invalid code point
+// into U+FFFD, as URLSearchParams does with a lone surrogate.
+func formEncode(s string) string {
+	const hex = "0123456789ABCDEF"
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '*', c == '-', c == '.', c == '_':
+			b.WriteByte(c)
+		case c == ' ':
+			b.WriteByte('+')
+		default:
+			b.WriteByte('%')
+			b.WriteByte(hex[c>>4])
+			b.WriteByte(hex[c&15])
+		}
+	}
+	return b.String()
 }
 
 // Map is mapSearchInputToFeedQuery(input, 'primary', 'website') for this service's inputs: the feed
@@ -179,6 +337,9 @@ func Map(q Query) (string, *Refusal) {
 	skip := func(reason string) (string, *Refusal) { return "", &Refusal{Reason: reason} }
 	reject := func(reason string) (string, *Refusal) { return "", &Refusal{Reason: reason, Rejected: true} }
 
+	if q.HasPrioritizedUserIDs {
+		return skip("input:prioritizedUserIds")
+	}
 	if q.HasGeneration {
 		return skip("input:generation")
 	}
@@ -187,6 +348,12 @@ func Map(q Query) (string, *Refusal) {
 	}
 	if q.RequiringMeta {
 		return skip("flag:requiringMeta")
+	}
+	if q.Pending {
+		return skip("flag:pending")
+	}
+	if q.PublishedOnly {
+		return skip("flag:publishedOnly")
 	}
 	// `[...postIds, postId]`: the completion's list, then the input's own post.
 	postIDs := positive(append(append([]int(nil), q.PostIDs...), q.PostID))
@@ -202,6 +369,35 @@ func Map(q Query) (string, *Refusal) {
 		}
 		if completion && q.Limit > MaxLimit {
 			return skip(fmt.Sprintf("postIds:limit>%d", MaxLimit))
+		}
+	}
+	// The follow list, after the post ids and before the sort (the mapper's order): too long for the
+	// feed, or beside a creator scope (the feed takes one `userIds`), is an empty page.
+	if q.Followed {
+		if len(q.FollowedUserIDs) > MaxFollowed {
+			return skip(fmt.Sprintf("followed>%d", MaxFollowed))
+		}
+		if q.UserID > 0 {
+			return skip("flag:followed:userId")
+		}
+	}
+	// The new-creators board, right after the follow list: too long, or beside a creator scope or
+	// any `followed: true` (the feed takes one `userIds`), is an empty page.
+	if q.NewCreators {
+		if len(q.NewCreatorUserIDs) > MaxFollowed {
+			return skip(fmt.Sprintf("newCreators>%d", MaxFollowed))
+		}
+		if q.UserID != 0 || q.FollowedSent {
+			return skip("flag:newCreators:userId")
+		}
+	}
+	// The hub, right after the new-creators board and before the sort.
+	var hub [][2]string
+	var hubExcludedUsers []int
+	if q.Hub != nil {
+		var reason string
+		if hub, hubExcludedUsers, reason = hubParams(q); reason != "" {
+			return skip(reason)
 		}
 	}
 	sort, ok := sorts[q.Sort]
@@ -284,18 +480,37 @@ func Map(q Query) (string, *Refusal) {
 	if len(excludedTags) > 0 {
 		p.set("excludedTags", join(excludedTags))
 	}
-	excludedUsers := uniq(positive(q.ExcludedUserIDs))
+	// The hub's own refusals first (`[...new Set([...hub.excludedUserIds, ...ints(excludedUserIds)])]`):
+	// the list is cut at the feed's limit, and a hub exclusion lost to the cut is content its owner kept
+	// out. The hub's ids are all positive (hubParams refused any other).
+	excludedUsers := uniq(append(append([]int(nil), hubExcludedUsers...), positive(q.ExcludedUserIDs)...))
 	if len(excludedUsers) > maxUsers {
 		excludedUsers = excludedUsers[:maxUsers]
 	}
 	if len(excludedUsers) > 0 {
 		p.set("excludedUserIds", join(excludedUsers))
 	}
+	for _, kv := range hub {
+		p.set(kv[0], kv[1])
+	}
 	if versionIDs != "" {
 		p.set("versionIds", versionIDs)
 	}
 	if q.UserID > 0 {
 		p.set("userIds", strconv.Itoa(q.UserID))
+	}
+	// `ints(followed)`: the positive ids, in order, repeats kept (a creator scope was refused above).
+	if q.Followed {
+		if followed := positive(q.FollowedUserIDs); len(followed) > 0 {
+			p.set("userIds", join(followed))
+		}
+	}
+	// `ints(newCreators)`: the board's positive ids, in order (a creator or follow scope was refused
+	// above).
+	if q.NewCreators {
+		if board := positive(q.NewCreatorUserIDs); len(board) > 0 {
+			p.set("userIds", join(board))
+		}
 	}
 	if len(q.Types) > 0 {
 		p.set("types", strings.Join(q.Types, ","))
@@ -314,6 +529,24 @@ func Map(q Query) (string, *Refusal) {
 		if q.ViewerID != 0 {
 			p.set("viewerId", strconv.Itoa(q.ViewerID))
 		}
+	}
+	// `baseModels` after the POI exclusion: `.map(String).filter(Boolean)`, joined with `,`.
+	var baseModels []string
+	for _, b := range q.BaseModels {
+		if b != "" {
+			baseModels = append(baseModels, b)
+		}
+	}
+	if len(baseModels) > 0 {
+		p.set("baseModels", strings.Join(baseModels, ","))
+	}
+	// `tools` after baseModels and before the post ids.
+	if tools := positive(q.Tools); len(tools) > 0 {
+		p.set("tools", join(tools))
+	}
+	// `techniques` right after `tools` (and before the unported `ids`).
+	if techniques := positive(q.Techniques); len(techniques) > 0 {
+		p.set("techniques", join(techniques))
 	}
 	if len(postIDs) > 0 {
 		p.set("postIds", join(uniq(postIDs)))
@@ -347,6 +580,8 @@ type Answer struct {
 	Status     int
 	IDs        []int
 	NextCursor string // the feed's own `<a>|<b>`, "" = end
+	// Route is the answer's `route` when it is a string ("" otherwise): the plan the feed took.
+	Route string
 }
 
 // Request-source headers, by mode. A shadow compute only re-runs a sampled request, so its calls must
@@ -384,14 +619,18 @@ type Client struct {
 	Timeout time.Duration // 0 = Timeout
 }
 
+// AttemptTimeout is the timeout Fetch gives one call: Timeout unless the client sets its own.
+func (c *Client) AttemptTimeout() time.Duration {
+	if c.Timeout == 0 {
+		return Timeout
+	}
+	return c.Timeout
+}
+
 // Fetch is `GET <base>/v1/feed?<query>`. A transport error or timeout is an error; a non-2xx status
 // is an Answer with that status and no ids. The request-source headers follow ctx's mode (WithShadow).
 func (c *Client) Fetch(ctx context.Context, query string) (Answer, error) {
-	timeout := c.Timeout
-	if timeout == 0 {
-		timeout = Timeout
-	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+	ctx, cancel := context.WithTimeout(ctx, c.AttemptTimeout())
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSuffix(c.BaseURL, "/")+"/v1/feed?"+query, nil)
 	if err != nil {
@@ -419,6 +658,7 @@ func (c *Client) Fetch(ctx context.Context, query string) (Answer, error) {
 	var body struct {
 		Items      []any `json:"items"`
 		NextCursor any   `json:"nextCursor"`
+		Route      any   `json:"route"`
 	}
 	dec := json.NewDecoder(io.LimitReader(res.Body, 8<<20))
 	dec.UseNumber()
@@ -428,6 +668,9 @@ func (c *Client) Fetch(ctx context.Context, query string) (Answer, error) {
 	a := Answer{Status: res.StatusCode, IDs: Ints(body.Items)}
 	if s, ok := body.NextCursor.(string); ok {
 		a.NextCursor = s
+	}
+	if s, ok := body.Route.(string); ok {
+		a.Route = s
 	}
 	return a, nil
 }

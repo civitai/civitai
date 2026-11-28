@@ -158,6 +158,7 @@ describe('winnerImageFields', () => {
     imageIngestion: 'Scanned' as const,
     imageBlockedFor: null,
     imageReviewed: true,
+    imageNotRestricted: true,
   });
 
   it('serves a rated winner image', () => {

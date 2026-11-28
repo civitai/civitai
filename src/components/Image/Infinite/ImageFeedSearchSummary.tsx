@@ -1,6 +1,8 @@
-import { Alert, Anchor, Button, Pill, Text, Title } from '@mantine/core';
+import { Alert, Anchor, Button, Chip, Pill, Text, Title } from '@mantine/core';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { IconCloudOff } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
+import type { ReactNode } from 'react';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { Tooltip } from '~/components/MantineOverlays';
 import type { ImagesQueryParamSchema } from '~/components/Image/image-query-params';
@@ -13,6 +15,8 @@ import useIsClient from '~/hooks/useIsClient';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { removeEmpty } from '~/utils/object-helpers';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
+import { SEARCH_AS_TYPED_PARAM } from '~/components/Search/useSearchAsTyped';
+import { CorrectedQueryNote } from '~/components/Search/FeedSearchSummary';
 
 const isEmptyFilter = (value: unknown) =>
   value === undefined || (Array.isArray(value) && value.length === 0);
@@ -21,20 +25,27 @@ type Props = {
   query: string;
   /** "More like this": the image matched while no query is set. */
   similarTo?: number;
+  /** "More like this" steering, for a viewer who may steer (`MoreLikeThisPrefer`). */
+  preferRow?: ReactNode;
   correctedQuery?: string;
   filters: Parameters<typeof ignoredWhileSearching>[0];
   failed: boolean;
+  /** "More like this" from an image it can't search: told plainly, not as an outage. */
+  unavailable?: boolean;
   onRetry: () => void;
 };
 
 export function ImageFeedSearchSummary({
   query,
   similarTo,
+  preferRow,
   correctedQuery,
   filters,
   failed,
+  unavailable,
   onRetry,
 }: Props) {
+  const currentUser = useCurrentUser();
   const router = useRouter();
   // The saved feed filters load in the browser, so the server can't render their chips.
   const isClient = useIsClient();
@@ -62,6 +73,10 @@ export function ImageFeedSearchSummary({
           query: removeEmpty({
             ...router.query,
             ...Object.fromEntries(inUrl.map((key) => [key, patch[key as keyof typeof patch]])),
+            // A changed or cleared query is corrected again.
+            ...('query' in patch && { [SEARCH_AS_TYPED_PARAM]: undefined }),
+            // A preference belongs to its anchor.
+            ...(('query' in patch || 'similarTo' in patch) && { prefer: undefined }),
           }),
         },
         undefined,
@@ -74,7 +89,6 @@ export function ImageFeedSearchSummary({
   };
 
   const ignored = ignoredWhileSearching(filters);
-  const shownQuery = correctedQuery && correctedQuery !== query ? correctedQuery : undefined;
 
   return (
     <div className="flex flex-col gap-2 pb-2">
@@ -90,28 +104,55 @@ export function ImageFeedSearchSummary({
           <>Images matching &ldquo;{query}&rdquo;</>
         )}
       </Title>
-      {shownQuery && (
-        <Text size="sm" c="dimmed">
-          Showing results for <strong>{shownQuery}</strong>
-        </Text>
-      )}
-      {failed && (
-        <Alert color="yellow" icon={<IconCloudOff size={18} />} p="xs">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <Text size="sm">
-              Search isn&rsquo;t answering right now, so this is the feed without your search.
-            </Text>
-            <Button size="compact-sm" variant="light" onClick={onRetry}>
-              Retry search
-            </Button>
-          </div>
+      <CorrectedQueryNote query={query} correctedQuery={correctedQuery} />
+      {unavailable ? (
+        <Alert color="gray" p="xs">
+          <Text size="sm">
+            More like this isn&rsquo;t available for this image, so this is the feed without it.
+          </Text>
         </Alert>
+      ) : (
+        failed && (
+          <Alert color="yellow" icon={<IconCloudOff size={18} />} p="xs">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <Text size="sm">
+                Search isn&rsquo;t answering right now, so this is the feed without your search.
+              </Text>
+              <Button size="compact-sm" variant="light" onClick={onRetry}>
+                Retry search
+              </Button>
+            </div>
+          </Alert>
+        )
       )}
       <div className="flex flex-wrap items-center gap-2">
         {similarTo ? (
-          <Pill withRemoveButton onRemove={() => update({ similarTo: undefined })}>
-            Similar to this image
-          </Pill>
+          <>
+            <Pill withRemoveButton onRemove={() => update({ similarTo: undefined })}>
+              Similar to this image
+            </Pill>
+            {currentUser && (
+              <Chip
+                size="xs"
+                checked={router.query.excludeOwn === 'true'}
+                onChange={(checked) =>
+                  void router.replace(
+                    {
+                      pathname: router.pathname,
+                      query: removeEmpty({
+                        ...router.query,
+                        excludeOwn: checked ? 'true' : undefined,
+                      }),
+                    },
+                    undefined,
+                    { shallow: true }
+                  )
+                }
+              >
+                Hide my images
+              </Chip>
+            )}
+          </>
         ) : (
           <Pill withRemoveButton onRemove={() => update({ query: undefined })}>
             &ldquo;{query}&rdquo;
@@ -157,6 +198,7 @@ export function ImageFeedSearchSummary({
           Clear search
         </Anchor>
       </div>
+      {similarTo && !unavailable && preferRow}
       {isClient && !failed && ignored.length > 0 && (
         <Tooltip label={IMAGE_FEED_SEARCH_UNAVAILABLE_REASON} multiline w={280} withArrow>
           <Text size="xs" c="dimmed" className="w-fit">

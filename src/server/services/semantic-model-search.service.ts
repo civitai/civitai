@@ -21,6 +21,7 @@ import {
   resolveUserIds,
   searchServiceSource,
   viewerExcludedUserIds,
+  withWordMatchesFirst,
   type CandidateFilter,
   type CandidateSource,
   type Hydrate,
@@ -62,12 +63,17 @@ export async function searchSemanticModels({
   onViewerDependent?: () => void;
   candidateSource?: CandidateSource;
 }) {
-  const none = { items: [] as HydratedModel[], nextCursor: undefined, correctedQuery: undefined };
-  const { query, cursor, limit, ...feedFilters } = input;
+  const none = {
+    items: [] as HydratedModel[],
+    nextCursor: undefined,
+    correctedQuery: undefined,
+    refused: false as boolean,
+  };
+  const { query, cursor, limit, spellcheck, ...feedFilters } = input;
   let browsingLevel = resolveSemanticBrowsingLevel(
     input.browsingLevel,
     user,
-    await isNonModClampOn()
+    await isNonModClampOn(user)
   );
   const [hidden, addonData, userIds] = await Promise.all([
     getAllHiddenForUser({ userId: user?.id }),
@@ -130,6 +136,7 @@ export async function searchSemanticModels({
   // Refused before any search: the audit may run it after the response, for its row only.
   if (queryRefused)
     return audit.refused(
+      'refused_query',
       none,
       browsingLevel,
       refusedTextCandidates(cachedSource, { text: query, filter, viewer })
@@ -166,10 +173,13 @@ export async function searchSemanticModels({
     return result.items;
   };
 
+  // Name or tag matches first (the `name` word index, the `tags` keyword index), then by meaning.
+  const ranked = withWordMatchesFirst(cachedSource, 'name', 'tags');
   const search = auditedTextCandidates({
-    source: (args) => timed('candidates', cachedSource(args)),
+    source: (args) => timed('candidates', ranked(args)),
     viewer,
     text: query,
+    spellcheck,
     filter,
     audit: (correction) => refusalOf(correction, 'correction'),
   });
@@ -186,6 +196,11 @@ export async function searchSemanticModels({
 
   audit.candidates(search.state.first);
   if (search.state.refused)
-    return audit.refused(none, browsingLevel, async () => search.state.first ?? { ids: [] });
+    return audit.refused(
+      'refused_correction',
+      none,
+      browsingLevel,
+      async () => search.state.first ?? { ids: [] }
+    );
   return audit.done({ ...page, correctedQuery: search.state.correctedQuery }, browsingLevel);
 }

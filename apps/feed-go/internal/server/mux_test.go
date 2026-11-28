@@ -62,7 +62,7 @@ func TestPprofOnInternalMuxOnlyWhenToggleOn(t *testing.T) {
 			t.Errorf("public %s: %d, want 404", p, code)
 		}
 	}
-	for _, p := range []string{"/metrics", "/healthz", "/internal/shadow/" + Procedure, "/internal/shadow/api/v1/images", "/internal/shadow/model.getAll", ProbePathPrefix + Procedure} {
+	for _, p := range []string{"/metrics", "/healthz", "/readyz", "/internal/shadow/" + Procedure, "/internal/shadow/api/v1/images", "/internal/shadow/model.getAll", ProbePathPrefix + Procedure} {
 		if code := statusOf(public, p); code != http.StatusNotFound {
 			t.Errorf("public %s: %d, want 404 (internal routes stay internal)", p, code)
 		}
@@ -103,7 +103,40 @@ func TestPublicMuxRoutesModelGetAll(t *testing.T) {
 	if code := statusOf(public, "/api/trpc/model.getAll"); code != http.StatusTeapot || proxied != 1 {
 		t.Fatalf("public /api/trpc/model.getAll (switch off): %d proxied=%d, want 418 from the fallback and 1", code, proxied)
 	}
-	for _, p := range []string{"/api/trpc/image.getInfinite", "/api/trpc/model.getById", "/api/trpc/model.getAll,model.getById", "/api/trpc-go/model.getAll"} {
+	for _, p := range []string{"/api/trpc/model.getById", "/api/trpc/model.getAll,model.getById", "/api/trpc-go/model.getAll"} {
+		if code := statusOf(public, p); code != http.StatusNotFound {
+			t.Errorf("public %s: %d, want 404", p, code)
+		}
+	}
+	if proxied != 1 {
+		t.Fatalf("an unrouted path reached the fallback: proxied=%d, want 1", proxied)
+	}
+}
+
+// The public listener routes /api/trpc/image.getInfinite to ServeInfiniteHTTP: with the serve switch
+// off (the default) the request reaches the handler and is proxied to the app, never a 404, and is
+// counted as the infinite-off fallback; look-alikes and every other procedure stay unrouted.
+func TestPublicMuxRoutesInfinite(t *testing.T) {
+	s := muxServer()
+	reg := prometheus.NewRegistry()
+	s.Metrics = NewMetrics(reg)
+	proxied := 0
+	s.Fallback = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		proxied++
+		w.WriteHeader(http.StatusTeapot)
+	})
+	s.computeInfiniteFn = func(context.Context, *http.Request) (*computed, error) {
+		t.Fatal("the switch is off: nothing may be computed")
+		return nil, nil
+	}
+	public := PublicMux(s)
+	if code := statusOf(public, "/api/trpc/image.getInfinite"); code != http.StatusTeapot || proxied != 1 {
+		t.Fatalf("public /api/trpc/image.getInfinite (switch off): %d proxied=%d, want 418 from the fallback and 1", code, proxied)
+	}
+	if v, _ := metricValue(t, reg, "feed_go_fallback_total", map[string]string{"feed_endpoint": "infinite", "mode": "serve", "reason": "infinite-off"}); v != 1 {
+		t.Fatalf("infinite-off fallbacks = %v, want 1", v)
+	}
+	for _, p := range []string{"/api/trpc/image.getInfinite,model.getAll", "/api/trpc/image.getInfiniteX", "/api/trpc-go/image.getInfinite", "/api/trpc/image.get"} {
 		if code := statusOf(public, p); code != http.StatusNotFound {
 			t.Errorf("public %s: %d, want 404", p, code)
 		}

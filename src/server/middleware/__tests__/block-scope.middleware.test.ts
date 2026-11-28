@@ -279,8 +279,8 @@ describe('verifyBlockToken fail-closed shapes (L-VERIFY / L-M6)', () => {
       .setAudience('civitai-app-block')
       .setSubject('user:1')
       .setJti('test-jti')
-      .setIssuedAt(now)
-      .setNotBefore(now)
+      .setIssuedAt(typeof extra.iat === 'number' ? extra.iat : now)
+      .setNotBefore(typeof extra.iat === 'number' ? extra.iat : now)
       .setExpirationTime(now + 600)
       .sign(key);
   }
@@ -401,6 +401,136 @@ describe('verifyBlockToken fail-closed shapes (L-VERIFY / L-M6)', () => {
     const dev = await verifyBlockToken(await signRaw({ dev: true }));
     expect(dev).not.toBeNull();
     expect(dev?.dev).toBe(true);
+  });
+
+  it('[REG] refuses a runner token by default, and admits it only on opt-in', async () => {
+    const token = await signRaw({
+      mintOrigin: 'runner',
+      runId: 'run_x',
+      authorizationId: 'rra_x',
+      runKey: 'run_x',
+    });
+    expect(await verifyBlockToken(token)).toBeNull();
+    expect(await verifyBlockToken(token, { admitRunner: false })).toBeNull();
+    const admitted = await verifyBlockToken(token, { admitRunner: true });
+    expect(admitted).not.toBeNull();
+    expect(admitted?.mintOrigin).toBe('runner');
+  });
+
+  it('[REG] a runner token needs its run claims, and each run claim needs the runner marker', async () => {
+    const runner = {
+      mintOrigin: 'runner',
+      runId: 'run_x',
+      authorizationId: 'rra_x',
+      runKey: 'run_x',
+    };
+    for (const claim of ['runId', 'authorizationId', 'runKey'] as const) {
+      for (const value of [undefined, '', 7]) {
+        expect(
+          await verifyBlockToken(await signRaw({ ...runner, [claim]: value }), {
+            admitRunner: true,
+          }),
+          `${claim}=${JSON.stringify(value)}`
+        ).toBeNull();
+      }
+      expect(
+        await verifyBlockToken(await signRaw({ [claim]: runner[claim] }), { admitRunner: true }),
+        `${claim} without the marker`
+      ).toBeNull();
+    }
+  });
+
+  it('[REG] a runner token is refused once older than the runner lifetime, whatever its exp', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    // Either side of the 180s runner lifetime (civitai/civitai#10543).
+    const old = await signRaw({
+      mintOrigin: 'runner',
+      runId: 'run_x',
+      authorizationId: 'rra_x',
+      runKey: 'run_x',
+      iat: now - 240,
+    });
+    expect(await verifyBlockToken(old, { admitRunner: true })).toBeNull();
+    const fresh = await signRaw({
+      mintOrigin: 'runner',
+      runId: 'run_x',
+      authorizationId: 'rra_x',
+      runKey: 'run_x',
+      iat: now - 60,
+    });
+    expect(await verifyBlockToken(fresh, { admitRunner: true })).not.toBeNull();
+  });
+
+  it('[INV] an ordinary token verifies with or without the opt-in', async () => {
+    const token = await signRaw({});
+    expect(await verifyBlockToken(token)).not.toBeNull();
+    expect(await verifyBlockToken(token, { admitRunner: true })).not.toBeNull();
+  });
+
+  it('[REG] refuses any other mintOrigin value, even on opt-in', async () => {
+    for (const bogus of ['Runner', 'live', '', 1, true, null, {}]) {
+      expect(
+        await verifyBlockToken(await signRaw({ mintOrigin: bogus }), { admitRunner: true }),
+        `mintOrigin=${JSON.stringify(bogus)}`
+      ).toBeNull();
+    }
+  });
+
+  it('[REG] refuses a runner token carrying dev, reviewRunForReal or privateRun', async () => {
+    for (const extra of [
+      { dev: true },
+      { dev: false },
+      { reviewRunForReal: true },
+      { privateRun: true },
+      { privateRun: false },
+    ]) {
+      expect(
+        await verifyBlockToken(
+          await signRaw({
+            mintOrigin: 'runner',
+            runId: 'run_x',
+            authorizationId: 'rra_x',
+            runKey: 'run_x',
+            ...extra,
+          }),
+          {
+            admitRunner: true,
+          }
+        ),
+        JSON.stringify(extra)
+      ).toBeNull();
+    }
+  });
+
+  it('[REG] refuses an anonymous runner token', async () => {
+    const sign = async (extra: Record<string, unknown>) => {
+      const now = Math.floor(Date.now() / 1000);
+      return new SignJWT({ ...baseClaims, ...extra })
+        .setProtectedHeader({ alg: 'RS256', typ: 'JWT', kid: await configuredKid() })
+        .setIssuer('civitai')
+        .setAudience('civitai-app-block')
+        .setSubject('anon')
+        .setJti('test-jti')
+        .setIssuedAt(now)
+        .setExpirationTime(now + 600)
+        .sign(await importPrivateKey());
+    };
+    // Control: an anonymous token without the marker verifies, so the refusal below is the
+    // runner rule and not the subject.
+    expect(await verifyBlockToken(await sign({}), { admitRunner: true })).not.toBeNull();
+    expect(
+      await verifyBlockToken(
+        await sign({
+          mintOrigin: 'runner',
+          runId: 'run_x',
+          authorizationId: 'rra_x',
+          runKey: 'run_x',
+        }),
+        {
+          admitRunner: true,
+        }
+      )
+    ).toBeNull();
   });
 
   // ---- PRIVATE-RUN AUDIENCE claim shape guard -------------------------------

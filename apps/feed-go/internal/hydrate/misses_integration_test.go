@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/integtest"
+	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
 )
 
 var integMissNow = time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
@@ -37,7 +38,7 @@ const (
 func integMissSetup(t *testing.T) *integEnv {
 	t.Helper()
 	e := integSetup(t, true)
-	e.src.Compute = &MissCompute{WriteBack: true, FrameNegative: true, Primary: e.pool, Now: func() time.Time { return integMissNow }}
+	e.src.Compute = &MissCompute{WriteBack: AllWrites(), FrameNegative: true, Primary: e.pool, Now: func() time.Time { return integMissNow }}
 	// The jsonb literals are written in a member order Postgres does not keep: the lookups must see
 	// the order Postgres prints (key length, then bytes), as Prisma hands it to Node.
 	integtest.Exec(t, e.pool, `DELETE FROM "Cosmetic" WHERE id BETWEEN 1150000 AND 1150999;
@@ -126,7 +127,7 @@ func TestIntegrationEventDecorationMissComputed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s, want := integPlain(t, got[1150202]), `{"id":1150107,"name":"integ-hat","type":"ContentDecoration","source":"Event","data":{"event":"integ-ev","url":"integ-hat-url"},"equippedToId":1150202,"equippedToType":"Image"}`; s != want {
+	if s, want := integPlain(t, got[1150202]), `{"id":1150107,"name":"integ-hat","type":"ContentDecoration","source":"Event","data":{"url":"integ-hat-url","event":"integ-ev"},"equippedToId":1150202,"equippedToType":"Image"}`; s != want {
 		t.Fatalf("decoration:\n got %s\nwant %s", s, want)
 	}
 	integWantPacked(t, e, KeyImageEvents, 1150202, integWantEvent, 24*time.Hour)
@@ -319,9 +320,9 @@ func TestIntegrationVersionImagesMissComputed(t *testing.T) {
 	// The image ids first, so a wrongly admitted row is named (the bytes below pin the rest).
 	for v, want := range map[int][]int{1150711: {1150731, 1150738}, 1150713: {1150745, 1150746}, 1150714: {1150750, 1150748, 1150747}} {
 		var ids []int
-		for _, img := range asList(got[v].Value["images"]) {
-			m, _ := img.(map[string]any)
-			id, _ := Int(m["id"])
+		for _, img := range asList(ObjectField(got[v].Ordered(), "images")) {
+			m, _ := img.(superjson.Object)
+			id, _ := Int(ObjectField(m, "id"))
 			ids = append(ids, id)
 		}
 		if !reflect.DeepEqual(ids, want) {
@@ -353,7 +354,7 @@ func TestIntegrationModelDecorationMissComputed(t *testing.T) {
 	if err := e.src.fillModelEvents(ctx, ids, got, writable); err != nil {
 		t.Fatal(err)
 	}
-	if d := got[1150601]; d.NotFound || d.Value["equippedToType"] != "Model" {
+	if d := got[1150601]; d.NotFound || ObjectField(d.Ordered(), "equippedToType") != "Model" {
 		t.Fatalf("1150601 = %+v, want its Model decoration", d)
 	}
 	if d, ok := got[1150602]; !ok || !d.NotFound {

@@ -19,7 +19,10 @@ vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
       handler(req, res, { id: 7 }),
 }));
 
-import handler from '~/pages/api/training-studio/studio/[route]';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import handler, { config } from '~/pages/api/training-studio/studio/[route]';
 import { studioOrigin } from '~/server/services/training-studio-forward.service';
 
 const SESSION = '__Secure-civ-token=jwt.a.b';
@@ -75,6 +78,7 @@ function call({
 const fetchMock = vi.fn();
 beforeEach(() => {
   access.allow.mockReset().mockResolvedValue(true);
+  loggingMock.logToAxiom.mockClear();
   fetchMock.mockReset().mockResolvedValue(Response.json({ workflowIds: ['wf-1'] }));
   vi.stubGlobal('fetch', fetchMock);
 });
@@ -112,6 +116,31 @@ describe('/api/training-studio/studio/[route]', () => {
     expect(res.statusCode).toBe(409);
     expect(res.body).toEqual({ message: 'confirm', matureCount: 2 });
     expect(res.headers['set-cookie']).toBeUndefined();
+  });
+
+  // The Studio's own log of a refusal is not shipped anywhere readable; this row is.
+  it("logs the Studio's refusal with the user and the reason", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({ message: 'still processing', code: 'filesProcessing' }, { status: 400 })
+    );
+    await call({ route: 'train' });
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'training-studio-forward-refused',
+        userId: 7,
+        route: 'train',
+        status: 400,
+        message: 'still processing',
+        code: 'filesProcessing',
+      })
+    );
+  });
+
+  it('does not log a submit that started, or a session the Studio did not accept', async () => {
+    await call({ route: 'train' });
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 401 }));
+    await call({ route: 'train' });
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalled();
   });
 
   it("prices a continuation with the caller's query, minus the route", async () => {
@@ -251,5 +280,50 @@ describe('/api/training-studio/studio/[route]', () => {
     );
     const res = await call({ route: 'train' });
     expect(res.statusCode).toBe(401);
+  });
+});
+
+describe('/api/training-studio/studio/[route] body limit', () => {
+  // Each limit in the one spelling its own parser reads: Next's `bytes` takes "16mb" (and reads "16m"
+  // as 16 bytes); adapter-node takes "16M" (and refuses "16MB" at startup).
+  const forward = /^(\d+)mb$/.exec(config.api.bodyParser.sizeLimit);
+  const dockerfile = readFileSync(
+    resolve(process.cwd(), 'apps/training-studio/Dockerfile'),
+    'utf8'
+  );
+  const runtimeStage = dockerfile.slice(dockerfile.search(/^FROM .* AS runtime$/m));
+  const studio = /^ENV BODY_SIZE_LIMIT=(\d+)M$/m.exec(runtimeStage);
+  // The Studio's own caps on a Start, read from its source: its modules do not load here.
+  const studioConst = (file: string, name: string) =>
+    Number(
+      new RegExp(`export const ${name} = ([0-9]+);`).exec(
+        readFileSync(resolve(process.cwd(), 'apps/training-studio/src/lib', file), 'utf8')
+      )?.[1]
+    );
+  const MAX_RUNS = studioConst('submit-limits.ts', 'MAX_RUNS');
+  const MAX_DATASET_BLOBS = studioConst('orchestrator-core.ts', 'MAX_DATASET_BLOBS');
+
+  it("matches the Studio server's own limit, set in the image it runs", () => {
+    expect(forward).not.toBeNull();
+    expect(dockerfile.search(/^FROM .* AS runtime$/m)).toBeGreaterThan(0);
+    expect(studio).not.toBeNull();
+    expect(Number(studio![1])).toBe(Number(forward![1]));
+  });
+
+  // 16 MB is chosen to hold a maximal Start at realistic captions; longer ones get the "too large" answer.
+  it('the 16 MB limit holds the largest Start the Studio accepts, at 1,000-character captions', () => {
+    const item = {
+      air: `urn:air:other:other:orchestrator:blob@${'A'.repeat(26)}.jpeg`,
+      caption: 'c'.repeat(1000),
+    };
+    const run = {
+      items: Array.from({ length: MAX_DATASET_BLOBS }, () => item),
+      prompts: ['p'.repeat(500)],
+    };
+    const body = JSON.stringify({ runs: Array.from({ length: MAX_RUNS }, () => run) });
+    // Read from source: a missed read would size an empty body and pass.
+    expect(MAX_RUNS).toBeGreaterThan(0);
+    expect(MAX_DATASET_BLOBS).toBeGreaterThan(0);
+    expect(Buffer.byteLength(body)).toBeLessThan(Number(forward![1]) * 1024 * 1024);
   });
 });

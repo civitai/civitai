@@ -1,3 +1,4 @@
+import { serverCopyTablesSql } from '@civitai/db-queries/test/image-uses';
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
@@ -28,6 +29,7 @@ beforeAll(async () => {
   await db.exec(`
     CREATE TYPE "ModelModifier" AS ENUM ('Archived', 'TakenDown');
     CREATE TYPE "CollectionContributorPermission" AS ENUM ('VIEW', 'ADD', 'ADD_REVIEW', 'MANAGE');
+    CREATE DOMAIN "ImageIngestionStatus" AS TEXT;
     CREATE TABLE "Model" (
       id int PRIMARY KEY, "userId" int NOT NULL, status text NOT NULL DEFAULT 'Published',
       "deletedAt" timestamp, availability text NOT NULL DEFAULT 'Public', mode "ModelModifier",
@@ -44,8 +46,10 @@ beforeAll(async () => {
       "publishedAt" timestamp NOT NULL DEFAULT now() - interval '1 day',
       availability text NOT NULL DEFAULT 'Public'
     );
+    CREATE TABLE "ServiceDealReviewImage" ("reviewId" int NOT NULL, "imageId" int NOT NULL);
+    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, images jsonb);
     CREATE TABLE "Image" (
-      id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, index int NOT NULL DEFAULT 0,
+      id int PRIMARY KEY, minor boolean NOT NULL DEFAULT false, "userId" int NOT NULL, "postId" int, index int NOT NULL DEFAULT 0,
       ingestion text NOT NULL DEFAULT 'Scanned', "needsReview" text, "blockedFor" text,
       "nsfwLevel" int NOT NULL DEFAULT 1, "modelRestricted" boolean NOT NULL DEFAULT false, "tosViolation" boolean NOT NULL DEFAULT false
     );
@@ -154,6 +158,8 @@ beforeAll(async () => {
       (79, 53, 'legacy-unheld', 'Published', now() - interval '1 day', 'Public', 'Scanned', ${
         NsfwLevel.PG13
       });
+    ${serverCopyTablesSql};
+    ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS url text;
   `);
 });
 

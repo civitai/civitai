@@ -1,19 +1,18 @@
 import { deriveDomainCurrency } from '~/server/games/daily-challenge/challenge-currency';
-import { getEffectiveBrowsingLevel } from '~/server/games/daily-challenge/challenge-visibility';
 import { logToAxiom } from '~/server/logging/client';
 import { ChallengeSort } from '~/server/schema/challenge.schema';
 import type { SemanticChallengeSearchInput } from '~/server/schema/semantic-challenge-search.schema';
 import { getInfiniteChallenges } from '~/server/services/challenge.service';
 import { getBrowsingSettingAddons } from '~/server/services/system-cache';
-import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
 import {
-  isNonModClampOn,
-  makeRefusalOf,
-  type QueryTracker,
   queryVerdictLevel,
   recordRefusal,
-  resolveSemanticBrowsingLevel,
   semanticQueryRefusal,
+  finishUnauditedSearch,
+  semanticSearchPrelude,
+  withRefusal,
+  type QueryRefusal,
+  type QueryTracker,
 } from '~/server/services/semantic-query-guard';
 import {
   auditedTextCandidates,
@@ -46,7 +45,8 @@ const searchServiceCandidates = searchServiceSource('challenges', {
 /**
  * The semantic path's query audit, for the feed's own text search (getInfinite with a query): the
  * search's fallback and a Cancelled-only filter reach it with the same text. `level` is the feed's
- * effective level, 0 meaning no level filter. Returns 'refuse' or the level to search at.
+ * effective level, 0 meaning no level filter. Returns 'refuse', or the level to search at and
+ * whether a verdict narrowed it (true even when the level was already within the safe levels).
  */
 export async function challengeTextQueryLevel({
   query,
@@ -58,7 +58,7 @@ export async function challengeTextQueryLevel({
   level: number;
   user?: SessionUser;
   track?: QueryTracker;
-}): Promise<number | 'refuse'> {
+}): Promise<{ level: number; narrowed: boolean } | 'refuse'> {
   const browsingLevel = level || allBrowsingLevelsFlag;
   const addonData = await getBrowsingSettingAddons();
   const { disablePoi } = resolveBrowsingSettingsAddons(addonData, browsingLevel, {
@@ -71,8 +71,9 @@ export async function challengeTextQueryLevel({
   });
   recordRefusal(track, refusal, query, 'challenges_text');
   const verdict = queryVerdictLevel(refusal, browsingLevel, user?.isModerator);
+  if (verdict === 'refuse') return 'refuse';
   // An unnarrowed query keeps the feed's own level, so 0 (no filter) still shows unrated rows.
-  return verdict === browsingLevel ? level : verdict;
+  return { level: verdict === browsingLevel ? level : verdict, narrowed: !!refusal };
 }
 
 export async function searchSemanticChallenges({
@@ -99,35 +100,19 @@ export async function searchSemanticChallenges({
     items: [] as HydratedChallenge[],
     nextCursor: undefined,
     correctedQuery: undefined,
+    refused: false as boolean,
   };
-  let browsingLevel = resolveSemanticBrowsingLevel(
-    input.browsingLevel,
-    user,
-    await isNonModClampOn()
-  );
-  if (browsingLevelCap !== undefined)
-    browsingLevel = Flags.intersection(browsingLevel, browsingLevelCap) || browsingLevelCap;
-  const [hidden, addonData] = await Promise.all([
-    getAllHiddenForUser({ userId: user?.id }),
-    getBrowsingSettingAddons(),
-  ]);
-  const { disablePoi } = resolveBrowsingSettingsAddons(addonData, browsingLevel, {
-    isModerator: user?.isModerator,
-  });
-  const refusalOf = makeRefusalOf({
+  const prelude = await semanticSearchPrelude({
     index: 'challenges_semantic',
-    track,
-    context: () => ({ browsingLevel, disablePoi, isModerator: user?.isModerator }),
-  });
-  const refusal = await refusalOf(input.query, 'query');
-  const verdictLevel = queryVerdictLevel(refusal, browsingLevel, user?.isModerator);
-  if (verdictLevel === 'refuse') return none;
-  // The level the feed itself filters on, so the candidates and the hydration agree.
-  browsingLevel = getEffectiveBrowsingLevel({
+    query: input.query,
+    requestedLevel: input.browsingLevel,
+    user,
     isGreen,
-    isLoggedIn: !!user,
-    requested: verdictLevel,
+    browsingLevelCap,
+    track,
   });
+  if ('refusedBy' in prelude) return withRefusal(none, user, prelude.refusedBy);
+  const { browsingLevel, hidden, refusalOf } = prelude;
 
   const statuses = input.status?.length
     ? input.status
@@ -178,6 +163,7 @@ export async function searchSemanticChallenges({
       participation: input.participation,
       browsingLevel,
       currentUserId: user?.id,
+      ownRowsExempt: false,
       isGreen,
       canAccessUserChallenges,
     });
@@ -199,12 +185,13 @@ export async function searchSemanticChallenges({
     return kept;
   };
 
+  let correctionVerdict: QueryRefusal = false;
   const search = auditedTextCandidates({
     source: candidateSource,
     text: input.query,
     filter,
     viewer: { isModerator: !!user?.isModerator },
-    audit: (correction) => refusalOf(correction, 'correction'),
+    audit: async (correction) => (correctionVerdict = await refusalOf(correction, 'correction')),
   });
   const page = await collectPage({
     candidates: search.candidates,
@@ -221,6 +208,10 @@ export async function searchSemanticChallenges({
     payload: { returned: search.state.returned, shown: page.items.length },
   });
 
-  if (search.state.refused) return none;
-  return { ...page, correctedQuery: search.state.correctedQuery };
+  return finishUnauditedSearch({ ...page, correctedQuery: search.state.correctedQuery }, none, {
+    user,
+    refused: search.state.refused,
+    correctionVerdict,
+    guard: search.state.first?.guard,
+  });
 }

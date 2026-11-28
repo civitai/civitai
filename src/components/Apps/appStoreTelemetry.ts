@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react';
-import {
-  impressionTelemetryOn,
-  useDwellImpression,
-} from '~/components/TrackView/useTrackImpression';
+import { impressionTelemetryOn } from '~/components/TrackView/impressionBuffer';
+import { useDwellImpression } from '~/components/TrackView/useTrackImpression';
 import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { enqueueTrackEvent } from '~/components/TrackView/trackEventBuffer';
 import type { ListingSort } from '~/server/schema/blocks/app-listing-read.schema';

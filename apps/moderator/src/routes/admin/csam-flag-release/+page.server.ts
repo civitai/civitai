@@ -2,6 +2,7 @@ import { error, fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { isSuper } from '$lib/server/access';
+import { holdsCsamReview } from '$lib/server/held-media';
 import { int4Id, parseForm } from '$lib/server/query';
 import {
   APPROVAL_REF_PATTERN,
@@ -11,8 +12,8 @@ import {
 } from '$lib/server/csam-flag-clear';
 
 // The `/admin` gate already admits only the admin role. Each action checks again, so moving or
-// regranting the page cannot widen who may override a hold.
-const isAdmin = (locals: App.Locals) => isSuper(locals.user);
+// regranting the page, or splitting the grant from admin, cannot widen who may override a hold.
+const isAdmin = (locals: App.Locals) => isSuper(locals.user) && holdsCsamReview(locals.user);
 
 export const load: PageServerLoad = async ({ locals }) => {
   if (!isAdmin(locals)) error(403, 'Admins only.');

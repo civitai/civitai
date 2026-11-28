@@ -3,6 +3,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { NsfwLevel } from '~/server/common/enums';
 import type * as BlocklistService from '~/server/services/blocklist.service';
 import type * as Submit from '~/server/services/text-scan/submit';
+import { imageNotRestrictedWhere } from '~/server/common/image-visibility';
 
 vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BlocklistService>()),
@@ -190,6 +191,7 @@ describe('getStorylineImageCaptions', () => {
         poi: false,
         nsfwLevel: { not: 0 },
         OR: [{ tags: { none: { tagId: { in: [12] }, disabled: false } } }, { userId: 3 }],
+        AND: [imageNotRestrictedWhere()],
       },
     });
   });

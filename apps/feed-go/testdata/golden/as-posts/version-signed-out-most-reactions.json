@@ -150,7 +150,7 @@
       },
       "packed": "3gADrGVxdWlwcGVkVG9JZM0fSKhub3RGb3VuZMOoY2FjaGVkQXTW/2ov6BQ="
     },
-    "packed:caches:profile-pictures:v3:1001": {
+    "packed:caches:profile-pictures:v4:1001": {
       "value": {
         "id": 8901,
         "name": null,
@@ -172,7 +172,7 @@
       },
       "packed": "3gAMomlkzSLFpG5hbWXAo3VybNkkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDA4OTAxqW5zZndMZXZlbAGkaGFzaLJVR09MREVOUFJPRklMRTg5MDGmdXNlcklkzQPpqWluZ2VzdGlvbqdTY2FubmVkpHR5cGWlaW1hZ2Wld2lkdGjNAgCmaGVpZ2h0zQIAqG1ldGFkYXRh3gACpXdpZHRozQIApmhlaWdodM0CAKhjYWNoZWRBdNb/ai/oFA=="
     },
-    "packed:caches:profile-pictures:v3:1002": {
+    "packed:caches:profile-pictures:v4:1002": {
       "value": {
         "userId": 1002,
         "notFound": true,
@@ -241,12 +241,13 @@
         "width": 640,
         "height": 360,
         "nsfwLevel": 1,
+        "blockMarked": false,
         "parentId": 8005,
         "cachedAt": {
           "$date": "2026-06-15T11:55:00.000Z"
         }
       },
-      "packed": "3gAHomlkzSLJo3VybNkkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDA4OTA1pXdpZHRozQKApmhlaWdodM0BaKluc2Z3TGV2ZWwBqHBhcmVudElkzR9FqGNhY2hlZEF01v9qL+gU"
+      "packed": "3gAIomlkzSLJo3VybNkkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDA4OTA1pXdpZHRozQKApmhlaWdodM0BaKluc2Z3TGV2ZWwBq2Jsb2NrTWFya2VkwqhwYXJlbnRJZM0fRahjYWNoZWRBdNb/ai/oFA=="
     },
     "packed:caches:user-cosmetics:1001": {
       "value": {
@@ -378,6 +379,7 @@
         "minor": false,
         "poi": false,
         "acceptableMinor": false,
+        "restricted": false,
         "_resources": [
           {
             "modelVersionId": 6001,
@@ -435,6 +437,7 @@
         "minor": false,
         "poi": false,
         "acceptableMinor": false,
+        "restricted": false,
         "_resources": [
           {
             "modelVersionId": 6001,
@@ -488,6 +491,7 @@
         "minor": false,
         "poi": false,
         "acceptableMinor": false,
+        "restricted": false,
         "_resources": [
           {
             "modelVersionId": 6001,
@@ -542,6 +546,7 @@
         "minor": false,
         "poi": false,
         "acceptableMinor": false,
+        "restricted": false,
         "_resources": [
           {
             "modelVersionId": 6001,
@@ -595,6 +600,7 @@
         "minor": true,
         "poi": false,
         "acceptableMinor": false,
+        "restricted": false,
         "_resources": [
           {
             "modelVersionId": 6001,
@@ -645,6 +651,14 @@
       {
         "id": 6401,
         "modelId": 5005
+      },
+      {
+        "id": 6501,
+        "modelId": 5006
+      },
+      {
+        "id": 6701,
+        "modelId": 5007
       }
     ],
     "models": [
@@ -682,6 +696,22 @@
       },
       {
         "id": 5005,
+        "userId": 1002,
+        "mode": null,
+        "minor": false,
+        "sfwOnly": false,
+        "galleryLevel": null
+      },
+      {
+        "id": 5006,
+        "userId": 1001,
+        "mode": null,
+        "minor": false,
+        "sfwOnly": false,
+        "galleryLevel": null
+      },
+      {
+        "id": 5007,
         "userId": 1002,
         "mode": null,
         "minor": false,
@@ -784,6 +814,12 @@
       {
         "id": 1004,
         "username": "mod_four",
+        "image": null,
+        "deletedAt": null
+      },
+      {
+        "id": -1,
+        "username": "golden_system",
         "image": null,
         "deletedAt": null
       }
@@ -988,6 +1024,8 @@
                 "model3dId": null,
                 "minor": false,
                 "poi": false,
+                "restricted": false,
+                "thumbnailUrl": null,
                 "modelVersionIds": [],
                 "modelVersionIdsManual": [],
                 "user": {
@@ -1017,8 +1055,7 @@
                   522
                 ],
                 "cosmetic": null,
-                "eventDecoration": null,
-                "thumbnailUrl": null
+                "eventDecoration": null
               }
             ],
             "review": null
@@ -1073,6 +1110,8 @@
                 "model3dId": null,
                 "minor": false,
                 "poi": false,
+                "restricted": false,
+                "thumbnailUrl": "00000000-0000-4000-8000-000000008905",
                 "modelVersionIds": [],
                 "modelVersionIdsManual": [],
                 "user": {
@@ -1102,8 +1141,7 @@
                   524
                 ],
                 "cosmetic": null,
-                "eventDecoration": null,
-                "thumbnailUrl": "00000000-0000-4000-8000-000000008905"
+                "eventDecoration": null
               }
             ],
             "review": null
@@ -1187,6 +1225,8 @@
                 "model3dId": null,
                 "minor": false,
                 "poi": false,
+                "restricted": false,
+                "thumbnailUrl": null,
                 "modelVersionIds": [],
                 "modelVersionIdsManual": [],
                 "user": {
@@ -1255,8 +1295,7 @@
                     "crop": "0%"
                   }
                 },
-                "eventDecoration": null,
-                "thumbnailUrl": null
+                "eventDecoration": null
               }
             ],
             "review": {
@@ -1315,6 +1354,8 @@
                 "model3dId": null,
                 "minor": true,
                 "poi": false,
+                "restricted": false,
+                "thumbnailUrl": null,
                 "modelVersionIds": [],
                 "modelVersionIdsManual": [],
                 "user": {
@@ -1344,8 +1385,7 @@
                   520
                 ],
                 "cosmetic": null,
-                "eventDecoration": null,
-                "thumbnailUrl": null
+                "eventDecoration": null
               }
             ],
             "review": null
@@ -1372,10 +1412,10 @@
           "items.0.images.0.publishedAt": [
             "Date"
           ],
-          "items.0.images.0.tags": [
+          "items.0.images.0.thumbnailUrl": [
             "undefined"
           ],
-          "items.0.images.0.thumbnailUrl": [
+          "items.0.images.0.tags": [
             "undefined"
           ],
           "items.0.review": [
@@ -1423,10 +1463,10 @@
           "items.2.images.0.publishedAt": [
             "Date"
           ],
-          "items.2.images.0.tags": [
+          "items.2.images.0.thumbnailUrl": [
             "undefined"
           ],
-          "items.2.images.0.thumbnailUrl": [
+          "items.2.images.0.tags": [
             "undefined"
           ],
           "items.3.publishedAt": [
@@ -1447,10 +1487,10 @@
           "items.3.images.0.publishedAt": [
             "Date"
           ],
-          "items.3.images.0.tags": [
+          "items.3.images.0.thumbnailUrl": [
             "undefined"
           ],
-          "items.3.images.0.thumbnailUrl": [
+          "items.3.images.0.tags": [
             "undefined"
           ],
           "items.3.review": [

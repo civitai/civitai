@@ -61,7 +61,7 @@ import { PAGE_SLOT_ID } from '~/shared/constants/slot-registry';
 
 // AIServicesWrite OAuth bit — models:read:self carries a DIFFERENT bit, so a
 // ceiling of just this bit strips models:read:self but keeps ai:write:budgeted.
-const AI_WRITE_BIT = 1 << 15;
+const AI_WRITE_BIT = 1n << 15n;
 
 const FULL_SOURCE = [
   'models:read:self',

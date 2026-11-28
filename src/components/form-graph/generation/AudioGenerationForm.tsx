@@ -84,7 +84,7 @@ export function AudioGenerationForm({ store }: { store: GenerationStore }) {
         name="images"
         render={({ value, meta, onChange, error }) => (
           <ImageUploadMultipleInput
-            label="Cover image"
+            label={ecosystem === 'SeedAudio' ? 'Reference image' : 'Cover image'}
             value={value}
             onChange={onChange}
             max={meta?.max}
@@ -137,6 +137,18 @@ export function AudioGenerationForm({ store }: { store: GenerationStore }) {
       />
       <Controller
         graph={audioHub}
+        name="instrumental"
+        render={({ value, meta, onChange }) => (
+          <Checkbox
+            label={meta?.label ?? 'Instrumental'}
+            description={meta?.description}
+            checked={value}
+            onChange={(e) => onChange(e.currentTarget.checked)}
+          />
+        )}
+      />
+      <Controller
+        graph={audioHub}
         name="soniloOperation"
         render={({ value, meta, onChange }) => (
           <div className="flex flex-col gap-1">
@@ -159,7 +171,11 @@ export function AudioGenerationForm({ store }: { store: GenerationStore }) {
                 store={store}
                 prompt={value}
                 label="Prompt"
-                info="Describe the song concept in plain English — a chat model drafts the music description and lyrics for you."
+                info={
+                  meta && 'info' in meta
+                    ? meta.info
+                    : 'Describe the song concept in plain English — a chat model drafts the music description and lyrics for you.'
+                }
                 required={meta?.required}
               />
             }
@@ -170,7 +186,11 @@ export function AudioGenerationForm({ store }: { store: GenerationStore }) {
               value={value}
               onChange={onChange}
               triggerWords={meta?.triggerWords}
-              placeholder="Describe the song you want to generate..."
+              placeholder={
+                meta && 'placeholder' in meta
+                  ? meta.placeholder
+                  : 'Describe the song you want to generate...'
+              }
               minRows={2}
               className="!border-0 !bg-transparent"
             />

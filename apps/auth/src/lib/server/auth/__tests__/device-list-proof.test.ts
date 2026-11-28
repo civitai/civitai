@@ -10,6 +10,10 @@ const h = vi.hoisted(() => ({
   verified: new Map<string, Record<string, unknown>>(),
 }));
 
+// No user rows: the account checks at each mint pass, as for an ordinary account.
+vi.mock('$lib/server/db/db', async () => ({
+  db: (await import('../../../../test/kysely-fake')).createKyselyFake({}),
+}));
 vi.mock('@civitai/auth', async (importOriginal) => ({
   ...(await importOriginal<typeof CivitaiAuth>()),
   isSecureCookie: () => false,
@@ -278,7 +282,8 @@ describe("the browser's family record", () => {
 
     expect(jar.device()).not.toBe(device);
     expect(h.sys.lua.set(families(device))).toEqual(['old-fam']);
-    expect(h.sys.lua.set(families(jar.device()!))).toHaveLength(1);
+    // One family on the new device id, so no record there (lazy family records).
+    expect(h.sys.lua.set(families(jar.device()!))).toBeUndefined();
   });
 
   it('an account in the list signing in again joins the family record', async () => {

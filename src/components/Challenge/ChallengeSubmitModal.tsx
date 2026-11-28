@@ -34,7 +34,8 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import type { GeneratorMediaCandidate } from '~/components/EntrySubmit/GeneratorMediaPicker';
 import {
   GeneratorMediaPicker,
-  useGeneratorSelectionStore,
+  generatorSelectionStore,
+  useGeneratorSelection,
 } from '~/components/EntrySubmit/GeneratorMediaPicker';
 import { MediaDropzone } from '~/components/Image/ImageDropzone/MediaDropzone';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
@@ -128,8 +129,8 @@ export function ChallengeSubmitModal({ challengeId, collectionId }: Props) {
   // Selection state
   const selectedImageIds = useStore((state) => Object.keys(state.selected).map(Number));
   const deselectAll = useStore((state) => state.deselectAll);
-  const generatorSelected = useGeneratorSelectionStore((state) => state.selected);
-  const deselectAllGenerator = useGeneratorSelectionStore((state) => state.deselectAll);
+  const generatorSelected = useGeneratorSelection();
+  const deselectAllGenerator = generatorSelectionStore.actions.clear;
 
   // Upload state
   const { files: uploadedFiles, uploadToCF, resetFiles, removeImage } = useCFImageUpload();

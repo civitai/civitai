@@ -1,15 +1,8 @@
-import dynamic from 'next/dynamic';
-import { routedDialogDictionary } from '~/components/Dialog/routed-dialog/utils';
+import type FilesEditModal from '~/components/Resource/FilesEditModal';
+import { routedDialog } from '~/components/Dialog/routed-dialog/utils';
 
-const FilesEditModal = dynamic(() => import('~/components/Resource/FilesEditModal'), {
-  ssr: false,
-});
-
-const filesEditDialog = routedDialogDictionary.addItem('filesEdit', {
-  component: FilesEditModal,
+export const filesEditDialog = routedDialog<typeof FilesEditModal>({
   resolve: (query, { modelVersionId }) => ({
     query: { ...query, modelVersionId },
   }),
 });
-
-export type FilesEditDialog = typeof filesEditDialog;

@@ -1,4 +1,4 @@
-import { describe, expect, test, vi, beforeEach } from 'vitest';
+import { describe, expect, test, vi, beforeEach, afterEach } from 'vitest';
 import { page } from 'vitest/browser';
 // Used INSIDE the hoisted `vi.mock` factory below. Safe: the factory is invoked
 // lazily (on first import of the mocked module), long after this binding is
@@ -7,6 +7,7 @@ import { page } from 'vitest/browser';
 import { useState } from 'react';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { advanceBy, advanceUntil, fakeTimeouts } from '../../../test/fakeTimeouts';
 
 /**
  * IframeHost — the COMMITTED loading→ready transition (model.sidebar_top).
@@ -74,10 +75,6 @@ vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', () => ({
     return 1;
   },
 }));
-
-// AppBlockChrome calls useCurrentUser() for the platform-nav moderator gate;
-// this suite renders the real host without a CivitaiSessionProvider.
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 
 // IframeHost now reads `appBlocks && appBlocksPages` (the run route's own
 // predicate) to decide whether the chrome may offer `/apps/run/<blockId>`
@@ -270,6 +267,10 @@ async function driveToReady(payload: unknown = {}) {
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 // ── beacon plumbing ──────────────────────────────────────────────────────────
 let fetchSpy: ReturnType<typeof vi.spyOn>;
@@ -627,15 +628,13 @@ describe('IframeHost ready transition — H-11: a late BLOCK_READY after a termi
     // `ok` one) and that a late ack leaves it that way. Killed by M3 (removing the
     // status guard makes the ready effect fire at mount and claim the shared
     // emit-once ref, so the error beacon never gets to fire).
+    fakeTimeouts();
     renderWithProviders(<IframeHost {...baseProps} />);
     await waitForMount();
     // Never ack → the controller's ~10s readiness timeout fires → 'timeout'.
-    await vi.waitFor(
-      () => {
-        expect(iframeQuery()).toBeNull();
-      },
-      { timeout: 14_000, interval: 250 }
-    );
+    await advanceUntil(() => {
+      expect(iframeQuery()).toBeNull();
+    }, 14_000);
     await vi.waitFor(() => expect(errorBeacons()).toHaveLength(1));
     expect(errorBeacons()[0]).toMatchObject({ errorClass: 'timeout' });
 
@@ -648,24 +647,22 @@ describe('IframeHost ready transition — H-11: a late BLOCK_READY after a termi
         origin: window.location.origin,
       })
     );
-    await sleep(200);
+    await advanceBy(200, 200);
     expect(okBeacons()).toHaveLength(0);
     expect(errorBeacons()).toHaveLength(1);
     expect(iframeQuery()).toBeNull();
-  }, 22_000);
+  });
 
   test('NO_TOKEN is terminal: error beacon only, and a late ack is not even deliverable', async () => {
     // An empty token never satisfies `shouldStartInit`, so the independent
     // token-wait timer (~15s) is what goes terminal here. Same coverage note as
     // the timeout case above — outcome, not guard.
+    fakeTimeouts();
     renderWithProviders(<IframeHost {...baseProps} token="" />);
     await waitForMount();
-    await vi.waitFor(
-      () => {
-        expect(iframeQuery()).toBeNull();
-      },
-      { timeout: 19_000, interval: 250 }
-    );
+    await advanceUntil(() => {
+      expect(iframeQuery()).toBeNull();
+    }, 19_000);
     await vi.waitFor(() => expect(errorBeacons()).toHaveLength(1));
     expect(errorBeacons()[0]).toMatchObject({ errorClass: 'no_token' });
 
@@ -675,10 +672,10 @@ describe('IframeHost ready transition — H-11: a late BLOCK_READY after a termi
         origin: window.location.origin,
       })
     );
-    await sleep(200);
+    await advanceBy(200, 200);
     expect(okBeacons()).toHaveLength(0);
     expect(errorBeacons()).toHaveLength(1);
-  }, 28_000);
+  });
 
   test('BLOCK_READY then BLOCK_ERROR{fatal} in the same batch resolves to fatal — the error beacon, not the ok beacon', async () => {
     // The REVERSE order of the case above, and a genuine behaviour change vs
@@ -720,6 +717,7 @@ describe('IframeHost ready transition — a ready block must never go terminal',
     // rendered, keeps its height, and emits no error beacon well past
     // BLOCK_READY_TIMEOUT_MS. (Mutation-verified: breaking all three — see M11 in
     // the PR body — fails this test; breaking any two still passes.)
+    fakeTimeouts();
     renderWithProviders(<IframeHost {...baseProps} />);
     await waitForMount();
     if (!mocks.bump) throw new Error('batching lever not wired');
@@ -731,12 +729,12 @@ describe('IframeHost ready transition — a ready block must never go terminal',
     });
     await vi.waitFor(() => expect(okBeacons()).toHaveLength(1));
 
-    await sleep(12_000);
+    await advanceBy(12_000);
 
     expect(iframeQuery()).not.toBeNull();
     expect(iframeEl().getAttribute('data-block-ready')).toBe('true');
     expect(appliedHeight()).toBe(420);
     expect(errorBeacons()).toHaveLength(0);
     expect(okBeacons()).toHaveLength(1);
-  }, 22_000);
+  });
 });

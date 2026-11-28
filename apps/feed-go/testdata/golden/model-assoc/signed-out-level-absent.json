@@ -1,0 +1,902 @@
+{
+  "name": "signed-out-level-absent",
+  "request": {
+    "input": "{\"json\":{\"fromId\":9001,\"type\":\"Suggested\"}}",
+    "viewer": null,
+    "cap": 1
+  },
+  "config": {
+    "coverageNext": true,
+    "promotions": "off"
+  },
+  "world": {
+    "source": {
+      "poi": false,
+      "userId": 1001
+    },
+    "associations": [
+      [
+        5001,
+        null
+      ],
+      [
+        5002,
+        null
+      ],
+      [
+        5004,
+        null
+      ],
+      [
+        5005,
+        null
+      ],
+      [
+        5009,
+        null
+      ],
+      [
+        5003,
+        null
+      ],
+      [
+        5001,
+        null
+      ]
+    ],
+    "promotions": 0,
+    "addons": [],
+    "gallery": {
+      "5006": {
+        "sfwHeld": false
+      },
+      "5010": {
+        "sfwHeld": false
+      }
+    },
+    "privacyDefaults": {},
+    "memberships": [
+      1001
+    ],
+    "hiddenPrefs": [],
+    "gateRules": {
+      "migrated": true,
+      "entries": [
+        "{\"id\":\"r1\",\"name\":\"mods only\",\"availableTo\":\"moderators\",\"presentation\":\"hidden\",\"modelVersionIds\":[6002]}",
+        "{\"id\":\"r2\",\"availableTo\":\"nobody\",\"presentation\":\"disabled\",\"modelVersionIds\":[6001]}",
+        "{not json"
+      ]
+    },
+    "users": {
+      "1001": {
+        "username": "artist_one",
+        "image": "00000000-0000-4000-8000-000000000901",
+        "deletedAt": null
+      },
+      "1002": {
+        "username": "artist_two",
+        "image": null,
+        "deletedAt": null
+      },
+      "1003": {
+        "username": "viewer_three",
+        "image": null,
+        "deletedAt": null
+      }
+    },
+    "modelRows": [
+      {
+        "id": 5001,
+        "name": "Model 5001",
+        "sfwName": null,
+        "coverImageId": null,
+        "sfwCoverImageId": null,
+        "type": "Checkpoint",
+        "minor": false,
+        "sfwOnly": false,
+        "poi": false,
+        "nsfw": false,
+        "nsfwLevel": 1,
+        "status": "Published",
+        "createdAt": "2026-06-01T10:00:00.000Z",
+        "lastVersionAt": "2026-06-02T10:00:00.000Z",
+        "publishedAt": "2026-06-02T10:00:00.000Z",
+        "locked": false,
+        "meta": null,
+        "mode": null,
+        "availability": "Public",
+        "userId": 1001,
+        "rank": {
+          "downloadCount": 50,
+          "thumbsUpCount": 90,
+          "thumbsDownCount": 0,
+          "commentCount": 1,
+          "collectedCount": 7,
+          "tippedAmountCount": 0
+        }
+      },
+      {
+        "id": 5002,
+        "name": "Model 5002",
+        "sfwName": null,
+        "coverImageId": null,
+        "sfwCoverImageId": null,
+        "type": "LORA",
+        "minor": false,
+        "sfwOnly": false,
+        "poi": false,
+        "nsfw": false,
+        "nsfwLevel": 5,
+        "status": "Published",
+        "createdAt": "2026-06-01T10:00:00.000Z",
+        "lastVersionAt": "2026-06-02T10:00:00.000Z",
+        "publishedAt": "2026-06-02T10:00:00.000Z",
+        "locked": false,
+        "meta": null,
+        "mode": null,
+        "availability": "Public",
+        "userId": 1002,
+        "rank": {
+          "downloadCount": 10,
+          "thumbsUpCount": 20,
+          "thumbsDownCount": 1,
+          "commentCount": 2,
+          "collectedCount": 3,
+          "tippedAmountCount": 4
+        }
+      },
+      {
+        "id": 5003,
+        "name": "Model 5003",
+        "sfwName": null,
+        "coverImageId": null,
+        "sfwCoverImageId": null,
+        "type": "TextualInversion",
+        "minor": false,
+        "sfwOnly": false,
+        "poi": false,
+        "nsfw": false,
+        "nsfwLevel": 1,
+        "status": "Published",
+        "createdAt": "2026-06-01T10:00:00.000Z",
+        "lastVersionAt": "2026-06-02T10:00:00.000Z",
+        "publishedAt": "2026-06-02T10:00:00.000Z",
+        "locked": false,
+        "meta": null,
+        "mode": null,
+        "availability": "Public",
+        "userId": 1001,
+        "rank": {
+          "downloadCount": 10,
+          "thumbsUpCount": 20,
+          "thumbsDownCount": 1,
+          "commentCount": 2,
+          "collectedCount": 3,
+          "tippedAmountCount": 4
+        }
+      }
+    ],
+    "modelData": {
+      "5001": {
+        "hashes": [
+          "ABC123"
+        ],
+        "tagIds": [
+          11
+        ],
+        "versions": [
+          {
+            "id": 6001,
+            "name": "v6001",
+            "baseModel": "SDXL 1.0",
+            "status": "Published",
+            "availability": "Public",
+            "nsfwLevel": 1,
+            "flags": 32,
+            "covered": true,
+            "coveredNext": true
+          }
+        ]
+      },
+      "5002": {
+        "hashes": [],
+        "tagIds": [],
+        "versions": [
+          {
+            "id": 6002,
+            "name": "v6002",
+            "baseModel": "Pony",
+            "status": "Published",
+            "availability": "Public",
+            "nsfwLevel": 5,
+            "flags": 0,
+            "covered": true,
+            "coveredNext": true
+          }
+        ]
+      },
+      "5003": {
+        "hashes": [],
+        "tagIds": [],
+        "versions": [
+          {
+            "id": 6003,
+            "name": "v6003",
+            "baseModel": "SDXL 1.0",
+            "status": "Published",
+            "availability": "Private",
+            "nsfwLevel": 1,
+            "flags": 0,
+            "covered": true,
+            "coveredNext": true
+          }
+        ]
+      },
+      "5005": {
+        "hashes": [],
+        "tagIds": [],
+        "versions": [
+          {
+            "id": 6005,
+            "name": "v6005",
+            "baseModel": "SDXL 1.0",
+            "status": "Published",
+            "availability": "Public",
+            "nsfwLevel": 1,
+            "flags": 0,
+            "covered": true,
+            "coveredNext": true
+          }
+        ]
+      },
+      "5006": {
+        "hashes": [],
+        "tagIds": [],
+        "versions": [
+          {
+            "id": 6006,
+            "name": "v6006",
+            "baseModel": "SDXL 1.0",
+            "status": "Published",
+            "availability": "Public",
+            "nsfwLevel": 5,
+            "flags": 0,
+            "covered": true,
+            "coveredNext": true
+          }
+        ]
+      },
+      "5007": {
+        "hashes": [],
+        "tagIds": [],
+        "versions": [
+          {
+            "id": 6007,
+            "name": "v6007",
+            "baseModel": "SDXL 1.0",
+            "status": "Published",
+            "availability": "Public",
+            "nsfwLevel": 1,
+            "flags": 0,
+            "covered": true,
+            "coveredNext": true
+          }
+        ]
+      },
+      "5008": {
+        "hashes": [],
+        "tagIds": [],
+        "versions": [
+          {
+            "id": 6008,
+            "name": "v6008",
+            "baseModel": "SDXL 1.0",
+            "status": "Published",
+            "availability": "Public",
+            "nsfwLevel": 1,
+            "flags": 0,
+            "covered": true,
+            "coveredNext": true
+          }
+        ]
+      },
+      "5009": {
+        "hashes": [],
+        "tagIds": [],
+        "versions": [
+          {
+            "id": 6009,
+            "name": "v6009",
+            "baseModel": "Pony",
+            "status": "Published",
+            "availability": "Public",
+            "nsfwLevel": 28,
+            "flags": 0,
+            "covered": false,
+            "coveredNext": false
+          }
+        ]
+      },
+      "5010": {
+        "hashes": [],
+        "tagIds": [],
+        "versions": [
+          {
+            "id": 6010,
+            "name": "v6010",
+            "baseModel": "SDXL 1.0",
+            "status": "Published",
+            "availability": "Public",
+            "nsfwLevel": 5,
+            "flags": 0,
+            "covered": true,
+            "coveredNext": true
+          }
+        ]
+      },
+      "5011": {
+        "hashes": [],
+        "tagIds": [],
+        "versions": [
+          {
+            "id": 6011,
+            "name": "v6011",
+            "baseModel": "SDXL 1.0",
+            "status": "Published",
+            "availability": "Public",
+            "nsfwLevel": 1,
+            "flags": 0,
+            "covered": true,
+            "coveredNext": true
+          }
+        ]
+      },
+      "5012": {
+        "hashes": [],
+        "tagIds": [],
+        "versions": [
+          {
+            "id": 6012,
+            "name": "v6012",
+            "baseModel": "SDXL 1.0",
+            "status": "Published",
+            "availability": "Public",
+            "nsfwLevel": 5,
+            "flags": 0,
+            "covered": true,
+            "coveredNext": true,
+            "description": "red"
+          }
+        ]
+      }
+    },
+    "imageRows": [
+      [
+        8021,
+        1002,
+        null,
+        "00000000-0000-4000-8000-000000008021",
+        1,
+        512,
+        768,
+        "h8021",
+        "image",
+        "{\"width\":512,\"height\":768}",
+        false,
+        false,
+        6002,
+        "Public",
+        true,
+        true,
+        false,
+        null
+      ],
+      [
+        8001,
+        1001,
+        null,
+        "00000000-0000-4000-8000-000000008001",
+        1,
+        512,
+        768,
+        "h8001",
+        "image",
+        "{\"width\":512,\"height\":768}",
+        false,
+        false,
+        6001,
+        "Public",
+        true,
+        true,
+        false,
+        null
+      ],
+      [
+        8003,
+        1001,
+        null,
+        "00000000-0000-4000-8000-000000008003",
+        1,
+        512,
+        768,
+        "h8003",
+        "image",
+        "{\"width\":512,\"height\":768}",
+        false,
+        false,
+        6003,
+        "Public",
+        true,
+        true,
+        false,
+        null
+      ]
+    ]
+  },
+  "binds": {
+    "pageIds": [
+      5001,
+      5002,
+      5004,
+      5005,
+      5009,
+      5003
+    ],
+    "pageLevel": 1,
+    "imageVersionIds": [
+      6001,
+      6002,
+      6003
+    ]
+  },
+  "expect": {
+    "envelope": {
+      "json": [
+        {
+          "resourceType": "model",
+          "id": 5001,
+          "name": "Model 5001",
+          "coverImageId": null,
+          "sfwCoverImageId": null,
+          "type": "Checkpoint",
+          "minor": false,
+          "sfwOnly": false,
+          "poi": false,
+          "nsfw": false,
+          "nsfwLevel": 1,
+          "status": "Published",
+          "createdAt": "2026-06-01T10:00:00.000Z",
+          "lastVersionAt": "2026-06-02T10:00:00.000Z",
+          "publishedAt": "2026-06-02T10:00:00.000Z",
+          "locked": false,
+          "mode": null,
+          "availability": "Public",
+          "userId": 1001,
+          "earlyAccessDeadline": null,
+          "hasActivePaidAccess": false,
+          "hasSfwFace": false,
+          "baseModels": [
+            "SDXL 1.0"
+          ],
+          "user": {
+            "id": 1001,
+            "username": "artist_one",
+            "deletedAt": null,
+            "image": "00000000-0000-4000-8000-000000000901",
+            "profilePicture": null,
+            "cosmetics": []
+          },
+          "cosmetic": null,
+          "eventDecoration": null,
+          "tags": [
+            11
+          ],
+          "hashes": [
+            "abc123"
+          ],
+          "hiddenMetrics": {
+            "buzz": false,
+            "downloads": false,
+            "generations": false
+          },
+          "rank": {
+            "downloadCount": 50,
+            "thumbsUpCount": 90,
+            "thumbsDownCount": 0,
+            "commentCount": 1,
+            "collectedCount": 7,
+            "tippedAmountCount": 0
+          },
+          "images": [
+            {
+              "id": 8001,
+              "userId": 1001,
+              "name": null,
+              "url": "00000000-0000-4000-8000-000000008001",
+              "nsfwLevel": 1,
+              "width": 512,
+              "height": 768,
+              "hash": "h8001",
+              "type": "image",
+              "metadata": {
+                "width": 512,
+                "height": 768
+              },
+              "minor": false,
+              "poi": false,
+              "modelVersionId": 6001,
+              "availability": "Public",
+              "hasMeta": true,
+              "hasPositivePrompt": true,
+              "onSite": false,
+              "remixOfId": null
+            }
+          ],
+          "canGenerate": true,
+          "version": {
+            "id": 6001,
+            "name": "v6001",
+            "baseModel": "SDXL 1.0",
+            "status": "Published",
+            "availability": "Public",
+            "nsfwLevel": 1,
+            "flags": 0,
+            "covered": true,
+            "coveredNext": true
+          },
+          "sponsored": false
+        },
+        {
+          "resourceType": "model",
+          "id": 5002,
+          "name": "Model 5002",
+          "coverImageId": null,
+          "sfwCoverImageId": null,
+          "type": "LORA",
+          "minor": false,
+          "sfwOnly": false,
+          "poi": false,
+          "nsfw": false,
+          "nsfwLevel": 5,
+          "status": "Published",
+          "createdAt": "2026-06-01T10:00:00.000Z",
+          "lastVersionAt": "2026-06-02T10:00:00.000Z",
+          "publishedAt": "2026-06-02T10:00:00.000Z",
+          "locked": false,
+          "mode": null,
+          "availability": "Public",
+          "userId": 1002,
+          "earlyAccessDeadline": null,
+          "hasActivePaidAccess": false,
+          "hasSfwFace": false,
+          "baseModels": [
+            "Pony"
+          ],
+          "user": {
+            "id": 1002,
+            "username": "artist_two",
+            "deletedAt": null,
+            "image": null,
+            "profilePicture": null,
+            "cosmetics": []
+          },
+          "cosmetic": null,
+          "eventDecoration": null,
+          "tags": [],
+          "hashes": [],
+          "hiddenMetrics": {
+            "buzz": false,
+            "downloads": false,
+            "generations": false
+          },
+          "rank": {
+            "downloadCount": 10,
+            "thumbsUpCount": 20,
+            "thumbsDownCount": 1,
+            "commentCount": 2,
+            "collectedCount": 3,
+            "tippedAmountCount": 4
+          },
+          "images": [
+            {
+              "id": 8021,
+              "userId": 1002,
+              "name": null,
+              "url": "00000000-0000-4000-8000-000000008021",
+              "nsfwLevel": 1,
+              "width": 512,
+              "height": 768,
+              "hash": "h8021",
+              "type": "image",
+              "metadata": {
+                "width": 512,
+                "height": 768
+              },
+              "minor": false,
+              "poi": false,
+              "modelVersionId": 6002,
+              "availability": "Public",
+              "hasMeta": true,
+              "hasPositivePrompt": true,
+              "onSite": false,
+              "remixOfId": null
+            }
+          ],
+          "canGenerate": false,
+          "version": {
+            "id": 6002,
+            "name": "v6002",
+            "baseModel": "Pony",
+            "status": "Published",
+            "availability": "Public",
+            "nsfwLevel": 5,
+            "flags": 0,
+            "covered": true,
+            "coveredNext": true
+          },
+          "sponsored": false
+        },
+        {
+          "resourceType": "model",
+          "id": 5003,
+          "name": "Model 5003",
+          "coverImageId": null,
+          "sfwCoverImageId": null,
+          "type": "TextualInversion",
+          "minor": false,
+          "sfwOnly": false,
+          "poi": false,
+          "nsfw": false,
+          "nsfwLevel": 1,
+          "status": "Published",
+          "createdAt": "2026-06-01T10:00:00.000Z",
+          "lastVersionAt": "2026-06-02T10:00:00.000Z",
+          "publishedAt": "2026-06-02T10:00:00.000Z",
+          "locked": false,
+          "mode": null,
+          "availability": "Public",
+          "userId": 1001,
+          "earlyAccessDeadline": null,
+          "hasActivePaidAccess": false,
+          "hasSfwFace": false,
+          "baseModels": [
+            "SDXL 1.0"
+          ],
+          "user": {
+            "id": 1001,
+            "username": "artist_one",
+            "deletedAt": null,
+            "image": "00000000-0000-4000-8000-000000000901",
+            "profilePicture": null,
+            "cosmetics": []
+          },
+          "cosmetic": null,
+          "eventDecoration": null,
+          "tags": [],
+          "hashes": [],
+          "hiddenMetrics": {
+            "buzz": false,
+            "downloads": false,
+            "generations": false
+          },
+          "rank": {
+            "downloadCount": 10,
+            "thumbsUpCount": 20,
+            "thumbsDownCount": 1,
+            "commentCount": 2,
+            "collectedCount": 3,
+            "tippedAmountCount": 4
+          },
+          "images": [
+            {
+              "id": 8003,
+              "userId": 1001,
+              "name": null,
+              "url": "00000000-0000-4000-8000-000000008003",
+              "nsfwLevel": 1,
+              "width": 512,
+              "height": 768,
+              "hash": "h8003",
+              "type": "image",
+              "metadata": {
+                "width": 512,
+                "height": 768
+              },
+              "minor": false,
+              "poi": false,
+              "modelVersionId": 6003,
+              "availability": "Public",
+              "hasMeta": true,
+              "hasPositivePrompt": true,
+              "onSite": false,
+              "remixOfId": null
+            }
+          ],
+          "canGenerate": false,
+          "version": {
+            "id": 6003,
+            "name": "v6003",
+            "baseModel": "SDXL 1.0",
+            "status": "Published",
+            "availability": "Private",
+            "nsfwLevel": 1,
+            "flags": 0,
+            "covered": true,
+            "coveredNext": true
+          },
+          "sponsored": false
+        },
+        {
+          "resourceType": "model",
+          "id": 5001,
+          "name": "Model 5001",
+          "coverImageId": null,
+          "sfwCoverImageId": null,
+          "type": "Checkpoint",
+          "minor": false,
+          "sfwOnly": false,
+          "poi": false,
+          "nsfw": false,
+          "nsfwLevel": 1,
+          "status": "Published",
+          "createdAt": "2026-06-01T10:00:00.000Z",
+          "lastVersionAt": "2026-06-02T10:00:00.000Z",
+          "publishedAt": "2026-06-02T10:00:00.000Z",
+          "locked": false,
+          "mode": null,
+          "availability": "Public",
+          "userId": 1001,
+          "earlyAccessDeadline": null,
+          "hasActivePaidAccess": false,
+          "hasSfwFace": false,
+          "baseModels": [
+            "SDXL 1.0"
+          ],
+          "user": {
+            "id": 1001,
+            "username": "artist_one",
+            "deletedAt": null,
+            "image": "00000000-0000-4000-8000-000000000901",
+            "profilePicture": null,
+            "cosmetics": []
+          },
+          "cosmetic": null,
+          "eventDecoration": null,
+          "tags": [
+            11
+          ],
+          "hashes": [
+            "abc123"
+          ],
+          "hiddenMetrics": {
+            "buzz": false,
+            "downloads": false,
+            "generations": false
+          },
+          "rank": {
+            "downloadCount": 50,
+            "thumbsUpCount": 90,
+            "thumbsDownCount": 0,
+            "commentCount": 1,
+            "collectedCount": 7,
+            "tippedAmountCount": 0
+          },
+          "images": [
+            {
+              "id": 8001,
+              "userId": 1001,
+              "name": null,
+              "url": "00000000-0000-4000-8000-000000008001",
+              "nsfwLevel": 1,
+              "width": 512,
+              "height": 768,
+              "hash": "h8001",
+              "type": "image",
+              "metadata": {
+                "width": 512,
+                "height": 768
+              },
+              "minor": false,
+              "poi": false,
+              "modelVersionId": 6001,
+              "availability": "Public",
+              "hasMeta": true,
+              "hasPositivePrompt": true,
+              "onSite": false,
+              "remixOfId": null
+            }
+          ],
+          "canGenerate": true,
+          "version": {
+            "id": 6001,
+            "name": "v6001",
+            "baseModel": "SDXL 1.0",
+            "status": "Published",
+            "availability": "Public",
+            "nsfwLevel": 1,
+            "flags": 0,
+            "covered": true,
+            "coveredNext": true
+          },
+          "sponsored": false
+        }
+      ],
+      "meta": {
+        "values": {
+          "0.createdAt": [
+            "Date"
+          ],
+          "0.lastVersionAt": [
+            "Date"
+          ],
+          "0.publishedAt": [
+            "Date"
+          ],
+          "1.createdAt": [
+            "Date"
+          ],
+          "1.lastVersionAt": [
+            "Date"
+          ],
+          "1.publishedAt": [
+            "Date"
+          ],
+          "2.createdAt": [
+            "Date"
+          ],
+          "2.lastVersionAt": [
+            "Date"
+          ],
+          "2.publishedAt": [
+            "Date"
+          ],
+          "3.createdAt": [
+            "Date"
+          ],
+          "3.lastVersionAt": [
+            "Date"
+          ],
+          "3.publishedAt": [
+            "Date"
+          ]
+        },
+        "referentialEqualities": {
+          "0.createdAt": [
+            "3.createdAt"
+          ],
+          "0.lastVersionAt": [
+            "3.lastVersionAt"
+          ],
+          "0.publishedAt": [
+            "3.publishedAt"
+          ],
+          "0.baseModels": [
+            "3.baseModels"
+          ],
+          "0.user": [
+            "3.user"
+          ],
+          "0.tags": [
+            "3.tags"
+          ],
+          "0.hashes": [
+            "3.hashes"
+          ],
+          "0.hiddenMetrics": [
+            "3.hiddenMetrics"
+          ],
+          "0.rank": [
+            "3.rank"
+          ],
+          "0.images": [
+            "3.images"
+          ],
+          "0.version": [
+            "3.version"
+          ]
+        },
+        "v": 1
+      }
+    }
+  }
+}

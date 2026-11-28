@@ -1,3 +1,6 @@
+import { credentialViews } from '~/server/auth/full-user-credential';
+import { holdLeavesImage } from '~/server/utils/held-level';
+import { getRequestCredential } from '~/server/auth/request-credential';
 import type { NextApiRequest } from 'next';
 import type { SessionUser } from '~/types/session';
 import { resolveClientIpOrNull } from '~/server/utils/client-ip';
@@ -9,7 +12,7 @@ import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { buildSearchActor } from '~/server/meilisearch/client';
 import { getAllImages, getImagesFromFeedServiceForRest } from '~/server/services/image.service';
 import { parseFeedCursor } from '~/server/common/feed-cursor';
-import { imageMetaCache, thumbnailCache } from '~/server/redis/caches';
+import { imageMetaCache, servableThumbnails, thumbnailCache } from '~/server/redis/caches';
 import type { PublicVideoThumbnail } from '~/server/utils/public-video-thumbnail';
 import { getPublicVideoThumbnail } from '~/server/utils/public-video-thumbnail';
 import {
@@ -17,7 +20,6 @@ import {
   NsfwLevelDeprecated,
 } from '~/shared/constants/browsingLevel.constants';
 import { MediaType } from '~/shared/utils/prisma/enums';
-import { Flags } from '~/shared/utils/flags';
 import { isDefined } from '~/utils/type-guards';
 
 /**
@@ -136,6 +138,7 @@ export async function runImageSearch(
   ctx: RunImageSearchContext
 ): Promise<{ items: ShapedImage[]; nextCursor?: string }> {
   const { browsingLevel, user, req } = ctx;
+  const views = credentialViews({ ...getRequestCredential(req), user });
   const {
     limit,
     skip,
@@ -262,6 +265,7 @@ export async function runImageSearch(
     browsingLevel,
     withMeta: false,
     user,
+    ...views,
     disableMinor: true,
     disablePoi: true,
     includeBaseModel: true,
@@ -278,7 +282,7 @@ export async function runImageSearch(
     browsingLevel,
     withMeta: false,
     currentUserId: user?.id,
-    isModerator: user?.isModerator,
+    isModerator: views.asModerator,
     disableMinor: true,
     disablePoi: true,
     actor,
@@ -304,7 +308,8 @@ export async function runImageSearch(
   }
 
   const videoIds = items.filter((img) => img.type === MediaType.video).map((img) => img.id);
-  const customThumbnails = videoIds.length > 0 ? await thumbnailCache.fetch(videoIds) : {};
+  const customThumbnails =
+    videoIds.length > 0 ? servableThumbnails(await thumbnailCache.fetch(videoIds)) : {};
 
   const shaped: ShapedImage[] = items.map((image) => {
     const nsfw = getNsfwLevelDeprecatedReverseMapping(image.nsfwLevel);
@@ -383,6 +388,6 @@ export async function withoutHeldImages<T extends Pick<ShapedImage, 'postId' | '
   return items.filter((image) => {
     const postId = postIdOf(image);
     const hold = postId ? held.get(postId) : undefined;
-    return !hold || Flags.intersects(hold.level, image.browsingLevel);
+    return holdLeavesImage(hold, undefined, image.browsingLevel);
   });
 }

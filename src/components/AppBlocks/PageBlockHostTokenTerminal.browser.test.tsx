@@ -3,6 +3,7 @@ import { page } from 'vitest/browser';
 import { useState } from 'react';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { advanceBy, advanceUntil, fakeTimeouts } from '../../../test/fakeTimeouts';
 
 /**
  * W10 run page — MID-SESSION credential loss.
@@ -29,8 +30,6 @@ import { renderWithProviders } from '../../../test/component-setup';
  * stubbed (the network/session Context the offline scaffold can't provide, NOT
  * the condition under test).
  */
-
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 
 vi.mock('~/utils/trpc', () => ({
   // FeatureFlagsProvider statically imports this; a wholesale module mock MUST
@@ -154,6 +153,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   fetchSpy.mockRestore();
+  vi.useRealTimers();
 });
 
 function postFromBlock(type: string, payload?: unknown) {
@@ -349,6 +349,7 @@ describe('a READY page whose credential is GONE for good', () => {
      * and its OWN error class, so the two events stay separable: one `ok` (the
      * load) plus one `error{token_lost_midsession}` (the revocation).
      */
+    fakeTimeouts(); // the auto-retry's waits below run on a fake clock (test/fakeTimeouts)
     const { rerender } = await renderWithProviders(
       <PageBlockHost {...baseProps} onConsentGranted={vi.fn()} onRetryToken={vi.fn()} />
     );
@@ -369,7 +370,7 @@ describe('a READY page whose credential is GONE for good', () => {
     // Let #3480's bounded auto-retry run its whole course too — the re-arm walks
     // back through 'loading' and lands on 'error' again, which is exactly the
     // re-entry the at-most-once latch has to absorb.
-    await new Promise((r) => setTimeout(r, 9_000));
+    await advanceBy(9_000);
 
     // Exactly TWO, in order, and the impression is still the untouched `ok`.
     expect(beaconStatuses()).toEqual(['ok', 'error']);
@@ -391,7 +392,7 @@ describe('a READY page whose credential is GONE for good', () => {
       errorClass: 'token_lost_midsession',
       secondary: true,
     });
-  }, 20_000);
+  });
 
   test('🔴 emits the teardown beacon AT MOST ONCE despite the host RE-ENTERING `error`', async () => {
     /**
@@ -428,6 +429,7 @@ describe('a READY page whose credential is GONE for good', () => {
       );
     }
 
+    fakeTimeouts();
     const { rerender } = await renderWithProviders(<Harness dead={false} />);
     await driveToReady();
     expect(beaconStatuses()).toEqual(['ok']);
@@ -435,10 +437,10 @@ describe('a READY page whose credential is GONE for good', () => {
     await rerender(<Harness dead />);
     await expect.element(page.getByTestId('app-page-fallback')).toBeInTheDocument();
     // Long enough for the whole bounded auto-retry sequence to run and re-enter.
-    await new Promise((r) => setTimeout(r, 9_000));
+    await advanceBy(9_000);
 
     expect(beaconStatuses()).toEqual(['ok', 'error']);
-  }, 20_000);
+  });
 
   test("re-arms #3480's bounded auto-retry, which re-mints ONCE then settles", async () => {
     /**
@@ -469,6 +471,7 @@ describe('a READY page whose credential is GONE for good', () => {
     }
 
     const onRemint = vi.fn();
+    fakeTimeouts();
     const { rerender } = await renderWithProviders(<Harness dead={false} onRemint={onRemint} />);
     await driveToReady();
     expect(onRemint).not.toHaveBeenCalled();
@@ -477,16 +480,17 @@ describe('a READY page whose credential is GONE for good', () => {
     await expect.element(page.getByTestId('app-page-fallback')).toBeInTheDocument();
 
     // `error` is an AUTH terminal, so the one automatic attempt spends a re-mint…
-    await vi.waitFor(
+    await advanceUntil(
       () => {
         if (onRemint.mock.calls.length < 1) throw new Error('no automatic re-mint yet');
       },
-      { timeout: 8_000 }
+      8_000,
+      50
     );
 
     // …and then it SETTLES: bounded, never an unbounded auth loop against the
     // rate-limited mint endpoint. MAX_AUTO_REMINTS is 1.
-    await new Promise((r) => setTimeout(r, 8_000));
+    await advanceBy(8_000);
     expect(onRemint.mock.calls.length).toBe(1);
 
     // What the user is left with: the real terminal message plus an UNMISSABLE
@@ -497,7 +501,7 @@ describe('a READY page whose credential is GONE for good', () => {
     // ONE credential-loss report, no matter how many times the re-mint loop
     // re-enters the terminal.
     expect(beaconStatuses()).toEqual(['ok', 'error']);
-  }, 25_000);
+  });
 });
 
 describe('app → app soft navigation (the host is NOT remounted)', () => {
@@ -519,6 +523,7 @@ describe('app → app soft navigation (the host is NOT remounted)', () => {
    * fixed here. This only pins that the new signal cannot be misattributed.)
    */
   test('🔴 does NOT report app B’s launch failure as app A’s mid-session loss', async () => {
+    fakeTimeouts();
     const { rerender } = await renderWithProviders(
       <PageBlockHost {...baseProps} onConsentGranted={vi.fn()} onRetryToken={vi.fn()} />
     );
@@ -545,7 +550,7 @@ describe('app → app soft navigation (the host is NOT remounted)', () => {
         onRetryToken={vi.fn()}
       />
     );
-    await new Promise((r) => setTimeout(r, 9_000));
+    await advanceBy(9_000);
 
     // THE assertion: no `token_lost_midsession` may be attributed to app B.
     const midSession = beaconBodies().filter((b) => b.errorClass === 'token_lost_midsession');
@@ -572,7 +577,7 @@ describe('app → app soft navigation (the host is NOT remounted)', () => {
     // trivially and would have held with the fix deleted. This line pins the real
     // observable state instead.
     expect(beaconStatuses()).toEqual(['ok']);
-  }, 20_000);
+  });
 });
 
 describe('backward compatibility', () => {

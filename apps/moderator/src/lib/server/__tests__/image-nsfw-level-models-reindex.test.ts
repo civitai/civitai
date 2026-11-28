@@ -17,14 +17,13 @@ vi.mock('../thumbnail-cache', async (importOriginal) => ({
   ...(await importOriginal<typeof ThumbnailCache>()),
   invalidateThumbnails: vi.fn(async () => undefined),
 }));
-vi.mock('../kono', () => ({ syncKonoFinalize: vi.fn(async () => undefined) }));
 vi.mock('../mod-activity', () => ({ recordModActivity: vi.fn(async () => undefined) }));
 vi.mock('../image-models-reindex', () => ({
-  queueModelsForImageChildTagChanges: vi.fn(async () => undefined),
+  queueDocumentsForImageMinorChanges: vi.fn(async () => undefined),
 }));
 
 const { updateImageNsfwLevel } = await import('../image-nsfw-level');
-const { queueModelsForImageChildTagChanges } = await import('../image-models-reindex');
+const { queueDocumentsForImageMinorChanges } = await import('../image-models-reindex');
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -35,16 +34,16 @@ describe('spoke updateImageNsfwLevel: models index', () => {
   it('hands the re-rated post image over', async () => {
     h.postId = 5;
 
-    await updateImageNsfwLevel({ id: 41, nsfwLevel: 8, userId: 1 });
+    await updateImageNsfwLevel({ csamReview: true, id: 41, nsfwLevel: 8, userId: 1 });
 
-    expect(queueModelsForImageChildTagChanges).toHaveBeenCalledWith({ levelImageIds: [41] });
+    expect(queueDocumentsForImageMinorChanges).toHaveBeenCalledWith({ levelImageIds: [41] });
   });
 
   it('skips an image on no post', async () => {
     h.postId = null;
 
-    await updateImageNsfwLevel({ id: 41, nsfwLevel: 8, userId: 1 });
+    await updateImageNsfwLevel({ csamReview: true, id: 41, nsfwLevel: 8, userId: 1 });
 
-    expect(queueModelsForImageChildTagChanges).not.toHaveBeenCalled();
+    expect(queueDocumentsForImageMinorChanges).not.toHaveBeenCalled();
   });
 });

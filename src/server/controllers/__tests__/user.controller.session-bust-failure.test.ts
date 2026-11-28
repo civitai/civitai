@@ -58,6 +58,7 @@ vi.mock('~/server/auth/session-client', () => ({
 }));
 vi.mock('~/server/services/orchestrator/civitai', () => ({
   invalidateCivitaiUser: vi.fn().mockResolvedValue(undefined),
+  revokeCivitaiUserTokens: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock('~/utils/signal-client', () => ({
   signalClient: { send: vi.fn().mockResolvedValue(undefined) },
@@ -84,7 +85,6 @@ vi.mock('~/server/services/user.service', async (importOriginal) => ({
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   ingestImageById: vi.fn(),
-  deleteImageById: vi.fn(),
 }));
 vi.mock('~/server/search-index', () => ({ usersSearchIndex: { queueUpdate: mockQueueUpdate } }));
 vi.mock('~/server/cloudflare/client', () => ({ purgeCache: vi.fn(() => ({ catch: vi.fn() })) }));

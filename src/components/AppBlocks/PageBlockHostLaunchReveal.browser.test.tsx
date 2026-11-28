@@ -1,7 +1,8 @@
-import { describe, expect, test, vi, beforeEach } from 'vitest';
+import { describe, expect, test, vi, beforeEach, afterEach } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { advanceUntil, fakeTimeouts } from '../../../test/fakeTimeouts';
 // Type-only (erased at runtime, so it can't defeat vi.mock hoisting) — lets the
 // `importOriginal` generic below be written without an inline `import()` type,
 // which the repo's `consistent-type-imports` rule forbids.
@@ -38,10 +39,6 @@ vi.mock('@mantine/hooks', async (importOriginal) => {
   const actual = await importOriginal<typeof MantineHooks>();
   return { ...actual, useReducedMotion: () => mocks.reduceMotion };
 });
-
-// AppBlockChrome calls useCurrentUser() for the platform-nav moderator gate; this
-// suite renders the real host without a CivitaiSessionProvider.
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 
 // PageBlockHost wires the money-path workflow bridge AND the storage bridge at
 // render, which need the tRPC Context the network-free scaffold doesn't provide.
@@ -183,6 +180,9 @@ const overlayEl = () => page.getByTestId('app-page-loading').element() as HTMLEl
 
 beforeEach(() => {
   mocks.reduceMotion = false;
+});
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe('PageBlockHost launch reveal — branded loading', () => {
@@ -490,33 +490,30 @@ describe('PageBlockHost launch reveal — the reveal must NOT gate the error pat
   test('the `timeout` terminal (block never acks BLOCK_READY) renders the fallback inside the chrome', async () => {
     // Token present so the init controller arms its readiness timeout, but we
     // never ack BLOCK_READY → after BLOCK_READY_TIMEOUT_MS the host goes
-    // terminal. The branded launch state must NOT survive it.
+    // terminal. The branded launch state must NOT survive it. (The host's timers
+    // run on a fake clock: test/fakeTimeouts.)
+    fakeTimeouts();
     renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
     await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
 
-    await vi.waitFor(
-      () => {
-        expect(page.getByTestId('app-page-fallback').query()).not.toBeNull();
-      },
-      { timeout: 14_000, interval: 250 }
-    );
+    await advanceUntil(() => {
+      expect(page.getByTestId('app-page-fallback').query()).not.toBeNull();
+    }, 14_000);
     await expect.element(page.getByTestId('app-block-chrome')).toBeInTheDocument();
     expect(page.getByTestId('app-page-loading').query()).toBeNull();
-  }, 20_000);
+  });
 
   test('the `no_token` terminal (token never arrives) renders the fallback inside the chrome', async () => {
+    fakeTimeouts();
     renderWithProviders(
       <PageBlockHost {...baseProps} token={null} tokenError={false} onConsentGranted={vi.fn()} />
     );
     await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
 
-    await vi.waitFor(
-      () => {
-        expect(page.getByTestId('app-page-fallback').query()).not.toBeNull();
-      },
-      { timeout: 19_000, interval: 250 }
-    );
+    await advanceUntil(() => {
+      expect(page.getByTestId('app-page-fallback').query()).not.toBeNull();
+    }, 19_000);
     await expect.element(page.getByTestId('app-block-chrome')).toBeInTheDocument();
     expect(page.getByTestId('app-page-loading').query()).toBeNull();
-  }, 26_000);
+  });
 });

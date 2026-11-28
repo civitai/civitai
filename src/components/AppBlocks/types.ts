@@ -195,6 +195,21 @@ export function slotRemountKey(args: {
 }
 
 /**
+ * `BLOCK_INIT.viewer.image` — the viewer's avatar as an app may see it, judged
+ * server-side against the token's output ceiling (the rule that decides whether a
+ * workflow output is restricted):
+ *   - `{ url, nsfwLevel }`: a ready-to-render CDN url and the picture's rating;
+ *   - `{ restricted: true }`: the viewer has an avatar the app may not be given —
+ *     rated above the ceiling, or not rated (yet, or ever). No url, no rating, and
+ *     no reason: which of the two would disclose the avatar's rating;
+ *   - `null`: no avatar to show.
+ */
+export type BlockInitViewerImage =
+  | { url: string; nsfwLevel: 'pg' | 'pg13' | 'r' | 'x' | 'xxx' }
+  | { restricted: true }
+  | null;
+
+/**
  * SDK BLOCK_INIT contract — the payload the host posts to the iframe once
  * iframe.load AND token are both ready. Matches @civitai/app-sdk/blocks v1.
  * See docs/features/app-blocks.md "BLOCK_INIT contract".
@@ -400,6 +415,15 @@ export interface BlockInitPayload {
      * out to reject unknown keys; nothing in the enumeration suggested it does.)
      */
     signedIn?: true;
+    /**
+     * The viewer's avatar, for an app whose token carries `user:read:self` — the
+     * same value `GET /api/v1/blocks/me` returns as `image` (the token mint
+     * computes it server-side; the host forwards it after a shape check,
+     * `projectBlockInitViewerImage`). ABSENT when the token lacks the scope, on a
+     * host or mint that predates the field, or when the read failed; `null` when
+     * the viewer has no avatar to show. See {@link BlockInitViewerImage}.
+     */
+    image?: BlockInitViewerImage;
   } | null;
   theme: 'light' | 'dark';
   renderMode: 'iframe' | 'inline';
@@ -437,9 +461,17 @@ export interface BlockInitPayload {
    */
   storageMode?: 'local-preview';
   /**
+   * The App Storage writes cutover: the app-data service's https base URL and the app's blockId,
+   * when the token mint moved this app's document store there (`blockInitAppData`). Read by
+   * `@civitai/sdk`'s `initialize()`. Optional and ADDED, like `storageMode`; absent everywhere else.
+   */
+  appData?: { url: string; slug: string };
+  /**
    * Bridge capabilities this host handles, e.g. `workflowMedia:v1`. An SDK sends
    * a capability's message only when it is listed: a host bundle loaded before
    * the capability shipped never receives a request it would leave hanging.
+   * `blockErrors:v1` is a host saying it collects the block's non-fatal errors
+   * (`BLOCK_HOST_ERROR_REPORTS`).
    */
   capabilities?: string[];
 }

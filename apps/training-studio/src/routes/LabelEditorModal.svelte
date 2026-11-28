@@ -6,6 +6,7 @@
   import { portalProps } from '$lib/host';
   import type { LabelType } from '$lib/data/trainingModels';
   import { canAutoLabelImage, captionTriggerHit, repeatsOf, withTags, type Img } from './trainingFlow';
+  import RatingBadge from '$lib/components/RatingBadge.svelte';
   import TagEditor from './TagEditor.svelte';
   import RepeatsStepper from './RepeatsStepper.svelte';
 
@@ -71,8 +72,10 @@
   const suggestions = $derived.by(() => {
     if (!editing) return [];
     const q = newTag.trim().toLowerCase();
-    const have = editing.tags;
-    return tagVocab.filter((t) => !have.includes(t) && (q === '' || t.toLowerCase().includes(q))).slice(0, 8);
+    const have = new Set(editing.tags.map((t) => t.toLowerCase()));
+    return tagVocab
+      .filter((t) => !have.has(t.toLowerCase()) && (q === '' || t.toLowerCase().includes(q)))
+      .slice(0, 8);
   });
 
   // Focus the primary field (tag input / caption textarea) on open — this is a correction surface, the
@@ -85,6 +88,13 @@
 <!-- The preview adapts to the media: an image, a playable <video>, or an <audio> player for audio clips —
      so captioning an audio/video dataset lets you actually see/hear what you're labeling. -->
 {#snippet mediaPreview(img: Img, cls: string)}
+  <div class="relative">
+    {@render media(img, cls)}
+    <RatingBadge level={img.nsfwLevel} class="absolute left-1.5 top-1.5" />
+  </div>
+{/snippet}
+
+{#snippet media(img: Img, cls: string)}
   {#if img.mediaType === 'audio'}
     <div
       class="flex flex-col items-center justify-center gap-3 rounded border border-dark-4 bg-dark-7 p-4 {cls}"

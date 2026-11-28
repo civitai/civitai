@@ -1,4 +1,5 @@
 import { Menu } from '~/components/MantineOverlays';
+import { RemoveFromVersionShowcasesMenuItem } from '~/components/Model/VersionShowcase/RemoveFromVersionShowcasesMenuItem';
 import { isFeedbackCaptureOwner } from '@civitai/shared/feedback-capture';
 import {
   IconAlertTriangle,
@@ -29,6 +30,8 @@ import type { ImageProps } from '~/components/ImageViewer/ImageViewer';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { ToggleSearchableMenuItem } from '~/components/MenuItems/ToggleSearchableMenuItem';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
+import { SetAsBackgroundMenuItem } from '~/components/Profile/SetAsBackground';
+import { PinToProfileMenuItem } from '~/components/Profile/PinToProfileMenuItem';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import type { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
@@ -102,8 +105,11 @@ export function ImageMenuItems(props: ImageContextMenuProps & { disableDelete?: 
       {isOwner && (
         <>
           <AddToShowcaseMenuItem entityType="Image" entityId={imageId} />
+          <RemoveFromVersionShowcasesMenuItem imageId={imageId} />
           {isImage && (
             <>
+              <PinToProfileMenuItem entityType="Image" entityId={imageId} />
+              <SetAsBackgroundMenuItem imageId={imageId} />
               <AddArtFrameMenuItem
                 entityType={CosmeticEntity.Image}
                 entityId={imageId}
@@ -182,6 +188,7 @@ export function ImageMenuItems(props: ImageContextMenuProps & { disableDelete?: 
               Report image
             </Menu.Item>
           </LoginRedirect>
+          <Menu.Divider />
           <HideImageButton as="menu-item" imageId={imageId} />
           {_userId && !isCapture && <HideUserButton as="menu-item" userId={_userId} />}
           {_userId && !isCapture && <BlockUserButton userId={_userId} as="menu-item" />}
@@ -189,6 +196,7 @@ export function ImageMenuItems(props: ImageContextMenuProps & { disableDelete?: 
       )}
       {isModerator && (
         <>
+          {!isOwner && <RemoveFromVersionShowcasesMenuItem imageId={imageId} asModerator />}
           <Menu.Item
             leftSection={<IconFlag size={14} stroke={1.5} />}
             onClick={() =>

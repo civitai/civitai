@@ -22,9 +22,9 @@ this as the first route.
 | The runner | `src/server/jobs/process-huggingface-imports.ts`, registered in the `jobs` array in `run-jobs` |
 | tRPC surface (`getAll` — filterable by `groupName`/`repo`, and by `unattached` — `getCounts`, `getConfig`, `lookup`, `enqueue`, `attach`, `detach`, `delete`, `renameGroup`, `retry`, `cancel`, `setConfig`) | `src/server/routers/huggingface-import.router.ts` |
 | Moderator page | `src/pages/moderator/huggingface-import.tsx` + `src/components/Moderation/HuggingFaceImport/` |
-| Transfer API — queue with a destination, poll one import, list a repo | `src/pages/api/admin/huggingface-import.ts` |
+| Transfer API — queue with a destination, poll one import, list a repo | `src/server/api-routes/admin/huggingface-import.ts` |
 | The session-free create path the job attaches through | `createModelFile` in `src/server/controllers/model-file.controller.ts` |
-| The *Manage files* picker (moderator-only) | `src/components/Moderation/HuggingFaceImport/AddFromImportsModal.tsx`, opened via `src/components/Dialog/triggers/add-from-hugging-face-imports.ts` from `AddFromImportsButton.tsx` in `src/components/Resource/Files.tsx` |
+| The *Manage files* picker (moderator-only) | `src/components/Moderation/HuggingFaceImport/AddFromImportsModal.tsx`, opened with `openDialog` from `AddFromImportsButton.tsx` in `src/components/Resource/Files.tsx` |
 | Server-side multipart helpers (`createMultipartUpload`, `uploadPart`) | `src/utils/s3-utils.ts` |
 | The shared key builder (`buildUploadKey`) | `src/utils/upload-key.ts` — used by `/api/upload` **and** the import |
 
@@ -190,7 +190,7 @@ them any more.
 ## The transfer API
 
 `POST /api/admin/huggingface-import` is internal tooling only — the same operational surface as the
-rest of `src/pages/api/admin/`, and not something a creator's own tooling reaches.
+rest of `src/server/api-routes/admin/`, and not something a creator's own tooling reaches.
 
 ```
 POST /api/admin/huggingface-import?token=…

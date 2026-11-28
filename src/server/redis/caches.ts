@@ -22,10 +22,20 @@ import type { BaseModelType } from '~/server/common/constants';
 import { CacheTTL } from '~/server/common/constants';
 import type { NsfwLevel } from '~/server/common/enums';
 import { clickhouse } from '~/server/clickhouse/client';
+import {
+  clickhouseDownloads,
+  queryDownloadsClickhouse,
+} from '~/server/clickhouse/downloads-client';
+import {
+  readsDedicatedDownloadsClickhouse,
+  withSharedClickhouseFallback,
+} from '~/server/services/downloads-clickhouse';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { hasBlockMarkerSql, ownerMediaAllowedSql } from '~/server/common/image-visibility';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { readImageTagsViaKysely } from '~/server/redis/image-tags.reads';
 import { userImageVideoCountQuery } from '~/server/redis/user-image-video-count.sql';
+import { imageResourcesQuery } from '~/server/redis/image-resources.sql';
 import { getDbWithoutLagBatch } from '~/server/db/db-lag-helpers';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { REDIS_KEYS, redis, type RedisKeyTemplateCache } from '~/server/redis/client';
@@ -846,7 +856,7 @@ const createUserContentCountCache = <T extends Record<string, any>>(
 
 // Individual cache objects for each user content counter
 type UserModelCount = { id: number; modelCount: number };
-export const userModelCountCache = createUserContentCountCache<UserModelCount>(
+const userModelCountAllCache = createUserContentCountCache<UserModelCount>(
   'modelCount',
   async (userIds, fromWrite) => (fromWrite ? dbWrite : dbRead).$queryRaw`
     SELECT
@@ -877,7 +887,7 @@ export const userModelCountSfwCache = createUserContentCountCache<UserModelCount
 );
 export const userModelCountPublicCache = createUserContentCountCache<UserModelCount>(
   'modelCount:public',
-  async (userIds) => dbRead.$queryRaw`
+  async (userIds, fromWrite) => (fromWrite ? dbWrite : dbRead).$queryRaw`
     SELECT
       "userId" as id,
       COUNT(*)::INT as "modelCount"
@@ -890,6 +900,18 @@ export const userModelCountPublicCache = createUserContentCountCache<UserModelCo
     GROUP BY "userId"
   `
 );
+// A rating change can move a model in or out of the sfw/public counts while 'all' stays put,
+// so every model-count refresh covers all three variants.
+export const userModelCountCache = {
+  ...userModelCountAllCache,
+  refresh: async (userIds: number | number[]) => {
+    await Promise.all([
+      userModelCountAllCache.refresh(userIds),
+      userModelCountSfwCache.refresh(userIds),
+      userModelCountPublicCache.refresh(userIds),
+    ]);
+  },
+};
 
 type UserPostCount = { id: number; postCount: number };
 export const userPostCountCache = createUserContentCountCache<UserPostCount>(
@@ -1450,8 +1472,6 @@ export const userContentOverviewCache = {
     const ids = Array.isArray(userIds) ? userIds : [userIds];
     await Promise.all([
       userModelCountCache.refresh(ids),
-      userModelCountSfwCache.refresh(ids),
-      userModelCountPublicCache.refresh(ids),
       userPostCountCache.refresh(ids),
       userPostCountSfwCache.refresh(ids),
       userPostCountPublicCache.refresh(ids),
@@ -1566,14 +1586,34 @@ export const imageMetadataCache = createCachedObject<ImageWithMetadata>({
   staleWhileRevalidateTtl: CacheTTL.hour,
 });
 
-export const thumbnailCache = createCachedObject<{
+/** The thumbnail rows `thumbnailCache` hands out. */
+export const thumbnailRowsSql = (thumbnailIds: (number | string)[]) => Prisma.sql`
+  SELECT id, url, width, height, "nsfwLevel", cast(metadata->'parentId' as int) as "parentId",
+    ${hasBlockMarkerSql('Image')} AS "blockMarked",
+    ${ownerMediaAllowedSql('Image')} AS "ownerMediaAllowed"
+  FROM "Image"
+  WHERE id IN (${Prisma.join(thumbnailIds)})
+`;
+
+export type ThumbnailCacheItem = {
   id: number;
   url: string;
   width: number | null;
   height: number | null;
   nsfwLevel: NsfwLevel;
+  blockMarked: boolean;
+  /** `ownerMediaAllowed`; absent on an entry cached before it was read, which counts as false. */
+  ownerMediaAllowed?: boolean;
   parentId?: number;
-}>({
+};
+
+/** Drops block-marked thumbnails: list readers must not serve them. */
+export const servableThumbnails = <T extends { blockMarked?: boolean }>(
+  thumbnails: Record<number, T>
+): Record<number, T> =>
+  Object.fromEntries(Object.entries(thumbnails).filter(([, t]) => t.blockMarked === false));
+
+export const thumbnailCache = createCachedObject<ThumbnailCacheItem>({
   key: REDIS_KEYS.CACHES.THUMBNAILS,
   idKey: 'parentId',
   lookupFn: async (ids, fromWrite) => {
@@ -1598,19 +1638,11 @@ export const thumbnailCache = createCachedObject<{
         width: number | null;
         height: number | null;
         nsfwLevel: NsfwLevel;
+        blockMarked: boolean;
+        ownerMediaAllowed: boolean;
         parentId: number;
       }[]
-    >`
-        SELECT
-          id,
-          url,
-          width,
-          height,
-          "nsfwLevel",
-          cast(metadata->'parentId' as int) as "parentId"
-        FROM "Image"
-        WHERE id IN (${Prisma.join(thumbnailIds)})
-      `;
+    >(thumbnailRowsSql(thumbnailIds));
 
     return Object.fromEntries(thumbnails.filter((x) => !!x.parentId).map((x) => [x.parentId, x]));
   },
@@ -2005,24 +2037,9 @@ export const imageResourcesCache = createCachedObject<ImageResourcesCacheItem>({
     // image-resource-use-write Flipt flag forces reads to the writer.
     const forceWrite = fromWrite || (await isFlipt(FLIPT_FEATURE_FLAGS.IMAGE_RESOURCE_USE_WRITE));
     const db = forceWrite ? dbWrite : await getDbWithoutLagBatch('imageResource', imageIds);
-    const resources = await db.$queryRaw<ImageResourceCacheItem[]>`
-      SELECT
-        ir."imageId",
-        ir."modelVersionId",
-        ir.strength,
-        ir.detected,
-        m.id as "modelId",
-        m.name as "modelName",
-        m.type as "modelType",
-        mv.name as "versionName",
-        mv."baseModel",
-        m.poi,
-        m.minor
-      FROM "ImageResourceNew" ir
-      JOIN "ModelVersion" mv ON ir."modelVersionId" = mv.id
-      JOIN "Model" m ON mv."modelId" = m.id
-      WHERE ir."imageId" IN (${Prisma.join(imageIds)})
-    `;
+    // Ordered by image then model version: the grouping below keeps row order, and that order is
+    // the cached order (`modelVersionIds`, and the first Checkpoint's `baseModel`).
+    const resources = await db.$queryRaw<ImageResourceCacheItem[]>(imageResourcesQuery(imageIds));
 
     // Group resources by imageId
     const grouped = resources.reduce((acc, resource) => {
@@ -2060,17 +2077,18 @@ export const userDownloadsCache = createCachedObject<UserDownloadsCacheItem>({
   key: REDIS_KEYS.CACHES.USER_DOWNLOADS,
   idKey: 'userId',
   ttl: CacheTTL.day,
-  cacheNotFound: false,
+  // A user with no downloads is cached as "none" too. The marker lives only 10 minutes because the
+  // download row reaches the table asynchronously: a lookup that lands after bustUserDownloadsCache's
+  // window but before the row does pins "none" for at most this long.
+  cacheNotFound: true,
+  notFoundTtl: CacheTTL.md,
   lookupFn: async (userIds) => {
     if (!clickhouse) return {};
     if (userIds.length === 0) return {};
+    const shared = clickhouse;
 
-    const results = await clickhouse.$query<{
-      userId: number;
-      modelVersionId: number;
-      fileId: number;
-      lastDownloaded: string;
-    }>`
+    type Row = { userId: number; modelVersionId: number; fileId: number; lastDownloaded: string };
+    const query = `
       SELECT
         userId,
         modelVersionId,
@@ -2082,6 +2100,17 @@ export const userDownloadsCache = createCachedObject<UserDownloadsCacheItem>({
       ORDER BY lastDownloaded DESC
       LIMIT 2000 BY userId
     `;
+    const readShared = () => shared.$query<Row>(query);
+    const results = readsDedicatedDownloadsClickhouse(
+      'user-downloads',
+      clickhouseDownloads !== undefined
+    )
+      ? await withSharedClickhouseFallback(
+          'user-downloads',
+          () => queryDownloadsClickhouse<Row>(query),
+          readShared
+        )
+      : await readShared();
 
     // Group by userId
     const grouped = results.reduce((acc, { userId, modelVersionId, fileId, lastDownloaded }) => {

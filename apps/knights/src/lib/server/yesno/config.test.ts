@@ -23,6 +23,8 @@ describe('yesNoSettings', () => {
       share: 0,
       stretch: 4,
       maxAgeDays: 30,
+      tagReview: false,
+      playerDefault: false,
     });
     expect(yesNoSettings({ KNIGHTS_YESNO_SHARE: '2', KNIGHTS_YESNO_STRETCH: '1.5' })).toEqual(
       DEFAULT_YESNO
@@ -30,5 +32,48 @@ describe('yesNoSettings', () => {
     expect(yesNoSettings({ KNIGHTS_YESNO_SHARE: '', KNIGHTS_YESNO_STRETCH: 'x' })).toEqual(
       DEFAULT_YESNO
     );
+  });
+});
+
+describe('yesNoSettings with stored settings', () => {
+  it('lets each stored value win over the environment, a share of 0 included', () => {
+    expect(
+      yesNoSettings(
+        { KNIGHTS_YESNO_SHARE: '0.4', KNIGHTS_YESNO_STRETCH: '5', KNIGHTS_YESNO_MAX_AGE_DAYS: '3' },
+        { yesNoShare: 0, yesNoStretch: 2, yesNoMaxAgeDays: 21 }
+      )
+    ).toEqual({ share: 0, stretch: 2, maxAgeDays: 21, tagReview: false, playerDefault: false });
+  });
+
+  it('keeps the environment for every field nothing is stored for', () => {
+    expect(
+      yesNoSettings(
+        { KNIGHTS_YESNO_SHARE: '0.4', KNIGHTS_YESNO_MAX_AGE_DAYS: '3' },
+        { yesNoStretch: 2 }
+      )
+    ).toEqual({ share: 0.4, stretch: 2, maxAgeDays: 3, tagReview: false, playerDefault: false });
+  });
+});
+
+describe('the tag review switch', () => {
+  it('is off unless the Config page stored it on', () => {
+    expect(yesNoSettings({}).tagReview).toBe(false);
+    expect(yesNoSettings({}, { modTagReview: false }).tagReview).toBe(false);
+    expect(yesNoSettings({}, { modTagReview: true }).tagReview).toBe(true);
+  });
+});
+
+describe('the default for players who never set the questions switch', () => {
+  it('is off unless the environment or the Config page turns it on', () => {
+    expect(yesNoSettings({}).playerDefault).toBe(false);
+    expect(yesNoSettings({ KNIGHTS_YESNO_PLAYER_DEFAULT: 'yes' }).playerDefault).toBe(false);
+    expect(yesNoSettings({ KNIGHTS_YESNO_PLAYER_DEFAULT: ' ON ' }).playerDefault).toBe(true);
+  });
+
+  it('takes the stored value over the environment, off included', () => {
+    expect(
+      yesNoSettings({ KNIGHTS_YESNO_PLAYER_DEFAULT: 'on' }, { yesNoPlayerDefault: false }).playerDefault
+    ).toBe(false);
+    expect(yesNoSettings({}, { yesNoPlayerDefault: true }).playerDefault).toBe(true);
   });
 });

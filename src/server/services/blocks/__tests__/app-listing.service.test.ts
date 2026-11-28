@@ -890,18 +890,27 @@ describe('listAvailableListings — query building + pagination', () => {
     expect(capturedValues()).toContain('games');
   });
 
-  it('maturity gate hides r/x when not red-capable', async () => {
+  it('maturity gate hides r/x/xxx when not red-capable', async () => {
     await listAvailableListings({ kind: 'all', sort: 'newest', limit: 20 }, { redCapable: false });
-    expect(capturedSql()).toMatch(/content_rating.*NOT IN \('r', 'x'\)/i);
+    expect(capturedSql()).toMatch(/content_rating.*NOT IN \('r', 'x', 'xxx'\)/i);
   });
 
-  // R and X also need their own browsing-level bits now; PG|PG13|R|X (15) allows both.
-  it('maturity gate is a no-op (TRUE) on a red-capable host for a viewer with R and X', async () => {
+  // R, X and XXX each need their own browsing-level bit; PG|PG13|R|X (15) allows R and X only.
+  it('maturity gate hides only xxx on a red-capable host for a viewer with R and X', async () => {
     await listAvailableListings(
       { kind: 'all', sort: 'newest', limit: 20 },
       { redCapable: true, viewerBrowsingLevel: 15 }
     );
     expect(capturedSql()).not.toMatch(/content_rating.*NOT IN/i);
+    expect(capturedSql()).toMatch(/content_rating\), ''\) <> 'xxx'/i);
+  });
+
+  it('maturity gate is a no-op on a red-capable host for a viewer with R, X and XXX', async () => {
+    await listAvailableListings(
+      { kind: 'all', sort: 'newest', limit: 20 },
+      { redCapable: true, viewerBrowsingLevel: 31 }
+    );
+    expect(capturedSql()).not.toMatch(/al\.content_rating\), ''\) (<>|NOT IN)/i);
   });
 
   it('sort=popular orders by install count DESC (no Bayesian fragment)', async () => {

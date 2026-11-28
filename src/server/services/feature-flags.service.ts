@@ -10,6 +10,7 @@ import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { getDisplayName } from '~/utils/string-helpers';
 import { colorDomainNames, type ColorDomain } from '~/shared/constants/domain.constants';
 import { KNIGHTS_APP_FLIPT_FLAG } from '~/shared/constants/knights.constants';
+import { APP_LISTINGS_AGENTIC_REVIEW_FLAG } from '~/shared/constants/connect-agent-review.constants';
 import { OnboardingSteps } from '~/server/common/enums';
 import { Flags } from '~/shared/utils/flags';
 import { CLASSIC_TRAINER_RETIRES_AT } from '~/shared/constants/training.constants';
@@ -100,14 +101,36 @@ const featureFlags = createFeatureFlags({
   // next window. Only where batching applies (`trpcBatching` on, signed in). OFF: unchanged. `[]` =
   // DARK and fails CLOSED when the key is absent or Flipt is down.
   trpcUnifiedBatchWindow: { availability: [], fliptKey: 'trpc-unified-batch-window' },
-  // Sends `image.getImagesAsPostsInfinite` (signed in) to `/api/trpc-go`. Edge rules keyed on
-  // `/api/trpc/` do not match that path, so enable only once the edge routes it. See
-  // `GO_TRANSPORT_URL`. `[]` = DARK, fails CLOSED when absent or Flipt is down.
+  // Sends `image.getImagesAsPostsInfinite` (signed in) to `/api/trpc-go`. Enable only once the edge
+  // routes that path. A signed-out answer there is edge-cached as on `/api/trpc/`, as its own cache
+  // entry (measured: apps/feed-go/DESIGN.md, "Edge caching of"). See `GO_TRANSPORT_URL`. `[]` = DARK, fails CLOSED when absent or Flipt is down.
   feedGoTransport: { availability: [], fliptKey: 'feed-go-transport' },
   // Sends `model.getAll` (signed in) to `/api/trpc-go`, as `feedGoTransport` does for the gallery
   // feed; its own flag, so either can be turned on or killed alone. Enable only once the edge routes
   // `/api/trpc-go/model.getAll`. `[]` = DARK, fails CLOSED when absent or Flipt is down.
   feedGoTransportModelGetAll: { availability: [], fliptKey: 'feed-go-transport-model-getall' },
+  // Sends `image.getInfinite` (signed in) to `/api/trpc-go`, as `feedGoTransport` does for the
+  // gallery feed; its own flag, so each can be turned on or killed alone. Enable only once the edge
+  // routes `/api/trpc-go/image.getInfinite`. `[]` = DARK, fails CLOSED when absent or Flipt is down.
+  feedGoTransportInfinite: { availability: [], fliptKey: 'feed-go-transport-infinite' },
+  // Client shadow compare (`~/utils/faro/shadowCompare`): a signed-in browser sends an allowlisted
+  // feed query to both the `/api/trpc` route and the Go transport path and beacons whether the two
+  // raw responses were byte-identical; the app uses the `/api/trpc` answer. Only for a procedure
+  // whose own Go-transport flag is also on for the user. Every compare is one extra request, so ramp
+  // it slowly. `[]` = DARK, fails CLOSED when absent or Flipt is down.
+  clientShadowCompare: { availability: [], fliptKey: 'client-shadow-compare' },
+  // The SIGNED-OUT twins of the three Go-transport flags and of `clientShadowCompare`: a signed-out
+  // browser sends that procedure to `/api/trpc-go` (and, for the last, shadow-compares it). Each
+  // ramps on its own, apart from the signed-in flags, which never read these. No `fliptKey` and `[]`
+  // on purpose: the registry evaluates a signed-out request with the single entity `anonymous`, so a
+  // percentage rollout there would switch every signed-out visitor at once. These are DARK here and
+  // set only by `applySignedOutRolloutFlags` (`~/server/services/signed-out-rollout`), which reads the
+  // Flipt key named in `SIGNED_OUT_ROLLOUT_FLAGS` per visitor bucket, for requests with no session
+  // user. Off when the key is absent, Flipt is down, or the visitor has no bucket yet.
+  feedGoTransportSignedOut: { availability: [] },
+  feedGoTransportSignedOutModelGetAll: { availability: [] },
+  feedGoTransportSignedOutInfinite: { availability: [] },
+  clientShadowCompareSignedOut: { availability: [] },
   // Show an unresolved reaction count as a "Couldn't load" badge instead of the zero it
   // collapses to. OFF renders exactly today's behaviour: the server still marks the
   // counts unknown, the client ignores it. The unknown state fires on every ClickHouse
@@ -347,6 +370,8 @@ const featureFlags = createFeatureFlags({
   articles: ['public'],
   articleCreate: ['public'],
   articleRatingDispute: { availability: ['user'], fliptKey: 'article-rating-dispute' },
+  // The public takedown forms (/requests) and the case links they send.
+  takedownRequests: { availability: ['mod'], fliptKey: 'takedown-requests' },
   // Every entity except Article, which keeps `articleRatingDispute`. Flipt-down falls back to off.
   ratingDispute: { availability: [], fliptKey: 'rating-dispute' },
   // The on-site appeal form (`/appeal`) and the appeal box on the banned screen.
@@ -388,6 +413,7 @@ const featureFlags = createFeatureFlags({
   ltx23Training: { availability: ['mod'], fliptKey: 'ltx23-training' },
   ltx25Training: { availability: ['public'], fliptKey: 'ltx25-training' },
   minimaxh3Training: { availability: ['mod'], fliptKey: 'minimaxh3-training' },
+  minimaxh3ImageTraining: { availability: ['mod'], fliptKey: 'minimaxh3-image-training' },
   wan22Training: { availability: ['mod'] },
   ernieTraining: { availability: ['mod'], fliptKey: 'ernie-training' },
   hidreamO1Training: { availability: ['mod'], fliptKey: 'hidream-o1-training' },
@@ -407,6 +433,13 @@ const featureFlags = createFeatureFlags({
   },
   // Training Studio's Kohya engine; `kohyaTraining` gates the old trainer's.
   trainingStudioKohya: { availability: ['mod'], fliptKey: 'training-studio-kohya' },
+  // Training Studio's Civitai Elements redesign (the embed's answer for `training-studio-elements-ui`).
+  trainingStudioElementsUi: { availability: ['mod'], fliptKey: 'training-studio-elements-ui' },
+  // Training Studio's Manage tags find-and-replace row.
+  trainingStudioTagFindReplace: {
+    availability: ['mod'],
+    fliptKey: 'training-studio-tag-find-replace',
+  },
   // Steps-based training pricing + QOL inputs (steps/batchSize/sample params/continue-training).
   // Public availability so it can be rolled out to a tester segment via Flipt; default off.
   trainingStepsPricing: { availability: ['mod'], fliptKey: 'training-steps-pricing' },
@@ -427,6 +460,8 @@ const featureFlags = createFeatureFlags({
     availability: ['mod'],
     fliptKey: 'training-studio-ui',
   },
+  // Classic trainer kill switch: dark until the Flipt flag exists.
+  classicTrainerOff: { availability: [], fliptKey: 'classic-trainer-off' },
   trainingAutoLabelOrchestrator: {
     availability: ['public'],
     fliptKey: 'training-auto-label-orchestrator',
@@ -479,12 +514,23 @@ const featureFlags = createFeatureFlags({
   // It answers from the semantic search, never Meilisearch. Mods until the Flipt flag exists; once it
   // does, Flipt decides both ways, so keep mods in its rule.
   imageSearch: { availability: ['mod'], fliptKey: 'semantic-image-search' },
+  // Mods until the Flipt flag exists; once it does, Flipt decides both ways, so keep mods in its rule.
+  semanticVideoSearch: { availability: ['mod'], fliptKey: 'semantic-video-search' },
   // Search v3: the header bar filters the feed you are on (?query=) instead of opening /search/*.
   // Images first. It switches between the old and the new search on its own (it opens the semantic
   // search procedure without `imageSearch`), so a Flipt rollout moves people over; off is the old UI.
   // Dark: Flipt is its only switch. Flipt keys signed-out visitors as one entity, so a percentage
   // rollout splits signed-in users only.
   feedSearch: { availability: [], fliptKey: 'search-v3-feed' },
+  // "More like this": the image card button, the image menu item, dropping an image on the search
+  // bar, and the images feed's ?similarTo=. Checked on top of `imageSearch` / `feedSearch`, so its
+  // rollout is its own. Mods until the Flipt flag exists; once it does, keep mods in its rule.
+  moreLikeThis: { availability: ['mod'], fliptKey: 'more-like-this' },
+  // "More like this" steering: Prefer a tag within the closest matches. Checked on top of `moreLikeThis`.
+  moreLikeThisSteer: { availability: ['mod'], fliptKey: 'more-like-this-steer' },
+  // Search by uploaded image: drop or pick a file in image search. Checked on top of `moreLikeThis`
+  // and never wider than it. Dark for everyone, mods included, until Flipt turns it on.
+  imageSearchUpload: { availability: [], fliptKey: 'image-search-upload' },
   // Newest matches in the feed search's sort menu. Dark: Flipt is its only switch.
   imageSearchNewestSort: { availability: [], fliptKey: 'image-search-newest-sort' },
   // Article search (/search/articles, the header and the quick-search dropdown) answers from the
@@ -528,6 +574,12 @@ const featureFlags = createFeatureFlags({
   // moderators at deploy: an absent Flipt key falls through to ['mod']. Create
   // `mod-retracted-media` in Flipt, disabled, to turn it off.
   modRetractedMedia: { availability: ['mod'], fliptKey: 'mod-retracted-media' },
+  // The retracted-media route's CDN-refusal leg and its tile fallback. DARK, fails CLOSED when the
+  // Flipt key is absent or Flipt is down. Only takes effect within modRetractedMedia.
+  modRetractedMediaCdnLeg: { availability: [], fliptKey: 'mod-retracted-media-cdn-leg' },
+  // An owner's own moderated or tos-blocked image, with no CSAM mark, on its image page, from the
+  // owner retracted-media route. DARK, fails CLOSED when the Flipt key is absent or Flipt is down.
+  ownerBlockedMedia: { availability: [], fliptKey: 'owner-blocked-media' },
   appealReports: isDev ? ['mod'] : ['granted'],
   moderateTags: ['granted'],
   chat: {
@@ -555,6 +607,17 @@ const featureFlags = createFeatureFlags({
   // Creator Services: sellers offer paid work, paid through Buzz escrow. `[]`, not `['mod']`, so
   // the Flipt flag is the only on-switch, including for moderators.
   creatorServices: { availability: [], fliptKey: 'creator-services' },
+  creatorServicesNext: { availability: [], fliptKey: 'creator-services-next' },
+  // The header bar filters the /services feed in place (`?query=`).
+  servicesFeedSearch: { availability: ['public'], fliptKey: 'creator-services-feed-search' },
+  // Search v3 on pages that filter their own list (PAGE_SEARCH in search-target.ts): the header bar
+  // writes the page's ?query= and the page filters by it, instead of a search box of its own.
+  pageSearch: { availability: [], fliptKey: 'search-v3-pages' },
+  // Image search by the model versions an image used. Off until the image collection's
+  // modelVersionIds payload is backfilled and indexed: an unindexed filter scans every point.
+  imageSearchResources: { availability: [], fliptKey: 'image-search-resources' },
+  // Only takes effect with `feedSearch` on too.
+  videoFeedSearch: { availability: [], fliptKey: 'video-feed-search' },
   // Whether Creator Services Finals go to the malware scan. Read once per file by the jobs, never per
   // user (see `isFinalsMalwareScanOn`). Off, or missing from Flipt, skips that one step; Flipt
   // unreachable keeps it.
@@ -596,6 +659,7 @@ const featureFlags = createFeatureFlags({
   // Stickers that follow a video's time. Gates sending a track on create, reading tracks
   // (`getStickerTracks`) and the pin control. Without it a track sticker draws at its `data` pose.
   stickerVideoTracks: { availability: ['mod'], fliptKey: 'sticker-video-tracks' },
+  stickerAutoTrack: { availability: ['mod'], fliptKey: 'sticker-auto-track' },
   // The sticker book profile tab. Its own flag rather than riding `stickers`:
   // the tab publishes what a creator owns and what their work has collected on a
   // PUBLIC profile, which is a disclosure decision separate from whether
@@ -619,6 +683,14 @@ const featureFlags = createFeatureFlags({
   creatorJourney: { availability: ['mod'], fliptKey: 'creator-journey' },
   // Creator-built showcase sections on the profile page.
   profileShowcases: { availability: ['mod'], fliptKey: 'profile-showcases' },
+  // The redesigned profile page.
+  profileRedesign: { availability: ['mod'], fliptKey: 'profile-redesign' },
+  // Creators curate a model version's showcase per site and feature community images in it.
+  modelVersionShowcase: { availability: ['mod'], fliptKey: 'model-version-showcase' },
+  // Kill switch for serving curated version showcases (the flag above gates curating). Read with no
+  // user, so it is one switch for everyone. `['public']`: ON when the Flipt key is absent or Flipt
+  // is down; creating the flag off turns every showcase back into the creator's own images.
+  modelVersionShowcaseServe: { availability: ['public'], fliptKey: 'model-version-showcase-serve' },
   // Recent written reviews on the model page, between Suggested Resources and Discussion.
   modelPageReviews: { availability: ['mod'], fliptKey: 'model-page-reviews' },
   // Civitai's 4th Birthday (Team Hats). Only the Flipt key is used, by the event engine's access
@@ -811,6 +883,9 @@ const featureFlags = createFeatureFlags({
   // launch. Off ⇒ Ultra is not offered and a submitted 'ultra' falls back to the
   // default (see `image/krea3.graph.ts`).
   krea3Ultra: { availability: ['mod'], fliptKey: 'krea3-ultra' },
+  // Gates the Seed Audio ecosystem in the generator: off ⇒ it is hidden from the audio picker and a
+  // submitted `SeedAudio` is refused (see `getEcosystemStates`).
+  seedAudioGenerator: { availability: ['mod'], fliptKey: 'seed-audio-generator' },
   // Retool privileged endpoints — `granted` means the moderator must carry the
   // matching permission key in user.permissions. Endpoints lookup the key
   // directly from `RetoolAction.privileged`, so the permission name MUST stay
@@ -867,6 +942,10 @@ const featureFlags = createFeatureFlags({
   appBlocksPages: { availability: ['mod'], fliptKey: 'app-blocks-pages-enabled' },
   // Remix Apps P1: one-tap remix apps from the Remix menu (`remixApp` router).
   remixApps: { availability: ['mod'], fliptKey: 'remix-apps' },
+  // Remix Apps v2-C: apps whose code a user wrote (rows with an `author`). Dark until their runner ships.
+  remixAppsUserCode: { availability: [], fliptKey: 'remix-apps-user-code' },
+  // Who may submit a user app's code.
+  remixAppBuilder: { availability: [], fliptKey: 'remix-app-builder' },
   // App Blocks — "App builders" get-started pitch, now state A of the
   // consolidated `/apps/build` (`/apps/get-started` 301s into it). Scope A soft
   // launch: a single marketing/funnel page that explains the platform to
@@ -910,6 +989,14 @@ const featureFlags = createFeatureFlags({
   // only on-switch + kill-switch. (Mirrors the `hiddenPrefsCompact` /
   // `genTabDeferView` `availability: []` precedent.)
   appBlocksAgenticReview: { availability: [], fliptKey: 'app-blocks-agentic-review' },
+  // The agent review's CONNECT lane: the `AgentReviewPanel` in the off-site review modal, for an
+  // OAuth-connect listing request. `[]` for the `appBlocksAgenticReview` reason; the server half
+  // is `isAppListingsAgenticReviewEnabled`, on the same key.
+  appListingsAgenticReview: { availability: [], fliptKey: APP_LISTINGS_AGENTIC_REVIEW_FLAG },
+  // The reply thread on an app review decision (`app_review_messages`, applied by hand). `[]`:
+  // dark for everyone, mods included, until the Flipt flag turns it on, so nothing reads or writes
+  // the table before it exists. Gates the thread procs server-side and every thread UI.
+  appReviewReplies: { availability: [], fliptKey: 'app-review-replies' },
   appDeveloperRateCard: { availability: [], fliptKey: 'app-developer-rate-card' },
   // App Assistant (on `/apps/build`); read only through `canAccessAppAssistant`. `[]` rather than
   // `['mod']` for the `appBlocksAgenticReview` reason: client and server agree while the flag is absent.
@@ -937,6 +1024,10 @@ const featureFlags = createFeatureFlags({
   // `app_sub_listing_parents` row), so items can queue for moderation while the store side is
   // dark.
   appStoreSubListings: { availability: [], fliptKey: 'app-store-sub-listings' },
+  // App index store search — `/apps` store text search through the app index service
+  // (`app-index-search.service.ts`, APP_INDEX_URL) instead of filtering the loaded grid in the
+  // browser. `[]`: dark for everyone, mods included, until the Flipt flag turns it on.
+  appIndexSearch: { availability: [], fliptKey: 'app-index-search' },
   // Membership-tiered app limits, the viewer-facing half: the running app's paused notice at the
   // plan's daily app Buzz cap, with an upgrade prompt and continue-on-own-Buzz. `[]`: dark for
   // everyone, mods included, until the Flipt flag turns it on — the client twin of the server's
@@ -1034,6 +1125,16 @@ const featureFlags = createFeatureFlags({
   storylineText: {
     availability: ['mod', 'granted'],
     fliptKey: 'storyline-text',
+    fliptKeyRequired: true,
+  },
+  // Keep the Flipt flag's `enabled` false until public launch, so removing the tester rollout
+  // turns the page off rather than on for everyone.
+  featurePages: { availability: [], fliptKey: 'feature-pages', fliptKeyRequired: true },
+  // Feature Pages comments and reports (posting, editing, reading a thread through commentv3). Same
+  // launch rule as featurePages: `enabled` stays false, testers come in through a rollout.
+  featurePagesDiscussion: {
+    availability: [],
+    fliptKey: 'feature-pages-discussion',
     fliptKeyRequired: true,
   },
   // The header Buzz spend pop (rolling counter + "-N" pop-out) in place of the Buzz update toast,
@@ -1204,6 +1305,20 @@ export function buildFliptContext(user?: SessionUser): Record<string, string> {
         }
       : undefined
   );
+}
+
+/**
+ * One Flipt boolean evaluated for an explicit entity id with the signed-out context (no user), for
+ * `applySignedOutRolloutFlags`. `true` / `false` when the client answers; `null` when the Flipt
+ * module is not loaded (always, in the browser), the key is absent, or the evaluation throws.
+ */
+export function evaluateSignedOutFlipt(fliptKey: string, entityId: string): boolean | null {
+  if (!_fliptModule) return null;
+  try {
+    return _fliptModule.isFliptSync(fliptKey, entityId, buildFliptContext());
+  } catch {
+    return null;
+  }
 }
 
 const hasFeature = (
@@ -1839,6 +1954,10 @@ export function computeUserFeatureFlagsOverlay(
       delete result[key];
     }
   }
+
+  // A stored opt-back can't reopen a retired classic trainer.
+  if (hostFeatures.classicTrainerOff && 'trainingStudioUi' in result)
+    result.trainingStudioUi = true;
 
   return result;
 }

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
+	"github.com/civitai/civitai/apps/feed-go/internal/clock"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/feedsvc"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
@@ -49,6 +50,8 @@ type V1Deps struct {
 	// http://localhost:3000.
 	NodeProduction bool
 	Now            func() time.Time
+	// Ports are the switches of the shapes ported behind one (ParseV1With).
+	Ports V1Ports
 }
 
 // V1Request is one call.
@@ -81,6 +84,27 @@ type V1Answer struct {
 	Trivial bool
 }
 
+// RequestedLevel is handleImagesRequest's `browsingLevel ?? nsfw ?? publicBrowsingLevelsFlag`: the
+// level the request asks for, before a restricted region clamps it or a gallery hold narrows it.
+func (in *V1Input) RequestedLevel() int {
+	switch {
+	case in.BrowsingLevel != nil:
+		return *in.BrowsingLevel
+	case in.Nsfw != nil:
+		return *in.Nsfw
+	}
+	return browsing.PublicLevels
+}
+
+// WithinSFW is handleImagesRequest's `withinSfw` over RequestedLevel: an integer from 0 to
+// sfwBrowsingLevelsFlag whose every bit is an SFW level. Outside it the handler answers
+// `Cache-Control: private, no-store` (the body depends on the caller's region, which a shared cache
+// does not key on).
+func (in *V1Input) WithinSFW() bool {
+	l := in.RequestedLevel()
+	return l >= 0 && l <= browsing.SFWLevels && l&browsing.SFWLevels == l
+}
+
 // ServeV1 is the `/api/v1/images` handler (handleImagesRequest) on the feed-service path
 // (runImageSearch → getImagesFromFeedServiceForRest), for the supported subset.
 func ServeV1(ctx context.Context, d *V1Deps, req V1Request) (*V1Answer, error) {
@@ -101,19 +125,14 @@ func ServeV1(ctx context.Context, d *V1Deps, req V1Request) (*V1Answer, error) {
 		viewer = *req.Viewer
 	}
 
-	level := browsing.PublicLevels
-	if in.BrowsingLevel != nil {
-		level = *in.BrowsingLevel
-	} else if in.Nsfw != nil {
-		level = *in.Nsfw
-	}
+	level := in.RequestedLevel()
 	if req.RegionRestricted {
 		level = browsing.SFWLevels
 	}
 	// A minor or SFW-only model's images are served only at its gallery's held level, and a taken-down
 	// model's not at all (its owner and moderators included, on this route).
 	if in.ModelID != 0 || in.ModelVersionID != 0 || in.PostID != 0 {
-		modelIDs, ok, err := resolveImageModelIDs(ctx, d.Sources, in.ModelID, in.ModelVersionID, in.PostID)
+		modelIDs, ok, err := resolveImageModelIDs(ctx, d.Sources, in.ModelID, in.ModelVersionID, in.PostID, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -145,7 +164,7 @@ func ServeV1(ctx context.Context, d *V1Deps, req V1Request) (*V1Answer, error) {
 
 	var page *v1Result
 	var err error
-	if len(in.IDs) > 0 {
+	if in.Legacy() {
 		viewerUsername := ""
 		if req.Viewer != nil {
 			viewerUsername = req.ViewerUsername
@@ -290,12 +309,12 @@ func v1Page(ctx context.Context, d *V1Deps, in *V1Input, viewer Viewer, level in
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return nil, fallback.Newf("feed-unavailable", "%v", err) // Node: a retryable 503
+		return nil, fallback.Wrap("feed-unavailable", err) // Node: a retryable 503
 	}
 	if ans.Status != 200 {
 		// A 5xx is a 503 on Node; a 4xx is an empty page there (a 400 with a feed cursor). A feed that
 		// refused this call but answered Node is not a page to compare, so every one falls back.
-		return nil, fallback.Newf("feed-status", "%d", ans.Status)
+		return nil, fallback.Safef("feed-status", "%d", ans.Status)
 	}
 	var next string
 	if ans.NextCursor != "" {
@@ -328,12 +347,12 @@ func v1Page(ctx context.Context, d *V1Deps, in *V1Input, viewer Viewer, level in
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return nil, fallback.Newf("feed-hydrate-error", "%v", err) // Node: hydrate:error, a 503
+		return nil, fallback.Wrap("feed-hydrate-error", err) // Node: hydrate:error, a 503
 	}
 	if len(rows) > hq.Limit {
 		rows = rows[:hq.Limit]
 	}
-	now := time.Now()
+	now := clock.Now()
 	if d.Now != nil {
 		now = d.Now()
 	}
@@ -362,11 +381,12 @@ func v1Page(ctx context.Context, d *V1Deps, in *V1Input, viewer Viewer, level in
 	return res, nil
 }
 
-// v1LegacyPage is runImageSearch's legacy arm for an `ids` batch: getAllImages itself. One Postgres
-// page in getAllImages' own order (the id, descending, ascending for Oldest; a post's own media by
-// its index), paged by `skip` or by a keyset cursor on that order, then the same shaping as the feed
-// path. Unlike the feed's hydrate, an empty page is an answer here (getAllImages does no read rescue),
-// and a statement timeout is an empty page, as Node answers it on this path.
+// v1LegacyPage is runImageSearch's legacy arm (V1Input.Legacy: an `ids` batch, an `imageId`, a model
+// without a version): getAllImages itself. One Postgres page in getAllImages' own order (the id,
+// descending, ascending for Oldest; the resource join's image id under a model scope; a post's own
+// media by its index), paged by `skip` or by a keyset cursor on that order, then the same shaping as
+// the feed path. Unlike the feed's hydrate, an empty page is an answer here (getAllImages does no read
+// rescue), and a statement timeout is an empty page, as Node answers it on this path.
 func v1LegacyPage(ctx context.Context, d *V1Deps, in *V1Input, viewer Viewer, viewerUsername string, level int, usingPaging bool) (*v1Result, error) {
 	cursor := 0
 	if in.Cursor != "" {
@@ -425,16 +445,19 @@ func v1LegacyPage(ctx context.Context, d *V1Deps, in *V1Input, viewer Viewer, vi
 		ViewerID:       viewer.ID,
 		IsModerator:    viewer.IsModerator,
 		PostID:         in.PostID,
+		ImageID:        in.ImageID,
 		TargetUserID:   userID,
 		// `postId && !modelId`: a post's own media, in its order.
 		IndexOrder: in.PostID != 0 && in.ModelID == 0,
+		// The handler leaves `requiringMeta` in the `data` it spreads into getAllImages' input.
+		RequiringMeta: in.RequiringMeta,
 	}
 	rows, err := d.Rows(ctx, q)
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return nil, fallback.Newf("v1-legacy-error", "%v", err) // Node: a 500
+		return nil, fallback.Wrap("v1-legacy-error", err) // Node: a 500
 	}
 	res := &v1Result{hydrated: true} // the query ran, whatever it found
 	if len(rows) > q.Limit {
@@ -446,7 +469,7 @@ func v1LegacyPage(ctx context.Context, d *V1Deps, in *V1Input, viewer Viewer, vi
 			res.next = int64(look.CursorID)
 		}
 	}
-	now := time.Now()
+	now := clock.Now()
 	if d.Now != nil {
 		now = d.Now()
 	}
@@ -771,7 +794,8 @@ func publicVideoThumbnail(r RawImage, h V1Hydrated, level int, location string) 
 		return nil, nil
 	}
 	allowed := level & browsing.AllLevels
-	if h.HasThumb && h.Thumb.NsfwLevel != 0 && h.Thumb.NsfwLevel&allowed != 0 {
+	// servableThumbnails: only a servable custom thumbnail is used.
+	if h.HasThumb && h.Thumb.Servable && h.Thumb.NsfwLevel != 0 && h.Thumb.NsfwLevel&allowed != 0 {
 		src, ok := h.Thumb.URL.(string)
 		if !ok {
 			return nil, fallback.New("v1-thumbnail-url") // Node throws on a non-string url
@@ -864,22 +888,29 @@ func SkipValue(metadata json.RawMessage) *float64 {
 	return &frame
 }
 
-// resolveImageModelIDs is resolveImageModelIds for a model, a version and a post: the named model, the
-// version's model and the post's version's model. ok is false when the named version or post cannot be
-// found (Node: null — withheld, and held at nothing).
-func resolveImageModelIDs(ctx context.Context, s modelResolver, modelID, versionID, postID int) ([]int, bool, error) {
+// resolveImageModelIDs is resolveImageModelIds for a model, a version and posts: the named model, the
+// version's model and each listed post's version's model (postId and postIds). ok is false when the named
+// version or the postId cannot be found (Node: null — withheld, and held at nothing); a postIds entry the
+// cache lacks is skipped.
+func resolveImageModelIDs(ctx context.Context, s modelResolver, modelID, versionID, postID int, postIDs []int) ([]int, bool, error) {
 	var listed []int
-	if postID != 0 {
-		posts, err := s.PostVersions(ctx, []int{postID})
+	if postID != 0 || len(postIDs) > 0 {
+		// `new Set(postIds)` then the `postId`: every listed post's version counts; only a `postId` the
+		// cache does not hold makes the selector unresolvable. (Unique drops a 0, which no post has.)
+		ids := hydrate.Unique(append(append([]int(nil), postIDs...), postID))
+		posts, err := s.PostVersions(ctx, ids)
 		if err != nil {
 			return nil, false, err
 		}
-		v, found := posts[postID]
-		if !found {
-			return nil, false, nil
+		if postID != 0 {
+			if _, found := posts[postID]; !found {
+				return nil, false, nil
+			}
 		}
-		if v != 0 {
-			listed = append(listed, v)
+		for _, id := range ids {
+			if v := posts[id]; v != 0 {
+				listed = append(listed, v)
+			}
 		}
 	}
 	var required []int
@@ -942,18 +973,20 @@ func heldLevels(ctx context.Context, g V1Gallery, modelIDs []int, unsetReason st
 	return out, nil
 }
 
-// withoutHeldImages leaves out the images above the held gallery level of their post's minor or
-// SFW-only model (getHeldLevelsByPost without owners: no one is exempt on this route).
-func withoutHeldImages(ctx context.Context, d *V1Deps, items []v1Item) ([]v1Item, error) {
-	if len(items) == 0 {
-		return items, nil
-	}
-	postIDs := make([]int, 0, len(items))
-	for _, it := range items {
-		postIDs = append(postIDs, it.postID)
-	}
+// postHold is a post's hold: the minor or SFW-only model its version belongs to, and that model's
+// held gallery level.
+type postHold struct{ modelID, level int }
+
+// heldByPost is getHeldLevelsByPost (src/server/services/model.service.ts) without its owner read: each
+// post (of postIDs) whose version's model is held, with that model's level. The post→version and
+// version→model caches are read only for what the step before found; no version, no hold.
+func heldByPost(ctx context.Context, s modelResolver, g V1Gallery, postIDs []int, unsetReason string) (map[int]postHold, error) {
+	out := map[int]postHold{}
 	postIDs = hydrate.Unique(postIDs)
-	posts, err := d.Sources.PostVersions(ctx, postIDs)
+	if len(postIDs) == 0 {
+		return out, nil
+	}
+	posts, err := s.PostVersions(ctx, postIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -965,9 +998,9 @@ func withoutHeldImages(ctx context.Context, d *V1Deps, items []v1Item) ([]v1Item
 	}
 	versionIDs = hydrate.Unique(versionIDs)
 	if len(versionIDs) == 0 {
-		return items, nil
+		return out, nil
 	}
-	versions, err := d.Sources.VersionModels(ctx, versionIDs)
+	versions, err := s.VersionModels(ctx, versionIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -977,21 +1010,43 @@ func withoutHeldImages(ctx context.Context, d *V1Deps, items []v1Item) ([]v1Item
 			modelIDs = append(modelIDs, m)
 		}
 	}
-	levels, err := heldLevels(ctx, d.Gallery, modelIDs, "v1-held-level-unset")
+	levels, err := heldLevels(ctx, g, modelIDs, unsetReason)
 	if err != nil {
 		return nil, err
 	}
-	if len(levels) == 0 {
+	for _, id := range postIDs {
+		if v := posts[id]; v != 0 {
+			if m, ok := versions[v]; ok {
+				if l, held := levels[m]; held {
+					out[id] = postHold{modelID: m, level: l}
+				}
+			}
+		}
+	}
+	return out, nil
+}
+
+// withoutHeldImages leaves out the images above the held gallery level of their post's minor or
+// SFW-only model (getHeldLevelsByPost without owners: no one is exempt on this route).
+func withoutHeldImages(ctx context.Context, d *V1Deps, items []v1Item) ([]v1Item, error) {
+	if len(items) == 0 {
+		return items, nil
+	}
+	postIDs := make([]int, 0, len(items))
+	for _, it := range items {
+		postIDs = append(postIDs, it.postID)
+	}
+	holds, err := heldByPost(ctx, d.Sources, d.Gallery, postIDs, "v1-held-level-unset")
+	if err != nil {
+		return nil, err
+	}
+	if len(holds) == 0 {
 		return items, nil
 	}
 	out := items[:0:0]
 	for _, it := range items {
-		if v := posts[it.postID]; v != 0 {
-			if m, ok := versions[v]; ok {
-				if l, held := levels[m]; held && l&it.browsingLevel == 0 {
-					continue
-				}
-			}
+		if h, held := holds[it.postID]; held && h.level&it.browsingLevel == 0 {
+			continue
 		}
 		out = append(out, it)
 	}

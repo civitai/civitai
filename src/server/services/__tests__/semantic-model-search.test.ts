@@ -69,6 +69,7 @@ vi.mock('~/server/services/blocklist.service', () => ({
 }));
 vi.mock('~/server/services/search-query-rules', () => ({ matchesQueryRule: async () => false }));
 vi.mock('~/utils/metadata/audit', () => ({
+  includesNsfw: () => false,
   includesInappropriate: h.includesInappropriate,
   includesPoi: () => false,
   includesMinor: () => false,
@@ -88,11 +89,16 @@ const input = (over: Partial<SemanticModelSearchInput> = {}) =>
   semanticModelSearchSchema.parse({ query: 'anime', browsingLevel: PG, ...over });
 
 let sent: CandidateFilter[];
+// The index: `ids` in similarity order; `words` the points whose text holds every query word.
 const ranking =
-  (ids: number[], correctedQuery?: string): CandidateSource =>
+  (ids: number[], correctedQuery?: string, words: number[] = []): CandidateSource =>
   async ({ filter, offset, limit }) => {
     sent.push(filter);
-    return { ids: ids.slice(offset, offset + limit), correctedQuery };
+    const excluded = new Set(filter.excludedIds ?? []);
+    const pool = filter.allWords
+      ? ids.filter((id) => words.includes(id))
+      : ids.filter((id) => !excluded.has(id));
+    return { ids: pool.slice(offset, offset + limit), correctedQuery };
   };
 
 const run = (
@@ -172,6 +178,25 @@ describe('hydration through the models feed', () => {
   });
 });
 
+describe('name and keyword matches', () => {
+  it('rank a model whose text holds every query word ahead of closer meanings', async () => {
+    h.visible = new Set([1, 2, 3, 9]);
+    const result = await searchSemanticModels({
+      input: input({ query: 'civetai' }),
+      user: VIEWER,
+      queryOptions: OPTIONS,
+      candidateSource: ranking([1, 2, 3, 9], undefined, [9]),
+    });
+    expect(result.items.map((m) => m.id)).toEqual([9, 1, 2, 3]);
+    // A model tagged with a query word is in the same first tier as a name match.
+    expect(sent[0].allWords).toEqual({
+      key: 'name',
+      text: 'civetai',
+      orAnyOf: { key: 'tags', values: ['civetai'] },
+    });
+  });
+});
+
 describe('the index filter', () => {
   it("carries the viewer's levels and the feed's type, base model and checkpoint filters", async () => {
     await run([], {
@@ -198,8 +223,9 @@ describe('the index filter', () => {
   it("narrows to the feed's user, and finds nothing for a user who doesn't exist", async () => {
     await run([], { username: 'someone' });
     expect(sent[0].userIds).toEqual([42]);
+    const asked = sent.length;
     expect((await run([1], { username: 'nobody' })).items).toEqual([]);
-    expect(sent).toHaveLength(1);
+    expect(sent).toHaveLength(asked);
   });
 });
 
@@ -209,6 +235,27 @@ describe('the query audit', () => {
     const result = await run([1]);
     expect(result.items).toEqual([]);
     expect(sent).toHaveLength(0);
+  });
+
+  it('searched as typed, still refuses a flagged query before asking the index', async () => {
+    h.includesInappropriate.mockReturnValue('poi');
+    const result = await run([1], { spellcheck: false });
+    expect(result.items).toEqual([]);
+    expect(sent).toHaveLength(0);
+  });
+
+  it('searched as typed, asks the index for the text with its spelling correction off', async () => {
+    const queries: unknown[] = [];
+    await searchSemanticModels({
+      input: input({ query: 'Shikata nee', spellcheck: false }),
+      user: VIEWER,
+      queryOptions: OPTIONS,
+      candidateSource: async ({ query }) => {
+        queries.push(query);
+        return { ids: [] };
+      },
+    });
+    expect(queries[0]).toEqual({ text: 'Shikata nee', spellcheck: false });
   });
 
   it("refuses when the service's spelling correction fails the audit", async () => {

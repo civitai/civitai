@@ -187,6 +187,12 @@ export function HatTurfPanel({
               nextAt={stock.nextAt}
               color={feed.team ? color(feed.team) : FALLBACK_COLOR}
             />
+            {!closed && stock.tooNew && (
+              <Text size="xs" c="dimmed" mt="sm" data-testid="hat-turf-panel-too-new">
+                Your account is too new to score in Hat Turf yet. Your hats will show, but they
+                won&apos;t add team points.
+              </Text>
+            )}
             {!closed && card && (
               <Button
                 fullWidth

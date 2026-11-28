@@ -3,7 +3,7 @@ import type { Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
 import { createQueueDb } from '../../../test/pglite-kysely';
-import { seedImage, seedPlayer } from '../../../test/seed';
+import { hideTagGroups, seedImage, seedPlayer } from '../../../test/seed';
 import { ensureVotePartitions } from '../queue/queue.service';
 import { pickYesNo } from './feed';
 import { importYesNo, type YesNoRow } from './import';
@@ -123,6 +123,15 @@ describe('what a player is offered', () => {
     expect(await pick(3, { rank: 'Inquisitor' })).toBeNull();
   });
 
+  it('is never an image on a Private post', async () => {
+    await seed([row('private', 11)]);
+    await seedPlayer(pg, 1);
+    await pg.query(`UPDATE "Post" SET availability = 'Private' WHERE id = 11`);
+    expect(await pick(1)).toBeNull();
+    await pg.query(`UPDATE "Post" SET availability = 'Unsearchable' WHERE id = 11`);
+    expect(await pick(1)).toMatchObject({ prompt: 'Question private?' });
+  });
+
   it('does not offer a question the player skipped', async () => {
     const ids = await seed([row('a', 10), row('b', 11)]);
     await seedPlayer(pg, 1);
@@ -173,7 +182,9 @@ describe('what a player is offered', () => {
     await seed([row('a', 10)]);
     await seedPlayer(pg, 1);
     expect(await pick(1, { share: 0 })).toBeNull();
-    expect(await pick(1, { share: 0, force: true })).not.toBeNull();
+    // A share of 0 turns the axes off even when the roll is skipped: only the tag review switch can force a question then.
+    expect(await pick(1, { share: 0, force: true })).toBeNull();
+    expect(await pick(1, { share: 0.01, force: true })).not.toBeNull();
     expect(await pick(1, { share: 1 })).not.toBeNull();
 
     const slots = new Set<boolean>();
@@ -319,5 +330,26 @@ describe('stretches', () => {
     const last = (await pick(1, { stretch: 3 }))!;
     expect(last.prompt).toBe('Question v2?');
     expect(last.banner).toBeNull();
+  });
+});
+
+describe('a player who hides a tag group', () => {
+  it('is not asked the questions on its topic, even about an image without its tags', async () => {
+    const ids = await seed([
+      row('cuts', 10, { axis: 'violence' }),
+      row('body', 11, { axis: 'subject_state' }),
+      row('nude', 12, { axis: 'sexual' }),
+    ]);
+    await seedPlayer(pg, 1);
+    await seedPlayer(pg, 2);
+    await hideTagGroups(pg, 1, ['gore']);
+
+    const offer = await pick(1, { force: true });
+    expect(offer?.prompt).toBe('Question nude?');
+    await answer(1, offer!.itemId);
+    expect(await pick(1, { force: true })).toBeNull();
+
+    // Another player who hides nothing is still asked them.
+    expect((await pick(2, { force: true, exclude: [ids.nude] }))?.prompt).toBe('Question body?');
   });
 });

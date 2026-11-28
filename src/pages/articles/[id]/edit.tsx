@@ -43,7 +43,7 @@ export const getServerSideProps = createServerSideProps({
 export default function ArticleEditPage({
   id,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
-  const { data, isLoading } = trpc.article.getById.useQuery({ id });
+  const { data, isLoading } = trpc.article.getById.useQuery({ id, edit: true });
 
   return (
     <Container size="lg">

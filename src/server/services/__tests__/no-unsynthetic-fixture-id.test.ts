@@ -3,7 +3,7 @@ import { readdirSync, readFileSync, statSync } from 'fs';
 import path from 'path';
 
 /**
- * 🔴 Fails when a moderation, report, appeal, legal-hold or CSAM test or fixture, or any test or
+ * 🔴 Fails when a moderation, report, appeal or CSAM test or fixture, or any test or
  * fixture that pairs a user id with a report id, holds an id-sized number outside the synthetic range. Ids in these fixtures come from `SYNTHETIC_MIN`..`SYNTHETIC_MAX`,
  * so a fixture never carries the id of a real account or record. Small ids (under 10 000), round
  * numbers (durations, sizes), values past int4 and UUID segments pass; a genuine non-id constant
@@ -21,6 +21,22 @@ const INT4_MAX = 2_147_483_647;
 const DESK_MIN = 990_000_000_000;
 const DESK_MAX = 990_999_999_999;
 const DESK_KEY = /(?:conversation|group|ticket)_?id['"`]?\s*[:=]\s*$/i;
+const KEY_BEFORE = /([\w$]+)['"`]?\s*[:=]\s*['"`]?\s*$/;
+/**
+ * A count or size setting: the key's first word is max/min or its last is limit/cap (`maxOpen`,
+ * `BIND_LIMIT`, `uploadCap`), and no word is id/ids (`maxUserId` is still checked).
+ */
+function isCapKey(before: string): boolean {
+  const key = KEY_BEFORE.exec(before)?.[1];
+  if (!key) return false;
+  const words = key
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .toLowerCase()
+    .split(/[_$]+/)
+    .filter(Boolean);
+  if (words.some((w) => w === 'id' || w === 'ids')) return false;
+  return ['max', 'min'].includes(words[0]) || ['limit', 'cap'].includes(words[words.length - 1]);
+}
 
 const EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.mts', '.mjs', '.svelte', '.sql', '.json']);
 const SKIP_DIRS = new Set(['node_modules', '.svelte-kit', '.next', 'build', 'dist', '.turbo']);
@@ -68,6 +84,8 @@ const BASELINE: Record<string, string[]> = {
   'apps/moderator/src/lib/server/__tests__/ticket-lora-runs.test.ts': ['99999'],
   'apps/moderator/src/lib/server/__tests__/user-workflows-by-id.test.ts': ['20260818'],
   'apps/moderator/src/lib/server/assistant/__tests__/tools.test.ts': ['1795314120'],
+  // An item cap passed as a tuple value, not under a cap key (#9503).
+  'apps/moderator/src/lib/server/knights/__tests__/sources-config.pglite.test.ts': ['1000001'],
   'apps/moderator/src/lib/server/text-scan-lab/__tests__/try.test.ts': ['600001'],
   'apps/moderator/src/routes/admin/__tests__/csam-flag-release-actions.test.ts': ['1234567890'],
   'apps/moderator/src/routes/admin/unpublished-version-posts/__tests__/actions.test.ts': [
@@ -81,7 +99,6 @@ const BASELINE: Record<string, string[]> = {
   'src/__tests__/pages/api/v1/model-versions/mini-moderation-block.test.ts': ['131072'],
   'src/components/Moderation/HuggingFaceImport/ImportQueueTable.browser.test.tsx': ['268435456'],
   'src/server/__tests__/game-frame-report.test.ts': ['12345'],
-  'src/server/jobs/__tests__/remove-blocked-images-hold-guard.behavior.test.ts': ['32767'],
   'src/server/schema/blocks/__tests__/offsite-moderation.schema.test.ts': ['23514'],
   'src/server/services/__tests__/csam-archive-stream-upload.test.ts': ['12345'],
   'src/server/services/__tests__/csam-original-image.test.ts': ['12345'],
@@ -98,7 +115,7 @@ const isTestOrFixture = (repoPath: string) =>
   /\/__tests__\/[^/]+\.[cm]?[jt]sx?$/.test(repoPath) ||
   /\/_{0,2}fixtures?_{0,2}\//.test(repoPath);
 
-const MODERATION_PATH = /^apps\/moderator\/|csam|report|appeal|moderat|legal-hold|held-/i;
+const MODERATION_PATH = /^apps\/moderator\/|csam|report|appeal|moderat|held-/i;
 const idKey = (name: string) => new RegExp(`${name}_?id['"\`]?\\s*[:=]`, 'i');
 const pairsUserAndReport = (source: string) =>
   idKey('report').test(source) && idKey('user').test(source);
@@ -124,6 +141,7 @@ function unsyntheticIds(source: string): string[] {
       if (n < DESK_MIN || n > DESK_MAX) found.push(digits);
       continue;
     }
+    if (isCapKey(source.slice(Math.max(0, match.index - 40), match.index))) continue;
     // Under 10 000, round, or past int4 (no row id is that large).
     if (n < 10_000 || n % 1000 === 0 || n >= INT4_MAX) continue;
     if (n >= SYNTHETIC_MIN && n <= SYNTHETIC_MAX) continue;
@@ -172,6 +190,9 @@ describe('🔴 moderation test fixtures use synthetic ids', () => {
     ['a support-desk conversation id', `{ conversationId: '210000000017' }`],
     ['a support-desk group id', `{ group_id: 210000000017 }`],
     ['a support-desk ticket id', `answer_ticket_id: '210000000017',`],
+    ['an id under a max-prefixed key', `const page = { maxUserId: 123456 };`],
+    ['an id under a plural id key', `const page = { maxReportIds: 123456 };`],
+    ['a key that only starts with min', `const row = { minute: 123456 };`],
   ])('flags %s', (_, source) => {
     expect(unsyntheticIds(source).length).toBeGreaterThan(0);
   });
@@ -194,6 +215,10 @@ describe('🔴 moderation test fixtures use synthetic ids', () => {
     ['dates and SQLSTATE strings', `'2026-11-14'; code === '23505';`],
     ['UUIDs', `const KEY = '11112222-3333-4444-8555-666677778888';`],
     ['int4 bounds and values past them', `n <= 2_147_483_647; const big = 10_000_000_019;`],
+    [
+      'count and size settings',
+      `{ maxOpen: 18300, minScore: 25001, rateLimit: 12345, uploadCap: 12347 }; draft.maxOpen = ' 18300 ';`,
+    ],
     [
       'support-desk ids from the fake range',
       `{ conversationId: '990000000001', group_id: 990000000003 }`,

@@ -113,13 +113,13 @@ beforeEach(() => {
  */
 function stageConnectApprove(
   overrides: {
-    requestedScopes?: number;
+    requestedScopes?: number | bigint;
     justifications?: Record<string, string>;
     /** In-tx (PRIMARY) row overrides — defaults mirror the replica row. Lets a test
      * diverge the primary from the replica to exercise the in-tx TOCTOU re-gate. */
-    primaryRequestedScopes?: number;
+    primaryRequestedScopes?: number | bigint;
     primaryJustifications?: Record<string, string>;
-    primaryAllowedScopes?: number;
+    primaryAllowedScopes?: bigint;
     /** The listing's destination. `null` → the actionability gate refuses go-live. */
     externalUrl?: string | null;
   } = {}
@@ -173,7 +173,7 @@ function stageConnectApprove(
 }
 
 /** Stage a connect REVISION approve: a pending request on a shadow of the live `apl_parent`. */
-function stageConnectRevision(scopes: number, justifications: Record<string, string>) {
+function stageConnectRevision(scopes: number | bigint, justifications: Record<string, string>) {
   mockRead.appListingPublishRequest.findUnique.mockResolvedValue({
     id: 'alpr_r',
     status: 'pending',
@@ -505,6 +505,69 @@ describe('approveExternalRequest — sensitive-must-justify gate', () => {
     await expect(
       approveExternalRequest({ publishRequestId: 'alpr_c', reviewerUserId: MOD })
     ).resolves.toMatchObject({ publishRequestId: 'alpr_c', listingId: 'apl_c' });
+    expect(mockWrite.appListing.updateMany).toHaveBeenCalled();
+  });
+});
+
+describe('approveExternalRequest — offline-access declaration (treated like a sensitive scope)', () => {
+  it('🔴 a DECLARED offline_access with a blank justification is refused before the tx', async () => {
+    stageConnectApprove({
+      requestedScopes: REQUESTED,
+      justifications: { ...JUSTIFIED, offline_access: '   ' },
+    });
+    await expect(
+      approveExternalRequest({ publishRequestId: 'alpr_c', reviewerUserId: MOD })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'offline access is declared but has no justification; add one before approval',
+    });
+    expect(mockWrite.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('🔴 a NON-sensitive scope set with a blank declaration is still refused, by message (the sensitive gate has nothing to check, so this one must not sit behind it)', async () => {
+    stageConnectApprove({
+      requestedScopes: TokenScope.ModelsRead,
+      justifications: { offline_access: '' },
+    });
+    await expect(
+      approveExternalRequest({ publishRequestId: 'alpr_c', reviewerUserId: MOD })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'offline access is declared but has no justification; add one before approval',
+    });
+    expect(mockWrite.appListing.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('🔴 the in-tx re-gate catches a declaration blanked on the PRIMARY after the replica read', async () => {
+    stageConnectApprove({
+      requestedScopes: REQUESTED,
+      justifications: { ...JUSTIFIED, offline_access: 'syncs nightly' },
+      primaryJustifications: { ...JUSTIFIED, offline_access: '' },
+    });
+    await expect(
+      approveExternalRequest({ publishRequestId: 'alpr_c', reviewerUserId: MOD })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'offline access is declared but has no justification; add one before approval',
+    });
+    expect(mockWrite.appListing.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('a declared and justified offline_access approves', async () => {
+    stageConnectApprove({
+      requestedScopes: REQUESTED,
+      justifications: { ...JUSTIFIED, offline_access: 'syncs your images nightly' },
+    });
+    await expect(
+      approveExternalRequest({ publishRequestId: 'alpr_c', reviewerUserId: MOD })
+    ).resolves.toMatchObject({ publishRequestId: 'alpr_c' });
+  });
+
+  it('NO declaration (every listing from before this existed) still approves: no retroactive block', async () => {
+    stageConnectApprove({ requestedScopes: REQUESTED, justifications: JUSTIFIED });
+    await expect(
+      approveExternalRequest({ publishRequestId: 'alpr_c', reviewerUserId: MOD })
+    ).resolves.toMatchObject({ publishRequestId: 'alpr_c' });
     expect(mockWrite.appListing.updateMany).toHaveBeenCalled();
   });
 });

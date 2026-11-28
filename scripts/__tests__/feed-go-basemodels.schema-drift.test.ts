@@ -21,6 +21,17 @@ describe('apps/feed-go basemodels.json', () => {
     expect(table.modelTypes).toContain('Checkpoint');
     expect(table.generation['SDXL 1.0']).toEqual(expect.arrayContaining(['Checkpoint', 'LORA']));
     expect(table.matureRestrictedModels).toContain('sd 3.5');
+    // isBaseModelGenerationDisabled's answers (getResourceCanGenerate); SD 3 is disabled today.
+    expect(table.generationDisabled).toContain('SD 3');
+    expect(table.generationDisabled).not.toContain('SDXL 1.0');
+    // isTargetedBy's answers (the associated-resources canGenerate gate): a base model is reached
+    // through its own ecosystem's key only, never its parent's; a name that is only an ecosystem key
+    // is not a base model, and a name the tables do not hold is reached by no key.
+    expect(table.gateEcosystems['SDXL 1.0']).toEqual(['SDXL']);
+    expect(table.gateEcosystems['Pony']).toEqual(['Pony']);
+    expect(table.gateEcosystems['SD 3']).toEqual(['SD3']);
+    expect(table.gateEcosystems).not.toHaveProperty('SDXL');
+    expect(table.gateEcosystems).not.toHaveProperty('Not A Base Model');
     expect(table.levels).toEqual({ minorContent: 3, sfw: 3, nsfw: 60, public: 1, all: 31 });
     expect(table.versionFlags).toEqual({
       generationDisabled: 2,

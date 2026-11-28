@@ -13,6 +13,10 @@ import {
 } from '~/server/services/blocks/app-developer-terms.service';
 import { bustAppListingCatalogCache } from '~/server/services/blocks/app-listing.service';
 import {
+  anotherApprovedListingDeclaresOffline,
+  listingEverLive,
+} from '~/server/services/blocks/connect-offline-listing';
+import {
   APP_LISTING_REPORT_REASONS,
   OFFSITE_MOD_REASON_MIN,
   type ClaimListingInput,
@@ -36,6 +40,12 @@ import { recordListingRatingChangeAfterCommit } from '~/server/services/blocks/a
 import { readListingMediaSplit } from '~/server/services/blocks/listing-media-split.service';
 import { getOpenHoldsBySlug } from '~/server/services/blocks/publish-request-holds.service';
 import {
+  forgetRevokedAppTokens,
+  lockAppBlockClientRows,
+  revokeAppBlockOauthTokens,
+  type RevokedAppTokens,
+} from '~/server/services/blocks/app-block-token-revoke.service';
+import {
   assertListingAssetsScanCleanInTx,
   assertListingMeetsFloor,
   resolveListingRatingFloorInTx,
@@ -58,6 +68,7 @@ import {
   newAppListingReportId,
   newUlid,
 } from '~/server/utils/app-block-ids';
+import { ownerCopyOf } from '~/shared/utils/publish-request-on-behalf';
 
 /**
  * App Store Listings (W13) — P3b OFF-SITE MODERATION service.
@@ -339,7 +350,8 @@ async function classifyOffsiteListing(
  * The Prisma predicate for "a listing a mod may PURGE".
  *
  * Two disjoint shapes:
- *   - any OFF-SITE listing (unchanged — purge has always been the off-site final expunge);
+ *   - any OFF-SITE listing (unchanged — purge has always been the off-site final expunge),
+ *     except an ever-live CONNECT listing, refused in the tx ({@link assertNotEverLiveConnectListing});
  *   - an ON-SITE **orphan pre-approval draft**: `status:'draft'` + `appBlockId: null`
  *     (never approved, so no backing `AppBlock`) + `revisionOfId: null`.
  *
@@ -453,6 +465,25 @@ async function assertNoLivePendingSubmission(
   }
 }
 
+/**
+ * An off-site CONNECT listing that was ever live cannot be purged: the removed row is what keeps
+ * its OAuth client "listed but undeclared" at the auth hub. Without any row the client reads as
+ * unlisted, and the app would regain offline access after its delist (listing-offline.ts).
+ * Delist is the takedown for these.
+ */
+async function assertNotEverLiveConnectListing(
+  client: Pick<typeof dbWrite, 'appListingPublishRequest' | 'appListingModerationEvent'>,
+  listing: { id: string; kind: string; status: string; connectClientId: string | null }
+): Promise<void> {
+  if (listing.kind !== 'offsite' || !listing.connectClientId) return;
+  if (!(await listingEverLive(client, listing))) return;
+  throw new OffsiteModerationError(
+    'NOT_TRANSITIONABLE',
+    'This connect app has been live, so it cannot be purged. Delist it instead: the delisted ' +
+      'listing stays as the record that keeps the app from regaining offline access.'
+  );
+}
+
 /** The `select` both purge reads use — every field {@link isPurgeableListing} inspects, so
  * neither call site can hand it an `undefined` the guard would then judge. */
 const PURGE_CLASSIFY_SELECT = {
@@ -463,6 +494,7 @@ const PURGE_CLASSIFY_SELECT = {
   appBlockId: true,
   revisionOfId: true,
   name: true,
+  connectClientId: true,
 } satisfies Prisma.AppListingSelect;
 
 /**
@@ -504,6 +536,7 @@ async function classifyListingForAction(appListingId: string): Promise<{
   name: string | null;
   appBlockId: string | null;
   userId: number;
+  connectClientId: string | null;
 }> {
   const listing = await dbRead.appListing.findUnique({
     where: { id: appListingId },
@@ -515,6 +548,7 @@ async function classifyListingForAction(appListingId: string): Promise<{
       name: true,
       appBlockId: true,
       userId: true,
+      connectClientId: true,
     },
   });
   if (!listing) {
@@ -528,6 +562,8 @@ async function classifyListingForAction(appListingId: string): Promise<{
     name: listing.name,
     appBlockId: listing.appBlockId,
     userId: listing.userId,
+    // `?? null`: a fixture or a row shape without the column reads as no client.
+    connectClientId: listing.connectClientId ?? null,
   };
 }
 
@@ -556,14 +592,22 @@ async function flipBackingBlockStatus(
     to: string;
     /** The owner, not a moderator, is restoring: refusals must not reveal moderation state. */
     ownerFacing?: boolean;
+    /** A suspension puts the tokens it revoked here, for the caller's post-commit cleanup. */
+    revoked?: { value: RevokedAppTokens | null };
   }
 ): Promise<boolean> {
   if (!opts.isOnsite || !opts.appBlockId) return false;
   if (opts.to === 'approved') await assertNoOpenReviewHold(tx, opts.appBlockId, opts.ownerFacing);
+  if (opts.to === 'suspended') await lockAppBlockClientRows(tx, opts.appBlockId);
   const flip = await tx.appBlock.updateMany({
     where: { id: opts.appBlockId, status: opts.from },
     data: { status: opts.to },
   });
+  // On a 0-count too: an already-suspended block keeps no tokens. The helper checks the status.
+  if (opts.to === 'suspended') {
+    const revoked = await revokeAppBlockOauthTokens(tx, opts.appBlockId);
+    if (opts.revoked) opts.revoked.value = revoked;
+  }
   return flip.count > 0;
 }
 
@@ -623,6 +667,13 @@ export type DelistListingResult = {
   status: 'removed';
   /** Set when the store takedown went through but the app keeps serving (the readiness app). */
   liveNote?: string;
+  /**
+   * Set only when the takedown ATTEMPTED to cut a connect app's offline access (flag on, an OAuth
+   * client, no other approved listing declaring offline access). Absent otherwise, so with the
+   * flag off the result is unchanged. `failed` means the app's refresh tokens may still be valid;
+   * the failure is in the moderation history, with a retry.
+   */
+  offlineCut?: { outcome: 'cut'; deleted: number } | { outcome: 'failed' };
 };
 
 /**
@@ -666,6 +717,7 @@ export async function delistListing(opts: {
   const isOnsite = listing.kind === 'onsite';
   const eventId = newAppListingModerationEventId();
 
+  const revoked: { value: RevokedAppTokens | null } = { value: null };
   await dbWrite.$transaction(async (tx) => {
     // Allow approved → removed AND removed → removed (the enforced-takedown lock). The
     // idempotent removed→removed write keeps status `removed` but still counts (1 row),
@@ -693,6 +745,7 @@ export async function delistListing(opts: {
       appBlockId: listing.appBlockId,
       from: 'approved',
       to: 'suspended',
+      revoked,
     });
     await tx.appListingModerationEvent.create({
       data: {
@@ -735,14 +788,114 @@ export async function delistListing(opts: {
     // Keyed by the audit event id so each distinct hide (delist→relist→delist)
     // notifies once, without a fresh nonce.
     key: `app-listing-hidden:${eventId}`,
+    // A takedown names the team, never the moderator (see `listMyListingModerationEvents`).
+    attribution: { kind: 'team' },
     details: { slug: listing.slug, name: listing.name, listingId: input.appListingId, reason },
   });
 
   // Catalog bust: delist removes the listing from the store catalog.
   await bustAppListingCatalogCache().catch(() => undefined);
   const live = isOnsite && listing.appBlockId ? await takeDownLiveAppAfterCommit(listing.slug) : {};
+  await forgetRevokedAppTokens(revoked.value);
+  // A moderator takedown of a CONNECT listing cuts the app's offline access (see that module).
+  let offlineCut: DelistListingResult['offlineCut'];
+  if (!isOnsite) {
+    const { cutConnectOfflineAccessAfterTakedown } = await import('./connect-offline-takedown');
+    const cut = await cutConnectOfflineAccessAfterTakedown({
+      connectClientId: listing.connectClientId,
+      takenDownListingId: input.appListingId,
+      slug: listing.slug,
+      actorUserId: reviewerUserId,
+    });
+    // The raw error message stays in the mod-only history; the mutation result says only that it
+    // failed.
+    if (cut.outcome === 'cut') offlineCut = { outcome: 'cut', deleted: cut.deleted };
+    else if (cut.outcome === 'failed') offlineCut = { outcome: 'failed' };
+  }
 
-  return { appListingId: input.appListingId, status: 'removed', ...live };
+  return {
+    appListingId: input.appListingId,
+    status: 'removed',
+    ...live,
+    ...(offlineCut ? { offlineCut } : {}),
+  };
+}
+
+export type RetryConnectOfflineCutResult =
+  | { appListingId: string; outcome: 'cut'; deleted: number }
+  | { appListingId: string; outcome: 'failed' };
+
+/**
+ * MOD retry the offline-access cut of a taken-down CONNECT listing — the action behind "Retry cut"
+ * on an `offline-cut-failed` row of the moderation history.
+ *
+ * Refuses (typed; nothing deleted, nothing recorded) unless ALL of these hold:
+ *   - `oauth-offline-grant` is on (FORBIDDEN otherwise: the feature is dark);
+ *   - the listing exists, is off-site and has an OAuth client (NOT_FOUND / NOT_TRANSITIONABLE);
+ *   - it is still TAKEN DOWN: `removed`, and its newest status-changing event is a moderator
+ *     `delist`, read on the primary. A relisted listing, or one whose removal is the owner's own
+ *     unpublish, is not a takedown, and cutting it would sign its users out for nothing;
+ *   - no OTHER approved listing on the client declares offline access (the takedown's own rule:
+ *     the hub grants per client, so that app keeps it).
+ *
+ * Then it runs the cut and records `offline-cut` (with the deleted count) or `offline-cut-failed`,
+ * attributed to the retrying moderator. A cut failure is RETURNED, not thrown, so the caller can
+ * warn. IDEMPOTENT: it deletes whatever Refresh keys the client holds now, so a retry after a
+ * success deletes 0 and records that.
+ */
+export async function retryConnectOfflineCut(opts: {
+  appListingId: string;
+  moderatorUserId: number;
+}): Promise<RetryConnectOfflineCutResult> {
+  const { appListingId, moderatorUserId } = opts;
+  const takedown = await import('./connect-offline-takedown');
+  if (!(await takedown.isOfflineGrantOn())) {
+    throw new OffsiteModerationError('FORBIDDEN', 'Offline access cuts are not enabled.');
+  }
+  // primary: this status gates deleting the client's Refresh keys; a relist the replica has not seen would read as removed.
+  const listing = await dbWrite.appListing.findUnique({
+    where: { id: appListingId },
+    select: { id: true, kind: true, status: true, slug: true, connectClientId: true },
+  });
+  if (!listing) throw new OffsiteModerationError('NOT_FOUND', 'Listing not found.');
+  const connectClientId = listing.connectClientId ?? null;
+  if (listing.kind === 'onsite' || !connectClientId) {
+    throw new OffsiteModerationError(
+      'NOT_TRANSITIONABLE',
+      'This listing has no connected app, so there is no offline access to cut.'
+    );
+  }
+  if (
+    listing.status !== 'removed' ||
+    (await readLastStatusChangingModerationEvent(dbWrite, appListingId))?.action !== 'delist'
+  ) {
+    throw new OffsiteModerationError(
+      'NOT_TRANSITIONABLE',
+      'This listing is no longer taken down by a moderator, so its offline access is not cut.'
+    );
+  }
+  if (
+    await anotherApprovedListingDeclaresOffline(dbWrite, {
+      connectClientId,
+      excludeListingIds: [appListingId],
+    })
+  ) {
+    throw new OffsiteModerationError(
+      'NOT_TRANSITIONABLE',
+      'Another approved listing of this app still declares offline access, so it is not cut.'
+    );
+  }
+  const result = await takedown.runOfflineCut(connectClientId);
+  await takedown.recordOfflineCutEvent({
+    appListingId,
+    slug: listing.slug,
+    actorUserId: moderatorUserId,
+    connectClientId,
+    result,
+  });
+  return result.outcome === 'cut'
+    ? { appListingId, outcome: 'cut', deleted: result.deleted }
+    : { appListingId, outcome: 'failed' };
 }
 
 export type RelistListingResult = { appListingId: string; status: 'approved' };
@@ -1081,7 +1234,8 @@ export type PurgeListingResult = { appListingId: string; purged: true };
 /**
  * MOD hard-delete (purge) a listing — the genuine final expunge that also makes the
  * delist round-trip self-cleaning. Targets are {@link PURGEABLE_LISTING_WHERE}: any
- * OFF-SITE listing, or an ON-SITE orphan pre-approval draft.
+ * OFF-SITE listing, or an ON-SITE orphan pre-approval draft. An off-site CONNECT listing that
+ * was ever live is refused ({@link assertNotEverLiveConnectListing}).
  *
  * 🔴 THE ON-SITE ARM IS THE DELIBERATE REPLACEMENT FOR A SILENT SIDE-EFFECT, NOT NEW
  * DESTRUCTIVE POWER. `rejectRequest` used to run `deleteOnsiteDraftListingForSlug` on
@@ -1153,6 +1307,7 @@ export async function purgeListing(opts: {
     // expressed in the `deleteMany` predicate below (no FK to traverse; see the fn's note).
     // A throw here rolls the tx back before the audit event is written.
     await assertNoLivePendingSubmission(tx, current);
+    await assertNotEverLiveConnectListing(tx, { id: input.appListingId, ...current });
     // Read INSIDE the tx, from the row we are about to delete, for the post-commit
     // notification below — after the delete there is nothing left to read it from. Held in a
     // local and returned at the end of the callback, AFTER the delete has been confirmed.
@@ -1179,7 +1334,12 @@ export async function purgeListing(opts: {
     // rolls back. This is the SQL twin of `isPurgeableListing` above; they are kept
     // next to each other so they can only drift together.
     const deleted = await tx.appListing.deleteMany({
-      where: { id: input.appListingId, ...PURGEABLE_LISTING_WHERE },
+      where: {
+        id: input.appListingId,
+        ...PURGEABLE_LISTING_WHERE,
+        // The status half of assertNotEverLiveConnectListing, against an approve racing it.
+        NOT: { connectClientId: { not: null }, status: { in: ['approved', 'removed'] } },
+      },
     });
     if (deleted.count === 0) {
       // Raced (concurrently purged between the snapshot and here) → roll the event back.
@@ -1377,6 +1537,15 @@ const OWNER_HIDDEN_MODERATION_ACTIONS = [
   'storage-doc-unhide',
   'storage-doc-delete',
   'storage-doc-dismiss',
+  // A data migration over every user's documents of one collection: its reason and counts are
+  // the moderators' record, not the owner's.
+  'storage-mark-migration',
+  'storage-collection-purge',
+  // Operational records of the offline-access cut after a takedown. Not about a third party,
+  // but not the owner's to read either: the failed one's `detail` is a raw error message, and
+  // the owner is told about the takedown itself by the `delist` row.
+  'offline-cut',
+  'offline-cut-failed',
 ] as const;
 
 /**
@@ -1656,6 +1825,7 @@ export async function resetOnsiteListingToPending(opts: {
   const eventId = newAppListingModerationEventId();
   const publishRequestId = `pubreq_${newUlid()}`;
 
+  const revoked: { value: RevokedAppTokens | null } = { value: null };
   try {
     await dbWrite.$transaction(async (tx) => {
       // (1) guard-flip listing approved → pending (onsite + status-guarded TOCTOU).
@@ -1678,6 +1848,7 @@ export async function resetOnsiteListingToPending(opts: {
         appBlockId,
         from: 'approved',
         to: 'suspended',
+        revoked,
       });
 
       // (3) re-enter the review queue: clone the latest approved request into a FRESH
@@ -1696,7 +1867,10 @@ export async function resetOnsiteListingToPending(opts: {
           bundleKey: lastApproved.bundleKey,
           bundleSha256: lastApproved.bundleSha256,
           bundleSizeBytes: lastApproved.bundleSizeBytes,
-          fileSummary: lastApproved.fileSummary as Prisma.InputJsonValue,
+          // The clone is the OWNER's request: a staff on-behalf label on the approved one
+          // (`fileSummary.onBehalf`) does not carry over, but its bytes are still the staff
+          // build, so `stagedFromOnBehalf` keeps its re-approve from shipping the update.
+          fileSummary: ownerCopyOf(lastApproved.fileSummary) as Prisma.InputJsonValue,
           manifestDiffSummary: lastApproved.manifestDiffSummary as Prisma.InputJsonValue,
           forgejoCommitSha: lastApproved.forgejoCommitSha,
           // #4059 — carry the client's provenance CLAIM forward, verbatim.
@@ -1762,6 +1936,7 @@ export async function resetOnsiteListingToPending(opts: {
   await bustAppListingCatalogCache().catch(() => undefined);
   // The re-approval publishes again; until then the subdomain must not serve the old version.
   const live = await takeDownLiveAppAfterCommit(listing.slug);
+  await forgetRevokedAppTokens(revoked.value);
 
   return { appListingId: input.appListingId, status: 'pending', publishRequestId, ...live };
 }
@@ -1859,6 +2034,7 @@ export async function unpublishOwnListing(opts: {
   // The on-site slug, for the post-commit live unpublish (set only once the tx authorized it).
   let onsiteSlug: string | null = null;
 
+  const revoked: { value: RevokedAppTokens | null } = { value: null };
   await dbWrite.$transaction(async (tx) => {
     const listing = await loadOwnedListingInTx(tx, input.appListingId, userId);
     if (listing.status !== 'approved') {
@@ -1884,6 +2060,7 @@ export async function unpublishOwnListing(opts: {
       appBlockId: listing.appBlockId,
       from: 'approved',
       to: 'suspended',
+      revoked,
     });
     if (isOnsite && listing.appBlockId) onsiteSlug = listing.slug;
     // 🔴 RECORD THE APPROVED ASSET SURFACE. This is the ONLY place the store learns what
@@ -1921,6 +2098,7 @@ export async function unpublishOwnListing(opts: {
   // Widened back from the closure assignment (TypeScript cannot see through it).
   const slugToTakeDown = onsiteSlug as string | null;
   const live = slugToTakeDown ? await takeDownLiveAppAfterCommit(slugToTakeDown) : {};
+  await forgetRevokedAppTokens(revoked.value);
 
   return { appListingId: input.appListingId, status: 'removed', ...live };
 }
@@ -2096,10 +2274,9 @@ export async function republishOwnListing(opts: {
     //     The raise's real effect is STORE VISIBILITY, and only ever NARROWING it:
     //     `listingMatureFilter` hides the card and `getListingDetail` 404s it for
     //     SFW-only viewers. That is the point of the fix.
-    //   - the raise PERSISTS: `buildListingScalarSync` deliberately EXCLUDES
-    //     `contentRating` from the manifest re-sync ("mod override, floored at the
-    //     derived rating" — `app-listing-mapper.ts`, restated at the approve call site in
-    //     `publish-request.service.ts`), so a later version approve does not undo it.
+    //   - the raise PERSISTS while the media does: a later version approve re-rates the
+    //     listing from its manifest (`approveRequest`, (3b-sync)) through this same
+    //     helper, which re-derives the media and keeps the raise.
     // 🔴 Three comments elsewhere still assert an UNQUALIFIED "on-site listings MIRROR
     // AppBlock.content_rating" (the `AppListing.contentRating` schema comment, the
     // mapper's create path, the backfill service) and the on-site media-revision copy

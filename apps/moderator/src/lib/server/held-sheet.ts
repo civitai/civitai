@@ -7,11 +7,11 @@ import {
   type SessionClaims,
   type SessionUser,
 } from '@civitai/auth';
-import { REDIS_SYS_KEYS, type RedisKeyTemplateSys } from '@civitai/redis';
+import { REDIS_KEYS, type RedisKeyTemplateCache } from '@civitai/redis';
 import type { ReviewTier } from '@civitai/shared/review-batch';
 import { env } from '$env/dynamic/private';
 import { admitsModerator, isRevoked } from './auth';
-import { getSysRedis } from './redis';
+import { getRedis } from './redis';
 
 /**
  * The held-media phone sheet signs in with a PKCE code: `auth/start` (behind the moderator's web
@@ -90,17 +90,19 @@ const webSession = ({ sub, sid, jti, signedAt }: SessionClaims): WebSession => (
 const sha256 = (value: string) => createHash('sha256').update(value).digest('base64url');
 const newSecret = () => randomBytes(32).toString('base64url');
 const codeKey = (code: string) =>
-  `${REDIS_SYS_KEYS.APP.HELD_SHEET_CODE}:${sha256(code)}` as RedisKeyTemplateSys;
+  `${REDIS_KEYS.APP.HELD_SHEET_CODE}:${sha256(code)}` as RedisKeyTemplateCache;
 const sessionKey = (token: string) =>
-  `${REDIS_SYS_KEYS.APP.HELD_SHEET_SESSION}:${sha256(token)}` as RedisKeyTemplateSys;
+  `${REDIS_KEYS.APP.HELD_SHEET_SESSION}:${sha256(token)}` as RedisKeyTemplateCache;
+// Both keys of a review session carry its `{sha256(token)}` tag, so they share a cluster slot and
+// one DEL ends both.
 const reviewKey = (token: string) =>
-  `${REDIS_SYS_KEYS.APP.REVIEW_SHEET_SESSION}:${sha256(token)}` as RedisKeyTemplateSys;
+  `${REDIS_KEYS.APP.REVIEW_SHEET_SESSION}:{${sha256(token)}}` as RedisKeyTemplateCache;
 const reviewBatchesKey = (token: string) =>
-  `${REDIS_SYS_KEYS.APP.REVIEW_SHEET_SESSION}:${sha256(token)}:batches` as RedisKeyTemplateSys;
+  `${REDIS_KEYS.APP.REVIEW_SHEET_SESSION}:{${sha256(token)}}:batches` as RedisKeyTemplateCache;
 
 /** Slides both keys' TTL; false when the session is gone (expired or signed out). */
 async function slideReviewSession(token: string, createdAt: number, now: number) {
-  const redis = getSysRedis();
+  const redis = getRedis();
   const ttl = reviewTtlSeconds(createdAt, now);
   const [record] = await Promise.all([
     redis.expire(reviewKey(token), ttl),
@@ -111,7 +113,7 @@ async function slideReviewSession(token: string, createdAt: number, now: number)
 
 /** Adds a batch hash to a live review session, refusing the one past REVIEW_SHEET_MAX_BATCHES. */
 async function addReviewBatch(token: string, hash: string, createdAt: number, now: number) {
-  const redis = getSysRedis();
+  const redis = getRedis();
   const set = reviewBatchesKey(token);
   const added = await redis.sAdd(set, hash);
   await redis.expire(set, reviewTtlSeconds(createdAt, now));
@@ -162,7 +164,7 @@ let verifier: ReturnType<typeof createAuthVerifier> | undefined;
 
 /** The claims of the web session this request carries, for binding a sheet session to it. */
 export async function webSessionClaims(cookieHeader: string): Promise<SessionClaims | null> {
-  const read = readSessionToken(parseCookieHeader(cookieHeader));
+  const read = readSessionToken(parseCookieHeader(cookieHeader), { host: null });
   if (!read) return null;
   return (verifier ??= createAuthVerifier({ isRevoked })).verifyToken(read.value);
 }
@@ -181,33 +183,54 @@ export async function issueCode(
     web: webSession(claims),
     ...(batch && { batch }),
   };
-  await getSysRedis().set(codeKey(code), JSON.stringify(record), {
+  await getRedis().set(codeKey(code), JSON.stringify(record), {
     EX: CODE_TTL_SECONDS,
     NX: true,
   });
   return code;
 }
 
-/** The code's record once its verifier matches, or null. The code is consumed before the verifier
- *  is compared, so it answers once whatever the verifier. */
-async function redeemCode(code: unknown, codeVerifier: unknown): Promise<CodeRecord | null> {
-  if (typeof code !== 'string' || !TOKEN.test(code)) return null;
-  if (typeof codeVerifier !== 'string' || !VERIFIER.test(codeVerifier)) return null;
+/** Why an exchange was refused, for the audit event. */
+export type ExchangeRefusal = 'malformed' | 'unknown-code' | 'verifier-mismatch' | 'wrong-tier';
+/** An exchange's outcome. `userId` and `batch` are known once the code was found. */
+export type Exchanged =
+  | { token: string; userId: number; batch?: string }
+  | { token: null; reason: ExchangeRefusal; userId?: number; batch?: string };
 
-  const raw = await getSysRedis().getDel(codeKey(code));
-  if (!raw) return null;
+type Redeemed =
+  | { record: CodeRecord }
+  | { record: null; reason: ExchangeRefusal; userId?: number; batch?: string };
+
+/** The code's record once its verifier matches, or why not. The code is consumed before the verifier
+ *  is compared, so it answers once whatever the verifier. */
+async function redeemCode(code: unknown, codeVerifier: unknown): Promise<Redeemed> {
+  if (typeof code !== 'string' || !TOKEN.test(code)) return { record: null, reason: 'malformed' };
+  if (typeof codeVerifier !== 'string' || !VERIFIER.test(codeVerifier))
+    return { record: null, reason: 'malformed' };
+
+  const raw = await getRedis().getDel(codeKey(code));
+  if (!raw) return { record: null, reason: 'unknown-code' };
   const record = JSON.parse(raw) as CodeRecord;
   const expected = Buffer.from(record.challenge);
   const actual = Buffer.from(sha256(codeVerifier));
-  if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) return null;
-  return record;
+  if (expected.length !== actual.length || !timingSafeEqual(expected, actual))
+    return {
+      record: null,
+      reason: 'verifier-mismatch',
+      userId: record.userId,
+      batch: record.batch?.hash,
+    };
+  return { record };
 }
 
-/** A new held sheet session token for a code and its verifier, or null. A general-tier code is
+/** A new held sheet session token for a code and its verifier, or why not. A general-tier code is
  *  refused here: it can only become a review session. */
-export async function exchangeCode(code: unknown, codeVerifier: unknown): Promise<string | null> {
-  const record = await redeemCode(code, codeVerifier);
-  if (!record || (record.batch && record.batch.tier !== 'held')) return null;
+export async function exchangeCode(code: unknown, codeVerifier: unknown): Promise<Exchanged> {
+  const redeemed = await redeemCode(code, codeVerifier);
+  if (!redeemed.record) return { token: null, ...redeemed };
+  const record = redeemed.record;
+  if (record.batch && record.batch.tier !== 'held')
+    return { token: null, reason: 'wrong-tier', userId: record.userId, batch: record.batch.hash };
 
   const token = newSecret();
   const session: SessionRecord = {
@@ -216,10 +239,10 @@ export async function exchangeCode(code: unknown, codeVerifier: unknown): Promis
     createdAt: Date.now(),
     ...(record.batch && { batch: record.batch.hash }),
   };
-  await getSysRedis().set(sessionKey(token), JSON.stringify(session), {
+  await getRedis().set(sessionKey(token), JSON.stringify(session), {
     EX: SHEET_IDLE_SECONDS,
   });
-  return token;
+  return { token, userId: record.userId, batch: record.batch?.hash };
 }
 
 /**
@@ -231,10 +254,14 @@ export async function exchangeReviewCode(
   code: unknown,
   codeVerifier: unknown,
   current: string | undefined
-): Promise<string | null> {
-  const record = await redeemCode(code, codeVerifier);
-  if (!record || record.batch?.tier !== 'general') return null;
-  const redis = getSysRedis();
+): Promise<Exchanged> {
+  const redeemed = await redeemCode(code, codeVerifier);
+  if (!redeemed.record) return { token: null, ...redeemed };
+  const record = redeemed.record;
+  if (record.batch?.tier !== 'general')
+    return { token: null, reason: 'wrong-tier', userId: record.userId, batch: record.batch?.hash };
+  const done = { userId: record.userId, batch: record.batch.hash };
+  const redis = getRedis();
   const now = Date.now();
   const hash = record.batch.hash;
 
@@ -248,7 +275,7 @@ export async function exchangeReviewCode(
     (await addReviewBatch(current!, hash, live.createdAt, now)) &&
     (await slideReviewSession(current!, live.createdAt, now))
   )
-    return current!;
+    return { token: current!, ...done };
 
   const token = newSecret();
   const session: ReviewSessionRecord = { userId: record.userId, web: record.web, createdAt: now };
@@ -256,13 +283,21 @@ export async function exchangeReviewCode(
   await redis.set(reviewKey(token), JSON.stringify(session), { EX: ttl });
   await redis.sAdd(reviewBatchesKey(token), hash);
   await redis.expire(reviewBatchesKey(token), ttl);
-  return token;
+  return { token, ...done };
 }
 
-/** Ends a review session on the server (the sheet's Sign out). A token that names none is a no-op. */
-export async function revokeReviewSession(token: string | undefined): Promise<void> {
-  if (!token || !TOKEN.test(token)) return;
-  await getSysRedis().del([reviewKey(token), reviewBatchesKey(token)]);
+/** Ends a review session on the server (the sheet's Sign out): its moderator's id, or null when the
+ *  token names no live session (a no-op) or one whose record cannot be read (still ended). */
+export async function revokeReviewSession(token: string | undefined): Promise<number | null> {
+  if (!token || !TOKEN.test(token)) return null;
+  const redis = getRedis();
+  const raw = await redis.get(reviewKey(token));
+  await redis.del([reviewKey(token), reviewBatchesKey(token)]);
+  try {
+    return raw ? (JSON.parse(raw) as ReviewSessionRecord).userId : null;
+  } catch {
+    return null;
+  }
 }
 
 let sessions: ReturnType<typeof createSessionClient> | undefined;
@@ -287,7 +322,7 @@ export async function resolveHeldSession(
   token: string | undefined
 ): Promise<{ user: SessionUser; batch: string | null } | null> {
   if (!token || !TOKEN.test(token)) return null;
-  const redis = getSysRedis();
+  const redis = getRedis();
   const key = sessionKey(token);
   const raw = await redis.get(key);
   if (!raw) return null;
@@ -315,7 +350,7 @@ export async function resolveReviewSession(token: string | undefined): Promise<{
   join: (hash: string) => Promise<boolean>;
 } | null> {
   if (!token || !TOKEN.test(token)) return null;
-  const redis = getSysRedis();
+  const redis = getRedis();
   const raw = await redis.get(reviewKey(token));
   if (!raw) return null;
   const session = JSON.parse(raw) as ReviewSessionRecord;
@@ -335,7 +370,14 @@ export async function resolveReviewSession(token: string | undefined): Promise<{
 }
 
 async function sessionUser(session: { userId: number; web: WebSession }) {
-  if (!session.web?.jti || (await isRevoked(session.web))) return null;
+  if (!session.web?.jti) return null;
+  // A copy, passed to both calls: confirmElevated answers for the claims object the check read.
+  const web = { ...session.web };
+  if (await isRevoked(web)) return null;
+  // Every sheet user is a moderator. Unconfirmed throws, so the route answers 503 and keeps the sheet cookie.
+  if ((await isRevoked.confirmElevated(web)) === 'unavailable') {
+    throw new Error('sheet session revocation read unavailable');
+  }
   const user = await (sessions ??= createSessionClient()).getSessionUserById(session.userId);
   return admitsSheetUser(user) && user.id === session.userId ? user : null;
 }

@@ -108,6 +108,7 @@ import {
   processTimedUnmutes,
 } from '~/server/services/strike.service';
 import { StrikeReason, StrikeStatus } from '~/shared/utils/prisma/enums';
+import { MUTE_POINTS, REVIEW_MUTE_POINTS } from '~/shared/constants/strike.constants';
 
 // Helper: mock evaluateStrikeEscalation's transaction. The returned mocks are the transaction
 // client's, so a test asserting on `userUpdate` is asserting the write happened INSIDE the
@@ -222,7 +223,12 @@ describe('strike.service', () => {
       await shouldRateLimitStrike(1);
       const [strings, ...values] = mockDbRead.$queryRaw.mock.calls[0];
       expect((strings as string[]).join('?')).toContain('"status" != ?::"StrikeStatus"');
-      expect(values).toEqual([1, [StrikeReason.ManualModAction, StrikeReason.Scam], 'Voided']);
+      expect((strings as string[]).join('?')).toContain('"reason"::text != ALL(?::text[])');
+      expect(values).toEqual([
+        1,
+        [StrikeReason.ManualModAction, StrikeReason.Copyright, StrikeReason.Scam],
+        'Voided',
+      ]);
     });
   });
 
@@ -1085,21 +1091,6 @@ describe('strike.service', () => {
       expect(mockDbWrite.userStrike.create).not.toHaveBeenCalled();
     });
 
-    it('logs to Axiom when rate limited', async () => {
-      mockDbRead.$queryRaw.mockReset();
-      mockDbRead.$queryRaw.mockResolvedValueOnce([{ count: 1 }]); // rate limited
-
-      await createStrike(baseInput);
-
-      expect(mockLogToAxiom).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: 'info',
-          name: 'strike-rate-limited',
-          userId: 100,
-        })
-      );
-    });
-
     it('bypasses rate limit for ManualModAction', async () => {
       const manualInput = { ...baseInput, reason: StrikeReason.ManualModAction };
 
@@ -1149,6 +1140,71 @@ describe('strike.service', () => {
       await expect(createStrike({ ...baseInput, onCreated })).rejects.toThrow('deadlock');
       expect(onCreated).toHaveBeenCalledExactlyOnceWith(mockCreatedStrike);
     });
+
+    it('never rate-limits a Copyright strike: a moderator issues it on a takedown', async () => {
+      mockDbRead.$queryRaw.mockReset();
+      mockDbRead.$queryRaw.mockResolvedValue([{ count: 1 }]);
+
+      expect(
+        await createStrike({ ...baseInput, reason: StrikeReason.Copyright, notifyUser: false })
+      ).toEqual(mockCreatedStrike);
+      expect(mockDbWrite.userStrike.create).toHaveBeenCalled();
+      expect(mockDbWrite.$transaction).toHaveBeenCalled(); // escalation still runs
+    });
+
+    // A Copyright strike on top of one already issued today escalates exactly as a moderator's own strike does.
+    describe.each([StrikeReason.Copyright, StrikeReason.ManualModAction])(
+      'a same-day %s strike that crosses a threshold',
+      (reason) => {
+        beforeEach(() => {
+          mockDbRead.$queryRaw.mockReset();
+          mockDbRead.$queryRaw.mockResolvedValue([{ count: 1 }]); // a strike already today
+        });
+
+        it(`at MUTE_POINTS (${MUTE_POINTS}) from one below: notifies and mutes`, async () => {
+          const { userUpdate } = mockTransactionForEscalation(MUTE_POINTS, {
+            muted: false,
+            muteExpiresAt: null,
+            meta: {},
+          });
+
+          expect(await createStrike({ ...baseInput, reason })).toEqual(mockCreatedStrike);
+
+          expect(userUpdate).toHaveBeenCalledWith(
+            expect.objectContaining({ data: expect.objectContaining({ muted: true }) })
+          );
+          expect(userUpdate.mock.calls[0][0].data.meta?.strikeFlaggedForReview).toBeFalsy();
+          expect(mockCreateNotification).toHaveBeenCalledWith(
+            expect.objectContaining({ type: 'strike-issued' })
+          );
+          expect(mockCreateNotification).toHaveBeenCalledWith(
+            expect.objectContaining({ type: 'strike-escalation-muted' })
+          );
+        });
+
+        it(`at REVIEW_MUTE_POINTS (${REVIEW_MUTE_POINTS}) from one below: notifies, mutes and flags for review`, async () => {
+          const { userUpdate } = mockTransactionForEscalation(REVIEW_MUTE_POINTS, {
+            muted: true,
+            muteExpiresAt: null,
+            meta: { muteReason: 'strike-escalation' },
+          });
+
+          expect(await createStrike({ ...baseInput, reason })).toEqual(mockCreatedStrike);
+
+          expect(userUpdate).toHaveBeenCalledWith(
+            expect.objectContaining({
+              data: expect.objectContaining({
+                muted: true,
+                meta: expect.objectContaining({ strikeFlaggedForReview: true }),
+              }),
+            })
+          );
+          expect(mockCreateNotification).toHaveBeenCalledWith(
+            expect.objectContaining({ type: 'strike-issued' })
+          );
+        });
+      }
+    );
 
     it('never rate-limits a Scam strike: a case issues at most one', async () => {
       mockDbRead.$queryRaw.mockReset();

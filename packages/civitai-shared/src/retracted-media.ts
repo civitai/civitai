@@ -10,6 +10,17 @@ export const RETRACTED_SERVED_ACTIVITY = 'retractedMedia:view';
 /** Per moderator, per minute. */
 export const RETRACTED_MEDIA_RATE_LIMIT = 600;
 
+/** The per-moderator request counter both apps' routes count in, before the cache-key prefix. */
+export const retractedMediaRateKey = (moderatorId: number) =>
+  `retracted-media:rate-limit:${moderatorId}`;
+
+/** The per-owner request counter of the main app's `/api/retracted-media/own`, before the prefix. */
+export const retractedMediaOwnRateKey = (userId: number) =>
+  `retracted-media:own:rate-limit:${userId}`;
+
+/** The eligibility read's statement timeout: a read that cannot finish refuses. */
+export const RETRACTED_MEDIA_READ_TIMEOUT_MS = 2_000;
+
 /** The largest object served; a larger one is refused whole, ranges included. */
 export const RETRACTED_MEDIA_MAX_BYTES = 250 * 1024 * 1024;
 

@@ -14,8 +14,15 @@
   let {
     token,
     submitting,
+    mediaFailed = false,
     onsubmit,
-  }: { token: string; submitting: boolean; onsubmit: SubmitFunction } = $props();
+  }: {
+    token: string;
+    submitting: boolean;
+    /** The card's media failed to load: Skip is offered first. */
+    mediaFailed?: boolean;
+    onsubmit: SubmitFunction;
+  } = $props();
 
   // Mounted per item (the parent keys it), so none of this carries over to the next image.
   let picking = $state(false);
@@ -54,6 +61,7 @@
     if (!picking) {
       if (e.key === 'b' || e.key === 'B') picking = true;
       else if (e.key === 'n' || e.key === 'N') submitWith('button[name="block"][value="0"]');
+      else if (e.key === 's' || e.key === 'S') submitWith('button[formaction="?/skip"]');
       return;
     }
     const index = Number(e.key) - 1;
@@ -68,6 +76,11 @@
 
 <form method="POST" action="?/vote" use:enhance={onsubmit} bind:this={form} class="flex flex-col gap-3">
   <input type="hidden" name="token" value={token} />
+  {#if mediaFailed}
+    <Button type="submit" formaction="?/skip" size="lg" disabled={submitting}>
+      Skip this card <span class="ml-2 text-xs opacity-70">S</span>
+    </Button>
+  {/if}
   {#if !picking}
     <div class="grid grid-cols-2 gap-3">
       <Button
@@ -154,5 +167,10 @@
         </Button>
       </div>
     {/if}
+  {/if}
+  {#if !mediaFailed}
+    <Button type="submit" formaction="?/skip" variant="ghost" size="sm" disabled={submitting}>
+      Skip, no vote <span class="ml-2 text-xs opacity-70">S</span>
+    </Button>
   {/if}
 </form>

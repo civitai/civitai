@@ -1,4 +1,5 @@
 import clsx from 'clsx';
+import { creatorCardSectionStyle } from '~/components/CreatorCard/section-style';
 import { uniqBy } from 'lodash-es';
 import { memo } from 'react';
 import type { CardProps } from '@mantine/core';
@@ -12,13 +13,12 @@ import {
   useMantineTheme,
   useComputedColorScheme,
 } from '@mantine/core';
-import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
+import { DomainLinkIcons } from '~/components/DomainIcon/DomainLinkIcons';
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
 import { UserAvatar, UserProfileLink } from '~/components/UserAvatar/UserAvatar';
 import { constants, creatorCardStatsDefaults } from '~/server/common/constants';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { formatDate } from '~/utils/date-helpers';
-import { getDomainLinkLabel, sortDomainLinks } from '~/utils/domain-link';
 import { trpc } from '~/utils/trpc';
 import type { UserStats } from '../UserStatBadges/UserStatBadges';
 import { UserStatBadgesV2 } from '../UserStatBadges/UserStatBadges';
@@ -35,7 +35,6 @@ import { ElementInView, useElementInView } from '~/components/IntersectionObserv
 import { Metrics } from '~/components/Metrics';
 import classes from './CreatorCard.module.css';
 import { cardGlowOf } from './card-glow';
-import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import type { UserCreator } from '~/server/services/user.service';
 
 /** The 70px avatar offset plus about 100px of name. */
@@ -53,6 +52,7 @@ const CreatorCardSimpleContent = ({
   statDisplayOverwrite,
   subText,
   actions,
+  footer,
   ...cardProps
 }: CreatorCardSimpleProps) => {
   const theme = useMantineTheme();
@@ -154,6 +154,8 @@ const CreatorCardSimpleContent = ({
                 left: 0,
                 width: '100%',
                 height: '100%',
+                // Decorative: out of hit-testing so no <video> sits under the name or buttons.
+                pointerEvents: 'none',
               },
             }}
             contain
@@ -251,26 +253,22 @@ const CreatorCardSimpleContent = ({
         <Card.Section
           withBorder
           inheritPadding
-          style={{
-            background: colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
-          }}
+          style={creatorCardSectionStyle(theme, colorScheme)}
           py={5}
         >
           <Group gap={4}>
-            {sortDomainLinks(creator.links).map((link, index) => (
-              <LegacyActionIcon
-                key={index}
-                component="a"
-                href={link.url}
-                target="_blank"
-                rel="nofollow noreferrer"
-                size={32}
-                aria-label={getDomainLinkLabel(link)}
-              >
-                <DomainIcon domain={link.domain} size={20} />
-              </LegacyActionIcon>
-            ))}
+            <DomainLinkIcons links={creator.links} size={32} iconSize={20} />
           </Group>
+        </Card.Section>
+      ) : null}
+      {footer ? (
+        <Card.Section
+          withBorder
+          inheritPadding
+          style={creatorCardSectionStyle(theme, colorScheme)}
+          py="xs"
+        >
+          {footer}
         </Card.Section>
       ) : null}
     </ElementInView>
@@ -284,6 +282,8 @@ export type CreatorCardSimpleProps = {
   useEquippedCosmetics?: boolean;
   statDisplayOverwrite?: string[];
   actions?: (creator: UserCreator) => React.ReactElement;
+  /** Extra content in its own section under a divider, below the links. Nothing renders without it. */
+  footer?: React.ReactNode;
 } & Omit<CardProps, 'children'>;
 
 type CreatorStats = NonNullable<UserCreator['stats']>;

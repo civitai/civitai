@@ -1,6 +1,6 @@
 import { recordGallerySourceRating } from '~/components/form-graph/generation/useFlux3MatureSource';
+import { isImageShownBlocked } from '~/shared/utils/image-blocked';
 import type { RemixKind } from '~/shared/constants/remix.constants';
-import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import {
   getEngineRefusal,
   getRemixEngine,
@@ -32,7 +32,7 @@ export {
  * available while a scan is pending — only a blocked image loses it.
  */
 export function isReuseRefused(image: RemixSourceImage): boolean {
-  return image.ingestion === ImageIngestionStatus.Blocked || !!image.blockedFor;
+  return isImageShownBlocked(image);
 }
 
 /** Remix kinds that need only the image itself. */

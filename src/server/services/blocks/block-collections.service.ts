@@ -14,9 +14,10 @@
  *     wire contracts (edge-url composed, maturity already clamped upstream).
  *
  * NOTE the maturity clamp itself is NOT applied here — the caller resolves the
- * token ceiling via `resolveCatalogBrowsingLevel(claims)` and passes the clamped
- * `browsingLevel` into the collection item service, so items are filtered at the
- * source (identical authority surface to /api/v1/blocks/images). Discovery
+ * viewer's level held to the token's domain ceiling via
+ * `resolveCatalogViewerBrowsingLevel(claims, { regionRestricted })` and passes it
+ * into the collection item service, so items are filtered at the source (the
+ * same clamp /api/v1/blocks/images uses). Discovery
  * additionally drops collections whose own `nsfwLevel` exceeds the ceiling.
  */
 
@@ -27,10 +28,14 @@ import { dbRead } from '~/server/db/client';
 import { sessionClient } from '~/server/auth/session-client';
 import type { SessionUser } from '~/types/session';
 import { Flags } from '~/shared/utils/flags';
-import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { imageNotRestrictedSql, imageRestrictedSql } from '~/server/common/image-visibility';
 import { getCoverBrowsingLevels } from '~/server/utils/public-cover-image';
 import { CollectionItemStatus } from '~/shared/utils/prisma/enums';
 import { classifyGatedImageForViewer } from '~/server/services/blocks/block-gated-images.logic';
+import {
+  collectionItemExtraFields,
+  type CollectionItemExtraFields,
+} from '~/server/services/blocks/block-collection-item-fields';
 
 /**
  * Resolve the FULL server-side SessionUser for a verified block-token subject
@@ -187,10 +192,7 @@ export function isPublicCollectionImage(
 }
 
 /**
- * Of `imageIds`, the ones `getAllImages` refuses on its restricted base model condition:
- * a mature level on an image linked to a license-restricted base model. The column is
- * written by raw SQL only and is not in the Prisma schema, so a cover select cannot read
- * it. `getFallbackCoverImages` applies the same condition in its own WHERE.
+ * Of `imageIds`, the ones restricted by their base model (`imageRestrictedSql`).
  */
 export async function getModelRestrictedImageIds(imageIds: number[]): Promise<Set<number>> {
   if (imageIds.length === 0) return new Set();
@@ -198,8 +200,7 @@ export async function getModelRestrictedImageIds(imageIds: number[]): Promise<Se
     SELECT i."id" as "id"
     FROM "Image" i
     WHERE i."id" IN (${Prisma.join(imageIds)})
-      -- The exact complement of getAllImages' condition, so a NULL refuses as it does there.
-      AND ((i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0 OR NOT i."modelRestricted") IS NOT TRUE
+      AND ${imageRestrictedSql()}
   `;
   return new Set(rows.map((r) => r.id));
 }
@@ -271,8 +272,7 @@ export async function getFallbackCoverImages(
         AND i."blockedFor" IS NULL
         AND p."publishedAt" < now()
         AND p."availability" != 'Private'
-        -- Same restricted-base-model condition getAllImages applies to every row.
-        AND ((i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0 OR NOT i."modelRestricted")
+        AND ${imageNotRestrictedSql()}
         AND ${heldGalleryImageSql()}
       -- Walks CollectionItem_collectionId_status_covered ("createdAt" DESC) and stops at
       -- the first item that passes, per collection.
@@ -462,21 +462,28 @@ export type BlockCollectionMediaItem = {
   height: number | null;
   creator: { userId: number; username: string | null } | null;
   nsfwLevel: number;
-};
+} & CollectionItemExtraFields;
 
 /**
  * Map an IMAGE-type expanded collection item (`getCollectionItemsByCollectionId`
- * → `{ type: 'image', data: ImagesInfiniteModel }`) to the block media contract.
+ * → `{ type: 'image', createdAt, data: ImagesInfiniteModel }`) to the block media
+ * contract. `collectionItem` is the expanded item itself: its `createdAt` is the
+ * time the image was added to the collection, which `data.createdAt` (the image's
+ * own) is not.
  */
-export function mapImageItemToMedia(data: {
-  id: number;
-  url?: string | null;
-  type?: string | null;
-  width?: number | null;
-  height?: number | null;
-  nsfwLevel?: number | null;
-  user?: { id: number; username?: string | null } | null;
-}): BlockCollectionMediaItem {
+export function mapImageItemToMedia(
+  data: {
+    id: number;
+    url?: string | null;
+    type?: string | null;
+    width?: number | null;
+    height?: number | null;
+    nsfwLevel?: number | null;
+    metadata?: unknown;
+    user?: { id: number; username?: string | null } | null;
+  },
+  collectionItem: { createdAt?: Date | string | null }
+): BlockCollectionMediaItem {
   const mediaType: 'image' | 'video' = data.type === 'video' ? 'video' : 'image';
   return {
     mediaId: data.id,
@@ -486,5 +493,10 @@ export function mapImageItemToMedia(data: {
     height: data.height ?? null,
     creator: data.user ? { userId: data.user.id, username: data.user.username ?? null } : null,
     nsfwLevel: data.nsfwLevel ?? 0,
+    ...collectionItemExtraFields({
+      mediaType,
+      metadata: data.metadata,
+      addedAt: collectionItem.createdAt,
+    }),
   };
 }

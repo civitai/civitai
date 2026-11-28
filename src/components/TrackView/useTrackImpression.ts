@@ -3,8 +3,10 @@ import { ScrollAreaContext } from '~/components/ScrollArea/ScrollAreaContext';
 import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   getCurrentImpressionSurface,
+  impressionTelemetryOn,
   recordImpression,
 } from '~/components/TrackView/impressionBuffer';
+import { recordFeedItemClick, recordFeedItemSeen } from '~/utils/feed-events';
 import type { ImpressionEntityType, ImpressionSurface } from '~/server/schema/track.schema';
 
 export type ImpressionTarget = { entityType: ImpressionEntityType; entityId: number };
@@ -59,9 +61,11 @@ function armDwell(registry: Registry, element: Element, state: ElementState) {
   state.timer = setTimeout(() => {
     state.timer = null;
     if (state.onSeen) state.onSeen();
-    else
+    else {
       for (const target of state.targets)
         recordImpression(target.entityType, target.entityId, surface);
+      recordFeedItemSeen(state.targets);
+    }
     // Recorded — stop watching. The session-level dedupe in the buffer would drop
     // a repeat anyway; this just avoids re-arming the timer on every scroll.
     registry.observer.unobserve(element);
@@ -131,18 +135,6 @@ function getRegistry(root: Element | null): Registry {
 }
 
 /**
- * THE gate for impression telemetry (the `feedImpressions` Flipt dial). Exported so a surface
- * that also records clicks against its impressions (the app store funnel) can put every event
- * of the funnel behind the SAME gate — otherwise turning the dial changes the denominator
- * while the numerator keeps flowing, and every ratio silently breaks.
- */
-export function impressionTelemetryOn(
-  features: { feedImpressions?: boolean } | null | undefined
-): boolean {
-  return !!features?.feedImpressions;
-}
-
-/**
  * Report that this element's entities were seen, once it has been half visible
  * for a continuous second.
  *
@@ -153,14 +145,21 @@ export function impressionTelemetryOn(
  * number — invisible.
  */
 export function useTrackImpression<T extends HTMLElement = HTMLDivElement>(
-  targets: ImpressionTarget[] | undefined
+  targets: ImpressionTarget[] | undefined,
+  /** Listen for clicks on the element's parent: for an overlay that takes no pointer events. */
+  { clicksOnParent = false }: { clicksOnParent?: boolean } = {}
 ) {
   // Identity of the entities, not of the array — callers rebuild the array every
   // render, and re-observing on that would be constant churn. This is the effect's
   // real dependency; `targets` is read inside it and deliberately not a dep.
   const key = targets?.map((t) => `${t.entityType}:${t.entityId}`).join(',') ?? '';
   // Read from this render's closure, never from a ref written during render.
-  return useImpressionObserver<T>(!!targets?.length, key, () => ({ targets: targets ?? [] }));
+  return useImpressionObserver<T>(
+    !!targets?.length,
+    key,
+    () => ({ targets: targets ?? [] }),
+    clicksOnParent
+  );
 }
 
 /**
@@ -189,7 +188,8 @@ export function useDwellImpression<T extends HTMLElement = HTMLDivElement>(
 function useImpressionObserver<T extends HTMLElement>(
   wanted: boolean,
   key: string,
-  buildState: () => Pick<ElementState, 'targets' | 'onSeen'>
+  buildState: () => Pick<ElementState, 'targets' | 'onSeen'>,
+  clicksOnParent = false
 ) {
   const ref = useRef<T>(null);
   // Optional, not `useFeatureFlags`: ElementInView calls this for every caller,
@@ -226,7 +226,12 @@ function useImpressionObserver<T extends HTMLElement>(
     registry.elements.set(element, state);
     registry.observer.observe(element);
 
+    const stopClicks = state.targets.length
+      ? trackFeedClicks(element, state.targets, clicksOnParent)
+      : undefined;
+
     return () => {
+      stopClicks?.();
       disarmDwell(state);
       registry.observer.unobserve(element);
       registry.elements.delete(element);
@@ -246,9 +251,35 @@ function useImpressionObserver<T extends HTMLElement>(
     // changes exactly when what it would build changes. Depending on it would
     // re-observe hundreds of cards per render for no change in meaning.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, key, root]);
+  }, [enabled, key, root, clicksOnParent]);
 
   return ref;
+}
+
+/** Feed click rows for link clicks in `element`, or in its parent for an overlay with no pointer events. */
+export function trackFeedClicks(
+  element: Element,
+  targets: ImpressionTarget[],
+  onParent = false
+): () => void {
+  const root = onParent ? element.parentElement : element;
+  const onClick = (event: Event) => {
+    if (event.type === 'auxclick' && (event as MouseEvent).button !== 1) return;
+    if (isLinkClick(event.target)) recordFeedItemClick(targets);
+  };
+  root?.addEventListener('click', onClick);
+  root?.addEventListener('auxclick', onClick);
+  return () => {
+    root?.removeEventListener('click', onClick);
+    root?.removeEventListener('auxclick', onClick);
+  };
+}
+
+// A button inside a link (e.g. a card menu) is not a click through, so the nearest control must be the link.
+const CONTROLS =
+  'a[href], button, [role="button"], [role="menuitem"], input, select, textarea, label';
+export function isLinkClick(target: EventTarget | null) {
+  return target instanceof Element && target.closest(CONTROLS)?.tagName === 'A';
 }
 
 // Test-only, mirroring impressionBuffer's hooks. Not part of the runtime contract.

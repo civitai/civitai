@@ -1,4 +1,5 @@
 import { dbWrite } from '~/server/db/client';
+import { evictHomeBlocksForImages } from '~/server/services/home-block-cache.service';
 import { tagIdsForImagesCache, refreshThumbnailCache, imageTagsCache } from '~/server/redis/caches';
 import type { TagSource } from '~/shared/utils/prisma/enums';
 import { pgDbWrite } from '~/server/db/pgDb';
@@ -7,9 +8,9 @@ import { getModeratedTags, getTagRules } from '~/server/services/system-cache';
 import { createImageTagsForReview } from '~/server/services/image-review.service';
 import { NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { refreshProfilePicturesForImagesLazy } from '~/server/services/refresh-profile-pictures-lazy';
-import { queueModelsForImageChildTagChanges } from '~/server/services/image-models-reindex.service';
+import { queueDocumentsForImageMinorChanges } from '~/server/services/image-models-reindex.service';
 
-// Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
+// Lazy, but not a cycle cut: the cycle guards count dynamic imports (docs/dev/import-cycles.md).
 const imageService = () => import('~/server/services/image.service');
 
 type TagsOnImageNewArgs = {
@@ -50,7 +51,7 @@ export async function insertTagsOnImageNew(args: TagsOnImageNewArgs[]) {
   });
 
   const levelImageIds = await updateImageNsfwLevels(withTagRules);
-  await queueModelsForImageChildTagChanges({ tagWrites: withTagRules, levelImageIds });
+  await queueDocumentsForImageMinorChanges({ levelImageIds });
   await (
     await imageService()
   ).queueImageSearchIndexUpdate({
@@ -87,7 +88,7 @@ export async function upsertTagsOnImageNew(args: TagsOnImageNewArgs[]) {
   });
 
   const levelImageIds = await updateImageNsfwLevels(withTagRules);
-  await queueModelsForImageChildTagChanges({ tagWrites: withTagRules, levelImageIds });
+  await queueDocumentsForImageMinorChanges({ levelImageIds });
   await (
     await imageService()
   ).queueImageSearchIndexUpdate({
@@ -111,7 +112,7 @@ export async function deleteTagsOnImageNew(args: { imageId: number; tagId: numbe
   });
 
   const levelImageIds = await updateImageNsfwLevels(args);
-  await queueModelsForImageChildTagChanges({ tagWrites: args, levelImageIds });
+  await queueDocumentsForImageMinorChanges({ levelImageIds });
   await (
     await imageService()
   ).queueImageSearchIndexUpdate({
@@ -173,6 +174,9 @@ async function queueBlockedTagReviews(args: { imageId: number; tagId: number }[]
     FROM enabled e
     JOIN flagged f ON f.id = e."imageId"
   `;
+
+  if (queued.length)
+    await evictHomeBlocksForImages({ imageIds: [...new Set(queued.map((x) => x.imageId))] });
 
   const tagIdsByImage = new Map<number, number[]>();
   for (const { imageId, tagId } of queued) {

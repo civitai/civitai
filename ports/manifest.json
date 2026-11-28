@@ -7,7 +7,7 @@
       "kind": "trpc",
       "service": "feed-go",
       "metricEndpoint": "as-posts",
-      "status": "shadow",
+      "status": "ramp",
       "routes": ["/api/trpc/image.getImagesAsPostsInfinite"],
       "nodeEntry": {
         "file": "src/server/routers/image.router.ts",
@@ -45,7 +45,7 @@
       "goRoots": ["apps/feed-go/internal/feed"],
       "flags": {
         "shadow": "feed-go-shadow-infinite",
-        "transport": null,
+        "transport": "feed-go-transport-infinite",
         "probe": null
       },
       "holdout": null,
@@ -71,6 +71,31 @@
       "flags": {
         "shadow": "feed-go-shadow-model-getall",
         "transport": "feed-go-transport-model-getall",
+        "probe": null
+      },
+      "holdout": null,
+      "soak": null,
+      "nodeDeletion": null
+    },
+    {
+      "id": "model.getAssociatedResourcesCardData",
+      "kind": "trpc",
+      "service": "feed-go",
+      "metricEndpoint": "model-associated",
+      "status": "shadow",
+      "routes": ["/api/trpc/model.getAssociatedResourcesCardData"],
+      "nodeEntry": {
+        "file": "src/server/routers/model.router.ts",
+        "symbol": "modelRouter.getAssociatedResourcesCardData"
+      },
+      "goHandler": [
+        "apps/feed-go/internal/server/associated.go",
+        "apps/feed-go/internal/modelfeed/assoc.go"
+      ],
+      "goRoots": ["apps/feed-go/internal/modelfeed"],
+      "flags": {
+        "shadow": "feed-go-shadow-model-associated",
+        "transport": null,
         "probe": null
       },
       "holdout": null,
@@ -153,6 +178,31 @@
       "nodeDeletion": null
     },
     {
+      "id": "POST /api/search/[...path]",
+      "kind": "rest",
+      "service": "feed-go",
+      "metricEndpoint": "site-search",
+      "status": "shadow",
+      "routes": ["/api/search/[...path]"],
+      "nodeEntry": {
+        "file": "src/pages/api/search/[...path].ts",
+        "symbol": "default"
+      },
+      "goHandler": [
+        "apps/feed-go/internal/server/sitesearch.go",
+        "apps/feed-go/internal/sitesearch/serve.go"
+      ],
+      "goRoots": ["apps/feed-go/internal/sitesearch"],
+      "flags": {
+        "shadow": "feed-go-shadow-site-search",
+        "transport": null,
+        "probe": null
+      },
+      "holdout": null,
+      "soak": null,
+      "nodeDeletion": null
+    },
+    {
       "id": "POST /api/internal/ping",
       "kind": "rest",
       "service": "beacon-go",
@@ -198,6 +248,32 @@
         "transport": null,
         "probe": null
       },
+      "holdout": null,
+      "soak": null,
+      "nodeDeletion": null
+    },
+    {
+      "id": "contentPolicy.registrySubscription",
+      "kind": "policy",
+      "service": "content-policy-go",
+      "metricEndpoint": "registry-subscription",
+      "status": "shadow",
+      "routes": ["/v1/decide"],
+      "nodeEntry": {
+        "file": "src/server/registry-adapter/audience.ts",
+        "symbol": "audienceForUser"
+      },
+      "goHandler": [
+        "apps/content-policy-go/internal/api/api.go",
+        "apps/content-policy-go/internal/policy/decide.go"
+      ],
+      "goRoots": ["apps/content-policy-go/internal/policy"],
+      "flags": {
+        "shadow": null,
+        "transport": null,
+        "probe": null
+      },
+      "shadowEnv": "REGISTRY_ADAPTER_POLICY_URL",
       "holdout": null,
       "soak": null,
       "nodeDeletion": null

@@ -1,10 +1,13 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import MyTrainings from '../../routes/MyTrainings.svelte';
+  import MyTrainingsElements from '../../routes/MyTrainingsElements.svelte';
   import TrainingFlow from '../../routes/TrainingFlow.svelte';
   import RunView from './RunView.svelte';
   import { backend, navigate, type StudioLocation } from '$lib/host';
   import { buzzBalance } from '$lib/buzz-balance.svelte';
+  import { setElementsUi } from '$lib/elements-ui';
+  import { ELEMENTS_UI_FLAG_KEY } from '$lib/data/trainingModels';
 
   // The element's internal views — the host owns the URL space and hands us a location; everything
   // below resolves data through the backend seam, so no view ever leaves the embedding page.
@@ -18,6 +21,10 @@
   // getBuzzBalances (null when the host has none) — without this, the Review step's Yellow/Green
   // spend confirmation had no Blue balance to compare against in the embed and never fired.
   onMount(() => void buzzBalance.refresh());
+
+  const elementsUi = $derived(enabledModelFlags.includes(ELEMENTS_UI_FLAG_KEY));
+  setElementsUi(() => elementsUi);
+  const List = $derived(elementsUi ? MyTrainingsElements : MyTrainings);
 
   // `reloadTick` is the host-context refresh(): bumping it rebuilds the promises, so "server data is
   // stale" re-reads the current view. Entering a view re-derives too, so home is always fresh after
@@ -46,7 +53,7 @@
   {#await rowsPromise}
     <p class="p-6 font-mono text-sm text-dark-2">Loading trainings…</p>
   {:then rows}
-    <MyTrainings {rows} onNew={() => navigate({ view: 'new' })} />
+    <List {rows} onNew={() => navigate({ view: 'new' })} />
   {:catch err}
     <p class="p-6 font-mono text-sm text-red-400">
       Could not load trainings: {err instanceof Error ? err.message : String(err)}

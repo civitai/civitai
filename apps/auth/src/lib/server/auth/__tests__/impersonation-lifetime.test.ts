@@ -7,11 +7,14 @@ vi.mock('@civitai/auth', async (importOriginal) => ({
   ...(await importOriginal<typeof CivitaiAuth>()),
   maybeCreateSessionSigner: () => ({ mintSessionToken: h.mintSessionToken, maxAge: 30 * 86_400 }),
 }));
-vi.mock('../registry', () => ({ sessions: { trackToken: vi.fn(async () => {}) } }));
+vi.mock('../registry', () => ({ sessions: { trackToken: vi.fn(async () => undefined) } }));
 vi.mock('../verifier', () => ({ verifier: { verifyToken: vi.fn() } }));
 vi.mock('../cookie', () => ({ cookieDomain: () => undefined }));
 vi.mock('../device', () => ({ getOrCreateDeviceId: vi.fn(), linkAccount: vi.fn() }));
-vi.mock('../../db/db', () => ({ db: {} }));
+// No user rows: the account checks at each mint pass, as for an ordinary account.
+vi.mock('$lib/server/db/db', async () => ({
+  db: (await import('../../../../test/kysely-fake')).createKyselyFake({}),
+}));
 vi.mock('../../redis', () => ({ getRedis: () => null, getSysRedis: () => null }));
 
 const { mintUserSession, reissueSession } = await import('../session');

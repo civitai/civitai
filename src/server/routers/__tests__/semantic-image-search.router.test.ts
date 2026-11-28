@@ -10,6 +10,10 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 const h = vi.hoisted(() => ({
   flagOn: false,
   feedOn: false,
+  videoOn: false,
+  resourcesOn: false,
+  mltOn: false,
+  steerOn: false,
   search: vi.fn(),
   createFeedback: vi.fn(),
   trackSearch: vi.fn(),
@@ -17,7 +21,14 @@ const h = vi.hoisted(() => ({
 
 vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlags>()),
-  getFeatureFlags: () => ({ imageSearch: h.flagOn, feedSearch: h.feedOn }),
+  getFeatureFlags: () => ({
+    imageSearch: h.flagOn,
+    feedSearch: h.feedOn,
+    semanticVideoSearch: h.videoOn,
+    imageSearchResources: h.resourcesOn,
+    moreLikeThis: h.mltOn,
+    moreLikeThisSteer: h.steerOn,
+  }),
 }));
 vi.mock('~/server/services/semantic-image-search.service', async (importOriginal) => ({
   ...(await importOriginal<typeof SemanticSearch>()),
@@ -43,11 +54,12 @@ const VIEWER = {
   onboarding: 0x1f,
   emailVerified: new Date(),
 };
-const caller = (user: typeof VIEWER | null = VIEWER) =>
+const caller = (user: typeof VIEWER | null = VIEWER, credential: object = {}) =>
   semanticImageSearchRouter.createCaller({
     acceptableOrigin: true,
     user: user ?? undefined,
     tokenScope: TokenScope.Full,
+    ...credential,
     req: { headers: {} },
     features: {},
     track: { search: h.trackSearch },
@@ -55,6 +67,9 @@ const caller = (user: typeof VIEWER | null = VIEWER) =>
 
 beforeEach(() => {
   vi.clearAllMocks();
+  h.resourcesOn = false;
+  h.mltOn = false;
+  h.steerOn = false;
   h.search.mockResolvedValue({ items: [], nextCursor: undefined });
   h.createFeedback.mockResolvedValue({ id: 1 });
   h.trackSearch.mockResolvedValue(undefined);
@@ -79,11 +94,95 @@ describe('semanticImageSearch router', () => {
     expect(h.search).toHaveBeenCalledWith(expect.objectContaining({ user: undefined }));
   });
 
+  // The procedure takes the full scope, so the narrowed credential that reaches it is an app's
+  // token: full scope, but issued to an OAuth client, never a full user credential.
+  it.each([
+    ['an app token', { subject: { type: 'oauth', id: 'app' }, tokenScope: TokenScope.Full }, false],
+    ['a session (control)', {}, true],
+  ])(
+    'searches for a moderator on %s with moderator and owner views: %s',
+    async (_, credential, views) => {
+      h.flagOn = true;
+      await caller({ ...VIEWER, isModerator: true }, credential).search({ query: 'fox' });
+      expect(h.search).toHaveBeenCalledWith(
+        expect.objectContaining({ asModerator: views, asOwner: views })
+      );
+    }
+  );
+
+  // The moderator view of a refusal (refusedBy) follows the session's role alone.
+  it('takes no moderator view from the request input', async () => {
+    h.flagOn = true;
+    await caller().search({
+      query: 'fox',
+      refusedBy: 'query guard',
+      refused: true,
+      isModerator: true,
+      asModerator: true,
+      viewer_is_moderator: true,
+    } as never);
+    const args = h.search.mock.calls[0][0];
+    expect(args).toMatchObject({ asModerator: false, user: { isModerator: false } });
+    for (const key of ['refusedBy', 'refused', 'isModerator', 'asModerator', 'viewer_is_moderator'])
+      expect(Object.hasOwn(args.input, key)).toBe(false);
+  });
+
   it('refuses feedback from a signed-out visitor', async () => {
     h.flagOn = true;
     await expect(caller(null).feedback({ rating: 'up' })).rejects.toMatchObject({
       code: 'UNAUTHORIZED',
     });
+  });
+
+  // The service filters on an index that may not exist yet; without its flag the filter is refused.
+  it.each([
+    [false, 'refuses'],
+    [true, 'serves'],
+  ])('with imageSearchResources %s, %s a search by model version', async (resourcesOn) => {
+    h.flagOn = true;
+    h.resourcesOn = resourcesOn;
+    const search = caller().search({ query: 'fox', modelVersionIds: [128078] });
+    if (resourcesOn) {
+      await search;
+      expect(h.search.mock.calls[0][0].input.modelVersionIds).toEqual([128078]);
+    } else {
+      await expect(search).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(h.search).not.toHaveBeenCalled();
+    }
+  });
+
+  // Dropped, not refused: a shared ?prefer= link still gets plain "more like this".
+  it.each([
+    [true, true, [55]],
+    [true, false, undefined],
+  ])(
+    'with moreLikeThis %s and moreLikeThisSteer %s, passes the preferred tag as %s',
+    async (mltOn, steerOn, passed) => {
+      h.flagOn = true;
+      h.mltOn = mltOn;
+      h.steerOn = steerOn;
+      await caller().search({ imageId: 3, preferTagIds: [55] });
+      expect(h.search).toHaveBeenCalledTimes(1);
+      expect(h.search.mock.calls[0][0].input.preferTagIds).toEqual(passed);
+    }
+  );
+
+  // Without its flag the image id was the only input, so dropping it would answer an empty query.
+  it.each([
+    [false, 'refuses'],
+    [true, 'serves'],
+  ])('with moreLikeThis %s, %s a search by image', async (mltOn) => {
+    h.flagOn = true;
+    h.mltOn = mltOn;
+    h.steerOn = true;
+    const search = caller().search({ imageId: 3 });
+    if (mltOn) {
+      await search;
+      expect(h.search.mock.calls[0][0].input.imageId).toBe(3);
+    } else {
+      await expect(search).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(h.search).not.toHaveBeenCalled();
+    }
   });
 
   it('serves both with the flag', async () => {
@@ -131,6 +230,7 @@ describe('semanticImageSearch router — own images without the flag', () => {
       userIds: [7],
     });
     expect(h.search.mock.calls[0][0].refuseNarrowing).toBe(true);
+    expect(h.search.mock.calls[0][0].tagMatchesFirst).toBe(true);
   });
 
   it('logs the search as it ran, not as it was asked', async () => {
@@ -187,6 +287,7 @@ describe('semanticImageSearch router — own images without the flag', () => {
     const { input } = h.search.mock.calls[0][0];
     expect(input.usernames).toEqual(['vixen']);
     expect(h.search.mock.calls[0][0].refuseNarrowing).toBe(false);
+    expect(h.search.mock.calls[0][0].tagMatchesFirst).toBe(false);
     expect(input.userIds).toBeUndefined();
   });
 });
@@ -274,5 +375,51 @@ describe('semanticImageSearch router — own-images answer time', () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(run.settled()).toBe(true);
     expect(h.trackSearch.mock.calls[0][0].filters.ownImages).toBeUndefined();
+  });
+});
+
+describe('semanticImageSearch.searchVideos', () => {
+  afterEach(() => {
+    h.flagOn = false;
+    h.videoOn = false;
+  });
+
+  it('is refused without its own flag, even with image search on', async () => {
+    h.flagOn = true;
+    await expect(caller().searchVideos({ query: 'fox' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect(h.search).not.toHaveBeenCalled();
+  });
+
+  it('searches the clip index with the flag', async () => {
+    h.videoOn = true;
+    await caller().searchVideos({ query: 'fox' });
+    expect(h.search).toHaveBeenCalledTimes(1);
+    expect(h.search).toHaveBeenCalledWith(expect.objectContaining({ collection: 'videos' }));
+  });
+
+  it.each([
+    [false, 'refuses'],
+    [true, 'serves'],
+  ])('with moreLikeThis %s, %s a search by image, as search does', async (mltOn) => {
+    h.videoOn = true;
+    h.mltOn = mltOn;
+    const search = caller().searchVideos({ imageId: 3 });
+    if (mltOn) {
+      await search;
+      expect(h.search.mock.calls[0][0].input.imageId).toBe(3);
+    } else {
+      await expect(search).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(h.search).not.toHaveBeenCalled();
+    }
+  });
+
+  it('refuses a search by model version without imageSearchResources, as search does', async () => {
+    h.videoOn = true;
+    await expect(
+      caller().searchVideos({ query: 'fox', modelVersionIds: [128078] })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(h.search).not.toHaveBeenCalled();
   });
 });

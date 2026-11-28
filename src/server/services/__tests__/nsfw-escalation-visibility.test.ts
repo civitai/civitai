@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock, loggingMock } from '~/__tests__/mocks';
 import { CrucibleSort, NsfwLevel } from '~/server/common/enums';
 import { getEffectiveBrowsingLevel } from '~/server/games/daily-challenge/challenge-visibility';
-import type * as ChallengeService from '~/server/services/challenge.service';
+import type * as ChallengeVoid from '~/server/games/daily-challenge/challenge-void';
 import type * as NotificationService from '~/server/services/notification.service';
 import type * as ChallengeMetrics from '~/server/prom/challenge.metrics';
 import { CrucibleStatus } from '~/shared/utils/prisma/enums';
@@ -14,8 +14,8 @@ vi.mock('~/server/services/notification.service', async (importOriginal) => ({
   ...(await importOriginal<typeof NotificationService>()),
   createNotification: vi.fn(),
 }));
-vi.mock('~/server/services/challenge.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof ChallengeService>()),
+vi.mock('~/server/games/daily-challenge/challenge-void', async (importOriginal) => ({
+  ...(await importOriginal<typeof ChallengeVoid>()),
   voidChallenge: vi.fn(),
 }));
 vi.mock('~/server/prom/challenge.metrics', async (importOriginal) => ({
@@ -115,6 +115,7 @@ describe('crucible escalated by a text scan', () => {
       image: {
         ingestion: 'Scanned',
         nsfwLevel: coverLevel,
+        modelRestricted: false,
         needsReview: null,
         tosViolation: false,
       },

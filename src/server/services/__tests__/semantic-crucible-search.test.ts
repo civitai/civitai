@@ -5,8 +5,10 @@ import {
   type CandidateFilter,
   type CandidateSource,
 } from '~/server/services/semantic-search-client';
+import type { GuardRead } from '~/server/services/semantic-search-client';
 import type { SessionUser } from '~/types/session';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { describeUnauditedRefusedPage } from './semantic-audit.harness';
 loggingMock.logToAxiom.mockImplementation(async () => undefined);
 
 const h = vi.hoisted(() => ({
@@ -35,6 +37,7 @@ vi.mock('~/server/services/blocklist.service', () => ({
 }));
 vi.mock('~/server/services/search-query-rules', () => ({ matchesQueryRule: async () => false }));
 vi.mock('~/utils/metadata/audit', () => ({
+  includesNsfw: () => false,
   includesInappropriate: h.includesInappropriate,
   includesPoi: () => false,
   includesMinor: () => false,
@@ -88,18 +91,20 @@ const run = (
     isGreen = false,
     cap,
     correctedQuery,
+    guard,
   }: {
     input?: Record<string, unknown>;
     user?: SessionUser;
     isGreen?: boolean;
     cap?: number;
     correctedQuery?: string;
+    guard?: GuardRead;
   } = {}
 ) => {
   const filters: CandidateFilter[] = [];
   const candidateSource: CandidateSource = async ({ filter, offset, limit }) => {
     filters.push(filter);
-    return { ids: ranked.slice(offset, offset + limit), correctedQuery };
+    return { ids: ranked.slice(offset, offset + limit), correctedQuery, guard };
   };
   const result = searchSemanticCrucibles({
     input: { query: 'neon arena', browsingLevel: 31, limit: 20, ...input } as never,
@@ -308,4 +313,14 @@ describe('searchSemanticCrucibles', () => {
     expect(page.items).toEqual([]);
     expect(page).not.toHaveProperty('refusal');
   });
+});
+
+describeUnauditedRefusedPage({
+  index: 'crucibles',
+  run,
+  refuseWords: () => h.includesInappropriate.mockReturnValue('poi' as never),
+  refuseCorrection: () =>
+    h.includesInappropriate.mockImplementation(({ prompt }) =>
+      prompt === 'corrected' ? ('blocked' as never) : false
+    ),
 });

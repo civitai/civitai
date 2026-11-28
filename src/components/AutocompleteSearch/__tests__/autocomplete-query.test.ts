@@ -252,6 +252,17 @@ describe('nextFeedSearchQuery', () => {
     ).toEqual({ baseModels: 'Illustrious', period: 'AllTime', query: 'red dragon' });
   });
 
+  it("keeps a profile's route username whatever @user token is typed", () => {
+    expect(
+      nextFeedSearchQuery({ username: 'RisingV' }, '@someone red dragon', undefined, true)
+    ).toEqual({ username: 'RisingV', query: 'red dragon' });
+    expect(nextFeedSearchQuery({ username: 'RisingV', query: 'cat' }, '', 'RisingV', true)).toEqual(
+      {
+        username: 'RisingV',
+      }
+    );
+  });
+
   it('drops only the query when the bar is emptied', () => {
     expect(nextFeedSearchQuery({ baseModels: 'Illustrious', query: 'cat' }, '')).toEqual({
       baseModels: 'Illustrious',

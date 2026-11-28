@@ -1,47 +1,36 @@
 import type { IncomingMessage } from 'http';
 import type { NextApiRequest } from 'next';
-import { mintAppToken } from '@civitai/auth';
 import { requiresEmailVerification } from '~/server/common/email-verification-gate';
 import { OnboardingSteps } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import type { BuzzLimit } from '~/server/schema/api-key.schema';
 import { simpleBuzzLimitToBudgets } from '~/server/schema/api-key.schema';
 import { isAppBlocksDevTunnelEnabled } from '~/server/services/app-blocks-flag';
-import { oauthScopeBitsFor } from '~/server/services/blocks/block-oauth-scope';
 import type { DevTunnelFrame } from '~/server/services/blocks/dev-tunnel-frame.service';
 import { resolveDevTunnelFrame } from '~/server/services/blocks/dev-tunnel-frame.service';
+import { stampDirectPreviewActivity } from '~/server/services/blocks/dev-tunnel.service';
 import { writeOauthConsent } from '~/server/services/blocks/oauth-consent-sync.service';
+import { reopenBanDisabledClient } from '~/server/services/oauth-ban-marker';
 import { getFeatureFlagsAsync, isFliptDecisive } from '~/server/services/feature-flags.service';
-import {
-  APP_ASSISTANT_DAILY_BUZZ_CAP,
-  APP_ASSISTANT_SCOPES,
-} from '~/shared/constants/app-assistant.constants';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { APP_ASSISTANT_DAILY_BUZZ_CAP } from '~/shared/constants/app-assistant.constants';
 import { canAccessAppAssistant } from '~/shared/utils/app-blocks-access';
 import { Flags } from '~/shared/utils/flags';
 import type { SessionUser } from '~/types/session';
+import {
+  appAssistantClientId,
+  appAssistantTokenScope,
+} from '~/server/services/app-assistant/app-assistant-token';
 
-/**
- * One OAuth client per user rather than one shared row: an `OauthClient` belongs to the user in its
- * `userId`, who may edit or delete it through the OAuth-apps settings, so a shared row would be one
- * user's to break for everyone. Not `firstparty-`: the auth hub reserves that prefix for its own
- * trusted clients.
- */
-export const APP_ASSISTANT_CLIENT_PREFIX = 'appassist-';
-
-export function appAssistantClientId(userId: number): string {
-  return `${APP_ASSISTANT_CLIENT_PREFIX}${userId}`;
-}
-
-/**
- * Who a token is for. The chat spends Buzz; the hosted sandbox service only needs to know who the
- * user is, so it gets `UserRead` alone.
- */
-export type AppAssistantTokenPurpose = 'chat' | 'sandbox';
-
-function scopeFor(purpose: AppAssistantTokenPurpose): number {
-  return purpose === 'chat' ? oauthScopeBitsFor([...APP_ASSISTANT_SCOPES]) : TokenScope.UserRead;
-}
+// The token mint and consent read live in a leaf module (no service graph behind it), so a caller
+// that only mints (the submission trace's chat read) does not pull this whole service in.
+export {
+  APP_ASSISTANT_CLIENT_PREFIX,
+  appAssistantClientId,
+  hasAppAssistantConsent,
+  mintAppAssistantToken,
+  type AppAssistantToken,
+  type AppAssistantTokenPurpose,
+} from '~/server/services/app-assistant/app-assistant-token';
 
 export interface AppAssistantRefusal {
   status: 403;
@@ -222,11 +211,6 @@ export async function getRunnerDevTunnelUser(
   return gated;
 }
 
-export interface AppAssistantToken {
-  token: string;
-  expiresAt: string;
-}
-
 /**
  * Turns App Assistant on for the user: their own client, and consent for its scopes with a daily
  * Buzz cap. Only an explicit request from the user may call this, never a token refresh, so revoking
@@ -235,31 +219,28 @@ export interface AppAssistantToken {
  */
 export async function enableAppAssistant(userId: number): Promise<void> {
   const clientId = appAssistantClientId(userId);
-  const scope = scopeFor('chat');
+  const scope = appAssistantTokenScope('chat');
 
-  const client = await dbWrite.oauthClient.findUnique({
+  // The whole shape on every call, so a hand-edited row is put back.
+  // accessMode is deliberately absent so the upsert never undoes a staff or ban disable.
+  const shape = {
+    secret: null,
+    name: 'App Assistant',
+    description: 'The Civitai App Assistant, building apps in your sandbox. Only you can use it.',
+    redirectUris: [],
+    allowedOrigins: [],
+    isConfidential: false,
+    grants: [],
+    allowedScopes: scope,
+  };
+  await dbWrite.oauthClient.upsert({
     where: { id: clientId },
-    select: { allowedScopes: true },
+    create: { id: clientId, ...shape, userId },
+    update: shape,
+    select: { id: true },
   });
-  if (client?.allowedScopes !== scope)
-    await dbWrite.oauthClient.upsert({
-      where: { id: clientId },
-      create: {
-        id: clientId,
-        secret: null,
-        name: 'App Assistant',
-        description:
-          'The Civitai App Assistant, building apps in your sandbox. Only you can use it.',
-        redirectUris: [],
-        allowedOrigins: [],
-        isConfidential: false,
-        grants: [],
-        allowedScopes: scope,
-        userId,
-      },
-      update: { allowedScopes: scope },
-      select: { id: true },
-    });
+
+  await reopenBanDisabledClient(clientId);
 
   const existing = await dbWrite.oauthConsent.findUnique({
     where: { userId_clientId: { userId, clientId } },
@@ -269,44 +250,11 @@ export async function enableAppAssistant(userId: number): Promise<void> {
     await writeOauthConsent({
       userId,
       clientId,
-      scope: (existing?.scope ?? 0) | scope,
+      scope: (existing?.scope ?? 0n) | scope,
       buzzLimit: existing
         ? (existing.buzzLimit as BuzzLimit | null)
         : simpleBuzzLimitToBudgets({ limit: APP_ASSISTANT_DAILY_BUZZ_CAP, period: 'day' }),
     });
-}
-
-/**
- * Mints an access token for `purpose` against the consent `enableAppAssistant` wrote, or returns
- * `null` when there is none covering the scopes (never turned on, or revoked since).
- */
-export async function mintAppAssistantToken(
-  userId: number,
-  purpose: AppAssistantTokenPurpose
-): Promise<AppAssistantToken | null> {
-  if (!(await hasAppAssistantConsent(userId, purpose))) return null;
-  const minted = await mintAppToken({
-    userId,
-    clientId: appAssistantClientId(userId),
-    scope: scopeFor(purpose),
-  });
-  return { token: minted.accessToken, expiresAt: minted.expiresAt };
-}
-
-/**
- * Whether the user's App Assistant consent covers `purpose`'s scopes: written by
- * `enableAppAssistant`, gone once the user revokes it under connected apps.
- */
-export async function hasAppAssistantConsent(
-  userId: number,
-  purpose: AppAssistantTokenPurpose = 'chat'
-): Promise<boolean> {
-  const scope = scopeFor(purpose);
-  const consent = await dbWrite.oauthConsent.findUnique({
-    where: { userId_clientId: { userId, clientId: appAssistantClientId(userId) } },
-    select: { scope: true },
-  });
-  return !!consent && (consent.scope & scope) === scope;
 }
 
 export type AppAssistantPreview =
@@ -324,7 +272,15 @@ export async function getAppAssistantPreview({
   user,
   req,
   blockId,
-}: GateContext & { blockId: string }): Promise<AppAssistantPreview> {
+  check = false,
+}: GateContext & {
+  blockId: string;
+  /**
+   * The pane's liveness poll, not a (re)mint of the frame: a direct preview's idle clock is not
+   * moved, so an open tab alone cannot keep a session from idling out.
+   */
+  check?: boolean;
+}): Promise<AppAssistantPreview> {
   const features = await getFeatureFlagsAsync({ user, req });
   if (!features.appBlocksAuthor || !(await isAppBlocksDevTunnelEnabled({ user })))
     return { status: 'forbidden', error: 'Live preview is not available on this account' };
@@ -332,5 +288,8 @@ export async function getAppAssistantPreview({
   if (!frame) return { status: 'not-found' };
   if (frame.dnsPending) return { status: 'preparing' };
   if (!frame.iframeSrc) return { status: 'no-tunnel' };
+  // A direct preview's activity: the frame (re)mint is its entry-document load (a tunnel's gate
+  // stamps on that). Never on the liveness poll.
+  if (frame.transport === 'direct' && !check) await stampDirectPreviewActivity(user.id, blockId);
   return { status: 'ok', frame: { ...frame, iframeSrc: frame.iframeSrc } };
 }

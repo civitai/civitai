@@ -66,6 +66,7 @@ export const commentDetailFetcher = createDetailFetcher({
       .where('tosViolation', '=', false)
       .where('hidden', '=', false)
       .where('deletedAt', 'is', null)
+      .where(sql`"entityType"::text`, '<>', 'featurePage')
       .execute();
     if (!rows.length) return;
     const users = await db.user.findMany({

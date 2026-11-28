@@ -1,3 +1,5 @@
+import { encodeSignals, PRESS_FIELDS, type PressSignals } from '$lib/press';
+
 /** What the page shows for one thing to judge: the question, the sealed item, and a banner when the question changed, and the category of a yes/no question. */
 export type PickedItem = {
   question: {
@@ -6,7 +8,15 @@ export type PickedItem = {
     prompt: string;
     options: { value: string; label: string }[];
   };
-  item: { id: string; key: string; src: string; width: number | null; height: number | null };
+  item: {
+    id: string;
+    key: string;
+    src: string;
+    width: number | null;
+    height: number | null;
+    /** The opaque name live drops use for this item (`live-key.ts`). */
+    live: string;
+  };
   banner: { heading: string } | null;
   category: { heading: string } | null;
 };
@@ -23,18 +33,54 @@ export const itemKey = (questionKey: string, src: string) => `${questionKey}:${s
  */
 export const MAX_EXCLUDED = 24;
 
-/** Items kept downloaded ahead of the one on screen (the first READY_TARGET of them decoded). */
-export const BUFFER_TARGET = 10;
+/**
+ * Items kept downloaded ahead of the one on screen (the first READY_TARGET of them decoded). Kept short: under load an item
+ * resolves within seconds, and one held longer is often closed by the time it is judged (11-18: about 1 in 4 votes).
+ */
+export const BUFFER_TARGET = 3;
 
 /** How many of the buffered items, from the front, are decoded and ready to be shown at once. */
 export const READY_TARGET = 3;
 
 /** More are asked for whenever this many or fewer are buffered. */
-export const REFILL_AT = 5;
+export const REFILL_AT = 2;
 
 export const NETWORK_NOTICE =
   'Your last judgment may not have been recorded: check your connection.';
 const FAILED_NOTICE = 'Your judgment could not be recorded.';
+
+const NOT_COUNTED = 'That judgment was not counted.';
+
+export const HEART_CUE = '+1 toward your next heart';
+
+/**
+ * The cue a recorded vote earns: a right skill check while a smite weighed on the player when they answered (`smitesBefore`,
+ * read at the press, since the page data may already be fresher).
+ */
+export function skillCheckCue(
+  result: Record<string, unknown> | undefined,
+  smitesBefore: number
+): string | null {
+  const check = result?.check as { verdict?: unknown } | undefined;
+  return check?.verdict === 'correct' && smitesBefore > 0 ? HEART_CUE : null;
+}
+
+/**
+ * Refusals that mean the item moved on while it waited to be judged (settled, escalated past the player's rank, or
+ * withdrawn), not that the player did anything wrong.
+ */
+/** Refusals for an item that moved on (settled, escalated, withdrawn) while it waited in the buffer. */
+export const STALE_REASONS: ReadonlySet<string> = new Set([
+  'not-open',
+  'not-eligible',
+  'unavailable',
+]);
+
+/** A background vote the server refused: by then the player has moved on, so the note says the press did not count. */
+export const refusedNote = (message: string) =>
+  message === NETWORK_NOTICE || message.includes(NOT_COUNTED)
+    ? message
+    : `${message} ${NOT_COUNTED}`;
 
 /**
  * Bookkeeping for votes posted in the background: an item is sent once (by key, since its token changes each time it is
@@ -134,6 +180,12 @@ export function createItemBuffer({
     drop(key: string) {
       items = items.filter((it) => it.item.item.key !== key);
     },
+    /** Drops the items whose live key is in `gone`; returns their item keys. */
+    dropLive(gone: ReadonlySet<string>): string[] {
+      const dropped = items.filter((it) => gone.has(it.item.item.live));
+      items = items.filter((it) => !dropped.includes(it));
+      return dropped.map((it) => it.item.item.key);
+    },
     clear() {
       items = [];
     },
@@ -161,7 +213,20 @@ export const refillCount = (size: number): number =>
   size === 0 ? READY_TARGET : Math.max(1, BUFFER_TARGET - size);
 
 type Outcome = { type: string; status?: number; data?: Record<string, unknown> };
-export type VoteOutcome = { ok: true } | { ok: false; message: string; resync: boolean };
+export type VoteOutcome =
+  | { ok: true }
+  | {
+      ok: false;
+      message: string;
+      resync: boolean;
+      stale: boolean;
+      /** A stale judgment the server still counted toward the Daily Watch (no gold). */
+      watchCounted?: boolean;
+    };
+
+/** The note a refused background vote leaves, or none for a stale item: the player is already on the next one. */
+export const refusalNote = (outcome: Extract<VoteOutcome, { ok: false }>): string | null =>
+  outcome.stale ? null : refusedNote(outcome.message);
 
 /** The server's answer when too many of one player's votes are in flight at once: not a rate limit, so the vote is simply sent again. */
 export const isBusy = (result: Outcome | null): boolean =>
@@ -197,6 +262,27 @@ export function createSerialQueue() {
   };
 }
 
+export type PressClock = { wall: () => number; mono: () => number };
+const systemClock: PressClock = { wall: () => Date.now(), mono: () => performance.now() };
+
+/**
+ * Stamps a vote body with the press fields. `waitedMs` uses the monotonic clock, so unlike the wall-clock gap the server
+ * works out it has no skew in it; the returned call sets it once, at the first start of the post (a resend keeps it).
+ */
+export function markPress(
+  body: FormData,
+  signals: PressSignals,
+  clock: PressClock = systemClock
+): () => void {
+  const pressed = clock.mono();
+  body.set(PRESS_FIELDS.pressedAt, String(clock.wall()));
+  body.set(PRESS_FIELDS.signals, encodeSignals(signals));
+  return () => {
+    if (body.has(PRESS_FIELDS.waitedMs)) return;
+    body.set(PRESS_FIELDS.waitedMs, String(Math.max(0, Math.round(clock.mono() - pressed))));
+  };
+}
+
 /** A post that has had no answer by then is given up on, so one hung request cannot hold up the votes queued behind it. */
 export const POST_TIMEOUT_MS = 15_000;
 
@@ -210,8 +296,12 @@ export type PostVoteDeps = {
   /** Posts the vote once. `reached` is true only for an answer that was read in full; an abort or a lost connection is not. */
   send: VoteSend;
   wait: (ms: number) => Promise<void>;
+  /** When the vote leaves the queue and its first post starts. */
+  onStart?: () => void;
   /** A vote that came back as anything but recorded: the notice, and whether the page must be read again. */
   onFailure: (outcome: Extract<VoteOutcome, { ok: false }>) => void;
+  /** A recorded vote, with what the action returned (a skill check graded on the spot carries `check`). */
+  onSuccess?: (data: Record<string, unknown> | undefined) => void;
   /** After the vote has settled, whatever it came to. */
   onSettled: () => Promise<void>;
   timeoutMs?: number;
@@ -230,12 +320,22 @@ export async function postVote(key: string, deps: PostVoteDeps): Promise<void> {
     reached = sent.reached;
     return sent.result;
   };
-  const result = await queue.add(() => sendWithRetry(attempt, wait, deps.retryDelays));
+  const result = await queue.add(() => {
+    deps.onStart?.();
+    return sendWithRetry(attempt, wait, deps.retryDelays);
+  });
   const outcome = describeOutcome(result);
   tracker.settle(key);
   if (!reached || isBusy(result)) tracker.release(key);
-  if (!outcome.ok) onFailure(outcome);
-  await onSettled();
+  // A throwing handler must not skip the settle: it lands the vote and reads the page again.
+  try {
+    if (!outcome.ok) onFailure(outcome);
+    else deps.onSuccess?.(result?.data);
+  } catch (error) {
+    console.error('knights: a vote handler failed', error);
+  } finally {
+    await onSettled();
+  }
 }
 
 /**
@@ -243,7 +343,7 @@ export async function postVote(key: string, deps: PostVoteDeps): Promise<void> {
  * paces the player, or that no longer matches the session, needs the page reloaded to show the rest.
  */
 export function describeOutcome(result: Outcome | null): VoteOutcome {
-  if (!result) return { ok: false, message: NETWORK_NOTICE, resync: false };
+  if (!result) return { ok: false, message: NETWORK_NOTICE, resync: false, stale: false };
   if (result.type === 'success') return { ok: true };
   if (result.type === 'failure') {
     const message = result.data?.message;
@@ -251,7 +351,9 @@ export function describeOutcome(result: Outcome | null): VoteOutcome {
       ok: false,
       message: typeof message === 'string' && message ? message : FAILED_NOTICE,
       resync: typeof result.data?.lockoutSeconds === 'number',
+      stale: typeof result.data?.reason === 'string' && STALE_REASONS.has(result.data.reason),
+      ...(result.data?.watchCounted === true ? { watchCounted: true } : {}),
     };
   }
-  return { ok: false, message: FAILED_NOTICE, resync: true };
+  return { ok: false, message: FAILED_NOTICE, resync: true, stale: false };
 }

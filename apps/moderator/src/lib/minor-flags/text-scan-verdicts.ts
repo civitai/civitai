@@ -25,6 +25,8 @@ export type RedetectionView = {
   textHash: string;
   promptIds?: unknown;
   model?: string | null;
+  /** The flag entry is this detection's own unfinished keep (set by the Needs review query). */
+  unfinishedKeep?: boolean;
 };
 
 /** The human clear a re-detection sits on top of. */

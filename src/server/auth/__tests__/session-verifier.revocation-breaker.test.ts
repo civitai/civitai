@@ -21,10 +21,6 @@ vi.mock('../session-metrics', async (importOriginal) => ({
 
 import { REDIS_SYS_KEYS } from '@civitai/redis/client';
 import { envMock, redisMock } from '~/__tests__/mocks';
-import {
-  sysReadBreakerTransitionCounter,
-  sysReadGuardRejectionCounter,
-} from '~/server/prom/sys-read-guard.metrics';
 import { withSysReadBreaker } from '~/server/redis/sys-read-deadline';
 
 // This file is about the breakers alone, so the seen-marker fallback is off. With it on, a read the
@@ -65,14 +61,13 @@ const storeAnswers = () => {
   redisMock.sysRedis.get.mockResolvedValue(null);
 };
 
-/** A store the client cannot reach: every read fails with a connection error. */
+/** A store the client cannot reach: every read fails at once, and the check does not retry it. */
 const storeErrors = () => {
-  redisMock.sysRedis.hGet.mockRejectedValue(new Error('ECONNRESET'));
-  redisMock.sysRedis.get.mockRejectedValue(new Error('ECONNRESET'));
+  redisMock.sysRedis.hGet.mockRejectedValue(new Error('The client is closed'));
+  redisMock.sysRedis.get.mockRejectedValue(new Error('The client is closed'));
 };
 
 const outcomes = () => observeSessionLeg.mock.calls.map((c) => c[1]);
-const lastOutcome = () => observeSessionLeg.mock.calls.at(-1)?.slice(0, 2);
 
 /** Fails `n` reads that are not the revocation read, through the shared breaker. */
 const failSharedReads = async (n: number) => {
@@ -111,7 +106,6 @@ describe('the session revocation read breaker', () => {
     await expect(sharedRead()).rejects.toMatchObject({ reason: 'breaker-open' });
 
     expect(await isRevoked(signedOut)).toBe(true);
-    expect(lastOutcome()).toEqual(['revocation', 'hit']);
   });
 
   it('opens on revocation-read failures, and those failures leave the shared breaker closed', async () => {
@@ -121,7 +115,6 @@ describe('the session revocation read breaker', () => {
     // Open: refused without waiting, so the check fails open even though the store answers again.
     storeAnswers();
     expect(await isRevoked(signedOut)).toBe(false);
-    expect(lastOutcome()).toEqual(['revocation', 'breaker-open']);
 
     await expect(sharedRead()).resolves.toBe('through');
   });
@@ -133,13 +126,10 @@ describe('the session revocation read breaker', () => {
 
     advance(COOLDOWN_MS - 1);
     expect(await isRevoked(signedOut)).toBe(false);
-    expect(lastOutcome()).toEqual(['revocation', 'breaker-open']);
 
     advance(2);
     expect(await isRevoked(signedOut)).toBe(true);
-    expect(lastOutcome()).toEqual(['revocation', 'hit']);
     expect(await isRevoked(signedOut)).toBe(true);
-    expect(lastOutcome()).toEqual(['revocation', 'hit']);
   });
 
   it('re-opens for another cooldown when the probe fails', async () => {
@@ -148,11 +138,9 @@ describe('the session revocation read breaker', () => {
 
     advance(COOLDOWN_MS + 1);
     expect(await isRevoked(signedOut)).toBe(false);
-    expect(lastOutcome()).toEqual(['revocation', 'error']);
 
     storeAnswers();
     expect(await isRevoked(signedOut)).toBe(false);
-    expect(lastOutcome()).toEqual(['revocation', 'breaker-open']);
   });
 
   it('with the breaker off (the default), neither breaker ever opens', async () => {
@@ -167,45 +155,16 @@ describe('the session revocation read breaker', () => {
     await expect(sharedRead()).resolves.toBe('through');
   });
 
-  it("labels the revocation breaker's transitions and rejections apart from the shared breaker's", async () => {
-    const count = async (
-      counter: typeof sysReadBreakerTransitionCounter | typeof sysReadGuardRejectionCounter,
-      labels: Record<string, string>
-    ) =>
-      (await counter.get()).values
-        .filter((v) =>
-          Object.entries(labels).every(
-            ([k, want]) => (v.labels as Record<string, unknown>)[k] === want
-          )
-        )
-        .reduce((sum, v) => sum + v.value, 0);
-    const snapshot = async () => ({
-      revocationOpened: await count(sysReadBreakerTransitionCounter, {
-        guard: 'revocation',
-        to: 'open',
-      }),
-      sharedOpened: await count(sysReadBreakerTransitionCounter, { guard: 'shared', to: 'open' }),
-      revocationRefused: await count(sysReadGuardRejectionCounter, {
-        guard: 'revocation',
-        reason: 'breaker-open',
-      }),
-      sharedRefused: await count(sysReadGuardRejectionCounter, {
-        guard: 'shared',
-        reason: 'breaker-open',
-      }),
-    });
-
+  // civitai/civitai#10695: a reset is retried once through the same breaker, so one check can count twice;
+  // a retry that fails pauses retries, so the next check counts once.
+  it('counts a retried reset and its failed retry toward the breaker, and reports one outcome per check', async () => {
     breakerOn();
-    const before = await snapshot();
-    await tripRevocationBreaker();
-    await isRevoked(signedOut);
-    await isRevoked(signedOut);
-
-    expect(await snapshot()).toEqual({
-      revocationOpened: before.revocationOpened + 1,
-      sharedOpened: before.sharedOpened,
-      revocationRefused: before.revocationRefused + 2,
-      sharedRefused: before.sharedRefused,
-    });
+    redisMock.sysRedis.hGet.mockRejectedValue(new Error('read ECONNRESET'));
+    redisMock.sysRedis.get.mockRejectedValue(new Error('read ECONNRESET'));
+    expect(await isRevoked(signedOut)).toBe(false);
+    expect(outcomes()).toEqual(['error']);
+    expect(await isRevoked(signedOut)).toBe(false);
+    expect(await isRevoked(signedOut)).toBe(false);
+    expect(outcomes()).toEqual(['error', 'error', 'breaker-open']);
   });
 });

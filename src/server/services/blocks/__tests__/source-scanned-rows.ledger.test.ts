@@ -130,13 +130,16 @@ describe('app-block-source-scanned-rows: one read, per app, at every surface', (
 const h = vi.hoisted(() => ({ isFlipt: vi.fn() }));
 vi.mock('~/server/flipt/client', () => ({
   FLIPT_FEATURE_FLAGS: { APP_BLOCK_SOURCE_SCANNED_ROWS: 'app-block-source-scanned-rows' },
-  isFlipt: (...a: unknown[]) => h.isFlipt(...a),
+  isFlipt: async (...a: unknown[]) => h.isFlipt(...a),
+  isFliptSync: (...a: unknown[]) => h.isFlipt(...a),
+  readFliptBoolean: async (...a: unknown[]) => h.isFlipt(...a),
+  ensureFliptInitialized: async () => undefined,
 }));
 
 describe('appUsesScannedSourceRows', () => {
   beforeEach(() => {
     h.isFlipt.mockReset();
-    h.isFlipt.mockImplementation(async (_flag: string, entityId?: string) => entityId === 'apb_a');
+    h.isFlipt.mockImplementation((_flag: string, entityId?: string) => entityId === 'apb_a');
   });
 
   it('🔴 evaluates the flag for the app: entity = the app block id, no context', async () => {
@@ -150,9 +153,14 @@ describe('appUsesScannedSourceRows', () => {
   });
 
   it.each([undefined, null, ''])('no app id (%s) answers OFF without asking Flipt', async (id) => {
-    h.isFlipt.mockResolvedValue(true);
+    h.isFlipt.mockReturnValue(true);
     const { appUsesScannedSourceRows } = await import('../source-scanned-rows');
     expect(await appUsesScannedSourceRows(id)).toBe(false);
     expect(h.isFlipt).not.toHaveBeenCalled();
+  });
+  it('🔴 a flag that cannot be evaluated answers ON', async () => {
+    h.isFlipt.mockReturnValue(null);
+    const { appUsesScannedSourceRows } = await import('../source-scanned-rows');
+    expect(await appUsesScannedSourceRows('apb_a')).toBe(true);
   });
 });

@@ -36,11 +36,11 @@ where it loads on demand:
 ## Where knowledge lives
 - **`.claude/rules/`** — load automatically when you read or edit matching files: `testing`,
   `convention-guards`, `server` (architecture map, jobs), `database`, `sveltekit`, `components`,
-  `comments`, `debug-endpoints`, `public-api`, `label-store`, `generation-form`. Creating a new file loads nothing, so read the matching
+  `comments`, `debug-endpoints`, `public-api`, `label-store`, `generation-form`, `import-cycles`. Creating a new file loads nothing, so read the matching
   rule first; read one directly whenever you need it before touching code.
 - **`docs/dev/`** — `local-setup.md` (env setup and the traps that cost hours: auth hub, SSL, env
   precedence, feature flags), `worktrees.md`, `prettier.md`, `filing-follow-ups.md`,
-  `convention-guards.md` (every guard and what it enforces).
+  `convention-guards.md` (every guard and what it enforces), `api-routes.md` (`src/server/api-routes`).
 - **`docs/features/`** — check before implementing a feature (index: `docs/features/README.md`).
 - **Skills** — `dev-server` (dev servers **and** worktrees), `postgres-query`, `civitai-review`,
   `pr-review` (the hosted review of your PR: intent, findings, fixes), etc.
@@ -53,7 +53,7 @@ where it loads on demand:
 - **Worktrees are optional.** If you use one, create it with
   `node .claude/skills/dev-server/cli.mjs wt new <name> <branch>` and remove it with `wt stale` / `wt rm`,
   not the `EnterWorktree` tool or a hand-rolled `git worktree add`.
-- `pnpm run typecheck` (authoritative; `typecheck:fast` is edit-loop only), `pnpm run lint`.
+- `pnpm run typecheck` (TypeScript 7 from `tools/ts7`, single-threaded locally; authoritative), `pnpm run lint`.
   In SvelteKit apps use `typecheck`, never `check` or a manual `svelte-kit sync`
   (details: `.claude/rules/sveltekit.md`).
 - **Formatting:** `pnpm run prettier:write` formats uncommitted files only. Never run a repo-wide
@@ -71,15 +71,15 @@ pnpm run test:packages:run # packages/*      pnpm run test:apps:run   # apps/*
 pnpm run test:component    # browser mode    pnpm run test:lint-rules # convention guards
 pnpm test                  # Playwright e2e (pnpm run test:ui for the UI)
 ```
-- A test earns its place only if it can catch a bug a caller would notice; what that rules out is in
-  `.claude/rules/testing.md` → What earns a test.
+- A test earns its place only if it can catch a bug a caller would notice, and mocks only what crosses the
+  process boundary, never this repo's own modules: `.claude/rules/testing.md` → What earns a test.
 - The suites cover disjoint directories; `test:unit:run` runs nothing under `packages/` or `apps/`.
 - Select the unit suite as **`--project 'unit*'`** — `--project unit` silently skips the `unit-native`
   files and exits 0.
 - Run the suites covering your change while iterating (find them with
-  `grep -rln '<symbol>' src --include=*.test.ts`), then the full suite once before committing.
+  `grep -rln '<symbol>' src --include=*.test.ts`); the full suite runs in CI (`full-ci` label).
   `vitest related` does **not** narrow this codebase.
-- Run `pnpm run test:lint-rules` (~1s) whenever you touch a transaction, a mock, or a module-scope
+- Run `pnpm run test:lint-rules` (~30s) whenever you touch a transaction, a mock, or a module-scope
   constant — those convention guards are tests, not eslint rules.
 - Never put unit tests under `src/pages` — `next build` treats them as routes and fails.
 
@@ -121,12 +121,12 @@ anything committed counts as disclosed and must be fixed and rotated.
 1. `pnpm run prettier:write`
 2. Lint what you changed: `pnpm exec eslint <changed .ts/.tsx files>`. Skip the full `pnpm run typecheck`
    and `pnpm run lint` locally — PR CI runs both on every PR to `main` (on a draft, ESLint only). (Typecheck can't be scoped to files.)
-3. The unit suite (`pnpm run test:unit:run`; PR CI does not run it unless the PR has the `full-ci` label: adding it starts the full
+3. The covering test files (the full unit suite runs only in CI, and PR CI runs it only with the `full-ci` label: adding it starts the full
    suite at once, every later push runs it too, and it lifts the draft gate (same-repo PRs only). Add it only when needed (the change touches code the unit/component suites cover and the PR is near
    merge-ready), never on every PR: `gh pr edit <n> --add-label full-ci`); `pnpm run db:check-generated` if you touched the schema
 4. Test the change locally
-5. Before merging, check the PR's CI and its `pr-review` round (the `pr-review` skill) — `main` has no
-   required checks, so a red run doesn't block.
+5. Leave nothing open: before marking a PR ready, settle every "possibly", fix every check it turns red, and get each
+   decision answered. Before merging, check its CI and `pr-review` round (`pr-review` skill); `main` has no required checks.
 6. Run the `cleanup` skill: `comment-review`, `docs-drift-review` and `claim-review`, lanes that no build or test covers (`comment-review`
    is also the hosted review's `comments` lane, and `civitai-review` runs it locally when recording). Required when you moved a file, renamed a script or command, retired an env var,
    completed a tracked item, or a pushback has turned up an overstatement.

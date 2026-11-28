@@ -1,0 +1,29 @@
+import { describe, expect, it } from 'vitest';
+import { csamQueueHeldText } from '../held-url';
+
+describe('csamQueueHeldText', () => {
+  // Callers pass a numeric id as a string (String(offeringId)); it must stay a literal, not be read
+  // as a column reference.
+  it('takes an integer literal as the entity', () => {
+    const text = csamQueueHeldText('ServiceOffering', '123');
+    expect(text).toContain('"entityId" = 123');
+  });
+
+  it('takes a column reference as the entity', () => {
+    expect(csamQueueHeldText('ServiceOffering', 'cso."id"')).toContain('"entityId" = cso."id"');
+  });
+
+  it('takes a column of an alias that only starts like one of its own', () => {
+    expect(csamQueueHeldText('ServiceOffering', 'qhx."id"')).toContain('"entityId" = qhx."id"');
+  });
+
+  it('takes an entity type with a digit in it, and still refuses one that is not a name', () => {
+    expect(csamQueueHeldText('CommentV3', 'm."commentId"')).toContain(`= 'CommentV3'`);
+    expect(() => csamQueueHeldText("CommentV3' OR '1", '1')).toThrow(/Bad entity type/);
+    expect(() => csamQueueHeldText('3Comment', '1')).toThrow(/Bad entity type/);
+  });
+
+  it('refuses an entity that names one of its own aliases', () => {
+    expect(() => csamQueueHeldText('ServiceOffering', 'qh."id"')).toThrow(/Alias taken/);
+  });
+});

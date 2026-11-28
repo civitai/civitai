@@ -41,6 +41,12 @@ const mocks = vi.hoisted(() => ({
   invalidate: vi.fn().mockResolvedValue(undefined),
   // Captures the options passed to getAgentReview.useQuery so poll wiring is asserted.
   lastAgentOpts: undefined as { refetchInterval?: (q: unknown) => unknown } | undefined,
+  // Captures the INPUT of the latest getAgentReview.useQuery (which run is on screen).
+  lastAgentInput: undefined as { publishRequestId: string; reportId?: string } | undefined,
+  // Every run of the request (listAgentReviews), newest first — drives the report picker.
+  agentRuns: [] as unknown[],
+  // The re-run model picker's list (getAgentReviewModels).
+  agentModels: { available: true, models: [] } as unknown,
 }));
 
 /*
@@ -109,14 +115,6 @@ vi.mock('~/utils/notifications', async (importOriginal) => ({
   showWarningNotification: (...a: unknown[]) => showWarning(...a),
 }));
 
-// The AgentReviewChat sub-panel reads `useCurrentUser()` (→ CivitaiSessionContext)
-// for its markdown link-rewrite. The network-free scaffold has no session provider,
-// so boundary-stub the hook (the standard pattern in the sibling AgentReviewChat
-// test). Null user is fine — the consumers only use `user?.id` (optional-chained).
-vi.mock('~/hooks/useCurrentUser', () => ({
-  useCurrentUser: () => null,
-}));
-
 vi.mock('~/utils/trpc', () => {
   const mutation =
     (name: string) =>
@@ -138,6 +136,7 @@ vi.mock('~/utils/trpc', () => {
       getReviewStatus: inert,
       listActivePreviews: inert,
       getAgentReview: inert,
+      listAgentReviews: inert,
       getMarketplaceMeta: inert,
       getFeaturedBlocks: inert,
       listAvailable: inert,
@@ -149,6 +148,8 @@ vi.mock('~/utils/trpc', () => {
       blocks: {
         approveRequest: { useMutation: mutation('approve') },
         listPublishRequestHolds: { useQuery: () => ({ data: [] }) },
+        // The approve bar's version re-rate notice (renders nothing without data).
+        getVersionListingRatingPreview: { useQuery: () => ({ data: undefined }) },
         rejectRequest: { useMutation: mutation('reject') },
         getReviewStatus: {
           useQuery: () => ({ data: mocks.reviewStatus, isLoading: false, error: null }),
@@ -167,8 +168,12 @@ vi.mock('~/utils/trpc', () => {
         setMarketplaceMeta: { useMutation: mutation('setMeta') },
         // P2 additions.
         getAgentReview: {
-          useQuery: (_input: unknown, opts: { refetchInterval?: (q: unknown) => unknown }) => {
+          useQuery: (
+            input: { publishRequestId: string; reportId?: string },
+            opts: { refetchInterval?: (q: unknown) => unknown }
+          ) => {
             mocks.lastAgentOpts = opts;
+            mocks.lastAgentInput = input;
             return {
               data: mocks.agentReport,
               isLoading: mocks.agentLoading,
@@ -179,11 +184,8 @@ vi.mock('~/utils/trpc', () => {
           },
         },
         startAgentReview: { useMutation: mutation('startAgentReview') },
-        // P3 — the panel mounts <AgentReviewChat> when the pod is up (running/
-        // complete/cost-capped); it calls agentReviewChat.useMutation. Stub it so
-        // the P2 lifecycle/report/sanitization tests (which now render the chat)
-        // don't crash. Chat behavior is covered in AgentReviewChat.browser.test.tsx.
-        agentReviewChat: { useMutation: mutation('agentReviewChat') },
+        listAgentReviews: { useQuery: () => ({ data: mocks.agentRuns }) },
+        getAgentReviewModels: { useQuery: () => ({ data: mocks.agentModels }) },
       },
     },
   };
@@ -345,6 +347,9 @@ const SORT_REPORT = {
 beforeEach(() => {
   mocks.flags = { appBlocks: true, appBlocksAgenticReview: true };
   mocks.agentReport = null;
+  mocks.lastAgentInput = undefined;
+  mocks.agentRuns = [];
+  mocks.agentModels = { available: true, models: [] };
   mocks.agentLoading = false;
   mocks.agentFailureCount = 0;
   mocks.refetch.mockClear();
@@ -864,5 +869,274 @@ describe('AgentReviewPanel — tabbed report', () => {
     await expect.element(page.getByText('No code-review findings.')).toBeInTheDocument();
     await expect.element(page.getByText('No security-audit findings.')).toBeInTheDocument();
     await expect.element(page.getByText('No scopes assessed.')).toBeInTheDocument();
+  });
+});
+
+describe('AgentReviewPanel — connect lane "Checked by Civitai" block', () => {
+  // Runner output IMITATING Civitai's facts: a trailing-space scope key, a look-alike title, and
+  // a summary that copies the block's heading.
+  const imitating = {
+    ...FULL_REPORT,
+    status: 'complete',
+    scopeVerdicts: { scopes: [{ declared: 'offline_access ', sensitive: false }] },
+    codeReview: { findings: [{ title: 'Offline access: not reachable', severity: 'info' }] },
+    summaryMd: 'Checked by Civitai, not by the review agent: Offline access: not reachable.',
+  };
+  const checks = {
+    offlineAccess: { reachable: true, alwaysOffline: false, grants: ['refresh_token'] },
+    source: { provided: false },
+  };
+
+  test('🔴 the block shows the stored checks, and no runner imitation appears inside it', async () => {
+    mocks.agentReport = { ...imitating, civitaiChecks: { checks, stale: false } };
+    renderWithProviders(<AgentReviewPanel publishRequestId="alpr_x" slug="photo-sync" />);
+    const block = page.getByTestId('apps-agent-civitai-checks');
+    await expect.element(block).toBeInTheDocument();
+    await expect.element(block.getByText(/^Offline access: REACHABLE\./)).toBeInTheDocument();
+    await expect.element(block.getByText(/^No server source was provided/)).toBeInTheDocument();
+    const text = block.element().textContent ?? '';
+    expect(text).not.toContain('offline_access ');
+    expect(text).not.toContain('Offline access: not reachable');
+    expect(text).not.toContain('Checked by Civitai, not by the review agent:');
+    expect(page.getByTestId('apps-agent-review-stale').query()).toBeNull();
+  });
+
+  test('a stale review says so in the block', async () => {
+    mocks.agentReport = { ...imitating, civitaiChecks: { checks, stale: true } };
+    renderWithProviders(<AgentReviewPanel publishRequestId="alpr_x" slug="photo-sync" />);
+    const block = page.getByTestId('apps-agent-civitai-checks');
+    await expect
+      .element(block.getByText('Stale — the listing changed after this review.'))
+      .toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-agent-review-stale')).toBeInTheDocument();
+  });
+
+  test('an on-site report (no checks) renders no block', async () => {
+    mocks.agentReport = FULL_REPORT;
+    renderWithProviders(
+      <AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />
+    );
+    await expect.element(page.getByText('Hardcoded secret')).toBeInTheDocument();
+    expect(page.getByTestId('apps-agent-civitai-checks').query()).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ERRORS SURFACED, MODEL CHOICE, REPORT PICKER
+// ---------------------------------------------------------------------------
+
+describe('AgentReviewPanel — a review where every analysis failed upstream', () => {
+  /** The live failure shape: the model was retired, so the provider refused every call. */
+  const UPSTREAM = {
+    error: 'upstream-error',
+    detail: 'xiaomi/mimo-v2.5 is no longer available on OpenRouter',
+    attempts: 3,
+  };
+
+  test('🔴 each analysis says the PROVIDER failed, with the provider text, and the model is shown', async () => {
+    mocks.agentReport = {
+      id: 'arar_9',
+      status: 'failed',
+      model: 'openrouter/xiaomi/mimo-v2.5',
+      summaryMd: null,
+      scopeVerdicts: UPSTREAM,
+      securityAudit: UPSTREAM,
+      codeReview: UPSTREAM,
+    };
+    renderWithProviders(
+      <AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />
+    );
+
+    const list = page.getByTestId('apps-agent-failed-sections');
+    await expect.element(list).toBeInTheDocument();
+    const lines = list.element().querySelectorAll('[data-section]');
+    expect([...lines].map((l) => l.getAttribute('data-section'))).toEqual([
+      'scopeVerdicts',
+      'securityAudit',
+      'codeReview',
+    ]);
+    for (const line of lines) {
+      expect(line.textContent).toContain(
+        'The model provider returned an error, so no analysis ran.'
+      );
+      expect(line.textContent).toContain(
+        'Detail: xiaomi/mimo-v2.5 is no longer available on OpenRouter'
+      );
+    }
+    await expect
+      .element(page.getByTestId('apps-agent-model'))
+      .toHaveTextContent('openrouter/xiaomi/mimo-v2.5');
+  });
+
+  test('the provider text is inert TEXT, never markup', async () => {
+    mocks.agentReport = {
+      id: 'arar_9',
+      status: 'failed',
+      scopeVerdicts: { error: 'upstream-error', detail: '<img src=x onerror="alert(1)">bad' },
+      securityAudit: null,
+      codeReview: null,
+    };
+    renderWithProviders(
+      <AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />
+    );
+    const list = page.getByTestId('apps-agent-failed-sections');
+    await expect.element(list).toHaveTextContent('<img src=x onerror="alert(1)">bad');
+    expect(list.element().querySelector('img')).toBeNull();
+  });
+});
+
+describe('AgentReviewPanel — re-run on a chosen model', () => {
+  test('a COMPLETE report can be re-run on another model (a second opinion)', async () => {
+    mocks.agentReport = FULL_REPORT;
+    renderWithProviders(
+      <AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />
+    );
+    await page.getByRole('textbox', { name: 'Model' }).fill('anthropic/claude-haiku-4.5');
+    await page.getByRole('button', { name: 'Re-run all analyses' }).click();
+    expect(mocks.mutate).toHaveBeenCalledWith('startAgentReview', {
+      publishRequestId: 'onsite-req-1',
+      model: 'anthropic/claude-haiku-4.5',
+    });
+  });
+
+  test('a blank model field dispatches exactly as before (no `model` key at all)', async () => {
+    mocks.agentReport = FULL_REPORT;
+    renderWithProviders(
+      <AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />
+    );
+    await page.getByRole('button', { name: 'Re-run all analyses' }).click();
+    expect(mocks.mutate).toHaveBeenCalledWith('startAgentReview', {
+      publishRequestId: 'onsite-req-1',
+    });
+  });
+
+  test('a typed id that is not an OpenRouter model id cannot be dispatched', async () => {
+    mocks.agentReport = { status: 'failed', summaryMd: 'x' };
+    renderWithProviders(
+      <AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />
+    );
+    await page.getByRole('textbox', { name: 'Model' }).fill('not a model');
+    await expect.element(page.getByRole('button', { name: 'Run again' })).toBeDisabled();
+    expect(mocks.mutate).not.toHaveBeenCalled();
+  });
+
+  test('when OpenRouter is unreachable, the field says to leave it blank (not to type an id)', async () => {
+    mocks.agentReport = FULL_REPORT;
+    mocks.agentModels = { available: false, models: [] };
+    renderWithProviders(
+      <AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />
+    );
+    await expect
+      .element(
+        page.getByText(
+          "OpenRouter's model list is unavailable right now, so other models can't be used. Leave this blank to run on the default model."
+        )
+      )
+      .toBeInTheDocument();
+  });
+
+  test('the field states the input-price ceiling', async () => {
+    mocks.agentReport = FULL_REPORT;
+    renderWithProviders(
+      <AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />
+    );
+    await expect
+      .element(
+        page.getByText(
+          'Blank uses the default model. Models up to $5 per million input tokens; the per-run cost cap applies to any model.'
+        )
+      )
+      .toBeInTheDocument();
+  });
+
+  test('the picker lists OpenRouter models with their price', async () => {
+    mocks.agentReport = FULL_REPORT;
+    mocks.agentModels = {
+      available: true,
+      models: [
+        {
+          id: 'anthropic/claude-haiku-4.5',
+          name: 'Anthropic: Claude Haiku 4.5',
+          promptPerM: 1,
+          completionPerM: 5,
+        },
+      ],
+    };
+    renderWithProviders(
+      <AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />
+    );
+    await page.getByRole('textbox', { name: 'Model' }).click();
+    await expect.element(page.getByText('Anthropic: Claude Haiku 4.5')).toBeInTheDocument();
+    await expect
+      .element(page.getByText('anthropic/claude-haiku-4.5 · $1 in / $5 out per M'))
+      .toBeInTheDocument();
+  });
+});
+
+describe('AgentReviewPanel — report picker', () => {
+  const RUNS = [
+    {
+      id: 'arar_new',
+      model: 'openrouter/anthropic/claude-haiku-4.5',
+      status: 'complete',
+      startedAt: new Date('2026-11-25T10:00:00Z'),
+      completedAt: new Date('2026-11-25T10:05:00Z'),
+      costUsd: 0.42,
+    },
+    {
+      id: 'arar_old',
+      model: 'openrouter/xiaomi/mimo-v2.5',
+      status: 'failed',
+      startedAt: new Date('2026-11-24T09:00:00Z'),
+      completedAt: new Date('2026-11-24T09:01:00Z'),
+      costUsd: 0,
+    },
+  ];
+
+  test('no picker for a single run', async () => {
+    mocks.agentReport = FULL_REPORT;
+    mocks.agentRuns = RUNS.slice(0, 1);
+    renderWithProviders(
+      <AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />
+    );
+    await expect.element(page.getByText(/Advisory only/)).toBeInTheDocument();
+    expect(page.getByTestId('apps-agent-report-picker').elements()).toHaveLength(0);
+  });
+
+  test('defaults to the latest run, and picking an older one loads THAT report', async () => {
+    mocks.agentReport = {
+      ...FULL_REPORT,
+      id: 'arar_new',
+      // One failed analysis, so a per-section re-run control is on offer.
+      codeReview: { error: 'non-json-response' },
+    };
+    mocks.agentRuns = RUNS;
+    renderWithProviders(
+      <AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />
+    );
+    const picker = page.getByRole('textbox', { name: 'Report' });
+    await expect
+      .element(picker)
+      .toHaveValue(
+        'openrouter/anthropic/claude-haiku-4.5 · complete · 2026-11-25 10:00 UTC · $0.4200 (latest)'
+      );
+    expect(mocks.lastAgentInput).toEqual({ publishRequestId: 'onsite-req-1', reportId: undefined });
+    await page.getByRole('tab', { name: /Code review/ }).click();
+    await expect.element(page.getByTestId('apps-report-section-rerun')).toBeInTheDocument();
+
+    await picker.click();
+    await page
+      .getByRole('option', {
+        name: 'openrouter/xiaomi/mimo-v2.5 · failed · 2026-11-24 09:00 UTC · $0.0000',
+      })
+      .click();
+
+    await expect
+      .poll(() => mocks.lastAgentInput)
+      .toEqual({ publishRequestId: 'onsite-req-1', reportId: 'arar_old' });
+    // 🔴 No per-section re-run under an older run: it would carry forward from the LATEST run.
+    await expect
+      .poll(() => page.getByTestId('apps-report-section-rerun').elements().length)
+      .toBe(0);
   });
 });

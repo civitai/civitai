@@ -9,7 +9,7 @@ import { upsertCosmeticShopItemInput } from '~/server/schema/cosmetic-shop.schem
  * A pack is a `CosmeticShopItem` with `cosmeticId` null, and the generic product
  * form requires one — so sending a pack to `/products/[id]/edit` gives a
  * moderator a form that fails on every save, losing what they typed. That is why
- * pack rows had no Edit control at all (ClickUp 868m67vx3, Ellie 2026-09-17).
+ * pack rows had no Edit control at all (#4910).
  *
  * 🔴 IF YOU ARE HERE TO DELETE THIS: the two-way split is deliberate. The pack
  * editor is the only thing that can edit a pack's CONTENTS, and the product form

@@ -7,7 +7,8 @@ vi.mock('~/server/services/image.service', async (importOriginal) => ({
   queueImageSearchIndexUpdate: vi.fn(() => Promise.resolve()),
 }));
 vi.mock('~/server/services/image-models-reindex.service', () => ({
-  queueModelsForImageChildTagChanges: vi.fn(async () => undefined),
+  queueDocumentsForImageMinorChanges: vi.fn(async () => undefined),
+  queueArticlesAndComicsForImages: vi.fn(async () => undefined),
 }));
 vi.mock('../../../../event-engine-common/services/metrics', () => ({
   MetricService: class {
@@ -24,7 +25,7 @@ import {
   setImageNsfwLevelFromKnights,
   updateNsfwLevel,
 } from '~/server/services/image.service';
-import { queueModelsForImageChildTagChanges } from '~/server/services/image-models-reindex.service';
+import { queueDocumentsForImageMinorChanges } from '~/server/services/image-models-reindex.service';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 
 const IMAGE_ID = 88;
@@ -51,13 +52,13 @@ describe('applyIngestionSideEffects: models index', () => {
   it('hands a scanned post image over as re-rated', async () => {
     await applyIngestionSideEffects({ image: image(10), outcome: scanned });
 
-    expect(queueModelsForImageChildTagChanges).toHaveBeenCalledWith({ levelImageIds: [IMAGE_ID] });
+    expect(queueDocumentsForImageMinorChanges).toHaveBeenCalledWith({ levelImageIds: [IMAGE_ID] });
   });
 
   it('hands over an image on no post too: it may be an article cover', async () => {
     await applyIngestionSideEffects({ image: image(null), outcome: scanned });
 
-    expect(queueModelsForImageChildTagChanges).toHaveBeenCalledWith({ levelImageIds: [IMAGE_ID] });
+    expect(queueDocumentsForImageMinorChanges).toHaveBeenCalledWith({ levelImageIds: [IMAGE_ID] });
   });
 });
 
@@ -79,17 +80,17 @@ describe('resolveIngestionError: models index', () => {
   it('hands the re-rated post image over', async () => {
     arm(10);
 
-    await resolveIngestionError({ id: IMAGE_ID, nsfwLevel: 8, userId: 7 });
+    await resolveIngestionError({ csamReview: true, id: IMAGE_ID, nsfwLevel: 8, userId: 7 });
 
-    expect(queueModelsForImageChildTagChanges).toHaveBeenCalledWith({ levelImageIds: [IMAGE_ID] });
+    expect(queueDocumentsForImageMinorChanges).toHaveBeenCalledWith({ levelImageIds: [IMAGE_ID] });
   });
 
   it('hands over an image on no post too', async () => {
     arm(null);
 
-    await resolveIngestionError({ id: IMAGE_ID, nsfwLevel: 8, userId: 7 });
+    await resolveIngestionError({ csamReview: true, id: IMAGE_ID, nsfwLevel: 8, userId: 7 });
 
-    expect(queueModelsForImageChildTagChanges).toHaveBeenCalledWith({ levelImageIds: [IMAGE_ID] });
+    expect(queueDocumentsForImageMinorChanges).toHaveBeenCalledWith({ levelImageIds: [IMAGE_ID] });
   });
 });
 
@@ -102,7 +103,7 @@ describe('level setters: models index', () => {
 
     await setImageNsfwLevelFromKnights({ id: IMAGE_ID, nsfwLevel: 8, userId: 7 });
 
-    expect(queueModelsForImageChildTagChanges).toHaveBeenCalledWith({ levelImageIds: [IMAGE_ID] });
+    expect(queueDocumentsForImageMinorChanges).toHaveBeenCalledWith({ levelImageIds: [IMAGE_ID] });
   });
 
   it("an owner's raise hands the re-rated post image over", async () => {
@@ -110,7 +111,7 @@ describe('level setters: models index', () => {
 
     await raiseOwnImageNsfwLevel({ id: IMAGE_ID, nsfwLevel: 4, userId: 7 });
 
-    expect(queueModelsForImageChildTagChanges).toHaveBeenCalledWith({ levelImageIds: [IMAGE_ID] });
+    expect(queueDocumentsForImageMinorChanges).toHaveBeenCalledWith({ levelImageIds: [IMAGE_ID] });
   });
 
   it('a Knights level hands over an image on no post too', async () => {
@@ -118,7 +119,7 @@ describe('level setters: models index', () => {
 
     await setImageNsfwLevelFromKnights({ id: IMAGE_ID, nsfwLevel: 8, userId: 7 });
 
-    expect(queueModelsForImageChildTagChanges).toHaveBeenCalledWith({ levelImageIds: [IMAGE_ID] });
+    expect(queueDocumentsForImageMinorChanges).toHaveBeenCalledWith({ levelImageIds: [IMAGE_ID] });
   });
 
   it("an owner's raise hands over an image on no post too", async () => {
@@ -126,13 +127,13 @@ describe('level setters: models index', () => {
 
     await raiseOwnImageNsfwLevel({ id: IMAGE_ID, nsfwLevel: 4, userId: 7 });
 
-    expect(queueModelsForImageChildTagChanges).toHaveBeenCalledWith({ levelImageIds: [IMAGE_ID] });
+    expect(queueDocumentsForImageMinorChanges).toHaveBeenCalledWith({ levelImageIds: [IMAGE_ID] });
   });
 
   it('a recompute hands its images over', async () => {
     await updateNsfwLevel([IMAGE_ID, 89]);
 
-    expect(queueModelsForImageChildTagChanges).toHaveBeenCalledWith({
+    expect(queueDocumentsForImageMinorChanges).toHaveBeenCalledWith({
       levelImageIds: [IMAGE_ID, 89],
     });
   });

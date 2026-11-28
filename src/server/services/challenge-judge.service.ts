@@ -72,3 +72,13 @@ export async function challengeJudgingEngineForCreate(
   const engine = await resolveJudgingEngineForJudge(judgeId);
   return engine === DEFAULT_JUDGING_ENGINE ? {} : { judgingEngine: engine };
 }
+
+export async function findActiveJudgeIdByName(name: string): Promise<number | null> {
+  const { dbRead } = await import('~/server/db/client');
+  const judge = await dbRead.challengeJudge.findFirst({
+    where: { name, active: true },
+    orderBy: { id: 'asc' },
+    select: { id: true },
+  });
+  return judge?.id ?? null;
+}

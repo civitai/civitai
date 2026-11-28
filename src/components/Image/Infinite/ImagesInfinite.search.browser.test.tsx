@@ -20,6 +20,7 @@ const state = vi.hoisted(() => ({
   searchFails: false,
   refusal: undefined as string | undefined,
   searchInputs: [] as unknown[],
+  searchOptions: [] as unknown[],
   feedEnabled: [] as (boolean | undefined)[],
   features: {} as Record<string, boolean>,
   periodWrites: [] as unknown[],
@@ -63,8 +64,9 @@ const result = (ids: number[], extra: Record<string, unknown> = {}) => ({
 vi.mock('~/components/Image/Infinite/useImageFeedSearch', async (importOriginal) => ({
   ...(await importOriginal<typeof FeedSearch>()),
   useImageFeedSearchQuery: () => useUrlQuery().query,
-  useSemanticImageFeed: (input: unknown) => {
+  useSemanticImageFeed: (input: unknown, options?: unknown) => {
     state.searchInputs.push(input);
+    state.searchOptions.push(options);
     return state.searchFails ? result([], { isError: true }) : result([101, 102]);
   },
 }));
@@ -86,9 +88,8 @@ vi.mock('@trpc/react-query', async (importOriginal) => ({
   getQueryKey: () => ['stub'],
 }));
 vi.mock('~/components/Search/useSearchRefusal', () => ({
-  useSearchRefusal: () => ({ refusal: state.refusal, profanityMatches: [] }),
+  useSearchRefusal: () => ({ refusal: state.refusal }),
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsModule>()),
   useFeatureFlags: () => state.features,
@@ -124,6 +125,7 @@ describe('ImagesInfinite with a search', () => {
     state.searchFails = false;
     state.refusal = undefined;
     state.searchInputs = [];
+    state.searchOptions = [];
     state.feedEnabled = [];
     state.features = {};
     state.periodWrites = [];
@@ -141,8 +143,24 @@ describe('ImagesInfinite with a search', () => {
     expect(state.feedEnabled.at(-1)).toBe(false);
   });
 
+  // Videos are their own index: the videos feed searches it, and only with its flag.
+  test.each([
+    ['videos', true, true],
+    ['videos', false, false],
+    ['images', true, false],
+  ] as const)(
+    'a %s feed with semanticVideoSearch %s searches the video index: %s',
+    async (filterType, flagOn, videos) => {
+      state.features = { semanticVideoSearch: flagOn };
+      renderWithProviders(<ImagesInfiniteContent searchable filterType={filterType} />);
+
+      await expect.element(page.getByText('image 101')).toBeVisible();
+      expect(state.searchOptions.at(-1)).toEqual({ videos });
+    }
+  );
+
   test('shows the images like ?similarTo= and keeps the plain feed switched off', async () => {
-    state.features = { feedSearch: true };
+    state.features = { feedSearch: true, moreLikeThis: true };
     useRouter().query = { similarTo: '42' };
     renderWithProviders(<ImagesInfiniteContent searchable />);
 
@@ -160,8 +178,17 @@ describe('ImagesInfinite with a search', () => {
     expect(state.searchInputs.every((input) => input === undefined)).toBe(true);
   });
 
-  test('a refused query never falls back to ?similarTo=', async () => {
+  test('ignores ?similarTo= without moreLikeThis', async () => {
     state.features = { feedSearch: true };
+    useRouter().query = { similarTo: '42' };
+    renderWithProviders(<ImagesInfiniteContent searchable />);
+
+    await expect.element(page.getByText('image 1', { exact: true })).toBeVisible();
+    expect(state.searchInputs.every((input) => input === undefined)).toBe(true);
+  });
+
+  test('a refused query never falls back to ?similarTo=', async () => {
+    state.features = { feedSearch: true, moreLikeThis: true };
     state.refusal = 'illegal';
     useRouter().query = { query: 'bad words', similarTo: '42' };
     renderWithProviders(<ImagesInfiniteContent searchable />);
@@ -172,7 +199,7 @@ describe('ImagesInfinite with a search', () => {
   });
 
   test('a typed query replaces ?similarTo=', async () => {
-    state.features = { feedSearch: true };
+    state.features = { feedSearch: true, moreLikeThis: true };
     useRouter().query = { query: 'red dragon', similarTo: '42' };
     renderWithProviders(<ImagesInfiniteContent searchable />);
 

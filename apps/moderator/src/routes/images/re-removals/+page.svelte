@@ -5,13 +5,14 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import { cn } from '@civitai/ui/utils.js';
-  import EdgeMedia from '$lib/components/EdgeMedia.svelte';
+  import CdnOrRetractedMedia from '$lib/components/image-queue/CdnOrRetractedMedia.svelte';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import LinkTabs from '$lib/components/LinkTabs.svelte';
   import { optimisticEnhancer } from '$lib/form-action';
   import { LINK_CLASS, dateTime } from '$lib/format';
   import { imageLookupUrl, userLookupUrl } from '$lib/entity-url';
   import { VIOLATION_LABELS } from '$lib/violations';
+  import { RETRACTED_REFUSED } from '$lib/held-media';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -93,14 +94,25 @@
           verdict && 'opacity-50'
         )}
       >
-        <a href={imageLookupUrl(row.imageId)} class="w-full shrink-0 sm:w-48">
-          <EdgeMedia
-            src={row.url}
-            type={row.mediaType === 'video' ? 'video' : 'image'}
-            width={400}
-            class="w-full rounded-md object-cover"
-          />
-        </a>
+        {#if row.restricted}
+          <div
+            class="flex aspect-square w-full shrink-0 items-center justify-center rounded-md bg-dark-6 p-4 text-center text-xs text-dark-2 sm:w-48"
+          >
+            {RETRACTED_REFUSED}
+          </div>
+        {:else}
+          <a href={imageLookupUrl(row.imageId)} class="w-full shrink-0 sm:w-48">
+            <CdnOrRetractedMedia
+              item={{
+                id: row.imageId,
+                url: row.url,
+                type: row.mediaType === 'video' ? 'video' : 'image',
+              }}
+              width={400}
+              class="w-full rounded-md object-cover"
+            />
+          </a>
+        {/if}
 
         <div class="min-w-0 flex-1 space-y-2 text-sm">
           <div class="flex flex-wrap items-baseline gap-x-2">

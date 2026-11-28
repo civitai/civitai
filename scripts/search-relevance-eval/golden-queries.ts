@@ -10,6 +10,12 @@
  *           `models`, a Checkpoint whose base model is in that ecosystem; on `images`, an
  *           image generated on one. Matched by ecosystem, never by name substring, since
  *           many LoRAs carry an ecosystem's name ("Flux") and would pass any boost.
+ *   subject — `images` only, graded by precision@k: the share of the top `k` whose prompt
+ *           matches every group in `expectTerms` (any term of a group, case-insensitive,
+ *           as a whole word bounded by non-letters, so `pokémon` needs a Unicode-aware
+ *           boundary, not `\b`). Below half is a miss. Prompt text is the point here:
+ *           these came from reports that semantic search returns look-alikes whose
+ *           prompts never name the subject.
  */
 
 import type { ECO } from '~/shared/constants/basemodel.constants';
@@ -21,7 +27,8 @@ type GoldenQueryBase = { id: string; text: string; targets: GoldenTarget[]; note
 export type GoldenQuery =
   | (GoldenQueryBase & { kind: 'canonical' })
   | (GoldenQueryBase & { kind: 'typo'; canonical: string })
-  | (GoldenQueryBase & { kind: 'named'; expectEcosystem: keyof typeof ECO; k: number });
+  | (GoldenQueryBase & { kind: 'named'; expectEcosystem: keyof typeof ECO; k: number })
+  | (GoldenQueryBase & { kind: 'subject'; expectTerms: string[][]; k: number });
 
 export function defineGoldenSet(queries: GoldenQuery[]) {
   const byId = new Map<string, GoldenQuery>();
@@ -30,6 +37,12 @@ export function defineGoldenSet(queries: GoldenQuery[]) {
     byId.set(query.id, query);
   }
   for (const query of queries) {
+    if (query.kind === 'subject') {
+      if (!query.expectTerms.length || !query.expectTerms.every((group) => group.length))
+        throw new Error(`subject "${query.id}" has an empty term group`);
+      if (query.targets.some((target) => target !== 'images'))
+        throw new Error(`subject "${query.id}" is graded on prompts, so it targets images only`);
+    }
     if (query.kind !== 'typo') continue;
     const canonical = byId.get(query.canonical);
     if (canonical?.kind !== 'canonical')
@@ -108,5 +121,88 @@ export const GOLDEN_QUERIES = defineGoldenSet([
     expectEcosystem: 'Flux1',
     k: 5,
     targets: ['models'],
+  },
+
+  // Tester reports: semantic search ignores prompt text and is weak on names and niche terms.
+  {
+    id: 'subject-foxy-paladin',
+    kind: 'subject',
+    text: 'foxy paladin',
+    expectTerms: [
+      ['fox', 'foxy', 'kitsune'],
+      ['paladin', 'knight'],
+    ],
+    k: 10,
+    targets: ['images'],
+  },
+  {
+    id: 'subject-nami-yellow-skirt',
+    kind: 'subject',
+    text: 'nami wearing a yellow skirt',
+    expectTerms: [['nami'], ['yellow'], ['skirt', 'miniskirt']],
+    k: 10,
+    targets: ['images'],
+    note: 'Character plus clothing: Nami images in another outfit are a partial miss.',
+  },
+  {
+    id: 'subject-misty-pokemon',
+    kind: 'subject',
+    text: 'misty pokemon',
+    expectTerms: [
+      ['misty', 'kasumi'],
+      ['pokemon', 'pokémon'],
+    ],
+    k: 10,
+    targets: ['images'],
+    note: '"misty" is also an adjective, so a prompt needs the Pokemon context too: foggy scenes or other Pokemon characters are the failure.',
+  },
+  {
+    id: 'subject-gremmy',
+    kind: 'subject',
+    text: 'Gremmy',
+    expectTerms: [['gremmy']],
+    k: 10,
+    targets: ['images'],
+    note: 'Single niche character name with no descriptive words to fall back on.',
+  },
+  // Subject counts (tester report): semantic search ranks images with the wrong number of
+  // subjects, or with the count written as text in the picture, above prompts that name it.
+  {
+    id: 'subject-count-2-girls',
+    kind: 'subject',
+    text: '2 girls',
+    expectTerms: [['2girls', '2 girls', 'two girls']],
+    k: 10,
+    targets: ['images'],
+    note: 'Reported with no correct match in the top results.',
+  },
+  {
+    id: 'subject-count-3-girls',
+    kind: 'subject',
+    text: '3 girls',
+    expectTerms: [['3girls', '3 girls', 'three girls']],
+    k: 20,
+    targets: ['images'],
+    note: 'Reported with the first miss around rank 20, so k is 20.',
+  },
+  {
+    id: 'subject-count-3-boys',
+    kind: 'subject',
+    text: '3 boys',
+    expectTerms: [['3boys', '3 boys', 'three boys']],
+    k: 10,
+    targets: ['images'],
+  },
+  {
+    id: 'subject-count-mixed',
+    kind: 'subject',
+    text: '2 girls 1 boy',
+    expectTerms: [
+      ['2girls', '2 girls', 'two girls'],
+      ['1boy', '1 boy', 'one boy'],
+    ],
+    k: 10,
+    targets: ['images'],
+    note: 'Mixed-gender counts were reported as worse than single-gender ones.',
   },
 ]);

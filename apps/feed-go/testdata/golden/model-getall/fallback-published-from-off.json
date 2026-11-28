@@ -1,0 +1,35 @@
+{
+  "name": "fallback-published-from-off",
+  "description": "`publishedFrom` with its switch off (the default): not served.",
+  "now": "2026-06-15T12:00:00.000Z",
+  "config": {
+    "baseModelMetrics": true,
+    "modelImagesSlim": true,
+    "coverageNext": true,
+    "loadingOpenToAll": true,
+    "decorationEvents": []
+  },
+  "request": {
+    "input": "{\"json\":{\"publishedFrom\":\"2026-06-01\",\"publishedTo\":\"2026-06-02\",\"browsingLevel\":1}}",
+    "headers": {
+      "host": "green.example.test"
+    },
+    "session": null
+  },
+  "redis": {},
+  "sysRedis": {
+    "system:browsing-setting-addons": {
+      "raw": "[{\"type\":\"some\",\"nsfwLevels\":[4,8,16],\"disableMinor\":true,\"excludedTagIds\":[9911]},{\"type\":\"some\",\"nsfwLevels\":[1,2,4,8,16],\"disablePoi\":true,\"excludedTagIds\":[9901]}]"
+    }
+  },
+  "db": {
+    "modelPages": [],
+    "paidAccess": [],
+    "coverImages": [],
+    "tags": [],
+    "creators": []
+  },
+  "expect": {
+    "fallback": "input-publishedFrom"
+  }
+}

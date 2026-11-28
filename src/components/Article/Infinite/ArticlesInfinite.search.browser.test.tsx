@@ -1,3 +1,4 @@
+import type { ReactElement } from 'react';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import type * as ArticleUtils from '~/components/Article/article.utils';
@@ -5,6 +6,11 @@ import type * as Masonry from '~/components/MasonryColumns/MasonryGridVirtual';
 import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../../test/component-setup';
+import { SignedOutSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
+
+// The refusal notice reads the viewer (for a moderator's line), so the feed renders in a session.
+const renderSignedOut = (ui: ReactElement) =>
+  renderWithProviders(<SignedOutSessionProvider>{ui}</SignedOutSessionProvider>);
 
 // The two sources the articles feed chooses between; which one it renders and enables is under test.
 const state = vi.hoisted(() => ({
@@ -12,6 +18,8 @@ const state = vi.hoisted(() => ({
   refusal: undefined as string | undefined,
   searchQueries: [] as (string | undefined)[],
   feedCalls: [] as { query?: string; enabled?: boolean }[],
+  features: {} as Record<string, boolean>,
+  pageQuery: undefined as string | undefined,
 }));
 
 const result = (ids: number[], extra: Record<string, unknown> = {}) => ({
@@ -30,7 +38,8 @@ vi.mock('~/components/Article/article.utils', async (importOriginal) => ({
   useArticleFilters: () => ({}),
   useQueryArticles: (filters: { query?: string }, options?: { enabled?: boolean }) => {
     state.feedCalls.push({ query: filters.query, enabled: options?.enabled });
-    return result([1, 2, 3]);
+    // An earlier page with more to load, as a disabled query keeps it.
+    return result([1, 2, 3], { hasNextPage: true });
   },
   useSemanticArticleFeed: (_filters: unknown, query: string | undefined) => {
     state.searchQueries.push(query);
@@ -40,8 +49,15 @@ vi.mock('~/components/Article/article.utils', async (importOriginal) => ({
       : { ...result([101, 102]), searchKey: query, correctedQuery: undefined };
   },
 }));
+vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  useFeatureFlags: () => state.features,
+}));
+vi.mock('~/components/Filters/FeedSearchInput', () => ({
+  useFeedSearchQuery: () => state.pageQuery,
+}));
 vi.mock('~/components/Search/useSearchRefusal', () => ({
-  useSearchRefusal: () => ({ refusal: state.refusal, profanityMatches: [] }),
+  useSearchRefusal: () => ({ refusal: state.refusal }),
 }));
 vi.mock('~/components/MasonryColumns/MasonryGridVirtual', async (importOriginal) => ({
   ...(await importOriginal<typeof Masonry>()),
@@ -60,10 +76,12 @@ describe('ArticlesInfinite with a search', () => {
     state.refusal = undefined;
     state.searchQueries = [];
     state.feedCalls = [];
+    state.features = { articleFeedSearch: true };
+    state.pageQuery = 'lora guide';
   });
 
   test("answers the page's query from the search, and leaves the feed query off", async () => {
-    await renderWithProviders(<ArticlesInfinite searchText="lora guide" />);
+    await renderSignedOut(<ArticlesInfinite searchable />);
     await expect.element(page.getByText('article 101')).toBeInTheDocument();
     await expect.element(page.getByText('Articles matching “lora guide”')).toBeInTheDocument();
     expect(page.getByText('article 1', { exact: true }).query()).toBeNull();
@@ -71,16 +89,23 @@ describe('ArticlesInfinite with a search', () => {
     expect(state.feedCalls.at(-1)?.enabled).toBe(false);
   });
 
-  test("falls back to the feed's title match with a banner when the search fails", async () => {
+  // The keyword feed has no server profanity check, so it must not show or page the query.
+  test('shows the banner over no results when the search fails, never the feed', async () => {
     state.searchFails = true;
-    await renderWithProviders(<ArticlesInfinite searchText="lora guide" />);
-    await expect.element(page.getByText('article 1', { exact: true })).toBeInTheDocument();
+    await renderSignedOut(<ArticlesInfinite searchable />);
     await expect.element(page.getByText('Retry search')).toBeInTheDocument();
-    expect(state.feedCalls.at(-1)).toEqual({ query: 'lora guide', enabled: true });
+    expect(page.getByText('article 1', { exact: true }).query()).toBeNull();
+    expect(state.feedCalls.at(-1)?.enabled).toBe(false);
   });
 
-  test('without a search, is the plain feed and never sends a query', async () => {
-    await renderWithProviders(<ArticlesInfinite filters={{ username: 'someone' }} />);
+  test('a feed that is not searchable, or without the flag, never sends the page query', async () => {
+    const { unmount } = await renderSignedOut(
+      <ArticlesInfinite filters={{ username: 'someone' }} />
+    );
+    await expect.element(page.getByText('article 1', { exact: true })).toBeInTheDocument();
+    unmount();
+    state.features = {};
+    await renderSignedOut(<ArticlesInfinite searchable />);
     await expect.element(page.getByText('article 1', { exact: true })).toBeInTheDocument();
     expect(state.searchQueries).toEqual([]);
     expect(state.feedCalls.every((call) => call.query === undefined)).toBe(true);
@@ -88,7 +113,7 @@ describe('ArticlesInfinite with a search', () => {
 
   test('a refused query reaches neither source', async () => {
     state.refusal = 'illegal';
-    await renderWithProviders(<ArticlesInfinite searchText="lora guide" />);
+    await renderSignedOut(<ArticlesInfinite searchable />);
     await expect.poll(() => state.searchQueries.length).toBeGreaterThan(0);
     expect(page.getByText('article 1', { exact: true }).query()).toBeNull();
     expect(state.searchQueries.every((query) => query === undefined)).toBe(true);

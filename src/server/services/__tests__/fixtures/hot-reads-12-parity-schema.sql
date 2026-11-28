@@ -44,7 +44,9 @@ CREATE TABLE "hot_reads_12_parity"."Image" (
   "metadata"    JSONB                                         NOT NULL DEFAULT '{}',
   "nsfwLevel"   INTEGER                                       NOT NULL DEFAULT 0,
   "needsReview" TEXT,
-  "ingestion"   "hot_reads_12_parity"."ImageIngestionStatus"  NOT NULL DEFAULT 'Pending'
+  "ingestion"   "hot_reads_12_parity"."ImageIngestionStatus"  NOT NULL DEFAULT 'Pending',
+  "modelRestricted" BOOLEAN                                   NOT NULL DEFAULT false,
+  "blockedFor" TEXT
 );
 
 CREATE TABLE "hot_reads_12_parity"."Cosmetic" (

@@ -10,7 +10,13 @@ import {
   type BlockScopedNextApiRequest,
 } from '~/server/middleware/block-scope.middleware';
 import { assertAppBlocksEnabledForTokenUser } from '~/server/services/blocks/block-token-access.service';
+import { blockOutputCeilingFromClaims } from '~/server/services/blocks/block-output-restriction';
+import {
+  blockViewerImageUserSelect,
+  projectBlockViewerImage,
+} from '~/server/services/blocks/block-viewer-image';
 import { checkBlockCatalogRateLimit } from '~/server/utils/block-catalog-rate-limit';
+import { appRateLimitMeta, sendAppRateLimited } from '~/server/utils/app-rate-limit';
 
 /**
  * GET /api/v1/blocks/me
@@ -34,7 +40,10 @@ import { checkBlockCatalogRateLimit } from '~/server/utils/block-catalog-rate-li
  * ai:write:budgeted claim — a block that wants the budget along with
  * identity asks for both scopes in its manifest.
  *
- * CORS: handled in withBlockScope from BLOCK_ALLOWED_ORIGINS.
+ * CORS: handled in withBlockScope. An allowlisted origin is echoed, and so is an opaque
+ * `Origin: null` (`allowOpaqueOrigin`): unverified blocks are sandboxed without
+ * `allow-same-origin`, so their direct `fetch` sends `Origin: null`. That is safe here
+ * because the Bearer block JWT is the only credential this route reads.
  *
  * ## THIS ROUTE AND `blocks.getMyViewer` ARE TWO FRONT DOORS TO ONE CAPABILITY
  *
@@ -152,11 +161,8 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
   //   there as the wrong direction. (b) The gate's two messages are deliberately distinct
   //   so an OPERATOR can separate them in a log; a third-party block iframe has no use for
   //   "the subject could not be resolved" and it is not ours to disclose. So both refusals
-  //   render as one literal here while staying separable at the throw site. 🔴 The
-  //   unhydratable-subject message is additionally a compiled-branch watchlist ANCHOR that
-  //   must stay unique app-wide — re-spelling it here to win message parity would break
-  //   that guard. The parity test therefore compares STATUS on this branch, not text, and
-  //   says so.
+  //   render as one literal here while staying separable at the throw site. The parity
+  //   test therefore compares STATUS on this branch, not text, and says so.
   //   The SPELLING is the siblings' (`<binding> as TRPCError`, then
   //   `typeof trpcError?.code === 'string'`), deliberately, so a future `@trpc/server` shape
   //   change is greppable across all of them at once rather than across three phrasings.
@@ -206,8 +212,11 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
       endpoint: 'me',
       retryAfterSeconds: rateLimit.retryAfterSeconds,
     });
-    res.setHeader('Retry-After', String(rateLimit.retryAfterSeconds));
-    res.status(429).json({ error: 'Rate limit exceeded, please retry shortly.' });
+    sendAppRateLimited(
+      res,
+      appRateLimitMeta('apps.catalog', rateLimit.retryAfterSeconds),
+      'Rate limit exceeded, please retry shortly.'
+    );
     return;
   }
 
@@ -222,6 +231,7 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
       bannedAt: true,
       muted: true,
       deletedAt: true,
+      ...blockViewerImageUserSelect,
     },
   });
   if (!user || user.deletedAt) {
@@ -242,10 +252,17 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
     id: user.id,
     username: user.username,
     status: user.muted ? 'muted' : 'active',
+    // The viewer's avatar, judged against this token's output ceiling — see
+    // `projectBlockViewerImage`. Shared with `blocks.getMyViewer`.
+    image: projectBlockViewerImage(user, blockOutputCeilingFromClaims(claims)),
     // buzzBudget is the per-call spend cap the block was issued with —
     // surfaces here so the block can clamp UI without a second API call.
     buzzBudget: claims.buzzBudget ?? null,
   });
 });
 
-export default withBlockScope(baseHandler, { endpoint: 'me', requiredScope: 'user:read:self' });
+export default withBlockScope(baseHandler, {
+  endpoint: 'me',
+  requiredScope: 'user:read:self',
+  allowOpaqueOrigin: true,
+});

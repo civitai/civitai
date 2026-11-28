@@ -1,28 +1,26 @@
 import { REDIS_KEYS } from '@civitai/redis';
-import { childBrowsingTagIds } from '@civitai/shared';
 import { logAxiomError } from './axiom';
 import { bustCachedObject } from './cache';
 import { dbWrite } from './db';
 import { syncSearchIndexBulk } from './search-index';
+import { parkModelSearchUpdates } from './search-index-park';
 
-const CHILD_TAG_IDS = [...childBrowsingTagIds];
-const childTagIds = new Set<number>(CHILD_TAG_IDS);
-
-type ImageChildTagChanges = {
-  /** Images whose tags were written; those whose written tags include a child tag are queued. */
-  tagWrites?: { imageId: number; tagId: number }[];
-  /** Images whose nsfwLevel may have changed; queued while they carry a child tag. */
+type ImageMinorChanges = {
+  /** Images whose nsfwLevel may have changed; queued while they carry the minor flag, since the minor rule reads the level. */
   levelImageIds?: number[];
+  /** Images whose minor flag was written; always queued. */
+  minorImageIds?: number[];
 };
 
 /**
- * For this app's tag and level writes: drops the cached tags and showcase images of the models whose
+ * For this app's level and minor-flag writes: drops the cached tags and showcase images of the models whose
  * posts hold these images, then queues those models for a models-index rewrite. Never throws: it runs
- * after the tag or level write has committed. A failed attempt, the queue call included, is retried
- * once; a second failure is logged, with the image and model ids, and the requeue is dropped.
+ * after the level or minor-flag write has committed. A failed attempt, the queue call included, is retried
+ * once; a second failure is logged, with the image and model ids, and the models found are parked for
+ * the main app to replay.
  */
-export async function queueModelsForImageChildTagChanges(
-  changes: ImageChildTagChanges
+export async function queueDocumentsForImageMinorChanges(
+  changes: ImageMinorChanges
 ): Promise<void> {
   for (let attempt = 1; ; attempt++) {
     const found: Found = {};
@@ -36,7 +34,7 @@ export async function queueModelsForImageChildTagChanges(
         imageIds: found.imageIds ?? changedImageIds(changes),
         modelIds: found.modelIds,
       });
-      if (attempt >= ATTEMPTS) return;
+      if (attempt >= ATTEMPTS) return parkModelSearchUpdates(found.modelIds ?? []);
       await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
     }
   }
@@ -49,26 +47,25 @@ const logError = (error: unknown) => void logAxiomError(error, { name: 'image-mo
 /** What an attempt resolved before it failed, for the error log. */
 type Found = { imageIds?: number[]; modelIds?: number[] };
 
-const changedImageIds = ({ tagWrites = [], levelImageIds = [] }: ImageChildTagChanges) => [
-  ...new Set([...tagWrites.map((x) => x.imageId), ...levelImageIds]),
+const changedImageIds = ({ levelImageIds = [], minorImageIds = [] }: ImageMinorChanges) => [
+  ...new Set([...levelImageIds, ...minorImageIds]),
 ];
 
 async function queueModels(
-  { tagWrites = [], levelImageIds = [] }: ImageChildTagChanges,
+  { levelImageIds = [], minorImageIds = [] }: ImageMinorChanges,
   found: Found
 ) {
-  const imageIds = new Set(tagWrites.filter((x) => childTagIds.has(x.tagId)).map((x) => x.imageId));
+  const imageIds = new Set(minorImageIds);
 
   const levelOnly = [...new Set(levelImageIds)].filter((id) => !imageIds.has(id));
   if (levelOnly.length) {
-    const tagged = await dbWrite
-      .selectFrom('TagsOnImageNew')
-      .select('imageId')
-      .distinct()
-      .where('imageId', 'in', levelOnly)
-      .where('tagId', 'in', CHILD_TAG_IDS)
+    const flagged = await dbWrite
+      .selectFrom('Image')
+      .select('id')
+      .where('id', 'in', levelOnly)
+      .where('minor', '=', true)
       .execute();
-    for (const { imageId } of tagged) imageIds.add(imageId);
+    for (const { id } of flagged) imageIds.add(id);
   }
 
   if (!imageIds.size) return;

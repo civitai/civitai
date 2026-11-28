@@ -66,6 +66,7 @@ export function useHatStock() {
         optedIn: data.optedIn,
         left: data.left,
         ownerOff: data.ownerOff,
+        tooNew: data.tooNew,
         cap: data.cap,
         /** How many of the viewer's team's stickers score on an image it leads. */
         creditedPlayers: data.creditedPlayers,

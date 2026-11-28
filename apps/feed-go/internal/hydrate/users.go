@@ -13,7 +13,7 @@ type BasicUser struct {
 	ID        int
 	Username  any // string or nil
 	Image     any // string or nil
-	DeletedAt any // time.Time or nil
+	DeletedAt any // *time.Time (one Date per user, basicUserFrom) or nil
 }
 
 // basicUsersFrom is getBasicDataForUsers over the `basic-users` cache's answer got for (unique) ids
@@ -46,7 +46,10 @@ func (s *Sources) basicUsersFrom(ctx context.Context, ids []int, got map[int]Ent
 func basicUserFrom(id int, m map[string]any) BasicUser {
 	u := BasicUser{ID: id, Username: m["username"], Image: m["image"], DeletedAt: m["deletedAt"]}
 	if t, ok := u.DeletedAt.(time.Time); ok {
-		u.DeletedAt = t
+		// One Date per user: every image's `user` carries `deletedAt: userData?.deletedAt ?? null`, the
+		// same Date from the user's cached entry, so the devalue writer writes it once (a pointer is
+		// that identity; the superjson writer reads through it).
+		u.DeletedAt = &t
 	}
 	return u
 }
@@ -63,7 +66,7 @@ type equippedCosmetic struct {
 // computed every miss (lookupUserCosmetics) into got before this runs.
 func userCosmeticsFrom(ids []int, got map[int]Entry) (map[int][]equippedCosmetic, []int, error) {
 	if miss := Missing(ids, got); len(miss) > 0 {
-		return nil, nil, fallback.Newf("user-cosmetics-miss", "%d ids", len(miss))
+		return nil, nil, fallback.Safef("user-cosmetics-miss", "%d ids", len(miss))
 	}
 	perUser := map[int][]equippedCosmetic{}
 	var cosmeticIDs []int
@@ -71,14 +74,16 @@ func userCosmeticsFrom(ids []int, got map[int]Entry) (map[int][]equippedCosmetic
 		if e.NotFound {
 			continue
 		}
-		list, _ := e.Value["cosmetics"].([]any)
-		for _, item := range list {
-			m, ok := item.(map[string]any)
+		// The ordered record (an ordered cache): each equipped entry's `data` keeps the key order
+		// Node's answer has.
+		for _, item := range asList(ObjectField(e.Ordered(), "cosmetics")) {
+			m, ok := item.(superjson.Object)
 			if !ok {
 				continue
 			}
-			cid, _ := Int(m["cosmeticId"])
-			perUser[id] = append(perUser[id], equippedCosmetic{cosmeticID: cid, data: m["data"]})
+			cid, _ := Int(ObjectField(m, "cosmeticId"))
+			data := ObjectField(m, "data")
+			perUser[id] = append(perUser[id], equippedCosmetic{cosmeticID: cid, data: data})
 			cosmeticIDs = append(cosmeticIDs, cid)
 		}
 	}
@@ -115,7 +120,8 @@ func (s *Sources) cosmeticsFrom(ctx context.Context, ids []int, got map[int]Entr
 	out := make(map[int]superjson.Object, len(ids))
 	for id, e := range got {
 		if !e.NotFound {
-			out[id] = Pick(e.Value, "id", "name", "type", "data", "source", "flags")
+			// The ordered record (an ordered cache): `data` keeps the key order Node's answer has.
+			out[id] = PickOrdered(e.Ordered(), "id", "name", "type", "data", "source", "flags")
 		}
 	}
 	if miss := Missing(ids, got); len(miss) > 0 {
@@ -135,17 +141,18 @@ func (s *Sources) cosmeticsFrom(ctx context.Context, ids []int, got map[int]Entr
 	return out, nil
 }
 
-// profilePictureColumns is the profile-pictures:v3 lookup's select list, in order.
+// profilePictureColumns is the profile-pictures:v4 lookup's select list, in order.
 var profilePictureColumns = []string{"id", "name", "url", "nsfwLevel", "hash", "userId", "ingestion", "type", "width", "height", "metadata"}
 
 // profilePicturesFrom is getProfilePicturesForUsers over the cache's answer got for (unique) ids. The
 // miss path runs the cache's own lookup query on the replica: the user's profile picture, only when it
-// is servable (src/server/services/profile-picture.sql.ts).
+// is servable (servableProfilePictureSql, src/server/services/profile-picture.sql.ts).
 func (s *Sources) profilePicturesFrom(ctx context.Context, ids []int, got map[int]Entry) (map[int]superjson.Object, error) {
 	out := make(map[int]superjson.Object, len(ids))
 	for id, e := range got {
 		if !e.NotFound {
-			out[id] = Pick(e.Value, profilePictureColumns...)
+			// The ordered record (an ordered cache): `metadata` keeps the key order Node's answer has.
+			out[id] = PickOrdered(e.Ordered(), profilePictureColumns...)
 		}
 	}
 	if miss := Missing(ids, got); len(miss) > 0 {
@@ -156,8 +163,10 @@ func (s *Sources) profilePicturesFrom(ctx context.Context, ids []int, got map[in
 			WHERE u.id = ANY($1::int[])
 			  AND i.ingestion <> 'Blocked'
 			  AND i."nsfwLevel" != 0
-			  AND i."needsReview" IS DISTINCT FROM 'csam'
-			  AND `+ImageReviewedSQL("i"), miss)
+			  AND (i."needsReview" IS NULL OR i."needsReview" NOT IN ('csam', 'minor'))
+			  AND `+ImageReviewedSQL("i")+`
+			  AND ((i."nsfwLevel" & 60) = 0 OR NOT i."modelRestricted")
+			  AND NOT `+HasBlockMarkerSQL("i"), miss)
 		if err != nil {
 			return nil, err
 		}
@@ -171,6 +180,58 @@ func (s *Sources) profilePicturesFrom(ctx context.Context, ids []int, got map[in
 		}
 	}
 	return out, nil
+}
+
+// HasBlockMarkerSQL is hasBlockMarkerSql(alias) (src/server/common/image-visibility.ts), with its
+// bound values inlined as literals.
+func HasBlockMarkerSQL(alias string) string {
+	a := `"` + alias + `"`
+	return `(` + a + `."ingestion" = 'Blocked'::"ImageIngestionStatus" OR ` + a + `."nsfwLevel" = 32 OR ` + a + `."blockedFor" IS NOT NULL)`
+}
+
+// OwnerMediaAllowedSQL is ownerMediaAllowedSql(alias) (src/server/common/image-visibility.ts), never
+// NULL, with OWNER_MEDIA_EXEMPT_BLOCKS (src/server/common/image-block-marker.ts) inlined as literals.
+func OwnerMediaAllowedSQL(alias string) string {
+	a := `"` + alias + `"`
+	return `(CASE WHEN ` + a + `."blockedFor" IS NOT NULL THEN ` + a + `."blockedFor" IN ('AiNotVerified') ELSE ` +
+		a + `."ingestion" <> 'Blocked'::"ImageIngestionStatus" END)`
+}
+
+// ImageBlockedForSQL is imageBlockedForConditions({ userId: viewerID, isModerator })
+// (src/server/common/image-visibility.ts) over "Image" i, the read that serves media (no
+// ownerKeepsBlockedRow): nothing for a moderator; `(i."blockedFor" IS NULL)` with no viewer;
+// otherwise an image with a blockedFor reason is kept only as the viewer's own, where
+// OwnerMediaAllowedSQL allows it. bind adds a query argument and returns its placeholder; it is
+// called once, for a viewer only.
+func ImageBlockedForSQL(viewerID int, isModerator bool, bind func(any) string) []string {
+	if isModerator {
+		return nil
+	}
+	if viewerID == 0 {
+		return []string{`(i."blockedFor" IS NULL)`}
+	}
+	return []string{`(i."blockedFor" IS NULL OR (i."userId" = ` + bind(viewerID) + ` AND ` + OwnerMediaAllowedSQL("i") + `))`}
+}
+
+// OwnerMediaSQL is ownerMediaSql(viewerID) (src/server/common/image-visibility.ts) over "Image" i:
+// the viewer's own images only where OwnerMediaAllowedSQL allows, whatever blockedFor says (a
+// Blocked ingestion with no reason included); `TRUE` with no viewer. bind as for ImageBlockedForSQL.
+func OwnerMediaSQL(viewerID int, bind func(any) string) string {
+	if viewerID == 0 {
+		return `TRUE`
+	}
+	return `("i"."userId" <> ` + bind(viewerID) + ` OR ` + OwnerMediaAllowedSQL("i") + `)`
+}
+
+// BlockedMediaListSQL is blockedMediaListConditions({ userId: viewerID, isModerator })
+// (src/server/common/image-visibility.ts), the block terms of a list that serves media: nothing for
+// a moderator, else ImageBlockedForSQL then OwnerMediaSQL. viewerID must be the viewer Node reads as
+// the owner (feedViewer's id: a session or a full-access key; feed-go answers no other credential).
+func BlockedMediaListSQL(viewerID int, isModerator bool, bind func(any) string) []string {
+	if isModerator {
+		return nil
+	}
+	return append(ImageBlockedForSQL(viewerID, false, bind), OwnerMediaSQL(viewerID, bind))
 }
 
 // ImageReviewedSQL is imageReviewedSql(alias) (src/server/common/image-visibility.ts), with its bound

@@ -75,10 +75,6 @@ const NARROW: [number, number] = [390, 844];
 /** Mantine `spacing="md"` — the gallery's column gap, in px. */
 const GAP = 16;
 
-// Anonymous viewer, so the `⋮` menu and its modals never mount. Nothing in this file
-// is about them and each one is a portal that would sit outside the measured tree.
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-
 // 🔴 `importOriginal` SPREAD, not a wholesale replacement (local-rules/
 // no-wholesale-module-mock): a hand-written factory silently breaks every importer
 // the day the real module grows an export it omits — and in this project that

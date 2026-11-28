@@ -82,7 +82,6 @@ type BaseUser = {
   id: number;
   username: string | null;
   createdAt: Date;
-  image: string | null;
   deletedAt: Date | null;
 };
 type UserMetric = {
@@ -115,7 +114,7 @@ type UserRank = {
 export const buildUsersIndexWhere = (...narrowing: (Prisma.Sql | undefined)[]) =>
   [...USER_SEARCH_INDEX_ELIGIBILITY, ...narrowing].filter(isDefined);
 
-const transformData = async ({
+export const transformData = async ({
   users,
   metrics,
   ranks,
@@ -131,6 +130,9 @@ const transformData = async ({
   const records = users.map((user) => {
     return {
       ...user,
+      // Null, not absent: an update merges into the stored document, so an absent key would keep
+      // the image an earlier version stored.
+      image: null,
       profilePicture: profilePictures[user.id] ?? null,
       rank: ranks.find((r) => r.userId === user.id),
       metrics: metrics.find((m) => m.userId === user.id),
@@ -216,8 +218,7 @@ export const pullUsersData = async (
           u.id,
           u.username,
           u."deletedAt",
-          u."createdAt",
-          u.image
+          u."createdAt"
         FROM "User" u
         WHERE ${Prisma.join(where, ' AND ')}
       `;

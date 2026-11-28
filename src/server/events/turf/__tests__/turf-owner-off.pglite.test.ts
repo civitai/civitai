@@ -3,9 +3,10 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import type * as TurfWatch from '~/server/events/turf/turf-watch';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
-import { createLuaRedis } from '~/server/utils/__tests__/redis-lua-harness';
+import { createLuaRedis, hashTicketFrom } from '~/server/utils/__tests__/redis-lua-harness';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type { Prisma } from '@prisma/client';
+import { TURF_SCORE_TIER_KEY } from '~/server/events/turf/config';
 import { UserFlag } from '~/shared/constants/user-flags.constants';
 
 /**
@@ -142,14 +143,13 @@ beforeEach(async () => {
   dbMock.dbWrite.$transaction.mockRejectedValue(new Error('passed the checks') as never);
   dbMock.dbRead.eventTurfStock.findUnique.mockResolvedValue(null as never);
   lua = createLuaRedis(0);
-  redisMock.sysRedis.eval.mockImplementation(lua.eval as never);
-  redisMock.sysRedis.hmGet.mockImplementation((async (_k: string, keys: string[]) =>
-    keys.map(() => null)) as never);
+  redisMock.redis.eval.mockImplementation(lua.eval as never);
+  for (const client of [redisMock.redis, redisMock.sysRedis])
+    client.hmGet.mockImplementation((async (_k: string, keys: string[]) =>
+      keys.map(() => null)) as never);
   let ticket = 0;
-  redisMock.sysRedis.incr.mockImplementation((async () => ++ticket) as never);
-  redisMock.sysRedis.hGetAll.mockImplementation(
-    (async (key: string) => lua.hash(key) ?? {}) as never
-  );
+  redisMock.redis.hIncrBy.mockImplementation(hashTicketFrom(lua, () => ++ticket) as never);
+  redisMock.redis.hGetAll.mockImplementation((async (key: string) => lua.hash(key) ?? {}) as never);
   pushTurfCounts.mockClear();
 });
 
@@ -360,7 +360,7 @@ describe('who may use the switch', () => {
   // By the time the sync runs the switch is saved: a failed sync must not report a failed save,
   // which would leave the client stale and a retry with nothing to change.
   it('a failed sync after the switch is saved still reports the change', async () => {
-    redisMock.sysRedis.eval.mockRejectedValue(new Error('redis down') as never);
+    redisMock.redis.eval.mockRejectedValue(new Error('redis down') as never);
     expect((await setTurfOwnerOff('e', OUTSIDER, true)).changed).toBe(true);
     expect((await getTurfStock('e', OUTSIDER)).ownerOff).toBe(true);
   });
@@ -389,5 +389,37 @@ describe('who may use the switch', () => {
     await expect(setTurfOptIn('e', OUTSIDER, true)).rejects.toThrow('to join');
     await setTurfOwnerOff('e', OUTSIDER, false);
     expect((await setTurfOptIn('e', OUTSIDER, true)).changed).toBe(true);
+  });
+});
+
+// Placing is never refused for this (hats still draw); stock only tells the player why they do not score.
+describe('too new to score', () => {
+  const NEW = '2026-11-10';
+  const [TOO_NEW, REACHED_TIER, BANNED, EXCLUDED] = [20, 21, 22, 23];
+  beforeEach(async () => {
+    await db.exec(`
+      INSERT INTO "CreatorMilestone" VALUES ('${TURF_SCORE_TIER_KEY}', 1000000) ON CONFLICT DO NOTHING;
+      INSERT INTO "User" (id, settings, "createdAt", meta, "bannedAt", flags) VALUES
+        (${TOO_NEW}, '{"eventTurfOptIn": {"e": true}}', '${NEW}', NULL, NULL, 0),
+        (${REACHED_TIER}, '{"eventTurfOptIn": {"e": true}}', '${NEW}', '{"scores":{"total":1000000}}', NULL, 0),
+        (${BANNED}, '{"eventTurfOptIn": {"e": true}}', '${NEW}', NULL, '2026-11-11', 0),
+        (${EXCLUDED}, '{"eventTurfOptIn": {"e": true}}', '${NEW}', NULL, NULL, ${UserFlag.ExcludeFromEventPoints});
+    `);
+  });
+  const tooNew = async (userId: number) => (await getTurfStock('e', userId)).tooNew;
+
+  it('says so for an account made after the start that has not reached the tier', async () => {
+    expect(await tooNew(TOO_NEW)).toBe(true);
+  });
+
+  it('not for an account from before the start, or one that has reached the tier', async () => {
+    expect(await tooNew(PLACER)).toBe(false);
+    expect(await tooNew(REACHED_TIER)).toBe(false);
+  });
+
+  // Telling these accounts they are too new would be untrue, and would hint at why they do not score.
+  it('not for a banned or excluded account, however new', async () => {
+    expect(await tooNew(BANNED)).toBe(false);
+    expect(await tooNew(EXCLUDED)).toBe(false);
   });
 });

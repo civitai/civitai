@@ -1,4 +1,5 @@
 import { error, json, type RequestHandler } from '@sveltejs/kit';
+import { OWNER_HIDDEN_REVIEWS } from '@civitai/shared/owner-hidden-reviews';
 import { sql } from '@civitai/db/kysely';
 import { sfwBrowsingLevelsFlag } from '@civitai/shared';
 import {
@@ -24,6 +25,8 @@ import {
 } from '$lib/analytics/reactors';
 
 export type ReactorEntity = 'image' | 'article';
+
+const HIDDEN_COUNT_MAX = 1000;
 
 const TABLES = {
   image: { content: 'Image', reactions: 'ImageReaction', fk: 'imageId' },
@@ -88,14 +91,15 @@ export const preLaunchImageReactionListed = (viewerId: number) => sql`
     )))`;
 
 /**
- * Only a scanned, safe-level profile picture, never one held for CSAM review (which the main app's
- * `servableProfilePictureSql` also excludes); the legacy User.image is unmoderated. Reads alias `p` (Image).
+ * Only a scanned, safe-level profile picture with no block reason, never one under an owner-hidden
+ * review hold (as the main app's `servableProfilePictureSql`); the legacy User.image is unmoderated.
+ * Reads alias `p` (Image).
  */
 export const safeProfilePictureUrl = () => sql`
   CASE
-    WHEN p.ingestion = 'Scanned' AND p."nsfwLevel" > 0
+    WHEN p.ingestion = 'Scanned' AND p."nsfwLevel" > 0 AND p."blockedFor" IS NULL
       AND (p."nsfwLevel" & ~${sql.lit(sfwBrowsingLevelsFlag)}) = 0
-      AND p."needsReview" IS DISTINCT FROM 'csam' THEN p.url
+      AND (p."needsReview" IS NULL OR p."needsReview" <> ALL(${[...OWNER_HIDDEN_REVIEWS]}::text[])) THEN p.url
   END`;
 
 /**
@@ -120,9 +124,10 @@ export async function getReactors(
   // Reactors the site's reaction totals leave out, left out of the counts and the list too so both match the
   // reaction bar. In SQL, before the LIMIT, so a page still fills.
   const notCounted = await getMetricExcludedUserIds();
-  const counted = notCounted.length
-    ? sql`AND NOT (${sql.ref('userId')} = ANY(${notCounted}::int[]))`
-    : sql``;
+  const counted = notMetricExcluded('userId', notCounted);
+
+  const listed = sql`${listedToViewer(`${t.reactions}.userId`, ownerId)}
+    ${entity === 'image' ? sql`AND ${preLaunchImageReactionListed(ownerId)}` : sql``}`;
 
   const countRows = await sql<{ reaction: string; n: number }>`
     SELECT reaction, count(*)::int AS n FROM ${sql.table(t.reactions)}
@@ -137,7 +142,18 @@ export async function getReactors(
 
   const reaction = query.reaction ?? defaultReaction(counts);
   if (!reaction || counts[reaction] === 0)
-    return { reaction, counts, reactors: [], next: null, prev: null };
+    return { reaction, counts, hidden: 0, reactors: [], next: null, prev: null };
+
+  // The listed filters cost a User lookup per reaction, so a large list (where a short last page is expected anyway)
+  // goes without the figure.
+  let hidden: number | undefined;
+  if (counts[reaction] <= HIDDEN_COUNT_MAX) {
+    const listedRows = await sql<{ n: number }>`
+      SELECT count(*)::int AS n FROM ${sql.table(t.reactions)}
+      WHERE ${sql.ref(t.fk)} = ${entityId} AND reaction = ${reaction} AND ${listed} ${counted}
+    `.execute(db);
+    hidden = Math.max(0, counts[reaction] - Number(listedRows.rows[0]?.n ?? 0));
+  }
 
   const { cursor } = query;
   const { bound, order } = keysetClause('userId', cursor);
@@ -148,8 +164,7 @@ export async function getReactors(
     FROM (
       SELECT "userId", "createdAt" FROM ${sql.table(t.reactions)}
       WHERE ${sql.ref(t.fk)} = ${entityId} AND reaction = ${reaction}
-        AND ${listedToViewer(`${t.reactions}.userId`, ownerId)}
-        ${entity === 'image' ? sql`AND ${preLaunchImageReactionListed(ownerId)}` : sql``} ${counted} ${bound}
+        AND ${listed} ${counted} ${bound}
       ORDER BY "userId" ${order}
       LIMIT ${REACTORS_PAGE_SIZE + 1}
     ) r
@@ -158,7 +173,7 @@ export async function getReactors(
     ORDER BY r."userId" ${order}
   `.execute(db);
 
-  return { reaction, counts, ...(await toReactorPage(db, ownerId, rows, cursor)) };
+  return { reaction, counts, hidden, ...(await toReactorPage(db, ownerId, rows, cursor)) };
 }
 
 type ReactorRow = {
@@ -204,8 +219,8 @@ const countedThumbsUp = sql`
     SELECT 1 FROM "Post" rvp WHERE rvp.id = rr."postId" AND rvp."publishedAt" <= now()
   ))`;
 
-const notMetricExcluded = (ids: number[]) =>
-  ids.length ? sql`AND NOT (rr."userId" = ANY(${ids}::int[]))` : sql``;
+export const notMetricExcluded = (column: string, ids: number[]) =>
+  ids.length ? sql`AND NOT (${sql.ref(column)} = ANY(${ids}::int[]))` : sql``;
 
 /**
  * Who left a thumbs-up on any version of the caller's model, one row per user. Null when the model is not theirs or a
@@ -244,7 +259,7 @@ export async function getModelLikers(
       CROSS JOIN LATERAL (
         SELECT rr."userId", rr."createdAt" FROM "ResourceReview" rr
         WHERE rr."modelVersionId" = mv.id AND ${countedThumbsUp}
-          AND ${listedToViewer('rr.userId', ownerId)} ${notMetricExcluded(notCounted)} ${bound}
+          AND ${listedToViewer('rr.userId', ownerId)} ${notMetricExcluded('rr.userId', notCounted)} ${bound}
         ORDER BY rr."userId" ${order}
         LIMIT ${REACTORS_PAGE_SIZE + 1}
       ) x

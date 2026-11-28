@@ -1,5 +1,5 @@
 import { json, type RequestHandler } from '@sveltejs/kit';
-import { maybeCreateSessionSigner } from '@civitai/auth';
+import { isAccessTokenJwt, maybeCreateSessionSigner } from '@civitai/auth';
 import { TokenScope } from '@civitai/auth/token-scope';
 import { db } from '$lib/server/db/db';
 import { oauthServer } from '$lib/server/oauth/server';
@@ -7,6 +7,8 @@ import { oauthModel } from '$lib/server/oauth/model';
 import {
   checkClientTokenRateLimit,
   checkOAuthRateLimit,
+  oauthRetryAfter,
+  rateLimitedResponse,
   tokenOverflowExhausted,
   tokenSecretChecksExhausted,
 } from '$lib/server/oauth/rate-limit';
@@ -16,15 +18,21 @@ import { OriginNotAllowedError } from '$lib/server/oauth/errors';
 import {
   ACCESS_TOKEN_TTL,
   ACCESS_TOKEN_TYPE,
+  BLOCK_TOKEN_TYPE,
   DEVICE_CODE_GRANT,
   TOKEN_EXCHANGE_GRANT,
   WORKER_TOKEN_TTL,
 } from '$lib/server/oauth/constants';
-import type { WorkerGrantRequestContext } from '$lib/server/oauth/worker-grant';
+import {
+  WorkerDeviceRateLimitedError,
+  type WorkerGrantRequestContext,
+} from '$lib/server/oauth/worker-grant';
 import { consumeOidcContext } from '$lib/server/oauth/oidc-nonce';
-import { hasScope, parseScopeRequest } from '$lib/server/oauth/scope';
+import { hasScope, parseScopeRequest, stringToScope } from '$lib/server/oauth/scope';
 import { deviceTokenGrant } from '$lib/server/oauth/device-token';
 import { handleUserTokenExchange } from '$lib/server/oauth/user-exchange';
+import { handleClientTokenExchange } from '$lib/server/oauth/client-exchange';
+import { handleBlockTokenExchange } from '$lib/server/oauth/block-exchange';
 import { handleServiceToken, serviceTokenClient } from '$lib/server/oauth/service-token';
 import {
   parseBody,
@@ -42,7 +50,8 @@ import {
 
 // POST /api/auth/oauth/token — authorization_code + refresh_token (+ client_credentials) grants, the
 // worker token-exchange grant (lib/server/oauth/worker-grant.ts), the user token exchange
-// (lib/server/oauth/user-exchange.ts) and service tokens (lib/server/oauth/service-token.ts).
+// (lib/server/oauth/user-exchange.ts), the block token exchange (lib/server/oauth/block-exchange.ts) and
+// service tokens (lib/server/oauth/service-token.ts).
 // Ported from src/pages/api/auth/oauth/token.ts.
 //
 // OIDC id_token signer: undefined unless the hub ES256 keys are set (they always are when sessions
@@ -109,10 +118,22 @@ export const POST: RequestHandler = async ({ request }) => {
   if (body.grant_type === DEVICE_CODE_GRANT) return deviceTokenGrant(request, body);
 
   // A user's access token exchanged for a resource JWT has its own client auth and limits (user-exchange.ts).
-  // Every other token exchange is a worker's, handled by the library's worker grant.
+  // A subject that is one of this hub's at+jwt access tokens is a service's own token passed on by a relay
+  // (client-exchange.ts); a user's token is never one (the user exchange takes opaque tokens only, and the
+  // client exchange refuses a JWT with a user). Every other token exchange is a worker's, handled by the
+  // library's worker grant.
   if (body.grant_type === TOKEN_EXCHANGE_GRANT && body.subject_token_type === ACCESS_TOKEN_TYPE) {
     const resources = await formResources();
+    if (typeof body.subject_token === 'string' && isAccessTokenJwt(body.subject_token)) {
+      return handleClientTokenExchange({ request, body, resources, clientIp, formEncoded });
+    }
     return handleUserTokenExchange({ request, body, resources, clientIp, formEncoded });
+  }
+  // An App Block token exchanged for an AppDataRead at+jwt naming the relay (block-exchange.ts). Dark
+  // unless OAUTH_BLOCK_EXCHANGE_CALLERS lists the caller; never the worker grant.
+  if (body.grant_type === TOKEN_EXCHANGE_GRANT && body.subject_token_type === BLOCK_TOKEN_TYPE) {
+    const resources = await formResources();
+    return handleBlockTokenExchange({ request, body, resources, clientIp, formEncoded });
   }
 
   // client_credentials with a `resource` from an authenticated service client is a service token under its
@@ -141,10 +162,8 @@ export const POST: RequestHandler = async ({ request }) => {
   ) {
     const headers = new Headers();
     setWildcardCors(headers);
-    return json(
-      { error: 'rate_limited', error_description: 'Too many token requests' },
-      { status: 429, headers }
-    );
+    // token and worker-token share this window.
+    return rateLimitedResponse(oauthRetryAfter('token'), headers, 'Too many token requests');
   }
 
   // The library authenticates the Basic header's client and ignores a body client_id, so a different one
@@ -266,9 +285,7 @@ export const POST: RequestHandler = async ({ request }) => {
     }
 
     const grantType = body.grant_type;
-    const scopeNum = token.scope
-      ? parseInt(Array.isArray(token.scope) ? token.scope[0] : token.scope, 10)
-      : undefined;
+    const scopeNum = token.scope ? stringToScope(token.scope) : undefined;
     logOAuthEvent({
       type: grantType === 'refresh_token' ? 'token.refreshed' : 'token.issued',
       userId: typeof token.user?.id === 'number' ? token.user.id : undefined,
@@ -327,6 +344,9 @@ export const POST: RequestHandler = async ({ request }) => {
     }
     void logAxiomError(err, { event: '[oauth/token] handler error' });
     setWildcardCors(respHeaders);
+    if (err instanceof WorkerDeviceRateLimitedError) {
+      return rateLimitedResponse(oauthRetryAfter('worker-device'), respHeaders, err.message);
+    }
     const e = err as { code?: number; statusCode?: number; name?: string; message?: string };
     const status =
       typeof e.statusCode === 'number' ? e.statusCode : typeof e.code === 'number' ? e.code : 500;

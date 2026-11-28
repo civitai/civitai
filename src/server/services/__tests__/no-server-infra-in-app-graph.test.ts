@@ -110,6 +110,11 @@ const KNOWN_REACHABLE: { file: string; reason: string }[] = [
     reason: 'via civitai-axiom/src/client.ts; drops with it.',
   },
   {
+    file: 'packages/civitai-axiom/src/console-forwarding.ts',
+    reason:
+      'via civitai-axiom/src/client.ts; a leaf with no imports (a globalThis counter). Drops with it.',
+  },
+  {
     file: 'packages/civitai-buzz/src/client.ts',
     reason:
       'PRE-EXISTING, invisible until this guard learned to resolve unaliased workspace packages. Static chain: _app -> SignalsProviderStack -> SignalsNotifications -> shared/constants/buzz.constants.ts -> the @civitai/buzz BARREL, which `export * from ./client`. buzz.constants only needs ./account-types. Fix needs an `exports` map on @civitai/buzz (it ships none) so the import can go deep.',
@@ -145,6 +150,12 @@ const SERVER_ONLY_EDGES: { file: string; spec: string; reason: string }[] = [
     spec: '~/server/shell/shell-render',
     reason:
       'the static-shell decision and its viewer-independent seeds (flags with no user, ToS, browsing addons, liveNow), read before the bootstrap is.',
+  },
+  {
+    file: 'src/pages/_app.tsx',
+    spec: '~/server/services/signed-out-rollout',
+    reason:
+      'the signed-out per-visitor rollout flags, set only on a render for one visitor; server-only because it evaluates Flipt.',
   },
   {
     file: 'src/pages/_app.tsx',

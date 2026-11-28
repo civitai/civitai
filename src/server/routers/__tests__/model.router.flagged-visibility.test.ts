@@ -7,13 +7,22 @@ import type * as ModelService from '~/server/services/model.service';
 import type * as SystemCache from '~/server/services/system-cache';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
+// Read when region-blocking loads: requests from XX are restricted.
+vi.hoisted(() => {
+  process.env.REGION_RESTRICTION_CONFIG = 'XX:2020-01-01';
+});
+
 const handlers = vi.hoisted(() => ({
   getModelOwnerHandler: vi.fn(async () => 'owner'),
   getModelVersionsHandler: vi.fn(async () => 'versions'),
   getModelDetailsForReviewHandler: vi.fn(async () => 'details'),
   getAssociatedResourcesCardDataHandler: vi.fn(async () => 'cards'),
   getSimpleModelWithVersions: vi.fn(async () => 'simple'),
-  getAssociatedResourcesSimple: vi.fn(async () => 'associated'),
+  setAssociatedResources: vi.fn(async (..._args: unknown[]) => ({})),
+  getAssociatedResourcesSimple: vi.fn(
+    async (..._args: unknown[]) =>
+      ({ items: [], regionDependent: false } as { items: unknown[]; regionDependent: boolean })
+  ),
 }));
 
 vi.mock('~/server/controllers/model.controller', async (importOriginal) => ({
@@ -38,6 +47,7 @@ vi.mock('~/server/services/model.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelService>()),
   getSimpleModelWithVersions: handlers.getSimpleModelWithVersions,
   getAssociatedResourcesSimple: handlers.getAssociatedResourcesSimple,
+  setAssociatedResources: handlers.setAssociatedResources,
 }));
 
 import { modelRouter } from '~/server/routers/model.router';
@@ -133,5 +143,90 @@ describe('model.getWithCategoriesSimple', () => {
 
   it('moderators get the unfiltered list', async () => {
     expect((await whereFor('moderator')).OR).toBeUndefined();
+  });
+});
+
+describe('model.getAssociatedResourcesSimple and region', () => {
+  const ctxFor = (
+    user: (typeof VIEWERS)[ViewerKey],
+    credential: Record<string, unknown>,
+    headers: Record<string, string> = {}
+  ) => ({
+    user,
+    acceptableOrigin: true,
+    ...credential,
+    req: { headers },
+    res: { setHeader: () => undefined, removeHeader: () => undefined },
+    cache: { edgeTTL: 60, browserTTL: 60, staleWhileRevalidate: 30, canCache: true, skip: false },
+    features: {},
+    track: {},
+  });
+  const session = { tokenScope: TokenScope.Full, apiKeyId: null };
+
+  async function run(regionDependent: boolean, ctx: ReturnType<typeof ctxFor>) {
+    getModelPoiAndOwner.mockResolvedValue({ poi: false, userId: OWNER });
+    handlers.getAssociatedResourcesSimple.mockResolvedValueOnce({ items: [], regionDependent });
+    await modelRouter
+      .createCaller(ctx as never)
+      .getAssociatedResourcesSimple({ fromId: 1, type: 'Suggested' });
+    return handlers.getAssociatedResourcesSimple.mock.calls.at(-1)?.[1] as {
+      viewer: { isModerator?: boolean };
+      isRestricted: () => boolean;
+    };
+  }
+
+  it('keeps a region-dependent answer out of the edge and browser caches', async () => {
+    const ctx = ctxFor(VIEWERS.anon, session);
+    await run(true, ctx);
+    expect(ctx.cache).toMatchObject({ edgeTTL: 0, browserTTL: 0, staleWhileRevalidate: 0 });
+  });
+
+  it('leaves the cache alone otherwise', async () => {
+    const ctx = ctxFor(VIEWERS.anon, session);
+    await run(false, ctx);
+    expect(ctx.cache).toMatchObject({ edgeTTL: 60, browserTTL: 60 });
+  });
+
+  it('exempts a moderator from the region only on a session or full-access key', async () => {
+    expect((await run(false, ctxFor(VIEWERS.moderator, session))).viewer.isModerator).toBe(true);
+    const scopedKey = {
+      tokenScope: TokenScope.ModelsRead,
+      apiKeyId: 5,
+      apiKeyType: 'User',
+      subject: { type: 'apiKey', id: 5 },
+    };
+    expect((await run(false, ctxFor(VIEWERS.moderator, scopedKey))).viewer.isModerator).toBe(false);
+  });
+
+  it('reads the region from the request, for the list and for a save', async () => {
+    const XX = { 'cf-ipcountry': 'XX' };
+    const editor = { ...VIEWERS.owner, onboarding: 0xffff };
+    expect((await run(false, ctxFor(VIEWERS.anon, session, XX))).isRestricted()).toBe(true);
+    expect((await run(false, ctxFor(VIEWERS.anon, session))).isRestricted()).toBe(false);
+
+    await modelRouter
+      .createCaller({ ...ctxFor(VIEWERS.owner, session, XX), user: editor } as never)
+      .setAssociatedResources({ fromId: 1, type: 'Suggested', associations: [] });
+    const reader = handlers.setAssociatedResources.mock.calls.at(-1)?.[2] as {
+      isRestricted: () => boolean;
+    };
+    expect(reader.isRestricted()).toBe(true);
+  });
+
+  it('does not count a moderator on a scoped key as a moderator for a save', async () => {
+    const moderator = { ...VIEWERS.moderator, onboarding: 0xffff };
+    const scopedKey = {
+      tokenScope: TokenScope.ModelsWrite,
+      apiKeyId: 5,
+      apiKeyType: 'User',
+      subject: { type: 'apiKey', id: 5 },
+    };
+    await modelRouter
+      .createCaller({ ...ctxFor(VIEWERS.moderator, scopedKey), user: moderator } as never)
+      .setAssociatedResources({ fromId: 1, type: 'Suggested', associations: [] });
+    const reader = handlers.setAssociatedResources.mock.calls.at(-1)?.[2] as {
+      viewer: { isModerator?: boolean };
+    };
+    expect(reader.viewer.isModerator).toBe(false);
   });
 });

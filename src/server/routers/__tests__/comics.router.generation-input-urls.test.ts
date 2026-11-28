@@ -9,6 +9,8 @@ const mocks = vi.hoisted(() => ({
   assertInputs: vi.fn(),
   assertStoredUnblocked: vi.fn(),
   getOrchestratorToken: vi.fn(async () => 'token'),
+  callerOwnOrchestratorToken: vi.fn(async (): Promise<string | null> => null),
+  queueStatus: vi.fn(async (): Promise<object> => ({})),
   submit: vi.fn(),
 }));
 
@@ -16,12 +18,14 @@ vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsService>()),
   getFeatureFlags: () => ({ comicCreator: true }),
 }));
+vi.mock('~/utils/signal-client', () => ({ signalClient: { send: async () => undefined } }));
 vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
   getOrchestratorToken: mocks.getOrchestratorToken,
+  callerOwnOrchestratorToken: mocks.callerOwnOrchestratorToken,
 }));
 vi.mock('~/server/services/orchestrator/queue-limits', () => ({
   assertCanGenerate: async () => undefined,
-  getUserQueueStatus: async () => ({}),
+  getUserQueueStatus: () => mocks.queueStatus(),
 }));
 vi.mock('~/server/services/orchestrator/preset-image-gen.service', async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -42,12 +46,13 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { OnboardingSteps } from '~/server/common/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { LAYOUT_OPTIONS } from '~/components/Comics/LayoutPicker';
+import { QUEUED_PANELS_REFUSED_FOR_OWN_KEY } from '../comics.router';
 
 const USER_ID = 7;
 const SOURCE = 'ab12cd34-ef56-4a7b-8c9d-0e1f2a3b4c5d';
 const REF = 'cd34ab12-ef56-4a7b-8c9d-0e1f2a3b4c5d';
 
-const caller = () =>
+const caller = (req?: object) =>
   comicsRouter.createCaller({
     user: { id: USER_ID, isModerator: false, onboarding: OnboardingSteps.Buzz, muted: false },
     domain: 'red',
@@ -55,7 +60,7 @@ const caller = () =>
     needsUpdate: false,
     tokenScope: TokenScope.Full,
     features: { comicCreator: true },
-    req: undefined,
+    req,
     res: { setHeader: () => undefined },
     cache: { edgeTTL: 0 },
     track: {},
@@ -273,6 +278,158 @@ describe('comics generation inputs the server loads', () => {
     expect(sent.map((i) => i.url)).toEqual([expect.stringContaining(SOURCE)]);
   });
 
+  it.each([
+    ['every image of one reference is blocked', 'moderated', true],
+    ['CONTROL: the reference keeps an unblocked image', null, false],
+  ] as const)('iterateGenerate tells the client when %s', async (_, blockedFor, skipped) => {
+    dbMock.dbRead.comicReference.findMany.mockResolvedValue([
+      { id: 5, name: 'A' },
+      { id: 6, name: 'B' },
+    ]);
+    dbMock.dbRead.comicReference.findUnique.mockImplementation((async (args: {
+      where: { id: number };
+    }) =>
+      args.where.id === 5
+        ? { name: 'A', images: [{ image: { id: 1, url: REF, width: 1, height: 1, blockedFor } }] }
+        : {
+            name: 'B',
+            images: [{ image: { id: 2, url: SOURCE, width: 1, height: 1, blockedFor: null } }],
+          }) as never);
+    mocks.submit.mockResolvedValue({ id: 'wf', cost: { total: 0 } });
+    const result = await caller().iterateGenerate({
+      projectId: 11,
+      chapterPosition: 0,
+      prompt: 'p',
+      referenceIds: [5, 6],
+    });
+    expect(result.referenceImagesSkipped).toBe(skipped);
+  });
+
+  describe('the skipped-reference notice', () => {
+    // Alpha's only image is blocked (or not, for the control); Beta always has a usable one.
+    const givenRefs = (alphaBlocked: boolean) => {
+      dbMock.dbRead.comicReference.findMany.mockResolvedValue([
+        { id: 5, name: 'Alpha' },
+        { id: 6, name: 'Beta' },
+      ]);
+      dbMock.dbRead.comicReference.findUnique.mockImplementation((async (args: {
+        where: { id: number };
+      }) => ({
+        name: args.where.id === 5 ? 'Alpha' : 'Beta',
+        images: [
+          {
+            image: {
+              id: args.where.id,
+              url: args.where.id === 5 ? REF : SOURCE,
+              width: 1,
+              height: 1,
+              blockedFor: args.where.id === 5 && alphaBlocked ? 'moderated' : null,
+            },
+          },
+        ],
+      })) as never);
+      mocks.assertUsable.mockResolvedValue(undefined);
+      mocks.submit.mockResolvedValue({ id: 'wf', cost: { total: 0 } });
+      dbMock.dbWrite.comicPanel.create.mockResolvedValue({ id: 1 } as never);
+      dbMock.dbWrite.comicPanel.update.mockResolvedValue({ id: 1, status: 'Generating' } as never);
+      dbMock.dbWrite.comicChapter.create.mockResolvedValue({ projectId: 11, position: 0 } as never);
+      dbMock.dbRead.comicProjectReference.findMany.mockResolvedValue([
+        { referenceId: 5 },
+        { referenceId: 6 },
+      ] as never);
+    };
+    const source = { sourceImageUrl: SOURCE, sourceImageWidth: 512, sourceImageHeight: 512 };
+    const routes = [
+      [
+        'createPanel',
+        (p: string) => caller().createPanel({ projectId: 11, chapterPosition: 0, prompt: p }),
+      ],
+      [
+        'enhancePanel',
+        (p: string) =>
+          caller().enhancePanel({ projectId: 11, chapterPosition: 0, prompt: p, ...source }),
+      ],
+      [
+        'smartCreateChapter',
+        (p: string) =>
+          caller().smartCreateChapter({
+            projectId: 11,
+            referenceIds: [5, 6],
+            panels: [{ prompt: p }],
+          }),
+      ],
+      [
+        'bulkCreatePanels, prompt only',
+        (p: string) =>
+          caller().bulkCreatePanels({ projectId: 11, chapterPosition: 0, panels: [{ prompt: p }] }),
+      ],
+      [
+        'bulkCreatePanels, source and prompt',
+        (p: string) =>
+          caller().bulkCreatePanels({
+            projectId: 11,
+            chapterPosition: 0,
+            panels: [{ prompt: p, ...source }],
+          }),
+      ],
+    ] as const;
+
+    it.each(routes)('%s flags a mentioned reference with no usable image', async (_, run) => {
+      givenRefs(true);
+      expect((await run('@Alpha and @Beta')).referenceImagesSkipped).toBe(true);
+    });
+
+    it.each(routes)(
+      'CONTROL: %s does not flag a usable or unmentioned reference',
+      async (_, run) => {
+        givenRefs(false);
+        expect((await run('@Alpha and @Beta')).referenceImagesSkipped).toBe(false);
+        givenRefs(true);
+        expect((await run('@Beta only')).referenceImagesSkipped).toBe(false);
+      }
+    );
+
+    // A panel generated with a context panel stores that panel's key; its image can be blocked since.
+    it.each(routes)(
+      '%s returns no stored context key, and keeps a clean candidate key',
+      async (_, run) => {
+        givenRefs(false);
+        const withContext = () => ({
+          id: 1,
+          status: 'Generating',
+          imageUrl: null,
+          metadata: {
+            candidateImages: [{ key: 'clean-key' }],
+            previousPanelImageUrl: 'ctx-blocked',
+            referencePanelImageUrl: 'ctx-blocked',
+            referenceImages: [{ url: 'ctx-blocked', width: 1, height: 1 }],
+          },
+        });
+        dbMock.dbWrite.comicPanel.create.mockImplementation((async () => withContext()) as never);
+        dbMock.dbWrite.comicPanel.update.mockImplementation((async () => withContext()) as never);
+        dbMock.dbWrite.image.findMany.mockResolvedValue([
+          {
+            url: 'ctx-blocked',
+            userId: USER_ID,
+            nsfwLevel: 1,
+            modelRestricted: false,
+            ingestion: 'Blocked',
+            blockedFor: 'moderated',
+          },
+        ] as never);
+        const result = (await run('@Beta')) as {
+          metadata?: unknown;
+          panels?: { metadata: unknown }[];
+        };
+        const metadata = result.panels ? result.panels[0].metadata : result.metadata;
+        expect(JSON.stringify(metadata).includes('ctx-blocked')).toBe(false);
+        expect(
+          (metadata as { candidateImages: { key?: string }[] }).candidateImages.map((c) => c.key)
+        ).toEqual(['clean-key']);
+      }
+    );
+  });
+
   // The kill switch is applied inside `submitPresetImageGen` from the user it is handed: a free,
   // non-moderator caller must arrive as one, or a forced tier or moderator flag is a bypass.
   it('submits as the signed-in user, for the generation kill switch', async () => {
@@ -297,5 +454,41 @@ describe('comics generation inputs the server loads', () => {
       expect.objectContaining({ where: { id: { in: [5] }, userId: USER_ID } })
     );
     expect(dbMock.dbRead.comicReference.findUnique).not.toHaveBeenCalled();
+  });
+});
+
+// Queued panels are submitted later by a job on the user's System token, so a request that would be
+// sent to the orchestrator as its own limited key cannot queue them (callerOwnOrchestratorToken; its
+// cases and flags are tested in get-orchestrator-token.own-key.test.ts).
+describe('smartCreateChapter with panels to queue (no open slots)', () => {
+  const req = { headers: {}, context: {} };
+  const create = () =>
+    caller(req)
+      .smartCreateChapter({ projectId: 11, referenceIds: [], panels: [{ prompt: 'p' }] })
+      .catch((e: unknown) => e);
+
+  beforeEach(() => {
+    dbMock.dbWrite.comicChapter.create.mockRejectedValue(new Error('chapter create reached'));
+  });
+
+  it('is refused for a request sent as its own limited key, before the chapter is created', async () => {
+    mocks.callerOwnOrchestratorToken.mockResolvedValue('caller-key');
+    expect(await create()).toMatchObject({
+      code: 'FORBIDDEN',
+      message: QUEUED_PANELS_REFUSED_FOR_OWN_KEY,
+    });
+    expect(mocks.callerOwnOrchestratorToken).toHaveBeenCalledWith(USER_ID, req);
+    expect(dbMock.dbWrite.comicChapter.create).not.toHaveBeenCalled();
+  });
+
+  it('CONTROL: goes ahead for an own-key request when every panel fits in the open slots', async () => {
+    mocks.callerOwnOrchestratorToken.mockResolvedValue('caller-key');
+    mocks.queueStatus.mockResolvedValueOnce({ canGenerate: true, available: 1 });
+    expect(await create()).toMatchObject({ message: 'chapter create reached' });
+  });
+
+  it('CONTROL: goes ahead when the request would use the System token', async () => {
+    mocks.callerOwnOrchestratorToken.mockResolvedValue(null);
+    expect(await create()).toMatchObject({ message: 'chapter create reached' });
   });
 });

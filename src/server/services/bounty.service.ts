@@ -1,8 +1,6 @@
+import type { ReportListedViewer } from '~/server/services/report-listed-visibility';
 import { randomBytes } from 'crypto';
-import { holdMarkerViewExists, ownerHeldSql } from '~/server/services/legal-hold.service';
-import { isRemovedWithOwner, notRemovedWithOwnerSql } from '~/server/utils/legal-hold';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
-import { heldEntryOnBountySql } from '~/server/services/held-review.service';
 import type * as z from 'zod';
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
@@ -11,7 +9,6 @@ import {
   BountyEntryMode,
   Currency,
   EntityType,
-  ImageIngestionStatus,
   JobQueueType,
   MetricTimeframe,
   TagTarget,
@@ -82,6 +79,7 @@ import type {
 import { createBountyInputSchema, updateBountyInputSchema } from '../schema/bounty.schema';
 import { isNotTag, isTag } from '../schema/tag.schema';
 import { imageSelect } from '../selectors/image.selector';
+import { entityImageVisibilityConditions } from '~/server/services/image-visibility.service';
 import {
   handleLogError,
   throwAuthorizationError,
@@ -108,7 +106,7 @@ import {
 import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
 import { BOUNTIES_SEARCH_INDEX } from '~/server/common/constants';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
-import { createProfanityFilter } from '~/libs/profanity-simple';
+import { getServerProfanityFilter } from '~/server/services/profanity-list.service';
 import {
   filterSensitiveProfanityData,
   keepStoredProfanityData,
@@ -714,7 +712,10 @@ export const updateBountyById = async ({
         ]);
 
       if (existing.complete) throw throwBadRequestError('Cannot update a completed bounty');
-      if (liftedTextScanPoi && isRemovedWithOwner(existing.meta))
+      if (
+        liftedTextScanPoi &&
+        (existing.meta as { removedWithOwner?: unknown } | null)?.removedWithOwner === true
+      )
         throw throwBadRequestError('This bounty is kept hidden until its payout settles');
 
       if (
@@ -903,7 +904,7 @@ export const upsertBounty = async ({
   const addLockedProperties: string[] = [];
   if (!isModerator && (await legacyProfanityAutoNsfwApplies('Bounty', id))) {
     // Check bounty name and description for profanity using threshold-based evaluation
-    const profanityFilter = createProfanityFilter();
+    const profanityFilter = (await getServerProfanityFilter()).filter;
     const textToCheck = [data.name, data.description].filter(Boolean).join(' ');
     const evaluation = profanityFilter.evaluateContent(textToCheck);
 
@@ -962,6 +963,14 @@ export const upsertBounty = async ({
   }
 };
 
+const autoNsfwBountySelect = {
+  name: true,
+  nsfw: true,
+  moderatorNsfwLevel: true,
+  lockedProperties: true,
+  details: true,
+} satisfies Prisma.BountySelect;
+
 /**
  * The one path for "a bounty's description changed", for a caller holding only new HTML — the
  * blurb fan-out. `upsertBounty` is form-shaped, so a partial call to it would clear name, tags,
@@ -990,16 +999,7 @@ export async function applyBountyContentChange({
   // catch it — same reason `applyArticleContentChange` re-checks.
   await throwOnBlockedUserContent(description, { surface: 'bounty' });
 
-  const stored = await dbWrite.bounty.findUnique({
-    where: { id },
-    select: {
-      name: true,
-      nsfw: true,
-      moderatorNsfwLevel: true,
-      lockedProperties: true,
-      details: true,
-    },
-  });
+  const stored = await dbWrite.bounty.findUnique({ where: { id }, select: autoNsfwBountySelect });
   if (!stored) throw throwNotFoundError(`No bounty with id ${id}`);
 
   // Raw SQL because Prisma's @updatedAt fires on every client-side update(), and a blurb
@@ -1021,31 +1021,41 @@ export async function applyBountyContentChange({
   // published bounty while it keeps the SFW rating it earned with the old text. Evaluated
   // unconditionally: there is no acting moderator here to exempt, only the owner whose blurb
   // changed.
-  const flagged = (await legacyProfanityAutoNsfwApplies('Bounty', id))
-    ? evaluateAutoNsfw({
-        name: stored.name,
-        description,
-        alreadyNsfw: stored.nsfw,
-        lockedProperties: stored.lockedProperties,
-      })
-    : null;
-  if (flagged) {
-    const details = {
-      ...((stored.details as MixedObject | null) ?? {}),
-      ...flagged.metaPatch,
-    } as Prisma.InputJsonObject;
-    // Prisma rather than raw SQL, unlike the body write above: this fires rarely, and hand-rolling
-    // the jsonb + text[] binds is where that trade stops being worth it.
+  const profanity = await getServerProfanityFilter();
+  const evaluate = (row: typeof stored) =>
+    evaluateAutoNsfw({
+      name: row.name,
+      description,
+      alreadyNsfw: row.nsfw,
+      lockedProperties: row.lockedProperties,
+      profanity,
+    });
+  // The unlocked read only decides whether to open the transaction; the write is decided again
+  // under the row lock, as `updateBountyById` does, so a moderator rating written in between is
+  // not lowered to R by the stale-rating raise.
+  const flaggedNsfw =
+    (await legacyProfanityAutoNsfwApplies('Bounty', id)) &&
+    !!evaluate(stored) &&
     // One transaction with the retry job: the next fan-out pass sees nsfw already set and would
     // never recompute a stored level left stale by a failed enqueue.
-    await dbWrite.$transaction(async (tx) => {
+    (await dbWrite.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT 1 FROM "Bounty" WHERE id = ${id} FOR UPDATE`;
+      const current = await tx.bounty.findUnique({ where: { id }, select: autoNsfwBountySelect });
+      const flagged = current && evaluate(current);
+      if (!flagged) return false;
+      const details = {
+        ...((current.details as MixedObject | null) ?? {}),
+        ...flagged.metaPatch,
+      } as Prisma.InputJsonObject;
+      // Prisma rather than raw SQL, unlike the body write above: this fires rarely, and
+      // hand-rolling the jsonb + text[] binds is where that trade stops being worth it.
       await tx.bounty.update({
         where: { id },
         data: flagged.lock
           ? {
               nsfw: true,
-              ...staleRatingRaise(stored, true),
-              lockedProperties: uniq([...stored.lockedProperties, 'nsfw']),
+              ...staleRatingRaise(current, true),
+              lockedProperties: uniq([...current.lockedProperties, 'nsfw']),
               details,
             }
           : { details },
@@ -1055,13 +1065,13 @@ export async function applyBountyContentChange({
           [{ entityId: id, entityType: EntityType.Bounty, type: JobQueueType.UpdateNsfwLevel }],
           tx
         );
-    });
-    // Before the reindex, which reads the stored level. Same pairing as `updateBountyById`.
-    if (flagged.lock)
-      await updateBountyNsfwLevels([id]).catch((e) =>
-        handleLogError(e, 'bounty-blurb-nsfw-level-recompute', { bountyId: id })
-      );
-  }
+      return flagged.lock;
+    }));
+  // Before the reindex, which reads the stored level. Same pairing as `updateBountyById`.
+  if (flaggedNsfw)
+    await updateBountyNsfwLevels([id]).catch((e) =>
+      handleLogError(e, 'bounty-blurb-nsfw-level-recompute', { bountyId: id })
+    );
 
   await queueBountySearchIndexUpdate(id);
   scanEntityInBackground({ entityType: 'Bounty', entityId: id });
@@ -1166,16 +1176,14 @@ export const deleteBountyById = async ({
     }
   }
 
-  const markerView = await holdMarkerViewExists();
   const awardTable = await bountyUnpaidAwardTableExists(dbWrite);
   const result = await dbWrite.$transaction(async (tx) => {
     if (!(await lockBountyForPayout(tx, id))) return null;
     const stored = await tx.bounty.findUnique({ where: { id } });
     if (!stored) return null;
-    // A held entrant, or an award recorded for manual resolution, keeps the bounty: hidden and
-    // detached from its owner, deleted later by `bounty-payout-retry`.
-    const keepsBounty = Prisma.sql`(${heldEntryOnBountySql(Prisma.raw('b.id'), markerView)}
-      OR ${openUnpaidBountyAwardSql(Prisma.raw('b.id'), awardTable)})`;
+    // An award recorded for manual resolution keeps the bounty: hidden and detached from its
+    // owner, deleted later by `bounty-payout-retry`.
+    const keepsBounty = openUnpaidBountyAwardSql(Prisma.raw('b.id'), awardTable);
     const doomed = Prisma.sql`SELECT b.id FROM "Bounty" b WHERE b.id = ${id} AND NOT ${keepsBounty}`;
     const [{ gone }] = await tx.$queryRaw<{ gone: boolean }[]>`
       WITH gone AS (DELETE FROM "Bounty" WHERE id IN (${doomed}) RETURNING id),
@@ -1191,7 +1199,8 @@ export const deleteBountyById = async ({
               'availabilityBeforeRemoval', b.availability,
               'userIdBeforeRemoval', b."userId"
             )
-        WHERE b.id = ${id} AND ${keepsBounty} AND ${notRemovedWithOwnerSql('b.meta')}
+        WHERE b.id = ${id} AND ${keepsBounty}
+          AND (b.meta ->> 'removedWithOwner') IS DISTINCT FROM 'true'
       )
       SELECT EXISTS (SELECT 1 FROM gone) AS gone`;
     return { bounty: stored, gone };
@@ -1221,28 +1230,71 @@ export const deleteBountyById = async ({
   return result?.bounty ?? null;
 };
 
+/**
+ * The ids of the bounties' images the viewer may see, by the entity image rules and the bounty
+ * search index's exclusions.
+ */
+async function getVisibleBountyImageIds({
+  bountyIds,
+  userId,
+  isModerator,
+  seesReportListed,
+  ownerSeesReportListed,
+}: BountyImageViewer & { bountyIds: number[] }) {
+  if (bountyIds.length === 0) return [];
+  const AND = entityImageVisibilityConditions({
+    userId,
+    isModerator,
+    seesReportListed: !!seesReportListed,
+    ownerSeesReportListed,
+  });
+  const rows = await dbRead.$queryRaw<{ imageId: number }[]>`
+    SELECT ic."imageId"
+    FROM "ImageConnection" ic
+    JOIN "Image" i ON i.id = ic."imageId"
+    WHERE ic."entityType" = 'Bounty'
+      AND ic."entityId" IN (${Prisma.join(bountyIds)})
+      ${AND.length ? Prisma.sql`AND ${Prisma.join(AND, ' AND ')}` : Prisma.empty}
+  `;
+  return rows.map(({ imageId }) => imageId);
+}
+
+type BountyImageViewer = { userId?: number; isModerator?: boolean } & Partial<
+  Omit<ReportListedViewer, 'userId'>
+>;
+
+/** Generation data its uploader hid goes only to the uploader and moderators. */
+const withVisibleMeta = <T extends { meta: unknown; hideMeta: boolean; userId: number }>(
+  image: T,
+  viewer: { userId?: number; isModerator?: boolean }
+) =>
+  image.hideMeta && !viewer.isModerator && image.userId !== viewer.userId
+    ? { ...image, meta: null }
+    : image;
+
 export const getBountyImages = async ({
   id,
   userId,
   isModerator,
-}: GetByIdInput & { userId?: number; isModerator?: boolean }) => {
-  const imageOr: Prisma.Enumerable<Prisma.ImageWhereInput> = isModerator
-    ? [{ ingestion: { notIn: [] } }]
-    : [{ ingestion: ImageIngestionStatus.Scanned, needsReview: null }];
-
-  if (userId) imageOr.push({ userId });
+  seesReportListed,
+  ownerSeesReportListed,
+}: GetByIdInput & BountyImageViewer) => {
+  const imageIds = await getVisibleBountyImageIds({
+    bountyIds: [id],
+    userId,
+    isModerator,
+    seesReportListed,
+    ownerSeesReportListed,
+  });
 
   const connections = await dbRead.imageConnection.findMany({
-    where: {
-      entityId: id,
-      entityType: 'Bounty',
-      image: { OR: imageOr },
-    },
+    // image-connection-orphan-safe: imageIds were read from Image just above.
+    where: { entityId: id, entityType: 'Bounty', imageId: { in: imageIds } },
     select: { image: { select: { ...imageSelect, poi: true, minor: true } } },
   });
 
   return connections.map(({ image }) => ({
-    ...image,
+    ...withVisibleMeta(image, { userId, isModerator }),
     nsfwLevel: image.nsfwLevel as NsfwLevel,
     tags: image.tags.map((t) => t.tag),
   }));
@@ -1374,22 +1426,20 @@ export const getImagesForBounties = async ({
   bountyIds,
   userId,
   isModerator,
-}: {
-  bountyIds: number[];
-  userId?: number;
-  isModerator?: boolean;
-}) => {
-  const imageOr: Prisma.Enumerable<Prisma.ImageWhereInput> = isModerator
-    ? [{ ingestion: { notIn: [] } }]
-    : [{ ingestion: ImageIngestionStatus.Scanned, needsReview: null }];
-  if (userId) imageOr.push({ userId });
+  seesReportListed,
+  ownerSeesReportListed,
+}: BountyImageViewer & { bountyIds: number[] }) => {
+  const imageIds = await getVisibleBountyImageIds({
+    bountyIds,
+    userId,
+    isModerator,
+    seesReportListed,
+    ownerSeesReportListed,
+  });
 
   const connections = await dbRead.imageConnection.findMany({
-    where: {
-      entityType: 'Bounty',
-      entityId: { in: bountyIds },
-      image: { OR: imageOr },
-    },
+    // image-connection-orphan-safe: imageIds were read from Image just above.
+    where: { entityType: 'Bounty', entityId: { in: bountyIds }, imageId: { in: imageIds } },
     select: {
       entityId: true,
       image: { select: { ...imageSelect, poi: true, minor: true } },
@@ -1398,7 +1448,7 @@ export const getImagesForBounties = async ({
 
   const groupedImages = groupBy(
     connections.map(({ entityId, image }) => ({
-      ...image,
+      ...withVisibleMeta(image, { userId, isModerator }),
       nsfwLefel: image.nsfwLevel as NsfwLevel,
       tags: image.tags.map((t) => ({ id: t.tag.id, name: t.tag.name })),
       entityId,
@@ -2261,27 +2311,17 @@ export async function retryUnsettledBountyPayouts({ now = new Date() } = {}) {
   return { settled };
 }
 
-/** A kept bounty is detached from its owner, who is recorded in meta.userIdBeforeRemoval. */
-const keptBountyOwnerSql = Prisma.raw(
-  `COALESCE(b."userId", (b.meta ->> 'userIdBeforeRemoval')::int)`
-);
-
 /**
  * Kept bounties that never had a payout or supporters, or whose payout is settled: any other still
- * owes supporters. One whose owner or an entrant is held waits for the first run after the hold ends,
- * and one with an award recorded for manual resolution waits until it is resolved.
+ * owes supporters. One with an award recorded for manual resolution waits until it is resolved.
  */
-
 export async function deleteSettledKeptBounties() {
-  const markerView = await holdMarkerViewExists();
   const awardTable = await bountyUnpaidAwardTableExists(dbWrite);
   const doomed = Prisma.sql`SELECT b.id FROM "Bounty" b
     WHERE b.meta ->> 'removedWithOwner' = 'true'
       AND ((b."payoutRecordedAt" IS NULL
           AND NOT EXISTS (SELECT 1 FROM "BountyBenefactor" bb WHERE bb."bountyId" = b.id))
         OR (b.complete AND b."payoutSettledAt" >= b."payoutRecordedAt"))
-      AND NOT ${ownerHeldSql(keptBountyOwnerSql)}
-      AND NOT ${heldEntryOnBountySql(Prisma.raw('b.id'), markerView)}
       AND NOT ${openUnpaidBountyAwardSql(Prisma.raw('b.id'), awardTable)}`;
   const deleted = await dbWrite.$queryRaw<{ id: number }[]>`
     WITH gone AS (DELETE FROM "Bounty" WHERE id IN (${doomed}) RETURNING id),

@@ -161,13 +161,16 @@ describe('user-level cosmetic reads carry no event hats', () => {
 
 describe('the profile shows event hats only to viewers the event is open to', () => {
   beforeEach(() => {
-    dbMock.dbWrite.user.findUniqueOrThrow.mockResolvedValue({
+    // Visitor reads go to the replica since civitai/civitai#10193; the owner falls back to the primary.
+    const row = {
       id: OWNER,
       meta: {},
       settings: null,
       profile: { userId: OWNER },
       cosmetics: rows,
-    } as never);
+    } as never;
+    dbMock.dbWrite.user.findUniqueOrThrow.mockResolvedValue(row);
+    dbMock.dbRead.user.findUniqueOrThrow.mockResolvedValue(row);
     dbMock.dbRead.userStat.findFirst.mockResolvedValue(null as never);
   });
 
@@ -274,5 +277,51 @@ describe('userProfile.get stays per-viewer', () => {
     const route = router.slice(start, end);
     expect(route).not.toMatch(/edgeCacheIt|cacheIt/);
     expect(route).not.toMatch(/\.use\(/);
+  });
+});
+
+// Not an event read: the same handler, for a moderator's own blocked profile cover.
+describe("a moderator's own blocked profile cover", () => {
+  beforeEach(() => {
+    // Visitor reads go to the replica since civitai/civitai#10193; the owner falls back to the primary.
+    const row = {
+      id: OWNER,
+      meta: {},
+      settings: null,
+      cosmetics: [],
+      profile: {
+        userId: OWNER,
+        coverImageId: 1,
+        coverImage: {
+          id: 1,
+          url: 'cover-blocked',
+          nsfwLevel: 1,
+          type: 'image',
+          needsReview: null,
+          ingestion: 'Blocked',
+          blockedFor: 'tos',
+          meta: null,
+          metadata: {},
+          tags: [],
+        },
+      },
+    } as never;
+    dbMock.dbWrite.user.findUniqueOrThrow.mockResolvedValue(row);
+    dbMock.dbRead.user.findUniqueOrThrow.mockResolvedValue(row);
+    dbMock.dbRead.userStat.findFirst.mockResolvedValue(null as never);
+  });
+
+  const coverFor = async (bearer: object) =>
+    (
+      (await getUserProfileHandler({
+        input: { username: 'owner' },
+        ctx: { user: { id: OWNER, isModerator: true }, ...bearer },
+      } as never)) as { profile: { coverImage: { url: string } | null } }
+    ).profile.coverImage?.url ?? null;
+
+  it('is withheld on a scoped key, and served on a session', async () => {
+    const key = { apiKeyId: 1, apiKeyType: 'User', subject: { type: 'apiKey', id: 1 } };
+    expect(await coverFor({ ...key, tokenScope: TokenScope.UserRead })).toBeNull();
+    expect(await coverFor({})).toBe('cover-blocked');
   });
 });

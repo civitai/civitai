@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { rateLimitMetaOf } from '~/server/utils/rate-limit-error';
 
 /**
  * `media-upload-batch.service` — the server half of `OPEN_MEDIA_UPLOAD_BATCH`: the viewer's daily
@@ -27,6 +28,8 @@ const NOW = new Date('2026-11-11T10:00:00.000Z');
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 const counters = new Map<string, number>();
+/** Each counter's TTL in seconds; a counter missing here has none and never expires. */
+const ttls = new Map<string, number>();
 const missingTable = () =>
   Object.assign(
     new Error(
@@ -37,18 +40,49 @@ const missingTable = () =>
 
 beforeEach(() => {
   counters.clear();
+  ttls.clear();
   presignSpy.mockReset().mockResolvedValue({ uploadUrl: 'u', expiresAt: 'e' });
-  redisMock.sysRedis.incrBy.mockReset().mockImplementation(async (key: string, n: number) => {
+  redisMock.redis.incrBy.mockReset().mockImplementation(async (key: string, n: number) => {
     const next = (counters.get(key) ?? 0) + n;
     counters.set(key, next);
     return next;
   });
-  redisMock.sysRedis.decrBy.mockReset().mockImplementation(async (key: string, n: number) => {
+  redisMock.redis.decrBy.mockReset().mockImplementation(async (key: string, n: number) => {
     const next = (counters.get(key) ?? 0) - n;
     counters.set(key, next);
     return next;
   });
-  redisMock.sysRedis.expire.mockReset().mockResolvedValue(true);
+  redisMock.redis.expire.mockReset().mockImplementation(async (key: string, ttl: number) => {
+    if (!counters.has(key)) return false;
+    ttls.set(key, ttl);
+    return true;
+  });
+  // The release: `SET key 0 NX EX ttl` + `INCRBY key -n` in one MULTI.
+  redisMock.redis.multi.mockReset().mockImplementation(() => {
+    const ops: Array<() => unknown> = [];
+    const chain = {
+      set: vi.fn((key: string, value: string, opts: { NX?: boolean; EX?: number }) => {
+        ops.push(() => {
+          if (opts.NX && counters.has(key)) return null;
+          counters.set(key, Number(value));
+          if (opts.EX) ttls.set(key, opts.EX);
+          return 'OK';
+        });
+        return chain;
+      }),
+      incrBy: vi.fn((key: string, n: number) => {
+        ops.push(() => {
+          const next = (counters.get(key) ?? 0) + n;
+          counters.set(key, next);
+          return next;
+        });
+        return chain;
+      }),
+      exec: vi.fn(async () => ops.map((op) => op())),
+    };
+    return chain;
+  });
+  redisMock.sysRedis.incrBy.mockClear();
   dbMock.dbRead.appBlock.findUnique.mockReset().mockResolvedValue({ version: '1.4.0' });
   dbMock.dbWrite.appBlockUploadBatch.create.mockReset().mockResolvedValue({ id: 91 });
   dbMock.dbWrite.$queryRaw.mockReset().mockResolvedValue([{ id: 91 }]);
@@ -68,13 +102,32 @@ describe('the daily batch quota', () => {
   it('admits the 1,200th file of the day and refuses the 1,201st', async () => {
     await expect(reserveMediaUploadBatchQuota(USER, 1199, 10, NOW)).resolves.toBeTypeOf('function');
     await expect(reserveMediaUploadBatchQuota(USER, 1, 10, NOW)).resolves.toBeTypeOf('function');
-    await expect(reserveMediaUploadBatchQuota(USER, 1, 10, NOW)).rejects.toMatchObject({
+    const refused = await reserveMediaUploadBatchQuota(USER, 1, 10, NOW).catch((e: unknown) => e);
+    expect(refused).toMatchObject({
       code: 'TOO_MANY_REQUESTS',
       message:
         "You've reached today's batch upload limit (1,200 files or 10 GB). It resets at midnight UTC.",
     });
+    // A product allowance: the day's files before this batch, and the reset at UTC midnight
+    // (14 hours after 10:00).
+    expect(rateLimitMetaOf(refused)).toEqual({
+      retryAfterSeconds: 50_400,
+      retryAt: expect.any(String),
+      id: 'apps.media-upload-daily-items',
+      kind: 'product',
+      limit: 1200,
+      used: 1200,
+      remaining: 0,
+      windowSeconds: 86_400,
+      resetAt: '2026-11-12T00:00:00.000Z',
+    });
     // The refused charge was handed back: the day still reads exactly 1,200.
     expect(used('items')).toBe(1200);
+    // A daily quota window: on the cache cluster, not in system Redis.
+    expect(
+      [...counters.keys()].every((k) => k.startsWith('system:blocks:media-upload-batch-daily:'))
+    ).toBe(true);
+    expect(redisMock.sysRedis.incrBy).not.toHaveBeenCalled();
   });
 
   it('admits 10 GiB in a day and refuses one byte more', async () => {
@@ -82,8 +135,14 @@ describe('the daily batch quota', () => {
     await reserveMediaUploadBatchQuota(USER, 1, 6_442_450_944, NOW);
     await reserveMediaUploadBatchQuota(USER, 1, 4_294_967_295, NOW);
     await reserveMediaUploadBatchQuota(USER, 1, 1, NOW);
-    await expect(reserveMediaUploadBatchQuota(USER, 1, 1, NOW)).rejects.toMatchObject({
-      code: 'TOO_MANY_REQUESTS',
+    const refused = await reserveMediaUploadBatchQuota(USER, 1, 1, NOW).catch((e: unknown) => e);
+    expect(refused).toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+    expect(rateLimitMetaOf(refused)).toMatchObject({
+      id: 'apps.media-upload-daily-bytes',
+      kind: 'product',
+      limit: 10_737_418_240,
+      used: 10_737_418_240,
+      remaining: 0,
     });
     expect(used('bytes')).toBe(10_737_418_240);
     expect(used('items')).toBe(3);
@@ -105,16 +164,43 @@ describe('the daily batch quota', () => {
   });
 
   it('fails closed when the counter cannot be written, charging nothing', async () => {
-    redisMock.sysRedis.incrBy
+    redisMock.redis.incrBy
       .mockImplementationOnce(async (key: string, n: number) => {
         counters.set(key, (counters.get(key) ?? 0) + n);
         return counters.get(key)!;
       })
-      .mockRejectedValueOnce(new Error('sysredis down'));
+      .mockRejectedValueOnce(new Error('cache cluster down'));
     await expect(reserveMediaUploadBatchQuota(USER, 5, 10, NOW)).rejects.toMatchObject({
       code: 'SERVICE_UNAVAILABLE',
     });
     expect(used('items')).toBe(0);
+  });
+});
+
+describe('the quota release', () => {
+  it('a release after the counter was evicted leaves no counter without a TTL', async () => {
+    const release = await reserveMediaUploadBatchQuota(USER, 3, 500, NOW);
+    expect(ttls.size).toBe(2);
+    // The cache cluster evicts both counters before the batch's release lands.
+    counters.clear();
+    ttls.clear();
+
+    await release();
+
+    expect(counters.size).toBe(2);
+    for (const key of counters.keys()) expect(ttls.get(key), key).toBe(2 * 24 * 60 * 60);
+  });
+
+  it('a release on a live counter hands the charge back and keeps its TTL', async () => {
+    await reserveMediaUploadBatchQuota(USER, 10, 100, NOW);
+    const release = await reserveMediaUploadBatchQuota(USER, 4, 40, NOW);
+    expect(used('items')).toBe(14);
+
+    await release();
+
+    expect(used('items')).toBe(10);
+    expect(used('bytes')).toBe(100);
+    for (const key of counters.keys()) expect(ttls.get(key), key).toBe(2 * 24 * 60 * 60);
   });
 });
 

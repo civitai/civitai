@@ -27,6 +27,7 @@ import { keepPreviousData } from '@tanstack/react-query';
 import { useCallback, useMemo, useState } from 'react';
 
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { MatureRestrictedBadge } from '~/components/Image/MatureRestrictedBadge/MatureRestrictedBadge';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { ContestScoringConfigEditor } from '~/components/Collections/components/ContestCollections/ContestScoringConfigEditor';
@@ -269,6 +270,11 @@ function CategoryTable({
                             by {entry.creatorUsername}
                           </Text>
                         )}
+                        <MatureRestrictedBadge
+                          restricted={entry.image?.modelRestricted}
+                          size="xs"
+                          w="fit-content"
+                        />
                         {entry.qualifyingVersionCount === undefined ? (
                           <Tooltip
                             label="This run predates version scoping, so it counted every version of the model."

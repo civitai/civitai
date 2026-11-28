@@ -166,7 +166,7 @@ const RESOLVED_INSTALL = {
     currentVersionDeployedAt: new Date('2026-01-01T00:00:00Z'),
     manifest: { scopes: ['models:read:self'] },
     approvedScopes: ['models:read:self'],
-    app: { allowedScopes: 4 /* TokenScope.ModelsRead */ },
+    app: { allowedScopes: 4n /* TokenScope.ModelsRead */ },
   },
 };
 
@@ -333,6 +333,31 @@ describe('POST /api/v1/block-tokens', () => {
     expect(mockTokenService.sign).not.toHaveBeenCalled();
   });
 
+  it('mints nothing for an impersonation, before any install lookup', async () => {
+    const impersonation = {
+      user: { id: 42, bannedAt: null, isModerator: true },
+      impersonatedBy: 7,
+    };
+    mockSession.value = impersonation as never;
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+    const res = makeRes();
+    await handler(makeReq({ origin: 'https://civitai.com', body: validBody() }), res);
+    expect(res._status).toBe(403);
+    expect(res._body).toEqual({
+      error: 'impersonation_refused',
+      message: 'Apps are paused while impersonating',
+    });
+    expect(mockBlockRegistry.resolveBlockInstance).not.toHaveBeenCalled();
+    expect(mockTokenService.sign).not.toHaveBeenCalled();
+
+    // Control: the same session without the impersonation mints.
+    mockSession.value = { user: impersonation.user } as never;
+    const ok = makeRes();
+    await handler(makeReq({ origin: 'https://civitai.com', body: validBody() }), ok);
+    expect(ok._status).toBe(200);
+    expect(mockTokenService.sign).toHaveBeenCalled();
+  });
+
   it('M1: banned user is rejected at issuance', async () => {
     // Mod (passes the Phase-2 mint-gate) but banned → rejected at the ban check.
     mockSession.value = { user: { id: 99, bannedAt: new Date(), isModerator: true } } as never;
@@ -366,7 +391,7 @@ describe('POST /api/v1/block-tokens', () => {
         ...RESOLVED_INSTALL.appBlock,
         manifest: { scopes: ['models:read:self', 'block:settings:read'] },
         approvedScopes: ['models:read:self', 'block:settings:read'],
-        app: { allowedScopes: 4 /* ModelsRead bit set */ },
+        app: { allowedScopes: 4n /* ModelsRead bit set */ },
       },
     });
     mockSession.value = { user: { id: 42, bannedAt: null, isModerator: true } } as never;
@@ -390,7 +415,7 @@ describe('POST /api/v1/block-tokens', () => {
         ...RESOLVED_INSTALL.appBlock,
         manifest: { scopes: ['models:read:self', 'buzz:read:self'] },
         approvedScopes: ['models:read:self', 'buzz:read:self'],
-        app: { allowedScopes: 4 /* only ModelsRead bit set; BuzzRead missing */ },
+        app: { allowedScopes: 4n /* only ModelsRead bit set; BuzzRead missing */ },
       },
     });
     // Mod session: pass the Phase-2 mint-gate so the scope-allowlist check
@@ -416,6 +441,47 @@ describe('POST /api/v1/block-tokens', () => {
     expect(res._status).toBe(400);
     expect(mockTokenService.sign).not.toHaveBeenCalled();
     expect(mockBlockRegistry.resolveBlockInstance).not.toHaveBeenCalled();
+  });
+
+  it('429: the per-IP mint limit answers Retry-After and the abuse meta, before any lookup', async () => {
+    // The 121st mint from one IP in the window (PER_IP_RATE_LIMIT_MAX = 120).
+    mockRedis.incrBy.mockResolvedValueOnce(121);
+    mockSession.value = { user: { id: 42, bannedAt: null, isModerator: true } } as never;
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+    const res = makeRes();
+    await handler(makeReq({ origin: 'https://civitai.com', body: validBody() }), res);
+    expect(res._status).toBe(429);
+    expect(res._headers['retry-after']).toBe('60');
+    expect(res._body).toEqual({
+      error: 'Rate limit exceeded',
+      message: 'Rate limit exceeded',
+      code: 'TOO_MANY_REQUESTS',
+      rateLimit: {
+        retryAfterSeconds: 60,
+        retryAt: expect.any(String),
+        id: 'apps.block-token-mint-ip',
+        kind: 'abuse',
+      },
+    });
+    expect(mockBlockRegistry.resolveBlockInstance).not.toHaveBeenCalled();
+    expect(mockTokenService.sign).not.toHaveBeenCalled();
+  });
+
+  it('429: the per-(subject, instance) mint limit answers Retry-After and the abuse meta', async () => {
+    mockTokenService.checkRateLimit.mockResolvedValueOnce(false);
+    mockSession.value = { user: { id: 42, bannedAt: null, isModerator: true } } as never;
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+    const res = makeRes();
+    await handler(makeReq({ origin: 'https://civitai.com', body: validBody() }), res);
+    expect(res._status).toBe(429);
+    expect(res._headers['retry-after']).toBe('60');
+    expect((res._body as { rateLimit?: unknown }).rateLimit).toEqual({
+      retryAfterSeconds: 60,
+      retryAt: expect.any(String),
+      id: 'apps.block-token-mint',
+      kind: 'abuse',
+    });
+    expect(mockTokenService.sign).not.toHaveBeenCalled();
   });
 
   it('404: returns "Block install not found" when the resolver returns null', async () => {
@@ -520,7 +586,7 @@ describe('POST /api/v1/block-tokens', () => {
       ...RESOLVED_INSTALL.appBlock,
       manifest: { scopes: ['models:read:self', 'buzz:read:self'] },
       approvedScopes: ['models:read:self', 'buzz:read:self'],
-      app: { allowedScopes: 4 | 65536 /* ModelsRead | BuzzRead */ },
+      app: { allowedScopes: 4n | 65536n /* ModelsRead | BuzzRead */ },
     },
   };
 
@@ -589,7 +655,7 @@ describe('POST /api/v1/block-tokens', () => {
         ...RESOLVED_INSTALL.appBlock,
         manifest: { scopes: ['apps:storage:read'] },
         approvedScopes: ['apps:storage:read'],
-        app: { allowedScopes: 4 },
+        app: { allowedScopes: 4n },
       },
     });
     mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue(null); // no grant at all
@@ -632,7 +698,7 @@ describe('POST /api/v1/block-tokens', () => {
         ...RESOLVED_INSTALL.appBlock,
         manifest: { scopes: ['models:read:self', 'ai:write:budgeted'] },
         approvedScopes: ['models:read:self', 'ai:write:budgeted'],
-        app: { allowedScopes: 4 | 32768 /* ModelsRead | AIServicesWrite */ },
+        app: { allowedScopes: 4n | 32768n /* ModelsRead | AIServicesWrite */ },
       },
     });
     const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
@@ -658,7 +724,7 @@ describe('POST /api/v1/block-tokens', () => {
         ...RESOLVED_INSTALL.appBlock,
         manifest: { scopes: ['models:read:self'] },
         approvedScopes: ['models:read:self'],
-        app: { allowedScopes: 4 },
+        app: { allowedScopes: 4n },
       },
     });
     const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
@@ -678,7 +744,7 @@ describe('POST /api/v1/block-tokens', () => {
         ...RESOLVED_INSTALL.appBlock,
         manifest: { scopes: ['models:read:self', 'buzz:read:self'] },
         approvedScopes: ['models:read:self', 'buzz:read:self'],
-        app: { allowedScopes: 4 | 65536 },
+        app: { allowedScopes: 4n | 65536n },
       },
     });
     mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
@@ -705,7 +771,7 @@ describe('POST /api/v1/block-tokens', () => {
         ...RESOLVED_INSTALL.appBlock,
         manifest: { scopes: ['models:read:self', 'ai:write:budgeted'] },
         approvedScopes: ['models:read:self', 'ai:write:budgeted'],
-        app: { allowedScopes: 4 | 32768 /* ModelsRead | AIServicesWrite */ },
+        app: { allowedScopes: 4n | 32768n /* ModelsRead | AIServicesWrite */ },
       },
     };
 

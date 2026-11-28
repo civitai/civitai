@@ -14,20 +14,39 @@ import { checkNotUpToDate } from '~/server/db/db-helpers';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { getApiAuthSession } from '~/server/auth/api-auth-session';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import {
+  applySessionScope,
+  INSUFFICIENT_SCOPE_MESSAGE,
+  type SessionScope,
+} from '~/server/auth/session-scope';
 import { credentialLogFields, getRequestCredential } from '~/server/auth/request-credential';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
-import { Flags } from '~/shared/utils/flags';
+import { hasScope, TokenScope } from '~/shared/constants/token-scope.constants';
 import { generateSecretHash } from '~/server/utils/key-generator';
 import { getAllServerHosts } from '~/server/utils/server-domain';
 import type { Partner } from '~/shared/utils/prisma/models';
 import { instrumentApiResponse, reconstructApiRoute } from '~/server/prom/http-errors';
-import { isClientAbortError, isDriverAuthoredMessage } from '~/server/utils/errorHandling';
+import { apiProfileRoute, pyroscopeArmed, withProfileRoute } from '~/server/pyroscope-labels';
+import {
+  isClientAbortError,
+  isDriverAuthoredMessage,
+  toDbUnavailableError,
+} from '~/server/utils/errorHandling';
 import { isDefined } from '~/utils/type-guards';
 import { PRIVATE_CACHE_CONTROL } from '~/server/middleware/middleware-utils';
 import { isConfiguredSecret } from '~/server/utils/configured-secret';
 import { timingSafeEqualStrings } from '~/server/utils/timing-safe-equal';
-import { matchProbeToken, matchWebhookToken } from '~/server/utils/webhook-token';
+import {
+  matchProbeToken,
+  matchWebhookToken,
+  type TokenMatchSlot,
+} from '~/server/utils/webhook-token';
+import {
+  recordAdminEndpointAudit,
+  type AdminAuditCredential,
+  type AdminAuditOutcome,
+} from '~/server/utils/admin-endpoint-audit';
 import { recordWebhookTokenMatch } from '~/server/prom/webhook-token.metrics';
+import { distinctAdminToken, type AdminEndpointTokenName } from '~/server/utils/admin-token';
 import { requestCarriesQueryToken } from '~/server/utils/request-query-token';
 import { requireFullScopeSession } from '~/server/utils/require-full-scope-session';
 import { logToAxiom, buildCentralErrorLog, wasServerFaultLogged } from '~/server/logging/client';
@@ -285,7 +304,8 @@ type AxiomAPIRequest = NextApiRequest & { log: Logger };
 // `withAxiom`). Records a `civitai_app_http_errors_total` sample for any 5xx
 // response — however it's produced — by attaching one `finish` listener. Steady-
 // state cost is one listener registration + an int compare; the route
-// normalization runs only on 5xx. See src/server/prom/http-errors.ts.
+// normalization runs only on 5xx (and per request on a Pyroscope-armed pool, for the
+// profile `route` label). See src/server/prom/http-errors.ts.
 function withApiMetrics(
   handler: (req: AxiomAPIRequest, res: NextApiResponse) => Promise<void | NextApiResponse>
 ) {
@@ -294,6 +314,13 @@ function withApiMetrics(
     // `await` without returning so this closure is Promise<void> — withAxiom's
     // AxiomApiHandler overload requires that, and withAxiom already discards a
     // handler's return value (same shape the 6 wrappers below rely on).
+    if (pyroscopeArmed) {
+      await withProfileRoute(
+        () => apiProfileRoute(reconstructApiRoute(req)),
+        () => handler(req, res)
+      );
+      return;
+    }
     await handler(req, res);
   });
 }
@@ -358,17 +385,19 @@ function presentedTokens(req: NextApiRequest) {
 
 const MIN_HEADER_TOKEN_LENGTH = 32;
 
+function isUsableHeaderToken(token: string | undefined): token is string {
+  return (
+    isConfiguredSecret(token) && token === token.trim() && token.length >= MIN_HEADER_TOKEN_LENGTH
+  );
+}
+
 export function HeaderTokenSecuredEndpoint(
   getToken: () => string | undefined,
   handler: (req: AxiomAPIRequest, res: NextApiResponse) => Promise<void>
 ) {
   return withApiMetrics(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     const token = getToken();
-    if (
-      !isConfiguredSecret(token) ||
-      token !== token.trim() ||
-      token.length < MIN_HEADER_TOKEN_LENGTH
-    ) {
+    if (!isUsableHeaderToken(token)) {
       res.status(503).json({ error: 'Endpoint not configured' });
       return;
     }
@@ -388,6 +417,61 @@ export function HeaderTokenSecuredEndpoint(
   });
 }
 
+/**
+ * An admin endpoint with its own `x-admin-token` (`distinctAdminToken`): no webhook, probe or job
+ * token is accepted, in any position. 404 while the token is unset, too short, or equal to another
+ * token, so an unprovisioned route looks absent. Every call writes an `admin-endpoint-audit` record.
+ */
+export function AdminTokenEndpoint(
+  tokenName: AdminEndpointTokenName,
+  handler: (req: AxiomAPIRequest, res: NextApiResponse) => Promise<void>,
+  options: { audit: string }
+) {
+  return withApiMetrics(async (req: AxiomAPIRequest, res: NextApiResponse) => {
+    const startedAt = Date.now();
+    const adminHeader = req.headers['x-admin-token'];
+    const { bearer, queryToken, header } = presentedTokens(req);
+    const presented: AdminAuditCredential[] = [
+      ...(header !== undefined ? ['header' as const] : []),
+      ...(typeof adminHeader === 'string' && adminHeader !== '' ? ['admin-header' as const] : []),
+      ...(bearer !== undefined ? ['bearer' as const] : []),
+      ...(queryToken !== undefined ? ['query' as const] : []),
+    ];
+    let matched = false;
+    let outcome: AdminAuditOutcome = 'rejected';
+    try {
+      const token = distinctAdminToken(tokenName);
+      if (!isUsableHeaderToken(token)) {
+        res.status(404).json({ error: 'Not found' });
+        return;
+      }
+      if (req.url?.includes('?') || Object.keys(req.query ?? {}).length) {
+        res.status(400).json({ error: 'This endpoint takes no query string' });
+        return;
+      }
+      if (typeof adminHeader !== 'string' || !timingSafeEqualStrings(token, adminHeader)) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+      }
+
+      matched = true;
+      outcome = 'error';
+      await handler(req, res);
+      outcome = 'accepted';
+    } finally {
+      recordAdminEndpointAudit(req, {
+        action: options.audit,
+        slot: matched ? 'admin' : 'none',
+        presented,
+        outcome,
+        // A throw before responding escapes to Next, which answers 500.
+        status: outcome === 'error' && !res.headersSent ? 500 : res.statusCode,
+        durationMs: Date.now() - startedAt,
+      });
+    }
+  });
+}
+
 export function JobEndpoint(
   handler: (req: AxiomAPIRequest, res: NextApiResponse) => Promise<void>
 ) {
@@ -399,14 +483,15 @@ export function JobEndpoint(
  * is set. Only `WEBHOOK_TOKEN` decides whether the endpoint is configured.
  */
 export function WebhookEndpoint(
-  handler: (req: AxiomAPIRequest, res: NextApiResponse) => Promise<void>
+  handler: (req: AxiomAPIRequest, res: NextApiResponse) => Promise<void>,
+  options: { audit?: string } = {}
 ) {
-  return webhookTokenEndpoint(handler, false);
+  return webhookTokenEndpoint(handler, false, options.audit);
 }
 
 /**
- * `WebhookEndpoint` that also accepts `PROBE_TOKEN`, for /api/live, /api/ready and /api/health
- * only (pinned by webhook-endpoint-probe-token.test.ts).
+ * `WebhookEndpoint` that also accepts `PROBE_TOKEN`, for /api/live, /api/ready, /api/health and
+ * /api/metrics only (pinned by webhook-endpoint-probe-token.test.ts).
  */
 export function ProbeEndpoint(
   handler: (req: AxiomAPIRequest, res: NextApiResponse) => Promise<void>
@@ -414,31 +499,57 @@ export function ProbeEndpoint(
   return webhookTokenEndpoint(handler, true);
 }
 
+/** `audit` names the action in an `admin-endpoint-audit` record written for every call, 401s included. */
 function webhookTokenEndpoint(
   handler: (req: AxiomAPIRequest, res: NextApiResponse) => Promise<void>,
-  acceptProbeToken: boolean
+  acceptProbeToken: boolean,
+  audit?: string
 ) {
   return withApiMetrics(async (req: AxiomAPIRequest, res: NextApiResponse) => {
-    if (!isConfiguredSecret(env.WEBHOOK_TOKEN)) {
-      res.status(503).json({ error: 'Endpoint not configured' });
-      return;
-    }
+    const startedAt = Date.now();
+    let slot: TokenMatchSlot | undefined;
+    let presented: AdminAuditCredential[] = [];
+    let outcome: AdminAuditOutcome = 'rejected';
+    try {
+      if (!isConfiguredSecret(env.WEBHOOK_TOKEN)) {
+        res.status(503).json({ error: 'Endpoint not configured' });
+        return;
+      }
 
-    const { bearer, queryToken, header } = presentedTokens(req);
-    // Same rule as `TokenSecuredEndpoint`: a present `x-webhook-token` is the only credential read.
-    const slot =
-      header !== undefined
-        ? matchWebhookToken(header)
-        : matchWebhookToken(bearer) ??
-          matchWebhookToken(queryToken) ??
-          (acceptProbeToken ? matchProbeToken(bearer) ?? matchProbeToken(queryToken) : undefined);
-    if (!slot) {
-      res.status(401).json({ error: 'Unauthorized' });
-      return;
-    }
-    recordWebhookTokenMatch(req, slot);
+      const { bearer, queryToken, header } = presentedTokens(req);
+      presented = [
+        ...(header !== undefined ? ['header' as const] : []),
+        ...(bearer !== undefined ? ['bearer' as const] : []),
+        ...(queryToken !== undefined ? ['query' as const] : []),
+      ];
+      // Same rule as `TokenSecuredEndpoint`: a present `x-webhook-token` is the only credential read.
+      slot =
+        header !== undefined
+          ? matchWebhookToken(header)
+          : matchWebhookToken(bearer) ??
+            matchWebhookToken(queryToken) ??
+            (acceptProbeToken ? matchProbeToken(bearer) ?? matchProbeToken(queryToken) : undefined);
+      if (!slot) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+      }
+      recordWebhookTokenMatch(req, slot);
 
-    await handler(req, res);
+      outcome = 'error';
+      await handler(req, res);
+      outcome = 'accepted';
+    } finally {
+      if (audit)
+        recordAdminEndpointAudit(req, {
+          action: audit,
+          slot: slot ?? 'none',
+          presented,
+          outcome,
+          // A throw before responding escapes to Next, which answers 500.
+          status: outcome === 'error' && !res.headersSent ? 500 : res.statusCode,
+          durationMs: Date.now() - startedAt,
+        });
+    }
   });
 }
 
@@ -661,14 +772,21 @@ export function PublicEndpoint(
   });
 }
 
+/**
+ * `scope`: the token scope a bearer credential needs (`SessionScope`). Short of it, `AuthedEndpoint`
+ * answers 403 and `MixedAuthEndpoint` serves the request as anonymous.
+ */
+type EndpointAuthOptions = { allowBanned?: boolean; scope?: SessionScope };
+
 export function AuthedEndpoint(
   handler: (
     req: AxiomAPIRequest,
     res: NextApiResponse,
-    user: SessionUser
+    user: SessionUser,
+    session: Session
   ) => Promise<void | NextApiResponse>,
   allowedMethods: string[] = ['GET'],
-  { allowBanned = false }: { allowBanned?: boolean } = {}
+  { allowBanned = false, scope }: EndpointAuthOptions = {}
 ) {
   return withApiMetrics(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     const shouldStop = addCorsHeaders(req, res, allowedMethods, { allowCredentials: true });
@@ -679,11 +797,19 @@ export function AuthedEndpoint(
 
     // allowBanned uses are pinned by authed-endpoint-ban-gate.test.ts.
     const session = allowBanned
-      ? await getServerAuthSession({ req, res })
-      : await getApiAuthSession({ req, res }, { whenBanned: 'refuse' });
+      ? await getServerAuthSession({ req, res, scope: 'defer' }).then((raw) => {
+          const resolved = applySessionScope(req, raw, scope);
+          if (!resolved.insufficient) return resolved.session;
+          res.status(403).json({ error: INSUFFICIENT_SCOPE_MESSAGE });
+          return false as const;
+        })
+      : await getApiAuthSession(
+          { req, res },
+          { whenBanned: 'refuse', scope, insufficient: 'refuse' }
+        );
     if (session === false) return;
     if (!session?.user) return res.status(401).json({ error: 'Unauthorized' });
-    await handler(req, res, session.user);
+    await handler(req, res, session.user, session);
   });
 }
 
@@ -694,7 +820,7 @@ export function MixedAuthEndpoint(
     user: Session['user'] | undefined
   ) => Promise<void | NextApiResponse>,
   allowedMethods: string[] = ['GET'],
-  { allowBanned = false }: { allowBanned?: boolean } = {}
+  { allowBanned = false, scope }: EndpointAuthOptions = {}
 ) {
   return withApiMetrics(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     // Same two properties as `PublicEndpoint`, for the same reasons — see the
@@ -734,8 +860,8 @@ export function MixedAuthEndpoint(
     // Acts as the signed-in user, so a banned session is refused rather than served as anonymous.
     // allowBanned uses are pinned by authed-endpoint-ban-gate.test.ts.
     const session = allowBanned
-      ? await getServerAuthSession({ req, res })
-      : await getApiAuthSession({ req, res }, { whenBanned: 'refuse' });
+      ? await getServerAuthSession({ req, res, scope })
+      : await getApiAuthSession({ req, res }, { whenBanned: 'refuse', scope });
     if (session === false) return;
 
     if (!!req.query?.etag && req.query.etag !== '') {
@@ -826,6 +952,13 @@ export function handleEndpointError(res: NextApiResponse, e: unknown) {
     if (!res.headersSent) noStore(res).status(499).end();
     return;
   }
+  // An unreachable database answers the same retryable 503 (generic message, re-map logged) as the
+  // tRPC path's `mapDbUnavailable`, whether or not the handler wrapped the driver error.
+  const dbUnavailable = toDbUnavailableError(
+    e instanceof TRPCError ? e : new TRPCError({ code: 'INTERNAL_SERVER_ERROR', cause: e }),
+    restRouteFor(res)
+  );
+  if (dbUnavailable) e = dbUnavailable;
   if (e instanceof TRPCError) {
     const apiError = e as TRPCError;
     const status = getHTTPStatusCodeFromError(apiError);
@@ -943,21 +1076,21 @@ export function OrchestratorEndpoint(
     token: string
   ) => Promise<void | NextApiResponse>,
   allowedMethods: string[],
-  requiredScope: number
+  requiredScope: bigint
 ) {
-  return AuthedEndpoint(async (req, res, user) => {
+  const scoped = async (req: AxiomAPIRequest, res: NextApiResponse, user: SessionUser) => {
     // Same rule as tRPC's enforceTokenScope: a cookie session and a full-scope key pass.
     const credential = getRequestCredential(req);
     if (
       credential.tokenScope !== TokenScope.Full &&
-      !Flags.hasFlag(credential.tokenScope, requiredScope)
+      !hasScope(credential.tokenScope, requiredScope)
     ) {
       // No user, key or IP.
       logToAxiom({
         name: 'orchestrator-endpoint-scope-refused',
         type: 'info',
         route: req.url?.split('?')[0],
-        requiredScope,
+        requiredScope: Number(requiredScope),
         ...credentialLogFields(credential),
       });
       return res
@@ -974,5 +1107,6 @@ export function OrchestratorEndpoint(
       throw error;
     }
     return await handler(req, res, user, token);
-  }, allowedMethods);
+  };
+  return AuthedEndpoint(scoped, allowedMethods, { scope: { scope: requiredScope } });
 }

@@ -92,7 +92,8 @@ vi.mock('~/server/services/user.service', () => ({ getUserById: mockGetUserById 
 const servingFlag = vi.hoisted(() => ({ on: false }));
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
-  isFlipt: async (flag: string) =>
+  ensureFliptInitialized: async () => undefined,
+  isFliptSync: (flag: string) =>
     flag === 'app-blocks-workflow-media-serve' ? servingFlag.on : false,
 }));
 vi.mock('~/server/auth/session-client', () => ({
@@ -376,7 +377,11 @@ describe.each(CASES)('restricted outputs never reach %s', (_label, maxBrowsingLe
 describe('🔴 F1 — an output still being rated is held, and naming it is refused', () => {
   /** The middle output has no rating yet; an SFW token's rating could still restrict it. */
   function unratedMiddle() {
-    const workflow = restrictedWorkflow({ allowMatureContent: undefined });
+    // Just finished: inside the rating hold (`isRatingHoldExpired`).
+    const workflow = restrictedWorkflow({
+      allowMatureContent: undefined,
+      completedAt: new Date().toISOString(),
+    });
     const blobs = (workflow.steps[0].output as { blobs: Array<Record<string, unknown>> }).blobs;
     delete blobs[1].nsfwLevel;
     return workflow;
@@ -395,7 +400,26 @@ describe('🔴 F1 — an output still being rated is held, and naming it is refu
       { url: OK_B, nsfwLevel: 'pg13' },
     ]);
     expect(snapshot.ratingPending).toBe(true);
+    // The orchestrator says succeeded; an app is told processing, so an old SDK keeps polling.
+    expect(snapshot.status).toBe('processing');
     expect(JSON.stringify(snapshot)).not.toContain(SECRET);
+  });
+
+  it("pollWorkflow's own bookkeeping keys on the REAL status while the app is told processing", async () => {
+    mockUpdateBlockWorkflowStatus.mockResolvedValue(1 as never);
+    const { snapshot } = await READS.pollWorkflow();
+    expect(snapshot.status).toBe('processing');
+    // The read model records the terminal status and settle runs now, not after the rating.
+    expect(mockUpdateBlockWorkflowStatus).toHaveBeenCalledTimes(1);
+    expect(mockUpdateBlockWorkflowStatus).toHaveBeenCalledWith({
+      workflowId: OWN_ID,
+      status: 'succeeded',
+    });
+    expect(mockSettleCustomComfySpend).toHaveBeenCalledTimes(1);
+    expect(mockSettleCustomComfySpend).toHaveBeenCalledWith({
+      workflowId: OWN_ID,
+      actualCost: 17,
+    });
   });
 
   it('publish of the pending position, or of "every output", is refused and writes nothing', async () => {
@@ -612,9 +636,18 @@ describe('🔴 serving on: publish refuses what the poll restricts', () => {
     expect(fetched()).toStrictEqual([OK_B]);
   });
 
-  it('CONTROL: with serving off the same `na` position publishes', async () => {
+  it('with serving off the same `na` position is refused too', async () => {
     servingFlag.on = false;
-    await publish([1]);
-    expect(fetched()).toStrictEqual([NA]);
+    await expect(publish([1])).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'output 1 is restricted',
+    });
+    expect(mockPersistBlockWorkflowOutputImage).not.toHaveBeenCalled();
+  });
+
+  it('CONTROL: with serving off the rated position beside it publishes', async () => {
+    servingFlag.on = false;
+    await publish([2]);
+    expect(fetched()).toStrictEqual([OK_B]);
   });
 });

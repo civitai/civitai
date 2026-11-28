@@ -55,7 +55,6 @@ import { ModerationRuleAction } from '~/shared/utils/prisma/enums';
 
 const holder = vi.hoisted(() => ({
   db: null as unknown as PGlite,
-  holdReadFails: false,
   tagNsfwLevel: 1,
   newUser: false,
   newUserAsked: [] as unknown[],
@@ -63,8 +62,6 @@ const holder = vi.hoisted(() => ({
 
 const BANNED = 7;
 const ACTIVE = 8;
-const HELD = 12;
-const REPORTED = 13;
 const CAPTURE = FEEDBACK_CAPTURE_OWNER_ID;
 
 beforeAll(async () => {
@@ -72,6 +69,7 @@ beforeAll(async () => {
   await holder.db.exec(`
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
     CREATE TABLE "User" (id int PRIMARY KEY, "bannedAt" timestamp(3));
+    CREATE TABLE "ModActivity" (id serial PRIMARY KEY, "entityType" text, "entityId" int, activity text, "createdAt" timestamp(3) DEFAULT now());
     CREATE TABLE "Image" (
       id int PRIMARY KEY,
       "nsfwLevelLocked" boolean NOT NULL DEFAULT false,
@@ -88,8 +86,6 @@ beforeAll(async () => {
       metadata jsonb,
       "scanJobs" jsonb
     );
-    CREATE TABLE "EvidenceHeldUser" ("userId" int PRIMARY KEY);
-    CREATE TABLE "EvidenceHoldImage" ("imageId" int PRIMARY KEY);
     CREATE TABLE "CsamReport" (
       id serial PRIMARY KEY,
       "userId" int,
@@ -98,6 +94,10 @@ beforeAll(async () => {
       "reportSentAt" timestamp(3),
       "archivedAt" timestamp(3)
     );
+    CREATE TYPE "EntityType" AS ENUM ('Image');
+    -- Read by a blocking scan's write: a pending appeal keeps its review.
+    CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected');
+    CREATE TABLE "Appeal" ("entityType" "EntityType", "entityId" int, status "AppealStatus");
   `);
 });
 
@@ -126,25 +126,26 @@ beforeEach(async () => {
       holder.newUserAsked.push(values[0]);
       return [{ isNewUser: holder.newUser }];
     }
-    // ownerHeld's statement: its hold SQL arrives as a nested value, not in `strings`.
-    if (text.includes(' AS held ')) {
-      if (holder.holdReadFails) throw new Error('hold read failed');
+    // The ban check's statement: its SQL arrives as a nested value, not in `strings`.
+    if (text.includes(' AS kept ')) {
       return (await runOnPglite(strings, values)).rows;
     }
-    if (text.includes('"User"')) return (await runOnPglite(strings, values)).rows;
+    if (
+      text.includes('FROM "Image" i WHERE i.id') ||
+      text.includes('SELECT ingestion, "blockedFor", "nsfwLevel" FROM "Image"') ||
+      text.includes('SELECT "blockedFor" FROM "Image"')
+    )
+      return (await runOnPglite(strings, values)).rows;
     return [{ poi: false, minor: false, hasResource: false }];
   }) as never);
-  holder.holdReadFails = false;
   holder.tagNsfwLevel = 1;
   holder.newUser = false;
   holder.newUserAsked = [];
   await holder.db.exec(`
-    TRUNCATE "Image", "User", "EvidenceHeldUser", "EvidenceHoldImage", "CsamReport";
+    TRUNCATE "Image", "User", "CsamReport";
     INSERT INTO "User" (id, "bannedAt")
-      VALUES (${BANNED}, now()), (${ACTIVE}, NULL), (${HELD}, NULL), (${REPORTED}, NULL),
+      VALUES (${BANNED}, now()), (${ACTIVE}, NULL),
         (${CAPTURE}, NULL);
-    INSERT INTO "EvidenceHeldUser" ("userId") VALUES (${HELD});
-    INSERT INTO "CsamReport" ("userId") VALUES (${REPORTED});
   `);
 });
 
@@ -264,61 +265,26 @@ describe("a clean scan landing on a banned owner's blocked image", () => {
   });
 });
 
-describe("a clean scan landing on a held owner's or a kept blocked image", () => {
-  const BLOCKED = { ingestion: 'Blocked', blockedFor: 'moderated', nsfwLevel: 32 };
-
-  it.each([
-    ['its owner is under a hold marker', HELD],
-    ['a holding report names its owner', REPORTED],
-  ] as const)('keeps the image blocked when %s', async (_, owner) => {
-    await insertImage(20, owner, 'Blocked', 'moderated');
-
-    const outcome = await scan(loaded(20, owner, 'Blocked', 'moderated'));
-
-    expect(outcome.ingestion).toBe('Blocked');
-    expect(await imageRow(20)).toEqual(BLOCKED);
-  });
-
-  it("keeps an image a hold kept, though its owner's hold has ended", async () => {
-    await insertImage(21, ACTIVE, 'Blocked', 'moderated');
-    await holder.db.exec(`INSERT INTO "EvidenceHoldImage" ("imageId") VALUES (21)`);
-
-    const outcome = await scan(loaded(21, ACTIVE, 'Blocked', 'moderated'));
-
-    expect(outcome.ingestion).toBe('Blocked');
-    expect(await imageRow(21)).toEqual(BLOCKED);
-  });
-
-  it('keeps the image blocked when the hold cannot be read', async () => {
-    await insertImage(22, ACTIVE, 'Blocked', 'moderated');
-    holder.holdReadFails = true;
-
-    const outcome = await scan(loaded(22, ACTIVE, 'Blocked', 'moderated'));
-
-    expect(outcome.ingestion).toBe('Blocked');
-    expect(await imageRow(22)).toEqual(BLOCKED);
-  });
-
-  it("publishes a held owner's image that was never blocked", async () => {
-    await insertImage(23, HELD, 'Pending', null);
-
-    const outcome = await scan(loaded(23, HELD, 'Pending', null));
-
-    expect(outcome.ingestion).toBe('Scanned');
-    expect(await imageRow(23)).toEqual({ ingestion: 'Scanned', blockedFor: null, nsfwLevel: 1 });
-  });
-});
-
 describe('a clean scan that should still lift or leave the image visible', () => {
-  it("clears a blocked image's block when its owner is not banned (moderator rescan)", async () => {
+  it('clean scan case 1', async () => {
     // Another owner's banned, blocked image, stored first: the check reads the scanned image.
     await insertImage(10, BANNED, 'Blocked', 'moderated');
-    await insertImage(4, ACTIVE, 'Blocked', 'moderated');
+    await insertImage(4, ACTIVE, 'Blocked', 'AiNotVerified');
 
-    const outcome = await scan(loaded(4, ACTIVE, 'Blocked', 'moderated'));
+    const outcome = await scan(loaded(4, ACTIVE, 'Blocked', 'AiNotVerified'));
 
     expect(outcome.ingestion).toBe('Scanned');
     expect(await imageRow(4)).toEqual({ ingestion: 'Scanned', blockedFor: null, nsfwLevel: 1 });
+  });
+
+  it('clean scan case 2', async () => {
+    await insertImage(10, BANNED, 'Blocked', 'moderated');
+    await insertImage(40, ACTIVE, 'Blocked', 'moderated');
+
+    const outcome = await scan(loaded(40, ACTIVE, 'Blocked', 'moderated'));
+
+    expect(outcome.ingestion).toBe('Blocked');
+    expect(await imageRow(40)).toMatchObject({ ingestion: 'Blocked', blockedFor: 'moderated' });
   });
 
   it("publishes a banned owner's image that the ban left up", async () => {
@@ -339,10 +305,17 @@ describe('a feedback page capture', () => {
     expect((await imageRow(30)).ingestion).toBe('Blocked');
   });
 
-  it('lets a clean scan lift a prior block nothing holds (control)', async () => {
-    await insertImage(31, CAPTURE, 'Blocked', 'moderated');
-    const outcome = await scan(loaded(31, CAPTURE, 'Blocked', 'moderated'));
+  it('capture case 1', async () => {
+    await insertImage(31, CAPTURE, 'Blocked', 'AiNotVerified');
+    const outcome = await scan(loaded(31, CAPTURE, 'Blocked', 'AiNotVerified'));
     expect(outcome.ingestion).toBe('Scanned');
+  });
+
+  it('capture case 2', async () => {
+    await insertImage(41, CAPTURE, 'Blocked', 'moderated');
+    const outcome = await scan(loaded(41, CAPTURE, 'Blocked', 'moderated'));
+    expect(outcome.ingestion).toBe('Blocked');
+    expect((await imageRow(41)).ingestion).toBe('Blocked');
   });
 
   it('gets the content review key an ordinary owner would', async () => {

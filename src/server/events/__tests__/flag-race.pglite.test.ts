@@ -30,9 +30,8 @@ vi.mock('~/server/events/turf/turf.service', () => ({
 const { swapFlagDay, pickCutAt, flagPot, flagSummaryKey } = await import(
   '~/server/events/turf/flag-day'
 );
-const { freezeEventAwards, flagRaceConfigKey } = await import(
-  '~/server/events/scoring/award-results'
-);
+const { flagRaceConfigKey } = await import('~/server/events/scoring/award-results');
+const { freezeEventAwards } = await import('~/server/events/scoring/freeze-event-awards');
 const { loadTeamAwards } = await import('~/server/events/scoring/team-awards');
 const { freezeFlagDays } = await import('~/server/events/turf/flag-freeze');
 
@@ -226,6 +225,65 @@ describe('the swap', () => {
     await crucible(3, 'Completed', [TAG], [[13, 1, 1]]);
     expect(await swapFlagDay(EVENT, { ...FLAGS, on: false }, SWAP)).toBeUndefined();
     expect(await homeItems()).toEqual([999]);
+  });
+});
+
+describe('the all-time collection', () => {
+  const ALL = 78;
+  const DAY = 24 * 3_600_000;
+  const items = async (collectionId: number) =>
+    (
+      await db.query<{ imageId: number }>(
+        `SELECT "imageId" FROM "CollectionItem" WHERE "collectionId" = $1 ORDER BY "createdAt" DESC`,
+        [collectionId]
+      )
+    ).rows.map((r) => r.imageId);
+  async function laterCrucible(id: number, days: number, images: number[]) {
+    await db.query(`INSERT INTO "Crucible" VALUES ($1, 'Completed', $2, $3)`, [
+      id,
+      new Date(END.getTime() + days * DAY),
+      [TAG],
+    ]);
+    for (const [index, image] of images.entries()) {
+      await db.query(
+        `INSERT INTO "Image" (id, "nsfwLevel") VALUES ($1, 1) ON CONFLICT DO NOTHING`,
+        [image]
+      );
+      await db.query(
+        `INSERT INTO "CrucibleEntry" ("crucibleId", "imageId", position) VALUES ($1, $2, $3)`,
+        [id, image, index + 1]
+      );
+    }
+  }
+  const swapOn = (days: number, allTime?: number) =>
+    swapFlagDay(
+      EVENT,
+      { ...FLAGS, allTimeCollectionId: allTime },
+      new Date(SWAP.getTime() + days * DAY)
+    );
+
+  it('gathers every day so far once set, keeps what it holds, and adds a repeat flag once', async () => {
+    await db.query(
+      `INSERT INTO "CollectionItem" ("collectionId", "imageId", status, "createdAt")
+       VALUES ($1, 500, 'ACCEPTED', '2026-11-01')`,
+      [ALL]
+    );
+    await laterCrucible(1, 0, [11, 12]);
+    expect((await swapOn(0))?.imageIds).toEqual([11, 12]);
+    expect(await items(ALL)).toEqual([500]);
+
+    // Set from day 2: day 1 comes in too, and 12, a flag both days, is in it once.
+    await laterCrucible(2, 1, [13, 12]);
+    await swapOn(1, ALL);
+    expect(await homeItems()).toEqual([13, 12]);
+    expect(await items(ALL)).toEqual([13, 12, 11, 500]);
+
+    await laterCrucible(3, 2, [14, 12]);
+    await swapOn(2, ALL);
+    expect(await homeItems()).toEqual([14, 12]);
+    expect(await items(ALL)).toEqual([14, 13, 12, 11, 500]);
+    expect(await swapOn(2.01, ALL)).toBeUndefined();
+    expect(await items(ALL)).toEqual([14, 13, 12, 11, 500]);
   });
 });
 
@@ -446,6 +504,29 @@ describe('the flag freeze', () => {
     expect(await freezeFlagDays(EVENT, FLAGS, SETTLE)).toBeGreaterThan(0);
     // Called directly: freezeEventAwards would turn a throw into 0.
     await expect(freezeFlagDays(EVENT, FLAGS, SETTLE)).resolves.toBe(0);
+  });
+
+  it('every minute, puts what it froze on the live team totals once', async () => {
+    const { liveBucket } = await import('~/server/events/points/keys');
+    const day = await dayWithFlags();
+    await hats(day.id, 11, 201, 'Blue', 1, new Date(day.cutAt.getTime() - 60_000));
+    const bumps = () =>
+      redisMock.sysRedis.hIncrBy.mock.calls.filter((c) => String(c[0]).includes(':live:'));
+    const before = bumps().length;
+    await freezeFlagDays(EVENT, FLAGS, SETTLE, { live: true });
+    expect(bumps().slice(before)).toEqual([
+      [expect.stringContaining(`:live:${liveBucket(day.cutAt)}:team`), 'Blue', 100],
+    ]);
+    await freezeFlagDays(EVENT, FLAGS, SETTLE, { live: true });
+    expect(bumps().length).toBe(before + 1);
+  });
+
+  it('from the settle, freezes without touching the live totals', async () => {
+    const day = await dayWithFlags();
+    await hats(day.id, 11, 201, 'Blue', 1, new Date(day.cutAt.getTime() - 60_000));
+    const before = redisMock.sysRedis.hIncrBy.mock.calls.length;
+    expect(await freezeFlagDays(EVENT, FLAGS, SETTLE)).toBeGreaterThan(0);
+    expect(redisMock.sysRedis.hIncrBy.mock.calls.length).toBe(before);
   });
 
   it("counts a banned player's hats for nobody", async () => {

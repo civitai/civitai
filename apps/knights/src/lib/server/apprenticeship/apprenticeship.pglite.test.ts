@@ -5,7 +5,8 @@ import type { DB } from '@civitai/db-schema/kysely';
 import { getLevelProgression } from '../progression/levels';
 import { counterValue } from '../../../test/metrics';
 import { createQueueDb } from '../../../test/pglite-kysely';
-import { seedImage } from '../../../test/seed';
+import { hideTagGroups, seedImage, tagImage } from '../../../test/seed';
+import { KNIGHTS_TAG_GROUPS } from '../knights-tag-groups';
 import { expForLevel } from '../progression/levels';
 import { ACOLYTE_WRONG_ANSWER_SMITE, BASE_SMITE_SIZE } from '../smites/config';
 import { playersDueForReset } from '../smites/smites.service';
@@ -28,7 +29,13 @@ let db: Kysely<DB>;
 let now = T0;
 const mirrorXp = vi.fn(async () => undefined);
 const resetPlayer = vi.fn<(id: number) => Promise<void>>(async () => undefined);
-const deps = (): ApprenticeDeps => ({ now: () => now, mirrorXp, resetPlayer });
+let smitesSwitch: { smites: boolean } | undefined;
+const deps = (): ApprenticeDeps => ({
+  now: () => now,
+  mirrorXp,
+  resetPlayer,
+  ...(smitesSwitch ? { settings: () => smitesSwitch! } : {}),
+});
 
 beforeAll(async () => {
   ({ pg, db } = await createQueueDb());
@@ -36,7 +43,7 @@ beforeAll(async () => {
 afterAll(() => pg.close());
 beforeEach(async () => {
   await pg.exec(
-    `TRUNCATE "KnightsApprenticeAnswer","KnightsYesNoReference","KnightsReferenceImage","NewOrderPlayer","NewOrderSmite","Image","Post" RESTART IDENTITY CASCADE`
+    `TRUNCATE "KnightsUnsure","KnightsApprenticeAnswer","KnightsYesNoReference","KnightsReferenceImage","NewOrderPlayer","NewOrderSmite","Image","Post" RESTART IDENTITY CASCADE`
   );
   await pg.exec(`DELETE FROM "KnightsQuestion" WHERE "key" LIKE 'knights.yesno.%'`);
   await pg.query(
@@ -44,6 +51,7 @@ beforeEach(async () => {
     [YESNO_Q]
   );
   now = T0;
+  smitesSwitch = undefined;
   mirrorXp.mockClear();
   resetPlayer.mockClear();
 });
@@ -190,7 +198,7 @@ const sourceOf = async (item: ApprenticeItem) => {
 };
 
 describe('the stream', () => {
-  it('mixes core, harvested and yes/no from the first item, fills in when a kind runs out, and never repeats an item', async () => {
+  it('mixes core and yes/no from the first item, turns to harvested once core runs out, and never repeats an item', async () => {
     await player(1);
     for (let i = 0; i < 4; i++) await rating(1 + i, { source: 'core', explanation: 'x' });
     for (let i = 0; i < 4; i++) await rating(10 + i);
@@ -199,20 +207,34 @@ describe('the stream', () => {
     const served = await play(1, 10);
     const sources = await Promise.all(served.map(sourceOf));
 
-    expect(sources.slice(0, 6)).toEqual([
+    expect(sources).toEqual([
       'core',
-      'harvested',
+      'core',
       'yesno',
       'core',
-      'harvested',
+      'core',
       'yesno',
+      // Core and yes/no are used up: harvested fills in rather than the stream running dry.
+      'harvested',
+      'harvested',
+      'harvested',
+      'harvested',
     ]);
-    // The yes/no pairs are used up: the rest is core and harvested.
-    expect(sources.slice(6).sort()).toEqual(['core', 'core', 'harvested', 'harvested']);
     const keys = served.map((s) => `${s.kind}:${s.referenceId}`);
     expect(new Set(keys).size).toBe(10);
     // 10 answered, nothing left: the recap is not due yet, so the stream simply has no more items.
     expect((await getApprentice(db, 1)).kind).toBe('exhausted');
+  });
+
+  it('serves only core rating references while any are left, however many harvested ones there are', async () => {
+    await player(1);
+    for (let i = 0; i < 3; i++) await rating(1 + i, { source: 'core' });
+    for (let i = 0; i < 12; i++) await rating(10 + i);
+
+    const served = await play(1, 3);
+
+    expect(await Promise.all(served.map(sourceOf))).toEqual(['core', 'core', 'core']);
+    expect(await sourceOf(question(await getApprentice(db, 1)).item)).toBe('harvested');
   });
 
   it('deals a fresh order after every answer, not one fixed order per player', async () => {
@@ -260,6 +282,32 @@ describe('the stream', () => {
     const { item } = question(await getApprentice(db, 1));
     expect(blocked).toBeGreaterThan(0);
     expect(item.referenceId).toBe(good);
+  });
+
+  it('never serves a reference on a Private post', async () => {
+    await player(1);
+    await rating(5);
+    await pg.query(`UPDATE "Post" SET availability = 'Private' WHERE id = 5`);
+    expect((await getApprentice(db, 1)).kind).toBe('exhausted');
+  });
+
+  it('ignores hidden tag groups: an Acolyte (say, a Knight whose career reset) is still dealt every practice image', async () => {
+    await player(1);
+    // A player who hid every group as a Knight keeps the stored choice through a reset; practice must not read it.
+    await hideTagGroups(
+      pg,
+      1,
+      KNIGHTS_TAG_GROUPS.map((g) => g.key)
+    );
+    const furry = await rating(1);
+    await tagImage(pg, 1, 5140);
+    expect(question(await getApprentice(db, 1)).item.referenceId).toBe(furry);
+
+    await answerNext(1);
+    const gore = await yesNo(2);
+    await tagImage(pg, 2, 1282);
+    const { item } = question(await getApprentice(db, 1));
+    expect(item).toMatchObject({ kind: 'yesno', referenceId: gore });
   });
 
   it('is for Acolytes only', async () => {
@@ -473,7 +521,12 @@ describe('smites', () => {
     expect(await smitesOf(1)).toHaveLength(0);
     await play(1, 1, false);
     expect(await smitesOf(1)).toMatchObject([
-      { givenById: -1, cleansedAt: null, size: BASE_SMITE_SIZE, reason: ACOLYTE_WRONG_ANSWER_SMITE },
+      {
+        givenById: -1,
+        cleansedAt: null,
+        size: BASE_SMITE_SIZE,
+        reason: ACOLYTE_WRONG_ANSWER_SMITE,
+      },
     ]);
     // The window restarts after a smite: five more wrong answers are not a second one, the sixth is.
     await play(1, 5, false);
@@ -481,6 +534,36 @@ describe('smites', () => {
     await play(1, 1, false);
     expect(await activeOf(1)).toBe(2);
     expect(await expOf(1)).toBe(0);
+  });
+
+  it(
+    'issues no wrong-answer smite while smites are switched off, and does when the switch is unset',
+    { timeout: 30_000 },
+    async () => {
+      await player(1);
+      await player(2);
+      for (let i = 0; i < 40; i++) await rating(i + 1);
+
+      smitesSwitch = { smites: false };
+      await play(1, 20, (n) => n >= 6);
+      expect(await smitesOf(1)).toHaveLength(0);
+
+      smitesSwitch = undefined;
+      await play(2, 20, (n) => n >= 6);
+      expect(await smitesOf(2)).toMatchObject([{ reason: ACOLYTE_WRONG_ANSWER_SMITE }]);
+    }
+  );
+
+  it('starts no career reset while smites are switched off, however many answers are wrong', async () => {
+    await player(1);
+    for (let i = 0; i < 20; i++) await rating(i + 1);
+    smitesSwitch = { smites: false };
+
+    await play(1, 18, false);
+
+    expect(await smitesOf(1)).toHaveLength(0);
+    expect(resetPlayer).not.toHaveBeenCalled();
+    expect(await playersDueForReset(db)).toEqual([]);
   });
 
   it('counts only the last 20 answers', async () => {
@@ -710,7 +793,7 @@ describe('checkpoints', () => {
     expect(view.checkpoint).toMatchObject({ total: 20, right: 20, missed: [] });
     expect(view.progress.answered).toBe(40);
     expect(view.progress.accuracy).toBe(0.875);
-  });
+  }, 20_000);
 
   it('lists a missed yes/no answer with its curated explanation', async () => {
     await player(1);
@@ -728,6 +811,7 @@ describe('checkpoints', () => {
     });
   });
 
+  // 60 sequential answers, each several PGlite round trips: over Vitest's 5s default on a loaded CI shard.
   it('offers coaching once accuracy is under 60% after 50 answers, and not before', async () => {
     await player(1);
     for (let i = 0; i < 70; i++) await rating(i + 1, { answer: '2' });
@@ -738,7 +822,7 @@ describe('checkpoints', () => {
     await play(1, 20, (n) => n % 2 === 0);
     const later = await getApprentice(db, 1);
     expect(later.kind === 'checkpoint' && later.checkpoint.coach).toBe(true);
-  });
+  }, 20_000);
 });
 
 describe('answers outlive their reference', () => {
@@ -821,5 +905,45 @@ describe('answers outlive their reference', () => {
         explanation: null,
       }),
     ]);
+  });
+});
+
+describe('"Not sure" on a practice pair', () => {
+  const answer = (userId: number, item: ApprenticeItem, value: string) =>
+    answerApprentice(
+      db,
+      {
+        userId,
+        kind: item.kind,
+        referenceId: item.referenceId,
+        version: item.version,
+        answer: value,
+      },
+      deps()
+    );
+  const countOf = async (table: string) =>
+    Number((await pg.query<{ n: string }>(`SELECT count(*) AS n FROM "${table}"`)).rows[0].n);
+
+  // Every practice pair is graded, so abstaining on one would keep a wrong answer out of the promotion window.
+  it('is refused as an answer not on offer, storing nothing and leaving the pair on screen', async () => {
+    await player(1);
+    await yesNo(20);
+    const pair = question(await getApprentice(db, 1)).item;
+    expect(pair.kind).toBe('yesno');
+
+    expect(await answer(1, pair, 'unsure')).toEqual({ status: 'rejected', reason: 'bad-answer' });
+
+    expect(await countOf('KnightsApprenticeAnswer')).toBe(0);
+    expect(await countOf('KnightsUnsure')).toBe(0);
+    expect(question(await getApprentice(db, 1)).item.referenceId).toBe(pair.referenceId);
+  });
+
+  it('still grades a Yes on the same pair', async () => {
+    await player(1);
+    await yesNo(20);
+    const pair = question(await getApprentice(db, 1)).item;
+
+    expect(await answer(1, pair, 'yes')).toMatchObject({ status: 'recorded' });
+    expect(await countOf('KnightsApprenticeAnswer')).toBe(1);
   });
 });

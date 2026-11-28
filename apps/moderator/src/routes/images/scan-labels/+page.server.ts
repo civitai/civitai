@@ -1,4 +1,5 @@
 import { fail } from '@sveltejs/kit';
+import { holdsCsamReview } from '$lib/server/held-media';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { parseForm, parseQuery } from '$lib/server/query';
@@ -9,12 +10,14 @@ import {
   applyCsamHolds,
   applyMajorityBlocks,
   castVote,
+  itemWithheld,
   claimNext,
   getCounters,
   getOpenFlaggerVersions,
   isControlFlaggerVersion,
   itemForToken,
   getVotedItemOwner,
+  skipCard,
   type VoteChoice,
 } from '$lib/server/scan-label.service';
 import {
@@ -35,7 +38,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
       : parsed;
   const filters = toFilters(query);
   const userId = locals.user.id;
-  const card = await claimNext(userId, filters);
+  const card = await claimNext({ userId, csamReview: holdsCsamReview(locals.user) }, filters);
   const [counters, versions] = await Promise.all([
     getCounters(userId, filters),
     getOpenFlaggerVersions(),
@@ -76,19 +79,33 @@ const voteSchema = z
     return { ...rest, choice: { block: true, reason, reasonComment: comment } as VoteChoice };
   });
 
-const REFUSAL: Record<'not-open' | 'already-voted' | 'full' | 'not-yours', string> = {
+const REFUSAL: Record<'not-open' | 'already-voted' | 'full' | 'released' | 'not-yours', string> = {
   'not-open': 'Someone else finished this one. Here is the next.',
   'not-yours': 'This card is not held by you. Here is the next.',
   full: 'Your hold on this one ran out and the others took its slots. Here is the next.',
   'already-voted': 'You already voted on this one. Here is the next.',
+  released: 'This card left your queue. Here is the next.',
 };
+
+// A moderator must not take a refused hold as having landed.
+const HOLD_REFUSED =
+  'Your CSAM hold was not recorded: this card was already decided or left your queue. Tell a lead if the image still needs CSAM review. Here is the next.';
 
 const HOLD_FAILED =
   'Your vote is recorded and the image has left the queue, but holding it for CSAM review failed. It is retried on the next vote; tell a lead if this keeps happening.';
 
 const STALE_PAGE = 'This page is out of date. Reload it to keep voting.';
 
+const skipSchema = z.object({ token: z.string().uuid() });
+
 export const actions: Actions = {
+  skip: async ({ request, locals }) => {
+    const input = parseForm(skipSchema, await request.formData());
+    if (typeof input === 'string') return fail(400, { error: STALE_PAGE });
+    if (!(await skipCard(input.token, locals.user.id)))
+      return fail(409, { error: REFUSAL['not-yours'] });
+    return { skipped: true };
+  },
   vote: async (event) => {
     const { request, locals } = event;
     const form = await request.formData();
@@ -96,8 +113,13 @@ export const actions: Actions = {
     if (!form.has('token')) return fail(400, { error: STALE_PAGE });
     const input = parseForm(voteSchema, form);
     if (typeof input === 'string') return fail(400, { error: input });
+    // A refused hold says so, whatever refused it; only a hold that already landed is not "refused".
+    const hold = input.choice.block && input.choice.reason === CSAM_HOLD_REASON;
+    const refuse = (reason: keyof typeof REFUSAL) =>
+      fail(409, { error: hold && reason !== 'already-voted' ? HOLD_REFUSED : REFUSAL[reason] });
     const itemId = await itemForToken(input.token, locals.user.id);
-    if (itemId === null) return fail(409, { error: REFUSAL['not-yours'] });
+    if (itemId === null) return refuse('not-yours');
+    if (await itemWithheld(itemId, holdsCsamReview(locals.user))) return refuse('not-open');
     const result = await castVote({
       itemId,
       userId: locals.user.id,
@@ -105,7 +127,7 @@ export const actions: Actions = {
       msOnItem: input.ms,
       claimToken: input.token,
     });
-    if (!result.ok) return fail(409, { error: REFUSAL[result.reason] });
+    if (!result.ok) return refuse(result.reason);
     // Holds first, and retried here like the blocks below. Must not fail the vote, which has landed.
     const holds = await applyCsamHolds(
       {},

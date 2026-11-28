@@ -3,7 +3,6 @@ package v1models
 import (
 	"strconv"
 
-	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
 )
@@ -14,6 +13,9 @@ import (
 // shapeOptions are what differs between the two.
 type shapeOptions struct {
 	level int
+	// unicodeNames: a file name over a non-ASCII model or version name is computed (nameModel.unicode)
+	// instead of falling back; missServe.filename.
+	unicodeNames bool
 	// detail: the `[id]` shaper (removeEmpty per version, removeEmpty file metadata, pinned per-file
 	// download URLs, images without `id`, includeImages by TakenDown only).
 	detail bool
@@ -24,6 +26,9 @@ type shapeOptions struct {
 	// primaryFileOnly: the list's file trim.
 	primaryFileOnly bool
 	imageLocation   string
+	// listing is the list's trainingDataListing (`file.visibility === Public && listed(file)`); `[id]`
+	// applies its own to the shaped body (withListableTrainingData), so it lists every Public file here.
+	listing *trainingDataFilter
 }
 
 // creatorObject is `{ username, image: publicAvatarUrl(user, level) }`.
@@ -64,7 +69,7 @@ func shapeModel(it *item, o shapeOptions) (superjson.Object, error) {
 	}
 	versions := make([]any, 0, len(it.versions))
 	name, _ := getVal(it.base, "name").(string)
-	model := nameModel{name: name, typ: it.typ}
+	model := nameModel{name: name, typ: it.typ, unicode: o.unicodeNames}
 	for _, v := range it.versions {
 		// The list's `supportsGeneration` filter is a fallback upstream, so only the status filters.
 		if s, _ := getVal(v, "status").(string); s != "Published" {
@@ -314,13 +319,8 @@ func shapeVersion(v superjson.Object, model nameModel, mode string, o shapeOptio
 	outFiles := []any{}
 	if includeDownloadURL {
 		for _, f := range files {
-			if f.vis != "Public" {
+			if f.vis != "Public" || !o.listing.listed(f.obj) {
 				continue
-			}
-			if f.typ == "Training Data" {
-				// trainingDataListing reads the replica (legal hold, CSAM reports, content flags,
-				// scan state): not ported.
-				return nil, fallback.New("v1-models-training-data")
 			}
 			isPrimary := f.id == primary.id
 			fileName, err := resolveFileName(model, ver, f.nameFile(), nameFiles)
@@ -328,8 +328,10 @@ func shapeVersion(v superjson.Object, model nameModel, mode string, o shapeOptio
 				return nil, err
 			}
 			rest := omit(f.obj, "hashes", "metadata", "modelVersionId")
+			// publicFileMetadata: a Training Data file carries no metadata (its server-only rating
+			// and archive keys included).
 			var meta any = superjson.Object{}
-			if f.metadata != nil {
+			if f.metadata != nil && f.typ != trainingDataType {
 				meta = f.metadata
 			}
 			var url string
@@ -400,7 +402,10 @@ func shapeVersion(v superjson.Object, model nameModel, mode string, o shapeOptio
 		version.Set("files", outFiles)
 		version.Set("images", outImages)
 		version.Set("downloadUrl", dl)
-		return removeEmpty(version), nil
+		version = removeEmpty(version)
+		// removeEmpty drops empty arrays, but the docs promise images is [] when every image is left out.
+		version.Set("images", outImages)
+		return version, nil
 	}
 	version.Set("supportsGeneration", getVal(v, "covered"))
 	version.Set("files", outFiles)

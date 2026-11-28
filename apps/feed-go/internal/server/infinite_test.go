@@ -72,7 +72,7 @@ func TestInfiniteShadowSampleIsLabelledAndClassifiedByImage(t *testing.T) {
 	}
 	for _, e := range []string{EndpointAsPosts, EndpointV1Images} {
 		for _, r := range []string{"order", "membership", "fields"} {
-			if _, found := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"feed_endpoint": e, "result": r}); found {
+			if v, _ := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"feed_endpoint": e, "result": r}); v != 0 {
 				t.Fatalf("an infinite sample was counted under %s/%s", e, r)
 			}
 		}
@@ -111,8 +111,7 @@ func TestComputeInfiniteEarlyFallbacks(t *testing.T) {
 		{"a POST", mk(http.MethodPost, `{"json":{}}`, nil), "method"},
 		{"an undecodable input", mk(http.MethodGet, `not json`, nil), "input-envelope"},
 		{"a hat sort", mk(http.MethodGet, `{"json":{"hatSort":"most"}}`, nil), "infinite-hat-turf"},
-		{"a collection", mk(http.MethodGet, `{"json":{"collectionId":4}}`, nil), "input-collectionId"},
-		{"a verified crawler", mk(http.MethodGet, `{"json":{}}`, map[string]string{verifiedBotHeader: "1"}), "verified-bot"},
+		{"a hub", mk(http.MethodGet, `{"json":{"hubId":4}}`, nil), "input-hubId"},
 	}
 	for _, c := range cases {
 		_, err := s.computeInfinite(context.Background(), c.r)
@@ -122,8 +121,9 @@ func TestComputeInfiniteEarlyFallbacks(t *testing.T) {
 	}
 }
 
-// The compare path is on the internal listener only; the public one never routes it.
-func TestInfiniteRouteIsInternalOnly(t *testing.T) {
+// The compare path is on the internal listener; the public listener's image.getInfinite route is the
+// serving one (ServeInfiniteHTTP, TestPublicMuxRoutesInfinite), never the compare handler.
+func TestInfiniteShadowRouteOnInternalMux(t *testing.T) {
 	s := muxServer()
 	s.computeInfiniteFn = func(context.Context, *http.Request) (*computed, error) {
 		return &computed{payload: []byte(`{"json":{"items":[]}}`)}, nil
@@ -132,8 +132,8 @@ func TestInfiniteRouteIsInternalOnly(t *testing.T) {
 	if code := postInfinite(t, internal, `{"json":{"items":[]}}`); code != http.StatusAccepted {
 		t.Fatalf("internal compare path: %d, want 202", code)
 	}
-	if code := statusOf(PublicMux(s), "/api/trpc/"+ProcedureInfinite); code != http.StatusNotFound {
-		t.Fatalf("public %s: %d, want 404", ProcedureInfinite, code)
+	if code := statusOf(PublicMux(s), "/internal/shadow/"+ProcedureInfinite); code != http.StatusNotFound {
+		t.Fatalf("public /internal/shadow/%s: %d, want 404", ProcedureInfinite, code)
 	}
 	waitFor(t, "the sample to finish", func() bool { return len(s.ShadowQueue) == 0 })
 }

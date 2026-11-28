@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
+import { rejectCrossSlot } from '~/__tests__/cluster-slots';
 import { EntityAccessPermission } from '~/server/common/enums';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
@@ -18,6 +20,7 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const {
   mockIsFlipt,
+  mockFliptVariant,
   mockSessions,
   mockResolveDownloadUrl,
   mockModelVersionEvent,
@@ -26,6 +29,7 @@ const {
   world,
 } = vi.hoisted(() => ({
   mockIsFlipt: vi.fn(),
+  mockFliptVariant: vi.fn(),
   mockSessions: new Map<string, unknown>(),
   mockResolveDownloadUrl: vi.fn(),
   mockModelVersionEvent: vi.fn(),
@@ -38,7 +42,11 @@ const {
     paidAccess: new Map<number, { endsAt: Date | null }>(),
     grants: [] as { userId: number; versionId: number; permissions: number }[],
     users: new Map<number, { id: number; bannedAt: Date | null; deletedAt: Date | null }>(),
-    apiKeys: new Map<number, { expiresAt: Date | null }>(),
+    /** Rows without a scope read as Full. */
+    apiKeys: new Map<
+      number,
+      { expiresAt: Date | null; tokenScope?: number; tokenScopeWide?: bigint | null }
+    >(),
     /** Client-credentials token rows by id, as the minter's re-check reads them. */
     clientTokens: new Map<number, { expiresAt: Date | null }>(),
     clients: new Map<
@@ -46,7 +54,7 @@ const {
       {
         userId: number;
         grants: string[];
-        allowedScopes: number;
+        allowedScopes: bigint;
         secret: string;
         user: { bannedAt: Date | null; deletedAt: Date | null };
       }
@@ -55,8 +63,12 @@ const {
 }));
 
 vi.mock('~/server/flipt/client', () => ({
-  FLIPT_FEATURE_FLAGS: { DOWNLOAD_LINKS_ENABLED: 'download-links-enabled' },
+  FLIPT_FEATURE_FLAGS: {
+    DOWNLOAD_LINKS_ENABLED: 'download-links-enabled',
+    BEARER_SCOPE_TIGHTEN: 'bearer-scope-tighten',
+  },
   isFlipt: mockIsFlipt,
+  getFliptVariant: mockFliptVariant,
 }));
 // Keeps the real function's client-credentials gate: a token carrying a client-credentials-only
 // scope (DownloadLink is one) resolves to no session unless the caller opts in.
@@ -69,11 +81,11 @@ vi.mock('~/server/auth/bearer-token', async () => {
       token: string,
       options: { allowClientCredentialsOnly?: boolean } = {}
     ) => {
-      const session = mockSessions.get(token) as { tokenScope?: number } | undefined;
+      const session = mockSessions.get(token) as { tokenScope?: bigint } | undefined;
       if (!session) return null;
       if (
         !options.allowClientCredentialsOnly &&
-        ((session.tokenScope ?? 0) & CLIENT_CREDENTIALS_ONLY_SCOPES) !== 0
+        ((session.tokenScope ?? 0n) & CLIENT_CREDENTIALS_ONLY_SCOPES) !== 0n
       )
         return null;
       return session;
@@ -92,7 +104,7 @@ vi.mock('~/server/clickhouse/client', () => ({
 }));
 // A provider's gate also reads moderator-review flags; none are set in this world.
 vi.mock('~/server/services/download-link/moderator-review.reads', () => ({
-  readModeratorFlags: async () => ({ inReview: false, removedWithOwner: false }),
+  readModeratorFlags: async () => ({ inReview: false }),
 }));
 vi.mock('~/server/prom/provider-download.metrics', () => ({
   countProviderDownload: mockCountProviderDownload,
@@ -166,66 +178,94 @@ vi.mock('~/server/redis/caches', () => ({
 import mintHandler from '~/pages/api/v1/download-links/index';
 import revokeHandler from '~/pages/api/v1/download-links/[linkId]';
 import linkHandler from '~/pages/api/download/l/[id]';
-import { revokeLinksOfRevokedCredentials } from '~/server/services/download-link/download-link.store';
+import {
+  DOWNLOAD_LINK_SYS_FALLBACK_UNTIL,
+  revokeLinksOfRevokedCredentials,
+  takeMintBudget,
+} from '~/server/services/download-link/download-link.store';
 import { clearGateReadCache } from '~/server/services/download-link/generation-fetch.service';
 import { mintProviderLink } from '~/server/services/download-link/download-link.service';
 import type { DownloadLinkCredential } from '~/server/services/download-link/download-link.store';
 import { miniResponseExpiresAt } from '~/server/utils/mini-expires';
 
 // ---------------------------------------------------------------------------------------------
-// In-memory sysRedis.
+// An in-memory cache cluster (links and mint windows) and system Redis (links minted before the
+// move, read only as the fallback). The cluster fake refuses a MULTI or a script whose keys span
+// hash slots with CROSSSLOT, as the cluster does; an array DEL is split per key, as the cluster
+// client does.
 
 type Entry =
   | { type: 'hash'; value: Map<string, string>; expiresAt: number | null }
   | { type: 'string'; value: string; expiresAt: number | null }
   | { type: 'set'; value: Set<string>; expiresAt: number | null };
 
+/** The cluster's keys. */
 let store = new Map<string, Entry>();
-const live = (key: string) => {
-  const entry = store.get(key);
-  if (entry && entry.expiresAt != null && entry.expiresAt <= Date.now()) {
-    store.delete(key);
-    return undefined;
-  }
-  return entry;
-};
-const ops = {
-  hSet(key: string, fields: Record<string, string>) {
-    const entry = live(key);
-    const hash = entry?.type === 'hash' ? entry.value : new Map<string, string>();
-    for (const [k, v] of Object.entries(fields)) hash.set(k, String(v));
-    store.set(key, { type: 'hash', value: hash, expiresAt: entry?.expiresAt ?? null });
-  },
-  pExpireAt(key: string, at: number) {
-    const entry = live(key);
-    if (entry) entry.expiresAt = at;
-  },
-  expire(key: string, seconds: number) {
-    const entry = live(key);
-    if (entry) entry.expiresAt = Date.now() + seconds * 1000;
-  },
-  set(key: string, value: string, options?: { PXAT?: number }) {
-    store.set(key, { type: 'string', value, expiresAt: options?.PXAT ?? null });
-  },
-  sAdd(key: string, member: string) {
-    const entry = live(key);
-    const set = entry?.type === 'set' ? entry.value : new Set<string>();
-    set.add(member);
-    store.set(key, { type: 'set', value: set, expiresAt: entry?.expiresAt ?? null });
-  },
-  incrBy(key: string, by: number) {
-    const entry = live(key);
-    const next = (entry?.type === 'string' ? Number(entry.value) : 0) + by;
-    store.set(key, { type: 'string', value: String(next), expiresAt: entry?.expiresAt ?? null });
-    return next;
-  },
-};
+/** System Redis's keys. */
+let sysStore = new Map<string, Entry>();
+
+function makeOps(map: () => Map<string, Entry>) {
+  const live = (key: string) => {
+    const entry = map().get(key);
+    if (entry && entry.expiresAt != null && entry.expiresAt <= Date.now()) {
+      map().delete(key);
+      return undefined;
+    }
+    return entry;
+  };
+  const ops = {
+    hSet(key: string, fields: Record<string, string>) {
+      const entry = live(key);
+      const hash = entry?.type === 'hash' ? entry.value : new Map<string, string>();
+      for (const [k, v] of Object.entries(fields)) hash.set(k, String(v));
+      map().set(key, { type: 'hash', value: hash, expiresAt: entry?.expiresAt ?? null });
+    },
+    pExpireAt(key: string, at: number) {
+      const entry = live(key);
+      if (entry) entry.expiresAt = at;
+    },
+    expire(key: string, seconds: number) {
+      const entry = live(key);
+      if (entry) entry.expiresAt = Date.now() + seconds * 1000;
+    },
+    set(key: string, value: string, options?: { PXAT?: number; NX?: boolean; EX?: number }) {
+      if (options?.NX && live(key)) return null;
+      const expiresAt = options?.PXAT ?? (options?.EX ? Date.now() + options.EX * 1000 : null);
+      map().set(key, { type: 'string', value, expiresAt });
+      return 'OK';
+    },
+    sAdd(key: string, member: string) {
+      const entry = live(key);
+      const set = entry?.type === 'set' ? entry.value : new Set<string>();
+      set.add(member);
+      map().set(key, { type: 'set', value: set, expiresAt: entry?.expiresAt ?? null });
+    },
+    incrBy(key: string, by: number) {
+      const entry = live(key);
+      const next = (entry?.type === 'string' ? Number(entry.value) : 0) + by;
+      map().set(key, {
+        type: 'string',
+        value: String(next),
+        expiresAt: entry?.expiresAt ?? null,
+      });
+      return next;
+    },
+  };
+  return { live, ops };
+}
 // An await between every command, as over a socket, so concurrent callers really interleave.
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 
-function installFakeSysRedis() {
-  store = new Map();
-  const r = redisMock.sysRedis;
+/** The keys of every MULTI and script each client ran, in order. */
+let sysMultiKeys: string[] = [];
+let clusterMultiKeys: string[] = [];
+
+function installFakeClient(name: 'redis' | 'sysRedis') {
+  const cluster = name === 'redis';
+  const map = () => (cluster ? store : sysStore);
+  const seen = () => (cluster ? clusterMultiKeys : sysMultiKeys);
+  const { live, ops } = makeOps(map);
+  const r = redisMock[name];
   r.hGetAll.mockImplementation(async (key: string) => {
     await tick();
     const entry = live(key);
@@ -236,9 +276,13 @@ function installFakeSysRedis() {
     const entry = live(key);
     return entry?.type === 'string' ? entry.value : null;
   });
+  r.set.mockImplementation(async (key: string, value: string, options?: object) => {
+    await tick();
+    return ops.set(key, value, options);
+  });
   r.del.mockImplementation(async (keys: string | string[]) => {
     await tick();
-    for (const key of [keys].flat()) store.delete(key);
+    for (const key of [keys].flat()) map().delete(key);
     return 1;
   });
   r.sRem.mockImplementation(async (key: string, member: string) => {
@@ -255,6 +299,8 @@ function installFakeSysRedis() {
   r.eval.mockImplementation(
     async (script: string, { keys, arguments: args }: { keys: string[]; arguments: string[] }) => {
       await tick();
+      if (cluster) rejectCrossSlot(keys);
+      seen().push(...keys);
       if (script.includes('HINCRBY')) {
         const entry = live(keys[0]);
         if (entry?.type !== 'hash') return -1;
@@ -264,7 +310,7 @@ function installFakeSysRedis() {
       }
       if (script.includes("'GET'")) {
         const entry = live(keys[0]);
-        if (entry?.type === 'string' && entry.value === args[0]) store.delete(keys[0]);
+        if (entry?.type === 'string' && entry.value === args[0]) map().delete(keys[0]);
         return 0;
       }
       throw new Error('unknown script');
@@ -272,20 +318,33 @@ function installFakeSysRedis() {
   );
   r.multi.mockImplementation(() => {
     const queued: (() => unknown)[] = [];
+    const keys: string[] = [];
     const chain: Record<string, unknown> = {
       exec: async () => {
         await tick();
+        if (cluster) rejectCrossSlot(keys);
+        seen().push(...keys);
         return queued.map((run) => run());
       },
     };
-    for (const name of Object.keys(ops) as (keyof typeof ops)[]) {
-      chain[name] = (...args: unknown[]) => {
-        queued.push(() => (ops[name] as (...a: unknown[]) => unknown)(...args));
+    for (const op of Object.keys(ops) as (keyof typeof ops)[]) {
+      chain[op] = (...args: unknown[]) => {
+        keys.push(String(args[0]));
+        queued.push(() => (ops[op] as (...a: unknown[]) => unknown)(...args));
         return chain;
       };
     }
     return chain;
   });
+}
+
+function installFakeRedis() {
+  store = new Map();
+  sysStore = new Map();
+  sysMultiKeys = [];
+  clusterMultiKeys = [];
+  installFakeClient('redis');
+  installFakeClient('sysRedis');
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -502,7 +561,15 @@ function wireDb() {
   dbMock.dbRead.apiKey.findUnique.mockImplementation(
     async ({ where }: { where: { id: number } }) => {
       const key = world.apiKeys.get(where.id);
-      return key ? { ...key, user: { bannedAt: null, deletedAt: null } } : null;
+      return key
+        ? {
+            tokenScope: 0,
+            tokenScopeWide: TokenScope.Full,
+            ...key,
+            type: 'System',
+            user: { bannedAt: null, deletedAt: null },
+          }
+        : null;
     }
   );
   dbMock.dbWrite.apiKey.findFirst.mockImplementation(
@@ -551,7 +618,7 @@ beforeEach(() => {
   world.reads = { version: 0, files: 0 };
   vi.clearAllMocks();
   wireDb();
-  installFakeSysRedis();
+  installFakeRedis();
   mockIsFlipt.mockResolvedValue(true);
   mockModelVersionEvent.mockResolvedValue(true);
   let n = 0;
@@ -1093,6 +1160,15 @@ describe('reuse', () => {
 });
 
 describe('mint limits', () => {
+  it('🔴 writes the link and the mint windows to the cache cluster, nothing to system Redis', async () => {
+    const result = await mintOne(userItem(PUBLIC_VERSION));
+    expect(clusterMultiKeys.some((key) => key.startsWith('dl:mint-rate:'))).toBe(true);
+    expect(clusterMultiKeys.some((key) => key.startsWith('dl:link:'))).toBe(true);
+    expect(store.has(`dl:linkid:${result.linkId}`)).toBe(true);
+    expect(sysMultiKeys).toEqual([]);
+    expect(sysStore.size).toBe(0);
+  });
+
   it('answers an item 429 past the per-user limit', async () => {
     setEnv({ DOWNLOAD_LINK_MINT_LIMIT_PER_USER: 2 });
     const res = await mint([
@@ -1135,6 +1211,139 @@ describe('mint limits', () => {
     ]);
     expect(res.status).toBe(429);
     expect(Number(res.headers['retry-after'])).toBeGreaterThan(0);
+  });
+
+  it('a mint window key carries its TTL from the first take', async () => {
+    await mintOne(userItem(PUBLIC_VERSION));
+    const windows = [...store.entries()].filter(([key]) => key.startsWith('dl:mint-rate:'));
+    expect(windows.length).toBeGreaterThan(0);
+    for (const [key, entry] of windows) expect(entry.expiresAt, key).not.toBeNull();
+  });
+
+  it('a hung cache cluster refuses the take by its deadline, not stalling the mint', async () => {
+    redisMock.redis.multi.mockImplementation(() => {
+      const chain: Record<string, unknown> = {
+        exec: () => new Promise(() => undefined),
+      };
+      for (const name of ['set', 'incr', 'incrBy', 'expire']) chain[name] = () => chain;
+      return chain;
+    });
+    const STILL_HUNG = 'takeMintBudget still pending 3s after the cluster stopped answering';
+    const outcome = await Promise.race([
+      takeMintBudget('user:1', 1, 10, Date.now()).then(
+        () => 'takeMintBudget resolved against a hung cluster',
+        (err: unknown) => err
+      ),
+      new Promise((resolve) => setTimeout(() => resolve(STILL_HUNG), 3_000)),
+    ]);
+    expect(outcome).toMatchObject({ name: 'ClusterCacheUnavailableError', reason: 'timeout' });
+  });
+});
+
+describe('on the cache cluster', () => {
+  it('🔴 a mint, its use, a revoke and a cascade each keep every MULTI and script in one slot', async () => {
+    // The cluster fake refuses a cross-slot MULTI or script, so any such request fails the route.
+    const a = await mintOne(userItem(PUBLIC_VERSION), 'tok-apikey');
+    const again = await mintOne(userItem(PUBLIC_VERSION), 'tok-apikey');
+    expect(again.linkId).toBe(a.linkId);
+    expect((await fetchLink(a.url)).status).toBe(302);
+    const b = await mintOne(userItem(GENERATION_ONLY), 'tok-apikey');
+    expect((await revoke(b.linkId, 'tok-apikey')).status).toBe(204);
+    expect((await fetchLink(b.url)).status).toBe(404);
+    await revokeLinksOfRevokedCredentials([{ kind: 'apikey', id: '555' }]);
+    expect((await fetchLink(a.url)).status).toBe(404);
+    expect(clusterMultiKeys.length).toBeGreaterThan(0);
+  });
+
+  it('🔴 revokes a link by linkId after the cluster evicted its linkid key', async () => {
+    const result = await mintOne(userItem(PUBLIC_VERSION));
+    expect(store.delete(`dl:linkid:${result.linkId}`)).toBe(true);
+    expect((await fetchLink(result.url)).status).toBe(302);
+    expect((await revoke(result.linkId)).status).toBe(204);
+    expect((await fetchLink(result.url)).status).toBe(404);
+  });
+
+  it('still refuses a revoke from another credential when the linkid key is gone', async () => {
+    const result = await mintOne(userItem(PUBLIC_VERSION));
+    store.delete(`dl:linkid:${result.linkId}`);
+    expect((await revoke(result.linkId, 'tok-apikey')).status).toBe(404);
+    expect((await fetchLink(result.url)).status).toBe(302);
+  });
+
+  it('writes the link hash before any key that names it', async () => {
+    const order: string[] = [];
+    const multi = redisMock.redis.multi.getMockImplementation()!;
+    redisMock.redis.multi.mockImplementation(() => {
+      const chain = multi() as Record<string, (...a: unknown[]) => unknown>;
+      const hSet = chain.hSet;
+      chain.hSet = (...a: unknown[]) => {
+        order.push(String(a[0]));
+        return hSet(...a);
+      };
+      return chain;
+    });
+    const set = redisMock.redis.set.getMockImplementation()!;
+    redisMock.redis.set.mockImplementation((key: string, ...rest: unknown[]) => {
+      order.push(key);
+      return set(key, ...rest);
+    });
+    await mintOne(userItem(PUBLIC_VERSION));
+    const first = order.findIndex((k) => k.startsWith('dl:link:'));
+    expect(first).toBe(0);
+    expect(order.slice(1).map((k) => k.split(':').slice(0, 2).join(':'))).toEqual([
+      'dl:linkid',
+      'dl:reuse',
+    ]);
+  });
+});
+
+/** Moves a minted link's keys from the cluster to system Redis, as if minted before the move. */
+function moveLinkToSys(linkId: string) {
+  const hashKey = store.get(`dl:linkid:${linkId}`);
+  if (hashKey?.type !== 'string') throw new Error(`no link ${linkId}`);
+  for (const key of [...store.keys()]) {
+    if (key.startsWith('dl:mint-rate:') || key.startsWith('dl:reuse:')) continue;
+    if (key.startsWith('dl:links:cred:')) {
+      const entry = store.get(key)!;
+      if (entry.type === 'set' && entry.value.has(hashKey.value)) {
+        sysStore.set(key, entry);
+        store.delete(key);
+      }
+      continue;
+    }
+    if (key === `dl:linkid:${linkId}` || key === `dl:link:${hashKey.value}`) {
+      sysStore.set(key, store.get(key)!);
+      store.delete(key);
+    }
+  }
+}
+
+describe('links minted before the move to the cache cluster', () => {
+  it('pins the end of the system Redis fallback past the longest link life', () => {
+    expect(DOWNLOAD_LINK_SYS_FALLBACK_UNTIL.toISOString()).toBe('2027-01-15T00:00:00.000Z');
+  });
+
+  it('🔴 still serve, counting each fetch in system Redis', async () => {
+    const result = await mintOne(userItem(PUBLIC_VERSION));
+    moveLinkToSys(result.linkId);
+    expect((await fetchLink(result.url)).status).toBe(302);
+    expect((await fetchLink(result.url)).status).toBe(302);
+    const hash = [...sysStore.entries()].find(([k]) => k.startsWith('dl:link:'))![1];
+    expect(hash.type === 'hash' && hash.value.get('fetches')).toBe('2');
+    expect([...store.keys()].filter((k) => k.startsWith('dl:link:'))).toEqual([]);
+  });
+
+  it('🔴 revoke by linkId, and by their credential', async () => {
+    const one = await mintOne(userItem(PUBLIC_VERSION), 'tok-apikey');
+    const two = await mintOne(userItem(GENERATION_ONLY), 'tok-apikey');
+    moveLinkToSys(one.linkId);
+    moveLinkToSys(two.linkId);
+    expect((await revoke(one.linkId, 'tok-apikey')).status).toBe(204);
+    expect((await fetchLink(one.url)).status).toBe(404);
+    expect((await fetchLink(two.url)).status).toBe(302);
+    await revokeLinksOfRevokedCredentials([{ kind: 'apikey', id: '555' }]);
+    expect((await fetchLink(two.url)).status).toBe(404);
+    expect([...sysStore.keys()].filter((k) => k.startsWith('dl:'))).toEqual([]);
   });
 });
 
@@ -1305,5 +1514,86 @@ describe('provider links', () => {
       expect(await mintFor(PUBLIC_VERSION)).toBeNull();
       expect(store.size).toBe(0);
     });
+  });
+});
+
+describe('API-key minters under bearer-scope-tighten', () => {
+  beforeEach(() => {
+    mockFliptVariant.mockReset();
+  });
+
+  // The default system-account key's read scopes.
+  const SYSTEM_ACCOUNT_SCOPE = TokenScope.UserRead | TokenScope.ModelsRead | TokenScope.MediaRead;
+
+  function keyWithScope(tokenScope: bigint) {
+    mockSessions.set('tok-apikey', {
+      ...(mockSessions.get('tok-apikey') as object),
+      tokenScope,
+    });
+    world.apiKeys.set(555, { expiresAt: null, tokenScope: 0, tokenScopeWide: tokenScope });
+  }
+
+  it('enforce: 403s an allowlisted key with no model-read scope, and mints nothing', async () => {
+    mockFliptVariant.mockResolvedValue('enforce');
+    keyWithScope(TokenScope.UserRead);
+    expect((await mint([userItem(PUBLIC_VERSION)], 'tok-apikey')).status).toBe(403);
+    expect(store.size).toBe(0);
+  });
+
+  it('log: the same key still mints, and the shortfall is logged', async () => {
+    mockFliptVariant.mockResolvedValue('log');
+    keyWithScope(TokenScope.UserRead);
+    expect((await mintOne(userItem(PUBLIC_VERSION), 'tok-apikey')).ok).toBe(true);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'bearer-scope-refused',
+        payload: expect.objectContaining({ route: 'download-link-mint', apiKeyId: 555 }),
+      })
+    );
+  });
+
+  it.each([
+    ['the default system-account key', SYSTEM_ACCOUNT_SCOPE],
+    ['a key holding AIServicesRead only', TokenScope.AIServicesRead],
+  ])('enforce: %s mints and its link is served', async (_label, scope) => {
+    mockFliptVariant.mockResolvedValue('enforce');
+    keyWithScope(scope);
+    const { url } = await mintOne(userItem(PUBLIC_VERSION), 'tok-apikey');
+    expect((await fetchLink(url)).status).toBe(302);
+  });
+
+  it('enforce: narrowing the key after the mint ends its links', async () => {
+    mockFliptVariant.mockResolvedValue('enforce');
+    keyWithScope(SYSTEM_ACCOUNT_SCOPE);
+    const { url } = await mintOne(userItem(PUBLIC_VERSION), 'tok-apikey');
+    // The live check reads the row's wide column when set, as the mint's session does.
+    world.apiKeys.set(555, { expiresAt: null, tokenScope: 0, tokenScopeWide: TokenScope.UserRead });
+    expect((await fetchLink(url)).status).toBe(404);
+  });
+
+  it('enforce: the live check reads the legacy column when the wide one is unset', async () => {
+    mockFliptVariant.mockResolvedValue('enforce');
+    keyWithScope(SYSTEM_ACCOUNT_SCOPE);
+    const { url } = await mintOne(userItem(PUBLIC_VERSION), 'tok-apikey');
+    world.apiKeys.set(555, {
+      expiresAt: null,
+      tokenScope: Number(TokenScope.ModelsRead),
+      tokenScopeWide: null,
+    });
+    expect((await fetchLink(url)).status).toBe(302);
+  });
+
+  it('log: a narrowed key’s links are still served', async () => {
+    mockFliptVariant.mockResolvedValue('log');
+    keyWithScope(SYSTEM_ACCOUNT_SCOPE);
+    const { url } = await mintOne(userItem(PUBLIC_VERSION), 'tok-apikey');
+    world.apiKeys.set(555, { expiresAt: null, tokenScope: 0, tokenScopeWide: TokenScope.UserRead });
+    expect((await fetchLink(url)).status).toBe(302);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'bearer-scope-refused',
+        payload: expect.objectContaining({ route: 'download-link-fetch' }),
+      })
+    );
   });
 });

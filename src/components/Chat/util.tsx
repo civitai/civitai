@@ -127,6 +127,12 @@ export const chatLinkifyOptions = (ownHosts: readonly string[]): Opts => {
 
 export const loadMotion = () => import('~/utils/lazy-motion').then((res) => res.default);
 
+/** The message with the server's masked copy as its text, when masking is on and it was masked. */
+export const serverMaskedPreview = <M extends { content: string; maskedContent?: string | null }>(
+  message: M,
+  blur: boolean
+): M => (blur && message.maskedContent ? { ...message, content: message.maskedContent } : message);
+
 /** Markdown the one-line preview would otherwise show raw: links, bold and inline code. */
 export const stripMarkdownForPreview = (text: string) =>
   text

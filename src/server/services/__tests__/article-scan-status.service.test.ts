@@ -119,3 +119,95 @@ describe('getArticleScanStatus text requirement', () => {
     );
   });
 });
+
+// civitai/civitai#10505: a block refuses its owner the media, so the author gets the status and
+// reason of a blocked image, not its url. The metadata hold is the author's to clear.
+describe('getArticleScanStatus image urls', () => {
+  const image = (id: number, ingestion: ImageIngestionStatus, blockedFor: string | null) => ({
+    id,
+    url: `key-${id}`,
+    ingestion,
+    blockedFor,
+    nsfwLevelLocked: false,
+    scanJobs: null,
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    givenArticle({ status: ArticleStatus.Draft, scheduledAt: null });
+    mockDbRead.article.findUnique.mockResolvedValue({
+      title: 't',
+      content: '<p>x</p>',
+      coverId: null,
+      bannerId: null,
+      status: ArticleStatus.Draft,
+      scheduledAt: null,
+    } as never);
+    mockDbRead.imageConnection.findMany.mockResolvedValue([
+      { image: image(1, ImageIngestionStatus.Blocked, 'moderated') },
+      { image: image(2, ImageIngestionStatus.Blocked, null) },
+      { image: image(3, ImageIngestionStatus.Blocked, 'AiNotVerified') },
+      { image: image(4, ImageIngestionStatus.Error, 'moderated') },
+      { image: image(5, ImageIngestionStatus.Error, null) },
+      // A moderator-blocked image being rescanned keeps its block.
+      { image: image(6, ImageIngestionStatus.Rescan, 'moderated') },
+      { image: image(7, ImageIngestionStatus.Pending, null) },
+    ] as never);
+  });
+
+  const urls = (status: Awaited<ReturnType<typeof getArticleScanStatus>>) => ({
+    blocked: status.images.blocked.map((i) => [i.id, i.url, i.blockedFor]),
+    error: status.images.error.map((i) => [i.id, i.url]),
+    pending: status.images.pending.map((i) => [i.id, i.url]),
+  });
+
+  it("withholds a blocked image's url from the author, keeping its reason", async () => {
+    expect(urls(await getArticleScanStatus({ id: ARTICLE_ID }))).toEqual({
+      blocked: [
+        [1, null, 'moderated'],
+        [2, null, null],
+        [3, 'key-3', 'AiNotVerified'],
+      ],
+      error: [
+        [4, null],
+        [5, 'key-5'],
+      ],
+      pending: [
+        [6, null],
+        [7, 'key-7'],
+      ],
+    });
+  });
+
+  it('names only a failed scan as the reason, and an absent image as left out', async () => {
+    mockDbRead.imageConnection.findMany.mockResolvedValue([
+      { image: image(1, ImageIngestionStatus.Error, null) },
+      { image: image(2, ImageIngestionStatus.NotFound, null) },
+      {
+        image: { ...image(3, ImageIngestionStatus.Error, null), url: 'blob:https://civitai.com/x' },
+      },
+    ] as never);
+
+    expect((await getArticleScanStatus({ id: ARTICLE_ID })).errorReason).toBe(
+      '1 image(s) could not be scanned. 2 image(s) could not be found and are left out of the article'
+    );
+  });
+
+  it('gives a moderator every url', async () => {
+    expect(urls(await getArticleScanStatus({ id: ARTICLE_ID, viewerIsModerator: true }))).toEqual({
+      blocked: [
+        [1, 'key-1', 'moderated'],
+        [2, 'key-2', null],
+        [3, 'key-3', 'AiNotVerified'],
+      ],
+      error: [
+        [4, 'key-4'],
+        [5, 'key-5'],
+      ],
+      pending: [
+        [6, 'key-6'],
+        [7, 'key-7'],
+      ],
+    });
+  });
+});

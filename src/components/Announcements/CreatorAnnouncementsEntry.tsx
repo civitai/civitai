@@ -50,7 +50,12 @@ export function CreatorAnnouncementsEntry({
 
   return (
     <div className={className}>
-      <div className="flex flex-wrap items-center gap-3 rounded-lg border border-gray-3 p-3 dark:border-dark-4">
+      <div
+        // A member's card colour and page background apply here as on the profile's panels.
+        data-profile-card
+        className="flex flex-wrap items-center gap-3 rounded-lg border border-gray-3 p-3 dark:border-dark-4"
+        style={{ background: 'var(--profile-card-bg)', backdropFilter: 'var(--profile-card-blur)' }}
+      >
         <IconSpeakerphone size={24} className="shrink-0" />
         <Text size="sm" className="flex-1">
           Post an announcement to tell your followers what you&apos;re working on.

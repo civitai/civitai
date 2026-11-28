@@ -23,33 +23,40 @@ import { slugit } from '~/utils/string-helpers';
 import { cacheItKeyHash } from '~/server/utils/query-cache-key';
 import { booleanString } from '~/utils/zod-helpers';
 
+/** The viewer's hidden tags, images, users and models, as `applyUserPreferences` excludes them. */
+export async function resolveHiddenPreferenceExclusions(ctx: Pick<Context, 'user' | 'req'>) {
+  // TODO.hiddenPreferences - update this once `disableHidden` comes in with rest of user settings
+  const result = booleanString().optional().safeParse(ctx.req.cookies?.['disableHidden']);
+  const disableHidden = result.success ? result.data ?? false : false;
+
+  const { hiddenImages, hiddenTags, hiddenModels, hiddenUsers } = await getAllHiddenForUser({
+    userId: ctx.user?.id,
+  });
+
+  const tagsToHide = hiddenTags.filter((x) => !disableHidden && x.hidden).map((x) => x.id);
+
+  const imagesToHide = hiddenImages
+    .filter((x) => !x.tagId || tagsToHide.findIndex((tagId) => tagId === x.tagId) > -1)
+    .map((x) => x.id);
+
+  return {
+    excludedTagIds: tagsToHide,
+    excludedImageIds: imagesToHide,
+    excludedUserIds: hiddenUsers.map((x) => x.id),
+    excludedModelIds: hiddenModels.map((x) => x.id),
+  };
+}
+
 export const applyUserPreferences = middleware(async ({ input, ctx, next }) => {
   return withSpan('trpc:middleware:applyUserPreferences', async () => {
     const _input = input as UserPreferencesInput | undefined;
     if (_input !== undefined && typeof _input === 'object' && !Array.isArray(_input)) {
       // _input.browsingLevel ??= ctx.browsingLevel;
-
-      // TODO.hiddenPreferences - update this once `disableHidden` comes in with rest of user settings
-      const result = booleanString().optional().safeParse(ctx.req.cookies['disableHidden']);
-      const disableHidden = result.success ? result.data ?? false : false;
-
-      const { hiddenImages, hiddenTags, hiddenModels, hiddenUsers } = await getAllHiddenForUser({
-        userId: ctx.user?.id,
-      });
-
-      const tagsToHide = hiddenTags.filter((x) => !disableHidden && x.hidden).map((x) => x.id);
-
-      const imagesToHide = hiddenImages
-        .filter((x) => !x.tagId || tagsToHide.findIndex((tagId) => tagId === x.tagId) > -1)
-        .map((x) => x.id);
-
-      _input.excludedTagIds = [...(_input.excludedTagIds ?? []), ...tagsToHide];
-      _input.excludedImageIds = [...(_input.excludedImageIds ?? []), ...imagesToHide];
-      _input.excludedUserIds = [...(_input.excludedUserIds ?? []), ...hiddenUsers.map((x) => x.id)];
-      _input.excludedModelIds = [
-        ...(_input.excludedModelIds ?? []),
-        ...hiddenModels.map((x) => x.id),
-      ];
+      const hidden = await resolveHiddenPreferenceExclusions(ctx);
+      _input.excludedTagIds = [...(_input.excludedTagIds ?? []), ...hidden.excludedTagIds];
+      _input.excludedImageIds = [...(_input.excludedImageIds ?? []), ...hidden.excludedImageIds];
+      _input.excludedUserIds = [...(_input.excludedUserIds ?? []), ...hidden.excludedUserIds];
+      _input.excludedModelIds = [...(_input.excludedModelIds ?? []), ...hidden.excludedModelIds];
     }
 
     return next({
@@ -184,12 +191,18 @@ export function rateLimit<TInput = any>(
       req: ctx.req,
     });
 
-    // When onlyCountSuccess is set, defer recording until the procedure succeeds
-    // so failed calls don't burn a slot.
+    // When onlyCountSuccess is set, a call that does not succeed releases its slot. The slot is
+    // held while the procedure runs, so a concurrent call at the limit is refused meanwhile.
     if (options?.onlyCountSuccess) {
-      const result = await next();
-      if (result.ok) await recordAttempt();
-      return result;
+      let succeeded = false;
+      try {
+        const result = await next();
+        succeeded = result.ok;
+        if (succeeded) await recordAttempt();
+        return result;
+      } finally {
+        if (!succeeded) await recordAttempt.refund();
+      }
     }
 
     await recordAttempt();
@@ -376,6 +389,18 @@ export function purgeOnSuccess(tags: string[]) {
       );
 
     return result;
+  });
+}
+
+/** `noEdgeCache` for the inputs `when` matches. It mutates `ctx.cache` in place, which the response headers read. */
+export function noEdgeCacheWhen(when: (input: Record<string, unknown>) => boolean) {
+  return middleware(async ({ next, ctx, getRawInput }) => {
+    const input = await getRawInput();
+    if (ctx.cache && input && typeof input === 'object' && when(input as Record<string, unknown>)) {
+      ctx.cache.edgeTTL = 0;
+      ctx.cache.browserTTL = 0;
+    }
+    return next();
   });
 }
 

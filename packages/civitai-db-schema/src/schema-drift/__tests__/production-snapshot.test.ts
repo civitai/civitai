@@ -283,10 +283,58 @@ describe('production catalog snapshot (2026-10-20)', () => {
     //   `Article.systemCategoryId`: `20271112120000_article_system_category`
     //   `Image.nsfwAxes`: `20270105130000_image_nsfw_axes` — no-type, raw SQL in
     //     `image-nsfw-axes.ts`, which degrades while it is unapplied.
+    //   `Image.firstVisibleAt`: `20271201120000_image_first_visible_at` — no-type, written only by
+    //     the sortAt trigger the same migration installs.
+    //   `ApiKey.tokenScopeWide`: `20271117180000_widen_token_scopes_bigint`
     //   the eight `app_block_publish_requests.actions_run_*` columns:
     //     `20271117130000_app_block_publish_request_actions_run_source` — no-type, raw SQL in
     //     `actions-run-source.service.ts`, which degrades while it is unapplied.
+    //   `ServiceDealFile.scannedEtag` / `.scannedVersionId`: `20271119070000_service_deal_file_scanned_etag`
+    //   the three `ServiceOffering.license*` and four `ServiceDeal.license*` columns:
+    //     `20271120030000_service_license_presets`
+    //   `ServiceDeal.reviewEnabledAt` and the four `ServiceOffering` review columns:
+    //     `20271120100100_service_deal_reviews`
+    //   `ServiceDeal.buyerDisclosureVersion` / `.buyerDisclosureLines`:
+    //     `20271125130000_service_deal_buyer_disclosure`
+    //   the three `ServiceOffering` request-form columns and the three `ServiceDeal` form columns:
+    //     `20271128130000_service_request_form` — drop these at the next catalog recapture.
+    //   `OauthConsent.offlineBuzzLimit` / `.offlineBuzzPeriod`: `20271204120000_recipe_runner_ledger`
+    //   the five redesign `UserProfile` columns (`about`, `backgroundImageId`, `sfwBackgroundImageId`,
+    //     `pageTheme`, `pinnedItems`): `20271125120000_profile_redesign_customization`
+    //   `ScanLabelClaim.releasedAt`: `20271208120000_scan_label_claim_released`
     const inFlightColumns = new Set([
+      'ScanLabelClaim.releasedAt',
+      'UserProfile.about',
+      'UserProfile.backgroundImageId',
+      'UserProfile.sfwBackgroundImageId',
+      'UserProfile.pageTheme',
+      'UserProfile.pinnedItems',
+      'OauthConsent.offlineBuzzLimit',
+      'OauthConsent.offlineBuzzPeriod',
+      'ServiceDealFileEntry.copyDeleteStartedAt',
+      'ServiceOffering.requestForm',
+      'ServiceOffering.requestFormVersion',
+      'ServiceOffering.fromPrice',
+      'ServiceDeal.formVersion',
+      'ServiceDeal.formAnswers',
+      'ServiceDeal.priceBreakdown',
+      'ServiceOffering.licensePreset',
+      'ServiceOffering.licenseCustomText',
+      'ServiceOffering.licenseAllowResale',
+      'ServiceDeal.licensePreset',
+      'ServiceDeal.licenseCustomText',
+      'ServiceDeal.licenseAllowResale',
+      'ServiceDeal.licenseAgreedAt',
+      'ServiceDeal.reviewEnabledAt',
+      'ServiceDeal.buyerDisclosureVersion',
+      'ServiceDeal.buyerDisclosureLines',
+      'ServiceOffering.allowReviewWork',
+      'ServiceOffering.happyCount',
+      'ServiceOffering.reviewCount',
+      'ServiceOffering.happySortKey',
+      'ServiceDealFile.scannedEtag',
+      'ServiceDealFile.scannedVersionId',
+      'ApiKey.tokenScopeWide',
       'BoxOpening.guaranteed',
       'ModActivity.credential',
       'ModActivity.reviewBatchId',
@@ -346,6 +394,7 @@ describe('production catalog snapshot (2026-10-20)', () => {
       'ServiceOffering.scannedAt',
       'Article.systemCategoryId',
       'Image.nsfwAxes',
+      'Image.firstVisibleAt',
       'app_user_scope_grants.confirm_within_limit_max_job',
       'app_block_publish_requests.actions_run_repository',
       'app_block_publish_requests.actions_run_repository_id',
@@ -355,6 +404,17 @@ describe('production catalog snapshot (2026-10-20)', () => {
       'app_block_publish_requests.actions_run_workflow_ref',
       'app_block_publish_requests.actions_run_repository_visibility',
       'app_block_publish_requests.actions_run_id',
+      'ModelVersion.licensingFeeMarkup',
+      // OAuth offline grant, migration 20271119140000_oauth_offline_grant (manual apply).
+      'ApiKey.mintOrigin',
+      'ApiKey.refreshFamilyId',
+      'OauthConsent.offlineGrantedAt',
+      // Staff licence-fee controls, migrations 20271121130000_licensing_fee_locked and
+      // 20271121140000_licensing_fee_paid_by_invoice (manual apply).
+      'ModelVersion.licensingFeeLocked',
+      'ModelVersion.licensingFeePaidByInvoice',
+      // Restricted licensing roots, migration 20271121150000_licensing_root_restricted (manual apply).
+      'LicensingRoot.restricted',
     ]);
     expect(currentFound('missing-column').filter((c) => !inFlightColumns.has(c))).toEqual([]);
     // Control that the kind still fires against a catalog that is behind the schema.

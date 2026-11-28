@@ -5,7 +5,8 @@ import type * as CoverageSource from '~/server/services/generation/coverage-sour
 import type * as GenerationService from '~/server/services/generation/generation.service';
 import type * as ModelService from '~/server/services/model.service';
 import type * as SystemCache from '~/server/services/system-cache';
-import { ModelStatus } from '~/shared/utils/prisma/enums';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { ApiKeyType, ModelStatus } from '~/shared/utils/prisma/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { installUserCosmeticCacheFake } from '~/test-utils/userCosmeticCacheFake';
 
@@ -105,6 +106,54 @@ beforeEach(() => {
       },
     },
   ] as never);
+});
+
+describe('model.getById private files', () => {
+  const SCOPED_KEY = {
+    apiKeyId: 1,
+    apiKeyType: ApiKeyType.User,
+    subject: { type: 'apiKey', id: 1 },
+    tokenScope: TokenScope.ModelsRead,
+  };
+  it.each([
+    ['on a session', {}, ['public.safetensors', 'private.safetensors']],
+    ['on a scoped key', SCOPED_KEY, ['public.safetensors']],
+  ])('the owner %s gets the files the owner view allows', async (_, credential, names) => {
+    const stored = await getModel();
+    getModel.mockResolvedValue({
+      ...stored,
+      modelVersions: [
+        {
+          ...stored.modelVersions[0],
+          usageControl: 'Download',
+          recommendedResources: [],
+          files: [
+            {
+              id: 1,
+              name: 'public.safetensors',
+              type: 'Model',
+              visibility: 'Public',
+              metadata: {},
+              hashes: [],
+            },
+            {
+              id: 2,
+              name: 'private.safetensors',
+              type: 'Model',
+              visibility: 'Private',
+              metadata: {},
+              hashes: [],
+            },
+          ],
+        },
+      ],
+    });
+    const model = await getModelHandler({
+      input: { id: 1 },
+      ctx: { user: { id: 10, isModerator: false }, features: {}, ...credential },
+    } as never);
+    expect(model.modelVersions[0].files.map((f: { name: string }) => f.name)).toEqual(names);
+  });
 });
 
 describe('model.getById linked components', () => {

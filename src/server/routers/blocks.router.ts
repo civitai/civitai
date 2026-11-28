@@ -1,4 +1,7 @@
 import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
+import { APP_BLOCK_TAG_PREFIX } from '~/shared/utils/app-block-tags';
+import { assertNotImpersonating } from '~/server/auth/refuse-while-impersonating';
+import { assertNoBlockMediaInputs } from '~/server/services/blocks/block-media-input-guard';
 import { isoDatetimeCompat } from '@civitai/shared/iso-datetime-compat';
 import { GLOBAL_SCOPE_ACTIVITY_OR } from '~/server/services/blocks/scope-activity-predicate';
 import { TRPCError, getTRPCErrorFromUnknown, type TRPCMiddlewareFunction } from '@trpc/server';
@@ -22,7 +25,7 @@ import {
 import { env } from '~/env/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { FORGEJO_ORG } from '~/server/services/blocks/forgejo.service';
-import { logToAxiom } from '~/server/logging/client';
+import { logToAxiom, safeError } from '~/server/logging/client';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import {
   BLOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB,
@@ -34,6 +37,7 @@ import {
   type BlockTokenClaims,
 } from '~/server/middleware/block-scope.middleware';
 import { authorizeBlockBridgeToken } from '~/server/services/blocks/block-bridge-auth.service';
+import { assertBlockSubjectIsSessionUser } from '~/server/services/block-token-session-subject';
 import type {
   BlockQuoteGrantKind,
   BlockQuoteGrantRecord,
@@ -63,7 +67,8 @@ import {
   REVIEW_RUN_FOR_REAL_BUZZ_CAP,
   REVOKE_SCOPES_MAX_PER_CALL,
 } from '~/shared/constants/block-scope.constants';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { takeClusterWindowCount } from '~/server/utils/cluster-window-count';
 import {
   buzzCapRedisKey,
   clearDailyCapRefusal,
@@ -107,9 +112,18 @@ import {
   checkBlockUploadAppRateLimit,
   checkBlockGenerationSourceUserRateLimit,
   checkBlockUploadedGenerationSourceUserRateLimit,
+  BLOCK_STANDING_CONSENT_RATE_LIMIT_WINDOW_SECONDS,
   claimBlockStandingSubmitSlot,
 } from '~/server/utils/block-catalog-rate-limit';
 import { withInFlightLimit } from '~/server/utils/in-flight-limit';
+import { usageLimits } from '~/shared/constants/usage-limits';
+import {
+  appRateLimitMeta,
+  BRIDGE_BUCKET_RATE_LIMIT_ID,
+  rateLimitMetaOfServiceError,
+  throwAppRateLimited,
+} from '~/server/utils/app-rate-limit';
+import { throwRateLimited } from '~/server/utils/rate-limit-error';
 import { acquireBlockPollHoldSlot } from '~/server/utils/block-poll-hold-slots';
 import {
   BLOCK_IDEMPOTENCY_KEY_REGEX,
@@ -149,13 +163,14 @@ import {
   placePublishRequestHoldSchema,
   backfillPublishRequestSchema,
   getMyPendingForSlugSchema,
-  agentReviewChatSchema,
+  agentReviewRequestSchema,
   getAgentReviewSchema,
   getPublishRequestDiffSchema,
   getPublishRequestSchema,
   getPublishRequestScreenshotsSchema,
   getReviewStatusSchema,
   listApprovedRequestsSchema,
+  listingRatingResyncSchema,
   listPendingRequestsSchema,
   listRejectedRequestsSchema,
   listVersionHistorySchema,
@@ -267,6 +282,7 @@ import {
   createBlockCustomComfyStep,
   formatStepTimeout,
   isPageLoraResource,
+  orchestratorBlockStatus,
   projectAppWorkflow,
   projectAppWorkflowWithPositions,
   blockPollWaitSecondsInput,
@@ -285,6 +301,10 @@ import {
   pendingOutputMessage,
   restrictedOutputMessage,
 } from '~/server/services/blocks/block-output-restriction';
+import {
+  blockViewerImageUserSelect,
+  projectBlockViewerImage,
+} from '~/server/services/blocks/block-viewer-image';
 import {
   resolveBlockOutputRules,
   resolveBlockOutputView,
@@ -373,6 +393,8 @@ import {
 // undiagnosable — it is not a cosmetic emit.
 import {
   recordBlockPostSubjectRefusal,
+  recordBlockUnlockChargedNotReleased,
+  recordBlockUnlockOutcomeUnknown,
   recordStepPriceCheck,
   type AppBlockPostSurface,
 } from '~/server/metrics/app-block-runtime.metrics';
@@ -412,6 +434,7 @@ import {
 import { getResourceGenerationSupport } from '~/shared/constants/basemodel.constants';
 import type { ModelType } from '~/shared/utils/prisma/enums';
 import { isAppReviewer } from '~/shared/utils/app-blocks-access';
+import { redactDeployDetailForAuthor } from '~/shared/utils/review-boot-check';
 import { BuzzTypes, TransactionType } from '~/shared/constants/buzz.constants';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { effectiveBlockScopes } from '~/shared/constants/block-effective-scopes';
@@ -451,6 +474,7 @@ import {
   buildGenerationContext,
   createWorkflowStepsFromGraphInput,
 } from '~/server/services/orchestrator/orchestration-new.service';
+import { outputRestrictions } from '~/server/services/orchestrator/form-graph/output-restrictions';
 import {
   assertGenerationInputsUsable,
   countAppBlockHostSources,
@@ -475,6 +499,25 @@ import {
 } from '~/server/trpc';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
 import type { SessionUser } from '~/types/session';
+import { readOnBehalf, staffSubmissionOf } from '~/shared/utils/publish-request-on-behalf';
+import {
+  checkRunnerBinding,
+  runnerSlotsSchema,
+  type RunnerBindingBody,
+} from '~/server/services/blocks/runner-binding';
+import {
+  readRunnerAttemptState,
+  reserveRunnerAttempt,
+  transitionRunnerAttempt,
+  type RunnerAttemptState,
+  type RunnerReservation,
+} from '~/server/services/blocks/runner-ledger.service';
+import {
+  claimRunnerSubmitJti,
+  prepareRunnerSubmit,
+  refuseRunnerSubmit,
+  type RunnerSubmit,
+} from '~/server/services/blocks/runner-submit.service';
 import {
   MEDIA_UPLOAD_BATCH_DISABLED_ERROR,
   MEDIA_UPLOAD_BATCH_MAX_BYTES,
@@ -801,10 +844,7 @@ async function authorizeBlockPostRequest(
   // (`assertAppBlocksEnabledForTokenUser`, `assertViewerIsAppDeveloper`): the
   // no-entity arm returns the flag's own BASE value, so under a base-`enabled: true`
   // GA flip, falling through with no subject would PASS this gate rather than
-  // refuse. Losing this branch re-opens that. It is watchlisted as
-  // `post-subject-refusal` in `scripts/compiled-branch-watchlist.mjs`, so the
-  // message literal below and the condition are both anchors — rewording either is
-  // a watchlist edit in the same commit, not a copy change.
+  // refuse. Losing this branch re-opens that.
   //
   // 🔴 REACHABILITY IS NARROW BUT REAL, AND IS NOT THE JUSTIFICATION ANYWAY. The
   // kill-switch above already hydrated this subject and refuses a `null`, so
@@ -923,8 +963,6 @@ async function authorizeBlockReactionRequest(
   assertBlockSubjectIsSessionUser(userId, sessionUserId);
   await assertAppBlocksEnabledForTokenUser(userId);
   const subjectUser = (await sessionClient.getSessionUserById(userId)) as SessionUser | null;
-  // Spelled `== null`, not `!subjectUser`: that exact text is the post preamble's anchor in
-  // `scripts/compiled-branch-watchlist.mjs`, which must match one line only.
   if (subjectUser == null) {
     throw new TRPCError({
       code: 'UNAUTHORIZED',
@@ -1099,10 +1137,10 @@ export function authorizeBlockBridgeViewer(
         claims,
         rate.retryAfterSeconds
       );
-      throw new TRPCError({
-        code: 'TOO_MANY_REQUESTS',
-        message: 'Rate limit exceeded, please retry shortly.',
-      });
+      throwAppRateLimited(
+        BRIDGE_BUCKET_RATE_LIMIT_ID[options.rateLimit.bucket],
+        rate.retryAfterSeconds
+      );
     }
     return next({ ctx: { blockViewer } });
   };
@@ -1187,15 +1225,6 @@ function resolveBlockMaturity(claims: { maxBrowsingLevel?: number }): {
   };
 }
 
-/**
- * The maturity fields of a real submit: the token's ceiling, held to PG-13 with mature content
- * refused when a resource's base model restricts mature generation (`capsGenerationOutput`).
- */
-function blockOutputClamp(capOutput: boolean, allowMatureContent: boolean | undefined) {
-  if (capOutput) return { nsfwLevel: 'pg13' as const, allowMatureContent: false };
-  return allowMatureContent === false ? { allowMatureContent: false } : {};
-}
-
 // SECURITY-CRITICAL (W10). A page token has no model binding, so the model-
 // binding check (`ctxModelId === body.modelId`) that bounds a model slot does
 // NOT apply. The replacement bound is a PRE-SPEND slice of the platform's
@@ -1234,8 +1263,8 @@ function blockOutputClamp(capOutput: boolean, allowMatureContent: boolean | unde
 // DO NOT remove that belt assuming this pre-spend gate already covers
 // early-access / Private — it does not.
 //
-// Pass the REAL viewer context (their id + real isModerator + the request's
-// sfwOnly/wildcards flags) — never an elevated context.
+// Pass the REAL viewer id and the request's sfwOnly/wildcards flags — never an
+// elevated context. The viewer is checked without moderator rights.
 //
 // 🔴 THE VIEWER IS NO LONGER ALWAYS AN APP AUTHOR. This comment used to say they
 // were, and leaned on it ("so they see the appropriate access"); the author gate
@@ -1252,7 +1281,7 @@ function blockOutputClamp(capOutput: boolean, allowMatureContent: boolean | unde
 // — a missed entry must deny, never default-allow.
 async function assertViewerCanGeneratePageResources(opts: {
   gates: ReturnType<typeof buildGateVersion>[];
-  viewer: { id: number; isModerator: boolean };
+  viewer: { id: number };
   sfwOnly: boolean;
   wildcardsEnabled: boolean;
 }): Promise<void> {
@@ -1261,7 +1290,9 @@ async function assertViewerCanGeneratePageResources(opts: {
     '~/server/services/generation/generation.service'
   );
   const states = await resolveCanGenerateForVersions(gates, {
-    user: { id: viewer.id, isModerator: viewer.isModerator },
+    // An app names these resources, so the viewer's moderator rights do not apply, as on the
+    // step arms (`checkAppStepResources`).
+    user: { id: viewer.id, isModerator: false },
     sfwOnly,
     wildcardsEnabled,
   });
@@ -1712,6 +1743,12 @@ type BlockBuzzReservation = {
   key: string;
   cap: number;
   consent: { total: number; key: string; cap: number; userId: number; appBlockId: string } | null;
+  /** A recipe runner's attempt in the ledger; `state` is where this submit last moved it. */
+  runner?: RunnerLeg;
+};
+type RunnerLeg = {
+  attemptId: string;
+  state: Extract<RunnerAttemptState, 'reserved' | 'submitting'>;
 };
 
 /**
@@ -1763,6 +1800,121 @@ type BlockBuzzReservation = {
  * REVOKED grant refuses — with the same refund.
  */
 async function reserveBlockBuzzSpendForClaims(
+  claims: BlockTokenClaims,
+  userId: number,
+  cost: number,
+  runner?: RunnerSubmit
+): Promise<BlockBuzzReservation> {
+  if (claims.mintOrigin !== 'runner') return reservePlatformAndConsentLegs(claims, userId, cost);
+  if (!runner) refuseRunnerSubmit(claims.runId, 'kind');
+  const leg = await reserveRunnerLeg(claims, userId, cost, runner);
+  try {
+    return { ...(await reservePlatformAndConsentLegs(claims, userId, cost)), runner: leg };
+  } catch (e) {
+    await refundRunnerLeg(leg);
+    throw e;
+  }
+}
+
+/**
+ * A runner submit answers with its attempt's ledger state: `runner.state` is authoritative, the
+ * snapshot only informational. A throw before any attempt exists is rethrown. A retry after
+ * `refunded` needs a freshly minted token.
+ */
+async function withRunnerAttempt<T extends object>(runner: RunnerSubmit, submit: () => Promise<T>) {
+  const attempt = async () => {
+    if (!runner.attemptId) return null;
+    const state = await ledgerDb()
+      .then((db) => readRunnerAttemptState(db, runner.attemptId!))
+      .catch(() => null);
+    return { attemptId: runner.attemptId, state };
+  };
+  try {
+    const result = await submit();
+    return { ...result, runner: await attempt() };
+  } catch (e) {
+    if (!runner.attemptId) throw e;
+    // A reason code only: the detail goes to the log, never to the caller.
+    logToAxiom({
+      name: 'runner-submit',
+      type: 'error',
+      payload: { outcome: 'failed', runId: runner.runId, attemptId: runner.attemptId },
+      error: safeError(e),
+    });
+    return {
+      snapshot: { workflowId: 'failed', status: 'failed' as const, error: runnerFailureCode(e) },
+      runner: await attempt(),
+    };
+  }
+}
+
+function runnerFailureCode(e: unknown): string {
+  return e instanceof TRPCError && e.code === 'BAD_REQUEST'
+    ? 'validation failed: the orchestrator refused the workflow'
+    : 'runner submit temporarily unavailable';
+}
+
+/** The primary: the ledger is read and written there only. */
+async function ledgerDb() {
+  return (await import('~/server/db/kyselyDb')).kyselyWrite;
+}
+
+function logRunnerLedgerError(step: string, attemptId: string, error: unknown) {
+  logToAxiom({
+    name: 'runner-ledger',
+    type: 'error',
+    payload: { step, attemptId },
+    error: safeError(error),
+  });
+}
+
+/**
+ * Move the attempt from where this submit left it to `refunded`. True only when this call moved
+ * it; never throws (a failed move leaves the attempt counting against the cap, the safe side).
+ */
+async function refundRunnerLeg(leg: RunnerLeg): Promise<boolean> {
+  try {
+    return await transitionRunnerAttempt(await ledgerDb(), leg.attemptId, leg.state, 'refunded');
+  } catch (error) {
+    logRunnerLedgerError('refund', leg.attemptId, error);
+    return false;
+  }
+}
+
+/**
+ * Reserve the run's attempt in the ledger, the budget authority for runner spend: the offline cap,
+ * the authorization's per-run and per-period limits and one live attempt per run, all under the
+ * consent row lock. Refuses FORBIDDEN; a database error throws SERVICE_UNAVAILABLE.
+ */
+async function reserveRunnerLeg(
+  claims: BlockTokenClaims,
+  userId: number,
+  cost: number,
+  runner: RunnerSubmit
+): Promise<RunnerLeg> {
+  let result: Awaited<ReturnType<typeof reserveRunnerAttempt>>;
+  try {
+    result = await reserveRunnerAttempt(await ledgerDb(), {
+      userId,
+      clientId: runner.clientId,
+      authorizationId: runner.authorizationId,
+      runKey: runner.runKey,
+      runId: runner.runId,
+      appBlockId: claims.appBlockId,
+      amount: Math.ceil(cost),
+      externalId: composeBlockExternalId(claims.appBlockId, runner.runId),
+      now: new Date(),
+    });
+  } catch (error) {
+    logRunnerLedgerError('reserve', runner.runId, error);
+    throw new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: 'runner ledger unavailable' });
+  }
+  if (!result.ok) refuseRunnerSubmit(runner.runId, result.refusal);
+  runner.attemptId = result.attemptId;
+  return { attemptId: result.attemptId, state: 'reserved' };
+}
+
+async function reservePlatformAndConsentLegs(
   claims: BlockTokenClaims,
   userId: number,
   cost: number
@@ -1892,13 +2044,22 @@ async function reserveBlockBuzzSpendForClaims(
  *
  * Best-effort per key, like `refundBlockBuzzSpend`: a lost refund OVER-counts, which
  * makes a cap stricter — the safe direction. Never throws into the caller.
+ *
+ * False when this call did not move the runner attempt to `refunded` (another writer moved it, or
+ * the ledger failed): no Redis leg is refunded then, and the caller refunds no other leg either.
  */
 async function refundBlockBuzzReservation(
   reservation: BlockBuzzReservation,
   cost: number
-): Promise<void> {
+): Promise<boolean> {
+  if (reservation.runner) {
+    // Only the writer that moves the attempt to refunded refunds the Redis legs; a failed move
+    // leaves both counting (the safe side).
+    if (!(await refundRunnerLeg(reservation.runner))) return false;
+  }
   await refundBlockBuzzSpend(reservation.key, cost);
   if (reservation.consent) await refundBlockBuzzSpend(reservation.consent.key, cost);
+  return true;
 }
 
 /** True when the reservation's CONSENT leg exists and its running total is over the
@@ -1947,9 +2108,7 @@ async function readMyConfirmWithinLimit(
   appBlockId: string
 ): Promise<number | null> {
   try {
-    const { readConfirmWithinLimit } = await import(
-      '~/server/services/blocks/scope-grant.service'
-    );
+    const { readConfirmWithinLimit } = await import('~/server/services/blocks/scope-grant.service');
     return await readConfirmWithinLimit(user.id, appBlockId, 'read');
   } catch {
     return null;
@@ -1957,15 +2116,13 @@ async function readMyConfirmWithinLimit(
 }
 
 async function checkDailyLimitReadRateLimit(userId: number): Promise<boolean> {
-  const key = `${REDIS_SYS_KEYS.BLOCKS.DAILY_LIMIT_READ_RATE}:${userId}` as const;
+  const key = `${REDIS_KEYS.BLOCKS.DAILY_LIMIT_READ_RATE}:${userId}` as const;
   try {
-    const count = await sysRedis.incrBy(key, 1);
-    if (count === 1) {
-      await sysRedis.expire(key, DAILY_LIMIT_READ_RATE_LIMIT.windowSeconds);
-    } else {
-      const ttl = await sysRedis.ttl(key);
-      if (ttl < 0) await sysRedis.expire(key, DAILY_LIMIT_READ_RATE_LIMIT.windowSeconds);
-    }
+    const count = await takeClusterWindowCount(
+      'checkDailyLimitReadRateLimit',
+      key,
+      DAILY_LIMIT_READ_RATE_LIMIT.windowSeconds
+    );
     return count <= DAILY_LIMIT_READ_RATE_LIMIT.max;
   } catch {
     return false;
@@ -1979,19 +2136,27 @@ async function checkDailyLimitReadRateLimit(userId: number): Promise<boolean> {
 // fails CLOSED (returns false) on a Redis error.
 const REVIEW_RUN_FOR_REAL_MINT_RATE_LIMIT = { max: 30, windowSeconds: 3600 } as const;
 
-async function checkReviewRunForRealMintRateLimit(userId: number): Promise<boolean> {
+/** Seconds a run-for-real refusal on a store error asks for: the store is down, not the window. */
+const REVIEW_RUN_FOR_REAL_STORE_ERROR_RETRY_SECONDS = 60;
+
+async function checkReviewRunForRealMintRateLimit(
+  userId: number
+): Promise<{ allowed: true } | { allowed: false; retryAfterSeconds: number }> {
   const key = `${REDIS_SYS_KEYS.BLOCKS.REVIEW_RUN_FOR_REAL_BUZZ_CAP}:mint-rate:${userId}` as const;
+  const { max, windowSeconds } = REVIEW_RUN_FOR_REAL_MINT_RATE_LIMIT;
   try {
     const count = await sysRedis.incrBy(key, 1);
     if (count === 1) {
-      await sysRedis.expire(key, REVIEW_RUN_FOR_REAL_MINT_RATE_LIMIT.windowSeconds);
+      await sysRedis.expire(key, windowSeconds);
     } else {
       const ttl = await sysRedis.ttl(key);
-      if (ttl < 0) await sysRedis.expire(key, REVIEW_RUN_FOR_REAL_MINT_RATE_LIMIT.windowSeconds);
+      if (ttl < 0) await sysRedis.expire(key, windowSeconds);
     }
-    return count <= REVIEW_RUN_FOR_REAL_MINT_RATE_LIMIT.max;
+    if (count <= max) return { allowed: true };
+    const ttl = await sysRedis.ttl(key).catch(() => windowSeconds);
+    return { allowed: false, retryAfterSeconds: ttl > 0 ? ttl : windowSeconds };
   } catch {
-    return false;
+    return { allowed: false, retryAfterSeconds: REVIEW_RUN_FOR_REAL_STORE_ERROR_RETRY_SECONDS };
   }
 }
 
@@ -2236,22 +2401,6 @@ async function createBlockTextToImageStep(opts: {
 }
 
 /**
- * Refuses unless the block token's subject is the signed-in user the request
- * arrived with. For bridge writes that run as `protectedProcedure`s: the session
- * proves who is at the keyboard, the token proves which app and install is asking,
- * and the two must name the same person. Shared by `publishGenerationOutputs` and
- * both post procedures (via `authorizeBlockPostRequest`).
- */
-function assertBlockSubjectIsSessionUser(subjectUserId: number, sessionUserId: number): void {
-  if (subjectUserId !== sessionUserId) {
-    throw new TRPCError({
-      code: 'FORBIDDEN',
-      message: 'this app session belongs to a different account; reload the page to continue',
-    });
-  }
-}
-
-/**
  * May this viewer read `blocks.getAppDetail` for this app block, as far as the backing
  * LISTING's visibility level is concerned?
  *
@@ -2386,18 +2535,24 @@ const UPLOADED_GENERATION_SOURCE_IN_FLIGHT = {
 async function withSourceSaveBounds<T>(
   inFlight: typeof GENERATION_SOURCE_IN_FLIGHT,
   who: { procedure: string; claims: BlockTokenClaims; userId: number },
-  charge: () => Promise<{ allowed: boolean }>,
+  charge: () => Promise<{ allowed: true } | { allowed: false; retryAfterSeconds: number }>,
   run: () => Promise<T>
 ): Promise<T> {
   return withInFlightLimit(
-    { ...inFlight, userId: who.userId },
+    {
+      ...inFlight,
+      userId: who.userId,
+      // A slot frees when a save in flight finishes, so the retry is a short one.
+      refusalMeta: () => appRateLimitMeta('apps.in-flight', 1),
+    },
     async () => {
       const rate = await charge();
       if (!rate.allowed) {
-        throw new TRPCError({
-          code: 'TOO_MANY_REQUESTS',
-          message: 'Too many generation sources saved — slow down.',
-        });
+        throwAppRateLimited(
+          'apps.generation-source',
+          rate.retryAfterSeconds,
+          'Too many generation sources saved — slow down.'
+        );
       }
       return run();
     },
@@ -2697,13 +2852,14 @@ export const blocksRouter = router({
     .input(devTunnelStartSchema)
     .mutation(async ({ ctx, input }) => {
       if (!ctx.user) throw throwAuthorizationError('Not authenticated');
+      assertNotImpersonating(ctx);
       // The dev-tunnel flag, ownership, and the unsubmitted-app start limit: shared with the
       // server runner's start endpoint (`dev-tunnel-access.service.ts`), one predicate for both.
-      const { authorizeDevTunnelStart } = await import(
+      const { authorizeDevTunnelStart, devTunnelRefusalError } = await import(
         '~/server/services/blocks/dev-tunnel-access.service'
       );
       const gate = await authorizeDevTunnelStart(ctx.user, input.blockId);
-      if (!gate.ok) throw new TRPCError({ code: gate.refusal.code, message: gate.refusal.error });
+      if (!gate.ok) throw devTunnelRefusalError(gate.refusal);
       const { startDevTunnel } = await import('~/server/services/blocks/dev-tunnel.service');
       try {
         return await startDevTunnel({
@@ -2941,6 +3097,76 @@ export const blocksRouter = router({
     }),
 
   /**
+   * MOD-ONLY: what approving this pending version does to the rating of the app's existing
+   * on-site store listing (`previewVersionListingRating`), so the approve bar can say so before
+   * the moderator approves. Same auth shape as getPublishRequestScreenshots.
+   */
+  getVersionListingRatingPreview: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(getPublishRequestScreenshotsSchema)
+    .query(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Mod review is restricted to civitai team');
+      }
+      const { previewVersionListingRating } = await import(
+        '~/server/services/blocks/publish-request.service'
+      );
+      return previewVersionListingRating(input.publishRequestId);
+    }),
+
+  /**
+   * MOD-ONLY: what `resyncListingRating` would do to an approved app's on-site listing rating
+   * (`{ listingId, from, to }`, or `null` when there is no such listing). Read-only.
+   */
+  getListingRatingResyncPreview: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(listingRatingResyncSchema)
+    .query(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Mod review is restricted to civitai team');
+      }
+      const { previewListingRatingResync } = await import(
+        '~/server/services/blocks/publish-request.service'
+      );
+      return previewListingRatingResync(input.appBlockId);
+    }),
+
+  /**
+   * MOD-ONLY: re-run the new-version rating sync for ONE approved app's on-site listing without
+   * approving anything (the rule `approveRequest` applies: the declared rating floored at the
+   * store media, keeping a moderator's raise). Records a `rating-change` event by the session
+   * moderator. NOT_FOUND for no approved app / listing; CONFLICT when the rating moved between
+   * the read and the write.
+   */
+  resyncListingRating: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(listingRatingResyncSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Re-rating listings is restricted to civitai team');
+      }
+      const { resyncListingRating } = await import(
+        '~/server/services/blocks/publish-request.service'
+      );
+      try {
+        return await resyncListingRating({
+          appBlockId: input.appBlockId,
+          actorUserId: ctx.user.id,
+        });
+      } catch (err) {
+        if (err instanceof TRPCError) throw err;
+        const serviceCode = err instanceof Error ? (err as { code?: unknown }).code : undefined;
+        const code =
+          serviceCode === 'NOT_FOUND'
+            ? 'NOT_FOUND'
+            : serviceCode === 'CONFLICT'
+            ? 'CONFLICT'
+            : 'INTERNAL_SERVER_ERROR';
+        throw new TRPCError({ code, message: (err as Error).message, cause: err });
+      }
+    }),
+
+  /**
    * MOD-ONLY line-level code diff for a publish request. Computes the per-file
    * UNIFIED diff between the pending bundle and the previous approved version so
    * a reviewer can read the actual code change in the modal instead of clicking
@@ -3092,12 +3318,13 @@ export const blocksRouter = router({
       // account-compromise / runaway-client mint storm). Only the run-for-real
       // path is limited; the ordinary render-only mint is unaffected.
       if (input.runForReal) {
-        const allowed = await checkReviewRunForRealMintRateLimit(ctx.user.id);
-        if (!allowed) {
-          throw new TRPCError({
-            code: 'TOO_MANY_REQUESTS',
-            message: 'run-for-real mint rate limit reached — please wait a moment and retry',
-          });
+        const mintRate = await checkReviewRunForRealMintRateLimit(ctx.user.id);
+        if (!mintRate.allowed) {
+          throwAppRateLimited(
+            'apps.review-token-run-for-real',
+            mintRate.retryAfterSeconds,
+            'run-for-real mint rate limit reached — please wait a moment and retry'
+          );
         }
       }
       const { mintReviewBlockToken } = await import(
@@ -3135,18 +3362,23 @@ export const blocksRouter = router({
    * moderatorProcedure + the isModerator belt + enforceAppBlocksFlag) makes the
    * whole feature ship DARK — the flag does not exist in Flipt yet, so
    * isAppBlocksAgenticReviewEnabled fail-closes to false and this rejects.
+   *
+   * CONNECT LANE: an `alpr_` id is an OAuth-connect listing request, gated instead on its own
+   * `app-listings-agentic-review` flag (`isAgentReviewLaneEnabled`), here and on the read
+   * procedures below and the review agent chat endpoint
+   * (`/api/mod/apps/review-agent/v1/chat/completions`). Advisory only: none of them approves or
+   * rejects.
    */
   startAgentReview: moderatorProcedure
     .use(enforceAppBlocksFlag)
     .input(startAgentReviewSchema)
     .mutation(async ({ ctx, input }) => {
-      if (!ctx.user?.isModerator) {
-        throw throwAuthorizationError('Agentic review is restricted to civitai team');
-      }
-      const { isAppBlocksAgenticReviewEnabled } = await import('~/server/services/app-blocks-flag');
-      if (!(await isAppBlocksAgenticReviewEnabled({ user: ctx.user }))) {
-        throw throwAuthorizationError('Agentic review is not enabled');
-      }
+      // Moderator, then the request's lane flag (on-site or connect): one gate for every
+      // agent-review procedure.
+      const { assertAgentReviewAccess } = await import(
+        '~/server/services/blocks/agent-review-lane'
+      );
+      await assertAgentReviewAccess(ctx.user, input.publishRequestId);
       const { startAgentReview } = await import('~/server/services/blocks/agent-review.service');
       try {
         return await startAgentReview({
@@ -3155,6 +3387,8 @@ export const blocksRouter = router({
           // Optional targeted re-run (one failed analysis instead of all three).
           // `undefined` ⇒ a full run, exactly as before this field existed.
           sections: input.sections,
+          // Optional OpenRouter model for this run. `undefined` ⇒ the agent's default model.
+          model: input.model,
         });
       } catch (err) {
         // Preserve a typed TRPCError's CODE (the service raises CONFLICT — "a
@@ -3183,59 +3417,69 @@ export const blocksRouter = router({
     .use(enforceAppBlocksFlag)
     .input(getAgentReviewSchema)
     .query(async ({ ctx, input }) => {
-      if (!ctx.user?.isModerator) {
-        throw throwAuthorizationError('Agentic review is restricted to civitai team');
-      }
-      const { isAppBlocksAgenticReviewEnabled } = await import('~/server/services/app-blocks-flag');
-      if (!(await isAppBlocksAgenticReviewEnabled({ user: ctx.user }))) {
-        throw throwAuthorizationError('Agentic review is not enabled');
-      }
+      // Moderator, then the request's lane flag (on-site or connect): one gate for every
+      // agent-review procedure.
+      const { assertAgentReviewAccess } = await import(
+        '~/server/services/blocks/agent-review-lane'
+      );
+      await assertAgentReviewAccess(ctx.user, input.publishRequestId);
       const { getAgentReport } = await import('~/server/services/blocks/app-review-report.service');
-      return getAgentReport(input.publishRequestId);
+      // `reportId` (the report picker) is looked up WITHIN this request, so the per-request
+      // gate above still covers it.
+      return getAgentReport(input.publishRequestId, input.reportId);
     }),
 
   /**
-   * AGENTIC MOD CODE-REVIEW (App Blocks P3) — in-modal CHAT. A moderator viewing a
-   * report can ask follow-up questions ("why did you flag scope X", "show the call
-   * site"). Non-streaming request/response (v1); streaming SSE is a follow-up.
-   *
-   * Gated IDENTICALLY to startAgentReview / getAgentReview (moderatorProcedure +
-   * the isModerator belt + enforceAppBlocksFlag + the dedicated mod-only
-   * `app-blocks-agentic-review` flag) so it ships DARK — the flag does not exist
-   * in Flipt yet, so isAppBlocksAgenticReviewEnabled fail-closes to false and this
-   * rejects. The service loads the PERSISTED report and answers as a STATELESS
-   * civitai→LLM completion grounded on that report (no live agent — a `failed`
-   * report is still chattable; only a missing/torn-down review → PRECONDITION_FAILED),
-   * returning `{ reply }`.
+   * AGENTIC MOD CODE-REVIEW — every run of a request, newest first (model, status, times, cost),
+   * for the panel's report picker. Gated IDENTICALLY to getAgentReview.
    */
-  agentReviewChat: moderatorProcedure
+  listAgentReviews: moderatorProcedure
     .use(enforceAppBlocksFlag)
-    .input(agentReviewChatSchema)
-    .mutation(async ({ ctx, input }) => {
-      if (!ctx.user?.isModerator) {
-        throw throwAuthorizationError('Agentic review is restricted to civitai team');
-      }
-      const { isAppBlocksAgenticReviewEnabled } = await import('~/server/services/app-blocks-flag');
-      if (!(await isAppBlocksAgenticReviewEnabled({ user: ctx.user }))) {
-        throw throwAuthorizationError('Agentic review is not enabled');
-      }
-      const { agentReviewChat } = await import('~/server/services/blocks/agent-review.service');
+    .input(agentReviewRequestSchema)
+    .query(async ({ ctx, input }) => {
+      // Moderator, then the request's lane flag (on-site or connect): one gate for every
+      // agent-review procedure.
+      const { assertAgentReviewAccess } = await import(
+        '~/server/services/blocks/agent-review-lane'
+      );
+      await assertAgentReviewAccess(ctx.user, input.publishRequestId);
+      const { listAgentReports } = await import(
+        '~/server/services/blocks/app-review-report.service'
+      );
+      return listAgentReports(input.publishRequestId);
+    }),
+
+  /**
+   * AGENTIC MOD CODE-REVIEW — the models a re-run can be dispatched on: OpenRouter's
+   * tool-capable models within the input-price ceiling, with their prices (cached server-side). Gated IDENTICALLY to
+   * startAgentReview, on the request the moderator is reviewing. When OpenRouter cannot be
+   * reached this answers `available: false` rather than failing, so the picker can say so; a
+   * chosen model cannot be priced then, and startAgentReview refuses it (the default still runs).
+   */
+  getAgentReviewModels: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(agentReviewRequestSchema)
+    .query(async ({ ctx, input }) => {
+      // Moderator, then the request's lane flag (on-site or connect): one gate for every
+      // agent-review procedure.
+      const { assertAgentReviewAccess } = await import(
+        '~/server/services/blocks/agent-review-lane'
+      );
+      await assertAgentReviewAccess(ctx.user, input.publishRequestId);
+      const { getPickableAgentReviewModels } = await import(
+        '~/server/services/blocks/agent-review-models.service'
+      );
       try {
-        return await agentReviewChat({
-          publishRequestId: input.publishRequestId,
-          messages: input.messages,
-        });
+        // Only models within the input-price ceiling (the start refuses the rest anyway).
+        return { available: true, models: await getPickableAgentReviewModels() };
       } catch (err) {
-        // Preserve the service's typed codes (PRECONDITION_FAILED = pod not up;
-        // BAD_GATEWAY = agent unreachable/timeout/non-200) so the client can
-        // render the right inline message; only opaque errors collapse to
-        // BAD_REQUEST. NEVER a 500 leak.
-        if (err instanceof TRPCError) throw err;
-        throw new TRPCError({
-          code: 'BAD_REQUEST',
-          message: (err as Error).message,
-          cause: err,
+        logToAxiom({
+          name: 'app-blocks.review.agent-models',
+          type: 'warning',
+          message: 'could not load the OpenRouter model list',
+          error: safeError(err),
         });
+        return { available: false, models: [] };
       }
     }),
 
@@ -3583,11 +3827,15 @@ export const blocksRouter = router({
       } catch (err) {
         if (err instanceof TRPCError) throw err;
         const serviceCode = err instanceof Error ? (err as { code?: unknown }).code : undefined;
+        if (serviceCode === 'RATE_LIMITED') {
+          throwRateLimited(
+            rateLimitMetaOfServiceError(err) ?? appRateLimitMeta('apps.build-retrigger', 60),
+            (err as Error).message
+          );
+        }
         const code =
           serviceCode === 'NOT_FOUND'
             ? 'NOT_FOUND'
-            : serviceCode === 'RATE_LIMITED'
-            ? 'TOO_MANY_REQUESTS'
             : // A build-service outage is OUR fault, not a malformed request —
             // reporting it as a 400 mislabels an incident as user error (and
             // keeps it off the server-fault error board).
@@ -3600,44 +3848,91 @@ export const blocksRouter = router({
 
   /**
    * Developer-facing list: every publish request submitted by the current
-   * viewer, newest first. The /apps/my-submissions page renders this.
+   * viewer, plus every staff submit made on their behalf for an app they own
+   * (labelled by `staffSubmission`), newest first. The /apps/my-submissions page renders this.
    * Returns the rejection reason inline so the dev sees mod feedback
    * without a second round-trip.
    */
   listMyPublishRequests: appDeveloperProcedure.use(enforceAppBlocksFlag).query(async ({ ctx }) => {
     if (!ctx.user) return [];
-    const rows = await dbRead.appBlockPublishRequest.findMany({
-      where: { submittedByUserId: ctx.user.id },
-      orderBy: { submittedAt: 'desc' },
-      take: 100,
-      select: {
-        id: true,
-        appBlockId: true,
-        slug: true,
-        version: true,
-        status: true,
-        submittedAt: true,
-        reviewedAt: true,
-        rejectionReason: true,
-        approvalNotes: true,
-        // Phase 2 build/deploy lifecycle, surfaced on /apps/my-submissions.
-        deployState: true,
-        deployDetail: true,
-        deployUpdatedAt: true,
-        fileSummary: true,
-        manifestDiffSummary: true,
-        appBlock: {
-          select: {
-            id: true,
-            // W13 P4: `hasPage` for the Open-live run-page link (does the manifest
-            // declare a launchable page). PUBLIC subset only — never the raw manifest.
-            manifest: true,
-            contentRating: true,
-            _count: { select: { userSubscriptions: true } },
-          },
+    const viewerId = ctx.user.id;
+    const select = {
+      id: true,
+      appBlockId: true,
+      slug: true,
+      version: true,
+      status: true,
+      submittedAt: true,
+      reviewedAt: true,
+      rejectionReason: true,
+      approvalNotes: true,
+      // Phase 2 build/deploy lifecycle, surfaced on /apps/my-submissions.
+      deployState: true,
+      deployDetail: true,
+      deployUpdatedAt: true,
+      fileSummary: true,
+      manifestDiffSummary: true,
+      appBlock: {
+        select: {
+          id: true,
+          // W13 P4: `hasPage` for the Open-live run-page link (does the manifest
+          // declare a launchable page). PUBLIC subset only — never the raw manifest.
+          manifest: true,
+          contentRating: true,
+          _count: { select: { userSubscriptions: true } },
         },
       },
-    });
+    } as const;
+    // A STAFF SUBMIT ON THE VIEWER'S BEHALF (`fileSummary.onBehalf`): its submitter is the
+    // moderator, but the version is the viewer's app's, so it is listed for them too.
+    // 🔴 Gated on BOTH the app's current owner (the block's OAuth client) and the owner the
+    // request recorded, in the query and again on the rows, so no other app's request can reach
+    // this list.
+    const onBehalfForViewer = async () => {
+      const ownApps = await dbRead.appBlock.findMany({
+        where: { app: { userId: viewerId } },
+        select: { id: true },
+      });
+      const ownAppIds = ownApps.map((b: { id: string }) => b.id);
+      if (ownAppIds.length === 0) return { ownAppIds, rows: [] };
+      const rows = await dbRead.appBlockPublishRequest.findMany({
+        where: {
+          appBlockId: { in: ownAppIds },
+          submittedByUserId: { not: viewerId },
+          fileSummary: { path: ['onBehalf', 'ownerUserId'], equals: viewerId },
+        },
+        orderBy: { submittedAt: 'desc' },
+        take: 100,
+        select,
+      });
+      return { ownAppIds, rows };
+    };
+    const [submitted, onBehalfOfViewer] = await Promise.all([
+      dbRead.appBlockPublishRequest.findMany({
+        where: { submittedByUserId: viewerId },
+        orderBy: { submittedAt: 'desc' },
+        take: 100,
+        select,
+      }),
+      onBehalfForViewer(),
+    ]);
+    const seen = new Set(submitted.map((r: { id: string }) => r.id));
+    const ownAppIds = new Set(onBehalfOfViewer.ownAppIds);
+    const rows = [
+      ...submitted,
+      ...onBehalfOfViewer.rows.filter(
+        (r: { id: string; appBlockId: string | null; fileSummary: unknown }) =>
+          !seen.has(r.id) &&
+          r.appBlockId !== null &&
+          ownAppIds.has(r.appBlockId) &&
+          readOnBehalf(r.fileSummary)?.ownerUserId === viewerId
+      ),
+    ]
+      .sort(
+        (a: { submittedAt: Date }, b: { submittedAt: Date }) =>
+          new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime()
+      )
+      .slice(0, 100);
     // Flatten _count onto each row so the UI doesn't have to dig through
     // the relation. Pending-first-version + withdrawn-first-version rows
     // have no appBlock (FK is set on approve) — surface null so the UI
@@ -3822,6 +4117,9 @@ export const blocksRouter = router({
       const problemsListing = listing ?? (readsDraft(r) ? draftBySlug.get(r.slug) : undefined);
       return {
         ...rest,
+        // 🔴 The author's own view: a review boot check is reduced to a fixed reason, never the
+        // app's own output (`redactDeployDetailForAuthor`, the one author-facing redaction).
+        deployDetail: redactDeployDetailForAuthor(rest.deployDetail),
         modelInstallCount: pinnedCount,
         userSubscriptionCount: totalSubs,
         // The backing on-site listing id (owner unpublish/republish/history target)
@@ -3849,6 +4147,8 @@ export const blocksRouter = router({
         // /apps/run/<slug> vs standalone-origin vs model-slot branching). PUBLIC
         // subset only.
         hasPage: !!toPublicBlockManifest(manifest).hasPage,
+        // A staff submit on the owner's behalf: who filed it, for the "Staff submission" label.
+        staffSubmission: staffSubmissionOf(rest.fileSummary),
       };
     });
   }),
@@ -5030,13 +5330,7 @@ export const blocksRouter = router({
    */
   listAvailable: publicProcedure
     .use(enforceAppBlocksFlag)
-    .use(
-      rateLimit({
-        limit: 60,
-        period: 60,
-        errorMessage: 'Too many marketplace requests — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.marketplace-reads')))
     .input(listAvailableSchema)
     .query(async ({ ctx, input }) => {
       if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
@@ -5088,13 +5382,7 @@ export const blocksRouter = router({
    */
   getAppDetail: publicProcedure
     .use(enforceAppBlocksFlag)
-    .use(
-      rateLimit({
-        limit: 60,
-        period: 60,
-        errorMessage: 'Too many marketplace requests — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.marketplace-reads')))
     .input(getAppDetailSchema)
     .query(async ({ ctx, input }) => {
       // Dark-flag fail-closed: while the appBlocks flag is off the middleware
@@ -5154,13 +5442,7 @@ export const blocksRouter = router({
    */
   getFeaturedBlocks: publicProcedure
     .use(enforceAppBlocksFlag)
-    .use(
-      rateLimit({
-        limit: 60,
-        period: 60,
-        errorMessage: 'Too many marketplace requests — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.marketplace-reads')))
     .input(getFeaturedBlocksSchema)
     .query(async ({ ctx, input }) => {
       if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
@@ -5622,6 +5904,8 @@ export const blocksRouter = router({
             status: 'processing' as const,
             // Not an observation: a block keeps its previous snapshot's values.
             throttled: true as const,
+            // The meta a thrown refusal by this limit would carry, so the block can wait it out.
+            rateLimit: appRateLimitMeta('apps.poll', pollRate.retryAfterSeconds),
           },
         };
       }
@@ -5719,17 +6003,22 @@ export const blocksRouter = router({
       // The write is TRANSITION-ONLY (1 only when the row's status changed), and
       // that 1 is what makes the succeeded-without-media counter once-per-
       // workflow: this branch runs on EVERY poll of a finished workflow.
-      if (TERMINAL_BLOCK_WORKFLOW_STATUSES.has(snapshot.status)) {
+      //
+      // Keyed on the workflow's REAL status, not `snapshot.status`: the app is told
+      // `processing` while an output waits for its rating (`appWorkflowStatus`), and
+      // the read model, the counter and settle must not wait on that.
+      const finishedStatus = orchestratorBlockStatus(workflow);
+      if (TERMINAL_BLOCK_WORKFLOW_STATUSES.has(finishedStatus)) {
         try {
           const { updateBlockWorkflowStatus } = await import(
             '~/server/services/blocks/block-workflows.service'
           );
           const transitioned = await updateBlockWorkflowStatus({
             workflowId: input.workflowId,
-            status: snapshot.status,
+            status: finishedStatus,
           });
           if (transitioned === 1) {
-            const noMedia = classifySucceededWithoutMedia(workflow, snapshot);
+            const noMedia = classifySucceededWithoutMedia(workflow, { status: finishedStatus });
             if (noMedia) recordSucceededWithoutMedia(noMedia.stepType, noMedia.reason);
           }
         } catch {
@@ -5953,6 +6242,8 @@ export const blocksRouter = router({
             status: 'processing' as const,
             // Not an observation: a block keeps its previous snapshot's values.
             throttled: true as const,
+            // The meta a thrown refusal by this limit would carry, so the block can wait it out.
+            rateLimit: appRateLimitMeta('apps.catalog', rate.retryAfterSeconds),
           },
         };
       }
@@ -6104,10 +6395,7 @@ export const blocksRouter = router({
           claims,
           rate.retryAfterSeconds
         );
-        throw new TRPCError({
-          code: 'TOO_MANY_REQUESTS',
-          message: 'Rate limit exceeded, please retry shortly.',
-        });
+        throwAppRateLimited('apps.catalog', rate.retryAfterSeconds);
       }
       const token = await getOrchestratorToken(userId, ctx);
       // HOST-FORCED per-app tag — the ONLY tag passed (the input has no `tags`
@@ -6217,10 +6505,7 @@ export const blocksRouter = router({
           claims,
           rate.retryAfterSeconds
         );
-        throw new TRPCError({
-          code: 'TOO_MANY_REQUESTS',
-          message: 'Rate limit exceeded, please retry shortly.',
-        });
+        throwAppRateLimited('apps.catalog', rate.retryAfterSeconds);
       }
       // GUARD (a): the durable user+app-block-bound ownership proof. Bound
       // entirely from the verified token — a block can only ever authorize a
@@ -6357,10 +6642,7 @@ export const blocksRouter = router({
           claims,
           rate.retryAfterSeconds
         );
-        throw new TRPCError({
-          code: 'TOO_MANY_REQUESTS',
-          message: 'Rate limit exceeded, please retry shortly.',
-        });
+        throwAppRateLimited('apps.publish', rate.retryAfterSeconds);
       }
       // GUARD (a): durable user+app-bound ownership proof — fail-closed.
       const { blockWorkflowOwnedByAppUser } = await import(
@@ -6499,10 +6781,7 @@ export const blocksRouter = router({
             claims,
             imageRate.retryAfterSeconds
           );
-          throw new TRPCError({
-            code: 'TOO_MANY_REQUESTS',
-            message: 'Rate limit exceeded, please retry shortly.',
-          });
+          throwAppRateLimited('apps.publish', imageRate.retryAfterSeconds);
         }
       }
 
@@ -6564,13 +6843,7 @@ export const blocksRouter = router({
    */
   persistAppUploadImage: protectedProcedure
     .meta({ blockApiKeys: true })
-    .use(
-      rateLimit({
-        limit: 60,
-        period: 3600,
-        errorMessage: 'Too many image uploads — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.image-uploads')))
     .input(
       persistBlockUploadImageSchema
         .pick({ url: true, name: true })
@@ -6596,10 +6869,11 @@ export const blocksRouter = router({
           claims,
           rate.retryAfterSeconds
         );
-        throw new TRPCError({
-          code: 'TOO_MANY_REQUESTS',
-          message: 'This app is handling too many uploads right now, please retry shortly.',
-        });
+        throwAppRateLimited(
+          'apps.upload-app',
+          rate.retryAfterSeconds,
+          'This app is handling too many uploads right now, please retry shortly.'
+        );
       }
       const { persistBlockUploadImage } = await import(
         '~/server/services/blocks/block-image-upload.service'
@@ -6640,13 +6914,7 @@ export const blocksRouter = router({
    */
   persistGenerationSource: protectedProcedure
     .meta({ blockApiKeys: true })
-    .use(
-      rateLimit({
-        limit: 60,
-        period: 3600,
-        errorMessage: 'Too many generation sources saved — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.generation-source-saves')))
     .input(
       z.object({
         blockToken: z.string().min(1),
@@ -6690,9 +6958,10 @@ export const blocksRouter = router({
    * A generation source the viewer PICKED (`OPEN_IMAGE_UPLOAD { purpose: 'generationSource' }`,
    * or a single `OPEN_MEDIA_UPLOAD` image), already uploaded by the host as a consumer blob, kept
    * as a PRIVATE, scanned row and returned as `persistGenerationSource` returns one. The host calls
-   * it only while `app-block-source-scanned-rows` is on (`blockImageUpload.
+   * it while `app-block-source-scanned-rows` is on (`blockImageUpload.
    * generationSourceUsesScannedRows`): the gate then refuses the blob, and accepts this row once it
-   * is scanned. See `persistUploadedGenerationSource` in `block-generation-source.service.ts`.
+   * is scanned. It also calls it when that query FAILS, so a FORBIDDEN here can be a host that
+   * could not read the flag, not a misbehaving one (`toGenerationSource`). See `persistUploadedGenerationSource` in `block-generation-source.service.ts`.
    *
    * GATES: `persistGenerationSource`'s preamble: `ai:write:budgeted`, subject = session user, the
    * runtime flag. Then `app-block-source-scanned-rows` must be on for the token's app (FORBIDDEN
@@ -6706,13 +6975,7 @@ export const blocksRouter = router({
    */
   persistUploadedGenerationSource: protectedProcedure
     .meta({ blockApiKeys: true })
-    .use(
-      rateLimit({
-        limit: 60,
-        period: 3600,
-        errorMessage: 'Too many generation sources saved — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.generation-source-saves')))
     .input(
       z.object({
         blockToken: z.string().min(1),
@@ -6925,10 +7188,7 @@ export const blocksRouter = router({
           claims,
           rate.retryAfterSeconds
         );
-        throw new TRPCError({
-          code: 'TOO_MANY_REQUESTS',
-          message: 'Rate limit exceeded, please retry shortly.',
-        });
+        throwAppRateLimited('apps.catalog', rate.retryAfterSeconds);
       }
       const { previewBlockPost } = await import('~/server/services/blocks/block-post.service');
       const { resolveViewerBrowsingLevel } = await import(
@@ -7065,10 +7325,7 @@ export const blocksRouter = router({
           claims,
           postRate.retryAfterSeconds
         );
-        throw new TRPCError({
-          code: 'TOO_MANY_REQUESTS',
-          message: 'Rate limit exceeded, please retry shortly.',
-        });
+        throwAppRateLimited('apps.post', postRate.retryAfterSeconds);
       }
       const appPostRate = await checkBlockPostAppRateLimit(claims.appId);
       if (!appPostRate.allowed) {
@@ -7078,10 +7335,7 @@ export const blocksRouter = router({
           claims,
           appPostRate.retryAfterSeconds
         );
-        throw new TRPCError({
-          code: 'TOO_MANY_REQUESTS',
-          message: 'Rate limit exceeded, please retry shortly.',
-        });
+        throwAppRateLimited('apps.post-app', appPostRate.retryAfterSeconds);
       }
 
       const {
@@ -7194,10 +7448,7 @@ export const blocksRouter = router({
             claims,
             imageRate.retryAfterSeconds
           );
-          throw new TRPCError({
-            code: 'TOO_MANY_REQUESTS',
-            message: 'Rate limit exceeded, please retry shortly.',
-          });
+          throwAppRateLimited('apps.publish', imageRate.retryAfterSeconds);
         }
 
         // ── MATERIALISE fresh workflow outputs OUTSIDE the transaction: each is a
@@ -7468,10 +7719,7 @@ export const blocksRouter = router({
           claims,
           rate.retryAfterSeconds
         );
-        throw new TRPCError({
-          code: 'TOO_MANY_REQUESTS',
-          message: 'Rate limit exceeded, please retry shortly.',
-        });
+        throwAppRateLimited('apps.catalog', rate.retryAfterSeconds);
       }
 
       const ids = [...new Set(input.ids)];
@@ -7522,14 +7770,13 @@ export const blocksRouter = router({
    * owner affordance above does not widen it: an author's RATED above-ceiling
    * image is still `hidden` from them.
    *
-   * The read is scoped to bare (post-less) rows THIS app PUBLISHED (the
-   * `blockPublishedAppId` provenance marker = the token's own `appId`), so a
-   * block reads only its OWN grid — never another app's images or a
-   * post-deletion-orphaned row. Like the block catalog reads (public, maturity-
-   * clamped data), it authorizes ANY valid block token for the app — NOT the
-   * author capability (`assertViewerIsAppDeveloper`), so the grid renders for the
-   * app's real audience, not just developers. Auth is still required so the clamp
-   * + blocked-users/tags bind to a real viewer.
+   * Which rows the read may return: see `getBlockGatedImagesByIds`.
+   *
+   * Like the block catalog reads (public, maturity-clamped data), it authorizes
+   * ANY valid block token for the app — NOT the author capability
+   * (`assertViewerIsAppDeveloper`), so the grid renders for the app's real
+   * audience, not just developers. Auth is still required so the clamp +
+   * blocked-users/tags bind to a real viewer.
    *
    * MUTATION for the bearer-token-in-URL reason (see queryAppWorkflows).
    *
@@ -7579,10 +7826,7 @@ export const blocksRouter = router({
       const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
       if (!rate.allowed) {
         recordBridgeRateLimitRefusal('getImagesByIds', 'catalog', claims, rate.retryAfterSeconds);
-        throw new TRPCError({
-          code: 'TOO_MANY_REQUESTS',
-          message: 'Rate limit exceeded, please retry shortly.',
-        });
+        throwAppRateLimited('apps.catalog', rate.retryAfterSeconds);
       }
       const { resolveGatedImagesForBlockClaims } = await import(
         '~/server/services/blocks/block-gated-images-read.service'
@@ -7609,10 +7853,7 @@ export const blocksRouter = router({
       const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
       if (!rate.allowed) {
         recordBridgeRateLimitRefusal('getWorkflowMedia', 'catalog', claims, rate.retryAfterSeconds);
-        throw new TRPCError({
-          code: 'TOO_MANY_REQUESTS',
-          message: 'Rate limit exceeded, please retry shortly.',
-        });
+        throwAppRateLimited('apps.catalog', rate.retryAfterSeconds);
       }
       const { resolveWorkflowMediaForBlockClaims } = await import(
         '~/server/services/blocks/block-media-serving'
@@ -7683,7 +7924,6 @@ export const blocksRouter = router({
       const { deps, unlockService } = await outputUnlockDeps({
         ctx,
         ...auth,
-        showNsfw: !!ctx.user.showNsfw,
         workflowId: input.workflowId,
       });
       return unlockService.previewBlockOutputUnlock(
@@ -7692,8 +7932,7 @@ export const blocksRouter = router({
           position: input.position,
           viewerUserId: auth.userId,
           claims: auth.claims,
-          // A preview returns no snapshot, so nothing is minted.
-          view: { serving: (await resolveBlockOutputRules(auth.claims)).serving, mint: null },
+          view: { ...(await resolveBlockOutputRules(auth.claims)), mint: null },
         },
         deps
       );
@@ -7707,7 +7946,6 @@ export const blocksRouter = router({
       const { deps, unlockService } = await outputUnlockDeps({
         ctx,
         ...auth,
-        showNsfw: !!ctx.user.showNsfw,
         workflowId: input.workflowId,
       });
       return unlockService.unlockBlockOutput(
@@ -7801,10 +8039,7 @@ export const blocksRouter = router({
       const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
       if (!rate.allowed) {
         recordBridgeRateLimitRefusal('estimateWorkflow', 'catalog', claims, rate.retryAfterSeconds);
-        throw new TRPCError({
-          code: 'TOO_MANY_REQUESTS',
-          message: 'Rate limit exceeded, please retry shortly.',
-        });
+        throwAppRateLimited('apps.catalog', rate.retryAfterSeconds);
       }
       // Everything below the limiter — the `kind` dispatch and the txt2img arm —
       // lives in `estimateBlockWorkflowCell`, which `estimateWorkflowBatch` calls
@@ -7887,10 +8122,7 @@ export const blocksRouter = router({
           claims,
           rate.retryAfterSeconds
         );
-        throw new TRPCError({
-          code: 'TOO_MANY_REQUESTS',
-          message: 'Rate limit exceeded, please retry shortly.',
-        });
+        throwAppRateLimited('apps.catalog', rate.retryAfterSeconds);
       }
       // Every arm of the single estimate refuses an anonymous subject, so a batch
       // from one is refused whole, before any cell is charged.
@@ -7911,10 +8143,7 @@ export const blocksRouter = router({
           claims,
           cellRate.retryAfterSeconds
         );
-        throw new TRPCError({
-          code: 'TOO_MANY_REQUESTS',
-          message: 'Rate limit exceeded, please retry shortly.',
-        });
+        throwAppRateLimited('apps.estimate-cells', cellRate.retryAfterSeconds);
       }
 
       // 🔴 THE CALL HAS A BUDGET (`BLOCK_ESTIMATE_BATCH_BUDGET_MS`). When it runs out:
@@ -8020,19 +8249,29 @@ export const blocksRouter = router({
         // Charset-restricted (audit 🟢): a UUID-ish alphabet so no control chars /
         // newlines / colons flow into the orchestrator `externalId`.
         idempotencyKey: z.string().regex(BLOCK_IDEMPOTENCY_KEY_REGEX).optional(),
+        /** A recipe runner's per-run values (binding v1); only with a runner token. */
+        runnerSlots: runnerSlotsSchema.optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
-      const claims = await authorizeBlockBridgeToken(input.blockToken);
+      const claims = await authorizeBlockBridgeToken(input.blockToken, { admitRunner: true });
+      let runner: RunnerSubmit | undefined;
+      if (claims.mintOrigin === 'runner') {
+        runner = await prepareRunnerSubmit({
+          claims,
+          bodyKind: input.body.kind,
+          idempotencyKey: input.idempotencyKey,
+          runnerSlots: input.runnerSlots,
+        });
+      } else if (input.runnerSlots !== undefined) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'runnerSlots needs a runner token' });
+      }
       ctx.blockSubmitTelemetry.appBlockIdLabel = submitFailureAppBlockLabel(claims);
       // Above every `kind` branch: each returns early, and nothing is resolved or reserved yet.
       const rate = await checkBlockSubmitRateLimit(claims.blockInstanceId, claims.sub);
       if (!rate.allowed) {
         recordBridgeRateLimitRefusal('submitWorkflow', 'submit', claims, rate.retryAfterSeconds);
-        throw new TRPCError({
-          code: 'TOO_MANY_REQUESTS',
-          message: 'Rate limit exceeded, please retry shortly.',
-        });
+        throwAppRateLimited('apps.submit', rate.retryAfterSeconds);
       }
       const userRate = await checkBlockSubmitUserRateLimit(claims.sub);
       if (!userRate.allowed) {
@@ -8042,10 +8281,7 @@ export const blocksRouter = router({
           claims,
           userRate.retryAfterSeconds
         );
-        throw new TRPCError({
-          code: 'TOO_MANY_REQUESTS',
-          message: 'Rate limit exceeded, please retry shortly.',
-        });
+        throwAppRateLimited('apps.submit-user', userRate.retryAfterSeconds);
       }
       if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
@@ -8063,18 +8299,23 @@ export const blocksRouter = router({
       if (input.body.kind !== 'training' && env.BLOCKS_ENFORCE_GENERATION_STATUS) {
         await assertBlockGenerationAllowed(subjectId);
       }
+      // Above every `kind` branch: a host media url is never an input, on any path.
+      assertNoBlockMediaInputs(input.body, { appBlockId: claims.appBlockId, phase: 'submit' });
       // App Blocks customComfy bridge (v1) — the SECURITY-CRITICAL post-paid
       // path. Branch to the dedicated handler (page-only guard + entitlement +
       // prompt audit + the §5.3 timeout-cap budget belt). The textToImage path
       // below stays byte-identical (we only ADD a branch); after this early
       // return `input.body` narrows to the textToImage member for the rest.
       if (input.body.kind === 'customComfy') {
-        return await submitCustomComfyWorkflow({
-          ctx,
-          claims,
-          body: input.body,
-          idempotencyKey: input.idempotencyKey,
-        });
+        const submit = () =>
+          submitCustomComfyWorkflow({
+            ctx,
+            claims,
+            body: input.body as CustomComfyBody,
+            idempotencyKey: input.idempotencyKey,
+            runner,
+          });
+        return runner ? await withRunnerAttempt(runner, submit) : await submit();
       }
       // App Blocks TRAINING kind — charged against the viewer-CONFIRMED quote the
       // body names, not the token's per-call budget. Its idempotency key is that
@@ -8279,7 +8520,7 @@ export const blocksRouter = router({
         assertNoRestrictedBaseModels({ baseModels: loraGates.map((g) => g.baseModel) });
         await assertViewerCanGeneratePageResources({
           gates: [buildGateVersion(resolved.gate), ...loraGates],
-          viewer: { id: userId, isModerator: !!user.isModerator },
+          viewer: { id: userId },
           // Unify resource selection with the output clamp: SFW-only iff the
           // authoritative token maturity is SFW (green/blue), not the request
           // domain. `allowMatureContent === false` ⇔ SFW ceiling.
@@ -8833,9 +9074,9 @@ export const blocksRouter = router({
             currencies,
             metadata: workflowMetadata,
             // Authoritative maturity clamp on the REAL submit — the orchestrator
-            // rejects mature output when this is false. Token-claim derived, and a base model
-            // that restricts mature generation holds it to PG-13 whatever the token allows.
-            ...blockOutputClamp(capOutput, allowMatureContent),
+            // rejects mature output when this is false. Token-claim derived, and a private
+            // generation or a restricting base model holds it to PG-13 whatever the token allows.
+            ...outputRestrictions(capOutput, allowMatureContent),
             // Idempotency: a retry — the CLIENT's (same key) or `submitWorkflow`'s
             // OWN internal 3× retry of THIS call — collapses to the existing
             // workflow on the orchestrator (dedupe on (userId, externalId)) → no
@@ -9477,7 +9718,14 @@ export const blocksRouter = router({
       // viewer surface to the block as active.
       const user = await dbWrite.user.findUnique({
         where: { id: userId },
-        select: { id: true, username: true, bannedAt: true, muted: true, deletedAt: true },
+        select: {
+          id: true,
+          username: true,
+          bannedAt: true,
+          muted: true,
+          deletedAt: true,
+          ...blockViewerImageUserSelect,
+        },
       });
       if (!user || user.deletedAt) {
         throw new TRPCError({ code: 'NOT_FOUND', message: 'User not found' });
@@ -9491,6 +9739,8 @@ export const blocksRouter = router({
         username: user.username,
         // Muted viewers pass through so the block can suppress write UI.
         status: (user.muted ? 'muted' : 'active') as 'active' | 'muted',
+        // The viewer's avatar against this token's output ceiling (mirrors /blocks/me).
+        image: projectBlockViewerImage(user, blockOutputCeilingFromClaims(claims)),
         // Per-call spend cap the block was issued with — surfaced so the block
         // can clamp UI without a second call (mirrors /blocks/me).
         buzzBudget: claims.buzzBudget ?? null,
@@ -9787,8 +10037,10 @@ export const blocksRouter = router({
     //     MIGRATIONS, which no zod schema governs.
     //   - `appblk-*` clients get `allowedScopes` written directly by
     //     publish-request.service (also bypassing zod). Safe by construction, not by cap:
-    //     `deriveOauthBitmaskFromBlockScopes` maps only bits below 25, and those clients
-    //     carry `grants: []` so they cannot mint an account bearer token at all.
+    //     `deriveOauthBitmaskFromBlockScopes` maps only bits below 25 (`appBlockOauthCeiling`
+    //     additionally keeps an operator-granted AppDataRead, bit 32, the client already
+    //     holds — never bit 25), and those clients carry `grants: []` so they cannot mint
+    //     an account bearer token at all.
     // 100777985 is not a superset of Full: it carries bits 0, 14, 15, 16, 25 and 26 —
     // UserRead, AIServicesRead, AIServicesWrite, BuzzRead, AppBlocksSubmit,
     // AppBlocksDevTunnel — and NONE of 1..13 or 17..24, so it does not contain Full
@@ -10118,8 +10370,8 @@ export const blocksRouter = router({
         manifest: block.manifest as Record<string, unknown>,
         // Surfaced so the client can preview which scopes/origins the edit is
         // bounded by (the SERVER re-derives + enforces these on save — the
-        // client copy is advisory only).
-        allowedScopes: block.app?.allowedScopes ?? 0,
+        // client copy is advisory only). A JSON number on the tRPC wire.
+        allowedScopes: Number(block.app?.allowedScopes ?? 0n),
         allowedOrigins: block.app?.allowedOrigins ?? [],
       };
     }),
@@ -10356,7 +10608,7 @@ export const blocksRouter = router({
         '~/server/services/block-manifest-validator.service'
       );
       const appContext = {
-        allowedScopes: block.app?.allowedScopes ?? 0,
+        allowedScopes: block.app?.allowedScopes ?? 0n,
         allowedOrigins: (block.app?.allowedOrigins ?? []).map((o: string) => o.toLowerCase()),
       };
       // `strictIssueTrackerLink: false`: this edits an EXISTING manifest, which may carry a `bugs`
@@ -10379,15 +10631,16 @@ export const blocksRouter = router({
       // touch block.manifest.json, leaving the app's source untouched.
       // Each edit is a new pending review (and possibly a review build): bound them per user.
       const { takePushReviewSlot } = await import('~/server/services/blocks/submit-rate-limit');
-      const slot = await takePushReviewSlot(`user:${ctx.user!.id}`);
+      const slot = await takePushReviewSlot(`user:${ctx.user!.id}`, ctx.user!);
       if (!slot.ok) {
-        throw new TRPCError({
-          code: 'TOO_MANY_REQUESTS',
-          message: `Too many manifest edits — try again in ${Math.max(
+        throwAppRateLimited(
+          'apps.push-review',
+          slot.retryAfterSeconds,
+          `Too many manifest edits — try again in ${Math.max(
             Math.ceil(slot.retryAfterSeconds / 60),
             1
-          )} min`,
-        });
+          )} min`
+        );
       }
       const { commitFiles } = await import('~/server/services/blocks/forgejo.service');
       const manifestJson = Buffer.from(JSON.stringify(merged, null, 2) + '\n', 'utf8');
@@ -10404,7 +10657,7 @@ export const blocksRouter = router({
       const { recordPendingFromPush } = await import(
         '~/server/services/blocks/publish-request.service'
       );
-      const { publishRequestId } = await recordPendingFromPush({
+      const { publishRequestId, advisories } = await recordPendingFromPush({
         slug,
         sha,
         appBlockId: block.id,
@@ -10418,6 +10671,8 @@ export const blocksRouter = router({
         version: newVersion,
         sha,
         status: 'pending' as const,
+        // Never refuses: e.g. the commit lacks a staff platform update (recorded for the moderator).
+        advisories: advisories ?? [],
       };
     }),
 
@@ -10915,6 +11170,7 @@ async function estimateBlockWorkflowCell(
   claims: BlockClaims,
   input: { body: BlockWorkflowBody; storeQuotes?: boolean }
 ) {
+  assertNoBlockMediaInputs(input.body, { appBlockId: claims.appBlockId, phase: 'estimate' });
   // App Blocks customComfy bridge (v1): a fixed server-authored recipe has no
   // whatIf-able cost, so estimate returns the recipe's per-engine DISPLAY
   // estimate. The textToImage path below stays byte-identical (we only ADD a
@@ -11070,7 +11326,7 @@ async function estimateBlockWorkflowCell(
     assertNoRestrictedBaseModels({ baseModels: loraGates.map((g) => g.baseModel) });
     await assertViewerCanGeneratePageResources({
       gates: [buildGateVersion(resolved.gate), ...loraGates],
-      viewer: { id: userId, isModerator: !!user.isModerator },
+      viewer: { id: userId },
       // SFW-only resource selection unifies with the output clamp: derive
       // from the authoritative token maturity (green/blue → true), not the
       // request domain. `allowMatureContent === false` ⇔ SFW ceiling.
@@ -11214,7 +11470,6 @@ async function estimateBlockWorkflowCell(
   return {
     snapshot: snapshotFromWorkflow(
       whatIfResult,
-      // An estimate has no outputs to mint.
       { ...blockOutputCeilingFromClaims(claims), serving: false, mint: null },
       {
         modelSubstitutions,
@@ -11402,8 +11657,10 @@ async function submitCustomComfyWorkflow(opts: {
   body: CustomComfyBody;
   /** OPTIONAL client idempotency key (item 2, gen half) → orchestrator externalId. */
   idempotencyKey?: string;
+  /** A recipe runner's submit, from `prepareRunnerSubmit`. */
+  runner?: RunnerSubmit;
 }) {
-  const { ctx, claims, body, idempotencyKey } = opts;
+  const { ctx, claims, body, idempotencyKey, runner } = opts;
   // Namespaced idempotency externalId — same shape as the txt2img branch, and like
   // it ALWAYS SET (audit 🔴-1): a server-minted `bls<uuid>` when the block sends no
   // key, so `submitWorkflow`'s own 3× retry of the real submit can never create (and
@@ -11520,7 +11777,7 @@ async function submitCustomComfyWorkflow(opts: {
     }
     await assertViewerCanGeneratePageResources({
       gates,
-      viewer: { id: userId, isModerator: !!user.isModerator },
+      viewer: { id: userId },
       sfwOnly: allowMatureContent === false,
       wildcardsEnabled: !!ctx.features.wildcards,
     });
@@ -11542,8 +11799,15 @@ async function submitCustomComfyWorkflow(opts: {
         workflow: inlineBody.workflow,
       }
     : buildCustomComfyWorkflowInput(recipe!, recipeBody!.params, {});
+  await assertStepPositionsAllowed(
+    claims,
+    userId,
+    [{ $type: 'comfy', input: stepInput }],
+    undefined,
+    true
+  );
   // Every resource the graph loads must be a Civitai version; their base models decide the cap.
-  const { capOutput } = await checkAppStepResources(stepInput);
+  const { capOutput } = await checkAppStepResources(stepInput, userId);
 
   const token = await getOrchestratorToken(userId, ctx);
 
@@ -11630,6 +11894,39 @@ async function submitCustomComfyWorkflow(opts: {
     };
   }
 
+  if (runner) {
+    // Derived from the request as sent, slot values filled in, so a value that changes the
+    // ceiling or the resources is refused here.
+    const binding = checkRunnerBinding(
+      body as RunnerBindingBody,
+      runner.slots,
+      { ceiling, resources: stepInput.resources },
+      runner.authorized
+    );
+    if (!binding.ok) {
+      logToAxiom({
+        name: 'runner-submit',
+        type: 'info',
+        // The audit record: both derived hashes, never which one differed.
+        payload: {
+          outcome: 'refused',
+          reason: 'runner_binding_mismatch',
+          detail: binding.refusal,
+          runId: runner.runId,
+          authorizationId: runner.authorizationId,
+          recipeVersionHash: binding.derived?.recipeVersionHash ?? null,
+          paramsHash: binding.derived?.paramsHash ?? null,
+        },
+      });
+      refuseRunnerSubmit(runner.runId, 'binding');
+    }
+    // After the binding check, so a mismatched request does not spend the token.
+    const fresh = await claimRunnerSubmitJti(claims.jti).catch(() => {
+      throw new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: 'runner submit unavailable' });
+    });
+    if (!fresh) refuseRunnerSubmit(runner.runId, 'replay');
+  }
+
   // ── GEN IDEMPOTENCY CLAIM (audit 🔴-1) — same guard as the txt2img path. Taken
   //    BEFORE the cap reservation + orchestrator submit so two CONCURRENT same-key
   //    submits can't BOTH reserve + BOTH charge, and a replay can't double-INCR the
@@ -11637,7 +11934,9 @@ async function submitCustomComfyWorkflow(opts: {
   //    CLOSED on a redis error; a resolved submit FINALIZEs, every non-committed
   //    exit RELEASEs. The orchestrator externalId dedupe stays as a 2nd layer.
   let genClaimKey: string | null = null;
-  if (idempotencyKey) {
+  // Not for a runner: the ledger's one live attempt per run is its idempotency, and a replay
+  // must be refused there rather than answered from cache with no attempt.
+  if (idempotencyKey && !runner) {
     let claim: BlockGenIdempotencyClaim<{ snapshot: ReturnType<typeof snapshotFromWorkflow> }>;
     try {
       claim = await claimGenIdempotency<{ snapshot: ReturnType<typeof snapshotFromWorkflow> }>(
@@ -11668,7 +11967,7 @@ async function submitCustomComfyWorkflow(opts: {
   // The reservation THROWS fail-closed on a redis error; release the claim first.
   let reservation: Awaited<ReturnType<typeof reserveBlockBuzzSpendForClaims>>;
   try {
-    reservation = await reserveBlockBuzzSpendForClaims(claims, userId, ceiling);
+    reservation = await reserveBlockBuzzSpendForClaims(claims, userId, ceiling, runner);
   } catch (e) {
     if (genClaimKey) await releaseGenIdempotency(genClaimKey);
     throw e;
@@ -11762,7 +12061,21 @@ async function submitCustomComfyWorkflow(opts: {
   // persisted in the settle record below. This is what makes adding the third
   // reservation safe (it can't over-count the session for the 25h TTL).
   let devSessionReserve: { sessionId: string; cost: number } | null = null;
-  {
+  // The app and dev-session legs are refunded only when the reservation's were (a runner attempt
+  // another writer moved keeps every leg counting).
+  const refundAllLegs = async () => {
+    if (!(await refundBlockBuzzReservation(reservation, ceiling))) return;
+    if (appSpendReserve) {
+      const { refundAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
+      await refundAppSpend(appSpendReserve.key, appSpendReserve.cost);
+    }
+    if (devSessionReserve) {
+      const { refundDevSessionBuzz } = await import('~/server/services/blocks/dev-tunnel.service');
+      await refundDevSessionBuzz(devSessionReserve.sessionId, devSessionReserve.cost);
+    }
+  };
+  // Not for a runner: a runner run is no dev session, and its attempt row names no such leg.
+  if (!runner) {
     const { getActiveDevTunnel, reserveDevSessionBuzz } = await import(
       '~/server/services/blocks/dev-tunnel.service'
     );
@@ -11778,11 +12091,7 @@ async function submitCustomComfyWorkflow(opts: {
         // above (the session reserve rolled ITSELF back on deny) and the G8
         // per-app reservation (present only for non-dev tokens; a token with
         // `dev !== true` can still have an active dev tunnel). Then fail-snapshot.
-        await refundBlockBuzzReservation(reservation, ceiling);
-        if (appSpendReserve) {
-          const { refundAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
-          await refundAppSpend(appSpendReserve.key, appSpendReserve.cost);
-        }
+        await refundAllLegs();
         // No money moved → release the idempotency claim so a genuine retry runs.
         if (genClaimKey) await releaseGenIdempotency(genClaimKey);
         return {
@@ -11797,6 +12106,8 @@ async function submitCustomComfyWorkflow(opts: {
           },
         };
       }
+      // Below the deny: refundAllLegs reads this when called, and the deny's reserve already rolled
+      // its session leg back, so an assignment above it would refund that leg twice.
       devSessionReserve = { sessionId: devTunnel.sessionId, cost: Math.ceil(ceiling) };
     }
   }
@@ -11818,6 +12129,33 @@ async function submitCustomComfyWorkflow(opts: {
   // `WorkflowCost.variable` — TRUE when the price is a CAP that may settle lower;
   // the author fee is skipped on one. Same hoist, same reason.
   let realizedPriceIsCap: boolean | null = null;
+  // A runner attempt is sent only by the submit that moves it to `submitting`. Not moved (another
+  // writer moved it, or the ledger failed): never sent.
+  if (reservation.runner) {
+    const { attemptId } = reservation.runner;
+    // The move records the legs just reserved, so the sweeper and reconciler settle from the row.
+    const legs: RunnerReservation = {
+      buzzCapKey,
+      consentBudgetKey: reservation.consent?.key ?? null,
+      appSpendKey: appSpendReserve?.key ?? null,
+      amount: Math.ceil(ceiling),
+    };
+    const moved = await ledgerDb()
+      .then((db) =>
+        transitionRunnerAttempt(db, attemptId, 'reserved', 'submitting', { reservation: legs })
+      )
+      .catch((error: unknown) => {
+        logRunnerLedgerError('submitting', attemptId, error);
+        return false;
+      });
+    if (!moved) {
+      await refundAllLegs();
+      if (genClaimKey) await releaseGenIdempotency(genClaimKey);
+      throw new TRPCError({ code: 'CONFLICT', message: 'runner attempt is no longer reserved' });
+    }
+    reservation.runner.state = 'submitting';
+  }
+
   // Captured just before the orchestrator submit → the server-side proxy for the
   // job's submit instant, so the settle-time wall-clock metric measures
   // submit→terminal-observation (incl. GPU queue-wait). Observability-only.
@@ -11837,11 +12175,13 @@ async function submitCustomComfyWorkflow(opts: {
         tags,
         currencies,
         // Authoritative maturity clamp on the real submit — token-claim derived.
-        ...blockOutputClamp(capOutput, allowMatureContent),
+        ...outputRestrictions(capOutput, allowMatureContent),
         // Idempotency: a retry — the CLIENT's (same key) or `submitWorkflow`'s OWN
         // internal 3× retry of THIS call — collapses to the existing workflow on the
         // orchestrator → no second Buzz charge. Always present.
         externalId: blockExternalId,
+        // Tips are billed on top of the step's runtime and are not in a runner's reservation.
+        ...(runner ? { tips: { civitai: 0, creators: 0 } } : {}),
       },
     });
     snapshot = snapshotFromWorkflow(submitted, await resolveBlockOutputView(claims));
@@ -11849,23 +12189,75 @@ async function submitCustomComfyWorkflow(opts: {
     realizedBaseCost = typeof submitted.cost?.base === 'number' ? submitted.cost.base : null;
     realizedPriceIsCap = submitted.cost?.variable === true;
   } catch (e) {
-    await refundBlockBuzzReservation(reservation, ceiling);
-    if (appSpendReserve) {
-      const { refundAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
-      await refundAppSpend(appSpendReserve.key, appSpendReserve.cost);
+    if (reservation.runner && !isDefiniteOrchestratorSubmitRefusal(e)) {
+      // Ambiguous: the orchestrator may have created and charged the workflow. Held, never
+      // refunded: every leg keeps counting until the attempt is resolved by hand.
+      const { attemptId } = reservation.runner;
+      await ledgerDb()
+        .then((db) => transitionRunnerAttempt(db, attemptId, 'submitting', 'unknown'))
+        .catch((error: unknown) => logRunnerLedgerError('unknown', attemptId, error));
+      logToAxiom({
+        name: 'runner-attempt-unknown',
+        type: 'error',
+        payload: { attemptId, runId: runner?.runId },
+        error: safeError(e),
+      });
+      throw e;
     }
-    // F4 — mirror the daily/app refund for the dev-session reservation so a failed
-    // submit doesn't permanently burn the session ceiling. Best-effort; present
-    // only when an active dev tunnel was reserved above.
-    if (devSessionReserve) {
-      const { refundDevSessionBuzz } = await import('~/server/services/blocks/dev-tunnel.service');
-      await refundDevSessionBuzz(devSessionReserve.sessionId, devSessionReserve.cost);
-    }
+    await refundAllLegs();
     // No resolved submit → no money moved; release the idempotency claim so a
     // genuine retry can re-run (orchestrator externalId dedupe still covers a retry
     // that DID create a workflow server-side despite a lost response).
     if (genClaimKey) await releaseGenIdempotency(genClaimKey);
     throw e;
+  }
+
+  if (reservation.runner) {
+    const { attemptId } = reservation.runner;
+    const moved = await ledgerDb()
+      .then((db) =>
+        transitionRunnerAttempt(db, attemptId, 'submitting', 'submitted', {
+          workflowId: snapshot.workflowId,
+        })
+      )
+      .catch((error: unknown) => {
+        logRunnerLedgerError('submitted', attemptId, error);
+        return false;
+      });
+    // Lost to the sweeper, which moved it to `unknown` while the submit was in flight: adopt it.
+    const adopted =
+      !moved &&
+      (await ledgerDb()
+        .then((db) =>
+          transitionRunnerAttempt(db, attemptId, 'unknown', 'submitted', {
+            workflowId: snapshot.workflowId,
+          })
+        )
+        .catch((error: unknown) => {
+          logRunnerLedgerError('adopt', attemptId, error);
+          return false;
+        }));
+    if (moved || adopted) {
+      logToAxiom({
+        name: 'runner-submit',
+        type: 'info',
+        payload: {
+          outcome: 'submitted',
+          runId: runner?.runId,
+          attemptId,
+          workflowId: snapshot.workflowId,
+        },
+      });
+    }
+    // Adopted: alarmed as the sweeper race. Unrecorded (neither move landed): the attempt stays in
+    // its current state and keeps counting.
+    if (!moved) {
+      logToAxiom({
+        name: adopted ? 'runner-attempt-adopted' : 'runner-attempt-unrecorded',
+        type: 'error',
+        payload: { attemptId, workflowId: snapshot.workflowId },
+      });
+    }
   }
 
   // A resolved submit is money-COMMITTED. Cache the terminal result under the
@@ -11881,20 +12273,24 @@ async function submitCustomComfyWorkflow(opts: {
   // included ONLY when a dev tunnel was reserved above (spread) — so a non-dev
   // submit persists the SAME record shape it did before (settle no-ops that leg).
   if (snapshot.workflowId && snapshot.workflowId !== 'failed' && snapshot.workflowId !== 'whatif') {
-    await persistCustomComfySettle({
-      workflowId: snapshot.workflowId,
-      buzzCapKey,
-      // The consent-budget leg, when the viewer set a per-app budget. Absent
-      // otherwise, so the record shape is unchanged for everyone else.
-      consentBudgetKey: reservation.consent?.key ?? null,
-      appSpendKey: appSpendReserve?.key ?? null,
-      ...(devSessionReserve ? { devSessionId: devSessionReserve.sessionId } : {}),
-      ceiling,
-      // Observability-only (per-engine runtime/cost at settle) — never affects the refund.
-      engine,
-      recipe: recipeId,
-      submittedAt,
-    });
+    // No settle record for a runner: the reconciler settles it from the attempt row, so a poll or
+    // cancel of the same workflow (by another of the user's tokens) has nothing to settle.
+    if (!runner) {
+      await persistCustomComfySettle({
+        workflowId: snapshot.workflowId,
+        buzzCapKey,
+        // The consent-budget leg, when the viewer set a per-app budget. Absent
+        // otherwise, so the record shape is unchanged for everyone else.
+        consentBudgetKey: reservation.consent?.key ?? null,
+        appSpendKey: appSpendReserve?.key ?? null,
+        ...(devSessionReserve ? { devSessionId: devSessionReserve.sessionId } : {}),
+        ceiling,
+        // Observability-only (per-engine runtime/cost at settle) — never affects the refund.
+        engine,
+        recipe: recipeId,
+        submittedAt,
+      });
+    }
     // G6 — persistent output queue (best-effort, non-dev). Same posture as
     // txt2img so a customComfy gen rebuilds in listMyWorkflows on reload.
     if (claims.dev !== true) {
@@ -12465,7 +12861,8 @@ async function assertStepRequestAllowed(claims: BlockClaims): Promise<number> {
 /**
  * Build the orchestrator step this registry entry will actually submit, and
  * re-assert on the BUILT value the two properties the registry could only check
- * at load time.
+ * at load time, then hold it to the step position rule every app-built step
+ * gets (`assertStepPositionsAllowed`).
  *
  * 🔴 SHARED BY THE QUOTE AND THE SUBMIT ON PURPOSE. Both the estimate's
  * `whatif:true` quote and the real submit go through here, so neither can be
@@ -12489,10 +12886,11 @@ async function assertStepRequestAllowed(claims: BlockClaims): Promise<number> {
  * `buildStep` that varies a PRICED field breaks this outright. Keep
  * per-request variation confined to fields the quote cannot see.
  */
-function buildStepOrchestratorStep(
+async function buildStepOrchestratorStep(
   step: ReturnType<typeof resolveBlockStep>,
   params: unknown,
-  plan: Pick<ReturnType<typeof planStepSpend>, 'stepTimeoutSeconds'>
+  plan: Pick<ReturnType<typeof planStepSpend>, 'stepTimeoutSeconds'>,
+  auth: { claims: BlockClaims; userId: number }
 ) {
   const built = step.buildStep(params);
 
@@ -12588,6 +12986,10 @@ function buildStepOrchestratorStep(
     });
   }
 
+  await assertStepPositionsAllowed(auth.claims, auth.userId, [
+    { $type: built.$type, input: built.input },
+  ]);
+
   return {
     $type: built.$type,
     name: BLOCK_STEP_NAME,
@@ -12671,7 +13073,7 @@ async function estimateStepWorkflow(opts: {
   // paths — so surfacing them is what makes the estimate honest. A failed
   // orchestrator ROUND-TRIP becomes a coded `step_quote_*` snapshot instead.
   const plan = planStepSpend(step, params, variant);
-  const orchestratorStep = buildStepOrchestratorStep(step, params, plan);
+  const orchestratorStep = await buildStepOrchestratorStep(step, params, plan, { claims, userId });
   // The submit's own call, so the estimate prices the order the submit drains.
   const currencies = resolveBlockCurrenciesForAccount(
     resolveBlockMaturity(claims).isGreen,
@@ -12794,7 +13196,7 @@ async function quoteStepBuzz(opts: {
   ctx: Context;
   claims: BlockClaims;
   step: ReturnType<typeof resolveBlockStep>;
-  orchestratorStep: ReturnType<typeof buildStepOrchestratorStep>;
+  orchestratorStep: Awaited<ReturnType<typeof buildStepOrchestratorStep>>;
   userId: number;
   /** The caller's own submitted params, serialized — see `classifyQuoteFailure`. */
   callerText: string;
@@ -12957,7 +13359,7 @@ async function submitStepWorkflow(opts: {
   // reservation, so a rejection costs nothing and has nothing to refund.
   // (`timeout` is stamped ONLY for a billing mode whose cap IS a timeout; see
   // the helper.)
-  const orchestratorStep = buildStepOrchestratorStep(step, params, plan);
+  const orchestratorStep = await buildStepOrchestratorStep(step, params, plan, { claims, userId });
   // Parameterized tags: emit the step id as both the workflow-type tag and the
   // `baseModel` slot (a registry step has no base model), preserving the
   // `app-block:*` provenance tags the per-app subqueue read depends on.
@@ -13707,7 +14109,8 @@ async function estimatePassThroughStepWorkflow(opts: {
   assertPassThroughStepTypeAllowed(body.$type, body.input);
   await assertBlockTrainingTriggerWordsAllowed({ claims, userId, steps: [body] });
   await assertBlockTrainingModelsAllowed([body]);
-  await checkAppStepResources(body.input);
+  await assertStepPositionsAllowed(claims, userId, [body]);
+  await checkAppStepResources(body.input, userId);
   // Before the mint and the quote: a disallowed pick refuses here, as on the submit.
   const currencies = resolveBlockCurrenciesForAccount(
     resolveBlockMaturity(claims).isGreen,
@@ -13935,13 +14338,16 @@ async function submitPassThroughStepWorkflow(opts: {
   assertPassThroughStepTypeAllowed(body.$type, body.input);
   await assertBlockTrainingTriggerWordsAllowed({ claims, userId, steps: [body] });
   await assertBlockTrainingModelsAllowed([body]);
-  const { capOutput } = await checkAppStepResources(body.input);
+  await assertBlockTrainingLicensesAccepted(userId, [body]);
+  const { capOutput } = await checkAppStepResources(body.input, userId);
 
   const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
   await auditPassThroughPrompts({
     ...passThroughAuditContext(claims, userId, isGreen),
     steps: [body],
   });
+  // After the audit, whose refusal of a non-literal prompt is the more specific one.
+  await assertStepPositionsAllowed(claims, userId, [body]);
   // The viewer's pick (`body.accountType`) goes first, the rest of the
   // domain-allowed set stays as fallback; absent → Auto (blue-first). The quote
   // below is priced with the same array.
@@ -14198,7 +14604,7 @@ async function submitPassThroughStepWorkflow(opts: {
         steps: [orchestratorStep as any],
         tags,
         currencies,
-        ...blockOutputClamp(capOutput, allowMatureContent),
+        ...outputRestrictions(capOutput, allowMatureContent),
         externalId: blockExternalId,
       },
     });
@@ -14530,7 +14936,8 @@ async function estimateMultiStepWorkflow(opts: {
   if ('refusal' in prepared) return prepared.refusal;
   await assertBlockTrainingTriggerWordsAllowed({ claims, userId, steps: prepared.steps });
   await assertBlockTrainingModelsAllowed(prepared.steps);
-  await checkAppStepResources(body);
+  await assertStepPositionsAllowed(claims, userId, prepared.steps, body.arguments);
+  await checkAppStepResources(body, userId, { workflow: true });
   // Per-WORKFLOW pick: the orchestrator takes one `currencies` list per workflow.
   const currencies = resolveBlockCurrenciesForAccount(
     resolveBlockMaturity(claims).isGreen,
@@ -14621,7 +15028,8 @@ async function submitMultiStepWorkflow(opts: {
   if ('refusal' in prepared) return prepared.refusal;
   await assertBlockTrainingTriggerWordsAllowed({ claims, userId, steps: prepared.steps });
   await assertBlockTrainingModelsAllowed(prepared.steps);
-  const { capOutput } = await checkAppStepResources(body);
+  await assertBlockTrainingLicensesAccepted(userId, prepared.steps);
+  const { capOutput } = await checkAppStepResources(body, userId, { workflow: true });
   const stepCount = prepared.steps.length;
 
   const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
@@ -14629,6 +15037,8 @@ async function submitMultiStepWorkflow(opts: {
     ...passThroughAuditContext(claims, userId, isGreen),
     steps: prepared.steps,
   });
+  // After the audit, whose refusal of a non-literal prompt is the more specific one.
+  await assertStepPositionsAllowed(claims, userId, prepared.steps, body.arguments);
   // Per-WORKFLOW pick (see the schema): one `currencies` list for every step.
   const currencies = resolveBlockCurrenciesForAccount(isGreen, body.accountType);
 
@@ -14872,7 +15282,7 @@ async function submitMultiStepWorkflow(opts: {
         steps: orchestratorSteps as any,
         tags,
         currencies,
-        ...blockOutputClamp(capOutput, allowMatureContent),
+        ...outputRestrictions(capOutput, allowMatureContent),
         ...(body.arguments ? { arguments: body.arguments } : {}),
         // Which steps this submit named, so a later poll can tell them from a
         // step the orchestrator added. See `WORKFLOW_METADATA_BLOCK_STEPS_KEY`.
@@ -15241,10 +15651,7 @@ async function previewQuoteGrantFor(
   const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
   if (!rate.allowed) {
     recordBridgeRateLimitRefusal('previewQuoteGrant', 'catalog', claims, rate.retryAfterSeconds);
-    throw new TRPCError({
-      code: 'TOO_MANY_REQUESTS',
-      message: 'Rate limit exceeded, please retry shortly.',
-    });
+    throwAppRateLimited('apps.catalog', rate.retryAfterSeconds);
   }
   const binding = {
     userId: auth.userId,
@@ -15353,10 +15760,7 @@ async function consentQuoteGrantFor(
   const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
   if (!rate.allowed) {
     recordBridgeRateLimitRefusal('consentQuoteGrant', 'catalog', claims, rate.retryAfterSeconds);
-    throw new TRPCError({
-      code: 'TOO_MANY_REQUESTS',
-      message: 'Rate limit exceeded, please retry shortly.',
-    });
+    throwAppRateLimited('apps.catalog', rate.retryAfterSeconds);
   }
   const { recordQuoteGrantConsent } = await import(
     '~/server/services/blocks/block-quote-grant.service'
@@ -15438,10 +15842,7 @@ async function consentQuoteGrantStandingFor(
       claims,
       rate.retryAfterSeconds
     );
-    throw new TRPCError({
-      code: 'TOO_MANY_REQUESTS',
-      message: 'Rate limit exceeded, please retry shortly.',
-    });
+    throwAppRateLimited('apps.catalog', rate.retryAfterSeconds);
   }
   const refuse = (message: string): never => {
     throw new TRPCError({ code: 'FORBIDDEN', message });
@@ -15477,10 +15878,12 @@ async function consentQuoteGrantStandingFor(
   const limit = await scopeGrant.readConsentDailyLimit(auth.userId, claims.appBlockId, quote.total);
   if (!limit || limit.exceeds) refuse('this job does not fit what is left of your daily limit');
   if (!(await rateLimit.claimBlockStandingConsentSlot(auth.userId, claims.appBlockId))) {
-    throw new TRPCError({
-      code: 'TOO_MANY_REQUESTS',
-      message: 'too many jobs without asking in the last minute',
-    });
+    // The claim reads no TTL: the window's length bounds the wait.
+    throwAppRateLimited(
+      'apps.standing-consent',
+      BLOCK_STANDING_CONSENT_RATE_LIMIT_WINDOW_SECONDS,
+      'too many jobs without asking in the last minute'
+    );
   }
   const updated = await recordStepQuoteStandingConsent(input.quoteId, binding, sessionUserId);
   if (!updated) {
@@ -15520,10 +15923,7 @@ async function authorizeOutputUnlockRequest(blockToken: string, sessionUserId: n
   const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
   if (!rate.allowed) {
     recordBridgeRateLimitRefusal('unlockOutput', 'catalog', claims, rate.retryAfterSeconds);
-    throw new TRPCError({
-      code: 'TOO_MANY_REQUESTS',
-      message: 'Rate limit exceeded, please retry shortly.',
-    });
+    throwAppRateLimited('apps.catalog', rate.retryAfterSeconds);
   }
   return { claims, userId };
 }
@@ -15539,14 +15939,9 @@ async function outputUnlockDeps(opts: {
   ctx: Context;
   claims: BlockClaims;
   userId: number;
-  /**
-   * The signed-in viewer's own mature-content setting, from the SESSION (already asserted to be
-   * the token subject). `getBlockSessionUser` does not select it, so it cannot come from there.
-   */
-  showNsfw: boolean;
   workflowId: string;
 }) {
-  const { ctx, claims, userId, showNsfw, workflowId } = opts;
+  const { ctx, claims, userId, workflowId } = opts;
   const [unlockService, { acquireOutputUnlockLock }, orchestration, workflows] = await Promise.all([
     import('~/server/services/blocks/block-output-unlock.service'),
     import('~/server/services/blocks/block-output-unlock-lock'),
@@ -15560,10 +15955,13 @@ async function outputUnlockDeps(opts: {
     assertUnlockAllowed: () =>
       orchestration.assertUnlockAllowed({
         domain: resolveBlockMaturity(claims).isGreen ? 'green' : 'red',
-        showNsfw,
       }),
     assertUnlockReleasesOutput: async () =>
-      orchestration.assertUnlockReleasesOutput({ token: await token(), workflowId }),
+      orchestration.assertUnlockReleasesOutput({
+        token: await token(),
+        workflowId,
+        outsideComicEditor: true,
+      }),
     liftRestriction: async () =>
       workflows.liftWorkflowMatureRestriction({
         token: await token(),
@@ -15572,11 +15970,16 @@ async function outputUnlockDeps(opts: {
       }),
     acquireLock: () => acquireOutputUnlockLock(workflowId),
     warnChargedNotReleased: (entry) => {
+      recordBlockUnlockChargedNotReleased(entry.readBackFailed);
       logToAxiom({
         type: 'warning',
         name: 'app-block-unlock-charged-not-released',
         details: entry,
       });
+    },
+    warnOutcomeUnknown: (entry) => {
+      recordBlockUnlockOutcomeUnknown();
+      logToAxiom({ type: 'warning', name: 'app-block-unlock-outcome-unknown', details: entry });
     },
   };
   return { deps, unlockService };
@@ -15596,7 +15999,7 @@ type QuotedGrantSubmitPlan = {
   invocation: { step: string; variant: string };
   /** Constant settle labels (metric cardinality). */
   settle: { engine: string; recipe: string };
-  /** Hold the output to PG-13 (`blockOutputClamp`). */
+  /** Hold the output to PG-13 (`outputRestrictions`). */
   capOutput?: boolean;
 };
 
@@ -15731,10 +16134,11 @@ async function submitConfirmedQuoteWorkflow(opts: {
     // would let earlier-consented quotes be bunched. After the quote claim, so the slot is spent
     // on a real attempt; fails closed (a store error refuses), and the quote is used up.
     if (standing && !(await claimBlockStandingSubmitSlot(userId, claims.appBlockId))) {
-      throw new TRPCError({
-        code: 'TOO_MANY_REQUESTS',
-        message: 'too many jobs without asking in the last minute',
-      });
+      throwAppRateLimited(
+        'apps.standing-submit',
+        BLOCK_STANDING_CONSENT_RATE_LIMIT_WINDOW_SECONDS,
+        'too many jobs without asking in the last minute'
+      );
     }
     if (quote.bodyHash !== (await arm.bodyHash())) {
       throw new TRPCError({
@@ -15916,7 +16320,7 @@ async function submitConfirmedQuoteWorkflow(opts: {
           steps: [plan.step as any],
           tags: plan.tags,
           currencies,
-          ...blockOutputClamp(!!plan.capOutput, allowMatureContent),
+          ...outputRestrictions(!!plan.capOutput, allowMatureContent),
           externalId: blockExternalId,
         },
       });
@@ -16340,7 +16744,8 @@ async function submitConfirmedPassThroughStepWorkflow(opts: {
           steps: [body],
         });
         await assertBlockTrainingModelsAllowed([body]);
-        capOutput = (await checkAppStepResources(body.input)).capOutput;
+        await assertStepPositionsAllowed(claims, userId, [body]);
+        capOutput = (await checkAppStepResources(body.input, userId)).capOutput;
         const { isAppConfirmedStepWithinLimitEnabled } = await import(
           '~/server/services/app-blocks-flag'
         );
@@ -16608,6 +17013,43 @@ async function assertBlockTrainingModelsAllowed(
   if (refusal) throw new TRPCError({ code: 'BAD_REQUEST', message: refusal });
 }
 
+/** Which values an app-built step may place outside its media inputs (`app-step-positions`). */
+async function assertStepPositionsAllowed(
+  claims: { appBlockId: string },
+  userId: number,
+  steps: ReadonlyArray<{ $type: string; input: unknown }>,
+  workflowArguments?: unknown,
+  inlineGraph = false
+): Promise<void> {
+  const { stepPositionsRefusal } = await import('~/server/services/blocks/app-step-positions');
+  const refusal = await stepPositionsRefusal({
+    appBlockId: claims.appBlockId,
+    viewerId: userId,
+    steps,
+    workflowArguments,
+    inlineGraph,
+  });
+  if (refusal) throw new TRPCError({ code: 'BAD_REQUEST', message: refusal });
+}
+
+/** The base model licence rule for the training `$type`s an app names itself, as `kind:'training'`
+ *  applies it. Submit only: a quote binds the user to nothing. */
+async function assertBlockTrainingLicensesAccepted(
+  userId: number,
+  steps: ReadonlyArray<{ $type: string; input: unknown }>
+): Promise<void> {
+  const { collectTrainingStepModels } = await import(
+    '~/server/services/blocks/block-training-model-check'
+  );
+  const collected = collectTrainingStepModels(steps);
+  if ('error' in collected) throw new TRPCError({ code: 'BAD_REQUEST', message: collected.error });
+  const { assertTrainingLicenseAccepted } = await import(
+    '~/server/services/generation-license.service'
+  );
+  for (const ecosystem of new Set(collected.models.flatMap((model) => model.ecosystem)))
+    await assertTrainingLicenseAccepted({ ecosystem, userId });
+}
+
 function passThroughAuditContext(claims: BlockClaims, userId: number, isGreen: boolean) {
   return {
     userId,
@@ -16698,6 +17140,10 @@ async function submitTrainingWorkflow(opts: {
           userId,
           steps: trainingBodyTriggerWordSteps(body),
         });
+        const { assertTrainingLicenseAccepted } = await import(
+          '~/server/services/generation-license.service'
+        );
+        await assertTrainingLicenseAccepted({ ecosystem: run.ecosystem, userId });
         // `name` is what the snapshot/publish extractors key on.
         const step = { ...run.step, name: BLOCK_STEP_NAME };
         return {
@@ -16789,7 +17235,7 @@ function buildWorkflowTags(
     // Per-app subqueue tag — the SAME helper `blocks.queryAppWorkflows` filters
     // on, so the STAMP and the READ can never desync (see appBlockTag).
     appBlockTag(claims.appId),
-    `app-block:block:${claims.blockId}`,
+    `${APP_BLOCK_TAG_PREFIX}block:${claims.blockId}`,
     // Per-instance tag — the SAME helper the dev-token publish proof reads
     // (`assertBlockWorkflowTaggedForInstance`).
     appBlockInstanceTag(claims.blockInstanceId),

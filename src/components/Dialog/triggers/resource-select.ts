@@ -1,15 +1,9 @@
-import dynamic from 'next/dynamic';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openDialog } from '~/components/Dialog/openDialog';
 import type { ResourceSelectModalProps } from '~/components/ImageGeneration/GenerationForm/ResourceSelectProvider';
 
-const ResourceSelectModal = dynamic(
-  () => import('~/components/ImageGeneration/GenerationForm/ResourceSelectModal'),
-  { ssr: false }
-);
-
 export function openResourceSelectModal(props: ResourceSelectModalProps) {
-  dialogStore.trigger({
-    component: ResourceSelectModal,
-    props,
-  });
+  openDialog(
+    () => import('~/components/ImageGeneration/GenerationForm/ResourceSelectModal'),
+    props
+  );
 }

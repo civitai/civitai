@@ -31,17 +31,22 @@ vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
 }));
 
 import { getAllImages } from '../image.service';
+import { thumbnailCache } from '~/server/redis/caches';
 
 const OWNER = 3300;
 const STRANGER = 4400;
 
-const BLOCKED_FOR = /\(i\."blockedFor" IS NULL(?: OR i\."userId" = \$(\d+))?\)/g;
+// The owner's exemption is held to `ownerMediaAllowedSql`, which follows the id.
+const BLOCKED_FOR = /\(i\."blockedFor" IS NULL(?:\)| OR \(i\."userId" = \$(\d+) AND )/g;
 
 async function blockedForClauses(
   viewer: { id: number; isModerator?: boolean } | undefined,
   profileUserId?: number
 ) {
   await getAllImages({
+    // The session views the feed grants a session or full-access key.
+    asModerator: true,
+    asOwner: true,
     limit: 20,
     period: 'AllTime',
     periodMode: 'published',
@@ -85,5 +90,128 @@ describe('getAllImages blockedFor exclusion', () => {
 
   it('applies no blockedFor exclusion for a moderator', async () => {
     expect(await blockedForClauses({ id: STRANGER, isModerator: true })).toEqual([]);
+  });
+});
+
+describe('getAllImages requiringMeta', () => {
+  const LEVEL_GATE = '"nsfwLevel" != 0';
+  const INGESTION_GATE = /"ingestion" = \$\d+::"ImageIngestionStatus"/;
+
+  async function statement(requiringMeta: boolean, domain: 'red' | 'green' = 'red') {
+    await getAllImages({
+      asModerator: true,
+      asOwner: true,
+      limit: 20,
+      period: 'AllTime',
+      periodMode: 'published',
+      sort: 'Newest',
+      browsingLevel: 1,
+      include: [],
+      user: { id: OWNER, isModerator: false },
+      userId: OWNER,
+      requiringMeta,
+      domain,
+    } as unknown as Parameters<typeof getAllImages>[0]).catch(() => undefined);
+    return queryWithTimeoutMock.mock.calls[0][2] as { text: string; values: unknown[] };
+  }
+  const blockedForAiNotVerified = (stmt: { text: string; values: unknown[] }) => {
+    const match = stmt.text.match(/i\."blockedFor" = \$(\d+)/);
+    return !!match && stmt.values[Number(match[1]) - 1] === 'AiNotVerified';
+  };
+
+  // A metadata-blocked image is stored Blocked at the Blocked level, so the feed's own level and
+  // ingestion gates would answer this filter with nothing.
+  it("lists the owner's images blocked for missing metadata, past the level and ingestion gates", async () => {
+    const stmt = await statement(true);
+    expect(blockedForAiNotVerified(stmt)).toBe(true);
+    expect(stmt.text).not.toContain(LEVEL_GATE);
+    expect(stmt.text).not.toMatch(INGESTION_GATE);
+  });
+
+  it('keeps both gates on a capped domain, where an unrated image may not be listed', async () => {
+    const stmt = await statement(true, 'green');
+    expect(blockedForAiNotVerified(stmt)).toBe(true);
+    expect(stmt.text).toContain(LEVEL_GATE);
+    expect(stmt.text).toMatch(INGESTION_GATE);
+  });
+
+  it('keeps both gates without the filter', async () => {
+    const stmt = await statement(false);
+    expect(blockedForAiNotVerified(stmt)).toBe(false);
+    expect(stmt.text).toContain(LEVEL_GATE);
+    expect(stmt.text).toMatch(INGESTION_GATE);
+  });
+});
+
+// civitai/civitai#10097: a marked custom thumbnail keeps its level; its url goes to the owner view or a moderator.
+describe('getAllImages thumbnails', () => {
+  const VIDEO = 9100;
+  const run = async (
+    user: { id: number } | undefined,
+    asOwner: boolean,
+    // A Blocked rating alone marks it; a block does not leave it to its owner.
+    ownerMediaAllowed = true
+  ) => {
+    queryWithTimeoutMock.mockResolvedValue({
+      rows: [
+        {
+          id: VIDEO,
+          userId: OWNER,
+          type: 'video',
+          nsfwLevel: 1,
+          url: 'video-url',
+          postId: 1,
+          publishedAt: new Date('2026-01-01T00:00:00Z'),
+          sortAt: new Date('2026-01-01T00:00:00Z'),
+          cursorId: VIDEO,
+          ingestion: 'Scanned',
+          metadata: {},
+        },
+      ],
+    });
+    const fetch = vi.spyOn(thumbnailCache, 'fetch').mockResolvedValue({
+      [VIDEO]: {
+        id: 1,
+        url: 'thumb-url',
+        width: 1,
+        height: 1,
+        nsfwLevel: 16,
+        blockMarked: true,
+        ownerMediaAllowed,
+      },
+    } as never);
+    try {
+      const { items } = await getAllImages({
+        asModerator: true,
+        asOwner,
+        limit: 20,
+        period: 'AllTime',
+        periodMode: 'published',
+        sort: 'Newest',
+        browsingLevel: 31,
+        include: [],
+        user: user ? { isModerator: false, ...user } : undefined,
+      } as unknown as Parameters<typeof getAllImages>[0]);
+      const item = items.find((i) => i.id === VIDEO);
+      return { url: item?.thumbnailUrl, level: item?.nsfwLevel };
+    } finally {
+      fetch.mockRestore();
+    }
+  };
+
+  it('gives a signed-out viewer no url for a marked thumbnail, and keeps its level', async () => {
+    expect(await run(undefined, true)).toEqual({ url: undefined, level: 16 });
+  });
+
+  it('gives the owner, viewing as owner, the marked thumbnail url', async () => {
+    expect(await run({ id: OWNER }, true)).toEqual({ url: 'thumb-url', level: 16 });
+  });
+
+  it('gives the owner without the owner view no url for a marked thumbnail', async () => {
+    expect(await run({ id: OWNER }, false)).toEqual({ url: undefined, level: 16 });
+  });
+
+  it('gives the owner, viewing as owner, no url for a blocked thumbnail', async () => {
+    expect(await run({ id: OWNER }, true, false)).toEqual({ url: undefined, level: 16 });
   });
 });

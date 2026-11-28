@@ -1,4 +1,4 @@
-import { sql, type Transaction } from 'kysely';
+import { sql, type ExpressionBuilder, type Kysely, type SqlBool, type Transaction } from 'kysely';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { asksBlockReason, blockReasonProblem } from '../../block-reasons';
@@ -11,6 +11,8 @@ import { standingOf } from '../progression/rating';
 import { isRank } from '../ranks';
 import { SMITES } from '../smites/config';
 import { activeSmiteCount } from '../smites/smites.service';
+import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
+import { KNIGHTS_TAG_GROUPS } from '../knights-tag-groups';
 import { canVote } from './ranks';
 import { levelForExp, voteWeight } from './resolution';
 
@@ -29,6 +31,7 @@ export type VoteRejection =
   | 'bad-answer'
   | 'bad-block-reason'
   | 'already-voted'
+  | 'own-image'
   | 'no-weight'
   | 'reset-pending';
 
@@ -47,6 +50,11 @@ export type VoteSubject = {
    * apart by their prompt, so (image, question key) is not the unit there.
    */
   ownJudgmentRule?: boolean;
+  /**
+   * A mod-confirmed skill check under `skillCheckServeJudged`: the player may already have judged its image in the queue.
+   * The same check (`itemId`) is still never answered twice.
+   */
+  judgedImageAllowed?: boolean;
 };
 
 export type InsertedVote = {
@@ -101,6 +109,15 @@ export async function insertVote(
     : null;
   if (reasonProblem) return rejected('bad-block-reason');
 
+  // Ratings, hidden checks and yes/no all reach the ledger here; `creditLateJudgment` carries its own check.
+  const owned = await trx
+    .selectFrom('Image')
+    .select('id')
+    .where('id', '=', subject.imageId)
+    .where('userId', '=', input.userId)
+    .executeTakeFirst();
+  if (owned) return rejected('own-image');
+
   const already = await trx
     .selectFrom('KnightsVote')
     .select('playerId')
@@ -109,7 +126,7 @@ export async function insertVote(
     .executeTakeFirst();
   if (already) return rejected('already-voted');
 
-  if (!subject.ownJudgmentRule) {
+  if (!subject.ownJudgmentRule && !subject.judgedImageAllowed) {
     const judged = await trx
       .selectFrom('KnightsVote')
       .select('playerId')
@@ -213,4 +230,151 @@ export async function creditVote(
       .where('userId', '=', input.userId)
       .execute();
   }
+}
+
+/** How recently an item must have settled for a judgment that arrives after it to count toward the Daily Watch. */
+/**
+ * Leaves out images whose creator the player has hidden or blocked. Who blocked the player is not read. Expects
+ * `Image as img`. With `perRow` (`OFFSET 0` keeps it a correlated subplan) it is one primary-key probe per row read: for
+ * a player with many such rows the plain anti-join can turn into a hash of all of them, which costs a short ordered read
+ * its early exit. A subplan also rules out a parallel plan, so a long scan takes the plain form.
+ */
+export const notHiddenCreator =
+  (userId: number, { perRow = true }: { perRow?: boolean } = {}) =>
+  (eb: ExpressionBuilder<DB & { img: DB['Image'] }, 'img'>) => {
+    const engaged = eb
+      .selectFrom('UserEngagement as ue')
+      .select(sql<number>`1`.as('one'))
+      .where('ue.userId', '=', userId)
+      .whereRef('ue.targetUserId', '=', 'img.userId')
+      .where('ue.type', 'in', ['Hide', 'Block']);
+    return eb.not(eb.exists(perRow ? engaged.offset(0) : engaged));
+  };
+
+type TagGroups = readonly { key: string; tags: readonly { id: number }[] }[];
+
+/**
+ * Leaves out images carrying an enabled tag of a preset group the player hides in Knights settings. Read inside the
+ * query, so it cannot fail open; a player who hides nothing matches no group, and no groups at all is no filter. The
+ * player's own hidden tags on the site never apply. Expects `Image as img`; `perRow` as in `notHiddenCreator`.
+ */
+export const notInHiddenTagGroups =
+  (
+    userId: number,
+    { perRow = true, groups = KNIGHTS_TAG_GROUPS }: { perRow?: boolean; groups?: TagGroups } = {}
+  ) =>
+  () => {
+    const rows = groups.flatMap((group) =>
+      group.tags.map((tag) => sql`(${sql.lit(group.key)}, ${sql.lit(tag.id)})`)
+    );
+    if (rows.length === 0) return sql<SqlBool>`true`;
+    return sql<SqlBool>`NOT EXISTS (
+      SELECT 1 FROM "KnightsPlayer" kp
+      JOIN (VALUES ${sql.join(rows)}) AS g(key, "tagId") ON g.key = ANY(kp."hiddenTagGroups")
+      JOIN "TagsOnImageDetails" td ON td."tagId" = g."tagId" AND td."imageId" = img.id AND NOT td.disabled
+      WHERE kp."playerId" = ${userId}${perRow ? sql` OFFSET 0` : sql``}
+    )`;
+  };
+
+/** What may be served to the player: not a hidden or blocked creator's image, nor one in a tag group they hide. */
+export const servedTo =
+  (userId: number, options: { perRow?: boolean } = {}) =>
+  (eb: ExpressionBuilder<DB & { img: DB['Image'] }, 'img'>) =>
+    eb.and([notHiddenCreator(userId, options)(eb), notInHiddenTagGroups(userId, options)()]);
+
+export const LATE_JUDGMENT_WINDOW_MS = 10 * 60_000;
+
+/**
+ * Counts a rating judgment toward the Daily Watch when its item settled shortly before the judgment arrived (it waited in
+ * the player's prefetch buffer). Writes a ledger row that weighs nothing, pays no gold or XP and is already set aside, so
+ * it never decides, grades or pays, but it is the player's one judgment of that image: a resend, or an image the player
+ * already judged, is refused, and it counts in the ledger-based Watch of a career-reset day. The day's tally moves, and
+ * the judgment that completes the Watch still pays the streak bonus. Under the same locks, in the same order, as
+ * `castVote`. True when it counted.
+ */
+export async function creditLateJudgment(
+  db: Kysely<DB>,
+  { userId, itemId, answer, now }: { userId: number; itemId: number; answer: string; now: Date }
+): Promise<boolean> {
+  return db.transaction().execute(async (trx) => {
+    await lockPlayerVoting(trx, userId);
+    const item = await trx
+      .selectFrom('KnightsQueueItem as i')
+      .innerJoin('KnightsQuestion as q', 'q.key', 'i.questionKey')
+      .innerJoin('Image as img', 'img.id', 'i.imageId')
+      .select([
+        'img.userId as ownerId',
+        'i.id',
+        'i.status',
+        'i.questionKey',
+        'i.imageId',
+        'i.minRank',
+        'i.updatedAt',
+        'i.appliedAt',
+        'q.options',
+      ])
+      .where('i.id', '=', itemId)
+      .where('i.questionKey', '=', KNIGHTS_NSFW_LEVEL_QUESTION)
+      .where(servedTo(userId))
+      .executeTakeFirst();
+    if (!item || item.status === 'Open' || item.ownerId === userId) return false;
+    // A settled rating still waiting on its write-back can be rerouted, and a reroute regrades every vote on the item
+    // (`regradeVotes`), this row included.
+    if (item.status === 'Resolved' && item.appliedAt === null) return false;
+    if (now.getTime() - item.updatedAt.getTime() > LATE_JUDGMENT_WINDOW_MS) return false;
+    const options = (item.options as { value: string }[] | null) ?? [];
+    if (!options.some((option) => option.value === answer)) return false;
+
+    const judged = await trx
+      .selectFrom('KnightsVote')
+      .select(sql<number>`1`.as('one'))
+      .where('playerId', '=', userId)
+      .where('imageId', '=', item.imageId)
+      .where('questionKey', '=', item.questionKey)
+      .executeTakeFirst();
+    if (judged) return false;
+
+    const player = await trx
+      .selectFrom('NewOrderPlayer')
+      .select(['rankType', 'exp', 'startAt'])
+      .where('userId', '=', userId)
+      .forUpdate()
+      .executeTakeFirst();
+    // Any rank that judges the rating queue: the item may have moved up a stage before it settled.
+    if (!player || !isRank(player.rankType) || !canVote(player.rankType, 'Knight')) return false;
+
+    await trx
+      .insertInto('KnightsVote')
+      .values({
+        itemId: item.id,
+        playerId: userId,
+        createdAt: utc(now),
+        questionKey: item.questionKey,
+        imageId: item.imageId,
+        stage: item.minRank,
+        answer,
+        weight: 0,
+        gold: 0,
+        xp: 0,
+        verdict: 'inconclusive',
+        settledAt: utc(now),
+      })
+      .execute();
+    const day = await recordVoteDay(trx, {
+      playerId: userId,
+      rank: player.rankType,
+      level: levelForExp(player.exp),
+      gold: 0,
+      now,
+      startAt: player.startAt,
+    });
+    metrics.goldEarned('streak_bonus', day.bonus);
+    if (day.bonus > 0)
+      await trx
+        .updateTable('NewOrderPlayer')
+        .set({ goldEarned: sql<number>`"goldEarned" + ${day.bonus}` })
+        .where('userId', '=', userId)
+        .execute();
+    return true;
+  });
 }

@@ -6,6 +6,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { sendEmail } from '~/server/email/client';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
+import { serviceDealNotificationTypes } from '~/server/notifications/creator-service.notifications';
 import {
   clearNotificationEmailEnabledCache,
   optOutOfNotificationEmail,
@@ -28,6 +29,19 @@ const migration = (dir: string) =>
 const db = { pg: null as unknown as PGlite };
 
 const DEAL = 'service-deal-requested';
+const REVIEW_DUE = serviceDealNotificationTypes.reviewDue;
+/** The types 20261203120100_deal_push_default_backfill granted. */
+const FIRST_DEAL_PUSH_TYPES: string[] = [
+  'service-deal-requested',
+  'service-deal-accepted',
+  'service-deal-declined',
+  'service-deal-expired',
+  'service-deal-delivered',
+  'service-deal-revision-requested',
+  'service-deal-cancellation-requested',
+  'service-deal-completed',
+  'service-deal-paid-out',
+];
 const deal = { type: DEAL, details: { dealId: 7, offeringTitle: 'Portrait' } };
 
 beforeAll(async () => {
@@ -52,7 +66,11 @@ beforeEach(async () => {
   vi.mocked(sendEmail).mockReset();
   clearNotificationEmailEnabledCache();
   dbMock.dbRead.keyValue.findUnique.mockResolvedValue({ key: 'k', value: true } as never);
-  redisMock.sysRedis.incrBy.mockResolvedValue(1 as never);
+  // The send quotas are counters on the cache cluster: every count is the first of its window.
+  redisMock.redis.multi.mockImplementation((() => {
+    const chain = { set: () => chain, incr: () => chain, exec: async () => ['OK', 1] };
+    return chain;
+  }) as never);
   await db.pg.exec(`
     TRUNCATE "UserEmailNotificationOptOut", "PushSubscription", "UserPushSetting";
     DELETE FROM "User";
@@ -121,5 +139,47 @@ describe('deal push backfill', () => {
     expect(one.filter((t) => t.startsWith('service-deal-'))).toHaveLength(9);
     expect(await pushTypes(2)).toEqual(['service-deal-accepted']);
     expect(await pushTypes(3)).toEqual([]);
+  });
+
+  it('gives the later deal notices to subscribers who still take deal push, once', async () => {
+    const later = () => db.pg.exec(migration('20271119130000_deal_notice_push_backfill'));
+    await db.pg.exec(`
+      INSERT INTO "PushSubscription" ("userId") VALUES (1), (2), (3), (4);
+      INSERT INTO "UserPushSetting" VALUES
+        (1, 'service-deal-accepted'),
+        (2, 'new-mention'),
+        (3, 'service-deal-accepted'), (3, 'service-deal-overdue'),
+        (5, 'service-deal-accepted');
+    `);
+    await later();
+    await later();
+
+    // Exactly the deal types neither the first backfill nor a later one covers, spelled as the
+    // registry spells them.
+    expect((await pushTypes(1)).filter((t) => t !== 'service-deal-accepted')).toEqual(
+      Object.values(serviceDealNotificationTypes)
+        .filter((t) => !FIRST_DEAL_PUSH_TYPES.includes(t) && t !== REVIEW_DUE)
+        .sort()
+    );
+    // Deal push turned off, a choice already made about the new notices, and no subscription.
+    expect(await pushTypes(2)).toEqual(['new-mention']);
+    expect(await pushTypes(3)).toEqual(['service-deal-accepted', 'service-deal-overdue']);
+    expect(await pushTypes(5)).toEqual(['service-deal-accepted']);
+  });
+
+  it('gives the review reminder to subscribers who still take deal push', async () => {
+    await db.pg.exec(`
+      INSERT INTO "PushSubscription" ("userId") VALUES (1), (2);
+      INSERT INTO "UserPushSetting" VALUES
+        (1, 'service-deal-completed'),
+        (2, 'new-mention'),
+        (3, 'service-deal-completed');
+    `);
+    await db.pg.exec(migration('20271120220000_review_due_push_backfill'));
+
+    expect(await pushTypes(1)).toEqual(['service-deal-completed', REVIEW_DUE]);
+    // Deal push turned off, and no subscription.
+    expect(await pushTypes(2)).toEqual(['new-mention']);
+    expect(await pushTypes(3)).toEqual(['service-deal-completed']);
   });
 });

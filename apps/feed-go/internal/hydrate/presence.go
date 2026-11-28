@@ -24,6 +24,7 @@ const (
 	CacheEventDecorations = "event-decorations"
 	CacheMetrics          = "metrics"
 	CacheCosmetics        = "cosmetics"
+	CacheImageTags        = "image-tags"
 )
 
 // metricHashPrefix is metricHashKey without the `:<id>` (a test pins the two together).
@@ -55,13 +56,15 @@ var PageCaches = []PageCache{
 	{Name: CacheThumbnails, Key: KeyThumbnails},
 	{Name: CacheTagIDs, Key: KeyTagIDs, Reason: "tag-ids-miss"},
 	{Name: CacheEventDecorations, Key: KeyImageEvents, Reason: "event-decoration-miss"},
+	// Read only for a request with PageRequest.Tags (image.getInfinite's include 'tags').
+	{Name: CacheImageTags, Key: KeyImageTags, Reason: "image-tags-miss"},
 	{Name: CacheMetrics, Key: metricHashPrefix, Reason: "metrics-miss"},
 	{Name: CacheCosmetics, Key: KeyCosmetics},
 }
 
 // MissReason is the fallback reason a miss on the named cache raises when s serves: "" for a cache
 // s.Compute answers (MissCaches, shared with the miss computation; the metric hashes only when s
-// reads ClickHouse); else the PageCaches Reason of a
+// reads ClickHouse; the image resources only while imageResourcesComputed); else the PageCaches Reason of a
 // page cache, the lookup spec's reason for another computed cache (model-frames), and "" for any
 // other name.
 func (s *Sources) MissReason(name string) string {
@@ -71,6 +74,13 @@ func (s *Sources) MissReason(name string) string {
 			return ""
 		}
 		return "metrics-miss"
+	}
+	if name == MissImageResources {
+		// Computed only while the Node lookup reads the replica (imageResourcesComputed).
+		if s.imageResourcesComputed() {
+			return ""
+		}
+		return "image-resources-miss"
 	}
 	if s.Compute != nil && slices.Contains(MissCaches, name) {
 		return ""
@@ -130,6 +140,11 @@ func (s *Sources) Check(ctx context.Context, req PageRequest, racedSince time.Ti
 	if req.NoProfilePictures {
 		profileUsers = nil
 	}
+	// As Page: the user cosmetics and frames (and so the cosmetic records) only with 'cosmetics'.
+	cosmeticUsers, frameImages := users, images
+	if req.NoCosmetics {
+		cosmeticUsers, frameImages = nil, nil
+	}
 	stage1 := NewBatch()
 	reads := []struct {
 		name string
@@ -137,10 +152,10 @@ func (s *Sources) Check(ctx context.Context, req PageRequest, racedSince time.Ti
 		read *PackedRead
 	}{
 		{CacheBasicUsers, users, s.Packed.Queue(stage1, KeyBasicUsers, users, ttlDay)},
-		{CacheUserCosmetics, users, s.Packed.Queue(stage1, KeyUserCosmetics, users, 0)},
+		{CacheUserCosmetics, cosmeticUsers, s.Packed.Queue(stage1, KeyUserCosmetics, cosmeticUsers, 0)},
 		// As Page: the profile pictures only when the include list asks for them.
 		{CacheProfilePictures, profileUsers, s.Packed.Queue(stage1, KeyProfilePictures, profileUsers, 0)},
-		{CacheImageFrames, images, s.Packed.Queue(stage1, KeyImageFrames, images, 0)},
+		{CacheImageFrames, frameImages, s.Packed.Queue(stage1, KeyImageFrames, frameImages, 0)},
 		{CacheThumbnails, videos, s.Packed.Queue(stage1, KeyThumbnails, videos, ttlDay)},
 		{CacheTagIDs, images, s.Packed.Queue(stage1, KeyTagIDs, images, tagIDsTTL)},
 	}
@@ -151,6 +166,14 @@ func (s *Sources) Check(ctx context.Context, req PageRequest, racedSince time.Ti
 			ids  []int
 			read *PackedRead
 		}{CacheEventDecorations, images, s.Packed.Queue(stage1, KeyImageEvents, images, 0)})
+	}
+	// As Page: the votable tags only when the include list asks for them.
+	if req.Tags {
+		reads = append(reads, struct {
+			name string
+			ids  []int
+			read *PackedRead
+		}{CacheImageTags, images, s.Packed.Queue(stage1, KeyImageTags, images, 0)})
 	}
 	metrics := s.queueMetricsExists(stage1, images)
 	stage1.Exec(ctx)

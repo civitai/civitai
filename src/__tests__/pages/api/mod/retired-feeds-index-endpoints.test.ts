@@ -1,5 +1,8 @@
+import { PGlite } from '@electric-sql/pglite';
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { pgliteKysely } from '~/__tests__/pglite-kysely';
+import { NOTHING_WITHHELD_SQL } from '../../../../../packages/civitai-shared/src/__tests__/csam-restriction-cases';
 
 // The mod endpoint that used to select from the feeds index (`metrics_images_v1`). Retired, the
 // index is gone with its Meilisearch instance, so the endpoint must work from Postgres alone. The
@@ -27,17 +30,28 @@ vi.mock('~/server/services/moderator.service', () => ({ trackModActivity: m.trac
 vi.mock('~/server/services/feature-flags.service', () => ({ getFeatureFlags: () => ({}) }));
 vi.mock('~/server/db/pgDb', () => ({ pgDbRead: {}, pgDbReadLong: {}, pgDbWrite: {} }));
 vi.mock('~/server/db/db-helpers', () => ({ dataProcessor: m.dataProcessor }));
+
+const withheld = vi.hoisted(() => ({ db: null as unknown as PGlite }));
+vi.mock('~/server/db/kyselyDb', () => {
+  const db = pgliteKysely(() => withheld.db);
+  return { kyselyRead: db, kyselyWrite: db };
+});
+
+beforeAll(async () => {
+  withheld.db = new PGlite();
+  await withheld.db.exec(NOTHING_WITHHELD_SQL);
+});
 vi.mock('~/server/meilisearch/client', () => ({
   searchClient: { index: () => ({ search: m.imagesSearch }) },
   updateDocs: m.updateDocs,
 }));
 
-import unblockImages from '~/pages/api/mod/unblock-images';
+import unblockImages from '~/server/api-routes/mod/unblock-images';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // `~/server/db/client` and `~/server/logging/client` are the global canonical mocks (setup.ts).
-const updateManyAndReturn = dbMock.dbWrite.image.updateManyAndReturn;
 const updateMany = dbMock.dbWrite.image.updateMany;
+const primaryRaw = dbMock.dbWrite.$queryRaw;
 
 type Handler = (req: NextApiRequest, res: NextApiResponse, user?: unknown) => unknown;
 
@@ -61,36 +75,40 @@ const call = async (handler: unknown, query: Record<string, string> = {}) => {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  updateManyAndReturn.mockResolvedValue([]);
+  primaryRaw.mockResolvedValue([]);
   updateMany.mockResolvedValue({ count: 0 });
 });
 
 describe('/api/mod/unblock-images', () => {
-  it('scans Postgres while the feeds index is retired, and clears only rows the primary still has blocked', async () => {
+  it('scans Postgres while the feeds index is retired, and follows up only the rows the primary update cleared', async () => {
     // The replica scan finds 11 and 12; the primary has since re-blocked 12.
     dbMock.dbRead.$queryRaw
       .mockResolvedValueOnce([{ maxId: 12 }])
       .mockResolvedValueOnce([{ id: 11 }, { id: 12 }]);
-    updateManyAndReturn.mockResolvedValue([{ id: 11 }]);
+    primaryRaw.mockResolvedValue([{ id: 11 }]);
 
     const { status, body } = await call(unblockImages);
 
     expect(status).toBe(200);
     expect(updateMany).not.toHaveBeenCalled();
-    expect(updateManyAndReturn).toHaveBeenCalledWith({
-      where: {
-        id: { in: [11, 12] },
-        blockedFor: { in: ['moderated', 'Moderated'] },
-        needsReview: null,
-        nsfwLevel: { notIn: [0, 32] },
-      },
-      data: { blockedFor: null },
-      select: { id: true },
-    });
     expect(m.dropBlockedImageDeleteQueue).toHaveBeenCalledWith([11]);
     expect(m.queueImageSearchIndexUpdate).toHaveBeenCalledWith(
       expect.objectContaining({ ids: [11] })
     );
     expect(body).toMatchObject({ updated: 1 });
+  });
+
+  it('leaves a ToS removal (ingestion Blocked) out of the replica scan', async () => {
+    dbMock.dbRead.$queryRaw.mockResolvedValueOnce([{ maxId: 12 }]).mockResolvedValueOnce([]);
+
+    await call(unblockImages);
+
+    const [strings, ...values] = dbMock.dbRead.$queryRaw.mock.calls[1] as [
+      TemplateStringsArray,
+      ...unknown[]
+    ];
+    const at = strings.findIndex((part) => /\bAND ingestion <> $/.test(part));
+    expect(at).toBeGreaterThan(-1);
+    expect(values[at]).toBe('Blocked');
   });
 });

@@ -28,6 +28,8 @@ import { Page } from '~/components/AppLayout/Page';
 import { ArticleContextMenu } from '~/components/Article/ArticleContextMenu';
 import { ArticleDetailComments } from '~/components/Article/Detail/ArticleDetailComments';
 import { ArticleScanStatus } from '~/components/Article/ArticleScanStatus';
+import { useArticleScanStatus } from '~/hooks/useArticleScanStatus';
+import { ingestionErrorNotice } from '~/shared/utils/article-ingestion-error';
 import { ArticleUnpublishedAlert } from '~/components/Article/ArticleUnpublishedAlert';
 import { Sidebar } from '~/components/Article/Detail/Sidebar';
 import { ToggleArticleEngagement } from '~/components/Article/ToggleArticleEngagement';
@@ -89,6 +91,8 @@ import classes from './[[...slug]].module.scss';
 import { RenderRichText } from '~/components/RichTextEditor/RenderRichText';
 import articleBodyClasses from '~/components/RichTextEditor/ArticleBody.module.scss';
 import { isViewer } from '~/utils/is-viewer';
+import { MatureRestrictedBadge } from '~/components/Image/MatureRestrictedBadge/MatureRestrictedBadge';
+import { isRestrictedImage } from '~/shared/utils/restricted-image';
 
 const NOT_FOUND = Symbol('article-not-found');
 
@@ -215,6 +219,11 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
 
   const disableArticles = !features.articles && !article?.user.isModerator;
 
+  const { status: scanStatus } = useArticleScanStatus({
+    articleId: id,
+    enabled: isOwner && article?.ingestion === ArticleIngestionStatus.Error,
+  });
+
   const queryUtils = trpc.useUtils();
   const upsertArticleMutation = trpc.article.upsert.useMutation();
 
@@ -234,7 +243,8 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
     if (!article || article.status === ArticleStatus.Published) return;
 
     upsertArticleMutation.mutate(
-      { ...article, status: ArticleStatus.Published },
+      // No body: the page's read may withhold images the save must keep.
+      { ...article, content: undefined, status: ArticleStatus.Published },
       {
         async onSuccess() {
           await queryUtils.article.getById.invalidate({ id });
@@ -497,6 +507,11 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
         style={imageMediaHatClearLeft(showEventCosmetics ? article.eventDecoration : null)}
       >
         <ArticleCoverHat articleId={article.id} decoration={article.eventDecoration} />
+        {/* The owner and moderators see a cover hidden from everyone else; say so. */}
+        <MatureRestrictedBadge
+          restricted={isOwner && !!article.coverImage && isRestrictedImage(article.coverImage)}
+          className="absolute bottom-2 left-2 z-20"
+        />
         <ImageGuard2 image={image} connectType="article" connectId={article.id}>
           {(safe) => (
             <>
@@ -590,7 +605,13 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
           >
             {article.ingestion === ArticleIngestionStatus.Blocked
               ? 'One or more images were blocked by our content policy, so the article stays hidden from the public until the issue is resolved.'
-              : 'Image scanning failed for one or more images (ingestion error), so the article stays hidden from the public until the scan succeeds or a moderator resolves it.'}
+              : ingestionErrorNotice({
+                  reason: scanStatus ? scanStatus.errorReason : undefined,
+                  retrying:
+                    (article.status === ArticleStatus.Published ||
+                      article.status === ArticleStatus.Processing) &&
+                    !article.metadata?.ingestionError?.exhaustedAt,
+                })}
           </AlertWithIcon>
         ) : null
       }

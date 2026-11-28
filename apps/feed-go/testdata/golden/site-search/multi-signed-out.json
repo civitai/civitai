@@ -1,0 +1,86 @@
+{
+  "name": "multi-signed-out",
+  "description": "A multi-search signed out on the mature host: every index held to the PG cap, each result shaped by its own index.",
+  "request": {
+    "path": "/api/search/multi-search",
+    "body": "{\"queries\":[{\"indexUid\":\"models_v9\",\"q\":\"cat\",\"limit\":2,\"attributesToRetrieve\":[\"id\",\"name\",\"images\",\"user\"]},{\"indexUid\":\"articles_v5\",\"q\":\"cat\",\"limit\":1},{\"indexUid\":\"users_v3\",\"q\":\"cat\",\"limit\":1},{\"indexUid\":\"collections_v3\",\"q\":\"cat\",\"limit\":1},{\"indexUid\":\"bounties_v3\",\"q\":\"cat\",\"limit\":1},{\"indexUid\":\"comics_v1\",\"q\":\"cat\",\"limit\":2},{\"indexUid\":\"tools_v2\",\"q\":\"cat\",\"limit\":1}]}",
+    "host": "red.example.test"
+  },
+  "config": {
+    "passthrough": false
+  },
+  "viewer": null,
+  "upstream": {
+    "status": 200,
+    "body": "{\"results\":[{\"indexUid\":\"models_v9\",\"hits\":[{\"id\":101,\"name\":\"Mature name\",\"images\":[{\"id\":1001,\"nsfwLevel\":1,\"url\":\"a\"},{\"id\":1002,\"nsfwLevel\":8,\"url\":\"b\"}],\"user\":{\"id\":201,\"username\":\"maker\",\"image\":\"img\",\"profilePicture\":{\"id\":301,\"nsfwLevel\":1,\"url\":\"p\"}},\"sfwName\":\"Safe name\"},{\"id\":102,\"name\":\"Plain\",\"images\":[],\"user\":{\"id\":202,\"username\":\"other\",\"image\":null,\"profilePicture\":{\"id\":302,\"nsfwLevel\":4,\"url\":\"q\"}},\"sfwName\":null}],\"query\":\"cat\",\"processingTimeMs\":0,\"limit\":2,\"offset\":0,\"estimatedTotalHits\":2},{\"indexUid\":\"articles_v5\",\"hits\":[{\"id\":401,\"title\":\"A\",\"nsfwLevel\":1,\"user\":{\"id\":203,\"username\":\"writer\",\"profilePicture\":{\"id\":303,\"nsfwLevel\":2}}}],\"query\":\"cat\",\"processingTimeMs\":0,\"limit\":1,\"offset\":0,\"estimatedTotalHits\":1},{\"indexUid\":\"users_v3\",\"hits\":[{\"id\":204,\"username\":\"artist\",\"image\":\"u\",\"profilePicture\":{\"id\":304,\"nsfwLevel\":1}}],\"query\":\"cat\",\"processingTimeMs\":0,\"limit\":1,\"offset\":0,\"estimatedTotalHits\":1},{\"indexUid\":\"collections_v3\",\"hits\":[{\"id\":501,\"name\":\"C\",\"srcs\":[\"s1\"],\"image\":{\"id\":601,\"nsfwLevel\":1,\"url\":\"c\"},\"images\":[{\"id\":602,\"nsfwLevel\":1},{\"id\":603,\"nsfwLevel\":16}],\"user\":{\"id\":205,\"username\":\"curator\",\"profilePicture\":null}}],\"query\":\"cat\",\"processingTimeMs\":0,\"limit\":1,\"offset\":0,\"estimatedTotalHits\":1},{\"indexUid\":\"bounties_v3\",\"hits\":[{\"id\":701,\"name\":\"B\",\"images\":[{\"id\":702,\"nsfwLevel\":1},{\"id\":703,\"nsfwLevel\":2}],\"user\":{\"id\":206,\"username\":\"poster\",\"image\":\"x\",\"profilePicture\":{\"id\":305,\"nsfwLevel\":1}}}],\"query\":\"cat\",\"processingTimeMs\":0,\"limit\":1,\"offset\":0,\"estimatedTotalHits\":1},{\"indexUid\":\"comics_v1\",\"hits\":[{\"id\":801,\"title\":\"K\",\"coverImageNsfwLevel\":1,\"coverImageUrl\":\"k1\",\"user\":{\"id\":207,\"username\":\"inker\"}},{\"id\":802,\"title\":\"L\",\"coverImageNsfwLevel\":0,\"coverImageUrl\":\"k2\"}],\"query\":\"cat\",\"processingTimeMs\":0,\"limit\":2,\"offset\":0,\"estimatedTotalHits\":2},{\"indexUid\":\"tools_v2\",\"hits\":[{\"id\":901,\"name\":\"T\",\"user\":{\"image\":\"t\"}}],\"query\":\"cat\",\"processingTimeMs\":0,\"limit\":1,\"offset\":0,\"estimatedTotalHits\":1}]}"
+  },
+  "expect": {
+    "call": {
+      "path": "/multi-search",
+      "body": {
+        "queries": [
+          {
+            "indexUid": "models_v9",
+            "q": "cat",
+            "limit": 2,
+            "attributesToRetrieve": [
+              "id",
+              "name",
+              "images",
+              "user",
+              "sfwName"
+            ],
+            "filter": [
+              "poi != true",
+              "availability != Private",
+              "nsfwLevel=1"
+            ]
+          },
+          {
+            "indexUid": "articles_v5",
+            "q": "cat",
+            "limit": 1,
+            "filter": [
+              "nsfwLevel=1"
+            ]
+          },
+          {
+            "indexUid": "users_v3",
+            "q": "cat",
+            "limit": 1
+          },
+          {
+            "indexUid": "collections_v3",
+            "q": "cat",
+            "limit": 1,
+            "filter": [
+              "nsfwLevel=1"
+            ]
+          },
+          {
+            "indexUid": "bounties_v3",
+            "q": "cat",
+            "limit": 1,
+            "filter": [
+              "nsfwLevel=1"
+            ]
+          },
+          {
+            "indexUid": "comics_v1",
+            "q": "cat",
+            "limit": 2,
+            "filter": [
+              "nsfwLevel IS NOT EMPTY AND nsfwLevel NOT IN [2, 4, 8, 16, 32]"
+            ]
+          },
+          {
+            "indexUid": "tools_v2",
+            "q": "cat",
+            "limit": 1
+          }
+        ]
+      }
+    },
+    "body": "{\"results\":[{\"indexUid\":\"models_v9\",\"hits\":[{\"id\":101,\"name\":\"Safe name\",\"images\":[{\"id\":1001,\"nsfwLevel\":1,\"url\":\"a\"}],\"user\":{\"id\":201,\"username\":\"maker\",\"image\":null,\"profilePicture\":{\"id\":301,\"nsfwLevel\":1,\"url\":\"p\"}}},{\"id\":102,\"name\":\"Plain\",\"images\":[],\"user\":{\"id\":202,\"username\":\"other\",\"image\":null,\"profilePicture\":null}}],\"query\":\"cat\",\"processingTimeMs\":0,\"limit\":2,\"offset\":0,\"estimatedTotalHits\":2},{\"indexUid\":\"articles_v5\",\"hits\":[{\"id\":401,\"title\":\"A\",\"nsfwLevel\":1,\"user\":{\"id\":203,\"username\":\"writer\",\"profilePicture\":null,\"image\":null}}],\"query\":\"cat\",\"processingTimeMs\":0,\"limit\":1,\"offset\":0,\"estimatedTotalHits\":1},{\"indexUid\":\"users_v3\",\"hits\":[{\"id\":204,\"username\":\"artist\",\"image\":null,\"profilePicture\":{\"id\":304,\"nsfwLevel\":1}}],\"query\":\"cat\",\"processingTimeMs\":0,\"limit\":1,\"offset\":0,\"estimatedTotalHits\":1},{\"indexUid\":\"collections_v3\",\"hits\":[{\"id\":501,\"name\":\"C\",\"image\":{\"id\":601,\"nsfwLevel\":1,\"url\":\"c\"},\"images\":[{\"id\":602,\"nsfwLevel\":1}],\"user\":{\"id\":205,\"username\":\"curator\",\"profilePicture\":null,\"image\":null}}],\"query\":\"cat\",\"processingTimeMs\":0,\"limit\":1,\"offset\":0,\"estimatedTotalHits\":1},{\"indexUid\":\"bounties_v3\",\"hits\":[{\"id\":701,\"name\":\"B\",\"images\":[{\"id\":702,\"nsfwLevel\":1}],\"user\":{\"id\":206,\"username\":\"poster\",\"image\":null,\"profilePicture\":{\"id\":305,\"nsfwLevel\":1}}}],\"query\":\"cat\",\"processingTimeMs\":0,\"limit\":1,\"offset\":0,\"estimatedTotalHits\":1},{\"indexUid\":\"comics_v1\",\"hits\":[{\"id\":801,\"title\":\"K\",\"coverImageNsfwLevel\":1,\"coverImageUrl\":\"k1\",\"user\":{\"id\":207,\"username\":\"inker\",\"image\":null,\"profilePicture\":null}},{\"id\":802,\"title\":\"L\",\"coverImageNsfwLevel\":0}],\"query\":\"cat\",\"processingTimeMs\":0,\"limit\":2,\"offset\":0,\"estimatedTotalHits\":2},{\"indexUid\":\"tools_v2\",\"hits\":[{\"id\":901,\"name\":\"T\",\"user\":{\"image\":\"t\"}}],\"query\":\"cat\",\"processingTimeMs\":0,\"limit\":1,\"offset\":0,\"estimatedTotalHits\":1}]}"
+  }
+}

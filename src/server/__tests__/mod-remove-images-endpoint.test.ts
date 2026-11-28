@@ -1,15 +1,25 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { Prisma } from '@prisma/client';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { likenessRequestMarkFailedCounter } from '~/server/prom/likeness-request.metrics';
 
-const { handleBlockImages, trackImages, holdRemovals } = vi.hoisted(() => ({
-  handleBlockImages: vi.fn(),
-  trackImages: vi.fn(),
-  holdRemovals: vi.fn(),
-}));
+const { handleBlockImages, trackImages, holdRemovals, getOpenImageReportIdsByImage } = vi.hoisted(
+  () => ({
+    getOpenImageReportIdsByImage: vi.fn(),
+    handleBlockImages: vi.fn(),
+    trackImages: vi.fn(),
+    holdRemovals: vi.fn(),
+  })
+);
 
 vi.mock('~/server/utils/endpoint-helpers', () => ({
   WebhookEndpoint: (handler: unknown) => handler,
 }));
-vi.mock('~/server/services/image.service', () => ({ handleBlockImages }));
+vi.mock('~/server/services/image.service', () => ({
+  handleBlockImages,
+  getOpenImageReportIdsByImage,
+}));
 vi.mock('~/server/services/image-removal-hold.service', () => ({
   holdRemovals,
   heldRemovalSummary: (held: { imageId: number }[]) => held.map(({ imageId }) => ({ imageId })),
@@ -29,7 +39,7 @@ function mockRes() {
 }
 
 const call = async (body: unknown) => {
-  const { default: handler } = await import('~/pages/api/mod/remove-images');
+  const { default: handler } = await import('~/server/api-routes/mod/remove-images');
   const res = mockRes();
   await handler({ method: 'POST', body } as never, res as never);
   return res;
@@ -39,6 +49,8 @@ beforeEach(() => {
   handleBlockImages.mockReset();
   trackImages.mockReset();
   holdRemovals.mockReset();
+  getOpenImageReportIdsByImage.mockReset();
+  getOpenImageReportIdsByImage.mockResolvedValue(new Map());
   holdRemovals.mockImplementation(async (requests: { imageId: number }[]) => ({
     held: [],
     proceed: requests.map((r) => r.imageId),
@@ -101,14 +113,27 @@ describe('/api/mod/remove-images re-removal hold', () => {
 
     expect(holdRemovals).toHaveBeenCalledWith(
       [
-        { imageId: 1, violationType: 'gore', violationDetails: undefined },
-        { imageId: 2, violationType: 'gore', violationDetails: undefined },
+        { imageId: 1, violationType: 'gore', violationDetails: undefined, reportIds: [] },
+        { imageId: 2, violationType: 'gore', violationDetails: undefined, reportIds: [] },
       ],
       9,
       'api.removeImages'
     );
     expect(handleBlockImages).toHaveBeenCalledWith({ ids: [1], userId: undefined, moderatorId: 9 });
     expect(res.json).toHaveBeenCalledWith({ images: 1, held: [{ imageId: 2 }] });
+  });
+
+  it("carries each image's open TOS reports on the hold, so a confirm actions them", async () => {
+    getOpenImageReportIdsByImage.mockResolvedValue(new Map([[1, [70, 71]]]));
+    holdRemovals.mockResolvedValue({ held: [{ imageId: 1 }, { imageId: 2 }], proceed: [] });
+
+    await call({ imageIds: [1, 2], moderatorId: 9, violationType: 'gore' });
+
+    expect(getOpenImageReportIdsByImage).toHaveBeenCalledWith([1, 2], 'TOSViolation');
+    expect(holdRemovals.mock.calls[0][0]).toEqual([
+      { imageId: 1, violationType: 'gore', violationDetails: undefined, reportIds: [70, 71] },
+      { imageId: 2, violationType: 'gore', violationDetails: undefined, reportIds: [] },
+    ]);
   });
 
   it('removes nothing when every image is held', async () => {
@@ -137,6 +162,84 @@ describe('/api/mod/remove-images re-removal hold', () => {
     await call({ userId: 5, moderatorId: 9 });
 
     expect(holdRemovals).not.toHaveBeenCalled();
+    expect(getOpenImageReportIdsByImage).not.toHaveBeenCalled();
     expect(handleBlockImages).toHaveBeenCalledTimes(2);
+  });
+});
+
+// The appeal-decision-records sweep deletes the appeal training copies of an image by this row.
+describe('/api/mod/remove-images likeness requests', () => {
+  beforeEach(() => vi.mocked(dbMock.dbWrite.$executeRaw).mockClear());
+
+  const likenessMarks = () =>
+    vi
+      .mocked(dbMock.dbWrite.$executeRaw)
+      .mock.calls.map(([strings, ...values]) =>
+        Prisma.sql(strings as unknown as readonly string[], ...values)
+      )
+      .filter(
+        (sql) => sql.text.includes('"ModActivity"') && sql.values.includes('likenessRequest')
+      );
+
+  it('marks each removed image, and not one held for a second moderator', async () => {
+    holdRemovals.mockResolvedValue({ held: [{ imageId: 12 }], proceed: [11, 13] });
+    handleBlockImages.mockResolvedValue([
+      { id: 11, userId: 3, nsfwLevel: 1 },
+      { id: 13, userId: 3, nsfwLevel: 1 },
+    ]);
+
+    await call({ imageIds: [11, 12, 13], moderatorId: 9, violationType: 'likenessRequest' });
+
+    const [mark, ...more] = likenessMarks();
+    expect(more).toEqual([]);
+    expect(mark.values).toEqual(expect.arrayContaining([9, 'image', [11, 13]]));
+  });
+
+  const failedMarks = async () =>
+    (await likenessRequestMarkFailedCounter.get()).values.reduce((n, v) => n + v.value, 0);
+
+  it('retries a failed mark, and the retry lands the row', async () => {
+    handleBlockImages.mockResolvedValue([{ id: 11, userId: 3, nsfwLevel: 1 }]);
+    vi.mocked(dbMock.dbWrite.$executeRaw).mockRejectedValueOnce(new Error('db down'));
+    const failedBefore = await failedMarks();
+
+    const res = await call({ imageIds: [11], moderatorId: 9, violationType: 'likenessRequest' });
+
+    expect(likenessMarks()).toHaveLength(2);
+    expect(await vi.mocked(dbMock.dbWrite.$executeRaw).mock.results[1].value).toBe(0);
+    expect(await failedMarks()).toBe(failedBefore);
+    expect(trackImages).toHaveBeenCalledTimes(1);
+    expect(res.status).toHaveBeenCalledWith(200);
+  });
+
+  it('counts a mark that fails every try, and still sends the events with no id logged', async () => {
+    handleBlockImages.mockResolvedValue([{ id: 4711, userId: 3, nsfwLevel: 1 }]);
+    vi.mocked(dbMock.dbWrite.$executeRaw).mockRejectedValue(new Error('db down'));
+    vi.mocked(loggingMock.logToAxiom).mockClear();
+    const failedBefore = await failedMarks();
+
+    try {
+      const res = await call({
+        imageIds: [4711],
+        moderatorId: 9,
+        violationType: 'likenessRequest',
+      });
+      expect(res.status).toHaveBeenCalledWith(200);
+    } finally {
+      vi.mocked(dbMock.dbWrite.$executeRaw).mockImplementation((async () => 0) as never);
+    }
+
+    expect(likenessMarks()).toHaveLength(3);
+    expect(await failedMarks()).toBe(failedBefore + 1);
+    expect(trackImages).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(vi.mocked(loggingMock.logToAxiom).mock.calls)).not.toContain('4711');
+  });
+
+  it('marks nothing for any other reason', async () => {
+    handleBlockImages.mockResolvedValue([{ id: 11, userId: 3, nsfwLevel: 1 }]);
+
+    await call({ imageIds: [11], moderatorId: 9, violationType: 'realPerson' });
+
+    expect(likenessMarks()).toEqual([]);
   });
 });

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type * as OgImageHelpers from '~/server/utils/og-image-helpers';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { answerShowcaseQueries } from '~/__tests__/mocks/showcase-queries';
 
 const { fetchImageAsDataUri } = vi.hoisted(() => ({ fetchImageAsDataUri: vi.fn() }));
 vi.mock('~/server/utils/og-image-helpers', async (importOriginal) => ({
@@ -21,7 +22,21 @@ type Row = {
   url: string;
   post: { userId: number; availability: string };
   nsfwLevel?: number;
+  acceptableMinor?: boolean;
+  minor?: boolean;
 };
+
+type MinorRule = { OR: Array<{ minor?: boolean; nsfwLevel?: { gt: number; lt: number } }> };
+// The minor content rule as the card queries pass it (`minorContentNotRestrictedWhere`).
+const passesMinorRule = (r: Row, and: MinorRule[] = []) =>
+  and.every(({ OR }) =>
+    OR.some((w) =>
+      w.minor !== undefined
+        ? (r.minor ?? false) === w.minor
+        : (r.nsfwLevel ?? 1) > (w.nsfwLevel?.gt ?? -Infinity) &&
+          (r.nsfwLevel ?? 1) < (w.nsfwLevel?.lt ?? Infinity)
+    )
+  );
 
 // Evaluates the parts of the query that decide WHICH image is picked: the mocked client
 // ignores `where` and `orderBy`, so without this any query would return the first row.
@@ -32,11 +47,18 @@ function fakeFindFirst(rows: Row[]) {
       ? orderBy
       : [orderBy];
     const hit = rows
+      .filter((r) => where.id === undefined || r.id === where.id)
       .filter((r) => p.userId === undefined || r.post.userId === p.userId)
       .filter((r) => p.availability === undefined || r.post.availability === p.availability)
       .filter(
         (r) => where.nsfwLevel?.in === undefined || where.nsfwLevel.in.includes(r.nsfwLevel ?? 1)
       )
+      .filter(
+        (r) =>
+          where.acceptableMinor === undefined ||
+          (r.acceptableMinor ?? false) === where.acceptableMinor
+      )
+      .filter((r) => passesMinorRule(r, where.AND))
       .sort((a, b) => {
         for (const key of keys) {
           const [field, dir] = Object.entries(key)[0] as [keyof Row, 'asc' | 'desc'];
@@ -51,7 +73,7 @@ function fakeFindFirst(rows: Row[]) {
   };
 }
 
-const render = async () => {
+const render = async (type = 'model') => {
   const res = {
     status: vi.fn(() => res),
     setHeader: vi.fn(() => res),
@@ -60,7 +82,7 @@ const render = async () => {
     end: vi.fn(() => res),
   } as unknown as NextApiResponse;
   await handler(
-    { method: 'GET', query: { type: 'model', id: '1' }, headers: {} } as unknown as NextApiRequest,
+    { method: 'GET', query: { type, id: '1' }, headers: {} } as unknown as NextApiRequest,
     res
   );
 };
@@ -249,5 +271,90 @@ describe('/api/og?type=model on a minor or SFW-only model', () => {
     mockModel(OWNER_ID, { gallerySettings: { level: 1 } });
     await render();
     expect(pickedUrl()).toBe('owner-pg13');
+  });
+
+  describe("with someone else's image featured as the cover", () => {
+    const COVER = 90;
+    // Featured in the model's civitai.red showcase, rated PG-13.
+    beforeEach(() => {
+      answerShowcaseQueries(dbMock.dbRead.$queryRaw, {
+        rows: [
+          { modelVersionId: 500, modelId: 1, imageId: COVER, site: 'red', source: 'Community' },
+        ],
+        community: [
+          { id: COVER, modelVersionId: 500, site: 'red', nsfwLevel: 2, url: 'other-community' },
+        ],
+      });
+    });
+
+    it('skips it when it is above the gallery level', async () => {
+      mockModel(OWNER_ID, { minor: true, gallerySettings: { level: 1 }, coverImageId: COVER });
+      await render();
+      expect(pickedUrl()).toBe('owner-pg');
+    });
+
+    it('uses it on an unflagged model', async () => {
+      mockModel(OWNER_ID, { coverImageId: COVER });
+      await render();
+      expect(pickedUrl()).toBe('other-community');
+    });
+  });
+});
+
+describe('/api/og image picks for a link preview', () => {
+  const ownImage = (id: number, url: string, over: Partial<Row> = {}): Row => ({
+    id,
+    postId: 5,
+    index: id,
+    url,
+    post: { userId: OWNER_ID, availability: 'Public' },
+    ...over,
+  });
+
+  it.each([
+    ['acceptable-minor', { acceptableMinor: true }],
+    ['minor-flagged and rated past the minor content limit', { minor: true, nsfwLevel: 4 }],
+  ])(
+    'pass over an earlier %s image to the next one, for the cover and showcase',
+    async (_, over) => {
+      mockModel(OWNER_ID, { coverImageId: 1 });
+      dbMock.dbRead.image.findFirst.mockImplementation(
+        fakeFindFirst([ownImage(1, 'owner-flagged', over), ownImage(2, 'owner-clean')])
+      );
+      await render();
+      expect(dbMock.dbRead.image.findFirst).toHaveBeenCalledTimes(2);
+      expect(pickedUrl()).toBe('owner-clean');
+    }
+  );
+
+  it("pass over a post's earlier acceptable-minor image to the next one", async () => {
+    dbMock.dbRead.post.findFirst.mockResolvedValue({
+      title: 'P',
+      detail: '',
+      user: { username: 'u' },
+      _count: { images: 2 },
+    } as never);
+    dbMock.dbRead.image.findFirst.mockImplementation(
+      fakeFindFirst([
+        ownImage(1, 'owner-flagged', { acceptableMinor: true }),
+        ownImage(2, 'owner-clean'),
+      ])
+    );
+    await render('post');
+    expect(pickedUrl()).toBe('owner-clean');
+  });
+
+  it("show a post's first image when it is not flagged (control)", async () => {
+    dbMock.dbRead.post.findFirst.mockResolvedValue({
+      title: 'P',
+      detail: '',
+      user: { username: 'u' },
+      _count: { images: 2 },
+    } as never);
+    dbMock.dbRead.image.findFirst.mockImplementation(
+      fakeFindFirst([ownImage(1, 'owner-first'), ownImage(2, 'owner-second')])
+    );
+    await render('post');
+    expect(pickedUrl()).toBe('owner-first');
   });
 });

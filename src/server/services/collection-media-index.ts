@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { chunk } from 'lodash-es';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { COVER_INDEX_NAME, coverIndexExists } from '~/server/services/collection-cover-index';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { collectionsSearchIndex } from '~/server/search-index/collections.search-index';
 
@@ -142,45 +143,7 @@ function logFailure(name: string, source: string, message: string, error: unknow
   });
 }
 
-export const COVER_INDEX_NAME = 'Collection_imageId_idx';
-
-/**
- * Is the cover leg's index present AND USABLE?
- *
- * 🔴 `pg_class` alone is NOT sufficient, and getting this wrong fails OPEN. A
- * `CREATE INDEX CONCURRENTLY` row appears in `pg_class` from the START of the build
- * and stays there permanently if the build fails — so a name-only check returns true
- * throughout a multi-minute build of a 2.8 GB heap, and forever after a failure. That
- * is precisely the window this gate exists to cover: the deploy-then-migrate ordering
- * would switch the cover leg on while the index is still being built, and every image
- * delete would pay the sequential scan concurrently with the build, on the primary,
- * up to five at a time (`deleteImages` runs `Limiter({ batchSize: 100 })`, whose
- * default concurrency is 5). `indisvalid AND indisready` is what makes the gate mean
- * "usable by the planner" rather than "someone started building this once".
- *
- * Schema-qualified because `relname` is not unique across schemas and this database
- * has a second one (`fk_remediation_backup`).
- *
- * A catalog lookup, not a cached flag: two index scans, cost 5.01 — far less than the
- * seven-leg query it guards — and re-reading it means the leg starts working the
- * moment the index becomes valid, with no deploy or restart.
- *
- * Once the index is valid in every environment, this gate and its branch can go.
- */
-async function coverIndexExists() {
-  const rows = await dbWrite.$queryRaw<{ present: boolean }[]>`
-    SELECT EXISTS (
-      SELECT 1 FROM pg_class c
-      JOIN pg_index x ON x.indexrelid = c.oid
-      WHERE c.relname = ${COVER_INDEX_NAME}
-        AND c.relkind = 'i'
-        AND c.relnamespace = 'public'::regnamespace
-        AND x.indisvalid
-        AND x.indisready
-    ) AS "present"
-  `;
-  return rows[0]?.present === true;
-}
+export { COVER_INDEX_NAME };
 
 /**
  * Collections whose document shows any of these images, by all seven routes.
@@ -518,9 +481,7 @@ export async function enqueueCollectionRebuild({
 /**
  * Collections whose document is affected by hard-deleting a post.
  *
- * Not just the post's own item row. `deletePost` raw-`DELETE`s the post's images inside
- * its transaction instead of calling `deleteImageById`, so the image-side enqueue never
- * fires for them; images it declines to delete survive with `postId` nulled
+ * Not just the post's own item row. Images `deletePost` declines to delete survive with `postId` nulled
  * (`Image.postId` is `ON DELETE SET NULL`), dropping them from the `postItemImage` and
  * `modelItemImage` CTEs.
  *
@@ -621,9 +582,9 @@ export async function getCollectionIdsForPostCascade({
  * involve no `CollectionItem` change, so the trigger cannot see them.)
  *
  * Only the one leg: the article's cover and content images are removed through
- * `deleteImageById`, which resolves and enqueues on its own. What nothing observes is
+ * `deleteImages`, which resolves and enqueues on its own. What nothing observes is
  * `CollectionItem.articleId` cascading when the Article row goes — and it goes FIRST,
- * so by the time `deleteImageById` runs, the image path's article leg
+ * so by the time `deleteImages` runs, the image path's article leg
  * (`WHERE a."coverId" IN (…)`) can no longer match. Resolve before the transaction.
  */
 export async function getCollectionIdsForArticle({

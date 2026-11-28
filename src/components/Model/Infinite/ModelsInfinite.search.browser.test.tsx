@@ -34,7 +34,8 @@ vi.mock('~/components/Model/model.utils', async (importOriginal) => ({
   useModelFilters: () => ({}),
   useQueryModels: (_filters: unknown, options?: { enabled?: boolean }) => {
     state.feedEnabled.push(options?.enabled);
-    return result([1, 2, 3]);
+    // An earlier page with more to load, as a disabled query keeps it.
+    return result([1, 2, 3], { hasNextPage: true });
   },
   useSemanticModelFeed: (_filters: unknown, query: string | undefined) => {
     state.searchQueries.push(query);
@@ -45,9 +46,8 @@ vi.mock('~/components/Model/model.utils', async (importOriginal) => ({
   },
 }));
 vi.mock('~/components/Search/useSearchRefusal', () => ({
-  useSearchRefusal: () => ({ refusal: state.refusal, profanityMatches: [] }),
+  useSearchRefusal: () => ({ refusal: state.refusal }),
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 vi.mock('~/hooks/useEngagedModelMembership', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   useEngagedModelsPrefetch: () => undefined,
@@ -96,12 +96,13 @@ describe('ModelsInfinite with a search', () => {
     expect(state.feedEnabled.at(-1)).toBe(false);
   });
 
-  test('falls back to the keyword feed with a banner when the search fails', async () => {
+  // The keyword feed has no server profanity check, so it must not show or page the query.
+  test('shows the banner over no results when the search fails, never the feed', async () => {
     state.searchFails = true;
     render();
-    await expect.element(page.getByText('model 1', { exact: true })).toBeInTheDocument();
     await expect.element(page.getByText('Retry search')).toBeInTheDocument();
-    expect(state.feedEnabled.at(-1)).toBe(true);
+    expect(page.getByText('model 1', { exact: true }).query()).toBeNull();
+    expect(state.feedEnabled.at(-1)).toBe(false);
   });
 
   test("keeps today's keyword feed without the flag, or off the models page", async () => {

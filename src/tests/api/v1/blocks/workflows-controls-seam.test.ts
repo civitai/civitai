@@ -482,7 +482,7 @@ describe('assertBlockWorkflowMintedForViewer reaches the wire', () => {
     // to the SAME token the middleware admitted — a stripped-wrong or hardcoded
     // value would still reach a mocked verifier, and every other assertion here
     // would stay green.
-    expect(mockVerifyBlockToken).toHaveBeenCalledWith('tok_seam');
+    expect(mockVerifyBlockToken).toHaveBeenCalledWith('tok_seam', { admitRunner: false });
   });
 });
 
@@ -537,7 +537,17 @@ describe('the rate-limit postures reach the wire unchanged', () => {
     const out = await call(pollHandler, { workflowId: OWN_ID }, '/api/v1/blocks/workflows/poll');
     expect(out.status).toBe(200);
     expect(out.json).toStrictEqual({
-      snapshot: { workflowId: OWN_ID, status: 'processing', throttled: true },
+      snapshot: {
+        workflowId: OWN_ID,
+        status: 'processing',
+        throttled: true,
+        // The limiter stub names no delay, so the meta carries the 1 s floor.
+        rateLimit: expect.objectContaining({
+          retryAfterSeconds: 1,
+          id: 'apps.poll',
+          kind: 'abuse',
+        }),
+      },
     });
     expect(mockGetWorkflow).not.toHaveBeenCalled();
   });
@@ -551,7 +561,17 @@ describe('the rate-limit postures reach the wire unchanged', () => {
     );
     expect(out.status).toBe(200);
     expect(out.json).toStrictEqual({
-      snapshot: { workflowId: OWN_ID, status: 'processing', throttled: true },
+      snapshot: {
+        workflowId: OWN_ID,
+        status: 'processing',
+        throttled: true,
+        // The limiter stub names no delay, so the meta carries the 1 s floor.
+        rateLimit: expect.objectContaining({
+          retryAfterSeconds: 1,
+          id: 'apps.catalog',
+          kind: 'abuse',
+        }),
+      },
     });
     expect(mockCancelWorkflow).not.toHaveBeenCalled();
   });

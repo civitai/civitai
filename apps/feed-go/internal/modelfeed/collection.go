@@ -4,12 +4,8 @@ import (
 	"context"
 )
 
-// collectionPermissionSQL is the part of getUserCollectionPermissionsByIds
-// (src/server/services/collection.service.ts) that decides `read` for one collection: its read
-// configuration, its owner and, for a signed-in viewer, their contributor row. Node also joins the
-// viewer's accepted invite, which only feeds `isCollaborator`; the contributor row is unique on
-// (userId, collectionId), so leaving the invite out cannot change the row's read inputs. No
-// contributor row reads as no permissions.
+// The read-deciding part of getUserCollectionPermissionsByIds (collection.service.ts). Node's
+// accepted-invite join is omitted: it only feeds isCollaborator.
 const (
 	collectionPermissionSQL = `SELECT c.read::text, c."userId", '{}'::text[]
     FROM "Collection" c
@@ -57,9 +53,8 @@ func collectionReadable(ctx context.Context, db Querier, collectionID, viewerID 
 	return readGranted(read, ownerID, perms, viewerID), nil
 }
 
-// readGranted is the `read` flag of getUserCollectionPermissionsByIds for one collection row, with no
-// moderator branch. perms is the viewer's contributor permissions (empty: no contributor row, which
-// grants nothing, as a row without VIEW grants no read).
+// readGranted is the `read` flag of getUserCollectionPermissionsByIds for one collection row. perms
+// is empty when the viewer has no contributor row.
 func readGranted(read string, ownerID int, perms []string, viewerID int) bool {
 	if read == "Public" || read == "Unlisted" {
 		return true

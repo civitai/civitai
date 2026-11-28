@@ -1,8 +1,12 @@
+import { deleteImagesIn } from '~/server/services/__tests__/deal-file-copy.fake';
+import { constants } from '~/server/common/constants';
 import { readFileSync } from 'fs';
+import { SERVICE_PREVIEW_OVER_LEVEL_REASON } from '~/shared/constants/creator-services.constants';
 import { join } from 'path';
 import { PGlite } from '@electric-sql/pglite';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SERVICES_TERMS_VERSION } from '~/shared/constants/creator-service-terms.constants';
+import type * as FliptClient from '~/server/flipt/client';
+import { BUYER_DISCLOSURE_VERSION } from '~/shared/constants/creator-service-terms.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
@@ -11,6 +15,9 @@ import type * as BuzzService from '~/server/services/buzz.service';
 import type * as ChatService from '~/server/services/chat.service';
 import type * as Blocklist from '~/server/services/blocklist.service';
 import type * as CreatorShop from '~/server/services/creator-shop.service';
+import type * as ImageService from '~/server/services/image.service';
+import type * as VideoPreview from '~/server/services/creator-service-deal-video-preview';
+import { childSafetyCaseTablesSql } from '~/server/services/__tests__/child-safety-case-tables';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -31,6 +38,13 @@ const buzz = vi.hoisted(() => ({
   refundTransaction: vi.fn(),
 }));
 // The deal flows notify buyer and seller; accept the call without asserting on it.
+const flipt = vi.hoisted(() => ({ retentionOn: true }));
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof FliptClient>()),
+  isFlipt: vi.fn(
+    async (flag: string) => flag === 'service-deal-file-retention' && flipt.retentionOn
+  ),
+}));
 vi.mock('~/server/notifications/client', () => ({
   notifications: { createNotification: vi.fn(async () => undefined) },
 }));
@@ -60,6 +74,7 @@ const s3 = vi.hoisted(() => ({
   getGetUrlByKey: vi.fn(),
   uploadImageBufferToStore: vi.fn(),
   send: vi.fn(),
+  imageStoreSend: vi.fn(),
 }));
 vi.mock('~/utils/s3-utils', () => ({
   getBucket: async () => 'bucket',
@@ -69,12 +84,29 @@ vi.mock('~/utils/s3-utils', () => ({
   deleteObject: s3.deleteObject,
   getGetUrlByKey: s3.getGetUrlByKey,
   uploadImageBufferToStore: s3.uploadImageBufferToStore,
+  getImageUploadBackend: async () => ({
+    s3: { send: s3.imageStoreSend },
+    bucket: 'image-store',
+    backend: 'b2',
+  }),
+}));
+vi.mock('@civitai/storage/s3-purge-versions', () => ({
+  purgeObjectVersions: async ({ bucket, key }: { bucket: string; key: string }) => {
+    await s3.deleteObject(bucket, key);
+    return { versionsDeleted: 1, remaining: 0 };
+  },
 }));
 
-const images = vi.hoisted(() => ({ createImage: vi.fn(), deleteImageById: vi.fn() }));
+const video = vi.hoisted(() => ({ build: vi.fn() }));
+vi.mock('~/server/services/creator-service-deal-video-preview', async (importOriginal) => ({
+  ...(await importOriginal<typeof VideoPreview>()),
+  buildWatermarkedVideoPreview: video.build,
+}));
+
+const images = vi.hoisted(() => ({ createImage: vi.fn(), deleteImages: vi.fn() }));
 vi.mock('~/server/services/image.service', () => ({
   createImage: images.createImage,
-  deleteImageById: images.deleteImageById,
+  deleteImages: images.deleteImages,
 }));
 
 const preview = vi.hoisted(() => ({ build: vi.fn(), scanCopy: vi.fn() }));
@@ -116,6 +148,14 @@ const MIGRATIONS = [
   '20261128150000_creator_service_final_malware_scan',
   '20261224150000_service_deal_file_removed_at',
   '20270106120000_service_offering_content_scan',
+  '20271118230000_service_deal_file_purge',
+  '20271119070000_service_deal_file_scanned_etag',
+  '20271120030000_service_license_presets',
+  '20271120100000_service_deal_reviewed_happy',
+  '20271120100100_service_deal_reviews',
+  '20271125130000_service_deal_buyer_disclosure',
+  '20271128130000_service_request_form',
+  '20271128140100_service_deal_file_entry_copy_delete_started_at',
 ].map((name) =>
   join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`)
 );
@@ -165,7 +205,8 @@ async function accepted(previewKind = 'Image') {
     expectedDeliveryDays: 3,
     buyerId: BUYER,
     requestText: 'please',
-    disclosureVersion: SERVICES_TERMS_VERSION,
+    disclosureVersion: BUYER_DISCLOSURE_VERSION,
+    disclosureReviewEnabled: false,
     buzzType: 'yellow',
     servableLevels: 31,
     consentLevels: 1,
@@ -212,25 +253,77 @@ const readyPreview = async (dealId: number) => {
 };
 
 const list = (dealId: number, userId: number, isModerator = false) =>
-  files.listServiceDealFiles({ dealId, userId, isModerator });
+  files.listServiceDealFiles({ dealId, userId, isModerator, servableLevels: 31 });
 
 const download = (fileId: number, userId: number, isModerator = false) =>
-  files.resolveServiceDealFileDownload({ fileId, userId, isModerator });
+  files.resolveServiceDealFileDownload({ servableLevels: 31, fileId, userId, isModerator });
 
 beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
-    CREATE TABLE "User" (id int PRIMARY KEY, username text, "bannedAt" timestamp, "deletedAt" timestamp, muted boolean NOT NULL DEFAULT false);
+    CREATE TABLE "User" (id int PRIMARY KEY, username text, "bannedAt" timestamp, "deletedAt" timestamp, muted boolean NOT NULL DEFAULT false, meta jsonb);
+    CREATE TABLE "UserReport" ("userId" int NOT NULL, "reportId" int NOT NULL);
     CREATE TYPE "UserEngagementType" AS ENUM ('Hide', 'Follow', 'Block');
     CREATE TABLE "UserEngagement" ("userId" int, "targetUserId" int, type "UserEngagementType");
-    CREATE TABLE "Report" (id serial PRIMARY KEY);
-    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int);
+    CREATE TYPE "ReportStatus" AS ENUM ('Pending', 'Processing', 'Actioned', 'Unactioned');
+    CREATE TABLE "Report" (id serial PRIMARY KEY, status "ReportStatus" NOT NULL DEFAULT 'Pending',
+      "createdAt" timestamp NOT NULL DEFAULT now(), "statusSetAt" timestamp);
+    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb NOT NULL DEFAULT '{}',
+      "reportSentAt" timestamp, "archivedAt" timestamp);
+    CREATE TABLE "Appeal" (id serial PRIMARY KEY, "userId" int NOT NULL, status text NOT NULL);
+    CREATE TABLE "ModActivity" (id serial PRIMARY KEY, "entityType" text, "entityId" int, activity text NOT NULL, "createdAt" timestamp(3) NOT NULL DEFAULT now());
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
     CREATE TABLE "Image" (id serial PRIMARY KEY, url text, ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Pending',
       "needsReview" text, poi boolean NOT NULL DEFAULT false, minor boolean NOT NULL DEFAULT false, "nsfwLevel" int NOT NULL DEFAULT 1,
       "tosViolation" boolean NOT NULL DEFAULT false);
   `);
   for (const migration of MIGRATIONS) await holder.db.exec(readFileSync(migration, 'utf8'));
+  await holder.db.exec(childSafetyCaseTablesSql);
+  // The deal holds a party's delete reads.
+  await holder.db.exec(`
+    ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS "userId" int, ADD COLUMN IF NOT EXISTS "blockedFor" text;
+    ALTER TABLE "CsamReport" ADD COLUMN IF NOT EXISTS images jsonb NOT NULL DEFAULT '[]';`);
+  // What the image page's by-id read (getImage) touches beyond the deal tables.
+  await holder.db.exec(`
+    ALTER TABLE "User" ADD COLUMN IF NOT EXISTS image text, ADD COLUMN IF NOT EXISTS "profilePictureId" int,
+      ADD COLUMN IF NOT EXISTS settings jsonb DEFAULT '{}';
+    ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS "postId" int, ADD COLUMN IF NOT EXISTS name text,
+      ADD COLUMN IF NOT EXISTS height int, ADD COLUMN IF NOT EXISTS width int, ADD COLUMN IF NOT EXISTS index int,
+      ADD COLUMN IF NOT EXISTS hash text, ADD COLUMN IF NOT EXISTS "hideMeta" boolean DEFAULT false,
+      ADD COLUMN IF NOT EXISTS "createdAt" timestamp DEFAULT now(), ADD COLUMN IF NOT EXISTS "mimeType" text,
+      ADD COLUMN IF NOT EXISTS "scannedAt" timestamp, ADD COLUMN IF NOT EXISTS type text,
+      ADD COLUMN IF NOT EXISTS metadata jsonb NOT NULL DEFAULT '{}', ADD COLUMN IF NOT EXISTS meta jsonb,
+      ADD COLUMN IF NOT EXISTS "acceptableMinor" boolean NOT NULL DEFAULT false,
+      ADD COLUMN IF NOT EXISTS "firstVisibleAt" timestamp,
+      ADD COLUMN IF NOT EXISTS "modelRestricted" boolean NOT NULL DEFAULT false,
+      ADD COLUMN IF NOT EXISTS "nsfwLevelLocked" boolean NOT NULL DEFAULT false,
+      ADD COLUMN IF NOT EXISTS "scanJobs" jsonb;
+    CREATE TABLE IF NOT EXISTS "ImageReaction" ("imageId" int, "userId" int, reaction text);
+    CREATE TABLE IF NOT EXISTS "Post" (id int PRIMARY KEY, "userId" int NOT NULL, "publishedAt" timestamp,
+      availability text DEFAULT 'Public', "collectionId" int, "modelVersionId" int, "model3dId" int);
+    CREATE TABLE IF NOT EXISTS "Model3D" (id int PRIMARY KEY, "userId" int, status text, "deletedAt" timestamp);
+    CREATE TABLE IF NOT EXISTS "Model" (id int PRIMARY KEY, mode text, minor boolean, "sfwOnly" boolean, "gallerySettings" jsonb);
+    CREATE TABLE IF NOT EXISTS "ModelVersion" (id int PRIMARY KEY, "modelId" int NOT NULL);
+    CREATE TABLE IF NOT EXISTS "Article" (id int PRIMARY KEY, "coverId" int, status text, "publishedAt" timestamp,
+      ingestion text, "bannerId" int, availability text DEFAULT 'Public', "userId" int);
+    CREATE TYPE "CollectionContributorPermission" AS ENUM ('VIEW', 'ADD', 'ADD_REVIEW', 'MANAGE');
+    CREATE TABLE IF NOT EXISTS "CollectionContributor" ("collectionId" int, "userId" int,
+      permissions "CollectionContributorPermission"[]);
+    CREATE TABLE IF NOT EXISTS "Bounty" (id int PRIMARY KEY, "userId" int, availability text DEFAULT 'Public');
+    CREATE TABLE IF NOT EXISTS "BountyEntry" (id int PRIMARY KEY, "bountyId" int NOT NULL, "userId" int);
+    CREATE TABLE IF NOT EXISTS "Crucible" (id int PRIMARY KEY, status text, "endAt" timestamp, "nsfwLevel" int);
+    CREATE TABLE IF NOT EXISTS "CrucibleEntry" (id int PRIMARY KEY, "crucibleId" int, "userId" int, "imageId" int);
+    CREATE TABLE IF NOT EXISTS "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);`);
+  const triggers = readFileSync(
+    join(
+      process.cwd(),
+      'packages/civitai-db-schema/prisma/programmability/image_post_triggers.sql'
+    ),
+    'utf8'
+  );
+  await holder.db.exec(
+    triggers.match(/CREATE OR REPLACE FUNCTION image_sort_at\([\s\S]*?\$\$;/)![0]
+  );
 });
 
 beforeEach(async () => {
@@ -244,13 +337,21 @@ beforeEach(async () => {
   shop.assertCreatorShopVisible.mockResolvedValue([]);
   buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([]);
   await holder.db.exec(`
-    TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering", "UserEngagement", "Image" RESTART IDENTITY;
+    TRUNCATE "ServiceDealReviewImage", "ServiceDealReview", "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering", "UserEngagement", "Image" RESTART IDENTITY;
     DELETE FROM "User";
     INSERT INTO "User" (id) VALUES (${SELLER}), (${BUYER}), (${STRANGER}), (${MOD});
     INSERT INTO "ServiceOffering" ("sellerId", title, description, price, "deliveryDays", "revisionsIncluded", "previewKind", status, ingestion, "updatedAt")
       VALUES (${SELLER}, 'Cat portraits', 'desc', 500, 3, 1, 'Image', 'Active', 'Scanned', now());
   `);
 });
+
+/** The purge, once the download-link lifetime it waits out has passed. */
+const agedPurge = async () => {
+  await holder.db.query(
+    `UPDATE "ServiceDealFile" SET "removedAt" = "removedAt" - interval '10 minutes' WHERE "removedAt" IS NOT NULL`
+  );
+  return files.purgeRemovedFiles();
+};
 
 describe('requesting an upload', () => {
   it('lets the seller of a deal being worked mint a key it chose itself', async () => {
@@ -294,7 +395,8 @@ describe('requesting an upload', () => {
           expectedDeliveryDays: 3,
           buyerId: BUYER,
           requestText: 'please',
-          disclosureVersion: SERVICES_TERMS_VERSION,
+          disclosureVersion: BUYER_DISCLOSURE_VERSION,
+          disclosureReviewEnabled: false,
           buzzType: 'yellow',
           servableLevels: 31,
           consentLevels: 1,
@@ -326,7 +428,7 @@ describe('requesting an upload', () => {
     };
     for (const [status, reach] of Object.entries(states)) {
       await q(
-        `TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal" RESTART IDENTITY`
+        `TRUNCATE "ServiceDealReviewImage", "ServiceDealReview", "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal" RESTART IDENTITY`
       );
       const dealId = await reach();
       const [row] = await q<{ status: string }>(
@@ -341,22 +443,23 @@ describe('requesting an upload', () => {
 
   it('refuses a final type we cannot inspect, and archives other than zip', async () => {
     const dealId = await accepted();
-    for (const name of [
-      'a.rar',
-      'a.7z',
-      'a.tar.gz',
-      'a.exe',
-      'a.mp4',
-      'a.webm',
-      'noextension',
-      'a.zip.exe',
-    ])
+    for (const name of ['a.rar', 'a.7z', 'a.tar.gz', 'a.exe', 'a.mov', 'noextension', 'a.zip.exe'])
       await expect(upload(dealId, { fileName: name })).rejects.toMatchObject({
         code: 'BAD_REQUEST',
       });
     expect(await q(`SELECT 1 FROM "ServiceDealFile"`)).toEqual([]);
     for (const name of ['A.ZIP', 'model.safetensors', 'notes.md'])
       await expect(upload(dealId, { fileName: name })).resolves.toBeTruthy();
+  });
+
+  it('refuses a PDF Final, whatever the case of its extension', async () => {
+    const dealId = await accepted();
+    for (const name of ['brief.pdf', 'Brief.PDF'])
+      await expect(upload(dealId, { fileName: name })).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: expect.stringMatching(/PDF files can't be delivered/),
+      });
+    expect(await q(`SELECT 1 FROM "ServiceDealFile"`)).toEqual([]);
   });
 
   it('holds a preview to image types and size, and not to a service that takes none', async () => {
@@ -366,7 +469,7 @@ describe('requesting an upload', () => {
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
 
     await q(
-      `TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal" RESTART IDENTITY`
+      `TRUNCATE "ServiceDealReviewImage", "ServiceDealReview", "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal" RESTART IDENTITY`
     );
     const dealId = await accepted('Image');
     const p = { kind: 'Preview', fileName: 'p.mp4' };
@@ -639,13 +742,13 @@ describe('deleting', () => {
     });
     s3.uploadImageBufferToStore.mockResolvedValue({ key: 'scan-copy-key' });
     images.createImage.mockResolvedValue({ id: 321 });
-    images.deleteImageById.mockResolvedValue(undefined);
+    images.deleteImages.mockResolvedValue([]);
     await files.startPreviewScans();
     expect((await fileRow(fileId)).imageId).toBe(321);
 
     const { s3Key } = await fileRow(fileId);
     await files.deleteServiceDealFile({ fileId, userId: SELLER });
-    expect(images.deleteImageById).not.toHaveBeenCalled();
+    expect(images.deleteImages).not.toHaveBeenCalled();
     expect(s3.deleteObject.mock.calls.map((call) => call[1])).not.toContain(s3Key);
     expect(await fileRow(fileId)).toMatchObject({
       imageId: 321,
@@ -693,9 +796,13 @@ describe('deleting', () => {
       [fileId]
     );
     const { s3Key } = await fileRow(fileId);
-    images.deleteImageById.mockResolvedValue(undefined);
+    images.deleteImages.mockResolvedValue([]);
     await files.deleteServiceDealFile({ fileId, userId: SELLER });
-    expect(images.deleteImageById).toHaveBeenCalledWith({ id: 321, updatePost: false });
+    await agedPurge();
+    expect(images.deleteImages).toHaveBeenCalledWith([321], {
+      updatePosts: false,
+      actor: { system: 'creator-service-deal-file' },
+    });
     expect(s3.deleteObject.mock.calls.map((call) => call[1])).toContain(s3Key);
     expect(await fileRow(fileId)).toBeUndefined();
   });
@@ -725,7 +832,9 @@ describe('deleting', () => {
       code: 'NOT_FOUND',
     });
     await files.deleteServiceDealFile({ fileId, userId: SELLER });
-    expect(await q(`SELECT 1 FROM "ServiceDealFile"`)).toEqual([]);
+    expect(await q(`SELECT "removedAt" IS NOT NULL AS removed FROM "ServiceDealFile"`)).toEqual([
+      { removed: true },
+    ]);
   });
 });
 
@@ -858,12 +967,43 @@ describe('who can download what', () => {
     expect(await download(finalId, MOD, true)).toMatchObject({ key: row.s3Key });
     expect(
       await files.resolveServiceDealFileDownload({
+        servableLevels: 31,
         fileId: finalId,
         userId: MOD,
         isModerator: true,
         delivered: true,
       })
     ).toMatchObject({ key: DELIVERY_KEY });
+  });
+
+  it('refuses a video Final over the video size cap, whatever the client allowed', async () => {
+    const dealId = await accepted();
+    const video = { kind: 'Final', fileName: 'clip.mp4', mimeType: 'video/mp4' };
+    await expect(
+      upload(dealId, { ...video, size: constants.mediaUpload.maxVideoFileSize + 1 })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringMatching(/video cannot be more/),
+    });
+    await expect(
+      upload(dealId, { ...video, size: constants.mediaUpload.maxVideoFileSize })
+    ).resolves.toBeTruthy();
+  });
+
+  it('serves a video preview as before: only video Finals carry the scanned-version gate', async () => {
+    const dealId = await accepted('Video');
+    const fileId = await uploaded(dealId, {
+      kind: 'Preview',
+      fileName: 'p.mp4',
+      mimeType: 'video/mp4',
+      size: 500,
+    });
+    await q(
+      `UPDATE "ServiceDealFile" SET status = 'Ready', "scanStatus" = 'Passed', "malwareScanStatus" = 'Passed' WHERE id = $1`,
+      [fileId]
+    );
+    expect(await download(fileId, SELLER)).toMatchObject({ fileName: 'p.mp4' });
+    expect(await download(fileId, MOD, true)).toMatchObject({ fileName: 'p.mp4' });
   });
 
   it('never gives the buyer a zip that has no built archive, even a Passed one', async () => {
@@ -873,6 +1013,7 @@ describe('who can download what', () => {
     expect(await download(finalId, BUYER)).toBeNull();
     expect(
       await files.resolveServiceDealFileDownload({
+        servableLevels: 31,
         fileId: finalId,
         userId: MOD,
         isModerator: true,
@@ -1033,6 +1174,38 @@ describe('what the listing shows', () => {
     expect(JSON.stringify(seen)).not.toContain('service-deals/');
   });
 
+  it('withholds a preview rated above what the domain may show, URL and all', async () => {
+    const { dealId, previewId } = await delivered();
+    await files.deliverServiceDeal({ dealId, userId: SELLER });
+    await q(`UPDATE "ServiceDeal" SET "maxNsfwLevel" = 4`);
+    await q(`UPDATE "ServiceDealFile" SET "nsfwLevel" = 4 WHERE id = $1`, [previewId]);
+    const watermarkedKey = (await fileRow(previewId)).watermarkedKey as string;
+    const sfw = 1 | 2;
+    for (const userId of [BUYER, SELLER]) {
+      const seen = await files.listServiceDealFiles({
+        dealId,
+        userId,
+        isModerator: false,
+        servableLevels: sfw,
+      });
+      expect(seen.find((f) => f.id === previewId)).toMatchObject({
+        previewUrl: null,
+        previewOffDomain: true,
+      });
+      expect(JSON.stringify(seen)).not.toContain(watermarkedKey);
+    }
+    const red = await files.listServiceDealFiles({
+      dealId,
+      userId: BUYER,
+      isModerator: false,
+      servableLevels: 31,
+    });
+    expect(red.find((f) => f.id === previewId)).toMatchObject({
+      previewUrl: expect.stringContaining(watermarkedKey),
+    });
+    expect(red.find((f) => f.id === previewId)).not.toHaveProperty('previewOffDomain');
+  });
+
   it('never shows the buyer a preview that is not Ready', async () => {
     const { dealId, previewId } = await delivered();
     await files.deliverServiceDeal({ dealId, userId: SELLER });
@@ -1098,7 +1271,7 @@ describe('preview pipeline', () => {
 
   beforeEach(() => {
     images.createImage.mockReset();
-    images.deleteImageById.mockReset();
+    images.deleteImages.mockReset();
     preview.scanCopy.mockReset();
     s3.send.mockResolvedValue(body(Buffer.from('original bytes')));
     preview.scanCopy.mockResolvedValue({
@@ -1118,15 +1291,17 @@ describe('preview pipeline', () => {
     s3.uploadImageBufferToStore.mockImplementation(async (data: Buffer) => ({
       key: data.equals(SCAN_COPY) ? 'scan-copy-key' : 'derivative-key',
     }));
-    images.createImage.mockImplementation(async ({ url }: { url: string }) => {
-      const [row] = await q<{ id: number }>(`INSERT INTO "Image" (url) VALUES ($1) RETURNING id`, [
-        url,
-      ]);
-      return { id: row.id };
-    });
-    images.deleteImageById.mockImplementation(async ({ id }: { id: number }) => {
-      await q(`DELETE FROM "Image" WHERE id = $1`, [id]);
-    });
+    images.createImage.mockImplementation(
+      async ({ url, userId }: { url: string; userId: number }) => {
+        const [row] = await q<{ id: number }>(
+          `INSERT INTO "Image" (url, "userId") VALUES ($1, $2) RETURNING id`,
+          [url, userId]
+        );
+        return { id: row.id };
+      }
+    );
+    // As deleteImages does: the rows it deleted.
+    images.deleteImages.mockImplementation(deleteImagesIn(holder.db));
   });
 
   const verdict = (ingestion: string, flags = '') =>
@@ -1216,15 +1391,18 @@ describe('preview pipeline', () => {
     ['flagged for review', `'Scanned'`, `, "needsReview" = 'poi'`],
     ['a person of interest', `'Scanned'`, `, poi = true`],
     ['a minor', `'Scanned'`, `, minor = true`],
+    ['rated above XXX', `'Scanned'`, `, "nsfwLevel" = 32`],
   ])(
-    'stops a preview that came back %s: no mark, no publish, failed for good',
+    'stops a preview that came back %s: no mark, no publish, failed for good, copy kept',
     async (_n, ingestion, flags) => {
       const { fileId } = await waiting();
       await files.startPreviewScans();
       await q(`UPDATE "Image" SET ingestion = ${ingestion}::"ImageIngestionStatus"${flags}`);
       await files.settlePreviewScans();
+      await files.deleteScanCopies();
 
       expect(await fileRow(fileId)).toMatchObject({ status: 'Failed', scanStatus: 'Failed' });
+      expect((await fileRow(fileId)).imageId).not.toBeNull();
       expect(await files.publishPreviews()).toBe(0);
       expect(preview.build).not.toHaveBeenCalled();
       expect((await list(1, BUYER)).filter((f) => f.kind === 'Preview')).toEqual([]);
@@ -1234,7 +1412,7 @@ describe('preview pipeline', () => {
   it('passes a PG or PG-13 preview and records the rating the scan gave it', async () => {
     for (const level of [1, 2]) {
       await holder.db.exec(
-        `TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal" RESTART IDENTITY; DELETE FROM "Image"; ALTER SEQUENCE "Image_id_seq" RESTART`
+        `TRUNCATE "ServiceDealReviewImage", "ServiceDealReview", "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal" RESTART IDENTITY; DELETE FROM "Image"; ALTER SEQUENCE "Image_id_seq" RESTART`
       );
       const { fileId } = await waiting();
       await files.startPreviewScans();
@@ -1244,15 +1422,151 @@ describe('preview pipeline', () => {
     }
   });
 
-  it.each([4, 8, 16, 32])('rejects a preview the scan rated %i: SFW only in v1', async (level) => {
-    const { fileId } = await waiting();
-    await files.startPreviewScans();
-    await q(`UPDATE "Image" SET ingestion = 'Scanned', "nsfwLevel" = $1`, [level]);
-    await files.settlePreviewScans();
-    expect(await fileRow(fileId)).toMatchObject({ status: 'Failed', scanStatus: 'Failed' });
-    expect(await files.publishPreviews()).toBe(0);
-    expect(preview.build).not.toHaveBeenCalled();
+  it.each([4, 8, 16])(
+    "rejects a preview rated %i on a PG-13 deal, saying it is above the deal's level",
+    async (level) => {
+      const { fileId } = await waiting();
+      await files.startPreviewScans();
+      await q(`UPDATE "Image" SET ingestion = 'Scanned', "nsfwLevel" = $1`, [level]);
+      await files.settlePreviewScans();
+      // A rating mismatch, not a verdict on the content: the scan Passed, the file did not.
+      expect(await fileRow(fileId)).toMatchObject({
+        status: 'Failed',
+        scanStatus: 'Passed',
+        failReason: SERVICE_PREVIEW_OVER_LEVEL_REASON,
+      });
+      expect(await files.publishPreviews()).toBe(0);
+      expect(preview.build).not.toHaveBeenCalled();
+    }
+  );
+
+  describe('a preview refused only for its rating is not kept as evidence; a rejected one is', () => {
+    const settled = async (rejected: boolean) => {
+      const { dealId, fileId } = await waiting();
+      await files.startPreviewScans();
+      await q(
+        `UPDATE "Image" SET ingestion = 'Scanned', "nsfwLevel" = 4${
+          rejected ? ', minor = true' : ''
+        }`
+      );
+      await files.settlePreviewScans();
+      await files.deleteScanCopies();
+      return { dealId, fileId };
+    };
+    const removals: [string, (fileId: number) => Promise<unknown>][] = [
+      [
+        'the seller deletes it',
+        (fileId) => files.deleteServiceDealFile({ fileId, userId: SELLER }),
+      ],
+      [
+        'the seller deletes their account',
+        async () => {
+          await closeDeal();
+          const retention = await import('~/server/services/creator-service-deal-file-retention');
+          return dbMock.dbWrite.$executeRaw(retention.markUserDealUploadsRemovedSql(SELLER));
+        },
+      ],
+      [
+        "the deal's retention window ends",
+        async () => {
+          await closeDeal();
+          const retention = await import('~/server/services/creator-service-deal-file-retention');
+          return retention.markExpiredDealFiles({ effectiveAt: new Date(0) });
+        },
+      ],
+    ];
+    /** Cancelled and settled long enough ago that retention has run out. */
+    const closeDeal = () =>
+      q(
+        `UPDATE "ServiceDeal" SET status = 'Cancelled', "closedAt" = now() - interval '40 days',
+           "settledAt" = now() - interval '40 days'`
+      );
+
+    it('deletes its scan copy and never serves it to a party', async () => {
+      const { dealId, fileId } = await settled(false);
+      expect((await fileRow(fileId)).imageId).toBeNull();
+      expect(images.deleteImages).toHaveBeenCalledOnce();
+      for (const userId of [SELLER, BUYER]) {
+        const previews = (await list(dealId, userId)).filter((f) => f.kind === 'Preview');
+        expect(previews.every((f) => f.previewUrl === null)).toBe(true);
+      }
+    });
+
+    it.each(removals)('purges it once %s', async (_n, remove) => {
+      const { fileId } = await settled(false);
+      await remove(fileId);
+      expect((await fileRow(fileId)).removedAt).not.toBeNull();
+      await agedPurge();
+      expect(await fileRow(fileId)).toBeUndefined();
+    });
+
+    it.each(removals)('keeps a rejected one, and its scan copy, once %s', async (_n, remove) => {
+      const { fileId } = await settled(true);
+      expect(await fileRow(fileId)).toMatchObject({ scanStatus: 'Failed' });
+      expect((await fileRow(fileId)).imageId).not.toBeNull();
+      await remove(fileId);
+      expect((await fileRow(fileId)).removedAt).not.toBeNull();
+      await agedPurge();
+      expect(await fileRow(fileId)).toBeDefined();
+      expect(images.deleteImages).not.toHaveBeenCalled();
+    });
   });
+
+  it("passes a preview up to its deal's own level", async () => {
+    for (const [dealLevel, level] of [
+      [4, 4],
+      [16, 8],
+    ]) {
+      await holder.db.exec(
+        `TRUNCATE "ServiceDealReviewImage", "ServiceDealReview", "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal" RESTART IDENTITY; DELETE FROM "Image"; ALTER SEQUENCE "Image_id_seq" RESTART`
+      );
+      const { fileId } = await waiting();
+      await q(`UPDATE "ServiceDeal" SET "maxNsfwLevel" = $1`, [dealLevel]);
+      await files.startPreviewScans();
+      await q(`UPDATE "Image" SET ingestion = 'Scanned', "nsfwLevel" = $1`, [level]);
+      await files.settlePreviewScans();
+      expect(await fileRow(fileId)).toMatchObject({ scanStatus: 'Passed', nsfwLevel: level });
+    }
+  });
+
+  it("reads the deal's level when the scan settles, not when it started", async () => {
+    const { fileId } = await waiting();
+    await q(`UPDATE "ServiceDeal" SET "maxNsfwLevel" = 4`);
+    await files.startPreviewScans();
+    await q(`UPDATE "ServiceDeal" SET "maxNsfwLevel" = 2`);
+    await q(`UPDATE "Image" SET ingestion = 'Scanned', "nsfwLevel" = 4`);
+    await files.settlePreviewScans();
+    expect(await fileRow(fileId)).toMatchObject({
+      status: 'Failed',
+      failReason: SERVICE_PREVIEW_OVER_LEVEL_REASON,
+    });
+  });
+
+  it.each(
+    [
+      ['a minor', `"minor" = true`],
+      ['a real person', `poi = true`],
+      ['one held for review', `"needsReview" = 'csam'`],
+      ['a Blocked rating', `"nsfwLevel" = 32`],
+    ].flatMap(([name, set]): [string, number, number, string][] => [
+      [name, 16, 4, set],
+      [name, 2, 8, set],
+    ])
+  )(
+    'refuses %s with the plain reason (deal %i, rated %i)',
+    async (_name, dealLevel, level, set) => {
+      const { fileId } = await waiting();
+      await q(`UPDATE "ServiceDeal" SET "maxNsfwLevel" = $1`, [dealLevel]);
+      await files.startPreviewScans();
+      await q(`UPDATE "Image" SET ingestion = 'Scanned', "nsfwLevel" = $1`, [level]);
+      await q(`UPDATE "Image" SET ${set}`);
+      await files.settlePreviewScans();
+      expect(await fileRow(fileId)).toMatchObject({
+        status: 'Failed',
+        failReason: 'This preview was rejected when it was checked.',
+      });
+    }
+  );
 
   it('does not pass a scanned preview the scan left unrated', async () => {
     const { fileId } = await waiting();
@@ -1276,12 +1590,16 @@ describe('preview pipeline', () => {
     const { imageId } = await fileRow(fileId);
 
     expect(await files.deleteScanCopies()).toBe(0);
-    expect(images.deleteImageById).not.toHaveBeenCalled();
+    expect(images.deleteImages).not.toHaveBeenCalled();
 
     await verdict('Scanned');
     await files.settlePreviewScans();
     expect(await files.deleteScanCopies()).toBe(1);
-    expect(images.deleteImageById).toHaveBeenCalledWith({ id: imageId, updatePost: false });
+    expect(images.deleteImages).toHaveBeenCalledWith([imageId], {
+      updatePosts: false,
+      actor: { system: 'creator-service-deal-file' },
+      onDeleted: expect.any(Function),
+    });
     expect(await fileRow(fileId)).toMatchObject({ imageId: null, scanKey: null });
     expect(await q(`SELECT 1 FROM "Image"`)).toEqual([]);
   });
@@ -1292,9 +1610,81 @@ describe('preview pipeline', () => {
     await verdict('Blocked');
     await files.settlePreviewScans();
     expect(await files.deleteScanCopies()).toBe(0);
-    expect(images.deleteImageById).not.toHaveBeenCalled();
+    expect(images.deleteImages).not.toHaveBeenCalled();
     expect((await fileRow(fileId)).imageId).not.toBeNull();
     expect(await q(`SELECT 1 FROM "Image"`)).toHaveLength(1);
+  });
+
+  it('keeps the pointer and key of a copy its case kept, so the copy stays refused', async () => {
+    const { fileId } = await waiting();
+    await files.startPreviewScans();
+    await verdict('Scanned');
+    await files.settlePreviewScans();
+    const { imageId, scanKey } = await fileRow(fileId);
+    images.deleteImages.mockResolvedValueOnce([]);
+    expect(await files.deleteScanCopies()).toBe(0);
+    expect(await fileRow(fileId)).toMatchObject({ imageId, scanKey });
+  });
+
+  it('clears the copy behind a full batch of kept ones', async () => {
+    const BATCH = 50;
+    const fileIds: number[] = [];
+    for (let i = 0; i <= BATCH; i++) fileIds.push((await waiting()).fileId);
+    expect(await files.startPreviewScans({ limit: BATCH + 1 })).toBe(BATCH + 1);
+    await verdict('Scanned');
+    await files.settlePreviewScans();
+    const imageIds = await Promise.all(fileIds.map(async (id) => (await fileRow(id)).imageId));
+    const kept = new Set(imageIds.slice(0, BATCH));
+    const realDelete = deleteImagesIn(holder.db);
+    images.deleteImages.mockImplementation(async (ids: number[], options: never) =>
+      kept.has(ids[0]) ? [] : realDelete(ids, options)
+    );
+    expect(await files.deleteScanCopies()).toBe(1);
+    expect(await fileRow(fileIds[BATCH])).toMatchObject({ imageId: null, scanKey: null });
+    expect((await fileRow(fileIds[0])).imageId).toBe(imageIds[0]);
+  });
+
+  it('clears the pointer of a copy whose delete committed before a crash', async () => {
+    const { fileId } = await waiting();
+    await files.startPreviewScans();
+    await verdict('Scanned');
+    await files.settlePreviewScans();
+    images.deleteImages.mockImplementationOnce(async (ids: number[], options: never) => {
+      await deleteImagesIn(holder.db)(ids, options);
+      throw new Error('stopped after the delete');
+    });
+    expect(await files.deleteScanCopies()).toBe(0);
+    expect(await fileRow(fileId)).toMatchObject({ imageId: null, scanKey: null });
+  });
+
+  it('keeps the pointer of a copy removed some other way, and stops walking it', async () => {
+    const { fileId } = await waiting();
+    await files.startPreviewScans();
+    await verdict('Scanned');
+    await files.settlePreviewScans();
+    const { imageId, scanKey } = await fileRow(fileId);
+    await q(`DELETE FROM "Image" WHERE id = $1`, [imageId]);
+    expect(await files.deleteScanCopies()).toBe(0);
+    expect(await files.deleteScanCopies()).toBe(0);
+    expect(await fileRow(fileId)).toMatchObject({ imageId, scanKey });
+    expect(images.deleteImages).not.toHaveBeenCalled();
+  });
+
+  // The copy is hidden by id from the seller too; the file itself comes from the deal route.
+  it('serves the seller their own file through the deal route while its copy is hidden from them', async () => {
+    const { fileId } = await waiting();
+    await files.startPreviewScans();
+    const row = await fileRow(fileId);
+    expect(row.imageId).not.toBeNull();
+    const { getImage } = await vi.importActual<typeof ImageService>(
+      '~/server/services/image.service'
+    );
+    // By id, both as a plain read and as the image page reads it (the review opt-in).
+    for (const shownReviewImageLevels of [undefined, 31])
+      await expect(
+        getImage({ id: row.imageId!, userId: SELLER, shownReviewImageLevels })
+      ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(await download(fileId, SELLER)).toMatchObject({ key: row.s3Key });
   });
 
   it('keeps the pointer when a delete fails, so the copy is retried', async () => {
@@ -1303,7 +1693,7 @@ describe('preview pipeline', () => {
     await verdict('Scanned');
     await files.settlePreviewScans();
 
-    images.deleteImageById.mockRejectedValueOnce(new Error('s3 down'));
+    images.deleteImages.mockRejectedValueOnce(new Error('s3 down'));
     expect(await files.deleteScanCopies()).toBe(0);
     expect((await fileRow(fileId)).imageId).not.toBeNull();
     expect(await files.deleteScanCopies()).toBe(1);
@@ -1531,6 +1921,7 @@ describe('recording who took a file', () => {
       const { finalId } = await completedDeal();
       await q(`UPDATE "ServiceDealFile" SET "removedAt" = now() WHERE id = $1`, [finalId]);
       const target = await files.resolveServiceDealFileDownload({
+        servableLevels: 31,
         fileId: finalId,
         userId: MOD,
         isModerator: true,
@@ -1574,6 +1965,7 @@ describe('recording who took a file', () => {
     const { finalId } = await completedDeal();
     await take(
       await files.resolveServiceDealFileDownload({
+        servableLevels: 31,
         fileId: finalId,
         userId: BUYER,
         isModerator: true,
@@ -1588,6 +1980,7 @@ describe('recording who took a file', () => {
     await take(await download(finalId, SELLER));
     await take(
       await files.resolveServiceDealFileDownload({
+        servableLevels: 31,
         fileId: finalId,
         userId: MOD,
         isModerator: true,
@@ -1651,5 +2044,198 @@ describe('recording who took a file', () => {
     expect(await Promise.race([take(target), waited])).toBe(
       'https://get/service-deals/delivered/k'
     );
+  });
+});
+
+describe('video previews', () => {
+  const ORIGINAL = Buffer.from('original video bytes');
+  const MARKED = Buffer.from('marked 480p clip');
+
+  beforeEach(() => {
+    images.createImage.mockReset();
+    images.deleteImages.mockReset();
+    video.build.mockReset();
+    preview.build.mockClear();
+    preview.scanCopy.mockClear();
+    video.build.mockResolvedValue({ data: MARKED, mimeType: 'video/mp4', width: 480 });
+    s3.uploadImageBufferToStore.mockImplementation(async () => ({ key: randomKey() }));
+    // Only the clip that was scanned may be read back for publishing.
+    s3.imageStoreSend.mockImplementation(async (command: { input: { Key: string } }) => {
+      const [row] = await q<{ id: number }>(
+        `SELECT id FROM "ServiceDealFile" WHERE "scanKey" = $1`,
+        [command.input.Key]
+      );
+      if (!row) throw new Error(`not the scan copy: ${command.input.Key}`);
+      return body(MARKED);
+    });
+    images.createImage.mockImplementation(async ({ url }: { url: string }) => {
+      const [row] = await q<{ id: number }>(`INSERT INTO "Image" (url) VALUES ($1) RETURNING id`, [
+        url,
+      ]);
+      return { id: row.id };
+    });
+    // As deleteImages does: the rows it deleted.
+    images.deleteImages.mockImplementation(deleteImagesIn(holder.db));
+  });
+
+  let keys = 0;
+  const randomKey = () => `store-key-${++keys}`;
+
+  const videoPreview = async (previewKind = 'Video') => {
+    const dealId = await accepted(previewKind);
+    const fileId = await uploaded(dealId, {
+      kind: 'Preview',
+      fileName: 'clip.mp4',
+      mimeType: 'video/mp4',
+      size: 5_000_000,
+    });
+    s3.send.mockResolvedValue(body(ORIGINAL));
+    return { dealId, fileId };
+  };
+
+  it('is refused on a deal that takes an image preview', async () => {
+    const dealId = await accepted('Image');
+    await expect(
+      upload(dealId, { kind: 'Preview', fileName: 'clip.mp4', mimeType: 'video/mp4', size: 1000 })
+    ).rejects.toThrow('Previews must be JPEG, PNG, WebP or GIF images.');
+  });
+
+  it('is refused over the video byte cap', async () => {
+    const dealId = await accepted('Video');
+    await expect(
+      upload(dealId, {
+        kind: 'Preview',
+        fileName: 'clip.mp4',
+        mimeType: 'video/mp4',
+        size: 64 * 1024 * 1024 + 1,
+      })
+    ).rejects.toThrow('Preview is too large (max 64 MB).');
+  });
+
+  it('scans the marked clip as a hidden video, and the buyer sees only that clip once it passes', async () => {
+    const { dealId, fileId } = await videoPreview();
+
+    expect(await files.startPreviewScans()).toBe(1);
+    expect(video.build).toHaveBeenCalledWith(ORIGINAL, 'video/mp4', SELLER);
+    expect(preview.scanCopy).not.toHaveBeenCalled();
+    const scanned = await fileRow(fileId);
+    // The bytes scanned are the marked clip, not the original.
+    expect(s3.uploadImageBufferToStore).toHaveBeenCalledTimes(1);
+    expect(s3.uploadImageBufferToStore.mock.calls[0][0]).toBe(MARKED);
+    expect(images.createImage.mock.calls[0][0]).toMatchObject({
+      url: scanned.scanKey,
+      type: 'video',
+      mimeType: 'video/mp4',
+      userId: SELLER,
+    });
+    expect(images.createImage.mock.calls[0][0]).not.toHaveProperty('skipIngestion');
+
+    // Nothing reaches the buyer while the scan is pending.
+    expect(await list(dealId, BUYER)).toEqual([]);
+
+    await q(`UPDATE "Image" SET ingestion = 'Scanned'::"ImageIngestionStatus", "nsfwLevel" = 1`);
+    await files.settlePreviewScans();
+    expect(await files.publishPreviews()).toBe(1);
+
+    const published = await fileRow(fileId);
+    expect(published.status).toBe('Ready');
+    // Its own copy: step 4 deletes the scan copy's object with its Image row.
+    expect(published.watermarkedKey).not.toBe(published.scanKey);
+    expect(s3.uploadImageBufferToStore).toHaveBeenLastCalledWith(MARKED, {
+      contentType: 'video/mp4',
+    });
+    expect(preview.build).not.toHaveBeenCalled();
+
+    await uploaded(dealId, { fileName: 'result.zip' });
+    await files.deliverServiceDeal({ dealId, userId: SELLER });
+    const seen = (await list(dealId, BUYER)).find((file) => file.id === fileId)!;
+    expect(seen.mimeType).toBe('video/mp4');
+    expect(seen.previewUrl).toContain(published.watermarkedKey);
+    expect(seen.previewUrl).toMatch(/\.mp4/);
+    expect(seen.previewUrl).not.toContain(published.s3Key);
+
+    await files.deleteScanCopies();
+    expect((await fileRow(fileId)).watermarkedKey).toBe(published.watermarkedKey);
+  });
+
+  it('keeps a passed clip until it is published, so publishing never loses what was scanned', async () => {
+    const { fileId } = await videoPreview();
+    await files.startPreviewScans();
+    await q(`UPDATE "Image" SET ingestion = 'Scanned'::"ImageIngestionStatus", "nsfwLevel" = 1`);
+    await files.settlePreviewScans();
+
+    expect(await files.deleteScanCopies()).toBe(0);
+    expect(await files.publishPreviews()).toBe(1);
+    expect(await files.deleteScanCopies()).toBe(1);
+    expect(await fileRow(fileId)).toMatchObject({ status: 'Ready', scanKey: null });
+  });
+
+  it('retries, never falls back to the image path, if the scanned clip is gone', async () => {
+    const { fileId } = await videoPreview();
+    await files.startPreviewScans();
+    await q(`UPDATE "Image" SET ingestion = 'Scanned'::"ImageIngestionStatus", "nsfwLevel" = 1`);
+    await files.settlePreviewScans();
+    await q(`UPDATE "ServiceDealFile" SET "scanKey" = NULL WHERE id = $1`, [fileId]);
+
+    expect(await files.publishPreviews()).toBe(0);
+    expect(preview.build).not.toHaveBeenCalled();
+    expect(await fileRow(fileId)).toMatchObject({ status: 'Processing', watermarkedKey: null });
+  });
+
+  it('gives up on a video still not transcoded after 45 minutes, before the image give-up', async () => {
+    const transcoded = await videoPreview();
+    await files.startPreviewScans();
+    const { fileId } = await videoPreview();
+    await q(
+      `UPDATE "ServiceDealFile" SET "uploadedAt" = now() - interval '46 minutes' WHERE id IN ($1, $2)`,
+      [fileId, transcoded.fileId]
+    );
+    await files.settlePreviewScans();
+    expect(await fileRow(fileId)).toMatchObject({
+      status: 'Failed',
+      failReason: 'This video could not be prepared. Upload a shorter or smaller one.',
+    });
+    // One already transcoded is only waiting on its scan, and keeps the long give-up.
+    expect((await fileRow(transcoded.fileId)).status).toBe('Processing');
+  });
+
+  it('deletes the clip of a passed video that then failed, since it will never be published', async () => {
+    const { fileId } = await videoPreview();
+    await files.startPreviewScans();
+    await q(`UPDATE "Image" SET ingestion = 'Scanned'::"ImageIngestionStatus", "nsfwLevel" = 1`);
+    await files.settlePreviewScans();
+    await q(`UPDATE "ServiceDealFile" SET status = 'Failed' WHERE id = $1`, [fileId]);
+    expect(await files.deleteScanCopies()).toBe(1);
+  });
+
+  it('takes one video per run, beside the images', async () => {
+    const first = await videoPreview();
+    const second = await videoPreview();
+    expect(await files.startPreviewScans({ limit: 3 })).toBe(1);
+    expect(video.build).toHaveBeenCalledTimes(1);
+    const rows = [await fileRow(first.fileId), await fileRow(second.fileId)];
+    expect(rows.filter((row) => row.imageId !== null)).toHaveLength(1);
+  });
+
+  it('fails the file with the reason when the video cannot be transcoded', async () => {
+    const { fileId } = await videoPreview();
+    video.build.mockRejectedValue(
+      new PreviewRejectedError('This video could not be turned into a preview.')
+    );
+    await files.startPreviewScans();
+    expect(await fileRow(fileId)).toMatchObject({
+      status: 'Failed',
+      failReason: 'This video could not be turned into a preview.',
+    });
+  });
+
+  it('a rejected video is never published', async () => {
+    const { dealId, fileId } = await videoPreview();
+    await files.startPreviewScans();
+    await q(`UPDATE "Image" SET ingestion = 'Scanned'::"ImageIngestionStatus", "nsfwLevel" = 8`);
+    await files.settlePreviewScans();
+    expect(await files.publishPreviews()).toBe(0);
+    expect(await fileRow(fileId)).toMatchObject({ status: 'Failed', watermarkedKey: null });
+    expect(await list(dealId, BUYER)).toEqual([]);
   });
 });

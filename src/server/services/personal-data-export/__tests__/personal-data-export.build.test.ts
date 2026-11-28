@@ -33,10 +33,6 @@ const m = vi.hoisted(() => ({
 
 vi.mock('~/server/services/moderator-grants', () => ({ hasModeratorGrant: m.grant }));
 
-vi.mock('~/server/services/legal-hold.service', () => ({
-  getAccountLegalHold: m.holds,
-  accountHoldSql: () => null,
-}));
 vi.mock('~/server/email/templates/personalDataExport.email', () => ({
   personalDataExportBuiltEmail: { send: m.builtSend },
   personalDataExportReadyEmail: { send: m.readySend },
@@ -159,7 +155,7 @@ beforeEach(() => {
   vi.mocked(logToAxiom).mockClear();
   m.grant.mockResolvedValue(true);
   m.manifest = null;
-  m.holds.mockResolvedValue({ legs: [], markerView: true });
+  m.holds.mockResolvedValue({ legs: [] });
   m.pg.mockImplementation(async ({ onNote }: { onNote: (n: unknown) => void }) => {
     onNote({
       table: 'Appeal',
@@ -184,9 +180,17 @@ beforeEach(() => {
     .mockImplementation((async (q: { sql?: string } | string[]) => {
       const text = Array.isArray(q) ? q.join('?') : String((q as { sql?: string }).sql ?? '');
       if (text.includes('"isModerator"')) return [{ id: STAFF_ID, username: 'ModBob' }];
-      return [{ present: false, review: false }];
+      if (text.includes('AS present')) return [await safetyRow()];
+      return [{ report: false, present: false, review: false }];
     }) as never);
 });
+
+/** The export hold check's row, from `m.holds`: `unconfirmed` (or a rejection) fails the read. */
+async function safetyRow() {
+  const { legs } = (await m.holds()) as { legs: string[] };
+  if (legs.includes('unconfirmed')) throw new Error('hold check unreadable');
+  return { report: false, present: legs.length > 0, review: false };
+}
 
 describe('buildExport', () => {
   it('emails the staff member who queued it, never the owner, and records the archive first', async () => {
@@ -249,7 +253,7 @@ describe('buildExport', () => {
    * you are about to build a held account's archive "for Legal to review", this test is why not.
    */
   it('refuses a held account: nothing built, one notice to Legal, the requester told only that', async () => {
-    m.holds.mockResolvedValue({ legs: ['report'], markerView: true });
+    m.holds.mockResolvedValue({ legs: ['report'] });
     expect(await buildExport(row, deps)).toBe('held');
     expect(m.stream).not.toHaveBeenCalled();
     expect(m.pg).not.toHaveBeenCalled();
@@ -268,11 +272,11 @@ describe('buildExport', () => {
     // The notice names the export, never the reason.
     expect(m.heldSend.mock.calls).toEqual([[{ to: 'staff@civitai.com', exportId: 5 }]]);
     const held = writes().find((c) => sqlOf(c).includes(`SET status = 'held'`))!;
-    expect(held).toEqual(expect.arrayContaining([['report']]));
+    expect(held).toEqual(expect.arrayContaining([['safety-content']]));
   });
 
   it('says ticket=none for a request queued from the dashboard', async () => {
-    m.holds.mockResolvedValue({ legs: ['report'], markerView: true });
+    m.holds.mockResolvedValue({ legs: ['report'] });
     await buildExport({ ...row, ticketId: null }, deps);
     expect(m.refusedSend.mock.calls[0][0]).toMatchObject({
       subject: 'DATA-EXPORT-REFUSED user=42 ticket=none requested=2026-09-14',
@@ -280,25 +284,24 @@ describe('buildExport', () => {
     });
   });
 
-  it.each([[{ present: true, review: false }], [{ present: false, review: true }]])(
-    'refuses every kind of hold the same way (#%#)',
-    async (found) => {
-      vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (q: unknown) => {
-        const text = Array.isArray(q) ? q.join('?') : String((q as { sql?: string }).sql ?? '');
-        if (text.includes('"isModerator"')) return [{ id: STAFF_ID, username: 'ModBob' }];
-        return [found];
-      }) as never);
-      expect(await buildExport(row, deps)).toBe('held');
-      expect(m.stream).not.toHaveBeenCalled();
-      expect(m.refusedSend).toHaveBeenCalledTimes(1);
-      expect(m.builtSend).not.toHaveBeenCalled();
-    }
-  );
+  it.each([
+    [{ report: false, present: true, review: false }],
+    [{ report: false, present: false, review: true }],
+    [{ report: true, present: false, review: false }],
+  ])('refuses every kind of hold the same way (#%#)', async (found) => {
+    vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (q: unknown) => {
+      const text = Array.isArray(q) ? q.join('?') : String((q as { sql?: string }).sql ?? '');
+      if (text.includes('"isModerator"')) return [{ id: STAFF_ID, username: 'ModBob' }];
+      return [found];
+    }) as never);
+    expect(await buildExport(row, deps)).toBe('held');
+    expect(m.stream).not.toHaveBeenCalled();
+    expect(m.refusedSend).toHaveBeenCalledTimes(1);
+    expect(m.builtSend).not.toHaveBeenCalled();
+  });
 
   it('deletes the archive when a hold lands while it is being built', async () => {
-    m.holds
-      .mockResolvedValueOnce({ legs: [], markerView: true })
-      .mockResolvedValue({ legs: ['report'], markerView: true });
+    m.holds.mockResolvedValueOnce({ legs: [] }).mockResolvedValue({ legs: ['report'] });
     expect(await buildExport(row, deps)).toBe('held');
     expect(m.stream).toHaveBeenCalledTimes(1);
     const [, keys] = m.del.mock.calls[0] as [unknown, (string | null)[]];
@@ -311,9 +314,7 @@ describe('buildExport', () => {
   });
 
   it("deletes a held account's upload even when this attempt no longer owns the row", async () => {
-    m.holds
-      .mockResolvedValueOnce({ legs: [], markerView: true })
-      .mockResolvedValue({ legs: ['report'], markerView: true });
+    m.holds.mockResolvedValueOnce({ legs: [] }).mockResolvedValue({ legs: ['report'] });
     // Recovered as stale while this ran: the refusal's guarded UPDATE matches nothing.
     vi.mocked(dbMock.dbWrite.$executeRaw).mockResolvedValue(0 as never);
     expect(await buildExport(row, deps)).toBe('failed');
@@ -358,9 +359,7 @@ describe('buildExport', () => {
    * neither recorded nor refused: the attempt is retried, and what it uploaded is deleted.
    */
   it('retries, recording nothing, when the hold check after the upload could not be read', async () => {
-    m.holds
-      .mockResolvedValueOnce({ legs: [], markerView: true })
-      .mockResolvedValue({ legs: ['unconfirmed'], markerView: true });
+    m.holds.mockResolvedValueOnce({ legs: [] }).mockResolvedValue({ legs: ['unconfirmed'] });
     expect(await buildExport(row, deps)).toBe('queued');
     expect(m.stream).toHaveBeenCalledTimes(1);
     expect(m.builtSend).not.toHaveBeenCalled();
@@ -400,15 +399,13 @@ describe('buildExport', () => {
     ],
     [
       'the first hold check cannot be read',
-      () => m.holds.mockResolvedValue({ legs: ['unconfirmed'], markerView: true }),
+      () => m.holds.mockResolvedValue({ legs: ['unconfirmed'] }),
     ],
     ['the build throws', () => m.stream.mockRejectedValue(new Error('upload failed'))],
     [
       'the hold check after the upload cannot be read',
       () =>
-        m.holds
-          .mockResolvedValueOnce({ legs: [], markerView: true })
-          .mockResolvedValue({ legs: ['unconfirmed'], markerView: true }),
+        m.holds.mockResolvedValueOnce({ legs: [] }).mockResolvedValue({ legs: ['unconfirmed'] }),
     ],
   ])('raises the failed alert when %s on the last attempt', async (_case, arrange) => {
     arrange();
@@ -511,9 +508,7 @@ describe('buildExport record, run', () => {
   });
 
   it('deletes the upload and keeps the row when the Legal notice fails, and records it as owed', async () => {
-    m.holds
-      .mockResolvedValueOnce({ legs: [], markerView: true })
-      .mockResolvedValue({ legs: ['report'], markerView: true });
+    m.holds.mockResolvedValueOnce({ legs: [] }).mockResolvedValue({ legs: ['report'] });
     m.refusedSend.mockRejectedValue(new Error('smtp down'));
     expect(await buildExport(row, deps)).toBe('held');
     expect(uploadsDeleted()).toEqual([
@@ -529,11 +524,11 @@ describe('buildExport record, run', () => {
   });
 
   it('records a refused held export with its hold reasons and no archive', async () => {
-    m.holds.mockResolvedValue({ legs: ['report'], markerView: true });
+    m.holds.mockResolvedValue({ legs: ['report'] });
     expect(await buildExport(row, deps)).toBe('held');
     const r = await stored();
     expect(r.status).toBe('held');
-    expect(r.holdReasons).toEqual(['report']);
+    expect(r.holdReasons).toEqual(['safety-content']);
     expect(r.archiveKey).toBeNull();
   });
 });

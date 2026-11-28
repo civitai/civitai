@@ -1,3 +1,10 @@
+import { blockLeavesMedia } from '~/server/common/image-block-marker';
+import {
+  imageRestrictionSelect,
+  isImageServable,
+  withServableImage,
+  type RestrictableImage,
+} from '~/server/common/image-visibility';
 import {
   BlockedByUsers,
   BlockedUsers,
@@ -25,6 +32,58 @@ export const isPanelTainted = ({ image }: ReaderPanel) =>
   image.tosViolation ||
   !!image.needsReview ||
   image.ingestion !== ImageIngestionStatus.Scanned;
+
+/** What `withholdRestrictedPanelImages` reads from a panel's `Image`. */
+export const panelImageVisibilitySelect = {
+  ...imageRestrictionSelect,
+  ingestion: true,
+  blockedFor: true,
+} as const;
+
+type PanelImage = RestrictableImage & { ingestion: string; blockedFor: string | null };
+
+/** What `withServableCover` reads beyond `imageRestrictionSelect`. */
+export const coverBlockSelect = { ingestion: true, blockedFor: true } as const;
+
+export { blockLeavesMedia };
+
+/** `withServableImage` for a cover or hero image, also withheld where `blockLeavesMedia` is false. */
+export function withServableCover<
+  K extends PropertyKey,
+  T extends { [P in K]: PanelImage | null | undefined }
+>(row: T, key: K, viewerId?: number | null, actsAsModerator = false) {
+  const servable = withServableImage(row, key, viewerId);
+  const image = servable[key];
+  return image && !blockLeavesMedia(image, viewerId, actsAsModerator)
+    ? { ...servable, [key]: null }
+    : servable;
+}
+
+/**
+ * Withholds each panel image `viewerId` may not see, and the media of each one `blockLeavesMedia`
+ * refuses them, blur hash included. A blocked panel keeps its image row so its owner still sees the
+ * block.
+ * Unlike a tainted panel this keeps the chapter up: only a re-rating below R lifts the restriction,
+ * so holding the chapter back would never end.
+ */
+export function withholdRestrictedPanelImages<I extends PanelImage & { hash?: string | null }>(
+  chapters: { panels: { imageUrl: string | null; image: I | null }[] }[],
+  viewerId?: number,
+  actsAsModerator = false
+) {
+  for (const { panels } of chapters) {
+    for (const panel of panels) {
+      if (!panel.image) continue;
+      if (!isImageServable(panel.image, viewerId)) {
+        panel.imageUrl = null;
+        panel.image = null;
+      } else if (!blockLeavesMedia(panel.image, viewerId, actsAsModerator)) {
+        panel.imageUrl = null;
+        if (panel.image.hash != null) panel.image = { ...panel.image, hash: null };
+      }
+    }
+  }
+}
 
 type ReaderProject = {
   userId: number;

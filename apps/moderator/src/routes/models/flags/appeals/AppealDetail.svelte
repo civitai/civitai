@@ -210,7 +210,7 @@
   };
 </script>
 
-{#snippet buttons()}
+{#snippet buttons(reasonId: string)}
   {#each decisionKeys as key, i (key)}
     {@const unavailable = unavailableFor(key)}
     <TriageKeyButton
@@ -222,7 +222,7 @@
       value={key}
       formaction={actionHref(RULINGS[key].action)}
       disabled={!!unavailable}
-      title={unavailable ?? undefined}
+      aria-describedby={unavailable ? reasonId : undefined}
     >
       {labelOf(key)}
     </TriageKeyButton>
@@ -327,6 +327,7 @@
       <TriageDecisionBar
         compact
         {buttons}
+        unavailable={decisionKeys.map(unavailableFor)}
         picker={reasonPicker.open !== null ? picker : undefined}
         {fields}
         {problem}

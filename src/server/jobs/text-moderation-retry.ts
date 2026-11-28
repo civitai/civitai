@@ -1,7 +1,16 @@
 import { dbRead, dbWrite } from '~/server/db/client';
 import { createJob } from '~/server/jobs/job';
+import {
+  TEXT_MODERATION_PENDING_TIMEOUT_MINUTES,
+  TEXT_MODERATION_RETRY_LIMIT,
+  TEXT_MODERATION_RETRY_STATUSES,
+} from '~/server/jobs/text-moderation-retry.constants';
 import { logToAxiom } from '~/server/logging/client';
-import { getModerationAdapter } from '~/server/services/moderation-adapters';
+import {
+  getModerationAdapter,
+  getSupportedModerationEntityTypes,
+} from '~/server/services/moderation-adapters';
+import { unaskableServiceDealReviewTypes } from '~/server/services/service-deal-review-moderation.adapter';
 import {
   TEXT_SCAN_ENTITY_GONE,
   TEXT_SCAN_ENTITY_NOT_PUBLIC,
@@ -11,10 +20,21 @@ import { EntityModerationStatus } from '~/shared/utils/prisma/enums';
 import { decreaseDate } from '~/utils/date-helpers';
 
 const TEXT_MODERATION_RETRY_DELAY_MINUTES = 60; // 1 hour for terminal failures
-export const TEXT_MODERATION_PENDING_TIMEOUT_MINUTES = 30; // 30 min for stuck Pending rows
-export const TEXT_MODERATION_RETRY_LIMIT = 9;
+
+export { TEXT_MODERATION_PENDING_TIMEOUT_MINUTES, TEXT_MODERATION_RETRY_LIMIT };
 const FETCH_LIMIT = 500; // max rows pulled per job tick
 const SUBMIT_CONCURRENCY = 5; // parallel orchestrator submissions
+
+/** The types whose adapter is off for every entity; an adapter that throws leaves its type in. */
+async function darkEntityTypes() {
+  const types = getSupportedModerationEntityTypes();
+  const dark = await Promise.all(
+    types.map((type) =>
+      (getModerationAdapter(type)?.isDarkForAll?.() ?? Promise.resolve(false)).catch(() => false)
+    )
+  );
+  return types.filter((_, i) => dark[i]);
+}
 
 export const retryFailedTextModeration = createJob(
   'retry-failed-text-moderation',
@@ -28,18 +48,28 @@ export const retryFailedTextModeration = createJob(
       'minutes'
     );
 
+    // Review text is left out while its scan cannot ask every label: a refused submit spends a
+    // retry, and the row would drop out for good. Left out of the query, not dropped after it, or
+    // those untouched oldest rows would fill every batch ahead of other types.
+    const unaskable = await unaskableServiceDealReviewTypes();
+    if (unaskable.length)
+      logToAxiom({
+        name: 'retry-failed-text-moderation',
+        type: 'warning',
+        message: 'review text scan cannot ask every required label; rows left for a later run',
+        payload: { entityTypes: unaskable },
+      });
+
+    // Dark types too, for the same reason; the per-entity check below still drops the rest.
+    const leftOut = [...unaskable, ...(await darkEntityTypes())];
+
     const rows = await dbRead.entityModeration.findMany({
       where: {
+        ...(leftOut.length ? { entityType: { notIn: leftOut } } : {}),
         retryCount: { lt: TEXT_MODERATION_RETRY_LIMIT },
         OR: [
           {
-            status: {
-              in: [
-                EntityModerationStatus.Failed,
-                EntityModerationStatus.Expired,
-                EntityModerationStatus.Canceled,
-              ],
-            },
+            status: { in: TEXT_MODERATION_RETRY_STATUSES },
             updatedAt: { lte: retryBefore },
           },
           {

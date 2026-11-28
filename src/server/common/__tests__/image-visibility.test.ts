@@ -3,7 +3,10 @@ import {
   imageReviewedSql,
   isImageReviewed,
   KNIGHTS_VOTE_NSFW_LEVEL_REASON,
+  minorMatureHidden,
+  withServableImage,
 } from '~/server/common/image-visibility';
+import { NsfwLevel } from '~/server/common/enums';
 
 const render = (alias?: string) => {
   const sql = alias ? imageReviewedSql(alias) : imageReviewedSql();
@@ -115,5 +118,73 @@ describe('isImageReviewed', () => {
     ['a mod lock on missing media', { ingestion: 'NotFound', ...locked }, false],
   ] as const)('%s → %s', (_label, input, expected) => {
     expect(isImageReviewed({ nsfwLevelReason: null, scanJobs: null, ...input })).toBe(expected);
+  });
+});
+
+describe('withServableImage', () => {
+  const UPLOADER = 5;
+  const image = (nsfwLevel: number, modelRestricted = true) => ({
+    id: 1,
+    nsfwLevel,
+    modelRestricted,
+    userId: UPLOADER,
+  });
+  const row = (cover: ReturnType<typeof image> | null, hero = image(4)) => ({
+    id: 9,
+    name: 'n',
+    meta: { a: 1 },
+    cover,
+    hero,
+  });
+
+  it('withholds a mature restricted image from anyone but its uploader, leaving the rest alone', () => {
+    const input = row(image(4));
+    for (const viewerId of [6, null, undefined]) {
+      expect(withServableImage(input, 'cover', viewerId)).toEqual({ ...input, cover: null });
+    }
+    expect(withServableImage(input, 'cover', UPLOADER)).toEqual(input);
+    expect(input.cover).toEqual(image(4));
+  });
+
+  it('serves a SFW or unflagged image to anyone, and keeps a missing one missing', () => {
+    expect(withServableImage(row(image(1)), 'cover').cover).toEqual(image(1));
+    expect(withServableImage(row(image(4, false)), 'cover').cover).toEqual(image(4, false));
+    expect(withServableImage(row(null), 'cover').cover).toBeNull();
+  });
+
+  it('withholds an image rated Blocked from anyone but its uploader', () => {
+    const input = row(image(32, false));
+    for (const viewerId of [6, null, undefined]) {
+      expect(withServableImage(input, 'cover', viewerId).cover).toBeNull();
+    }
+    expect(withServableImage(input, 'cover', UPLOADER).cover).toEqual(image(32, false));
+  });
+
+  it('serves an unflagged image at the highest browsable level', () => {
+    expect(withServableImage(row(image(16, false)), 'cover', 6).cover).toEqual(image(16, false));
+  });
+
+  it('judges each key on its own when nested', () => {
+    const served = withServableImage(withServableImage(row(image(1)), 'cover', 6), 'hero', 6);
+    expect([served.cover, served.hero]).toEqual([image(1), null]);
+  });
+});
+
+describe('minorMatureHidden', () => {
+  const image = { userId: 5, minor: true, nsfwLevel: NsfwLevel.R };
+
+  it('hides a restricted minor image from a signed-out viewer and a stranger', () => {
+    expect(minorMatureHidden(image)).toBe(true);
+    expect(minorMatureHidden(image, 6)).toBe(true);
+  });
+
+  it('shows it to its uploader and to a moderator', () => {
+    expect(minorMatureHidden(image, 5)).toBe(false);
+    expect(minorMatureHidden(image, 6, true)).toBe(false);
+  });
+
+  it("needs the uploader, so a select without it cannot count as the viewer's own", () => {
+    // @ts-expect-error userId is required
+    minorMatureHidden({ minor: true, nsfwLevel: NsfwLevel.R });
   });
 });

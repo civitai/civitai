@@ -172,6 +172,8 @@ export interface TrainingStudioMeta {
   /** Dataset images the upload scan rated R or above, stamped at submit. A positive count lets "train
    *  further" skip re-rating the dataset; 0 or absent is re-checked. */
   matureCount?: number;
+  /** See `CLIP_SKIP_AS_SENT` in `@civitai/shared/training-kohya-replay`. */
+  clipSkipAsSent?: true;
 }
 
 const STATE_BY_STATUS: Record<WorkflowStatus, RunState> = {
@@ -604,8 +606,10 @@ export interface TrainingDetail {
   sourceWorkflowId?: string;
   sourceEpoch?: number;
   /** The run's model on Civitai — draft or published (see TrainingStudioMeta.modelId); drives the
-   *  model-page link. */
+   *  model-page link. `modelVersionId` is the run's own version (on a model the run was added to, not
+   *  the first); for a draft made before versions carried the link, it can be another version. */
   modelId?: number;
+  modelVersionId?: number;
   settings: TrainingSettingsExport;
 }
 
@@ -750,6 +754,7 @@ export function workflowToDetail(w: FetchedWorkflow): TrainingDetail | null {
     sourceWorkflowId,
     sourceEpoch,
     modelId: typeof meta.modelId === 'number' ? meta.modelId : undefined,
+    modelVersionId: typeof meta.modelVersionId === 'number' ? meta.modelVersionId : undefined,
     settings,
   };
 }

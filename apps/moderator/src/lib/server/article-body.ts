@@ -15,6 +15,8 @@ export type ArticleSegment =
   | { kind: 'text'; text: string }
   /** An `Image.url` — the page finds the Image in the article's images to show its flags. */
   | { kind: 'media'; url: string; mediaType: 'image' | 'video' }
+  /** A `media` segment whose image is withheld from this moderator (`withholdArticleBody`). */
+  | { kind: 'withheld'; mediaType: 'image' | 'video' }
   | { kind: 'external'; src: string; alt: string | null }
   | { kind: 'embed'; src: string };
 

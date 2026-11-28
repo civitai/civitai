@@ -17,6 +17,7 @@ const note = vi.fn();
 const actions = createTicketAppealActions({
   linkedUser: (...a) => linkedUser(...a),
   canAct: (...a) => canAct(...a),
+  withheld: async () => false,
   appealOf: (...a) => appealOf(...a),
   needsReviewOf: (...a) => needsReviewOf(...a),
   parseReason: (...a) => parseReason(...a),
@@ -72,6 +73,7 @@ describe('appealResolveImage', () => {
       resolvedReason: 'not-violation',
       internalNotes: undefined,
       userId: 4,
+      csamReview: false,
     });
     expect(parseReason).toHaveBeenCalledWith(expect.any(FormData), 'Approved');
     const text = note.mock.calls[0][1] as string;

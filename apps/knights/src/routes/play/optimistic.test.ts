@@ -2,15 +2,18 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   BUFFER_TARGET,
   refillCount,
-  READY_TARGET,
-  REFILL_AT,
   MAX_EXCLUDED,
   createItemBuffer,
   createSerialQueue,
   createVoteTracker,
   describeOutcome,
   itemKey,
+  markPress,
   postVote,
+  NETWORK_NOTICE,
+  refusedNote,
+  refusalNote,
+  skillCheckCue,
   sendWithRetry,
 } from './optimistic';
 import type { PickedItem } from './optimistic';
@@ -114,9 +117,37 @@ describe('describeOutcome', () => {
       describeOutcome({
         type: 'failure',
         status: 409,
-        data: { message: 'You have already judged this one.' },
+        data: { message: 'You have already judged this one.', reason: 'already-voted' },
       })
-    ).toEqual({ ok: false, message: 'You have already judged this one.', resync: false });
+    ).toEqual({
+      ok: false,
+      message: 'You have already judged this one.',
+      resync: false,
+      stale: false,
+    });
+  });
+
+  it.each(['not-open', 'not-eligible', 'unavailable'])(
+    'marks a vote refused as %s stale: the item moved on while it waited in the buffer',
+    (reason) => {
+      expect(
+        describeOutcome({
+          type: 'failure',
+          status: 409,
+          data: { message: 'This one has already been settled.', reason },
+        })
+      ).toMatchObject({ ok: false, stale: true });
+    }
+  );
+
+  it('does not mark a refusal stale from its message alone', () => {
+    expect(
+      describeOutcome({
+        type: 'failure',
+        status: 409,
+        data: { message: 'This one has already been settled.' },
+      })
+    ).toMatchObject({ stale: false });
   });
 
   it('resyncs when the server paces the player, because the page must show the rest', () => {
@@ -149,7 +180,7 @@ describe('describeOutcome', () => {
 
 const picked = (id: string, key = id): PickedItem => ({
   question: { key: 'q', kind: 'rating', prompt: 'Rate it', options: [] },
-  item: { id, key, src: `cdn/${id}`, width: 1, height: 1 },
+  item: { id, key, src: `cdn/${id}`, width: 1, height: 1, live: `live-${id}` },
   banner: null,
   category: null,
 });
@@ -172,12 +203,6 @@ describe('createItemBuffer', () => {
     return started;
   };
 
-  it('holds 10 downloaded, 3 of them ready, and refills from 5 down', () => {
-    expect(BUFFER_TARGET).toBe(10);
-    expect(READY_TARGET).toBe(3);
-    expect(REFILL_AT).toBe(5);
-  });
-
   it('hands items out in the order they were enqueued, the head only once it is decoded', () => {
     const buffer = createItemBuffer();
     fill(buffer, ['a', 'b']);
@@ -187,6 +212,13 @@ describe('createItemBuffer', () => {
     expect(buffer.next()?.item.id).toBe('a');
     expect(buffer.next()?.item.id).toBe('b');
     expect(buffer.next()).toBeNull();
+  });
+
+  it('drops the items whose live key is named, and returns their keys', () => {
+    const buffer = createItemBuffer();
+    fill(buffer, ['a', 'b', 'c']);
+    expect(buffer.dropLive(new Set(['live-a', 'live-c', 'live-x']))).toEqual(['a', 'c']);
+    expect(buffer.tokens()).toEqual(['b']);
   });
 
   it('asks to decode only the first three, and only once each', () => {
@@ -199,8 +231,11 @@ describe('createItemBuffer', () => {
     expect(buffer.readyCount).toBe(1);
   });
 
+  // The layering, at a buffer deeper than the default: downloaded items wait behind the decoded window.
+  const deep = () => createItemBuffer({ total: 10, ready: 3, refillAt: 5 });
+
   it('promotes the next downloaded item to be decoded when a ready one is consumed', () => {
-    const buffer = createItemBuffer();
+    const buffer = deep();
     fill(buffer, ['a', 'b', 'c', 'd', 'e']);
     expect(decode(buffer)).toEqual(['a', 'b', 'c']);
     expect(buffer.next()?.item.id).toBe('a');
@@ -211,7 +246,7 @@ describe('createItemBuffer', () => {
   });
 
   it('promotes the next item when a ready one is dropped, and fills the window as items arrive', () => {
-    const buffer = createItemBuffer();
+    const buffer = deep();
     fill(buffer, ['a', 'b']);
     expect(decode(buffer)).toEqual(['a', 'b']);
     fill(buffer, ['c', 'd']);
@@ -251,20 +286,17 @@ describe('createItemBuffer', () => {
     expect(buffer.tokens()).toEqual(['token-1']);
   });
 
-  it('asks for more once downloaded plus ready is 5 or fewer, and for enough to reach 10', () => {
+  it('asks for more once 2 or fewer are buffered, and for enough to reach 3', () => {
     const buffer = createItemBuffer();
     expect(buffer.needsRefill()).toBe(true);
-    expect(buffer.missing()).toBe(10);
-    fill(buffer, ['a', 'b', 'c', 'd', 'e', 'f']);
+    expect(buffer.missing()).toBe(3);
+    fill(buffer, ['a', 'b', 'c', 'd']);
+    expect(buffer.size).toBe(3);
     expect(buffer.needsRefill()).toBe(false);
-    expect(buffer.missing()).toBe(4);
-    buffer.next();
-    expect(buffer.size).toBe(5);
-    expect(buffer.needsRefill()).toBe(true);
-    expect(buffer.missing()).toBe(5);
-    fill(buffer, ['g', 'h', 'i', 'j', 'k']);
     expect(buffer.missing()).toBe(0);
-    expect(buffer.needsRefill()).toBe(false);
+    buffer.next();
+    expect(buffer.needsRefill()).toBe(true);
+    expect(buffer.missing()).toBe(1);
   });
 
   it('drops one item by key and clears all', () => {
@@ -284,8 +316,8 @@ describe('refillCount', () => {
   });
 
   it('tops up to the full buffer otherwise, always asking for at least one', () => {
-    expect(refillCount(4)).toBe(6);
-    expect(refillCount(10)).toBe(1);
+    expect(refillCount(1)).toBe(2);
+    expect(refillCount(3)).toBe(1);
   });
 });
 
@@ -346,7 +378,12 @@ describe('sendWithRetry', () => {
     const result = await sendWithRetry(send, async () => undefined, [1, 1, 1]);
 
     expect(send).toHaveBeenCalledTimes(4);
-    expect(describeOutcome(result)).toEqual({ ok: false, message: 'busy', resync: false });
+    expect(describeOutcome(result)).toEqual({
+      ok: false,
+      message: 'busy',
+      resync: false,
+      stale: false,
+    });
   });
 
   it('does not resend a real cooldown, which still asks for the lockout screen', async () => {
@@ -363,6 +400,54 @@ describe('sendWithRetry', () => {
     const send = vi.fn(async () => null);
     expect(await sendWithRetry(send, async () => undefined)).toBeNull();
     expect(send).toHaveBeenCalledOnce();
+  });
+});
+
+describe('refusalNote', () => {
+  it('says nothing for a stale item: the player has moved on and did nothing wrong', () => {
+    expect(
+      refusalNote({
+        ok: false,
+        message: 'This one has already been settled.',
+        resync: false,
+        stale: true,
+      })
+    ).toBeNull();
+  });
+
+  it('keeps the note for any other refusal', () => {
+    expect(
+      refusalNote({
+        ok: false,
+        message: 'You have already judged this one.',
+        resync: false,
+        stale: false,
+      })
+    ).toBe(refusedNote('You have already judged this one.'));
+    expect(refusalNote({ ok: false, message: NETWORK_NOTICE, resync: false, stale: false })).toBe(
+      NETWORK_NOTICE
+    );
+  });
+});
+
+describe('refusedNote', () => {
+  it('says the press was not counted, once', () => {
+    expect(refusedNote('This one has already been settled.')).toBe(
+      'This one has already been settled. That judgment was not counted.'
+    );
+    expect(refusedNote(NETWORK_NOTICE)).toBe(NETWORK_NOTICE);
+  });
+});
+
+describe('skillCheckCue', () => {
+  const check = (verdict: string) => ({ success: true, check: { verdict, smites: 1 } });
+
+  it('cheers a right skill check only while a smite weighed on the player when they answered', () => {
+    expect(skillCheckCue(check('correct'), 1)).toBe('+1 toward your next heart');
+    expect(skillCheckCue(check('correct'), 0)).toBeNull();
+    expect(skillCheckCue(check('failed'), 2)).toBeNull();
+    expect(skillCheckCue({ success: true }, 2)).toBeNull();
+    expect(skillCheckCue(undefined, 2)).toBeNull();
   });
 });
 
@@ -392,6 +477,71 @@ describe('postVote', () => {
       signal.addEventListener('abort', () => done({ reached: false, result: null }))
     );
 
+  it('hands a recorded vote its answer, and a refused one none', async () => {
+    const tracker = createVoteTracker();
+    const onSuccess = vi.fn();
+    const check = { verdict: 'correct', consequence: null, smites: 1, reset: false };
+    const results = [
+      { type: 'success', status: 200, data: { success: true, check } },
+      { type: 'failure', status: 409, data: { message: 'nope' } },
+    ];
+    for (const key of ['a', 'b']) {
+      tracker.claim(key, `t-${key}`);
+      await postVote(key, {
+        queue: createSerialQueue(),
+        tracker,
+        send: async () => ({ reached: true, result: results.shift()! }),
+        wait: async () => undefined,
+        onFailure: () => undefined,
+        onSuccess,
+        onSettled: async () => undefined,
+      });
+    }
+    expect(onSuccess).toHaveBeenCalledTimes(1);
+    expect(onSuccess).toHaveBeenCalledWith({ success: true, check });
+  });
+
+  it('shows the heart cue for a right skill check under a smite, and still settles the vote', async () => {
+    const tracker = createVoteTracker();
+    tracker.claim('a', 't-a');
+    const check = { verdict: 'correct', consequence: null, smites: 1, reset: false };
+    let cue: string | null = null;
+    const onSettled = vi.fn(async () => undefined);
+    await postVote('a', {
+      queue: createSerialQueue(),
+      tracker,
+      send: async () => ({
+        reached: true,
+        result: { type: 'success', status: 200, data: { success: true, check } },
+      }),
+      wait: async () => undefined,
+      onFailure: () => undefined,
+      onSuccess: (data) => (cue = skillCheckCue(data, 1)),
+      onSettled,
+    });
+    expect(cue).toBe('+1 toward your next heart');
+    expect(onSettled).toHaveBeenCalledOnce();
+  });
+
+  it('settles the vote even when the success handler throws', async () => {
+    const tracker = createVoteTracker();
+    tracker.claim('a', 't-a');
+    const onSettled = vi.fn(async () => undefined);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    await postVote('a', {
+      queue: createSerialQueue(),
+      tracker,
+      send: async () => ({ reached: true, result: ok }),
+      wait: async () => undefined,
+      onFailure: () => undefined,
+      onSuccess: () => {
+        throw new Error('boom');
+      },
+      onSettled,
+    });
+    expect(onSettled).toHaveBeenCalledOnce();
+  });
+
   it('gives up on a hung post, frees its item, and lets the votes queued behind it go out', async () => {
     const sends = [hangs, async () => ({ reached: true, result: ok })];
     const { tracker, failures, post } = setup(async (signal) => sends.shift()!(signal));
@@ -402,7 +552,7 @@ describe('postVote', () => {
     expect(tracker.has('b')).toBe(true);
     expect(tracker.pending).toBe(0);
     expect(failures).toEqual([
-      { ok: false, message: expect.stringMatching(/connection/i), resync: false },
+      { ok: false, message: expect.stringMatching(/connection/i), resync: false, stale: false },
     ]);
   });
 
@@ -447,7 +597,7 @@ describe('postVote', () => {
 
     expect(tracker.pending).toBe(0);
     expect(tracker.has('a')).toBe(true);
-    expect(failures).toEqual([{ ok: false, message: 'too quick', resync: true }]);
+    expect(failures).toEqual([{ ok: false, message: 'too quick', resync: true, stale: false }]);
   });
 
   it('retries a busy vote and records it', async () => {
@@ -465,7 +615,7 @@ describe('postVote', () => {
     const { tracker, failures, post } = setup(async () => ({ reached: true, result: busy }));
     await post('a');
     expect(tracker.has('a')).toBe(false);
-    expect(failures).toEqual([{ ok: false, message: 'busy', resync: false }]);
+    expect(failures).toEqual([{ ok: false, message: 'busy', resync: false, stale: false }]);
   });
 
   it('frees the item when a busy vote is followed by a lost connection', async () => {
@@ -482,5 +632,60 @@ describe('postVote', () => {
     const { onSettled, post } = setup(async () => ({ reached: false, result: null }));
     await post('a');
     expect(onSettled).toHaveBeenCalledOnce();
+  });
+});
+
+describe('press timing on a vote body', () => {
+  const clock = (wall: number) => {
+    const now = { wall, mono: 1_000 };
+    return { now, clock: { wall: () => now.wall, mono: () => now.mono } };
+  };
+
+  it('stamps the press time and the live connection state at the press', () => {
+    const body = new FormData();
+    markPress(body, { connected: true, subscribed: false }, clock(1_797_336_000_000).clock);
+    expect(body.get('pressedAt')).toBe('1797336000000');
+    expect(body.get('signals')).toBe('10');
+    expect(body.has('waitedMs')).toBe(false);
+  });
+
+  it('records how long a background vote waited behind the votes queued before it, once, at the start of its post', async () => {
+    const { now, clock: fake } = clock(1_797_336_000_000);
+    const queue = createSerialQueue();
+    const tracker = createVoteTracker();
+    let releaseFirst!: () => void;
+    const first = queue.add(() => new Promise<void>((done) => (releaseFirst = done)));
+
+    const body = new FormData();
+    tracker.claim('b', 't-b');
+    const sent: (string | null)[] = [];
+    const results = [
+      { type: 'failure', status: 429, data: { busy: true } },
+      { type: 'success', status: 200, data: { success: true } },
+    ];
+    const posted = postVote('b', {
+      queue,
+      tracker,
+      onStart: markPress(body, { connected: true, subscribed: true }, fake),
+      send: async () => {
+        sent.push(String(body.get('waitedMs')));
+        now.mono += 500;
+        return { reached: true, result: results.shift()! };
+      },
+      wait: async () => undefined,
+      onFailure: () => undefined,
+      onSettled: async () => undefined,
+      retryDelays: [1],
+    });
+
+    await new Promise((done) => setTimeout(done, 0));
+    now.mono += 4_100;
+    releaseFirst();
+    await first;
+    await posted;
+
+    // The resend after a busy answer keeps the wait of the first post.
+    expect(sent).toEqual(['4100', '4100']);
+    expect(body.get('signals')).toBe('11');
   });
 });

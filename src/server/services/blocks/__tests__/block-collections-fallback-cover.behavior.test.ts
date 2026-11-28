@@ -28,6 +28,7 @@ vi.mock('~/server/services/model.service', async (importOriginal) => ({
 import {
   getFallbackCoverImages,
   getModelRestrictedImageIds,
+  mapImageItemToMedia,
 } from '~/server/services/blocks/block-collections.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
@@ -313,5 +314,35 @@ describe('getModelRestrictedImageIds against Postgres', () => {
     vi.mocked(dbMock.dbRead.$queryRaw).mockClear();
     expect((await getModelRestrictedImageIds([])).size).toBe(0);
     expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
+  });
+});
+
+// The real mapper (not a copy): `addedAt` comes from the COLLECTION ITEM's createdAt, never the
+// image's, and `duration` from the video's metadata. Image and item dates differ on purpose.
+describe('mapImageItemToMedia — addedAt and duration', () => {
+  const image = {
+    id: 77,
+    url: 'abc',
+    type: 'video',
+    width: 640,
+    height: 360,
+    nsfwLevel: 1,
+    metadata: { duration: 42.5 },
+    createdAt: new Date('2020-01-01T00:00:00.000Z'),
+    user: { id: 9, username: 'someone' },
+  };
+
+  it('carries the collection item time and the video length', () => {
+    const media = mapImageItemToMedia(image, {
+      createdAt: new Date('2026-03-04T05:06:07.000Z'),
+    });
+    expect(media.addedAt).toBe('2026-03-04T05:06:07.000Z');
+    expect(media.duration).toBe(42.5);
+  });
+
+  it('an image item has no duration key; a missing item time is null', () => {
+    const media = mapImageItemToMedia({ ...image, type: 'image' }, { createdAt: null });
+    expect(media.addedAt).toBeNull();
+    expect('duration' in media).toBe(false);
   });
 });

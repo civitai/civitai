@@ -1,14 +1,16 @@
 import { sql, type Kysely, type SqlBool } from 'kysely';
-import { closeOpenYesNoItem } from './close';
+import { closeOpenYesNoItem, type RetireReason } from './close';
 import { parseCsv } from './csv';
 import type { DB } from '@civitai/db-schema/kysely';
 import {
   isModeratedSql,
   MODERATION_META_KEY,
   MODERATOR_RETIRED,
+  readWithoutJit,
   REWORD_OF_META_KEY,
   YESNO_QUESTION_MAX,
 } from '@civitai/db/knights';
+import { servableImage } from '../image-gate';
 import {
   axisKey,
   axisPrompt,
@@ -28,12 +30,19 @@ export type YesNoRow = {
   prompt: string;
   yesEffect: string | null;
   noEffect: string | null;
-  meta: Record<string, string>;
+  meta: Record<string, string | number>;
 };
 
 export type Skipped = Partial<
   Record<
-    'inactive' | 'bad-id' | 'bad-image' | 'bad-axis' | 'bad-kind' | 'bad-question' | 'duplicate',
+    | 'inactive'
+    | 'bad-id'
+    | 'bad-image'
+    | 'bad-axis'
+    | 'bad-kind'
+    | 'bad-question'
+    | 'duplicate'
+    | 'unservable-image',
     number
   >
 >;
@@ -79,7 +88,7 @@ export function toYesNoRows(records: Record<string, string>[]): {
   skipped: Skipped;
   /** Ids of rows the producer no longer marks active; an open question with one of these is retired by the import. */
   retire: string[];
-  /** Well-formed later copies of an id, counted as `duplicate`; `dropMissingImages` uses one when the first copy's image is missing. */
+  /** Well-formed later copies of an id, counted as `duplicate`; `dropUnservableImages` uses one when the first copy's image is missing or cannot be served. */
   spares: YesNoRow[];
 } {
   const retire: string[] = [];
@@ -149,31 +158,36 @@ function toYesNoRow(r: Record<string, string>, externalId: string): YesNoRow | k
 }
 
 /**
- * Drops the rows whose image is not in `Image`, counting each under `skipped['bad-image']`. Nothing references `Image`
- * from the queue, so an item for a missing image would be inserted and stay open, never served. A dropped row is
- * replaced by the first of its `spares` whose image exists, which then no longer counts as a `duplicate`.
+ * Drops the rows whose image is not in `Image` (`skipped['bad-image']`) or fails `servableImage`
+ * (`skipped['unservable-image']`). Nothing references `Image` from the queue, so such an item would be inserted and stay
+ * open, never served. A dropped row is replaced by the first of its `spares` whose image can be served, which then no
+ * longer counts as a `duplicate`.
  */
-export async function dropMissingImages(
+export async function dropUnservableImages(
   db: Kysely<DB>,
   rows: YesNoRow[],
   skipped: Skipped,
   spares: YesNoRow[] = []
 ): Promise<YesNoRow[]> {
   if (rows.length === 0) return rows;
-  const found = await db
-    .selectFrom('Image')
-    .select('id')
-    .where('id', 'in', [...new Set([...rows, ...spares].map((r) => r.imageId))])
-    .execute();
-  const existing = new Set(found.map((f) => f.id));
+  const found = await readWithoutJit(db, (trx) =>
+    trx
+      .selectFrom('Image as img')
+      .leftJoin('Post as p', 'p.id', 'img.postId')
+      .select((eb) => ['img.id', servableImage(eb).as('servable')])
+      .where('img.id', 'in', [...new Set([...rows, ...spares].map((r) => r.imageId))])
+      .execute()
+  );
+  const servable = new Map(found.map((f) => [f.id, f.servable === true]));
   const kept: YesNoRow[] = [];
   for (const row of rows) {
-    if (existing.has(row.imageId)) {
+    if (servable.get(row.imageId)) {
       kept.push(row);
       continue;
     }
-    skipped['bad-image'] = (skipped['bad-image'] ?? 0) + 1;
-    const spare = spares.find((s) => s.externalId === row.externalId && existing.has(s.imageId));
+    const reason = servable.has(row.imageId) ? 'unservable-image' : 'bad-image';
+    skipped[reason] = (skipped[reason] ?? 0) + 1;
+    const spare = spares.find((s) => s.externalId === row.externalId && servable.get(s.imageId));
     if (!spare) continue;
     kept.push(spare);
     skipped.duplicate = (skipped.duplicate ?? 0) - 1;
@@ -214,7 +228,23 @@ export async function importYesNo(
     batchSize = 1000,
     retire = [],
     now = new Date(),
-  }: { batchSize?: number; retire?: string[]; now?: Date } = {}
+    source = YESNO_SOURCE,
+    minRank = 'Knight',
+    retireReason = 'retired',
+    retireMeta,
+  }: {
+    batchSize?: number;
+    retire?: string[];
+    now?: Date;
+    /** The producer the items are recorded under; the CSV import's by default. */
+    source?: string;
+    /** The stage new items start at, and the axis question's rank. */
+    minRank?: string;
+    /** Why the `retire` questions close: `retired` (the producer withdrew them) is reopened when they are listed again. */
+    retireReason?: Extract<RetireReason, 'retired' | 'moderator-ruled'>;
+    /** Merged into the `meta` of each question `retire` closes. */
+    retireMeta?: Record<string, unknown>;
+  } = {}
 ): Promise<ImportResult> {
   const axes = [...new Set(rows.map((r) => r.axis))];
   for (const axis of axes) {
@@ -225,7 +255,7 @@ export async function importYesNo(
         kind: 'bool',
         prompt: axisPrompt(axis),
         options: JSON.stringify(YESNO_ANSWERS),
-        minRank: 'Knight',
+        minRank,
         votesToResolve: YESNO_CONSENSUS_VOTES,
         maxVotes: YESNO_MAX_VOTES,
         threshold: 0.5,
@@ -253,8 +283,8 @@ export async function importYesNo(
           externalId: r.externalId,
           questionKey: axisKey(r.axis),
           imageId: r.imageId,
-          source: YESNO_SOURCE,
-          minRank: 'Knight',
+          source,
+          minRank,
           votesNeeded: YESNO_CONSENSUS_VOTES,
           priority: 2,
           expiresAt: null,
@@ -314,12 +344,12 @@ export async function importYesNo(
       result.revived += await reviveReworded(db, left);
     }
   }
-  await retireWithdrawn(db, retire, result, now, batchSize);
+  await retireWithdrawn(db, retire, result, now, batchSize, retireReason, retireMeta);
   return result;
 }
 
 /** The file never carries the moderation record a moderator's action merges into `meta`, so it is left out of the comparison. */
-const sameMeta = (a: unknown, b: Record<string, string>) => {
+const sameMeta = (a: unknown, b: Record<string, string | number>) => {
   const { [MODERATION_META_KEY]: _moderation, ...stored } = (a ?? {}) as Record<string, unknown>;
   return JSON.stringify(Object.entries(stored).sort()) === JSON.stringify(Object.entries(b).sort());
 };
@@ -371,14 +401,26 @@ async function reviveReworded(db: Kysely<DB>, skipped: YesNoRow[]): Promise<numb
       .filter((c) => c.reason === 'retired' && c.voteCount === 0)
       .sort((a, b) => number(b) - number(a))[0];
     if (!latest) continue;
-    const reopened = await db
-      .updateTable('KnightsQueueItem')
-      .set({ status: 'Open', reason: null, resolvedAt: null, updatedAt: utcNow })
-      .where('id', '=', latest.id)
-      .where('status', '=', 'Closed')
-      .where('reason', '=', 'retired')
-      .where('voteCount', '=', 0)
-      .executeTakeFirst();
+    const reopened = await readWithoutJit(db, (trx) =>
+      trx
+        .updateTable('KnightsQueueItem')
+        .set({ status: 'Open', reason: null, resolvedAt: null, updatedAt: utcNow })
+        .where('id', '=', latest.id)
+        .where('status', '=', 'Closed')
+        .where('reason', '=', 'retired')
+        .where('voteCount', '=', 0)
+        .where((eb) =>
+          eb.exists(
+            eb
+              .selectFrom('Image as img')
+              .innerJoin('Post as p', 'p.id', 'img.postId')
+              .select('img.id')
+              .whereRef('img.id', '=', 'KnightsQueueItem.imageId')
+              .where(servableImage)
+          )
+        )
+        .executeTakeFirst()
+    );
     revived += Number(reopened.numUpdatedRows);
   }
   return revived;
@@ -429,7 +471,9 @@ async function retireWithdrawn(
   ids: string[],
   result: ImportResult,
   now: Date,
-  batchSize: number
+  batchSize: number,
+  reason: Extract<RetireReason, 'retired' | 'moderator-ruled'>,
+  meta?: Record<string, unknown>
 ) {
   for (let at = 0; at < ids.length; at += batchSize) {
     const open = await db
@@ -446,7 +490,7 @@ async function retireWithdrawn(
       })
       .execute();
     for (const { id } of open) {
-      if (await closeOpenYesNoItem(db, id, 'retired', now)) result.retired++;
+      if (await closeOpenYesNoItem(db, id, reason, now, meta)) result.retired++;
     }
   }
 }
@@ -471,7 +515,7 @@ export async function importYesNoChunk(
   const records = parseCsv(csv);
   const parsed = toYesNoRows(records);
   const { skipped, retire } = parsed;
-  const rows = await dropMissingImages(db, parsed.rows, skipped, parsed.spares);
+  const rows = await dropUnservableImages(db, parsed.rows, skipped, parsed.spares);
   const summary: ChunkSummary = {
     read: records.length,
     toImport: rows.length,

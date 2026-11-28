@@ -1,4 +1,9 @@
 import type { Prisma } from '@prisma/client';
+import { REMIX_STATUSES } from '~/shared/remix-apps/row.schema';
+import {
+  lockAppBlockClientRows,
+  revokeAppBlockOauthTokens,
+} from './app-block-token-revoke.service';
 
 /** The fields the app runs under, as they were before this approve wrote the new version's. */
 export type PriorRuntime = {
@@ -11,7 +16,7 @@ export type PriorRuntime = {
     trustTier: string;
   };
   oauthClientId: string;
-  allowedScopes: number;
+  allowedScopes: bigint;
 };
 
 /** The on-site store listing as it was before this approve synced the new version's copy. */
@@ -104,8 +109,10 @@ export async function finaliseOnsiteApprove(
         appBlockId: input.appBlockId,
       },
     });
+  if (late.length) await lockAppBlockClientRows(tx, input.appBlockId);
+  // Throws (P2025) for a remix app's row: never suspended or stamped as a store app.
   await tx.appBlock.update({
-    where: { id: input.appBlockId },
+    where: { id: input.appBlockId, status: { notIn: REMIX_STATUSES } },
     // A held version is never marked current, and its unreviewed manifest, scopes and tier are
     // put back to the ones the app ran under: a restore serves the current sha's build under
     // them, and a re-triggered build rebuilds only the current sha.
@@ -117,7 +124,8 @@ export async function finaliseOnsiteApprove(
           screenshots: input.screenshots,
         },
   });
-  if (!late.length) return { lateHoldIds: late };
+  if (!late.length) return { lateHoldIds: late, revokedTokens: null };
+  const revoked = await revokeAppBlockOauthTokens(tx, input.appBlockId);
   // The held version's client ceiling and store copy go back to what they were before step (3).
   if (input.priorVersion) {
     await tx.oauthClient.update({
@@ -133,7 +141,7 @@ export async function finaliseOnsiteApprove(
       where: { appBlockId: input.appBlockId, kind: 'onsite' },
       data: { status: 'pending' },
     });
-    return { lateHoldIds: late };
+    return { lateHoldIds: late, revokedTokens: revoked };
   }
   // Only a listing that was going live is left for that re-approve. Any other status (a delisted
   // app) goes back as it was, so the re-approve never republishes it.
@@ -147,5 +155,5 @@ export async function finaliseOnsiteApprove(
     const { writeListingIssueTrackerUrl } = await import('./app-listing-issue-tracker.service');
     await writeListingIssueTrackerUrl(tx, id, issueTracker.value);
   }
-  return { lateHoldIds: late };
+  return { lateHoldIds: late, revokedTokens: revoked };
 }

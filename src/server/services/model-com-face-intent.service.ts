@@ -34,12 +34,15 @@ export function comFaceIntentFields({
 export const comFaceIntentTextHash = (listing: ComFaceIntentListing) =>
   textScanTextHash({ fields: comFaceIntentFields(listing), declared: {} });
 
-/** The id of the intent prompt version in use; undefined when it cannot be read. */
-export async function activeComFaceIntentPromptId(): Promise<number | undefined> {
+/** The id of a label's prompt version in use; undefined when it cannot be read. */
+export async function activeTextScanPromptId(label: string): Promise<number | undefined> {
   return getActiveTextScanPrompts()
-    .then((prompts) => prompts['label:model-com-face-intent']?.id)
+    .then((prompts) => prompts[`label:${label}`]?.id)
     .catch(() => undefined);
 }
+
+/** The id of the intent prompt version in use; undefined when it cannot be read. */
+export const activeComFaceIntentPromptId = () => activeTextScanPromptId('model-com-face-intent');
 
 /** The stored verdict for this exact text. A new or restored prompt version retires the check's own
  *  verdicts, never a moderator's overturn. */
@@ -47,14 +50,15 @@ export function reusableComFaceIntent(
   meta: unknown,
   textHash: string,
   activePromptId: number | undefined
-): Pick<ComFaceIntentRecord, 'detected' | 'reason'> | null {
+): Pick<ComFaceIntentRecord, 'detected' | 'reason' | 'promptId'> | null {
   const record = (meta as ModelMeta | null)?.comFaceIntent;
   if (!record || typeof record !== 'object' || record.textHash !== textHash) return null;
   if (typeof record.detected !== 'boolean') return null;
   // An overturned detection stands as allowed for the text it was ruled on.
-  if (record.overturnedAt) return { detected: false, reason: record.reason };
+  if (record.overturnedAt)
+    return { detected: false, reason: record.reason, promptId: record.promptId };
   if (activePromptId === undefined || record.promptId !== activePromptId) return null;
-  return { detected: record.detected, reason: record.reason };
+  return { detected: record.detected, reason: record.reason, promptId: record.promptId };
 }
 
 /**

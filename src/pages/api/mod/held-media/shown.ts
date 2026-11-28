@@ -35,8 +35,8 @@ const body = z
  */
 async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionUser) {
   res.setHeader('cache-control', 'private, no-store');
-  if (!getFeatureFlags({ user, req }).csamReports)
-    return void res.status(403).json({ error: 'Forbidden' });
+  const csamReview = !!getFeatureFlags({ user, req }).csamReports;
+  if (!csamReview) return void res.status(403).json({ error: 'Forbidden' });
   const parsed = body.safeParse(req.body);
   if (!parsed.success) return void res.status(400).json({ error: 'Bad request' });
   const { imageId, userId, action, rendition } = parsed.data;
@@ -51,7 +51,7 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
   // A held image is shown only from storage. Any other is shown from the CDN, or from storage through
   // the retracted-media route when it is blocked.
   const held = await getHeldMedia(imageId, dbWrite);
-  const retracted = held ? null : await getRetractedMedia(imageId, { csamReview: true }, dbWrite);
+  const retracted = held ? null : await getRetractedMedia(imageId, { csamReview }, dbWrite);
   const media = held ?? (typeof retracted === 'string' ? null : retracted);
   if (rendition === 'original' ? !media : !!held)
     return void res.status(409).json({ error: 'Not shown that way' });

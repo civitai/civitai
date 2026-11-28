@@ -1,13 +1,18 @@
+import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { NsfwLevel } from '~/server/common/enums';
+import { challengeCoverWhere, imageNotRestrictedWhere } from '~/server/common/image-visibility';
 import type * as ChallengeHelpers from '~/server/games/daily-challenge/challenge-helpers';
 import type * as DailyChallengeUtils from '~/server/games/daily-challenge/daily-challenge.utils';
 import type * as UserService from '~/server/services/user.service';
 
 // The detail page's winners and cover go through the same site gating as the challenge list.
 
-const { mockGetChallengeById } = vi.hoisted(() => ({ mockGetChallengeById: vi.fn() }));
+const { mockGetChallengeById, mockAmIBlockedByUser } = vi.hoisted(() => ({
+  mockGetChallengeById: vi.fn(),
+  mockAmIBlockedByUser: vi.fn(async (_: { userId: number; targetUserId?: number }) => false),
+}));
 
 vi.mock('~/server/games/daily-challenge/challenge-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof ChallengeHelpers>()),
@@ -21,11 +26,15 @@ vi.mock('~/server/services/user.service', async (importOriginal) => ({
   ...(await importOriginal<typeof UserService>()),
   getProfilePicturesForUsers: vi.fn(async () => ({})),
   getCosmeticsForUsers: vi.fn(async () => ({})),
+  amIBlockedByUser: mockAmIBlockedByUser,
 }));
 
-const { getChallengeDetail, getCompletedChallengesWithWinners } = await import(
-  '~/server/services/challenge.service'
-);
+const {
+  getChallengeDetail,
+  getChallengeEvents,
+  getChallengeForEdit,
+  getCompletedChallengesWithWinners,
+} = await import('~/server/services/challenge.service');
 
 const WINNER_URL = 'winner-image-url';
 const VIEWER = 333;
@@ -69,6 +78,7 @@ const winnerRow = (imageNsfwLevel: number, image: Record<string, unknown> = {}) 
   imageIngestion: 'Scanned',
   imageBlockedFor: null,
   imageReviewed: true,
+  imageNotRestricted: true,
   ...image,
   place: 1,
   buzzAwarded: 0,
@@ -195,11 +205,19 @@ describe('getChallengeDetail — cover image', () => {
     viewerId: number | undefined,
     isGreen: boolean,
     challenge: Record<string, unknown> = completedSystemChallenge,
-    image: Record<string, unknown> = {}
+    image: Record<string, unknown> = {},
+    listed = false
   ) {
     mockGetChallengeById.mockResolvedValue({ ...challenge, coverImageId: 80 });
-    dbMock.dbRead.$queryRaw.mockResolvedValue([] as never);
-    dbMock.dbRead.image.findUnique.mockResolvedValue({
+    // The report-listed lookup names the cover when `listed`; every other raw read finds nothing.
+    dbMock.dbRead.$queryRaw.mockImplementation((async (
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) =>
+      listed && Prisma.sql(strings, ...(values as never[])).sql.includes('"CsamReport"')
+        ? [{ id: 80 }]
+        : []) as never);
+    dbMock.dbRead.image.findFirst.mockResolvedValue({
       id: 80,
       url: 'cover-image-url',
       nsfwLevel,
@@ -225,6 +243,10 @@ describe('getChallengeDetail — cover image', () => {
 
   it('withholds a PG-13 cover on the green site from a signed-out viewer', async () => {
     expect(await cover(NsfwLevel.PG13, undefined, true)).toBeNull();
+  });
+
+  it('🔴 withholds a cover listed on a report', async () => {
+    expect(await cover(NsfwLevel.PG, VIEWER, false, completedSystemChallenge, {}, true)).toBeNull();
   });
 
   it('keeps an SFW cover on the green site', async () => {
@@ -256,5 +278,104 @@ describe('getChallengeDetail — cover image', () => {
     ['a block reason', NsfwLevel.X, { blockedFor: 'tos' }],
   ])('withholds a cover with %s on the mature site', async (_, nsfwLevel, image) => {
     expect(await cover(nsfwLevel, VIEWER, false, completedSystemChallenge, image)).toBeNull();
+  });
+});
+
+describe('getChallengeDetail — the cover read', () => {
+  it('asks only for a cover every viewer may be shown, as challengeCoverWhere states it', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-06-01T00:00:00Z'));
+    try {
+      mockGetChallengeById.mockResolvedValue({ ...completedSystemChallenge, coverImageId: 80 });
+      dbMock.dbRead.$queryRaw.mockResolvedValue([] as never);
+      dbMock.dbRead.image.findFirst.mockResolvedValue(null as never);
+      await getChallengeDetail(500, VIEWER, false, false, true);
+      expect(dbMock.dbRead.image.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            id: 80,
+            AND: [imageNotRestrictedWhere({ viewerId: VIEWER }), challengeCoverWhere()],
+          }),
+        })
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('getChallengeDetail — user challenge gates', () => {
+  const OWNER = 111;
+  const userChallenge = { ...completedSystemChallenge, source: 'User', createdById: OWNER };
+
+  beforeEach(() => {
+    dbMock.dbRead.$queryRaw.mockResolvedValue([] as never);
+  });
+
+  it('hides a user challenge when the caller omits the userChallenges flag', async () => {
+    mockGetChallengeById.mockResolvedValue(userChallenge);
+    expect(await getChallengeDetail(500, VIEWER, false, false)).toBeNull();
+  });
+
+  it('hides a user challenge from a viewer its creator blocked', async () => {
+    mockGetChallengeById.mockResolvedValue(userChallenge);
+    mockAmIBlockedByUser.mockImplementationOnce(
+      async ({ userId, targetUserId }) => userId === VIEWER && targetUserId === OWNER
+    );
+    expect(await getChallengeDetail(500, VIEWER, false, false, true)).toBeNull();
+  });
+
+  it('hides a user challenge whose cover is unrated, reading only the fields it selects', async () => {
+    mockGetChallengeById.mockResolvedValue({ ...userChallenge, coverImageId: 77 });
+    const row = { poi: false, ingestion: 'Scanned', nsfwLevel: 0 };
+    dbMock.dbRead.image.findUnique.mockImplementation((async ({
+      select,
+    }: {
+      select: Record<string, boolean>;
+    }) => Object.fromEntries(Object.entries(row).filter(([key]) => select[key]))) as never);
+    expect(await getChallengeDetail(500, VIEWER, false, false, true)).toBeNull();
+  });
+});
+
+describe('the moderator edit views of a cover listed on a report', () => {
+  const listedCover = {
+    id: 80,
+    url: 'cover-image-url',
+    nsfwLevel: NsfwLevel.PG,
+    hash: 'cover-hash',
+    width: 512,
+    height: 512,
+    type: 'image',
+    ingestion: 'Scanned',
+    blockedFor: null,
+  };
+  beforeEach(() => {
+    mockGetChallengeById.mockResolvedValue({ ...completedSystemChallenge, coverImageId: 80 });
+    dbMock.dbRead.$queryRaw.mockImplementation((async (
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) =>
+      Prisma.sql(strings, ...(values as never[])).sql.includes('"CsamReport"')
+        ? [{ id: 80 }]
+        : []) as never);
+    dbMock.dbRead.image.findFirst.mockResolvedValue(listedCover as never);
+    dbMock.dbRead.image.findMany.mockResolvedValue([listedCover] as never);
+    dbMock.dbRead.challengeEvent.findMany.mockResolvedValue([
+      { id: 7, title: 'Event', coverImageId: 80, _count: { challenges: 0 } },
+    ] as never);
+  });
+
+  it('🔴 keep its id but not its source without the grant', async () => {
+    const edit = await getChallengeForEdit(500);
+    expect(edit?.coverImage).toMatchObject({ id: 80, url: '', hash: null });
+    const [event] = await getChallengeEvents({} as never);
+    expect(event.coverImage).toMatchObject({ id: 80, url: '', hash: null });
+  });
+
+  it('keep it whole for a held-media viewer (control)', async () => {
+    const edit = await getChallengeForEdit(500, { seesReportListed: true });
+    expect(edit?.coverImage).toMatchObject({ id: 80, url: 'cover-image-url' });
+    const [event] = await getChallengeEvents({} as never, { seesReportListed: true });
+    expect(event.coverImage).toMatchObject({ id: 80, url: 'cover-image-url' });
   });
 });

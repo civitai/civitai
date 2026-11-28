@@ -17,6 +17,7 @@
     PaginationPrevious,
   } from '@civitai/ui/components/ui/pagination/index.js';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
+  import { RETRACTED_REFUSED } from '$lib/held-media';
   import {
     articleStatusFilters,
     articleStatusBadge,
@@ -27,7 +28,6 @@
   import { userUrl } from '$lib/entity-url';
   import type { ActionData, PageData } from './$types';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
-  import { Alert, AlertDescription, AlertTitle } from '@civitai/ui/components/ui/alert/index.js';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -63,18 +63,6 @@
 
 {#if form?.error}
   <ErrorAlert class="mb-4" message={form.error} />
-{/if}
-{#if form?.kept?.length}
-  <Alert class="mb-4">
-    <AlertTitle>The article was deleted, but a hold kept {form.kept.length} of its images</AlertTitle>
-    <AlertDescription>
-      <ul>
-        {#each form.kept as image (image.id)}
-          <li>Image {image.id}: {image.label}</li>
-        {/each}
-      </ul>
-    </AlertDescription>
-  </Alert>
 {/if}
 
 <div class="mb-4 flex flex-wrap items-end gap-x-6 gap-y-3">
@@ -112,7 +100,13 @@
   <div class="flex flex-col gap-3">
     {#each data.items as article (article.id)}
       <div class="flex gap-4 rounded-xl border p-3">
-        {#if article.coverUrl}
+        {#if article.coverRestricted}
+          <div
+            class="grid size-24 shrink-0 place-items-center rounded-lg bg-muted p-1 text-center text-[10px] text-dark-2"
+          >
+            {RETRACTED_REFUSED}
+          </div>
+        {:else if article.coverUrl}
           <div class="size-24 shrink-0 overflow-hidden rounded-lg bg-muted">
             <EdgeMedia
               src={article.coverUrl}

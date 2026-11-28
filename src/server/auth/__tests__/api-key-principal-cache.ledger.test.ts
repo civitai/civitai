@@ -21,6 +21,8 @@ import type * as OrchestratorCivitai from '~/server/services/orchestrator/civita
 import type * as FeatureFlagsService from '~/server/services/feature-flags.service';
 import type * as UserService from '~/server/services/user.service';
 import { OnboardingSteps } from '~/server/common/enums';
+import { DOCS_API_KEY_SCOPE } from '~/shared/constants/docs-api-key.constants';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { stripCodeComments } from '~/test-utils/strip-code-comments';
 
 /**
@@ -75,6 +77,7 @@ vi.mock('~/server/services/user.service', async (importOriginal) => ({
 }));
 
 const { getSessionFromBearerToken } = await import('~/server/auth/bearer-token');
+const { deleteAuthSubject } = await import('~/server/http/orchestrator/api-key-spend');
 const {
   deleteApiKey,
   deleteApiKeys,
@@ -103,6 +106,10 @@ const NOT_CACHED =
 const WORKER_ONLY =
   'touches type Worker rows only; the bearer path never selects that type, so never caches one';
 const LEDGER: Record<string, { count: number; why: string }> = {
+  'src/server/services/blocks/app-block-token-revoke.service.ts': {
+    count: 1,
+    why: NOT_CACHED,
+  },
   'src/server/auth/bearer-token.ts': {
     count: 1,
     why: 'lastUsedAt only; nothing the bearer path decides on. Throttled per key per hour.',
@@ -119,7 +126,9 @@ const LEDGER: Record<string, { count: number; why: string }> = {
   'src/server/routers/oauth-consent.router.ts': { count: 1, why: NOT_CACHED },
   'src/server/services/blocks/oauth-consent-sync.service.ts': { count: 1, why: NOT_CACHED },
   'apps/auth/src/lib/server/oauth/model.ts': { count: 1, why: NOT_CACHED },
-  'apps/auth/src/lib/server/oauth/token-helpers.ts': { count: 1, why: 'insert: OAuth rows' },
+  'apps/auth/src/lib/server/oauth/token-helpers.ts': { count: 2, why: 'insert: OAuth rows' },
+  // Refresh-family revoke (Refresh + Access) and the offline-decline Refresh delete: OAuth rows.
+  'apps/auth/src/lib/server/oauth/offline-grant.ts': { count: 3, why: NOT_CACHED },
   'apps/auth/src/routes/api/auth/oauth/revoke/+server.ts': { count: 2, why: NOT_CACHED },
   'apps/auth/src/lib/server/oauth/worker-grant.ts': { count: 2, why: WORKER_ONLY },
   'apps/auth/src/lib/server/oauth/worker-admin.ts': { count: 1, why: WORKER_ONLY },
@@ -254,6 +263,17 @@ const seed = (): Row[] => [
     expiresAt: null,
   },
 ];
+const DOCS_NAME = 'Developer docs (civitai.com)';
+const docsRow = (id: number, token: string, over: Partial<Row> = {}): Row => ({
+  ...seed()[0],
+  id,
+  key: `hash-of-${token}`,
+  name: DOCS_NAME,
+  tokenScope: Number(DOCS_API_KEY_SCOPE),
+  buzzLimit: null,
+  expiresAt: new Date(T0.getTime() + 10 * 86_400_000),
+  ...over,
+});
 const matches = (row: Row, where: Record<string, unknown>): boolean =>
   Object.entries(where).every(([field, cond]) => {
     if (field === 'AND') return (cond as Record<string, unknown>[]).every((c) => matches(row, c));
@@ -266,6 +286,10 @@ const matches = (row: Row, where: Record<string, unknown>): boolean =>
       const value = row[field as keyof Row] as Date | null;
       return value !== null && value >= (cond as { gte: Date }).gte;
     }
+    if (cond && typeof cond === 'object' && 'startsWith' in cond)
+      return (row[field as keyof Row] as string).startsWith(
+        (cond as { startsWith: string }).startsWith
+      );
     if (cond && typeof cond === 'object' && 'in' in cond)
       return (cond as { in: unknown[] }).in.includes(row[field as keyof Row]);
     return row[field as keyof Row] === cond;
@@ -310,9 +334,10 @@ beforeEach(() => {
   }) =>
     rows
       .filter((r) => matches(r, where))
-      .map(({ id, key, userId, expiresAt, type, tokenScope }) => ({
+      .map(({ id, key, name, userId, expiresAt, type, tokenScope }) => ({
         id,
         key,
+        name,
         userId,
         expiresAt,
         type,
@@ -381,6 +406,41 @@ describe('writes that evict the bearer cache', () => {
     expect((await getSessionFromBearerToken('personal'))?.apiKeyId).toBe(51);
   });
 
+  it('🔴 deleteApiKeys over many holders: each holder’s orchestrator auth expires once, never more than 10 at a time', async () => {
+    // A connect app's takedown deletes the client's refresh tokens for every user at once.
+    for (let i = 0; i < 25; i++) {
+      rows.push({
+        ...seed()[0],
+        id: 1000 + i,
+        key: `hash-of-refresh-${i}`,
+        userId: 7000 + i,
+        clientId: 'oc_takedown',
+        type: 'Refresh',
+      });
+    }
+    const { revokeCivitaiUserTokens } = await import('~/server/services/orchestrator/civitai');
+    let inFlight = 0;
+    let peak = 0;
+    vi.mocked(revokeCivitaiUserTokens).mockImplementation(async () => {
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      await new Promise((r) => setTimeout(r, 1));
+      inFlight--;
+      return true;
+    });
+    await expect(deleteApiKeys({ type: 'Refresh', clientId: 'oc_takedown' })).resolves.toEqual({
+      count: 25,
+    });
+    expect(
+      vi
+        .mocked(revokeCivitaiUserTokens)
+        .mock.calls.map((c) => c[0].userId)
+        .sort()
+    ).toEqual(Array.from({ length: 25 }, (_, i) => 7000 + i));
+    expect(peak).toBe(10);
+    expect(rows.some((r) => r.clientId === 'oc_takedown')).toBe(false);
+  });
+
   it('expireUserApiKeys stops every key of the user on the next request and keeps the rows', async () => {
     const { revokeCivitaiUserTokens } = await import('~/server/services/orchestrator/civitai');
     rows.push({ ...seed()[0], id: 53, key: 'hash-of-other-user', userId: 502 });
@@ -407,6 +467,20 @@ describe('writes that evict the bearer cache', () => {
     vi.setSystemTime(new Date(T0.getTime() + 1000)); // the next request
     expect(await getSessionFromBearerToken('orchestrator')).toBeNull();
     expect((await getSessionFromBearerToken('personal'))?.apiKeyId).toBe(51);
+  });
+
+  it('expireGenerationCredentials stops a docs key, not a personal key that only shares its name', async () => {
+    rows.push(
+      docsRow(71, 'docs'),
+      docsRow(72, 'look-alike', { tokenScope: Number(TokenScope.Full), expiresAt: null })
+    );
+    await warm('docs');
+    await warm('look-alike');
+    await expireGenerationCredentials(501);
+    vi.setSystemTime(new Date(T0.getTime() + 1000)); // the next request
+    expect(await getSessionFromBearerToken('docs')).toBeNull();
+    expect((await getSessionFromBearerToken('look-alike'))?.apiKeyId).toBe(72);
+    expect(rows.find((r) => r.id === 72)?.expiresAt).toBeNull();
   });
 
   it("expireClientTokens stops that client's tokens on the next request, not another client's", async () => {
@@ -485,7 +559,10 @@ describe('writes that evict the bearer cache', () => {
     expect((await getSessionFromBearerToken('personal'))?.buzzLimit).toEqual({ limit: 9 });
   });
 
-  it('GET /api/user/orchestrator-key (regenerate) stops the old orchestrator key', async () => {
+  it('GET /api/user/orchestrator-key past the cap stops the oldest docs key, not the System key', async () => {
+    rows.push(docsRow(71, 'docs-old'), docsRow(72, 'docs-new'));
+    await warm('docs-old');
+    await warm('docs-new');
     await warm('orchestrator');
     // The route checks the caller's stored standing first; answer that read only.
     dbMock.dbWrite.user.findUnique.mockImplementation((async (args: {
@@ -520,13 +597,19 @@ describe('writes that evict the bearer cache', () => {
     const req = {
       method: 'GET',
       url: '/api/user/orchestrator-key',
-      headers: { host: 'civitai.com' },
+      headers: { host: 'civitai.com', origin: 'https://developer.civitai.com' },
       query: {},
       cookies: {},
     } as unknown as NextApiRequest;
     await orchestratorKeyRoute(req, res);
-    expect(body).toEqual({ key: 'minted-api-key' });
-    expect(tombstoned('hash-of-orchestrator')).toBe(true);
-    expect(await getSessionFromBearerToken('orchestrator')).toBeNull();
+    expect(body).toMatchObject({ key: 'minted-api-key' });
+    expect(tombstoned('hash-of-docs-old')).toBe(true);
+    expect(await getSessionFromBearerToken('docs-old')).toBeNull();
+    expect(deleteAuthSubject).toHaveBeenCalledWith({
+      userId: 501,
+      subject: { type: 'apiKey', id: 71 },
+    });
+    expect((await getSessionFromBearerToken('docs-new'))?.apiKeyId).toBe(72);
+    expect((await getSessionFromBearerToken('orchestrator'))?.apiKeyId).toBe(52);
   });
 });

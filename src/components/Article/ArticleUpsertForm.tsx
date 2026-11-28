@@ -2,7 +2,7 @@ import type { ButtonProps, StackProps, TooltipProps } from '@mantine/core';
 import { Alert, Anchor, Button, Group, Input, Paper, Stack, Text, Title } from '@mantine/core';
 import { Tooltip } from '~/components/MantineOverlays';
 import { aspectRatioMap } from '~/components/CardTemplates/AspectRatioCard';
-import { openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { IconLink, IconQuestionMark, IconSparkles, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
@@ -55,6 +55,8 @@ import { showErrorNotification } from '~/utils/notifications';
 import { parseNumericString } from '~/utils/query-string-helpers';
 import { titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { MatureRestrictedBadge } from '~/components/Image/MatureRestrictedBadge/MatureRestrictedBadge';
+import { isRestrictedImage } from '~/shared/utils/restricted-image';
 
 const schema = articleFormSchema(true);
 const querySchema = z.object({
@@ -143,6 +145,11 @@ export function ArticleUpsertForm({ article }: Props) {
   });
   const [userNsfwLevel, content] = form.watch(['userNsfwLevel', 'content']);
   const [watchedCover, watchedBanner] = form.watch(['coverImage', 'bannerImage']);
+  // The saved image, while it is still selected: its owner and moderators see it, its readers don't.
+  const isSavedRestricted = (
+    saved: ArticleGetById['coverImage'],
+    watched: { id?: number } | null | undefined
+  ) => !!saved && watched?.id === saved.id && isRestrictedImage(saved);
   useEffect(() => {
     if (currentUser?.isModerator) {
       if (userNsfwLevel)
@@ -203,6 +210,7 @@ export function ArticleUpsertForm({ article }: Props) {
         {
           ...rest,
           content,
+          editForm: true,
           userNsfwLevel: getUserNsfwLevelSubmit(userNsfwLevel, canEditUserNsfwLevel),
           // moderatorNsfwLevel is gated server-side too, but only send it from
           // the mod-only picker so non-mod payloads never carry the key.
@@ -266,9 +274,9 @@ export function ArticleUpsertForm({ article }: Props) {
         return;
       }
 
-      openConfirmModal({
+      openConfirm({
         title: 'Article Image Processing',
-        children: (
+        message: (
           <Stack gap="sm">
             <Text>
               Your article contains {newImages.length} new embedded image
@@ -302,9 +310,9 @@ export function ArticleUpsertForm({ article }: Props) {
       return;
     }
 
-    openConfirmModal({
+    openConfirm({
       title: 'Moderator rating will be re-evaluated',
-      children: (
+      message: (
         <Text>
           A moderator previously set this article&apos;s rating manually. Saving will trigger a
           rescan and may reset that rating. Continue?
@@ -521,7 +529,11 @@ export function ArticleUpsertForm({ article }: Props) {
               }
               cardCrop={aspectRatioMap.portrait}
               previewWidth={constants.article.coverImageWidth}
+              ratingClickable
               withAsterisk={!features.articleTypography}
+            />
+            <MatureRestrictedBadge
+              restricted={isSavedRestricted(article?.coverImage, watchedCover)}
             />
             {features.articleTypography && (
               <ReframeButton
@@ -538,6 +550,12 @@ export function ArticleUpsertForm({ article }: Props) {
                 aspectRatio={
                   constants.article.bannerImageHeight / constants.article.bannerImageWidth
                 }
+                ratingClickable
+              />
+            )}
+            {features.articleTypography && (
+              <MatureRestrictedBadge
+                restricted={isSavedRestricted(article?.bannerImage, watchedBanner)}
               />
             )}
             {features.articleTypography && (
@@ -718,7 +736,9 @@ function ActionButtons({
       ...(scanStatus.images?.error || []),
     ];
 
-    return problematicImages.some((img) => currentContentUrls.has(img.url));
+    // A blocked image sent without its url cannot be matched to the content, so it holds the
+    // publish until a save drops it from the scan.
+    return problematicImages.some((img) => img.url === null || currentContentUrls.has(img.url));
   }, [scanStatus, currentContentUrls]);
 
   const publishDisabled = publishButtonProps.disabled || hasProblematicImages;

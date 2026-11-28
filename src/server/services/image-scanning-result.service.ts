@@ -27,7 +27,8 @@ import { computePerceptualHash } from '~/server/services/orchestrator/orchestrat
 import { recordImageScanningResult } from '~/server/services/scanner-audit.service';
 import { recordScanLabelFlag } from '~/server/services/scan-label-flag.service';
 import { labelUploadPrompt } from '~/server/services/upload-prompt-scan.service';
-import { handleLogError } from '~/server/utils/errorHandling';
+import { bustPostCachesLazy } from '~/server/services/bust-post-caches-lazy';
+import { evictHomeBlocksForImages } from '~/server/services/home-block-cache.service';
 import { fanOutArticleImageUpdates } from '~/server/utils/webhook-debounce';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 
@@ -196,7 +197,8 @@ async function failScan(
   }
 ) {
   const { articleImageScanning, logType, message, stack, ...error } = input;
-  const { retryCount, mediaType, userId, failureClass } = await markImageScanError(error);
+  const { retryCount, mediaType, userId, ingestion, blockedFor, failureClass } =
+    await markImageScanError(error);
   logToAxiom(
     {
       name: IMAGE_SCANNING_LOG.name,
@@ -214,7 +216,8 @@ async function failScan(
   await sendIngestionSignal({
     imageId: error.imageId,
     userId,
-    ingestion: ImageIngestionStatus.Error,
+    ingestion: ingestion ?? ImageIngestionStatus.Error,
+    blockedFor,
     log: IMAGE_SCANNING_LOG,
   });
   if (articleImageScanning) await fanOutArticleImageUpdates(error.imageId);
@@ -338,8 +341,11 @@ export async function processImageScanningWorkflow({
       },
       'webhooks'
     );
-    // The showcase bust runs late in the side effects; a step before it may be what threw.
-    if (image.postId) await bustPostCaches(image.postId);
+    // Backstop: the in-pipeline showcase bust may not have run if an earlier step threw.
+    if (image.postId) await bustPostCachesLazy(image.postId);
+    // Likewise the home-block refresh, which never throws.
+    if (outcome.ingestion === ImageIngestionStatus.Blocked)
+      await evictHomeBlocksForImages({ imageIds: [image.id] });
   }
 
   // A label for moderators to verify, recorded after the verdict so it cannot change it.
@@ -372,14 +378,4 @@ export async function processImageScanningWorkflow({
     void labelUploadPrompt({ imageId, userId: image.userId, prompt, negativePrompt }).catch(
       () => null
     );
-}
-
-/** Never throws. Call-site import: post.service loads most of the server, which this handler's tests stub. */
-async function bustPostCaches(postId: number) {
-  try {
-    const { bustCachesForPosts } = await import('~/server/services/post.service');
-    await bustCachesForPosts(postId);
-  } catch (error) {
-    handleLogError(error as Error);
-  }
 }

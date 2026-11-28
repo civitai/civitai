@@ -19,15 +19,21 @@ import { pgliteDialect } from './abuse-detection-pglite.harness';
 
 vi.setConfig({ hookTimeout: 60_000 });
 
-const { dbHandle, recordModActivity, applyBlockSideEffects, setReportStatus, chQuery } = vi.hoisted(
-  () => ({
-    dbHandle: { current: null as unknown },
-    recordModActivity: vi.fn(async () => undefined),
-    applyBlockSideEffects: vi.fn(async () => undefined),
-    setReportStatus: vi.fn(async (_input: { id: number }) => ({ ok: true, changed: true })),
-    chQuery: vi.fn(async (): Promise<object[]> => []),
-  })
-);
+const {
+  dbHandle,
+  recordModActivity,
+  insertModActivity,
+  applyBlockSideEffects,
+  setReportStatus,
+  chQuery,
+} = vi.hoisted(() => ({
+  dbHandle: { current: null as unknown },
+  recordModActivity: vi.fn(async () => undefined),
+  insertModActivity: vi.fn(async (_input: object, _db?: unknown) => 1),
+  applyBlockSideEffects: vi.fn(async () => undefined),
+  setReportStatus: vi.fn(async (_input: { id: number }) => ({ ok: true, changed: true })),
+  chQuery: vi.fn(async (): Promise<object[]> => []),
+}));
 
 vi.mock('../db', () => ({
   get dbRead() {
@@ -54,11 +60,11 @@ vi.mock('../thumbnail-cache', async (importOriginal) => ({
   invalidateThumbnails: vi.fn(async () => undefined),
 }));
 vi.mock('../tags-on-image.service', () => ({ upsertTagsOnImageNew: vi.fn() }));
-vi.mock('../mod-activity', () => ({ recordModActivity }));
+vi.mock('../mod-activity', () => ({ insertModActivity, recordModActivity }));
 vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn() }));
 vi.mock('../reports.service', () => ({ setReportStatus }));
 
-const { blockImage } = await import('../image-moderation.service');
+const { blockImage, isBannedOwnerBlocked } = await import('../image-moderation.service');
 const { confirmRemoval, declineRemoval } = await import('../image-removal-confirmation.service');
 
 const MIGRATION = readFileSync(
@@ -74,7 +80,7 @@ const MIGRATION = readFileSync(
 const SCHEMA = `
 CREATE TYPE "EntityType" AS ENUM ('Image', 'Post', 'Model');
 CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected', 'Void');
-CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "username" TEXT);
+CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "username" TEXT, "bannedAt" TIMESTAMP(3));
 CREATE TABLE "Image" (
   "id" INTEGER PRIMARY KEY,
   "type" TEXT,
@@ -105,6 +111,12 @@ CREATE TABLE "Appeal" (
   "resolvedMessage" TEXT
 );
 CREATE TABLE "AppealDecisionRecord" ("appealId" INTEGER UNIQUE, "removalLabel" TEXT);
+CREATE TABLE "ModActivity" (id SERIAL PRIMARY KEY, "userId" INTEGER, "entityType" TEXT, "entityId" INTEGER, activity TEXT, "createdAt" TIMESTAMP(3) DEFAULT now());
+CREATE TYPE "ReportStatus" AS ENUM ('Pending', 'Processing', 'Actioned', 'Unactioned');
+CREATE TABLE "Report" (id INTEGER PRIMARY KEY, status "ReportStatus" NOT NULL, reason TEXT NOT NULL DEFAULT 'NSFW');
+CREATE TABLE "ImageReport" ("imageId" INTEGER NOT NULL, "reportId" INTEGER NOT NULL);
+INSERT INTO "Report" (id, status) VALUES (7, 'Pending'), (8, 'Processing');
+INSERT INTO "ImageReport" ("imageId", "reportId") VALUES (50, 7), (50, 8);
 `;
 
 const REQUESTER = 2;
@@ -217,6 +229,49 @@ describe('a removal of an image approved on appeal', () => {
     const result = await blockImage({ imageId: IMAGE, userId: REQUESTER });
     expect(result.held).toBeDefined();
     expect((await image()).ingestion).toBe('Scanned');
+  });
+
+  // The CDN access sync reads a block as a takedown only once its ModActivity row exists, so the two
+  // must commit together: a sync run between them would deny without ever retracting.
+  describe('the takedown audit row, written for real', () => {
+    const actual = async () =>
+      (await vi.importActual<typeof import('../mod-activity')>('../mod-activity'))
+        .insertModActivity;
+    const auditRows = async () =>
+      (
+        await db.query<{ activity: string }>(
+          `SELECT activity FROM "ModActivity" WHERE "entityId" = $1`,
+          [IMAGE]
+        )
+      ).rows;
+
+    it('commits with the block, through its transaction', async () => {
+      const insert = await actual();
+      let isTransaction: boolean | undefined;
+      insertModActivity.mockImplementationOnce(async (input, client) => {
+        // One PGlite connection runs a plain-client write inside the open transaction too, so the
+        // rows alone cannot tell the two apart: the client has to be the transaction.
+        isTransaction = (client as { isTransaction?: boolean }).isTransaction;
+        return insert(input as never, client as never);
+      });
+      await blockImage({ imageId: IMAGE, userId: REQUESTER, violationType: 'gore' });
+      expect((await image()).ingestion).toBe('Blocked');
+      expect(await auditRows()).toEqual([{ activity: 'review' }]);
+      expect(isTransaction).toBe(true);
+    });
+
+    it('rolls back with the block when a later write in it fails', async () => {
+      const insert = await actual();
+      insertModActivity.mockImplementationOnce(async (input, client) => {
+        await insert(input as never, client as never);
+        throw new Error('a later write failed');
+      });
+      await expect(
+        blockImage({ imageId: IMAGE, userId: REQUESTER, violationType: 'gore' })
+      ).rejects.toThrow('a later write failed');
+      expect((await image()).ingestion).toBe('Scanned');
+      expect(await auditRows()).toEqual([]);
+    });
   });
 
   it('applies when the image has no approved appeal', async () => {
@@ -419,13 +474,165 @@ describe('deciding a held removal', () => {
       expect.anything(),
       expect.objectContaining({ actorUserId: REQUESTER, violationType: 'animatedMinorNsfw' })
     );
-    expect(recordModActivity).toHaveBeenCalledWith(
-      expect.objectContaining({ userId: REQUESTER, activity: 'review' })
+    expect(insertModActivity).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: REQUESTER, activity: 'review' }),
+      expect.anything()
     );
     expect(recordModActivity).toHaveBeenCalledWith(
       expect.objectContaining({ userId: CONFIRMER, activity: 'confirmRemoval' })
     );
-    expect(setReportStatus.mock.calls.map(([a]) => a.id)).toEqual([7, 8]);
+    expect(
+      setReportStatus.mock.calls.map(([a]) => [a.id, (a as { noReward?: boolean }).noReward])
+    ).toEqual([
+      [7, false],
+      [8, false],
+    ]);
+  });
+
+  it("closes the reports unpaid for a banned owner's grace-blocked image", async () => {
+    await approve();
+    await db.query(
+      `UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'moderated',
+         metadata = '{"accountDeletionPriorIngestion": "Scanned"}' WHERE id = $1`,
+      [IMAGE]
+    );
+    await db.query(
+      `INSERT INTO "User" ("id", "bannedAt") SELECT "userId", now() FROM "Image" WHERE id = $1
+       ON CONFLICT ("id") DO UPDATE SET "bannedAt" = now()`,
+      [IMAGE]
+    );
+    const { held } = await blockImage({
+      imageId: IMAGE,
+      userId: REQUESTER,
+      violationType: 'animatedMinorNsfw',
+      reportIds: [7, 8],
+    });
+
+    await confirmRemoval({ id: held!.confirmationId, userId: CONFIRMER });
+
+    expect(await image()).toEqual({ ingestion: 'Blocked', blockedFor: 'moderated' });
+    expect(
+      setReportStatus.mock.calls.map(([a]) => [a.id, (a as { noReward?: boolean }).noReward])
+    ).toEqual([
+      [7, true],
+      [8, true],
+    ]);
+  });
+
+  it('leaves a report a moderator reviewed since the hold as it is', async () => {
+    const id = await hold();
+    await db.query(`UPDATE "Report" SET status = 'Unactioned' WHERE id = 8`);
+
+    await confirmRemoval({ id, userId: CONFIRMER });
+
+    expect(setReportStatus.mock.calls.map(([a]) => a.id)).toEqual([7]);
+    // The write itself is guarded too, for a review landing between this read and the write.
+    expect(setReportStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ fromStatuses: ['Pending', 'Processing'] })
+    );
+  });
+
+  it('actions only the kept reports that are on this image', async () => {
+    await db.exec(`
+      INSERT INTO "Report" (id, status) VALUES (9, 'Pending');
+      INSERT INTO "ImageReport" ("imageId", "reportId") VALUES (51, 9);
+    `);
+    await approve();
+    const { held } = await blockImage({
+      imageId: IMAGE,
+      userId: REQUESTER,
+      violationType: 'animatedMinorNsfw',
+      reportIds: [7, 9],
+    });
+
+    await confirmRemoval({ id: held!.confirmationId, userId: CONFIRMER });
+
+    expect(setReportStatus.mock.calls.map(([a]) => a.id)).toEqual([7]);
+  });
+
+  const fileSinceHold = () =>
+    db.exec(`
+      INSERT INTO "Report" (id, status, reason) VALUES (10, 'Pending', 'TOSViolation'), (11, 'Pending', 'NSFW');
+      INSERT INTO "ImageReport" ("imageId", "reportId") VALUES (50, 10), (50, 11);
+    `);
+  const actioned = () => setReportStatus.mock.calls.map(([a]) => a.id);
+
+  it.each(['api.removeImages', 'site.setTosViolation'])(
+    'held from %s, also actions a TOS report filed since the hold, but no other new report',
+    async (source) => {
+      await approve();
+      const { held } = await blockImage({
+        imageId: IMAGE,
+        userId: REQUESTER,
+        violationType: 'animatedMinorNsfw',
+        reportIds: [7, 8],
+        source,
+      });
+      await fileSinceHold();
+
+      await confirmRemoval({ id: held!.confirmationId, userId: CONFIRMER });
+
+      expect(actioned()).toEqual([7, 8, 10]);
+    }
+  );
+
+  it('on a moderator block, leaves a TOS report filed since the hold for review', async () => {
+    const id = await hold();
+    await fileSinceHold();
+
+    await confirmRemoval({ id, userId: CONFIRMER });
+
+    expect(actioned()).toEqual([7, 8]);
+  });
+
+  it('voided because a ban removed the image meanwhile: closes the kept reports unpaid, no others', async () => {
+    await approve();
+    const { held } = await blockImage({
+      imageId: IMAGE,
+      userId: REQUESTER,
+      violationType: 'animatedMinorNsfw',
+      reportIds: [7, 8],
+      source: 'api.removeImages',
+    });
+    await fileSinceHold();
+    await db.query(
+      `UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'moderated' WHERE id = $1`,
+      [IMAGE]
+    );
+    await db.query(
+      `INSERT INTO "User" ("id", "bannedAt") SELECT "userId", now() FROM "Image" WHERE id = $1
+       ON CONFLICT ("id") DO UPDATE SET "bannedAt" = now()`,
+      [IMAGE]
+    );
+
+    expect(await confirmRemoval({ id: held!.confirmationId, userId: CONFIRMER })).toMatchObject({
+      status: 'Void',
+    });
+
+    expect(
+      setReportStatus.mock.calls.map(([a]) => [a.id, (a as { noReward?: boolean }).noReward])
+    ).toEqual([
+      [7, true],
+      [8, true],
+    ]);
+  });
+
+  it('stays Pending, its reports untouched, when the payout read for a voided confirm fails', async () => {
+    const id = await hold();
+    await db.query(
+      `UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'moderated' WHERE id = $1`,
+      [IMAGE]
+    );
+    // The banned-owner read is the only query on the Void path that reads "bannedAt".
+    await db.exec(`ALTER TABLE "User" RENAME COLUMN "bannedAt" TO "bannedAtGone"`);
+
+    await expect(confirmRemoval({ id, userId: CONFIRMER })).rejects.toThrow(/bannedAt/);
+
+    await db.exec(`ALTER TABLE "User" RENAME COLUMN "bannedAtGone" TO "bannedAt"`);
+    expect(await confirmations()).toEqual([
+      expect.objectContaining({ status: 'Pending', decidedById: null }),
+    ]);
+    expect(setReportStatus).not.toHaveBeenCalled();
   });
 
   it('runs the removal once when two moderators confirm', async () => {
@@ -451,18 +658,53 @@ describe('deciding a held removal', () => {
     expect(setReportStatus.mock.calls.map(([a]) => a.id)).toEqual([7, 8]);
   });
 
-  it('leaves the reports open when the image was removed with its block reason kept meanwhile', async () => {
+  it.each(['CSAM', 'TOS,csam'])(
+    'leaves the reports open when the image was removed for CSAM (%s) meanwhile',
+    async (blockedFor) => {
+      const id = await hold();
+      await db.query(`UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = $2 WHERE id = $1`, [
+        IMAGE,
+        blockedFor,
+      ]);
+
+      expect(await confirmRemoval({ id, userId: CONFIRMER })).toMatchObject({ ok: true });
+
+      expect((await image()).ingestion).toBe('Blocked');
+      expect(setReportStatus).not.toHaveBeenCalled();
+    }
+  );
+
+  it('answers the reports when the image was removed meanwhile for reasons without CSAM (control)', async () => {
     const id = await hold();
     await db.query(
-      `UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'CSAM' WHERE id = $1`,
+      `UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'TOS,Moderated' WHERE id = $1`,
       [IMAGE]
     );
 
     expect(await confirmRemoval({ id, userId: CONFIRMER })).toMatchObject({ ok: true });
 
-    expect((await image()).ingestion).toBe('Blocked');
-    expect(setReportStatus).not.toHaveBeenCalled();
+    expect(setReportStatus).toHaveBeenCalled();
   });
+
+  it.each([
+    ['TOS,Moderated', true],
+    ['TOS,csam', false],
+  ])(
+    "reads a banned owner's image blocked for %s as banned-owner blocked: %s",
+    async (blockedFor, expected) => {
+      await db.query(`UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = $2 WHERE id = $1`, [
+        IMAGE,
+        blockedFor,
+      ]);
+      await db.query(
+        `INSERT INTO "User" ("id", "bannedAt") SELECT "userId", now() FROM "Image" WHERE id = $1
+       ON CONFLICT ("id") DO UPDATE SET "bannedAt" = now()`,
+        [IMAGE]
+      );
+
+      expect(await isBannedOwnerBlocked(IMAGE)).toBe(expected);
+    }
+  );
 
   it('voids the request, leaving the image up, when a later appeal was approved', async () => {
     const id = await hold();

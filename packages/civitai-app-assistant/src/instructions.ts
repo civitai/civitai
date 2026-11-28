@@ -117,8 +117,15 @@ export function assistantRules(
     RULES_AFTER_SETUP[0],
     ...toolRules(features),
     ...RULES_AFTER_SETUP.slice(1),
+    ...(runner === 'remote' ? [PLATFORM_LIMIT_RULE] : []),
   ].join('\n');
 }
+
+/**
+ * A limit of the platform is claimed only from a docs page read for it. The runner's only, as it
+ * names `read_docs`, which the page's assistant does not have.
+ */
+export const PLATFORM_LIMIT_RULE = `- Before you tell the user something cannot be done on Civitai, or offer a smaller version because of a platform limit, look it up with ${READ_DOCS} (https://developer.civitai.com/llms.txt lists the pages, or read the reference page for that area) and name the page that shows the limit. If no page shows it, do not claim the limit.`;
 
 /**
  * How an app reaches the App Store from here. The user has no CLI and cannot reach the sandbox's files,
@@ -130,6 +137,14 @@ export const SUBMIT_RULE =
 /** Where real Civitai data comes from, and what to do when the app needs data Civitai cannot give. */
 export const DATA_RULE =
   "- Civitai data (models, images, creators, their stats) comes from the public API through app.site from @civitai/sdk, for example app.site.get('models', { query: { query, types: 'LORA', sort: 'Most Downloaded', limit: 24 } }); its routes are listed at https://developer.civitai.com/site/reference.md. Never invent data in place of real data the user asked for. If they need data neither gives, tell them before you build and let them choose: an app using what is available, or clearly labelled sample data (then set_checklist with data: 'sample', and a visible \"Sample data\" label at the top of the app). The preview check has no internet, so a real-data app shows its loading or error state there: that is expected, not a reason to use sample data.";
+
+/**
+ * The app's look: ADVICE, never a requirement (report_ready only adds a note, `gate.ts`). Many
+ * submitted apps shipped Civitai's stock look; the theming guide is where an accent of the app's own
+ * is explained. Runner-neutral: the page fetches the guide itself, the runner with `read_docs`.
+ */
+export const THEME_RULE =
+  "- A distinct look is recommended, not required: an accent of the app's own (a scoped --civitai-color-primary override on the app's root element, never at :root, checked in light and dark) helps it stand out in the store; see https://developer.civitai.com/apps/guide/theming.md.";
 
 /**
  * The viewer's own Buzz history. @civitai/sdk's BREAKING.md lists it under "No v1 route", which an
@@ -158,7 +173,7 @@ export const COVER_RULE =
   "- When the user asks for a store cover image for the app, call generate_app_cover with a prompt that describes the app's subject and mood, with no text or logos. It spends nothing itself: the user sees the price and a button, and only their press makes the cover and puts it on the app's store listing. Tell them that in one short sentence; your reply ends there. Never make a cover any other way, and never call generate_app_cover unless they asked for a cover.";
 
 const RULES_AFTER_SETUP = [
-  '- Before you scaffold, restate the features the user asked for with set_checklist: every requested feature and nothing they did not ask for. It is your plan, not a question: go straight on to building it. Ask the user only when their request is ambiguous or needs a decision from them.',
+  '- Before you scaffold, restate the features the user asked for with set_checklist: every requested feature and nothing they did not ask for. It is your plan, not a question: go straight on to building it. Ask the user only when their request is ambiguous or needs a decision from them, and then ask with ask_choice (2 to 4 options; they can still type their own answer), never with a question typed at the end of your reply.',
   '- Put throwaway probes and scripts in <blockId>/scratch/, never in src/.',
   '- The user knows each sandbox as one of their apps: say "your app", never "sandbox".',
   '- If create_app fails, do not call it again in the same reply: tell the user what its message says to do.',
@@ -168,6 +183,7 @@ const RULES_AFTER_SETUP = [
   // A run grepped the SDK README for "models(", found nothing, and shipped invented models as real ones.
   DATA_RULE,
   BUZZ_TRANSACTIONS_RULE,
+  THEME_RULE,
   '- Before you tell the user the app is ready, call report_ready, on its own in its step. It is refused until the preview check, the tests and the typecheck have passed since your last file change or other command (a dev_server_start or dev_server_restart counts) and every checklist item is done; do what a refusal says, then call it again. Never say the app is ready, or describe what the browser shows, without it.',
   SUBMIT_RULE,
   FEEDBACK_RULE,
@@ -226,33 +242,7 @@ export function assistantSystemPrompt(
   const rules = `${assistantRules(runner, features)}${
     subagents ? `\n${assistantSubagentRules(runner)}` : ''
   }`;
-  return (defaults) =>
-    `${
-      runner === 'remote' ? withoutSentencesNaming(defaults, PAGE_ONLY_CHAT_TOOLS) : defaults
-    }\n\n${rules}`;
-}
-
-/**
- * Tools the chat's own rules name whatever tools a reply has, which only the page can offer:
- * `ask_choice` waits for the viewer to tap a choice, and on the runner nobody may be watching, so
- * the runner does not offer it and its rules do not name it.
- */
-export const PAGE_ONLY_CHAT_TOOLS = ['ask_choice'] as const;
-
-/** `text` with every sentence that names one of `tools` taken out, line by line. */
-export function withoutSentencesNaming(text: string, tools: readonly string[]): string {
-  const names = new RegExp(`\\b(?:${tools.join('|')})\\b`);
-  return text
-    .split('\n')
-    .map((line) => {
-      if (!names.test(line)) return line;
-      // A sentence ends at ". " (the chat's rules use no other end inside a line).
-      return line
-        .split(/(?<=\.) +/)
-        .filter((sentence) => !names.test(sentence))
-        .join(' ');
-    })
-    .join('\n');
+  return (defaults) => `${defaults}\n\n${rules}`;
 }
 
 /**

@@ -1,5 +1,5 @@
 import { Button, Text } from '@mantine/core';
-import { openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { IconUserCircle } from '@tabler/icons-react';
 import { useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -65,10 +65,9 @@ export function AvatarProfilePictureButton({
       loading={saving}
       leftSection={<IconUserCircle size={14} />}
       onClick={() =>
-        openConfirmModal({
+        openConfirm({
           title: 'Use as profile picture',
-          children: <Text size="sm">This replaces your current profile picture.</Text>,
-          centered: true,
+          message: <Text size="sm">This replaces your current profile picture.</Text>,
           labels: { confirm: 'Use this image', cancel: 'Cancel' },
           onConfirm: save,
         })

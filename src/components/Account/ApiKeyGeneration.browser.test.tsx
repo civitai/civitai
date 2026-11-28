@@ -24,6 +24,7 @@ const keys = [
     buzzLimit: null,
     createdAt: new Date(),
     lastUsedAt: null,
+    expiresAt: new Date('2099-03-04T12:00:00Z'),
   },
   {
     id: 3,
@@ -66,8 +67,9 @@ describe('API key generation hints', () => {
   });
 
   test('Creator mask is the Creator preset (fixture guard)', () => {
-    expect(CREATOR_MASK).toBe(TokenScopePresets.Creator);
-    expect(CREATOR_MASK & TokenScope.AIServicesWrite).toBe(0);
+    // The fixture is a tRPC value (a JSON number); the preset is a bigint.
+    expect(BigInt(CREATOR_MASK)).toBe(TokenScopePresets.Creator);
+    expect(BigInt(CREATOR_MASK) & TokenScope.AIServicesWrite).toBe(0n);
   });
 
   test('key rows: Creator can’t generate; AI Services and legacy (null) can', async () => {
@@ -76,5 +78,11 @@ describe('API key generation hints', () => {
     await expect.element(markers.nth(0)).toHaveTextContent(/can.t generate/i);
     await expect.element(markers.nth(1)).toHaveTextContent(/^can generate$/i);
     await expect.element(markers.nth(2)).toHaveTextContent(/^can generate$/i);
+  });
+
+  test('a key with an expiry shows it; a key without one shows none', async () => {
+    renderWithProviders(<ApiKeysCard />);
+    await expect.element(page.getByText(/^Expires /)).toHaveTextContent(/2099/);
+    expect(page.getByText(/^Expires /).elements()).toHaveLength(1);
   });
 });

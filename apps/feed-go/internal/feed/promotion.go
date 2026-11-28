@@ -73,8 +73,9 @@ func (a PromotionAudience) For(v *Viewer, banned bool) (on, known bool) {
 // promotionRunDays is PROMOTION_RUN_DAYS.
 var promotionRunDays = []int{1, 3, 7}
 
-// maxRun is MAX_RUN_MS: the longest run, the window liveApprovedPromotions reads.
-const maxRun = 7 * 24 * time.Hour
+// MaxPromotionRun is MAX_RUN_MS: the longest run, the window liveApprovedPromotions reads (both
+// surfaces: the gallery post here, the model card in modelfeed).
+const MaxPromotionRun = 7 * 24 * time.Hour
 
 // GalleryPromotion is GalleryPromotionData, a `galleryPromotion` placement's payload.
 type GalleryPromotion struct {
@@ -269,7 +270,7 @@ type PromotionStore interface {
 // version, or nil. Node picks one of several overlapping runs AT RANDOM per request, which a
 // comparison cannot reproduce, so more than one live run falls back (`sponsored-rotation`).
 func SponsoredGalleryPost(ctx context.Context, s PromotionStore, modelID, versionID int, now time.Time) (*SponsoredPick, error) {
-	rows, err := s.LiveGalleryPromotions(ctx, modelID, now.Add(-maxRun))
+	rows, err := s.LiveGalleryPromotions(ctx, modelID, now.Add(-MaxPromotionRun))
 	if err != nil {
 		return nil, err
 	}
@@ -296,7 +297,7 @@ func SponsoredGalleryPost(ctx context.Context, s PromotionStore, modelID, versio
 		return nil, nil
 	}
 	if len(live) > 1 {
-		return nil, fallback.Newf("sponsored-rotation", "%d live runs", len(live))
+		return nil, fallback.Safef("sponsored-rotation", "%d live runs", len(live))
 	}
 	m, err := s.PromotionModel(ctx, modelID)
 	if err != nil {

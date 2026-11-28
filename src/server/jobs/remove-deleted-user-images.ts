@@ -1,6 +1,10 @@
+import { deletePostRows } from '@civitai/db-queries/content-deletion';
+import { kyselyOver } from '~/server/db/prisma-kysely';
+import { fromPrismaSql } from '~/server/db/prisma-sql-kysely';
 import { Prisma } from '@prisma/client';
 import { chunk, uniq } from 'lodash-es';
 import { BlockedReason, NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { csamBlockedSql } from '~/server/common/image-visibility';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
@@ -9,11 +13,18 @@ import {
   invalidateManyImageExistence,
   queueImageSearchIndexUpdate,
 } from '~/server/services/image.service';
-import { accountHoldSql, holdMarkerViewExists } from '~/server/services/legal-hold.service';
+import { evictHomeBlocksForImages } from '~/server/services/home-block-cache.service';
+import { ACCOUNT_DELETION_DRAIN } from '~/server/services/account-deletion-images';
 import { bustCachesForPosts } from '~/server/services/post.service';
 import { refreshProfilePicturesForUsersLazy } from '~/server/services/refresh-profile-pictures-lazy';
-import { PRIOR_BLOCKED_FOR_KEY, PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
-import { PLACEHOLDER_OWNER_ID } from '~/server/utils/legal-hold';
+import {
+  PRIOR_BLOCKED_FOR_KEY,
+  PRIOR_INGESTION_KEY,
+  PRIOR_NEEDS_REVIEW_KEY,
+  PRIOR_NSFW_LEVEL_KEY,
+  PRIOR_NSFW_LOCKED_KEY,
+} from '~/server/utils/image-removal-mode';
+import { immediateRemovalSql } from '~/server/utils/image-removal-mode';
 import { createJob, getJobDate } from './job';
 import { postHoldsHeldTextSql } from '~/server/services/post-text-hold';
 
@@ -93,25 +104,36 @@ async function isStillMarkedForDeletion(userId: number) {
       SELECT 1 FROM "User" u
       WHERE u.id = ${userId}
         AND u."deletedAt" IS NOT NULL
-        AND (u.meta->>'imageRemoval' IS NULL OR u.meta->>'imageRemoval' = 'immediate')
+        AND ${immediateRemovalSql(Prisma.raw('u'))}
     ) AS "stillDeleted"
   `;
   return row.stillDeleted;
 }
 
-/** Every hold on the account, plus the placeholder owner. */
-const accountHeldSql = (id: Prisma.Sql, markerView: boolean) =>
-  Prisma.sql`(${id} = ${PLACEHOLDER_OWNER_ID} OR ${accountHoldSql(id, markerView)})`;
+/**
+ * Not already queued as a delete its child-safety case keeps: `pending-deletes` carries that one
+ * out, so the drain skips it and does not count it as one the account still has. A cleanup alone
+ * does not count, since it goes only while the image is unused.
+ */
+const notPendingSql = (entityType: 'Image' | 'Post', id: Prisma.Sql) => Prisma.sql`NOT EXISTS (
+  SELECT 1 FROM "JobQueue" q
+  WHERE q.type = 'PendingDelete' AND q."entityType" = ${entityType}::"EntityType" AND q."entityId" = ${id}
+    AND q.data ?| array['ownerId', 'deletedBy']
+)`;
+
+/** The worklist's mode: an absent or 'immediate' choice deletes, anything else blocks. */
+const worklistModeSql = Prisma.sql`CASE
+  WHEN ${immediateRemovalSql(Prisma.raw('u'))} THEN 'immediate'
+  ELSE 'grace'
+END`;
 
 async function drainUser(
   userId: number,
   budget: number,
-  isCanceled: () => boolean,
-  markerView: boolean
+  isCanceled: () => boolean
 ): Promise<UserDrain> {
   let deletedImages = 0;
   let budgetUsed = 0;
-  const held = accountHeldSql(Prisma.sql`${userId}::int`, markerView);
 
   try {
     // Joined rather than trusted from the worklist: that was read off a replica, so a
@@ -121,9 +143,9 @@ async function drainUser(
       FROM "Image" i
       JOIN "User" u ON u.id = i."userId"
         AND u."deletedAt" IS NOT NULL
-        AND (u.meta->>'imageRemoval' IS NULL OR u.meta->>'imageRemoval' = 'immediate')
+        AND ${immediateRemovalSql(Prisma.raw('u'))}
       WHERE i."userId" = ${userId}
-        AND NOT ${held}
+        AND ${notPendingSql('Image', Prisma.raw('i.id'))}
       LIMIT ${budget}
     `;
 
@@ -138,8 +160,7 @@ async function drainUser(
       if (!(await isStillMarkedForDeletion(userId)))
         return { deletedImages, blockedImages: 0, budgetUsed, drained: false, canceled: false };
 
-      // Re-checked on the delete itself, so a hold placed mid-drain still stops it.
-      const deleted = await deleteImages(batch, undefined, { onlyWhere: Prisma.sql`NOT ${held}` });
+      const deleted = await deleteImages(batch, { actor: { system: ACCOUNT_DELETION_DRAIN } });
       deletedImages += deleted.length;
       budgetUsed += batch.length;
     }
@@ -147,13 +168,17 @@ async function drainUser(
     const [state] = await dbWrite.$queryRaw<{ stillDeleted: boolean; hasImages: boolean }[]>`
       SELECT
         EXISTS (SELECT 1 FROM "User" u WHERE u.id = ${userId} AND u."deletedAt" IS NOT NULL) AS "stillDeleted",
-        EXISTS (SELECT 1 FROM "Image" i WHERE i."userId" = ${userId}) AS "hasImages"
+        EXISTS (
+          SELECT 1 FROM "Image" i
+          WHERE i."userId" = ${userId} AND ${notPendingSql('Image', Prisma.raw('i.id'))}
+        ) AS "hasImages"
     `;
     if (!state.stillDeleted || state.hasImages)
       return { deletedImages, blockedImages: 0, budgetUsed, drained: false, canceled: false };
 
     const posts = await dbWrite.$queryRaw<{ id: number }[]>`
-      SELECT id FROM "Post" WHERE "userId" = ${userId}
+      SELECT id FROM "Post" p
+      WHERE p."userId" = ${userId} AND ${notPendingSql('Post', Prisma.raw('p.id'))}
     `;
     let deletedPosts = 0;
     for (const batch of chunk(
@@ -162,22 +187,20 @@ async function drainUser(
     )) {
       if (isCanceled())
         return { deletedImages, blockedImages: 0, budgetUsed, drained: false, canceled: true };
-      deletedPosts += await dbWrite.$executeRaw`
-        WITH doomed AS (
-          SELECT p.id FROM "Post" p
-          WHERE p.id IN (${Prisma.join(batch)})
-            AND p."userId" = ${userId}
-            AND EXISTS (
-              SELECT 1 FROM "User" u
-              WHERE u.id = ${userId}
-                AND u."deletedAt" IS NOT NULL
-                AND (u.meta->>'imageRemoval' IS NULL OR u.meta->>'imageRemoval' = 'immediate')
-            )
-            AND NOT ${held}
-            AND NOT ${postHoldsHeldTextSql(Prisma.raw('p.id'))}
-        )
-        DELETE FROM "Post" WHERE id IN (SELECT id FROM doomed)
-      `;
+      const { deleted } = await deletePostRows(kyselyOver(dbWrite), {
+        ids: batch,
+        actor: { system: ACCOUNT_DELETION_DRAIN },
+        where: fromPrismaSql(Prisma.sql`
+          "userId" = ${userId}
+          AND EXISTS (
+            SELECT 1 FROM "User" u
+            WHERE u.id = ${userId}
+              AND u."deletedAt" IS NOT NULL
+              AND ${immediateRemovalSql(Prisma.raw('u'))}
+          )
+          AND NOT ${postHoldsHeldTextSql(Prisma.raw('"Post".id'))}`),
+      });
+      deletedPosts += deleted.length;
     }
 
     // The gated DELETE affecting fewer rows than it targeted means the account came back mid-run.
@@ -203,6 +226,8 @@ async function propagateBlock(touched: TouchedImage[]) {
   const ids = touched.map((x) => x.id);
   const postIds = uniq(touched.map((x) => x.postId).filter((id): id is number => id != null));
 
+  // First: it never throws, and the steps after it can.
+  await evictHomeBlocksForImages({ imageIds: ids });
   await Promise.all([
     queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Delete }),
     invalidateManyImageExistence(ids),
@@ -230,10 +255,8 @@ async function queueBlockedImagesForDelete(userId: number) {
 }
 
 /**
- * No statement-level CSAM gate here, unlike `drainUser`: blocking never touches S3, and the NCMEC
- * archive re-fetches from the CDN, which still serves a blocked image. The block does keep the
- * moderator-only review flag: `remove-blocked-images` holds a blocked image on it, so clearing it
- * here would queue the image for purge.
+ * The block keeps the moderator-only review flag: `remove-blocked-images` holds a blocked image on
+ * it, so clearing it here would queue the image for purge.
  */
 async function blockUserImages(
   userId: number,
@@ -278,11 +301,11 @@ async function blockUserImages(
             UPDATE "Image"
             SET ingestion = 'Blocked'::"ImageIngestionStatus",
                 "nsfwLevel" = ${NsfwLevel.Blocked},
-                "blockedFor" = CASE WHEN "blockedFor" = ${
-                  BlockedReason.CSAM
-                } THEN "blockedFor" ELSE ${BlockedReason.Moderated} END,
+                "blockedFor" = CASE WHEN ${csamBlockedSql()} THEN "blockedFor" ELSE ${
+            BlockedReason.Moderated
+          } END,
                 "needsReview" = CASE WHEN "needsReview" = 'csam' THEN 'csam' END,
-                "metadata" = "metadata" || jsonb_build_object(${PRIOR_INGESTION_KEY}::text, ingestion::text, ${PRIOR_BLOCKED_FOR_KEY}::text, "blockedFor"),
+                "metadata" = "metadata" || jsonb_build_object(${PRIOR_INGESTION_KEY}::text, ingestion::text, ${PRIOR_BLOCKED_FOR_KEY}::text, "blockedFor", ${PRIOR_NEEDS_REVIEW_KEY}::text, "needsReview", ${PRIOR_NSFW_LEVEL_KEY}::text, "nsfwLevel", ${PRIOR_NSFW_LOCKED_KEY}::text, "nsfwLevelLocked"),
                 "updatedAt" = now()
             WHERE id IN (${Prisma.join(hide)})
               AND "userId" = ${userId}
@@ -300,7 +323,7 @@ async function blockUserImages(
           ...(await dbWrite.$queryRaw<TouchedImage[]>`
             UPDATE "Image"
             SET "blockedFor" = ${BlockedReason.Moderated},
-                "metadata" = "metadata" || jsonb_build_object(${PRIOR_INGESTION_KEY}::text, ingestion::text, ${PRIOR_BLOCKED_FOR_KEY}::text, "blockedFor"),
+                "metadata" = "metadata" || jsonb_build_object(${PRIOR_INGESTION_KEY}::text, ingestion::text, ${PRIOR_BLOCKED_FOR_KEY}::text, "blockedFor", ${PRIOR_NEEDS_REVIEW_KEY}::text, "needsReview", ${PRIOR_NSFW_LEVEL_KEY}::text, "nsfwLevel", ${PRIOR_NSFW_LOCKED_KEY}::text, "nsfwLevelLocked"),
                 "updatedAt" = now()
             WHERE id IN (${Prisma.join(repoint)})
               AND "userId" = ${userId}
@@ -348,8 +371,7 @@ async function blockUserImages(
 async function drainPage(
   users: Candidate[],
   budget: number,
-  isCanceled: () => boolean,
-  markerView: boolean
+  isCanceled: () => boolean
 ): Promise<{
   deletedImages: number;
   blockedImages: number;
@@ -380,7 +402,7 @@ async function drainPage(
     // resolve — a mode it did not select, a value it did not normalize — blocks instead of deletes.
     const result =
       user.mode === 'immediate'
-        ? await drainUser(user.id, remaining, isCanceled, markerView)
+        ? await drainUser(user.id, remaining, isCanceled)
         : await blockUserImages(user.id, remaining, isCanceled);
     remaining -= result.budgetUsed;
     deletedImages += result.deletedImages;
@@ -427,22 +449,6 @@ export const removeDeletedUserImages = createJob(
       }
     };
 
-    const markerView = await holdMarkerViewExists();
-    // Without the marker view (a restore or a copy from before its migration) the drain does nothing:
-    // the delete path reads the marker's other objects too, after its DELETE has committed.
-    if (!markerView) {
-      logToAxiom({
-        type: 'warning',
-        name: 'remove-deleted-user-images',
-        message: 'hold marker view missing: nothing drained this run',
-      });
-      return {
-        skipped: 'hold-marker-view-missing',
-        deletedImages: 0,
-        blockedImages: 0,
-        deletedUsers: 0,
-      };
-    }
     const [freshMark, setFreshMark] = await getJobDate(FRESH_CURSOR_KEY, new Date());
     const [backlogCursor, setBacklogCursor] = await getJobDate(BACKLOG_CURSOR_KEY, CURSOR_START);
 
@@ -455,23 +461,12 @@ export const removeDeletedUserImages = createJob(
     // while they own an image the purge pipeline would not take — their posts leave at day 7 with
     // CleanIfEmpty — while an immediate user still matches on any image, or an account left
     // holding only blocked ones would drop out of the worklist with nothing else to sweep it.
-
-    // An account under any legal hold (`accountHoldSql`) is left out entirely. While its report is
-    // unfinished this also matters to archive-csam-reports, which runs five minutes after this job
-    // and rebuilds the NCMEC evidence by re-fetching each image from the CDN, silently skipping —
-    // and then stamping the report archived — for anything gone.
     const fresh = await dbRead.$queryRaw<Candidate[]>`
       SELECT u.id, u."deletedAt", m.mode
       FROM "User" u
-      CROSS JOIN LATERAL (
-        SELECT CASE
-          WHEN u.meta->>'imageRemoval' IS NULL OR u.meta->>'imageRemoval' = 'immediate'
-          THEN 'immediate' ELSE 'grace'
-        END AS mode
-      ) m
+      CROSS JOIN LATERAL (SELECT ${worklistModeSql} AS mode) m
       WHERE u."deletedAt" IS NOT NULL
         AND u."deletedAt" >= ${freshMark}
-        AND NOT ${accountHeldSql(Prisma.raw('u.id'), markerView)}
         AND (
           EXISTS (
             SELECT 1 FROM "Image" i
@@ -488,7 +483,7 @@ export const removeDeletedUserImages = createJob(
       LIMIT ${USERS_PER_RUN}
     `;
 
-    const freshRun = await drainPage(fresh, budget, isCanceled, markerView);
+    const freshRun = await drainPage(fresh, budget, isCanceled);
     // Written on every run, drained or not: an unstored key falls back to the default, so a
     // first run that never persists its seed re-seeds to a later `now` on the next tick and
     // everything deleted in between lands above the mark and below the backlog cursor.
@@ -504,17 +499,11 @@ export const removeDeletedUserImages = createJob(
       const backlog = await dbRead.$queryRaw<Candidate[]>`
         SELECT u.id, u."deletedAt", m.mode
         FROM "User" u
-        CROSS JOIN LATERAL (
-          SELECT CASE
-            WHEN u.meta->>'imageRemoval' IS NULL OR u.meta->>'imageRemoval' = 'immediate'
-            THEN 'immediate' ELSE 'grace'
-          END AS mode
-        ) m
+        CROSS JOIN LATERAL (SELECT ${worklistModeSql} AS mode) m
         WHERE u."deletedAt" IS NOT NULL
           AND u."deletedAt" <= ${backlogCursor}
           AND u."deletedAt" < ${freshMark}
-          AND NOT ${accountHeldSql(Prisma.raw('u.id'), markerView)}
-          AND (
+            AND (
             EXISTS (
               SELECT 1 FROM "Image" i
               WHERE i."userId" = u.id
@@ -534,7 +523,7 @@ export const removeDeletedUserImages = createJob(
         wrapped = true;
         await setBacklogCursor(CURSOR_START);
       } else {
-        const backlogRun = await drainPage(backlog, freshRun.remaining, isCanceled, markerView);
+        const backlogRun = await drainPage(backlog, freshRun.remaining, isCanceled);
         deletedImages += backlogRun.deletedImages;
         blockedImages += backlogRun.blockedImages;
         deletedUsers += backlogRun.deletedUsers;

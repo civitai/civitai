@@ -17,8 +17,7 @@ import { createJob } from './job';
  * safe ungated: it only finishes deletions of deleted accounts and removes objects no row
  * references. It is gated on the archive store instead: with none configured it does nothing.
  *
- * A deleted account under a legal hold (or whose hold cannot be read) is skipped and counted.
- * The orphan pass keeps a held user's objects too. Logs one line per run with its counts. Any error
+ * Logs one line per run with its counts. Any error
  * (a missing table included) fails the run: the job runner counts and logs it, and the next run
  * retries.
  */
@@ -32,27 +31,19 @@ export const sweepHibernationObjectsJob = createJob(
     ]);
     const deps = await defaultHibernationDeps();
     if (!deps.store) return { skipped: 'no archive store configured' as const };
-    const [{ isMissingTableError }, { isAccountUnderLegalHold, areAccountsUnderLegalHold }] =
-      await Promise.all([
-        import('~/server/services/blocks/app-access.service'),
-        import('~/server/services/legal-hold.service'),
-      ]);
+    const { isMissingTableError } = await import('~/server/services/blocks/app-access.service');
     // A failure (a missing table included) is rethrown by not catching it: the job runner counts
     // it as a failed run and logs it.
     const result = await sweepOrphanedArchives({
       ...deps,
       isMissingTable: isMissingTableError,
-      isUnderLegalHold: isAccountUnderLegalHold,
-      areUnderLegalHold: areAccountsUnderLegalHold,
     });
     const summary = {
       scanned: result.scanned,
       removed: result.orphans.length,
-      orphansHeld: result.orphansHeld,
       deletedAccountsFinished: result.accountsRetried.length,
       deletedAccountRowsFinished: result.accountRowsFinished,
       deletedAccountObjectsRemoved: result.accountObjectsRemoved,
-      heldAccounts: result.accountsHeld.length,
       errors: result.accountsFailed.length,
     };
     logToAxiom({ name: 'sweep-hibernation-objects', type: 'info', ...summary }, 'webhooks');

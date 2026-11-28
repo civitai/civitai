@@ -20,10 +20,12 @@ vi.mock('~/server/cloudflare/client', async (importOriginal) => ({
 
 import {
   assertShowcaseItemsOwned,
+  setPinnedItem,
   updateUserProfile,
 } from '~/server/services/user-profile.service';
 import { addEntityToShowcaseHandler } from '~/server/controllers/user-profile.controller';
 import type { ShowcaseItemSchema } from '~/server/schema/user-profile.schema';
+import { dealCopyCheckFor } from '~/server/services/__tests__/deal-file-copy.fake';
 
 const OWNER_ID = 100;
 const STRANGER_ID = 200;
@@ -31,14 +33,28 @@ const OWN_IMAGE = 1;
 const OWN_MODEL = 2;
 const STRANGER_IMAGE = 3;
 const TRANSFERRED_MODEL = 4;
+const OWN_TAKEN_DOWN_MODEL = 5;
+const OWN_ARCHIVED_MODEL = 6;
 
 const db = dbMock.dbWrite;
 
 // Mirrors the `where: { id: { in }, userId }` filter: only rows belonging to the queried user return.
 const ownedBy: Record<'image' | 'model', Record<number, number>> = {
   image: { [OWN_IMAGE]: OWNER_ID, [STRANGER_IMAGE]: STRANGER_ID },
-  model: { [OWN_MODEL]: OWNER_ID, [TRANSFERRED_MODEL]: STRANGER_ID },
+  model: {
+    [OWN_MODEL]: OWNER_ID,
+    [TRANSFERRED_MODEL]: STRANGER_ID,
+    [OWN_TAKEN_DOWN_MODEL]: OWNER_ID,
+    [OWN_ARCHIVED_MODEL]: OWNER_ID,
+  },
 };
+const modeOf: Record<number, string | null> = {
+  [OWN_TAKEN_DOWN_MODEL]: 'TakenDown',
+  [OWN_ARCHIVED_MODEL]: 'Archived',
+};
+// Mirrors `count({ where: { id: { in }, mode } })`.
+const countWithMode = async ({ where }: { where: { id: { in: number[] }; mode: string } }) =>
+  where.id.in.filter((id) => (modeOf[id] ?? null) === where.mode).length;
 const findOwned =
   (table: 'image' | 'model') =>
   async ({ where }: { where: { id: { in: number[] }; userId: number } }) =>
@@ -67,8 +83,11 @@ const storeShowcase = (showcaseItems: ShowcaseItemSchema[]) =>
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // clearAllMocks keeps a once-queue a case left unread; it must not reach the next case.
+  db.image.findMany.mockReset();
   db.image.findMany.mockImplementation(findOwned('image') as never);
   db.model.findMany.mockImplementation(findOwned('model') as never);
+  db.model.count.mockImplementation(countWithMode as never);
   db.image.findUniqueOrThrow.mockResolvedValue({ id: STRANGER_IMAGE } as never);
   dbMock.dbRead.image.findUniqueOrThrow.mockResolvedValue({ id: STRANGER_IMAGE } as never);
   db.$transaction.mockImplementation(async (fn: (client: unknown) => Promise<unknown>) => fn(tx));
@@ -148,6 +167,48 @@ describe('assertShowcaseItemsOwned', () => {
     ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
   });
 
+  it.each([false, true])(
+    "refuses a taken-down model, the owner's own included (moderator: %s)",
+    async (isModerator) => {
+      await expect(
+        assertShowcaseItemsOwned({
+          userId: OWNER_ID,
+          isModerator,
+          showcaseItems: [{ entityType: 'Model', entityId: OWN_TAKEN_DOWN_MODEL }],
+          currentShowcaseItems: [],
+        })
+      ).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: 'A taken-down model cannot be showcased',
+      });
+    }
+  );
+
+  it("accepts the owner's archived model: only a takedown is refused", async () => {
+    await expect(
+      assertShowcaseItemsOwned({
+        userId: OWNER_ID,
+        showcaseItems: [{ entityType: 'Model', entityId: OWN_ARCHIVED_MODEL }],
+        currentShowcaseItems: [],
+      })
+    ).resolves.toBeUndefined();
+  });
+
+  it.each([false, true])(
+    "refuses a deal file's scan copy, the caller a moderator: %s",
+    async (isModerator) => {
+      db.$queryRaw.mockImplementationOnce(dealCopyCheckFor(OWN_IMAGE));
+      await expect(
+        assertShowcaseItemsOwned({
+          userId: OWNER_ID,
+          isModerator,
+          showcaseItems: [{ entityType: 'Image', entityId: OWN_IMAGE }],
+          currentShowcaseItems: [],
+        })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    }
+  );
+
   it('lets a moderator through without a lookup', async () => {
     await expect(
       assertShowcaseItemsOwned({
@@ -159,9 +220,84 @@ describe('assertShowcaseItemsOwned', () => {
     ).resolves.toBeUndefined();
     expect(db.image.findMany).not.toHaveBeenCalled();
   });
+
+  it.each([
+    { ingestion: 'Blocked', blockedFor: 'tos' },
+    { ingestion: 'Blocked', blockedFor: null },
+  ])("refuses the owner's own image that ownerMediaAllowed withholds (%o)", async (block) => {
+    db.image.findMany.mockResolvedValueOnce([{ id: OWN_IMAGE, ...block }] as never);
+    await expect(
+      assertShowcaseItemsOwned({
+        userId: OWNER_ID,
+        showcaseItems: [{ entityType: 'Image', entityId: OWN_IMAGE }],
+        currentShowcaseItems: [],
+      })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'A blocked image cannot be added to your showcase',
+    });
+  });
+
+  // OWNER_MEDIA_EXEMPT_BLOCKS (image-block-marker.ts) leaves the owner an AiNotVerified image.
+  it("accepts the owner's image blocked only for an unverified AI claim", async () => {
+    db.image.findMany.mockResolvedValueOnce([
+      { id: OWN_IMAGE, ingestion: 'Blocked', blockedFor: 'AiNotVerified' },
+    ] as never);
+    await expect(
+      assertShowcaseItemsOwned({
+        userId: OWNER_ID,
+        showcaseItems: [{ entityType: 'Image', entityId: OWN_IMAGE }],
+        currentShowcaseItems: [],
+      })
+    ).resolves.toBeUndefined();
+  });
 });
 
 describe('updateUserProfile — showcase ownership', () => {
+  it("lets a moderator editing another user's profile store an item that user does not own", async () => {
+    await expect(
+      updateUserProfile({
+        userId: OWNER_ID,
+        isModerator: true,
+        asModerator: true,
+        sessionUserId: STRANGER_ID,
+        showcaseItems: [{ entityType: 'Image', entityId: STRANGER_IMAGE }],
+      })
+    ).resolves.toBeDefined();
+    expect(db.$transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("holds a moderator on a scoped key to the owner's rules: the owner's blocked image is refused", async () => {
+    db.image.findMany.mockResolvedValueOnce([
+      { id: OWN_IMAGE, ingestion: 'Blocked', blockedFor: 'tos' },
+    ] as never);
+    await expect(
+      updateUserProfile({
+        userId: OWNER_ID,
+        isModerator: true,
+        asModerator: false,
+        sessionUserId: STRANGER_ID,
+        showcaseItems: [{ entityType: 'Image', entityId: OWN_IMAGE }],
+      })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'A blocked image cannot be added to your showcase',
+    });
+    expect(db.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("refuses a moderator putting another user's image on their own profile", async () => {
+    await expect(
+      updateUserProfile({
+        userId: OWNER_ID,
+        isModerator: true,
+        sessionUserId: OWNER_ID,
+        showcaseItems: [{ entityType: 'Image', entityId: STRANGER_IMAGE }],
+      })
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(db.$transaction).not.toHaveBeenCalled();
+  });
+
   it("refuses to store another user's image and writes nothing", async () => {
     await expect(
       updateUserProfile({
@@ -246,6 +382,57 @@ describe('updateUserProfile — custom placement rows without sections', () => {
   });
 });
 
+describe('updateUserProfile — section widths', () => {
+  const storeSections = (profileSectionsSettings: unknown[]) =>
+    db.user.findUniqueOrThrow.mockResolvedValue({
+      id: OWNER_ID,
+      meta: {},
+      settings: {},
+      publicSettings: {},
+      cosmetics: [],
+      profile: {
+        userId: OWNER_ID,
+        message: null,
+        coverImage: null,
+        showcaseItems: [],
+        profileSectionsSettings,
+      },
+    } as never);
+  const savedSections = () =>
+    (
+      tx.userProfile.update.mock.calls as unknown as [
+        { data: { profileSectionsSettings: unknown } }
+      ][]
+    )[0][0].data.profileSectionsSettings;
+
+  it('keeps the stored widths when saved without the redesign', async () => {
+    storeSections([{ key: 'showcase', enabled: true, width: 'half' }]);
+    await updateUserProfile({
+      userId: OWNER_ID,
+      sessionUserId: OWNER_ID,
+      profileSectionsSettings: [
+        { key: 'showcase', enabled: true, width: 'full' },
+        { key: 'popularModels', enabled: true, width: 'half' },
+      ],
+    });
+    expect(savedSections()).toEqual([
+      { key: 'showcase', enabled: true, width: 'half' },
+      { key: 'popularModels', enabled: true },
+    ]);
+  });
+
+  it('saves the widths sent with the redesign', async () => {
+    storeSections([{ key: 'showcase', enabled: true, width: 'half' }]);
+    await updateUserProfile({
+      userId: OWNER_ID,
+      sessionUserId: OWNER_ID,
+      profileRedesign: true,
+      profileSectionsSettings: [{ key: 'showcase', enabled: true, width: 'full' }],
+    });
+    expect(savedSections()).toEqual([{ key: 'showcase', enabled: true, width: 'full' }]);
+  });
+});
+
 describe('addEntityToShowcaseHandler — ownership', () => {
   const ctxFor = (isModerator: boolean) =>
     ({ user: { id: OWNER_ID, isModerator }, domain: 'red' } as never);
@@ -260,11 +447,102 @@ describe('addEntityToShowcaseHandler — ownership', () => {
     expect(db.$transaction).not.toHaveBeenCalled();
   });
 
-  it("lets a moderator add another user's image", async () => {
-    await addEntityToShowcaseHandler({
-      input: { entityType: 'Image', entityId: STRANGER_IMAGE },
-      ctx: ctxFor(true),
-    });
-    expect(db.$transaction).toHaveBeenCalledTimes(1);
+  // The moderator exemption is for curating another user's showcase, never for a moderator's own.
+  it("rejects a moderator adding another user's image to their own showcase", async () => {
+    await expect(
+      addEntityToShowcaseHandler({
+        input: { entityType: 'Image', entityId: STRANGER_IMAGE },
+        ctx: ctxFor(true),
+      })
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(db.$transaction).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])(
+    'lets the owner add their own model (moderator: %s)',
+    async (isModerator) => {
+      db.model.findUniqueOrThrow.mockResolvedValue({ id: OWN_MODEL } as never);
+      dbMock.dbRead.model.findUniqueOrThrow.mockResolvedValue({ id: OWN_MODEL } as never);
+      await addEntityToShowcaseHandler({
+        input: { entityType: 'Model', entityId: OWN_MODEL },
+        ctx: ctxFor(isModerator),
+      });
+      expect(db.$transaction).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it('rejects the owner adding their own taken-down model', async () => {
+    db.model.findUniqueOrThrow.mockResolvedValue({ id: OWN_TAKEN_DOWN_MODEL } as never);
+    dbMock.dbRead.model.findUniqueOrThrow.mockResolvedValue({ id: OWN_TAKEN_DOWN_MODEL } as never);
+    await expect(
+      addEntityToShowcaseHandler({
+        input: { entityType: 'Model', entityId: OWN_TAKEN_DOWN_MODEL },
+        ctx: ctxFor(false),
+      })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(db.$transaction).not.toHaveBeenCalled();
+  });
+});
+
+describe('setPinnedItem', () => {
+  let stored: ShowcaseItemSchema[];
+  beforeEach(() => {
+    stored = [];
+    db.userProfile.upsert.mockImplementation((async () => ({ pinnedItems: stored })) as never);
+    Object.assign(ownedBy.image, { 11: OWNER_ID, 12: OWNER_ID, 13: OWNER_ID });
+    db.userProfile.updateMany.mockImplementation((async ({ data }: never) => {
+      stored = (data as { pinnedItems: ShowcaseItemSchema[] }).pinnedItems;
+      return { count: 1 };
+    }) as never);
+  });
+  const pin = (entityType: 'Image' | 'Model', entityId: number, pinned = true) =>
+    setPinnedItem({ userId: OWNER_ID, entityType, entityId, pinned });
+
+  it("pins the owner's own image and model, and unpins them", async () => {
+    await pin('Image', OWN_IMAGE);
+    await pin('Model', OWN_MODEL);
+    expect(stored).toEqual([
+      { entityType: 'Image', entityId: OWN_IMAGE },
+      { entityType: 'Model', entityId: OWN_MODEL },
+    ]);
+    await pin('Image', OWN_IMAGE, false);
+    expect(stored).toEqual([{ entityType: 'Model', entityId: OWN_MODEL }]);
+  });
+
+  it("refuses another user's image and writes nothing", async () => {
+    await expect(pin('Image', STRANGER_IMAGE)).rejects.toThrow();
+    expect(db.userProfile.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('refuses a fourth pin instead of dropping one', async () => {
+    stored = [
+      { entityType: 'Image', entityId: 11 },
+      { entityType: 'Image', entityId: 12 },
+      { entityType: 'Image', entityId: 13 },
+    ];
+    await expect(pin('Image', OWN_IMAGE)).rejects.toThrow(/up to 3/);
+    expect(stored).toHaveLength(3);
+  });
+
+  it('frees the slot of a pinned item that was deleted, so a new pin fits', async () => {
+    stored = [
+      { entityType: 'Image', entityId: 11 },
+      { entityType: 'Image', entityId: 12 },
+      { entityType: 'Image', entityId: 999 }, // deleted: no longer found among the owner's images
+    ];
+    await pin('Image', OWN_IMAGE);
+    expect(stored).toEqual([
+      { entityType: 'Image', entityId: 11 },
+      { entityType: 'Image', entityId: 12 },
+      { entityType: 'Image', entityId: OWN_IMAGE },
+    ]);
+  });
+
+  it('refuses a save over pins that changed since they were read', async () => {
+    db.userProfile.updateMany.mockResolvedValue({ count: 0 } as never);
+    await expect(pin('Image', OWN_IMAGE)).rejects.toThrow(/changed while saving/);
+    expect(db.userProfile.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { userId: OWNER_ID, pinnedItems: { equals: [] } } })
+    );
   });
 });

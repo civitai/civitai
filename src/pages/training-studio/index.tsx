@@ -10,6 +10,7 @@ import { Page } from '~/components/AppLayout/Page';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import { seedRawAirResource } from '~/components/form-graph/generation/raw-air-seed';
 import { checkStudioModelLive } from '~/components/Training/studio-model-live';
+import { getModelUrl } from '~/utils/string-helpers';
 import { studioPublishUrl } from '~/components/Training/studio-publish-url';
 import { checkStudioTriggerWord } from '~/components/Training/studio-trigger-word-check';
 import { SUPPORT_LINKS } from '~/components/Support/support.constants';
@@ -103,9 +104,9 @@ function TrainingStudioEmbed({
   const canGenerate = features.generationAirResources;
   // The host knows its domain color; the element locks its Buzz mode to it (no user toggle).
   const buzzMode: 'yellow' | 'green' = features.isGreen ? 'green' : 'yellow';
-  // Epoch generation runs off UNPUBLISHED weights, which this app gates on membership — the same
+  // Epoch generation runs off UNPUBLISHED weights, which this app gates on sign-in — the same
   // predicate as the training-results Generate button (TrainingSelectFile). Passed explicitly so
-  // the element can explain the gate instead of a non-member's click silently doing nothing.
+  // the element can explain the gate instead of a click silently doing nothing.
   const currentUser = useCurrentUser();
   const canGenerateUnpublished = canGenerateWithEpochs(currentUser);
   const isPaidMember = paidMemberHostFlag(currentUser);
@@ -219,6 +220,7 @@ function TrainingStudioEmbed({
           supportUrl: SUPPORT_LINKS.portal,
           dataPolicyUrl: '/content/training/data-policy',
           enabledModelFlags,
+          userId: currentUser?.id,
         },
         hrefFor,
         navigate: async (loc: StudioLocation) => {
@@ -241,7 +243,9 @@ function TrainingStudioEmbed({
         // Relative on purpose (same-tab). Not gated on canGenerate — the publish entry guards
         // muted/onboarding itself, and publishing doesn't ride the generation lanes.
         publishUrl: studioPublishUrl,
-        modelPageUrl: (req: { modelId: number }) => `/models/${req.modelId}`,
+        publishVersionUrl: (req: Parameters<typeof studioPublishUrl>[0]) =>
+          studioPublishUrl({ ...req, asVersion: true }),
+        modelPageUrl: (req: { modelId: number; modelVersionId?: number }) => getModelUrl(req),
         modelLive: checkStudioModelLive,
         // The studio's Custom base: open this app's resource-select modal and hand back the picked
         // checkpoint as an AIR (the same urn:air:<eco>:checkpoint:civitai:<modelId>@<versionId>
@@ -307,6 +311,7 @@ function TrainingStudioEmbed({
     canGenerateUnpublished,
     isPaidMember,
     enabledModelFlags,
+    currentUser?.id,
   ]);
 
   // Browser navigation (and the element's own host.navigate round-trip) drives the view: the query
@@ -324,14 +329,14 @@ function TrainingStudioEmbed({
     ref.current?.classList.toggle('light', colorScheme === 'light');
   }, [elReady, colorScheme]);
 
-  const classicTrainerUrl =
-    isNew || !currentUser?.username
-      ? '/models/train'
-      : `/user/${currentUser.username}/models?section=training`;
+  const pastRunsUrl = currentUser?.username
+    ? `/user/${currentUser.username}/models?section=training`
+    : undefined;
+  const classicTrainerUrl = isNew || !pastRunsUrl ? '/models/train' : pastRunsUrl;
 
   return (
     <div className="mx-auto max-w-[1100px] p-4 sm:p-6">
-      <SwitchToClassicTrainerAlert destination={classicTrainerUrl} />
+      <SwitchToClassicTrainerAlert destination={classicTrainerUrl} pastRunsUrl={pastRunsUrl} />
       {error ? <p>{error}</p> : <StudioTag ref={ref} />}
     </div>
   );

@@ -462,6 +462,7 @@ model User {
   pushSubscriptions    PushSubscription[]
   pushSettings         UserPushSetting[]
   emailOptOuts         UserEmailNotificationOptOut[]
+  notificationDigest   UserNotificationDigest?
   webhooks             Webhook[]
   interests            ModelInterest[]
   engagingUsers        UserEngagement[]           @relation("engagingUsers")
@@ -626,6 +627,7 @@ model User {
   blockGoodPurchasesAsAppOwner     BlockGoodPurchase[]      @relation("BlockGoodPurchaseAppOwner")
   blockGoodEntitlements            BlockGoodEntitlement[]   @relation("BlockGoodEntitlementOwner")
   publishRequestsSubmitted   AppBlockPublishRequest[]        @relation("PublishRequestSubmitter")
+  appAssistantSessionLinks   AppAssistantSessionLink[]
   publishRequestsReviewed    AppBlockPublishRequest[]        @relation("PublishRequestReviewer")
   blockScopeInvocations      BlockScopeInvocation[]
   appUserScopeGrants         AppUserScopeGrant[]
@@ -637,6 +639,7 @@ model User {
   appListingReportsReported          AppListingReport[]         @relation("AppListingReportReporter")
   appListingReportsResolved          AppListingReport[]         @relation("AppListingReportResolver")
   appListingModerationEvents         AppListingModerationEvent[] @relation("AppListingModEventActor")
+  appReviewMessagesAuthored          AppReviewMessage[]          @relation("AppReviewMessageAuthor")
   appSubListingsAuthored             AppSubListing[]             @relation("AppSubListingAuthor")
   appSubListingsModerated            AppSubListing[]             @relation("AppSubListingModerator")
   // App Listing Collaborators — editor seats held / issued, the ownership audit
@@ -1176,9 +1179,9 @@ model Model {
   @@index([updatedAt, id])
 }
 
-/// Every owner a model has had, including its first. Read by the legal hold so a transfer cannot
-/// move data out of it. Append-only (a trigger refuses UPDATE and DELETE); no foreign keys, so rows
-/// outlive the model and user.
+/// Every owner a model has had, including its first. Account restore reads it to find the models
+/// a deleted account handed to the placeholder owner. Append-only (a trigger refuses UPDATE and
+/// DELETE); no foreign keys, so rows outlive the model and user.
 model ModelOwnership {
   id        Int      @id @default(autoincrement())
   modelId   Int
@@ -1289,6 +1292,8 @@ model ModelVersionShowcaseItem {
   source         String // 'Owner' | 'Community' (CHECK in the migration)
   position       Int?     @db.SmallInt
   excluded       Boolean  @default(false)
+  /// The image's author or a moderator removed it; kept so the owner can't add it back.
+  removed        Boolean  @default(false)
   addedById      Int
   createdAt      DateTime @default(now())
 
@@ -1366,6 +1371,15 @@ model ModelVersion {
   licensingFee                   Decimal?                        @db.Decimal(10, 2)
   licensingFeeType               LicensingFeeType?               @default(PerImageBuzz)
   licensingFeeSettlementCurrency LicensingFeeSettlementCurrency? @default(Buzz)
+  // Percent points of compute charged on top of a PercentOfCompute fee and logged apart from it, so the
+  // fee alone is what the licensor is owed. Ours, never paid out. Staff set and clear it by hand; it is
+  // read only while the type is PercentOfCompute, so clearing the fee leaves it inert.
+  licensingFeeMarkup             Decimal?                        @db.Decimal(5, 2)
+  // Staff set it by hand: while true only a moderator may change the fee, its type or its currency.
+  licensingFeeLocked             Boolean                         @default(false)
+  // Staff set it by hand: the licensor is paid by invoice, so the daily payout mints none of this
+  // version's licence fee. Its resourceCompensations rows stay as the usage ledger.
+  licensingFeePaidByInvoice      Boolean                         @default(false)
 
   // Licensing lineage: the root version whose fee this version inherits (e.g. a
   // checkpoint built on Anima-Turbo points at the turbo version). Null means NO
@@ -1420,6 +1434,9 @@ model LicensingRoot {
   modelVersionId Int          @unique
   modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
   isDefault      Boolean      @default(false)
+  // Staff set it by hand: kept out of the editor's picker, and a version may only gain it as its source
+  // through a moderator. A version that already holds it keeps it.
+  restricted     Boolean      @default(false)
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
@@ -1446,6 +1463,8 @@ model PricingSlot {
 
 enum LicensingFeeType {
   PerImageBuzz
+  // licensingFee is a percent of the generation's compute cost (35 = 35%), not Buzz.
+  PercentOfCompute
 }
 
 enum LicensingFeeSettlementCurrency {
@@ -1819,6 +1838,7 @@ model Report {
   gameFrameGame  GameFrameGameReport?
   serviceOffering ServiceOfferingReport?
   postText       PostTextReport?
+  serviceDealReview ServiceDealReviewReport?
   gameFrameReceipts GameFrameReportReceipt[]
 }
 
@@ -1930,30 +1950,6 @@ model ComicProjectReport {
 
   @@id([reportId, comicProjectId])
   @@index([comicProjectId], type: Hash)
-}
-
-/// A copy of a held author's ResourceReview, written in the same statement as a delete that would
-/// cascade it. Purged once the author's hold ends.
-model HeldResourceReview {
-  /// The original ResourceReview id.
-  id             Int       @id
-  modelId        Int
-  modelVersionId Int
-  userId         Int
-  rating         Int
-  recommended    Boolean
-  details        String?
-  exclude        Boolean
-  nsfw           Boolean
-  tosViolation   Boolean
-  metadata       Json?
-  createdAt      DateTime
-  updatedAt      DateTime
-  heldAt         DateTime  @default(now())
-  /// The holds on the author when it was copied.
-  holdReasons    String[]
-
-  @@index([userId])
 }
 
 model ResourceReview {
@@ -2252,9 +2248,15 @@ model Image {
   scanJobs          Json?
   assignedUser      User?                   @relation("profilePicture")
   sortAt            DateTime                @default(dbgenerated()) // authored by image_post_triggers (set_image_sort_at BEFORE INSERT/UPDATE); no client/DB literal default — keeps the field client-optional while the trigger owns the value
+  // When the row first passed the public feed gates; written only by set_image_sort_at, which adds it
+  // to sortAt within the release cap. Raw SQL only, so Prisma never selects it and code may deploy
+  // before the migration.
+  firstVisibleAt    DateTime? // @no-type
   minor             Boolean                 @default(false)
   poi               Boolean                 @default(false)
   acceptableMinor   Boolean                 @default(false)
+  /// Made with a base model that restricts mature images. Read through imageNotRestrictedSql / imageNotRestrictedWhere.
+  modelRestricted   Boolean                 @default(false)
 
   reports             ImageReport[]
   reactions           ImageReaction[]
@@ -2270,6 +2272,8 @@ model Image {
   connections         ImageConnection[]
   UserProfile         UserProfile[]
   userProfileSfwCover UserProfile[]         @relation("UserProfileSfwCoverImage")
+  userProfileBackground    UserProfile[] @relation("UserProfileBackgroundImage")
+  userProfileSfwBackground UserProfile[] @relation("UserProfileSfwBackgroundImage")
   announcementCovers  Announcement[]        @relation("AnnouncementCover")
   clubCover           Club[]                @relation("coverImage")
   clubHeader          Club[]                @relation("headerImage")
@@ -2304,6 +2308,7 @@ model Image {
   crucibles              Crucible[]             @relation("CrucibleImage")
   crucibleHeroes         Crucible[]             @relation("CrucibleHeroImage")
   serviceOfferingCovers  ServiceOffering[]      @relation("ServiceOfferingCover")
+  serviceDealReviewImage ServiceDealReviewImage?
   crucibleEntries        CrucibleEntry[]
   storylineCovers        Storyline[]            @relation("StorylineCoverImage")
   storylineHeroes        Storyline[]            @relation("StorylineHeroImage")
@@ -2316,6 +2321,9 @@ model Image {
   @@index([userId, postId])
   @@index([userId, id], map: "image_userid_id_idx")
   @@index([sortAt])
+  // Also INCLUDE (id, "hideMeta"), which Prisma cannot express: it lives in migration
+  // 20271119051500 and will not round-trip here. The auth session producer relies on it.
+  @@index([url], map: "Image_url_covered_idx")
 }
 
 model ImageTagForReview {
@@ -2882,6 +2890,24 @@ model KeyValue {
   value Json
 }
 
+// "Already done" markers that must survive a Redis eviction: the moderator DM, headless post and
+// Stripe AIR idempotency keys, behind the `idempotency-keys-pg` flag. RAW SQL ONLY
+// (`idempotency-key.service.ts`). Migration `20271119120000_idempotency_key`, applied by hand;
+// with the flag on and the table missing, each caller refuses rather than act twice.
+// `state` is 'pending' or 'done' (a CHECK constraint in the migration).
+// @no-type
+model IdempotencyKey {
+  scope     String
+  key       String
+  state     String
+  result    Json?
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  expiresAt DateTime @db.Timestamptz(6)
+
+  @@id([scope, key])
+  @@index([expiresAt])
+}
+
 /// Free-text feedback captured from in-product prompts. `area` is a plain
 /// string, not an enum, so adding a feedback surface needs no migration.
 model Feedback {
@@ -2956,6 +2982,9 @@ model AppAccessRequest {
   reviewedAt   DateTime?
   reviewedById Int?
   reviewedBy   User?     @relation("AppAccessRequestReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
+  /// moderator | system (CHECK `AppAccessRequest_reviewSource_check`). Who decided the row, kept
+  /// apart from `reviewedById`, which a deleted moderator account sets NULL. NULL while pending.
+  reviewSource String?
 
   @@index([userId, createdAt(sort: Desc)])
   @@index([status, createdAt(sort: Desc)])
@@ -2974,6 +3003,10 @@ model ApiKey {
   key        String       @unique
   name       String
   tokenScope Int          @default(33554431) // Bitwise flags — default = Full (all scopes)
+  /// The whole scope, past the 31 bits `tokenScope` holds. Read `tokenScopeWide ?? tokenScope`; a write sets both
+  /// (`apiKeyScopeColumns` in @civitai/auth/token-scope), `tokenScope` to the low 31 bits. Null on rows written
+  /// before the column existed, all of which fit `tokenScope`.
+  tokenScopeWide BigInt?
   userId     Int
   user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   createdAt  DateTime     @default(now())
@@ -2986,6 +3019,14 @@ model ApiKey {
   /// Set on `Worker` tokens only: the device the token was issued to.
   workerDeviceId Int?
   workerDevice   WorkerDevice? @relation(fields: [workerDeviceId], references: [id], onDelete: Cascade)
+  // OAuth offline grant (auth hub, flag `oauth-offline-grant`), migration
+  // `20271119140000_oauth_offline_grant`. No-type, so the generated clients never name them and the
+  // deploy and the manual migration can land in either order; read and written only by flag-on code
+  // (apps/auth `offline-columns.ts`, src/server/orchestrator/offline-spend-cap.ts). `mintOrigin`: how
+  // an OAuth `Access` row was minted, or on a `Refresh` row the grant that started its chain (CHECK
+  // `ApiKey_mintOrigin_check`). `refreshFamilyId`: the id every rotation of one refresh chain shares.
+  mintOrigin      String? // @no-type
+  refreshFamilyId String? // @no-type
 
   @@index([clientId])
   @@index([workerDeviceId])
@@ -3001,7 +3042,7 @@ model OauthClient {
   redirectUris   String[]       @default([])
   allowedOrigins String[]       @default([])
   grants         String[]       @default(["authorization_code", "refresh_token"])
-  allowedScopes  Int            @default(33554431)
+  allowedScopes  BigInt         @default(33554431)
   isConfidential Boolean        @default(true)
   /// Login gating: "open" (anyone), "testers" (only users holding the "tester" UserRole), "disabled" (no one).
   /// Read by the auth hub's /authorize gate. First-party (spoke) clients have no row here, so are never gated.
@@ -3490,6 +3531,8 @@ model AppBlockPublishRequest {
   actionsRunId                   String? @map("actions_run_id") // @no-type
   createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt             DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  assistantTrace        AppPublishRequestTrace?
+  reviewMessages        AppReviewMessage[]
 
   @@index([status, submittedAt(sort: Desc)], map: "app_block_publish_requests_queue_idx")  // mod queue
   @@index([appBlockId, submittedAt(sort: Desc)], map: "app_block_publish_requests_app_history_idx")
@@ -3533,6 +3576,102 @@ model AppBlockBuildAttempt {
   @@index([publishRequestId, mode, createdAt(sort: Desc)], map: "app_block_build_attempts_request_idx")
   @@index([mode, slug, sha, createdAt(sort: Desc)], map: "app_block_build_attempts_version_idx")
   @@map("app_block_build_attempts")
+}
+
+/// App Assistant session tracing: which App Assistant chats worked on which app, for whom. One row
+/// per (conversation, app slug), upserted by every finished server-runner turn whose chat had an app
+/// chosen (`~/server/services/app-assistant/session-tracing.service`), while the
+/// `app-assistant-tracing` Flipt flag is on. A chat that moves between apps has one row per app; an
+/// app built over several chats has one row per chat. Read by moderators only (submission tracing).
+///
+/// 🔴 APPLIED MANUALLY, AND THE APP TOLERATES IT BEING ABSENT: every write is best-effort (a failure,
+/// a missing table included, is logged and dropped), so code using it ships before the table.
+/// Migration `20271124120000_app_assistant_session_links`. The user FK cascades only on a HARD
+/// delete; account deletion (`deleteUser`) is soft, and its `delete-app-assistant-links` step
+/// deletes these rows.
+model AppAssistantSessionLink {
+  id             Int      @id @default(autoincrement())
+  userId         Int      @map("user_id")
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conversationId String   @map("conversation_id") // the chat's conversation id (orchestration tag `cvt:conv:<id>`)
+  appSlug        String   @map("app_slug") // the app's blockId, as `create_app` / `use_open_app` chose it
+  firstSeenAt    DateTime @default(now()) @map("first_seen_at") @db.Timestamptz(6)
+  lastSeenAt     DateTime @default(now()) @map("last_seen_at") @db.Timestamptz(6)
+  turnCount      Int      @default(0) @map("turn_count")
+  lastModel      String?  @map("last_model")
+  buzzTotal      Float    @default(0) @map("buzz_total")
+  lastRunId      String?  @map("last_run_id") // the last reported PASS, "<runId>@<pass start>": that pass delivered again right after counts once
+
+  // Per user: a conversation id is chosen by the page, so only the user's own chats share its space.
+  @@unique([userId, conversationId, appSlug], map: "app_assistant_session_links_user_conversation_app_key")
+  @@index([appSlug, userId, lastSeenAt(sort: Desc)], map: "app_assistant_session_links_app_user_idx")
+  @@map("app_assistant_session_links")
+}
+
+/// App Assistant session tracing, frozen at submission: for one publish request, the App Assistant
+/// chats that built it (the submitter's own `AppAssistantSessionLink` rows for the slug), an immutable
+/// JSON snapshot of each chat's transcript in the bundle store (`snapshots[].key`), and the signals
+/// computed from the submitted bundle and those transcripts (`signals`, shape versioned by
+/// `signalsVersion`). Written once per request at submit, best-effort, while the
+/// `app-assistant-tracing` flag is on. Read by moderators only.
+///
+/// 🔴 APPLIED MANUALLY, AND THE APP TOLERATES IT BEING ABSENT: a write that fails is logged and the
+/// submission goes on. Migration `20271124130000_app_publish_request_traces`.
+model AppPublishRequestTrace {
+  id               Int                    @id @default(autoincrement())
+  publishRequestId String                 @unique @map("publish_request_id")
+  publishRequest   AppBlockPublishRequest @relation(fields: [publishRequestId], references: [id], onDelete: Cascade)
+  slug             String
+  userId           Int                    @map("user_id") // the submitter
+  conversationIds  String[]               @map("conversation_ids")
+  snapshots        Json // [{ conversationId, key?, bytes?, turns?, error? }]
+  signals          Json
+  signalsVersion   Int                    @map("signals_version")
+  snapshotError    String?                @map("snapshot_error") // why the trace is partial, if it is
+  createdAt        DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([slug, createdAt(sort: Desc)], map: "app_publish_request_traces_slug_idx")
+  @@index([createdAt], map: "app_publish_request_traces_created_idx")
+  @@index([userId], map: "app_publish_request_traces_user_idx")
+  @@map("app_publish_request_traces")
+}
+
+/// The conversation on one app review decision: messages between the app's developer side and
+/// Civitai App Review, both directions, on one publish request.
+///
+/// ONE table over BOTH request tables, with a nullable FK to each and a CHECK that exactly one
+/// is set (`num_nonnulls(...) = 1`, in the migration only; Prisma cannot express it). That keeps
+/// one thread shape for an on-site version request (`pubreq_…`) and a store-listing request
+/// (`alpr_…`) while each message keeps real referential integrity and cascades with its request;
+/// a single polymorphic text id could carry no FK at all.
+///
+/// `recipientUserId` is the individual notified when the message was posted, or NULL when it went
+/// to the moderator queue (a developer reply whose reviewer is gone, no longer a moderator, or
+/// was an automated review) or to the developer side (a moderator reply). It records who was
+/// told at the time, so it has no FK: a cascade or SET NULL would rewrite that history, and a
+/// NULL written by a deletion would read as "routed to the queue".
+///
+/// 🔴 APPLIED MANUALLY. The thread reads and writes this table only behind the
+/// `app-review-replies` flag. The one reader outside it is the personal-data export (it reads
+/// every registered table), which reports this file as unavailable until the table exists.
+/// Migration `20271205120000_app_review_messages`.
+model AppReviewMessage {
+  id                      Int                       @id @default(autoincrement())
+  publishRequestId        String?                   @map("publish_request_id")
+  publishRequest          AppBlockPublishRequest?   @relation(fields: [publishRequestId], references: [id], onDelete: Cascade)
+  listingPublishRequestId String?                   @map("listing_publish_request_id")
+  listingPublishRequest   AppListingPublishRequest? @relation(fields: [listingPublishRequestId], references: [id], onDelete: Cascade)
+  authorUserId            Int?                      @map("author_user_id")
+  author                  User?                     @relation("AppReviewMessageAuthor", fields: [authorUserId], references: [id], onDelete: SetNull)
+  authorRole              String                    @map("author_role") // 'developer' | 'moderator' (DB CHECK)
+  body                    String // 1..2000 characters (DB CHECK)
+  recipientUserId         Int?                      @map("recipient_user_id") // who was notified; NULL = the queue or the developer side
+  createdAt               DateTime                  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([publishRequestId, createdAt], map: "app_review_messages_publish_request_idx")
+  @@index([listingPublishRequestId, createdAt], map: "app_review_messages_listing_request_idx")
+  @@index([authorUserId], map: "app_review_messages_author_idx")
+  @@map("app_review_messages")
 }
 
 /// App Store Listings (W13) — the store-facing record, decoupled from runtime.
@@ -3749,6 +3888,11 @@ model AppListing {
   // guard is the migration's partial-unique index + the app-level P2002 →
   // idempotent-reuse handling in beginListingRevision.
   @@index([revisionOfId], map: "app_listings_revision_of_id_key")
+  // The auth hub reads a client's connect listings (offline access is granted only when one of
+  // its approved listings declares it). Plain here; the REAL index is PARTIAL (WHERE
+  // connect_client_id IS NOT NULL), which Prisma cannot express, and lives only in the
+  // manual-apply migration `20271120150000_app_listing_connect_client_idx`.
+  @@index([connectClientId], map: "app_listings_connect_client_id_idx")
   @@map("app_listings")
 }
 
@@ -3879,6 +4023,7 @@ model AppListingPublishRequest {
   changelog         String?
   createdAt         DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt         DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  reviewMessages    AppReviewMessage[]
 
   @@index([status, submittedAt(sort: Desc)], map: "app_listing_publish_requests_queue_idx")
   @@index([appListingId, submittedAt(sort: Desc)], map: "app_listing_publish_requests_listing_history_idx")
@@ -4120,6 +4265,8 @@ model AppReviewAgentReport {
   priorReportId    String?               @map("prior_report_id")
   priorReport      AppReviewAgentReport?  @relation("AppReviewAgentReportChain", fields: [priorReportId], references: [id], onDelete: SetNull)
   nextReports      AppReviewAgentReport[] @relation("AppReviewAgentReportChain")
+  // Connect lane only: what Civitai checked itself (see AppReviewAgentReportCheck).
+  civitaiCheck     AppReviewAgentReportCheck?
   // LLM token accounting (provider-shaped Json) + total cost. See costUsd note
   // in the model docstring for the Decimal(12,6) rationale.
   tokenUsage       Json?     @map("token_usage")
@@ -4137,6 +4284,28 @@ model AppReviewAgentReport {
   // (publish_request_id) WHERE status='running' live ONLY in the migration .sql —
   // Prisma cannot express CHECKs or partial-unique indexes.
   @@map("app_review_agent_reports")
+}
+
+/// Agent review, CONNECT lane: the facts Civitai checked itself for one report (offline-access
+/// reachability, whether server source was provided and reviewed) plus a fingerprint of the
+/// listing fields the review read. Written ONLY by the dispatch, never by the runner's callback,
+/// so nothing the runner reports can add to, edit or imitate it. The panel renders it as its own
+/// "Checked by Civitai" block and marks the review stale when the live listing's fingerprint
+/// differs. One row per connect report; on-site reports have none. Cascades with its report.
+/// MANUAL-APPLY migration `20271120120000_app_review_agent_report_checks`; the lane is dark until
+/// it is applied and the flag is on.
+model AppReviewAgentReportCheck {
+  reportId         String               @id @map("report_id")
+  report           AppReviewAgentReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  publishRequestId String               @map("publish_request_id")
+  // `ConnectCivitaiChecks` (connect-agent-review.logic.ts).
+  checks           Json
+  // `connectListingFingerprint` of the listing as reviewed.
+  fingerprint      String
+  createdAt        DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([publishRequestId], map: "app_review_agent_report_checks_publish_request_idx")
+  @@map("app_review_agent_report_checks")
 }
 
 // App review holds: a moderator or agent's open check on an app's pending publish requests;
@@ -5199,6 +5368,40 @@ model AppSourceRepo {
   @@map("app_source_repos")
 }
 
+// App Blocks platform updates: a change Civitai staff pushed to someone else's app, as a branch of
+// its source repo. The row is the proof the update is from staff (commit text is forgeable).
+// RAW SQL ONLY (`app-platform-update.service.ts`), so the model is stripped from the generated
+// client; the migration `20271205140000_app_platform_updates` is applied by hand (with its CHECKs
+// and indexes, which live only there) and the service tolerates the table's absence.
+// @no-type
+model AppPlatformUpdate {
+  id               String    @id // apu_<ULID>
+  appBlockId       String    @map("app_block_id")
+  slug             String
+  staffUserId      Int       @map("staff_user_id")
+  reason           String
+  branch           String
+  baseCommitSha    String    @map("base_commit_sha")
+  commitSha        String    @map("commit_sha")
+  paths            Json
+  touchesManifest  Boolean   @default(false) @map("touches_manifest")
+  seededSourceRepo Boolean   @default(false) @map("seeded_source_repo")
+  status           String    @default("pending")
+  mergeCommitSha   String?   @map("merge_commit_sha")
+  resolvedByUserId Int?      @map("resolved_by_user_id")
+  resolvedAt       DateTime? @map("resolved_at") @db.Timestamptz(6)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  // Set at approve: the approved request whose bundle first contained the update (migration
+  // `20271206120000_app_platform_updates_shipped`, applied by hand).
+  shippedInPublishRequestId String?   @map("shipped_in_publish_request_id")
+  shippedAt                 DateTime? @map("shipped_at") @db.Timestamptz(6)
+
+  @@index([appBlockId, status, createdAt(sort: Desc)], map: "app_platform_updates_app_status_idx")
+  @@unique([slug, commitSha], map: "app_platform_updates_slug_commit_idx")
+  @@map("app_platform_updates")
+}
+
 // App hibernate ("Sleeping" apps): one row per sleeping app, per user — the archive of the app's
 // workspace in the archive store, and optionally its `.env*` files, encrypted under a data key
 // that is stored here only wrapped by a civitai-held master key. RAW SQL ONLY
@@ -5258,12 +5461,96 @@ model OauthConsent {
   user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   clientId  String
   client    OauthClient @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  scope     Int
+  scope     BigInt
   buzzLimit Json?
   createdAt DateTime    @default(now())
   updatedAt DateTime    @default(now()) @updatedAt
+  // When the user approved "stay connected while you're away" (the OAuth offline grant, flag
+  // `oauth-offline-grant`); null = none. No-type for the reason `ApiKey.mintOrigin` gives.
+  offlineGrantedAt DateTime? // @no-type
+  // The spend cap for a recipe runner acting on the offline grant, over a rolling period
+  // (`day` | `week` | `month` = 1, 7, 30 days). Both null or both set; null refuses every runner
+  // mint. Separate from `buzzLimit`, the live-session cap. No-type, like `offlineGrantedAt`.
+  offlineBuzzLimit  Int?    // @no-type
+  offlineBuzzPeriod String? // @no-type
 
   @@unique([userId, clientId])
+}
+
+// The one recipe-runner OAuth client bound to a recipe app, written only by Civitai admins. RAW
+// SQL ONLY; CHECKs live in migration `20271204120000_recipe_runner_ledger`, applied by hand.
+// @no-type
+model RunnerClientBinding {
+  runnerClientId  String    @id @map("runner_client_id")
+  appBlockId      String    @unique @map("app_block_id")
+  status          String    @default("active")
+  createdByUserId Int       @map("created_by_user_id")
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  suspendedAt     DateTime? @map("suspended_at") @db.Timestamptz(6)
+  suspendedReason String?   @map("suspended_reason")
+
+  @@map("runner_client_bindings")
+}
+
+// What a user authorized a recipe runner to start: one run (`single`) or a capped recurring
+// authorization (`standing`). RAW SQL ONLY; same migration.
+// @no-type
+model RunnerRunAuthorization {
+  id                String    @id
+  userId            Int       @map("user_id")
+  runnerClientId    String    @map("runner_client_id")
+  kind              String
+  runId             String?   @map("run_id")
+  recipeVersionHash String    @map("recipe_version_hash")
+  paramsHash        String    @map("params_hash")
+  maxAmountPerRun   Int       @map("max_amount_per_run")
+  maxRunsPerPeriod  Int?      @map("max_runs_per_period")
+  period            String?
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  expiresAt         DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt         DateTime? @map("revoked_at") @db.Timestamptz(6)
+  revokedReason     String?   @map("revoked_reason")
+
+  @@index([userId, runnerClientId], map: "runner_run_authorizations_user_client_idx")
+  @@map("runner_run_authorizations")
+}
+
+// One row per submit attempt of a recipe run; the runner's spend ledger. At most one live
+// attempt per run (partial unique index). RAW SQL ONLY; same migration.
+// @no-type
+model RunnerRunAttempt {
+  attemptId       String    @id @map("attempt_id")
+  runId           String    @map("run_id")
+  attemptNo       Int       @map("attempt_no")
+  userId          Int       @map("user_id")
+  runnerClientId  String    @map("runner_client_id")
+  appBlockId      String    @map("app_block_id")
+  authorizationId String    @map("authorization_id")
+  state           String
+  reservedAmount  Int       @map("reserved_amount")
+  chargedAmount   Int?      @map("charged_amount")
+  workflowId      String?   @map("workflow_id")
+  externalId      String    @map("external_id")
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  settledAt       DateTime? @map("settled_at") @db.Timestamptz(6)
+  /// The Redis legs the attempt holds: key names and amounts only.
+  reservation     Json?
+
+  @@unique([runId, attemptNo])
+  @@index([userId, runnerClientId, createdAt], map: "runner_run_attempts_user_client_created_idx")
+  @@map("runner_run_attempts")
+}
+
+// A refund transaction re-credits a runner attempt at most once. RAW SQL ONLY; same migration.
+// @no-type
+model RunnerRecredit {
+  transactionId String   @id @map("transaction_id")
+  attemptId     String   @map("attempt_id")
+  amount        Int
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("runner_recredits")
 }
 
 /// An emailed sign-in invite from a system app (auth hub POST /api/auth/invite). Only the token's hash is
@@ -5386,6 +5673,19 @@ model UserEmailNotificationOptOut {
   @@id([userId, type])
 }
 
+// The weekly missed-notification digest: when each user was last sent one, so a user gets at most
+// one a week and no notification is listed in two of them. RAW SQL ONLY
+// (`notification-digest.service.ts`). Migration `20271117150000_user_notification_digest`, applied
+// by hand; the digest sends nothing while the table is missing.
+// @no-type
+model UserNotificationDigest {
+  userId     Int      @id
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lastSentAt DateTime
+
+  @@map("UserNotificationDigest")
+}
+
 model Webhook {
   id        Int      @id @default(autoincrement())
   url       String
@@ -5487,6 +5787,76 @@ enum CommentEntityType {
   crucible
   storyline
   postText
+  featurePage
+}
+
+// A data.civitai.com Feature Pages subject (a feature or a feature request) with a comment thread.
+// The integer id is what CommentV3.entityId addresses; the urn is the platform's name for it.
+model FeaturePageTopic {
+  id        Int      @id @default(autoincrement())
+  urn       String   @unique
+  kind      String // feature | request (DB CHECK)
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+}
+
+// One row per Feature Pages comment: what the mirror last pushed to the platform, and when it pushes
+// next. No relation to CommentV3, so the row outlives a hard-deleted comment.
+model FeaturePageCommentMirror {
+  commentId      Int       @id
+  userId         Int
+  requestId      String
+  urn            String?
+  goneCause      String? // author | moderator | refused (DB CHECK)
+  version        Int       @default(1)
+  pushedState    String?
+  pushedDigest   String?
+  platformDigest String?
+  // The state and post digest the next push is for, so the dirty pass schedules each change once
+  // and leaves a row in backoff alone until what it should hold changes again.
+  pendingDigest  String?
+  pushAttempts   Int       @default(0)
+  scanAttempts   Int       @default(0)
+  // The scan content hash scanAttempts counts against; a new hash starts the count again.
+  scanHash       String?
+  // The frame requestIds of the last 20 edits applied, so a resent edit changes nothing.
+  editRequestIds String[]  @default([])
+  // Set before the first post is sent: a lost reply leaves it set with no urn.
+  postAttemptedAt DateTime? @db.Timestamptz(6)
+  // Counts text sends after the first post, so each changed body gets its own idempotency key.
+  postSeq        Int       @default(0)
+  // When goneCause was set: the retraction's event time, the same on every retry.
+  goneAt            DateTime? @db.Timestamptz(6)
+  // Since when its feature subject is one the platform does not hold yet: the post waits, uncapped.
+  subjectMissingAt  DateTime? @db.Timestamptz(6)
+  // The text's own event time (post or edit), sent as `at`; flag changes do not move it.
+  contentAt         DateTime  @default(now()) @db.Timestamptz(6)
+  // Set when the platform holds, or is about to be sent, a removal: never cleared.
+  removeWantedAt    DateTime? @db.Timestamptz(6)
+  // Since when a restriction (hide, removal, retraction) is owed to the platform: lease priority and
+  // the alert clock.
+  restrictedAt      DateTime? @db.Timestamptz(6)
+  // The scan's own hide: CommentV3.hiddenAt as the scan set it, the text version it judged and the
+  // report it filed. Any other hide clears scanHiddenAt, so they no longer match the current hide.
+  scanHiddenAt      DateTime? @db.Timestamptz(6)
+  scanHiddenVersion Int?
+  scanHideReportId  Int? // partial index FeaturePageCommentMirror_scanHideReportId_idx (migration only)
+  // The `at` of the last moderator hide sent, and what it was sent for: the scan's hide, a
+  // moderator's here, or one the platform already held (foreign: never lifted from here).
+  modHideSentAt     DateTime? @db.Timestamptz(6)
+  modHideOrigin     String? // scan | moderator | foreign (DB CHECK)
+  // A moderator's lift of a hide: when (taken under the comment's lock), by whom, for which version.
+  liftGrantedAt      DateTime? @db.Timestamptz(6)
+  liftGrantedBy      Int?
+  liftGrantedVersion Int?
+  nextPushAt     DateTime? @db.Timestamptz(6)
+  leaseUntil     DateTime? @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@unique([userId, requestId])
+  @@index([nextPushAt])
+  // Partial indexes, in the migration only: unique urn WHERE urn IS NOT NULL, and nextPushAt WHERE
+  // restrictedAt IS NOT NULL.
 }
 
 // Partitioned by entityType in the database, with the entity FK on each partition. No @relation to
@@ -5527,6 +5897,8 @@ model CommentV3 {
   deletedAt     DateTime? @db.Timestamptz(6)
   tosViolation  Boolean   @default(false)
   hidden        Boolean   @default(false)
+  // When `hidden` last became true; a restore undoes only the hide that wrote this stamp.
+  hiddenAt      DateTime? @db.Timestamptz(6)
   locked        Boolean   @default(false)
   pinnedAt      DateTime? @db.Timestamptz(6)
   reactionCount Int       @default(0)
@@ -5803,6 +6175,8 @@ enum CosmeticType {
   ChatTheme
   // A glow around the creator card; its own slot, so it stacks with a badge.
   CardDecoration
+  // Art behind the profile sidebar header (redesign); not the creator card background.
+  SidebarBackground
 }
 
 enum CosmeticSource {
@@ -7232,68 +7606,6 @@ model PersonalDataExport {
   @@index([status])
 }
 
-/// A hold marker on one owner. While a row is active (see `EvidenceHeldUser`), that owner's images
-/// are not deleted by anything. Report rows are written by a trigger on `CsamReport` when a report is
-/// sent; `manual` rows are written by a person. A hold ends at `releaseAt` (or `extendedUntil`, if
-/// later), or when a person releases it; clearing an image's review flag never ends it.
-model EvidenceHold {
-  id              Int       @id @default(autoincrement())
-  userId          Int
-  csamReportId    Int?
-  /// subject | secondary | manual
-  role            String
-  reportSentAt    DateTime?
-  /// NULL holds until released.
-  releaseAt       DateTime?
-  extendedUntil   DateTime?
-  /// Who asked for the extension, and their reference.
-  extensionRequestedBy String?
-  extensionReference   String?
-  reason          String
-  createdAt       DateTime  @default(now())
-  createdById     Int?
-  releasedAt      DateTime?
-  releasedById    Int?
-  releaseReason   String?
-
-  @@index([userId])
-}
-
-/// An image a hold marker kept from deletion. The delete trigger takes it out of its post; `postId`
-/// is the post it was in, and nothing else records it. `prior*` are the image's ingestion, block
-/// reason and nsfwLevel before the trigger blocked it. Purged once no hold covers the owner.
-model EvidenceHoldImage {
-  imageId         Int      @id
-  userId          Int
-  postId          Int?
-  keptAt          DateTime @default(now())
-  priorIngestion  String?
-  priorBlockedFor String?
-  priorNsfwLevel  Int?
-}
-
-/// A held owner's post, copied by a delete trigger when it was deleted; it stands in for the post.
-/// Purged with the owner's `EvidenceHoldImage` rows once no hold covers them.
-model EvidenceHoldPost {
-  postId         Int       @id
-  userId         Int
-  title          String?
-  detail         String?
-  createdAt      DateTime?
-  publishedAt    DateTime?
-  modelVersionId Int?
-  collectionId   Int?
-  metadata       Json?
-  keptAt         DateTime  @default(now())
-}
-
-/// @view
-/// The owners with at least one active `EvidenceHold`.
-model EvidenceHeldUser {
-  userId    Int       @id
-  heldUntil DateTime?
-}
-
 model Link {
   id         Int      @id @default(autoincrement())
   url        String
@@ -7346,6 +7658,7 @@ model ModelVersionGiftLink {
 
   @@index([modelVersionId, createdAt(sort: Desc)])
   @@index([batchId])
+  @@index([createdById])
 }
 
 model ModelVersionGiftRedemption {
@@ -7812,12 +8125,19 @@ enum JobQueueType {
   ImageScan
   ReplacedImageDelete
   ImageStorageDelete
+  /// Retired: replaced by `PendingDelete`; nothing drains it.
+  ImageDelete
   CdnAccessSync
   ImageCdnPersistRetry
   /// A user queued for the CSAM report archiver (a separate service). Written and consumed only
   /// by that service's own database functions. No job in this app processes these rows; the
   /// moderator queue-health panel only counts them.
   CsamArchive
+  /// A delete that has to wait: a delete a child-safety case keeps (the owner's, carried out as the
+  /// owner, or anyone else's, carried out as the system; `removeBlockedImages` keeps its own in its own
+  /// queue instead), or a parent's cleanup of an image something still keeps.
+  /// `pending-deletes` carries it out once nothing blocks it.
+  PendingDelete
 }
 
 /// What the image CDN has been told about one stored url: `Denied`, or `Retracted` (denied, with
@@ -8292,6 +8612,8 @@ model ScanLabelClaim {
   userId    Int
   expiresAt DateTime @db.Timestamptz(3)
   token     String?  @unique @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Set when the moderator skipped the card or it was dropped from their queue; it never comes back to them.
+  releasedAt DateTime? @db.Timestamptz(3)
 
   @@id([itemId, userId])
   @@index([userId])
@@ -8593,6 +8915,9 @@ model KnightsQueueItem {
   meta              Json?
   /// Yes/no items only: answers so far; serving finishes questions that are under way first.
   voteCount         Int             @default(0)
+  /// The settled value the label pass has finished with: recorded as its verdict label, or skipped for good (image not
+  /// servable or gone, or refused by the label store too often). Null until then.
+  verdictLabelledValue String?
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
 
@@ -8642,6 +8967,37 @@ model KnightsPlayer {
   startAtSeen DateTime?
   /// The player ticked "Don't show this again": the daily recap popup stays closed; the header button still opens it.
   recapPopupOptOut Boolean @default(false)
+  /// The yes/no questions switch in Knights settings. Null follows the default saved on the moderator Config page.
+  yesNoQuestions   Boolean?
+  /// Keys of the preset tag groups the player hides in Knights settings.
+  hiddenTagGroups  String[] @default([])
+}
+
+/// One "Not sure" on a yes/no queue item (`itemId`); the run cadence reads it back. Never a vote. `questionKey` and `imageId`
+/// are a snapshot, so counts outlive items. `yesNoReferenceId` is unused: Acolyte practice pairs are graded and offer no
+/// "Not sure".
+model KnightsUnsure {
+  id               BigInt   @id @default(autoincrement())
+  playerId         Int
+  itemId           Int?
+  yesNoReferenceId Int?
+  questionKey      String
+  imageId          Int
+  createdAt        DateTime @default(now())
+
+  @@unique([playerId, itemId])
+  @@unique([playerId, yesNoReferenceId])
+  @@index([itemId])
+  @@index([yesNoReferenceId])
+}
+
+/// A UTC day on which the player voted in the original Knights game, filled once from its vote history. Counted with
+/// `KnightsPlayerDay` toward Paladin's days-played bar; nothing writes it after the backfill.
+model KnightsLegacyPlayerDay {
+  playerId Int
+  day      DateTime @db.Date
+
+  @@id([playerId, day])
 }
 
 /// One row per player per UTC day on which they voted. `goldRecorded` counts against the daily cap;
@@ -8692,9 +9048,9 @@ model KnightsReferenceImage {
   id            Int      @id @default(autoincrement())
   imageId       Int      @unique
   questionKey   String   @default("knights.image.nsfwLevel")
-  pool          String // trials | hiddenCheck
+  pool          String // trials | hiddenCheck | skillCheck
   answer        String
-  source        String // core | harvested | agreement
+  source        String // core | harvested | agreement | inquisitor
   explanation   String? // required for core
   status        String   @default("active") // active | retired
   modActivityId Int? // the moderator ruling a harvested item came from
@@ -8706,6 +9062,37 @@ model KnightsReferenceImage {
 
   @@index([pool, status, source])
   @@index([modActivityId])
+}
+
+/// A settled rating item moderators review in game. Two agreeing votes confirm it as a skill check; a split or an excluded review ends there. The queueItemId foreign key (cascade) lives in the migration only, like the other Knights tables.
+model KnightsInquisitorReview {
+  id             Int       @id @default(autoincrement())
+  queueItemId    Int       @unique
+  imageId        Int
+  questionKey    String
+  consensusValue String // the players' settled answer (the item's resolvedValue)
+  status         String    @default("open") // open | confirmed | split | excluded | expired
+  confirmedValue String? // the level both moderators gave, on a confirmed review
+  claimedBy      Int? // the moderator whose closing vote is writing the image level
+  claimExpiresAt DateTime? // that claim's lease
+  createdAt      DateTime  @default(now())
+  closedAt       DateTime?
+  checkedAt      DateTime? // when the tick last checked its image against the safety exclusions
+
+  @@index([status, createdAt])
+  @@index([status, checkedAt])
+  @@index([imageId])
+}
+
+/// One moderator's vote on an inquisitor review. The reviewId foreign key (cascade) lives in the migration only.
+model KnightsInquisitorVote {
+  reviewId    Int
+  moderatorId Int
+  answer      String
+  createdAt   DateTime @default(now())
+
+  @@id([reviewId, moderatorId])
+  @@index([moderatorId, createdAt])
 }
 
 /// An image with a known yes/no answer to one yes/no question (kind `bool`), curated by moderators for grading Acolytes. Never touches Knight+ consensus. The imageId foreign key (cascade) lives in the migration only, like the other Knights tables.
@@ -9751,12 +10138,25 @@ model UserProfile {
   profileSectionsSettings Json      @default("[{\"key\":\"showcase\",\"enabled\":true},{\"key\":\"popularModels\",\"enabled\":true},{\"key\":\"popularArticles\",\"enabled\":true},{\"key\":\"modelsOverview\",\"enabled\":true},{\"key\":\"imagesOverview\",\"enabled\":true},{\"key\":\"recentReviews\",\"enabled\":true}]")
   showcaseItems           Json      @default("[]")
   showcaseSections        Json      @default("[]")
+  // Members-only page customisation (profile redesign). The sfw* image overrides on civitai.com.
+  backgroundImageId       Int?
+  backgroundImage         Image?    @relation("UserProfileBackgroundImage", fields: [backgroundImageId], references: [id], onDelete: SetNull)
+  sfwBackgroundImageId    Int?
+  sfwBackgroundImage      Image?    @relation("UserProfileSfwBackgroundImage", fields: [sfwBackgroundImageId], references: [id], onDelete: SetNull)
+  /// Members-only card colours: { dark?: { color, opacity? }, light?: { color, opacity? } }.
+  /// Light mode falls back to dark when unset. Shape: profilePageThemeSchema.
+  pageTheme               Json?
+  /// Up to three of the owner's own images or models, shown on the About tab. Shape: showcaseItemSchema[].
+  pinnedItems             Json      @default("[]")
+  about                   String?
 
   @@id([userId])
   // Serves the ON DELETE SET NULL referential-integrity trigger for the
   // sfwCoverImage relation. Without it every Image delete sequentially scans this
   // whole table. Prisma does not index relation scalars on its own.
   @@index([sfwCoverImageId])
+  @@index([backgroundImageId])
+  @@index([sfwBackgroundImageId])
 }
 
 /// @view
@@ -10257,6 +10657,7 @@ model ComicPanel {
   @@index([projectId, chapterPosition, position])
   @@index([imageId])
   @@index([status])
+  @@index([workflowId])
 }
 
 model ComicProjectEngagement {
@@ -10325,6 +10726,7 @@ enum StrikeReason {
   ProhibitedContent
   ManualModAction
   Scam
+  Copyright
 }
 
 enum StrikeStatus {
@@ -11445,6 +11847,14 @@ enum ServicePreviewKind {
   None
 }
 
+/// The license an offering grants its buyers. Wording per preset: creator-service-license.constants.ts.
+enum ServiceLicensePreset {
+  Personal
+  CommercialCredit
+  CommercialNoCredit
+  Custom
+}
+
 /// The Buzz a deal is paid in. One per deal, fixed at request time, so every leg
 /// draws from and returns to the same account type.
 enum ServiceBuzzType {
@@ -11488,6 +11898,8 @@ enum ServiceDealEventType {
   Held
   Released
   Refunded
+  /// The buyer's happy review, which pays the seller now instead of after the dispute window.
+  ReviewedHappy
 }
 
 /// Preview and Final are the seller's delivery. An Attachment is a file the buyer gives the seller
@@ -11555,6 +11967,11 @@ model ServiceOffering {
   deliveryDays      Int
   revisionsIncluded Int                   @default(0)
   maxOpenDeals      Int?
+  /// Null: no license terms set. Copied onto each deal at request time.
+  licensePreset      ServiceLicensePreset?
+  /// The seller's own terms; set only with the Custom preset.
+  licenseCustomText  String?
+  licenseAllowResale Boolean               @default(false)
   status            ServiceOfferingStatus @default(Draft)
   /// Set only when a moderator removes the offering: a key of the moderator reason list in code.
   /// Null on a seller's own remove, which is how the two are told apart.
@@ -11565,10 +11982,25 @@ model ServiceOffering {
   /// The seller's agreement to the services terms when they published: userId, offeringId,
   /// affirmedAt, version and the statement verbatim. Null until first published.
   sellerAffirmation Json?
+  /// The seller lets buyers attach delivered work to their review. Off until the seller opts in.
+  allowReviewWork   Boolean               @default(false)
+  /// Questions whose answers add to the price and days; null for a single-price service.
+  requestForm        Json?
+  requestFormVersion Int                   @default(0)
+  /// The least a buyer pays: the price, or the form's cheapest total. Null only on rows saved before request forms.
+  fromPrice          Int?
+  /// Counted reviews only (one per distinct buyer, priced and aged per the counting bar). Changed
+  /// only in the transaction that publishes or hides a review; the deals job compares them to rows.
+  happyCount        Int                   @default(0)
+  reviewCount       Int                   @default(0)
+  /// happyCount / reviewCount once reviewCount >= 3, else -1. Never null, so the feed pages by it with an id cursor.
+  happySortKey      Float                 @default(-1)
   createdAt         DateTime              @default(now())
   updatedAt         DateTime              @updatedAt
   deals             ServiceDeal[]
   reports           ServiceOfferingReport[]
+  reviews           ServiceDealReview[]
+  reviewReports     ServiceDealReviewReport[]
 
   /// Target of the deal's composite FK that binds `ServiceDeal.sellerId` to the offering's seller.
   @@unique([id, sellerId])
@@ -11606,6 +12038,16 @@ model ServiceDeal {
   revisionsUsed             Int                     @default(0)
   deliveryDays              Int
   previewKind               ServicePreviewKind
+  /// The offering's license when requested, as the buyer agreed to it; never re-read from it.
+  licensePreset             ServiceLicensePreset?
+  licenseCustomText         String?
+  licenseAllowResale        Boolean                 @default(false)
+  /// When the buyer ticked the license checkbox. Null on a deal whose offering had no license.
+  licenseAgreedAt           DateTime?
+  /// The buyer disclosure version (`BUYER_DISCLOSURE_VERSION`) and its lines as the buyer was shown
+  /// them before the hold. Null on a deal made before they were recorded.
+  buyerDisclosureVersion    String?
+  buyerDisclosureLines      String[]
   /// The offering's maxNsfwLevel when requested; never re-read from the offering.
   maxNsfwLevel              Int                     @default(2)
   status                    ServiceDealStatus       @default(Requested)
@@ -11618,6 +12060,9 @@ model ServiceDeal {
   settledAt                 DateTime?
   chatId                    Int?
   requestText               String
+  formVersion               Int?
+  formAnswers               Json?
+  priceBreakdown            Json?
   requestedAt               DateTime                @default(now())
   acceptedAt                DateTime?
   dueAt                     DateTime?
@@ -11637,9 +12082,13 @@ model ServiceDeal {
   disputeResolvedById       Int?
   closedAt                  DateTime?
   closeReason               String?
+  /// Set at accept when the buyer had the review flag: the deal ends in a review card, and a happy
+  /// review may release the Buzz early.
+  reviewEnabledAt           DateTime?
   createdAt                 DateTime                @default(now())
   updatedAt                 DateTime                @updatedAt
   events                    ServiceDealEvent[]
+  review                    ServiceDealReview?
   files                     ServiceDealFile[]
   transactions              ServiceDealTransaction[]
   disputeReviews            ServiceDisputeReview[]
@@ -11683,6 +12132,73 @@ model ServiceDisputeReview {
   @@index([dealId])
 }
 
+enum ServiceDealReviewVerdict {
+  Happy
+  NotQuite
+}
+
+/// The buyer's review of a completed deal, one per deal. A Happy review releases the Buzz at once.
+/// Public only once its text passed its check and (Happy, or the deal has settled), and while not hidden.
+model ServiceDealReview {
+  id                       Int                            @id @default(autoincrement())
+  dealId                   Int                            @unique
+  deal                     ServiceDeal                    @relation(fields: [dealId], references: [id], onDelete: Restrict)
+  offeringId               Int
+  offering                 ServiceOffering                @relation(fields: [offeringId], references: [id], onDelete: Restrict)
+  sellerId                 Int
+  buyerId                  Int
+  verdict                  ServiceDealReviewVerdict
+  comment                  String?
+  /// The content check of `comment`; reset to Pending on every edit.
+  scanStatus               ServiceOfferingIngestionStatus @default(Pending)
+  scanWorkflowId           String?
+  publishedAt              DateTime?
+  /// The buyer may edit until then.
+  editableUntil            DateTime
+  sellerReply              String?
+  sellerReplyAt            DateTime?
+  sellerReplyScanStatus    ServiceOfferingIngestionStatus?
+  sellerReplyScanWorkflowId String?
+  hiddenAt                 DateTime?
+  hiddenById               Int?
+  createdAt                DateTime                       @default(now())
+  updatedAt                DateTime                       @updatedAt
+  images                   ServiceDealReviewImage[]
+  reports                  ServiceDealReviewReport[]
+
+  @@index([offeringId, publishedAt])
+  @@index([sellerId, publishedAt])
+}
+
+/// A report on one buyer review. The offering is kept so the review's reports join the service
+/// queue under it.
+model ServiceDealReviewReport {
+  reportId            Int               @id
+  report              Report            @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  serviceDealReviewId Int
+  serviceDealReview   ServiceDealReview @relation(fields: [serviceDealReviewId], references: [id], onDelete: Restrict)
+  serviceOfferingId   Int
+  serviceOffering     ServiceOffering   @relation(fields: [serviceOfferingId], references: [id], onDelete: Restrict)
+
+  @@index([serviceDealReviewId], type: Hash)
+  @@index([serviceOfferingId], type: Hash)
+}
+
+/// Delivered work a buyer attached to their review: a fresh upload, owned by the buyer and scanned
+/// as any upload. Also the takedown list for review images.
+model ServiceDealReviewImage {
+  reviewId Int
+  review   ServiceDealReview @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  imageId  Int               @unique
+  image    Image             @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  /// The final it was copied from; one copy per final per review.
+  sourceFileId Int?
+  sourceFile   ServiceDealFile? @relation(fields: [sourceFileId], references: [id], onDelete: SetNull)
+
+  @@id([reviewId, imageId])
+  @@unique([reviewId, sourceFileId])
+}
+
 /// The deal's accountability sheet. Append-only. `actorId` -1 is the system.
 model ServiceDealEvent {
   id        Int                  @id @default(autoincrement())
@@ -11697,6 +12213,19 @@ model ServiceDealEvent {
   createdAt  DateTime             @default(now())
 
   @@index([dealId, createdAt, id])
+}
+
+/// What remains of a deal file once it is deleted: no name or content. `etag` is the storage
+/// fingerprint of the upload, when it could be read at deletion.
+model ServiceDealFilePurge {
+  id       Int      @id @default(autoincrement())
+  fileId   Int      @unique
+  dealId   Int
+  size     Int
+  etag     String?
+  purgedAt DateTime @default(now())
+
+  @@index([dealId])
 }
 
 model ServiceDealFile {
@@ -11739,6 +12268,10 @@ model ServiceDealFile {
   deliveryKey    String?
   deliverySize   Int?
   repackedAt     DateTime?
+  /// A video Final only: the ETag and version of the held object its scan copy was made from. A
+  /// download refuses unless the object still has them, and serves that version.
+  scannedEtag      String?
+  scannedVersionId String?
   /// An Attachment only: when the buyer confirmed the rights and likeness attestations for it.
   attestedAt     DateTime?
   /// Set when the uploader removed the file but its row and objects must stay; only moderators
@@ -11746,8 +12279,12 @@ model ServiceDealFile {
   removedAt      DateTime?
   createdAt      DateTime                  @default(now())
   entries        ServiceDealFileEntry[]
+  reviewImages   ServiceDealReviewImage[]
 
   @@index([dealId, round, kind])
+  @@index([imageId])
+  // NOTE: the partial index "ServiceDealFile_scanKey_idx" (scanKey WHERE scanKey IS NOT NULL)
+  // lives only in migration 20271206120000_deal_file_copy_indexes: Prisma has no partial indexes.
 }
 
 /// One image inside a Final, scanned on its own. Rows exist only for images; other files in a zip
@@ -11769,8 +12306,13 @@ model ServiceDealFileEntry {
   scanStatus ServiceDealFileScanStatus @default(Pending)
   failReason String?
   createdAt  DateTime                  @default(now())
+  /// Set just before our own delete of the scan copy, so a retry can tell that delete from another.
+  copyDeleteStartedAt DateTime?
 
   @@unique([fileId, entryIndex])
+  @@index([imageId])
+  // NOTE: the partial index "ServiceDealFileEntry_scanKey_idx" (scanKey WHERE scanKey IS NOT NULL)
+  // lives only in migration 20271206120000_deal_file_copy_indexes: Prisma has no partial indexes.
 }
 
 /// One row per movement of Buzz for a deal, modelled on `PlacementTransaction`. A composite FK

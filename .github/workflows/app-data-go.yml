@@ -1,0 +1,319 @@
+name: app-data-go
+
+# apps/app-data-go is a Go module (the shared app-data service: per-user registry streams with a REST
+# fallback; see apps/app-data-go/README.md and DESIGN.md). It is not a pnpm workspace member, so none
+# of the Node suites see it. This workflow is its only gate, with app-index-go.yml's gates: gofmt,
+# vet, the unit tests under -race with a test-count floor and coverage floors, and a build of the
+# binary (job `test`); golangci-lint (`lint`); govulncheck (`vuln`); go.mod tidiness and module
+# checksums (`mod`); and a short run of every fuzz target for a fixed number of executions (`fuzz`).
+# There is no integration tier: the service holds no database. The gate scripts live in
+# apps/app-data-go/ci.
+#
+# internal/registry is a byte-identical copy of apps/app-index-go/internal/registry; the `test` job
+# fails when the two differ, so this workflow also runs on a change to app-index-go's copy.
+#
+# A draft PR skips this job, as in apps.yml, unless it carries the `full-ci` label; full-ci.yml
+# dispatches this workflow when the label is added to a draft PR (on a ready PR, the PR's own run
+# here is not draft-gated, so nothing is dispatched).
+# A push to `main` has its own `push` paths filter below, and no draft gate.
+#
+# ── THE 2-HOUR MAIN BATCH: fuzz, govulncheck, go.mod tidy ─────────────────────
+#
+# `vuln`, `mod` and `fuzz` no longer run on pull requests or on a push: across 59 recent
+# runs on PRs and `main` they caught nothing the PR's own `test` and `lint` did not. They run on a
+# dispatch: the 2-hour batch on `main` (lint.yml's `batch-suites` job dispatches this workflow with
+# `batch: true` when a path below changed since the last green batch), a hand dispatch, or the
+# `full-ci` label's dispatch on a draft. A batch dispatch runs ONLY those jobs (`test`, `lint`
+# already ran on the push), and a red one turns the `Batch suites (main batch)` commit status red,
+# which opens a CI-watch item naming the commit range; nothing bisects it automatically.
+on:
+  pull_request:
+    branches: [main, release]
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'apps/app-data-go/**'
+      - 'apps/app-index-go/internal/registry/**'
+      - '.github/workflows/app-data-go.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'apps/app-data-go/**'
+      - 'apps/app-index-go/internal/registry/**'
+      - '.github/workflows/app-data-go.yml'
+  workflow_dispatch:
+    inputs:
+      # Set by the main batch (lint.yml, `batch-suites`): run only the batch jobs (see the header).
+      batch:
+        description: Run only the batch jobs (fuzz, govulncheck, go.mod tidy). Set by the main batch.
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: app-data-go-${{ github.event_name == 'workflow_dispatch' && inputs.batch && format('batch-{0}', github.run_id) || github.event_name == 'workflow_dispatch' && format('dispatch-{0}', github.ref) || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: app-data-go vet + test + build
+    runs-on: ubuntu-latest
+    if: (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) && !inputs.batch
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: apps/app-data-go
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: internal/registry is app-index-go's copy
+        working-directory: .
+        run: |
+          set -euo pipefail
+          a=apps/app-index-go/internal/registry b=apps/app-data-go/internal/registry
+          [ -s "$a/registry.go" ] && [ -s "$b/registry.go" ]
+          if ! diff -r "$a" "$b"; then
+            echo "::error::$b differs from $a: make the same change in both copies"
+            exit 1
+          fi
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: apps/app-data-go/go.mod
+          cache: false
+
+      # setup-go's cache is off: it saves on every ref. Restore-only here, same key.
+      - uses: ./.github/actions/go-cache-restore
+        with:
+          dependency-path: apps/app-data-go/go.sum
+
+      - name: gofmt
+        run: |
+          set -euo pipefail
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::Not gofmt-formatted (run gofmt -w apps/app-data-go):"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      # `-json` so the step below can count the tests that actually ran: a package that silently
+      # compiled to zero tests would otherwise still exit 0. The cover profile feeds the floors below.
+      - name: go test
+        run: |
+          status=0
+          go test -race -count=1 -covermode=atomic -coverprofile=cover.out -json ./... > test.json || status=$?
+          jq -j 'select(.Action=="output") | .Output' test.json
+          exit $status
+
+      - name: Assert the tests ran
+        if: always()
+        run: |
+          set -euo pipefail
+          passed=$(jq -r 'select(.Action=="pass" and .Test!=null) | .Test' test.json | wc -l)
+          failed=$(jq -r 'select(.Action=="fail" and .Test!=null) | .Test' test.json | wc -l)
+          pkgs=$(jq -r 'select(.Action=="pass" and .Test==null) | .Package' test.json | sort -u | wc -l)
+          echo "passed tests: $passed, failed tests: $failed, passing packages: $pkgs"
+          # Positive control: a count below these floors means tests stopped being discovered, not that
+          # they passed. Raise the floors when tests or packages are added.
+          [ "$failed" -eq 0 ]
+          [ "$pkgs" -ge 9 ]
+          [ "$passed" -ge 150 ]
+
+      # Statement coverage of the unit run (each package's own tests), per package and in total,
+      # against the ratchet floors in ci/coverage-floors.txt. A second instrument prints its own total
+      # (`go tool cover -func`) so the script's arithmetic can be cross-checked in the log.
+      - name: Coverage floors
+        run: |
+          set -euo pipefail
+          python3 ci/coverage_gate.py cover.out ci/coverage-floors.txt test.json
+          go tool cover -func=cover.out | tail -n 1
+
+      - name: go build
+        run: CGO_ENABLED=0 go build -trimpath -o /tmp/app-data-go ./cmd/app-data-go
+
+      # Last, so the build cache holds what the steps above built. Saves only on `main`.
+      - uses: ./.github/actions/go-cache-save
+
+  lint:
+    name: app-data-go golangci-lint
+    runs-on: ubuntu-latest
+    if: (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) && !inputs.batch
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: apps/app-data-go/go.mod
+          cache: false
+
+      # setup-go's cache is off: it saves on every ref. Restore-only here, same key.
+      - uses: ./.github/actions/go-cache-restore
+        with:
+          dependency-path: apps/app-data-go/go.sum
+
+      # Configuration: apps/app-data-go/.golangci.yml (v2 format, feed-go's linter set). Any finding
+      # fails the step.
+      - name: golangci-lint
+        # golangci/golangci-lint-action v9.3.0
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a
+        with:
+          # Restores everywhere; saves only on a push / dispatch / schedule run on `main`.
+          skip-save-cache: ${{ !(contains(fromJSON('["push", "workflow_dispatch", "schedule"]'), github.event_name) && github.ref == 'refs/heads/main') }}
+          version: v2.15.0
+          working-directory: apps/app-data-go
+
+      # Last, so the build cache holds what the steps above built. Saves only on `main`.
+      - uses: ./.github/actions/go-cache-save
+
+  vuln:
+    name: app-data-go govulncheck
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/app-data-go
+    steps:
+      - uses: actions/checkout@v7
+
+      # The newest 1.26 patch, not go.mod's minimum: the standard library govulncheck checks is the
+      # toolchain's, and the image is built on the golang:1.26 line (apps/app-data-go/Dockerfile).
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+          check-latest: true
+          cache: false
+
+      # setup-go's cache is off: it saves on every ref. Restore-only here, same key.
+      - uses: ./.github/actions/go-cache-restore
+        with:
+          dependency-path: apps/app-data-go/go.sum
+
+      # Exits non-zero when a vulnerability is REACHABLE from this module's code (symbol-level).
+      - name: govulncheck
+        run: |
+          go version
+          go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+
+      # Last, so the build cache holds what the steps above built. Saves only on `main`.
+      - uses: ./.github/actions/go-cache-save
+
+  mod:
+    name: app-data-go go.mod tidy + verify
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: apps/app-data-go
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: apps/app-data-go/go.mod
+          cache: false
+
+      # setup-go's cache is off: it saves on every ref. Restore-only here, same key.
+      - uses: ./.github/actions/go-cache-restore
+        with:
+          dependency-path: apps/app-data-go/go.sum
+
+      - name: go mod tidy
+        run: |
+          if ! go mod tidy -diff; then
+            echo "::error::go.mod/go.sum are not tidy (run go mod tidy in apps/app-data-go)"
+            exit 1
+          fi
+      - name: go mod verify
+        run: go mod verify
+
+      # Last, so the build cache holds what the steps above built. Saves only on `main`.
+      - uses: ./.github/actions/go-cache-save
+
+  # Each fuzz target for a fixed number of executions (beacon-go.yml explains why a count, not a
+  # time). A crasher is written to the package's testdata/fuzz/<Target>/ and uploaded; commit it as
+  # a regression seed with the fix.
+  fuzz:
+    name: app-data-go fuzz
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/app-data-go
+    env:
+      FUZZ_MINIMIZE: 100x
+      # <package dir>:<target>:<executions>. The first step fails when this list and the Fuzz
+      # functions in the module differ in either direction.
+      FUZZ_TARGETS: >-
+        internal/registry:FuzzNext:200000
+        internal/cache:FuzzReadReply:200000
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: apps/app-data-go/go.mod
+          cache: false
+
+      # setup-go's cache is off: it saves on every ref. Restore-only here, same key.
+      - uses: ./.github/actions/go-cache-restore
+        with:
+          dependency-path: apps/app-data-go/go.sum
+
+      - name: The fuzz targets are the listed set
+        run: |
+          set -euo pipefail
+          go test -list '^Fuzz' -json ./... \
+            | jq -r 'select(.Action=="output" and (.Output|startswith("Fuzz"))) | (.Package|sub(".*/apps/app-data-go/";"")) + ":" + (.Output|rtrimstr("\n"))' \
+            | sort > "$RUNNER_TEMP/fuzz-found.txt"
+          printf '%s\n' $FUZZ_TARGETS | cut -d: -f1,2 | sort > "$RUNNER_TEMP/fuzz-listed.txt"
+          echo "found $(wc -l < "$RUNNER_TEMP/fuzz-found.txt") fuzz targets, $(wc -l < "$RUNNER_TEMP/fuzz-listed.txt") listed"
+          if ! diff -u "$RUNNER_TEMP/fuzz-listed.txt" "$RUNNER_TEMP/fuzz-found.txt"; then
+            echo "::error::FUZZ_TARGETS in app-data-go.yml and the module's Fuzz functions differ (- listed, + found)"
+            exit 1
+          fi
+          [ -s "$RUNNER_TEMP/fuzz-found.txt" ]
+
+      - name: Fuzz
+        run: |
+          set -o pipefail # the go test status must survive the tee
+          status=0
+          for t in $FUZZ_TARGETS; do
+            IFS=: read -r pkg name count <<< "$t"
+            echo "::group::$pkg:$name ($count executions)"
+            corpus="$pkg/testdata/fuzz/$name"
+            before=$(find "$corpus" -type f 2>/dev/null | sort || true)
+            if ! go test -run '^$' -fuzz "^${name}\$" -fuzztime "${count}x" -fuzzminimizetime "$FUZZ_MINIMIZE" "./$pkg" 2>&1 | tee "$RUNNER_TEMP/fuzz-$name.log"; then
+              status=1
+            fi
+            echo "::endgroup::"
+            after=$(find "$corpus" -type f 2>/dev/null | sort || true)
+            new=$(comm -13 <(printf '%s\n' "$before") <(printf '%s\n' "$after") | sed '/^$/d')
+            if [ -n "$new" ]; then
+              echo "::error::$pkg:$name found a crasher, uploaded as app-data-go-fuzz-crashers: $new"
+              status=1
+            elif ! grep -q "^ok " "$RUNNER_TEMP/fuzz-$name.log"; then
+              echo "::error::$pkg:$name failed without writing a crasher (see its log above)"
+              status=1
+            fi
+          done
+          exit $status
+
+      - name: Upload crashers
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: app-data-go-fuzz-crashers
+          path: apps/app-data-go/internal/*/testdata/fuzz/
+          if-no-files-found: ignore
+
+      # Last, so the build cache holds what the steps above built. Saves only on `main`.
+      - uses: ./.github/actions/go-cache-save

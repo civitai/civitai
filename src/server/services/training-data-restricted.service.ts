@@ -1,7 +1,9 @@
 import { isTrustedOrchestratorUrl } from '~/server/services/orchestrator/trusted-blob-url';
+import { createHash } from 'crypto';
 import { Prisma } from '@prisma/client';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
-import { ownerHeld, ownerHeldSql } from '~/server/services/legal-hold.service';
+import { CSAM_REPORT_LISTED_IMAGE_IDS_SQL } from '@civitai/shared/held-media';
 import { ModelFileVisibility, ScanResultCode } from '~/shared/utils/prisma/enums';
 import {
   trainingDataServableOnHost,
@@ -20,12 +22,38 @@ export function normalizeTrainingDataShare(share: Partial<TrainingDataShare>): T
   return { ownRights, shareDataset: ownRights && share.shareDataset === true };
 }
 
-/** Whether `owner` (an int SQL expression) may not share a training dataset. */
+/**
+ * Whether `owner` (an int SQL expression) may not share a training dataset: named on a CSAM report,
+ * any of their images under CSAM review, blocked for CSAM or listed on a report, or the placeholder
+ * owner a deleted account handed its models to. Separate legs, so each image test uses its own index.
+ */
 export function trainingDataOwnerRestrictedSql(owner: Prisma.Sql): Prisma.Sql {
-  return Prisma.sql`(${ownerHeldSql(owner)} OR EXISTS (
-    SELECT 1 FROM "CsamReport" tr
-    WHERE tr."userId" = ${owner} OR tr.details ->> 'secondaryUserId' = (${owner})::text
-  ))`;
+  return Prisma.sql`(
+    (${owner}) = -1
+    OR EXISTS (
+      SELECT 1 FROM "CsamReport" tr
+      WHERE tr."userId" = ${owner} OR tr.details ->> 'secondaryUserId' = (${owner})::text
+    )
+    OR EXISTS (SELECT 1 FROM "Image" ti WHERE ti."userId" = ${owner} AND ti."needsReview" = 'csam')
+    OR EXISTS (SELECT 1 FROM "Image" ti WHERE ti."userId" = ${owner} AND ti."blockedFor" = 'CSAM')
+    OR (${owner}) IN (
+      SELECT ri."userId" FROM (${Prisma.raw(CSAM_REPORT_LISTED_IMAGE_IDS_SQL)}) l
+      JOIN "Image" ri ON ri.id = CASE WHEN l.id ~ '^[0-9]{1,9}$' THEN l.id::int END
+    )
+  )`;
+}
+
+/**
+ * Whether the model version `versionId` (an int SQL expression) is on a CSAM report not yet sent or
+ * archived. Sending and archiving read its training data from storage, so nothing may purge it first.
+ */
+export function trainingDataOnOpenReportSql(versionId: Prisma.Sql): Prisma.Sql {
+  return Prisma.sql`EXISTS (
+    SELECT 1 FROM "CsamReport" ocr
+    WHERE (ocr."reportSentAt" IS NULL OR ocr."archivedAt" IS NULL)
+      AND jsonb_typeof(ocr.details -> 'modelVersionIds') = 'array'
+      AND ocr.details -> 'modelVersionIds' @> jsonb_build_array(${versionId})
+  )`;
 }
 
 /** Whether the model version `versionId` (an int SQL expression) carries restricted content. */
@@ -44,20 +72,75 @@ export function trainingDataContentRestrictedSql(versionId: Prisma.Sql): Prisma.
  * Whether the training dataset of `modelVersionId` must not be shared: a restricted owner or
  * restricted content. `true` when that can't be read.
  */
-export function trainingDataShareRestricted(
+export async function trainingDataShareRestricted(
   db: Pick<Prisma.TransactionClient, '$queryRaw'>,
   modelVersionId: number
 ): Promise<boolean> {
-  return ownerHeld(
-    db,
-    Prisma.sql`FROM "ModelVersion" mv JOIN "Model" m ON m.id = mv."modelId" WHERE mv.id = ${modelVersionId}`,
-    Prisma.sql`(${trainingDataOwnerRestrictedSql(
+  const rows = await db.$queryRaw<{ restricted: unknown }[]>`
+    SELECT (${trainingDataOwnerRestrictedSql(
       Prisma.raw('m."userId"')
-    )} OR ${trainingDataContentRestrictedSql(Prisma.raw('mv.id'))})`
-  );
+    )} OR ${trainingDataContentRestrictedSql(Prisma.raw('mv.id'))}) AS restricted
+    FROM "ModelVersion" mv JOIN "Model" m ON m.id = mv."modelId" WHERE mv.id = ${modelVersionId}
+  `.catch((e: unknown) => {
+    logToAxiom({
+      type: 'error',
+      name: 'training-data-share-restricted-check-failed',
+      message: (e as Error).message,
+    });
+    return null;
+  });
+  if (!rows) return true;
+  return rows.some((r) => r.restricted !== false);
 }
 
 type ListedFile = { id: number; type: string; visibility: string };
+
+/**
+ * `trainingDataListing`'s statement over the candidate versions. feed-go reads the same rows with an
+ * embedded copy of this text (apps/feed-go/internal/v1models/training_data_listing.sql), held to it
+ * byte for byte by feed-go-training-data-listing.parity.test.ts.
+ */
+export function trainingDataListingSql(candidates: number[]): Prisma.Sql {
+  return Prisma.sql`
+    SELECT mf.id, mf."virusScanResult", mf.metadata -> 'nsfwLevel' AS "nsfwLevel",
+      mf.metadata -> 'fullyRated' AS "fullyRated", (${trainingDataOwnerRestrictedSql(
+        Prisma.raw('m."userId"')
+      )}
+      OR ${trainingDataContentRestrictedSql(Prisma.raw('mv.id'))}) AS restricted
+    FROM "ModelFile" mf
+    JOIN "ModelVersion" mv ON mv.id = mf."modelVersionId"
+    JOIN "Model" m ON m.id = mv."modelId"
+    WHERE mf."modelVersionId" = ANY(${candidates}::int[]) AND mf.type = 'Training Data'`;
+}
+
+/**
+ * The version of `trainingDataListing`'s JS decision (its whole body, between the feed-go-rules
+ * markers, src/shared/utils/training-data-visibility.ts, and the values of sfwBrowsingLevelsFlag and
+ * ScanResultCode.Success it reads). feed-go mirrors it (TrainingDataRulesVersion in
+ * apps/feed-go/internal/v1models/trainingdata.go) and lists Training Data files only for a Node
+ * sending the same version. feed-go-training-data-listing.parity.test.ts hashes that source and fails
+ * until this is bumped (in both places) whenever it changes.
+ */
+export const TRAINING_DATA_LISTING_RULES_VERSION = 2;
+
+let listingSqlSha256: string | undefined;
+/**
+ * The SHA-256 (hex) of `trainingDataListingSql`'s text: the statement half of the rule set
+ * `trainingDataListingRulesId` names (the decision half is TRAINING_DATA_LISTING_RULES_VERSION).
+ */
+export function trainingDataListingSqlSha256(): string {
+  listingSqlSha256 ??= createHash('sha256').update(trainingDataListingSql([]).text).digest('hex');
+  return listingSqlSha256;
+}
+
+/**
+ * The rule set this build lists Training Data files by, as the feed-go shadow sends it with every
+ * model sample: the statement's hash and the decision's version, `<sha256>;rules=<n>`. feed-go answers
+ * a body with Training Data files only when both equal its own, and falls back otherwise.
+ */
+export function trainingDataListingRulesId(): string {
+  return `${trainingDataListingSqlSha256()};rules=${TRAINING_DATA_LISTING_RULES_VERSION}`;
+}
 
 /**
  * Whether a file may be listed: a `Training Data` file is left out where its download would be
@@ -69,15 +152,29 @@ type ListedFile = { id: number; type: string; visibility: string };
 export async function trainingDataListing(
   db: Pick<Prisma.TransactionClient, '$queryRaw'>,
   versions: { id: number; files?: ListedFile[] | null }[],
-  { redCapable, viewerManages = false }: { redCapable: boolean; viewerManages?: boolean }
+  opts: { redCapable: boolean; viewerManages?: boolean }
 ): Promise<(file: ListedFile) => boolean> {
-  if (viewerManages) return () => true;
+  return (await trainingDataListings(db, versions, opts)).listed;
+}
+
+/**
+ * `trainingDataListing` for this host (`listed`) and, from the same rows, for a red-capable one
+ * (`listedOnRed`): a file only the second lists is refused here by its rating alone.
+ */
+export async function trainingDataListings(
+  db: Pick<Prisma.TransactionClient, '$queryRaw'>,
+  versions: { id: number; files?: ListedFile[] | null }[],
+  { redCapable, viewerManages = false }: { redCapable: boolean; viewerManages?: boolean }
+): Promise<{ listed: (file: ListedFile) => boolean; listedOnRed: (file: ListedFile) => boolean }> {
+  // feed-go-rules:begin (TRAINING_DATA_LISTING_RULES_VERSION: bump it when this body changes)
+  const all = () => true;
+  if (viewerManages) return { listed: all, listedOnRed: all };
   const candidates = versions
     // `files` is absent when the read did not select them (model-version getById without
     // `withFiles`): such a version lists nothing, so it has nothing to check.
     .filter((v) => v.files?.some((f) => f.type === 'Training Data'))
     .map((v) => v.id);
-  if (!candidates.length) return () => true;
+  if (!candidates.length) return { listed: all, listedOnRed: all };
   const rows = await db.$queryRaw<
     {
       id: number;
@@ -86,37 +183,34 @@ export async function trainingDataListing(
       virusScanResult: string;
       restricted: boolean | null;
     }[]
-  >`
-    SELECT mf.id, mf."virusScanResult", mf.metadata -> 'nsfwLevel' AS "nsfwLevel",
-      mf.metadata -> 'fullyRated' AS "fullyRated", (${trainingDataOwnerRestrictedSql(
-        Prisma.raw('m."userId"')
-      )}
-      OR ${trainingDataContentRestrictedSql(Prisma.raw('mv.id'))}) AS restricted
-    FROM "ModelFile" mf
-    JOIN "ModelVersion" mv ON mv.id = mf."modelVersionId"
-    JOIN "Model" m ON m.id = mv."modelId"
-    WHERE mf."modelVersionId" = ANY(${candidates}::int[]) AND mf.type = 'Training Data'`.catch(
-    (e: unknown) => {
-      logToAxiom({
-        type: 'error',
-        name: 'training-data-share-check-failed',
-        message: (e as Error).message,
-      });
-      return null;
-    }
-  );
-  if (!rows) return (file) => file.type !== 'Training Data';
-  const refused = new Set(
-    rows
-      .filter(
-        (r) =>
-          r.restricted !== false ||
-          r.virusScanResult !== ScanResultCode.Success ||
-          !trainingDataServableOnHost(r, redCapable)
-      )
-      .map((r) => r.id)
-  );
-  return (file) => !(file.type === 'Training Data' && refused.has(file.id));
+  >`${trainingDataListingSql(candidates)}`.catch((e: unknown) => {
+    logToAxiom({
+      type: 'error',
+      name: 'training-data-share-check-failed',
+      message: (e as Error).message,
+    });
+    return null;
+  });
+  if (!rows) {
+    const none = (file: ListedFile) => file.type !== 'Training Data';
+    return { listed: none, listedOnRed: none };
+  }
+  const listedOn = (red: boolean) => {
+    const refused = new Set(
+      rows
+        .filter(
+          (r) =>
+            r.restricted !== false ||
+            r.virusScanResult !== ScanResultCode.Success ||
+            !trainingDataServableOnHost(r, red)
+        )
+        .map((r) => r.id)
+    );
+    return (file: ListedFile) => !(file.type === 'Training Data' && refused.has(file.id));
+  };
+  const listed = listedOn(redCapable);
+  return { listed, listedOnRed: redCapable ? listed : listedOn(true) };
+  // feed-go-rules:end
 }
 
 type ViewedFile = { id: number; type: string; visibility: string; metadata?: unknown };
@@ -209,16 +303,45 @@ export async function trainingDataPublicView<F extends ViewedFile>(
   db: Pick<Prisma.TransactionClient, '$queryRaw'>,
   versions: { id: number; files?: F[] | null }[],
   { redCapable }: { redCapable: boolean }
-): Promise<<T extends F[] | null | undefined>(files: T) => T> {
-  const listed = await trainingDataListing(db, versions, { redCapable });
+): Promise<TrainingDataPublicView<F>> {
+  const { listed, listedOnRed } = await trainingDataListings(db, versions, { redCapable });
+  const pointerOn =
+    !redCapable &&
+    versions.some((v) => v.files?.some((f) => f.type === 'Training Data')) &&
+    (await isFlipt(FLIPT_FEATURE_FLAGS.TRAINING_DATA_RED_POINTER));
   // An absent `files` (not selected by the read) is passed through as it came.
-  return (files) =>
+  const view = <T extends F[] | null | undefined>(files: T): T =>
     files == null
       ? files
       : (files
           .filter((f) => f.type !== 'Training Data' || (f.visibility === 'Public' && listed(f)))
           .map((f) => (f.type === 'Training Data' ? { ...f, metadata: {} } : f)) as typeof files);
+  const offDomain = (files: F[] | null | undefined): OffDomainTrainingData | null => {
+    if (!pointerOn) return null;
+    const file = files?.find(
+      (f) => f.type === 'Training Data' && f.visibility === 'Public' && !listed(f) && listedOnRed(f)
+    );
+    return file
+      ? { id: file.id, type: 'Training Data', visibility: file.visibility, offDomain: true }
+      : null;
+  };
+  return Object.assign(view, { offDomain });
 }
+
+/**
+ * A Public dataset this host refuses only for its rating: enough to point the viewer at civitai.red,
+ * and nothing about the file itself.
+ */
+export type OffDomainTrainingData = {
+  id: number;
+  type: 'Training Data';
+  visibility: string;
+  offDomain: true;
+};
+
+type TrainingDataPublicView<F extends ViewedFile> = (<T extends F[] | null | undefined>(
+  files: T
+) => T) & { offDomain: (files: F[] | null | undefined) => OffDomainTrainingData | null };
 
 /**
  * The visibility of a Training Studio dataset row. Only an archived zip that holds the whole run
@@ -247,8 +370,8 @@ const VISIBILITY_RANK: Record<ModelFileVisibility, number> = {
 };
 
 /**
- * Whether `modelVersionId` is a Training Studio version: it has a Studio dataset row, or its model
- * was published from Studio (a server-owned meta key, so deleting the row does not change the
+ * Whether `modelVersionId` is a Training Studio version: it has a Studio dataset row, or it or its
+ * model was published from Studio (a server-owned meta key, so deleting the row does not change the
  * answer). Any other `Training Data` file on that version stays Private for everyone but
  * moderators, so a second upload can't share what the Studio rules keep unshared.
  */
@@ -262,7 +385,8 @@ export async function versionHasStudioDataset(
       AND mf.metadata ? 'selectedEpochUrl'
     UNION ALL
     SELECT mv.id FROM "ModelVersion" mv JOIN "Model" m ON m.id = mv."modelId"
-    WHERE mv.id = ${modelVersionId} AND m.meta ? 'trainingStudioWorkflowId'
+    WHERE mv.id = ${modelVersionId}
+      AND (mv.meta ? 'trainingStudioWorkflowId' OR m.meta ? 'trainingStudioWorkflowId')
     LIMIT 1
   `;
   return rows.length > 0;

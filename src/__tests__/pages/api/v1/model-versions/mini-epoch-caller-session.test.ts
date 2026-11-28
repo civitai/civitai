@@ -24,6 +24,9 @@ vi.mock('~/server/auth/session-client', () => ({
   sessionClient: { getSessionUserById: vi.fn(async () => null) },
 }));
 vi.mock('~/server/services/generation/generation.service', () => ({
+  getGateRuleState: vi.fn(async () => ({ known: true, value: [] })),
+  getGateSubjects: vi.fn(async () => new Map()),
+  gatedVersionIds: vi.fn(() => new Set()),
   resolveCanGenerateForVersions: vi.fn(async () => new Map([[VERSION_ID, { canGenerate: true }]])),
   getShouldChargeForResources: vi.fn(async () => ({ 77: false })),
 }));
@@ -61,7 +64,7 @@ const keySession = (userId: number, subject: 'apiKey' | 'oauth') => ({
   apiKeyId: 11,
   apiKeyType: subject === 'oauth' ? 'Access' : 'User',
   subject: { type: subject, id: subject === 'oauth' ? 'client-abc' : 11 },
-  tokenScope: 0,
+  tokenScope: 0n,
   buzzLimit: null,
 });
 

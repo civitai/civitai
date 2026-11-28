@@ -1,13 +1,25 @@
 import { bustUserCreator } from '~/server/services/user-creator.service';
+import {
+  getProfileAbout,
+  getProfileCustomization,
+  setProfileBackground,
+} from '~/server/services/profile-customization.service';
 import { throwAuthorizationError, throwDbError } from '~/server/utils/errorHandling';
 import {
+  addToShowcaseSection,
   getUserContentOverview,
   getUserWithProfile,
+  setPinnedItem,
   setShowcaseSections,
   updateUserProfile,
 } from '~/server/services/user-profile.service';
 import type {
+  AddToShowcaseSectionSchema,
+  GetProfileCustomizationSchema,
+  GetProfilePartSchema,
   GetUserProfileSchema,
+  SetPinnedItemSchema,
+  SetProfileBackgroundSchema,
   PrivacySettingsSchema,
   ProfileSectionSchema,
   SetShowcaseSectionsSchema,
@@ -17,10 +29,17 @@ import type {
 } from '~/server/schema/user-profile.schema';
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { eventViewerOf } from '~/server/events/event-viewer';
+import { actsAsModerator } from '~/server/utils/image-media-visibility';
 import { TRPCError } from '@trpc/server';
 import { entityExists } from '~/server/services/util.service';
 import { constants } from '~/server/common/constants';
-import { amIBlockedByUser } from '~/server/services/user.service';
+import {
+  amIBlockedByUser,
+  archiveProfileBeforeModeratorChange,
+} from '~/server/services/user.service';
+import { archiveUserProfile } from '~/server/services/csam.service-new';
+import { logToAxiom } from '~/server/logging/client';
+import { trackModActivity } from '~/server/services/moderator.service';
 import { getShowcaseHatForUser } from '~/server/events/showcase-hat';
 
 export const getUserContentOverviewHandler = async ({
@@ -57,10 +76,12 @@ export const getUserProfileHandler = async ({
   try {
     const user = await getUserWithProfile({
       username: input.username,
-      isModerator: ctx.user?.isModerator,
+      isModerator: actsAsModerator(ctx),
       sessionUserId: ctx.user?.id,
+      sessionUsername: ctx.user?.username,
       eventViewer: eventViewerOf(ctx),
       domain: ctx.domain,
+      fromReplica: true,
     });
 
     if (ctx.user && !ctx.user.isModerator) {
@@ -112,6 +133,23 @@ export const getUserProfileHandler = async ({
   }
 };
 
+// The civitai.com copies count as the field they override.
+const moderatorArchivedFields = {
+  bio: ['bio', 'sfwBio'],
+  message: ['message', 'sfwMessage'],
+  location: ['location'],
+  links: ['socialLinks', 'sponsorshipLinks'],
+  showcaseSections: ['showcaseItems', 'profileSectionsSettings'],
+  about: ['about'],
+} as const;
+
+/** The profile fields a moderator's save over another user's profile touches, archived first. */
+export function profileFieldsTouchedByModerator(input: object) {
+  return (Object.keys(moderatorArchivedFields) as (keyof typeof moderatorArchivedFields)[]).filter(
+    (field) => moderatorArchivedFields[field].some((key) => key in input)
+  );
+}
+
 export const updateUserProfileHandler = async ({
   input,
   ctx,
@@ -126,15 +164,45 @@ export const updateUserProfileHandler = async ({
       throw throwAuthorizationError();
 
     const userId = sessionUser.isModerator ? input.userId || sessionUser.id : sessionUser.id;
+    const byModerator = userId !== sessionUser.id;
+    if (byModerator) {
+      const fields = profileFieldsTouchedByModerator(input);
+      if (fields.length)
+        await archiveProfileBeforeModeratorChange({
+          userId,
+          actorId: sessionUser.id,
+          fields,
+          archive: archiveUserProfile,
+        });
+    }
     const user = await updateUserProfile({
       ...input,
       userId,
       isModerator: sessionUser.isModerator,
+      asModerator: actsAsModerator(ctx),
       sessionUserId: sessionUser.id,
       domain: ctx.domain,
+      profileRedesign: ctx.features.profileRedesign,
     });
 
     await bustUserCreator(userId);
+    // The edit has committed: a failed record must not report it as failed.
+    if (byModerator) {
+      try {
+        await trackModActivity(sessionUser.id, {
+          entityType: 'user',
+          activity: 'editProfile',
+          entityId: userId,
+        });
+      } catch (error) {
+        logToAxiom({
+          type: 'error',
+          name: 'edit-profile-mod-activity',
+          userId,
+          message: (error as Error).message,
+        });
+      }
+    }
 
     return user;
   } catch (error) {
@@ -152,6 +220,22 @@ export const setShowcaseSectionsHandler = async ({
   if (ctx.user.muted) throw throwAuthorizationError();
   try {
     return await setShowcaseSections({ ...input, userId: ctx.user.id });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+export const addToShowcaseSectionHandler = async ({
+  input,
+  ctx,
+}: {
+  input: AddToShowcaseSectionSchema;
+  ctx: ProtectedContext;
+}) => {
+  if (ctx.user.muted) throw throwAuthorizationError();
+  try {
+    return await addToShowcaseSection({ ...input, userId: ctx.user.id });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
@@ -197,6 +281,88 @@ export const addEntityToShowcaseHandler = async ({
     await bustUserCreator(ctx.user.id);
 
     return result;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+/** Nothing for a viewer the owner blocked, as the profile itself is a stub for them. */
+const blockedViewer = async (ctx: Context, userId: number) =>
+  !!ctx.user &&
+  !ctx.user.isModerator &&
+  ctx.user.id !== userId &&
+  (await amIBlockedByUser({ userId: ctx.user.id, targetUserId: userId }));
+
+export const getProfileCustomizationHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetProfileCustomizationSchema;
+  ctx: Context;
+}) => {
+  try {
+    if (await blockedViewer(ctx, input.userId))
+      return {
+        background: null,
+        pageTheme: null,
+        stored: null,
+      };
+    return await getProfileCustomization({
+      userId: input.userId,
+      viewerId: ctx.user?.id,
+      isModerator: ctx.user?.isModerator,
+      domain: ctx.domain,
+      browsingLevel: input.browsingLevel,
+    });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+export const getProfileAboutHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetProfilePartSchema;
+  ctx: Context;
+}) => {
+  try {
+    if (await blockedViewer(ctx, input.userId)) return { about: null, pinnedItems: [] };
+    return await getProfileAbout({ userId: input.userId, viewerId: ctx.user?.id });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+export const setProfileBackgroundHandler = async ({
+  input,
+  ctx,
+}: {
+  input: SetProfileBackgroundSchema;
+  ctx: ProtectedContext;
+}) => {
+  try {
+    if (ctx.user.muted) throw throwAuthorizationError();
+    await setProfileBackground({ userId: ctx.user.id, imageId: input.imageId, domain: ctx.domain });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+export const setPinnedItemHandler = async ({
+  input,
+  ctx,
+}: {
+  input: SetPinnedItemSchema;
+  ctx: ProtectedContext;
+}) => {
+  try {
+    if (ctx.user.muted) throw throwAuthorizationError();
+    return await setPinnedItem({ ...input, userId: ctx.user.id });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);

@@ -1,4 +1,6 @@
 import type { KohyaTrainingInputWritable } from '@civitai/orchestration-client';
+import { baseModelSupportsClipSkip } from '@civitai/shared/basemodel.constants';
+import { KOHYA_SDXL_ECOSYSTEMS } from '@civitai/shared/training-kohya-replay';
 import {
   TARGET_STEPS,
   type ModelVersionInfo,
@@ -40,25 +42,29 @@ export const KOHYA_SCHEDULERS = [
   'polynomial',
 ] satisfies KohyaInput['lrScheduler'][];
 
-export function kohyaFamily(ecosystem: string): 'sd1' | 'sdxl' | 'flux1' | 'chroma' | undefined {
+export function kohyaFamily(
+  ecosystem: string
+): 'sd1' | 'sdxl' | 'flux1' | 'chroma' | 'anima' | undefined {
+  if (KOHYA_SDXL_ECOSYSTEMS.has(ecosystem)) return 'sdxl';
   switch (ecosystem) {
     case 'sd1':
       return 'sd1';
-    case 'sdxl':
-    case 'pony':
-    case 'illustrious':
-    case 'noobai':
-      return 'sdxl';
     case 'flux1':
       return 'flux1';
     case 'chroma':
       return 'chroma';
+    case 'anima':
+      return 'anima';
     default:
       return undefined;
   }
 }
 
 export const isKohyaFlow = (ecosystem: string): boolean =>
+  ecosystem === 'flux1' || ecosystem === 'chroma' || ecosystem === 'anima';
+
+/** The flow models large enough to need FP8 weights and block swapping. */
+export const isKohyaFlux = (ecosystem: string): boolean =>
   ecosystem === 'flux1' || ecosystem === 'chroma';
 
 export function kohyaDefaults(version: ModelVersionInfo): RunParamDefaults {
@@ -66,16 +72,17 @@ export function kohyaDefaults(version: ModelVersionInfo): RunParamDefaults {
   const flow = isKohyaFlow(version.ecosystem);
   const pony = version.key === 'pony';
   const anime = version.key === 'anime';
+  const anima = version.ecosystem === 'anima';
   return {
     epochs: flow ? 5 : 10,
-    unetLr: pony ? 1 : 5e-4,
+    unetLr: pony ? 1 : anima ? 3e-4 : 5e-4,
     textEncoderLr: flow ? 0 : pony ? 1 : anime ? 1e-4 : 5e-5,
-    networkDim: anime ? 16 : 32,
+    networkDim: anime || anima ? 16 : 32,
     networkAlpha: anime ? 8 : version.key === 'flux_dev' ? 2 : 16,
     resolution: sd1 ? 512 : 1024,
     batchSize: flow ? 1 : version.key === 'realistic' ? 2 : sd1 ? 6 : pony ? 5 : 4,
     noiseOffset: flow ? 0 : pony ? 0.03 : 0.1,
-    lrScheduler: pony ? 'cosine' : 'cosine_with_restarts',
+    lrScheduler: pony ? 'cosine' : anima ? 'constant' : 'cosine_with_restarts',
     optimizer: pony ? 'Prodigy' : !sd1 && !flow ? 'Adafactor' : 'AdamW8bit',
   };
 }
@@ -112,10 +119,27 @@ export const KOHYA_PARAM_FIELDS = [
   'zeroTerminalSnr',
 ] as const;
 
+/** Clip skip applies to SD1 and the SDXL family. SDXL defaults to 2; 1 is allowed but trains on the last
+ *  layer. */
+export function kohyaClipSkip(
+  ecosystem: string
+): { min: number; max: number; default: number } | undefined {
+  const family = kohyaFamily(ecosystem);
+  const baseModel = family === 'sd1' ? 'SD 1.5' : family === 'sdxl' ? 'SDXL 1.0' : undefined;
+  if (!baseModelSupportsClipSkip(baseModel)) return undefined;
+  return { min: 1, max: KOHYA_BOUNDS.clipSkip!.max, default: family === 'sdxl' ? 2 : 1 };
+}
+
+export function kohyaBound(field: string, ecosystem: string): ParamBound | undefined {
+  const bound = KOHYA_BOUNDS[field];
+  const clip = field === 'clipSkip' ? kohyaClipSkip(ecosystem) : undefined;
+  return bound && clip ? { ...bound, min: clip.min } : bound;
+}
+
 export function kohyaFieldSupported(field: string, ecosystem: string): boolean {
   if (field === 'negativePrompt') return ecosystem !== 'flux1';
-  if (field === 'clipSkip') return ecosystem === 'sd1';
-  if (field === 'fp8Base' || field === 'blocksToSwap') return isKohyaFlow(ecosystem);
+  if (field === 'clipSkip') return !!kohyaClipSkip(ecosystem);
+  if (field === 'fp8Base' || field === 'blocksToSwap') return isKohyaFlux(ecosystem);
   if (field === 'vParameterization' || field === 'zeroTerminalSnr') return !isKohyaFlow(ecosystem);
   return true;
 }

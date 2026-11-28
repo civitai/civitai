@@ -1,12 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
-// No hold covers the account here; the hold itself is `account-legal-hold.behavior.test.ts`.
-vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  assertAccountNotUnderLegalHold: async () => ({ markerView: false }),
-}));
-
 // Any inline wipe would have to go through the maintenance object: make reaching it loud.
 const wipeAccount = vi.hoisted(() => vi.fn());
 vi.mock('~/server/services/apps/doc-store-maintenance.instance', () => ({
@@ -45,7 +39,7 @@ beforeEach(() => {
 
 describe('deleteUser — app-data opt-in', () => {
   it('records the request in the deletion transaction when the box is ticked, and wipes nothing inline', async () => {
-    await UserService.deleteUser({ id: USER_ID, removeAppData: true });
+    await UserService.deleteUser({ id: USER_ID, removeAppData: true, actorId: USER_ID });
 
     expect(metaWritten()).toMatchObject({ keep: 'x', appDataRemoval: 'requested' });
     // The meta write is an element of the deletion's transaction, so the request commits
@@ -56,7 +50,7 @@ describe('deleteUser — app-data opt-in', () => {
   });
 
   it('records no request when the box is left off (the default)', async () => {
-    await UserService.deleteUser({ id: USER_ID });
+    await UserService.deleteUser({ id: USER_ID, actorId: USER_ID });
 
     expect(metaWritten().appDataRemoval).toBeUndefined();
     expect(wipeAccount).not.toHaveBeenCalled();
@@ -68,7 +62,7 @@ describe('deleteUser — app-data opt-in', () => {
       meta: { keep: 'x', appDataRemoval: 'requested' },
     });
 
-    await UserService.deleteUser({ id: USER_ID, removeAppData: false });
+    await UserService.deleteUser({ id: USER_ID, removeAppData: false, actorId: USER_ID });
 
     expect(metaWritten()).toMatchObject({ keep: 'x' });
     expect(metaWritten().appDataRemoval).toBeUndefined();

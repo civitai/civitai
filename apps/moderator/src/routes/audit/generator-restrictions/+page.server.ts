@@ -6,11 +6,12 @@ import { restrictionActions, restrictionTriageLoad } from '$lib/server/restricti
 import { getGenerationRestrictions, recheckTriggers } from '$lib/server/user-restriction.service';
 
 // `?type=scam` is redirected to the Users page in hooks.server.ts, ahead of this page's grant.
-export const load: PageServerLoad = ({ url }) =>
-  restrictionTriageLoad(url, {
-    types: GENERATOR_RESTRICTION_TYPES,
-    fallback: RESTRICTION_TYPE,
-  });
+export const load: PageServerLoad = ({ url, locals }) =>
+  restrictionTriageLoad(
+    url,
+    { types: GENERATOR_RESTRICTION_TYPES, fallback: RESTRICTION_TYPE },
+    locals.user
+  );
 
 export const actions: Actions = {
   ...restrictionActions(GENERATOR_RESTRICTION_TYPES),

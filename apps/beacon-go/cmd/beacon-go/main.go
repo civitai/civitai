@@ -52,6 +52,25 @@ func redisClient(rawURL string, cluster bool) (redis.UniversalClient, error) {
 	return redis.NewClient(opts), nil
 }
 
+// trackerWriter builds and starts the serve-mode tracker client, wired to the metrics: each row's
+// result (beacon_go_tracker_writes_total), each sent row's duration (beacon_go_tracker_send_seconds),
+// and the queue-depth gauge, registered on reg.
+func trackerWriter(cfg *config.Config, metrics *server.Metrics, reg prometheus.Registerer) *tracker.Client {
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.MaxIdleConnsPerHost = cfg.TrackerWorkers
+	w := &tracker.Client{
+		BaseURL: cfg.TrackerURL,
+		HTTP:    &http.Client{Transport: tr},
+		Record:  func(table, result string) { metrics.TrackerWrites.WithLabelValues(table, result).Inc() },
+		Observe: func(table string, d time.Duration) {
+			metrics.TrackerSendSeconds.WithLabelValues(table).Observe(d.Seconds())
+		},
+	}
+	w.Start(cfg.TrackerWorkers, cfg.TrackerQueue)
+	reg.MustRegister(server.TrackerQueueDepth(w.Depth))
+	return w
+}
+
 func run(log *slog.Logger) error {
 	cfg, err := config.Load(os.Getenv)
 	if err != nil {
@@ -104,7 +123,8 @@ func run(log *slog.Logger) error {
 		Verifier:            verifier,
 		Revocation:          &auth.Revocation{Redis: sys, Timeout: cfg.SysReadTimeout, OnReadError: readErrors.Report},
 		Sessions:            &hydrate.PackedReader{Redis: cache, Prefix: cfg.CacheKeyPrefix},
-		CookieNames:         cfg.CookieNames(),
+		CookieNames:         cfg.CookieNames,
+		OnSlot:              func(slot string) { metrics.SessionCookieSlot.WithLabelValues(slot).Inc() },
 		ModerationAccountID: cfg.ModerationAccountID,
 	}
 	engine := &beacon.Engine{
@@ -114,8 +134,7 @@ func run(log *slog.Logger) error {
 		TrackerEnabled: cfg.OutwardTraffic && (cfg.Mode == server.ModeShadow || cfg.TrackerURL != ""),
 		HubOrigin:      cfg.AuthIssuer,
 		UpdateAgeMs:    cfg.UpdateAgeMs,
-		CookieMode:     cfg.AuthCookieMode,
-		LegacyRead:     cfg.AuthLegacyRead,
+		ModeFor:        cfg.ModeFor,
 	}
 	srv := &server.Server{
 		Engine:        engine,
@@ -125,27 +144,23 @@ func run(log *slog.Logger) error {
 		ShadowQueue:   make(chan struct{}, cfg.ShadowWorkers),
 		ComputeBudget: cfg.ComputeBudget,
 	}
-	var writer *tracker.Client
-	servers := []*http.Server{server.InternalHTTPServer(cfg.InternalAddr, server.InternalMux(srv, promhttp.HandlerFor(reg, promhttp.HandlerOpts{})))}
+	var writer rowWriter
+	internal := server.InternalHTTPServer(cfg.InternalAddr, server.InternalMux(srv, promhttp.HandlerFor(reg, promhttp.HandlerOpts{})))
+	var public []*http.Server
 	if cfg.Mode == server.ModeServe {
 		target, err := url.Parse(cfg.FallbackURL)
 		if err != nil {
 			return err
 		}
 		srv.Proxy = fallbackProxy(target)
-		tr := http.DefaultTransport.(*http.Transport).Clone()
-		tr.MaxIdleConnsPerHost = cfg.TrackerWorkers
-		writer = &tracker.Client{
-			BaseURL: cfg.TrackerURL,
-			HTTP:    &http.Client{Transport: tr},
-			Record:  func(table, result string) { metrics.TrackerWrites.WithLabelValues(table, result).Inc() },
-		}
-		writer.Start(cfg.TrackerWorkers, cfg.TrackerQueue)
-		srv.Writer = writer
-		servers = append(servers, server.PublicHTTPServer(cfg.Addr, server.PublicMux(srv)))
+		w := trackerWriter(cfg, metrics, reg)
+		srv.Writer = w
+		writer = w
+		public = append(public, server.PublicHTTPServer(cfg.Addr, server.PublicMux(srv)))
 	}
 	log.Info("starting", "mode", cfg.Mode)
 
+	servers := append([]*http.Server{internal}, public...)
 	errs := make(chan error, len(servers))
 	for _, s := range servers {
 		go func(s *http.Server) {
@@ -160,20 +175,50 @@ func run(log *slog.Logger) error {
 		return err
 	case <-ctx.Done():
 	}
-	// One grace period: drain the listeners (no new beacon can queue a row after this), end the
-	// running shadow samples, then send the rows still queued; the redis clients close last.
-	shutdown, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	shutdown(log, gracePeriod, public, internal, srv, writer)
+	return nil
+}
+
+// gracePeriod bounds the drain; internalGrace is the extra time the internal listener gets after it
+// to finish a scrape already in progress.
+const (
+	gracePeriod   = 20 * time.Second
+	internalGrace = 2 * time.Second
+)
+
+// drainer is the shadow-sample side of the drain (server.Server).
+type drainer interface {
+	Close(ctx context.Context) error
+}
+
+// rowWriter is the tracker side of the drain (tracker.Client); nil in shadow mode.
+type rowWriter interface {
+	Close(ctx context.Context) (tracker.Abandoned, error)
+}
+
+// shutdown is the one grace period, in order: the public listener drains (no new beacon can queue a
+// row after it), the running shadow samples end, the queued tracker rows are sent. The internal
+// listener (/metrics, /healthz, the shadow endpoints, whose late samples are counted as dropped once
+// the samples are closing) shuts down LAST: every result the drain counts, including the rows it
+// gives up on, is still scrapeable until then. The redis clients close after this returns.
+func shutdown(log *slog.Logger, grace time.Duration, public []*http.Server, internal *http.Server, samples drainer, writer rowWriter) {
+	ctx, cancel := context.WithTimeout(context.Background(), grace)
 	defer cancel()
-	for _, s := range servers {
-		_ = s.Shutdown(shutdown)
+	for _, s := range public {
+		_ = s.Shutdown(ctx)
 	}
-	if err := srv.Close(shutdown); err != nil {
+	if err := samples.Close(ctx); err != nil {
 		log.Warn("shadow samples still running at the end of the grace period", "err", err)
 	}
 	if writer != nil {
-		if err := writer.Close(shutdown); err != nil {
-			log.Warn("tracker rows still queued at the end of the grace period", "err", err)
+		// A scrape can miss the last counts (the process exits right after), so the rows given up on
+		// are also logged, per table.
+		if a, err := writer.Close(ctx); err != nil {
+			log.Warn("tracker rows still queued or in flight at the end of the grace period; counted as dropped",
+				"err", err, "dropped", a.Dropped, "dropped_total", a.Total(), "in_flight", a.InFlight)
 		}
 	}
-	return nil
+	last, cancelLast := context.WithTimeout(context.Background(), internalGrace)
+	defer cancelLast()
+	_ = internal.Shutdown(last)
 }

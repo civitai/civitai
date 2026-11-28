@@ -1,20 +1,27 @@
+import type { DB } from '@civitai/db-schema/kysely';
+import type { Selectable } from 'kysely';
 import sanitize from 'sanitize-html';
+import { isMinorMatureImage } from '~/server/common/image-visibility';
 import { keysIn } from '~/server/services/image-url-ownership';
 import { servableArticleImage } from '~/shared/utils/article-card-image';
 import { isRatingWithinCap } from '~/shared/utils/rating-cap';
 import { extractCloudflareUuid } from '~/utils/article-helpers';
 
-export type ArticleBodyImageState = {
-  url: string;
-  nsfwLevel: number;
-  ingestion: string;
-  needsReview: string | null;
-  tosViolation: boolean;
-};
+export type ArticleBodyImageState = Pick<
+  Selectable<DB['Image']>,
+  'url' | 'nsfwLevel' | 'ingestion' | 'needsReview' | 'tosViolation' | 'modelRestricted'
+>;
 
-/** Scanned, not awaiting review and not a violation: what anyone but its owner and mods may get. */
-export const isServableBodyImage = (image: ArticleBodyImageState) =>
+/** Scanned, rated, not awaiting review, not a violation and not restricted by its base model. */
+const isClearedBodyImage = (image: ArticleBodyImageState) =>
   servableArticleImage(image) !== null && !image.tosViolation;
+
+/**
+ * What anyone but its owner and mods may get: cleared, and not a minor-flagged image the minor
+ * content rule restricts (`isMinorMatureImage`).
+ */
+export const isServableBodyImage = (image: ArticleBodyImageState & { minor: boolean | null }) =>
+  isClearedBodyImage(image) && !isMinorMatureImage(image);
 
 /** The `needsReview` of an image held for csam review. */
 export const CSAM_HELD_REVIEW = 'csam';
@@ -23,15 +30,30 @@ export const CSAM_HELD_REVIEW = 'csam';
 export const isCsamHeldBodyImage = (image: Pick<ArticleBodyImageState, 'needsReview'>) =>
   image.needsReview === CSAM_HELD_REVIEW;
 
-/** Servable body images rated wholly within `browsingLevel` (unrated never is), by uuid. */
+/**
+ * Cleared body images rated wholly within `browsingLevel` (unrated never is), by uuid. For images
+ * `getArticleById` already narrowed to what this viewer may get.
+ */
 export function servableBodyImageUrls(images: ArticleBodyImageState[], browsingLevel: number) {
   return new Set(
     images
       .filter(
-        (image) => isServableBodyImage(image) && isRatingWithinCap(image.nsfwLevel, browsingLevel)
+        (image) => isClearedBodyImage(image) && isRatingWithinCap(image.nsfwLevel, browsingLevel)
       )
       .map((image) => image.url)
   );
+}
+
+/**
+ * Whether a source or link names one of `uuids` (lower-case image urls). `keysIn` reads the uuid
+ * however the url spells it, as the browser would resolve it.
+ */
+export function namesBodyMedia(value: string | undefined, uuids: readonly string[]) {
+  if (!value || !uuids.length) return false;
+  const lower = value.toLowerCase();
+  if (uuids.some((uuid) => lower.includes(uuid))) return true;
+  const keys = new Set(uuids);
+  return keysIn(value).some((key) => keys.has(key));
 }
 
 /**
@@ -55,17 +77,15 @@ export function removeBodyMedia(
   const held = withheld.filter(Boolean).map((uuid) => uuid.toLowerCase());
   if (!html || !/<(img|edge-media|a)\b/i.test(html)) return html;
   if (!keep && !held.length && edgeMediaAllKept(html, keepEdgeMedia)) return html;
-  const heldKeys = new Set(held);
-  // keysIn reads the uuid however the url spells it, as the browser would resolve it.
-  const namesWithheld = (value: string | undefined) => {
-    if (!value) return false;
-    const lower = value.toLowerCase();
-    return held.some((uuid) => lower.includes(uuid)) || keysIn(value).some((k) => heldKeys.has(k));
-  };
+  const namesWithheld = (value: string | undefined) => namesBodyMedia(value, held);
   const kept = (uuid: string | null | undefined, set = keep) => !set || set.has(uuid ?? '');
   return sanitize(html, {
     allowedTags: false,
     allowedAttributes: false,
+    // Only silences the per-call warning that script and style pass through; output is unchanged
+    // (the body as stored, minus media). The result is NOT sanitised: render it through RenderHtml
+    // or strip its tags, never insert it as HTML directly.
+    allowVulnerableTags: true,
     // Only media is removed; every other href and src is left as stored.
     allowedSchemesAppliedToAttributes: [],
     exclusiveFilter: (frame) => {
@@ -105,4 +125,22 @@ function edgeMediaAllKept(html: string, keepEdgeMedia: ReadonlySet<string> | und
     if (keepEdgeMedia && !keepEdgeMedia.has(uuid)) return false;
   }
   return true;
+}
+
+/**
+ * The body a reader who is neither its owner nor a moderator is served, and the body images it
+ * keeps: servable ones not in `hiddenIds` (the report-listed images this reader may not see).
+ */
+export function readerArticleBody<
+  T extends ArticleBodyImageState & { id: number; minor: boolean | null }
+>(content: string, bodyImages: T[], hiddenIds: ReadonlySet<number>) {
+  const kept = bodyImages.filter((image) => !hiddenIds.has(image.id) && isServableBodyImage(image));
+  const withheld = bodyImages.filter((image) => !kept.includes(image)).map((image) => image.url);
+  return {
+    kept,
+    content: removeBodyMedia(content, {
+      withheld,
+      keepEdgeMedia: new Set(kept.map((image) => image.url)),
+    }),
+  };
 }

@@ -23,8 +23,17 @@ vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
 type Raw = ReturnType<typeof pgliteRaw>;
 dbMock.dbWrite.$executeRaw.mockImplementation(((...a: Parameters<Raw['executeRaw']>) =>
   pgliteRaw(holder.db).executeRaw(...a)) as never);
-dbMock.dbWrite.$queryRaw.mockImplementation(((...a: Parameters<Raw['queryRaw']>) =>
-  pgliteRaw(holder.db).queryRaw(...a)) as never);
+// A Date goes as timestamptz, as Prisma sends it: untyped, `${date} - INTERVAL` reads as an interval.
+const TIMESTAMPTZ = 1184;
+dbMock.dbWrite.$queryRaw.mockImplementation((async (
+  strings: TemplateStringsArray | Prisma.Sql,
+  ...values: unknown[]
+) => {
+  if (!Array.isArray(strings)) return pgliteRaw(holder.db).queryRaw(strings);
+  const sql = Prisma.sql(strings as TemplateStringsArray, ...values);
+  const paramTypes = sql.values.map((v) => (v instanceof Date ? TIMESTAMPTZ : 0));
+  return (await holder.db.query(sql.text, sql.values, { paramTypes })).rows;
+}) as never);
 
 const {
   appealTrainingHeld,
@@ -32,8 +41,10 @@ const {
   copyRejectedForTraining,
   isAppealTrainingConfigured,
   createAppealTrainingStore,
+  removeErasedOwnerRecords,
   sweepExcludedRecords,
 } = await import('~/server/jobs/appeal-decision-records');
+const { downvotedTagsToDelete } = await import('~/server/jobs/apply-voted-tags');
 
 const MIGRATIONS = [
   '20261020120000_appeal_decision_record',
@@ -74,6 +85,30 @@ beforeAll(async () => {
       "resolvedReason" text
     );
     CREATE TABLE "CsamReport" ("id" serial PRIMARY KEY, "userId" integer, "images" jsonb NOT NULL DEFAULT '[]');
+    CREATE TABLE "User" ("id" integer PRIMARY KEY, "deletedAt" timestamp(3), "meta" jsonb);
+    CREATE TABLE "ModActivity" (
+      "id" serial PRIMARY KEY, "userId" integer, "activity" text NOT NULL, "entityType" text,
+      "entityId" integer, "createdAt" timestamp(3) NOT NULL DEFAULT now()
+    );
+    CREATE TABLE "Tag" (
+      "id" serial PRIMARY KEY, "name" text NOT NULL UNIQUE, "type" text NOT NULL DEFAULT 'UserGenerated'
+    );
+    CREATE TABLE "TagsOnImageNew" (
+      "imageId" integer NOT NULL, "tagId" integer NOT NULL, "attributes" smallint NOT NULL DEFAULT 0,
+      PRIMARY KEY ("imageId", "tagId")
+    );
+    CREATE TABLE "TagsOnImageVote" (
+      "imageId" integer NOT NULL, "tagId" integer NOT NULL, "userId" integer NOT NULL,
+      "vote" integer NOT NULL, "applied" boolean NOT NULL DEFAULT false,
+      "createdAt" timestamp(3) NOT NULL DEFAULT now()
+    );
+    CREATE VIEW "TagsOnImageDetails" AS SELECT "imageId", "tagId",
+      ("attributes" >> 11) & 1 = 1 AS automated,
+      ("attributes" >> 10) & 1 = 1 AS disabled,
+      ("attributes" >> 9) & 1 = 1 AS "needsReview"
+    FROM "TagsOnImageNew";
+    CREATE FUNCTION iif(boolean, integer, integer) RETURNS integer
+      LANGUAGE sql AS 'SELECT CASE WHEN $1 THEN $2 ELSE $3 END';
     CREATE TABLE training_labels (
       url text, label text, "createdAt" timestamp, source text, reason text, old_label text
     );
@@ -91,9 +126,27 @@ beforeEach(async () => {
   noLabels.mockClear();
   await holder.db.exec(
     `TRUNCATE "AppealDecisionRecord", "AppealTrainingObjectDeletion", "Image", "CsamReport",
-       training_labels RESTART IDENTITY`
+       training_labels, "Appeal", "ModActivity", "User", "Tag", "TagsOnImageNew", "TagsOnImageVote"
+       RESTART IDENTITY`
   );
 });
+
+// A SpineRating tag written before it had its own code: source 0, automated, confidence 16.
+const SCAN_RATING_ATTRIBUTES = (1 << 11) | 16;
+// As the packing does once SpineRating has its own code (10): bit 15 set, so a negative smallint.
+const SPINE_CODE_RATING_ATTRIBUTES = ((10 << 12) | (1 << 11) | 16) - (1 << 16);
+// A tag a user added: source 1 (User), not automated.
+const USER_TAG_ATTRIBUTES = 1 << 12;
+// An automated tag from another source: WD14 (3).
+const WD14_TAG_ATTRIBUTES = (3 << 12) | (1 << 11);
+const tagImage = async (imageId: number, name: string, attributes: number) => {
+  await holder.db.query(`INSERT INTO "Tag" ("name") VALUES ($1) ON CONFLICT DO NOTHING`, [name]);
+  await holder.db.query(
+    `INSERT INTO "TagsOnImageNew" ("imageId", "tagId", "attributes")
+     SELECT $1, id, $3 FROM "Tag" WHERE name = $2`,
+    [imageId, name, attributes]
+  );
+};
 
 type Rec = {
   appealId: number;
@@ -102,6 +155,8 @@ type Rec = {
   removalLabel?: string | null;
   removalNsfw?: string | null;
   aiNsfwLevel?: number | null;
+  /** Ratings the scan stored for the image (automated tags, source bits 0). */
+  scanRatings?: string[];
   hoursAgo?: number;
   state?: string | null;
   key?: string | null;
@@ -115,6 +170,7 @@ const record = async ({
   removalLabel = 'spam',
   removalNsfw = null,
   aiNsfwLevel = 0,
+  scanRatings = [],
   hoursAgo = 0.1,
   state = null,
   key = null,
@@ -126,6 +182,7 @@ const record = async ({
       `INSERT INTO "Image" ("id", "userId", "url") VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
       [imageId, userId, `u-${imageId}`]
     );
+  for (const name of scanRatings) await tagImage(imageId, name, SCAN_RATING_ATTRIBUTES);
   await holder.db.query(
     `INSERT INTO "AppealDecisionRecord" ("appealId", "imageId", "imageUrl", "nsfwLevel",
        "nsfwLevelLocked", "decision", "decidedAt", "removalLabel", "trainingCopyState",
@@ -234,29 +291,104 @@ describe('copyRejectedForTraining', () => {
     expect(await states()).toEqual([{ appealId: 1, removalLabel, state: 'skipped', key: null }]);
   });
 
-  it.each([
-    ['poi', 'None', 1, 'copied'],
-    ['poi', 'Soft', 2, 'copied'],
-    ['realPerson', 'None', 1, 'copied'],
-    ['realPerson', 'None', null, 'skipped'],
-    ['realPerson', 'None', 0, 'skipped'],
-    ['poi', 'Soft', 0, 'skipped'],
-    ['poi', 'Mature', 0, 'skipped'],
-    ['poi', 'X', 0, 'skipped'],
-    ['poi', null, 0, 'skipped'],
-    ['poi', 'None', 4, 'skipped'],
-    ['realPerson', 'Blocked', 1, 'skipped'],
-    ['realPersonNsfw', 'None', 1, 'skipped'],
+  it.each<[string, string | null, string[], 'copied' | 'skipped']>([
+    ['realPerson', 'None', ['pg'], 'copied'],
+    ['poi', 'Soft', ['pg13'], 'copied'],
+    ['poi', 'None', ['pg-13'], 'copied'],
+    ['realPerson', 'None', ['r'], 'skipped'],
+    ['poi', 'None', ['x'], 'skipped'],
+    ['poi', 'None', ['xxx'], 'skipped'],
+    ['realPerson', 'None', [], 'skipped'],
+    ['realPerson', 'None', ['pg', 'r'], 'skipped'],
+    ['poi', 'Mature', ['pg'], 'skipped'],
+    ['poi', 'X', ['pg'], 'skipped'],
+    ['poi', null, ['pg'], 'skipped'],
+    ['realPerson', 'Blocked', ['pg'], 'skipped'],
+    ['realPersonNsfw', 'None', ['pg'], 'skipped'],
   ])(
-    'rates a record labelled %s at %s (ai level %s): %s',
-    async (removalLabel, removalNsfw, aiNsfwLevel, state) => {
-      await record({ appealId: 1, imageId: 101, removalLabel, removalNsfw, aiNsfwLevel });
+    'rates a record labelled %s at %s with scan ratings %j: %s',
+    async (removalLabel, removalNsfw, scanRatings, state) => {
+      await record({ appealId: 1, imageId: 101, removalLabel, removalNsfw, scanRatings });
       const store = fakeStore();
 
       await copyRejectedForTraining({ store, lookup: noLabels });
 
       expect(store.copy).toHaveBeenCalledTimes(state === 'copied' ? 1 : 0);
       expect((await states())[0].state).toBe(state);
+    }
+  );
+
+  it('rates a realPerson record by the scan alone, never by aiNsfwLevel or any other tag', async () => {
+    await record({
+      appealId: 1,
+      imageId: 101,
+      removalLabel: 'realPerson',
+      removalNsfw: 'None',
+      aiNsfwLevel: 1,
+    });
+    await record({ appealId: 2, imageId: 102, removalLabel: 'realPerson', removalNsfw: 'None' });
+    await tagImage(102, 'pg', USER_TAG_ATTRIBUTES);
+    await record({
+      appealId: 3,
+      imageId: 103,
+      removalLabel: 'realPerson',
+      removalNsfw: 'None',
+      scanRatings: ['pg'],
+    });
+    await tagImage(103, 'r', USER_TAG_ATTRIBUTES);
+    await record({
+      appealId: 4,
+      imageId: 104,
+      removalLabel: 'realPerson',
+      removalNsfw: 'None',
+      scanRatings: ['pg'],
+    });
+    await tagImage(104, 'r', WD14_TAG_ATTRIBUTES);
+    await record({ appealId: 5, imageId: 105, removalLabel: 'realPerson', removalNsfw: 'None' });
+    await tagImage(105, 'pg', 0);
+    const store = fakeStore();
+
+    await copyRejectedForTraining({ store, lookup: noLabels });
+
+    expect(store.copy.mock.calls).toEqual([
+      ['u-103', '3/u-103'],
+      ['u-104', '4/u-104'],
+    ]);
+    expect((await states()).map((s) => s.state)).toEqual([
+      'skipped',
+      'skipped',
+      'copied',
+      'copied',
+      'skipped',
+    ]);
+  });
+
+  it.each(['spam', 'realPerson'])(
+    'never copies a %s record whose image carries a likeness request mark',
+    async (removalLabel) => {
+      await record({
+        appealId: 1,
+        imageId: 101,
+        removalLabel,
+        removalNsfw: 'None',
+        scanRatings: ['pg'],
+      });
+      await record({
+        appealId: 2,
+        imageId: 102,
+        removalLabel,
+        removalNsfw: 'None',
+        scanRatings: ['pg'],
+      });
+      await holder.db.exec(
+        `INSERT INTO "ModActivity" ("activity", "entityType", "entityId") VALUES ('likenessRequest', 'image', 101)`
+      );
+      const store = fakeStore();
+
+      await copyRejectedForTraining({ store, lookup: noLabels });
+
+      expect(store.copy.mock.calls).toEqual([['u-102', '2/u-102']]);
+      expect((await states()).map((s) => s.state)).toEqual(['skipped', 'copied']);
     }
   );
 
@@ -356,7 +488,7 @@ describe('copyRejectedForTraining', () => {
   it('looks up a missing label, stores it, and copies on it', async () => {
     await record({ appealId: 1, imageId: 101, removalLabel: null });
     await record({ appealId: 2, imageId: 102, removalLabel: null });
-    await record({ appealId: 3, imageId: 103, removalLabel: null, aiNsfwLevel: 1 });
+    await record({ appealId: 3, imageId: 103, removalLabel: null, scanRatings: ['pg'] });
     const lookup = vi.fn<RemovalLabelLookup>(
       async () =>
         new Map([
@@ -503,9 +635,6 @@ describe('copyRejectedForTraining', () => {
       ['failed', null],
       ['copied', '2/u-102'],
     ]);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'error', name: 'appeal-training-copy' })
-    );
   });
 
   it('leaves approvals and settled records alone', async () => {
@@ -560,7 +689,7 @@ describe('copyRejectedForTraining', () => {
     expect((await states())[0].state).toBeNull();
   });
 
-  it('does nothing but warn when the training bucket is not configured', async () => {
+  it('does nothing when the training bucket is not configured', async () => {
     await record({ appealId: 1, imageId: 101, removalLabel: null });
     await record({ appealId: 2, imageId: 102, hoursAgo: 30 });
     const lookup = vi.fn<RemovalLabelLookup>(
@@ -574,9 +703,6 @@ describe('copyRejectedForTraining', () => {
       { appealId: 1, removalLabel: null, state: null, key: null },
       { appealId: 2, removalLabel: 'spam', state: null, key: null },
     ]);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ type: 'warning', name: 'appeal-training-copy' })
-    );
   });
 });
 
@@ -632,7 +758,7 @@ describe('appealTrainingHeld', () => {
       imageId: 101,
       removalLabel: 'poi',
       removalNsfw: 'Soft',
-      aiNsfwLevel: 1,
+      scanRatings: ['pg13'],
     });
     await record({ appealId: 2, imageId: 102, removalLabel: 'poi' });
     await record({ appealId: 3, imageId: 103, removalLabel: 'realPerson', removalNsfw: 'Mature' });
@@ -641,14 +767,14 @@ describe('appealTrainingHeld', () => {
       imageId: 104,
       removalLabel: 'realPerson',
       removalNsfw: 'None',
-      aiNsfwLevel: null,
+      aiNsfwLevel: 1,
     });
     await record({
       appealId: 5,
       imageId: 105,
       removalLabel: 'poi',
       removalNsfw: 'Soft',
-      aiNsfwLevel: 0,
+      scanRatings: ['r'],
     });
 
     expect(await held()).toEqual([101]);
@@ -685,7 +811,7 @@ describe('sweepExcludedRecords and the training bucket', () => {
     expect(store.remove).toHaveBeenCalledExactlyOnceWith(['k-101', 'k-102']);
   });
 
-  it('logs a failed object delete and still deletes the records', async () => {
+  it('still deletes the records when an object delete fails', async () => {
     await record({ appealId: 1, imageId: 101, state: 'copied', key: 'k-101' });
     await holder.db.exec(`INSERT INTO "CsamReport" ("images") VALUES ('[{"id": 101}]')`);
     const store = fakeStore();
@@ -698,9 +824,6 @@ describe('sweepExcludedRecords and the training bucket', () => {
       objects: 0,
     });
     expect(await states()).toEqual([]);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'error', name: 'appeal-training-copy' })
-    );
   });
 
   it('deletes a record whose stored object an excluded image shares, and its copy', async () => {
@@ -833,6 +956,176 @@ describe('sweepExcludedRecords and the training bucket', () => {
   });
 });
 
+describe('records removed on erasure or on request', () => {
+  const appeal = (id: number, userId: number) =>
+    holder.db.query(
+      `INSERT INTO "Appeal" ("id", "userId", "entityType", "entityId") VALUES ($1, $2, 'Image', $1)`,
+      [id, userId]
+    );
+  const modActivity = (entityType: string, entityId: number, activity: string) =>
+    holder.db.query(
+      'INSERT INTO "ModActivity" ("userId", "entityType", "entityId", activity) VALUES (1, $1, $2, $3)',
+      [entityType, entityId, activity]
+    );
+  const ownedRecord = async (appealId: number, userId: number) => {
+    await record({
+      appealId,
+      imageId: 100 + appealId,
+      state: 'copied',
+      key: `k-${appealId}`,
+      userId,
+    });
+    await appeal(appealId, userId);
+  };
+  const removedKeys = (store: ReturnType<typeof fakeStore>) =>
+    store.remove.mock.calls.flatMap(([keys]) => keys).sort();
+  const deletedUser = (id: number, daysAgo: number | null, imageRemoval?: 'grace' | 'immediate') =>
+    holder.db.query(
+      `INSERT INTO "User" ("id", "deletedAt", "meta") VALUES ($1, now() - make_interval(days => $2), $3)`,
+      [id, daysAgo, JSON.stringify({ imageRemoval })]
+    );
+
+  it("deletes an erased account's records and copies, and keeps another account's", async () => {
+    await ownedRecord(1, 9);
+    await ownedRecord(2, 10);
+    await deletedUser(9, 0, 'immediate');
+    await modActivity('user', 9, 'deleteAccount');
+    const store = fakeStore();
+
+    expect((await sweepExcludedRecords(store)).swept).toBe(1);
+    expect((await states()).map((row) => row.appealId)).toEqual([2]);
+    expect(removedKeys(store)).toEqual(['k-1']);
+  });
+
+  it('waits out the grace a restore can undo, and keeps a restored account', async () => {
+    await ownedRecord(1, 9);
+    await ownedRecord(2, 10);
+    await ownedRecord(3, 11);
+    await ownedRecord(4, 12);
+    await ownedRecord(5, 13);
+    await ownedRecord(6, 14);
+    await deletedUser(9, 2, 'grace'); // inside the grace
+    await deletedUser(10, null, 'grace'); // restored: no deletedAt
+    await deletedUser(11, 8, 'grace'); // past the grace
+    await deletedUser(12, 0, 'immediate');
+    await deletedUser(13, null, 'immediate'); // restored, meta still naming the old removal
+    await deletedUser(14, 0); // no choice recorded: immediate, as for the account's images
+    for (const id of [9, 10, 11, 12, 13, 14]) await modActivity('user', id, 'deleteAccount');
+    const store = fakeStore();
+
+    expect((await sweepExcludedRecords(store)).swept).toBe(3);
+    expect((await states()).map((row) => row.appealId)).toEqual([1, 2, 5]);
+    expect(removedKeys(store)).toEqual(['k-3', 'k-4', 'k-6']);
+  });
+
+  it('keeps the records of an account that was deleted any other way', async () => {
+    await ownedRecord(1, 9);
+    await modActivity('user', 9, 'removeContent');
+    await modActivity('image', 9, 'deleteAccount');
+
+    expect((await sweepExcludedRecords(fakeStore())).swept).toBe(0);
+    expect((await states()).map((row) => row.appealId)).toEqual([1]);
+  });
+
+  it('finds an erased account by owner hash when its appeal row is gone', async () => {
+    await record({ appealId: 1, imageId: 101, state: 'copied', key: 'k-1', withImage: false });
+    await record({ appealId: 2, imageId: 102, state: 'copied', key: 'k-2', withImage: false });
+    await holder.db.query(
+      'UPDATE "AppealDecisionRecord" SET "ownerHash" = $1 WHERE "appealId" = 1',
+      [ownerHashOf(9)]
+    );
+    await holder.db.query(
+      'UPDATE "AppealDecisionRecord" SET "ownerHash" = $1 WHERE "appealId" = 2',
+      [ownerHashOf(10)]
+    );
+    await modActivity('user', 9, 'deleteAccount');
+    const store = fakeStore();
+
+    expect((await sweepExcludedRecords(store)).swept).toBe(1);
+    expect((await states()).map((row) => row.appealId)).toEqual([2]);
+    expect(removedKeys(store)).toEqual(['k-1']);
+  });
+
+  it('deletes the records of an image removed on a likeness request, never a realPerson removal', async () => {
+    await record({
+      appealId: 1,
+      imageId: 101,
+      removalLabel: 'realPerson',
+      state: 'copied',
+      key: 'k-1',
+    });
+    await record({
+      appealId: 2,
+      imageId: 102,
+      removalLabel: 'realPerson',
+      state: 'copied',
+      key: 'k-2',
+    });
+    await record({
+      appealId: 3,
+      imageId: 103,
+      removalLabel: 'likenessRequest',
+      state: 'copied',
+      key: 'k-3',
+    });
+    await modActivity('image', 102, 'likenessRequest');
+    // Same id, other entity: a user 101 marked so must not reach image 101.
+    await modActivity('user', 101, 'likenessRequest');
+    const store = fakeStore();
+
+    expect((await sweepExcludedRecords(store)).swept).toBe(2);
+    expect((await states()).map((row) => row.appealId)).toEqual([1]);
+    expect(removedKeys(store)).toEqual(['k-2', 'k-3']);
+  });
+
+  it("removes an erased account's records on the endpoint's call, rows before objects", async () => {
+    await ownedRecord(1, 9);
+    await ownedRecord(2, 10);
+    const store = fakeStore();
+    let recordsWhenObjectsWent: number[] = [];
+    store.remove.mockImplementationOnce(async () => {
+      recordsWhenObjectsWent = (await states()).map((row) => row.appealId);
+    });
+
+    expect(await removeErasedOwnerRecords(9, store)).toEqual({ removed: 1, objects: 1 });
+    expect(recordsWhenObjectsWent).toEqual([2]);
+    expect(removedKeys(store)).toEqual(['k-1']);
+  });
+
+  it('keeps the rows deleted and queues the copy when the object delete fails', async () => {
+    await ownedRecord(1, 9);
+    const store = fakeStore();
+    store.remove.mockRejectedValueOnce(new Error('denied'));
+
+    expect(await removeErasedOwnerRecords(9, store)).toEqual({ removed: 1, objects: 0 });
+    expect(await states()).toEqual([]);
+    expect(await tombstones()).toEqual(['k-1']);
+    // The key names the appeal and image: logged hashed, beside the owner hash.
+    const [logged, ...more] = vi.mocked(loggingMock.logToAxiom).mock.calls.map(([entry]) => entry);
+    expect(more).toEqual([]);
+    expect(logged).toMatchObject({
+      message: expect.stringContaining(`(owner ${ownerHashOf(9)})`),
+      details: { keys: [expect.stringMatching(/^[0-9a-f]{16}$/)] },
+    });
+    expect(JSON.stringify(logged)).not.toContain('k-1');
+  });
+
+  it('logs no raw key when the failure message names one', async () => {
+    await ownedRecord(1, 9);
+    const store = fakeStore();
+    store.remove.mockRejectedValueOnce(new Error('delete failed: k-1'));
+
+    await removeErasedOwnerRecords(9, store);
+
+    const logged = vi.mocked(loggingMock.logToAxiom).mock.calls.map(([entry]) => entry);
+    expect(logged).toHaveLength(1);
+    expect(JSON.stringify(logged)).not.toContain('k-1');
+    expect(logged[0]).toMatchObject({
+      details: { error: expect.stringMatching(/^delete failed: [0-9a-f]{16}$/) },
+    });
+  });
+});
+
 describe('createAppealTrainingStore', () => {
   const clients = () => {
     const bytes = new Uint8Array([1, 2, 3]);
@@ -889,7 +1182,9 @@ describe('createAppealTrainingStore', () => {
     });
     const keys = Array.from({ length: 2500 }, (_, i) => `k-${i}`);
 
-    await expect(store.remove(keys)).rejects.toThrow(/k-1500/);
+    // A count, never the key: a key names its appeal and image, and the message is logged.
+    const error = await store.remove(keys).catch((e: Error) => e);
+    expect(error).toEqual(new Error('delete failed for 1 objects: unknown'));
 
     const sent = target.send.mock.calls.map(
       ([c]) => (c.input as { Delete: { Objects: { Key: string }[] } }).Delete.Objects
@@ -932,7 +1227,9 @@ describe('createAppealTrainingStore', () => {
       targetBucket: 'training',
     });
 
-    await expect(store.remove(['a', 'b'])).rejects.toThrow(/b/);
+    await expect(store.remove(['a', 'b'])).rejects.toThrow(
+      new Error('delete failed for 1 objects: AccessDenied')
+    );
 
     expect(source.send).not.toHaveBeenCalled();
     expect(target.send.mock.calls.map(([c]) => [c.constructor.name, c.input])).toEqual([
@@ -1017,5 +1314,110 @@ describe('appealTrainingStoreFromEnv', () => {
   it('still deletes training objects without the owner hash key', async () => {
     setEnv({ ...full, ...extra, APPEAL_OWNER_HASH_KEY: undefined });
     expect(await appealTrainingStoreFromEnv()).not.toBeNull();
+  });
+});
+
+describe('community downvotes and the scanner rating', () => {
+  const downvote = async (imageId: number, name: string) =>
+    holder.db.query(
+      `INSERT INTO "TagsOnImageVote" ("imageId", "tagId", "userId", "vote")
+       SELECT $1, id, 9, -1 FROM "Tag" WHERE name = $2`,
+      [imageId, name]
+    );
+  const tagsOf = async (imageId: number) =>
+    (
+      await holder.db.query<{ name: string }>(
+        `SELECT t.name FROM "TagsOnImageNew" ti JOIN "Tag" t ON t.id = ti."tagId"
+         WHERE ti."imageId" = $1 ORDER BY t.name`,
+        [imageId]
+      )
+    ).rows.map((row) => row.name);
+
+  it('never deletes a scanner rating, so a record the scan rated R stays skipped', async () => {
+    await record({
+      appealId: 1,
+      imageId: 101,
+      removalLabel: 'realPerson',
+      removalNsfw: 'None',
+      scanRatings: ['pg', 'r'],
+    });
+    await tagImage(101, 'woman', WD14_TAG_ATTRIBUTES);
+    await downvote(101, 'r');
+    await downvote(101, 'woman');
+
+    // What the vote job deletes, deleted as its write does.
+    for (const { imageId, tagId } of await downvotedTagsToDelete(new Date(0)))
+      await holder.db.query(`DELETE FROM "TagsOnImageNew" WHERE "imageId" = $1 AND "tagId" = $2`, [
+        imageId,
+        tagId,
+      ]);
+
+    expect(await tagsOf(101)).toEqual(['pg', 'r']);
+    const store = fakeStore();
+    await copyRejectedForTraining({ store, lookup: noLabels });
+    expect(store.copy).not.toHaveBeenCalled();
+    expect((await states()).map((s) => s.state)).toEqual(['skipped']);
+  });
+});
+
+describe('the scan rating under its own source code', () => {
+  const copiedImages = async () => {
+    const store = fakeStore();
+    await copyRejectedForTraining({ store, lookup: noLabels });
+    return store.copy.mock.calls.map(([key]) => key);
+  };
+  const realPerson = (appealId: number, imageId: number) =>
+    record({ appealId, imageId, removalLabel: 'realPerson', removalNsfw: 'None' });
+
+  it('reads a rating stored with the SpineRating code', async () => {
+    await realPerson(1, 101);
+    await tagImage(101, 'pg13', SPINE_CODE_RATING_ATTRIBUTES);
+    await realPerson(2, 102);
+    await tagImage(102, 'r', SPINE_CODE_RATING_ATTRIBUTES);
+
+    expect(await copiedImages()).toEqual(['u-101']);
+    expect((await states()).map((s) => s.state)).toEqual(['copied', 'skipped']);
+  });
+
+  it('reads a rating across both encodings, so a new pg beside an old r still skips', async () => {
+    await realPerson(1, 101);
+    await tagImage(101, 'pg', SPINE_CODE_RATING_ATTRIBUTES);
+    await tagImage(101, 'r', SCAN_RATING_ATTRIBUTES);
+
+    expect(await copiedImages()).toEqual([]);
+  });
+
+  it('still reads a legacy automated source-0 label as a rating, so the record skips', async () => {
+    await record({
+      appealId: 1,
+      imageId: 101,
+      removalLabel: 'realPerson',
+      removalNsfw: 'None',
+      scanRatings: ['pg'],
+    });
+    // A Hive or AiRecognition label written before those sources had codes: automated, source 0.
+    await tagImage(101, 'woman', SCAN_RATING_ATTRIBUTES);
+
+    expect(await copiedImages()).toEqual([]);
+  });
+
+  it('keeps a downvote off a SpineRating-coded rating and a legacy source-0 label, not off WD14', async () => {
+    await tagImage(101, 'r', SPINE_CODE_RATING_ATTRIBUTES);
+    await tagImage(101, 'woman', SCAN_RATING_ATTRIBUTES);
+    await tagImage(101, 'smile', WD14_TAG_ATTRIBUTES);
+    for (const name of ['r', 'woman', 'smile'])
+      await holder.db.query(
+        `INSERT INTO "TagsOnImageVote" ("imageId", "tagId", "userId", "vote")
+         SELECT 101, id, 9, -1 FROM "Tag" WHERE name = $1`,
+        [name]
+      );
+
+    const selected = await downvotedTagsToDelete(new Date(0));
+    const names = (
+      await holder.db.query<{ name: string }>(`SELECT name FROM "Tag" WHERE id = ANY($1::int[])`, [
+        selected.map((row) => row.tagId),
+      ])
+    ).rows.map((row) => row.name);
+    expect(names).toEqual(['smile']);
   });
 });

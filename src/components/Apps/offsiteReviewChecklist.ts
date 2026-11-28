@@ -74,7 +74,7 @@ export type OffsiteChecklistData = {
   // `connectClientId` is set the checklist adds a "sensitive scopes justified" item
   // that WARNS if any sensitive requested scope lacks a non-empty justification.
   connectClientId?: string | null;
-  connectRequestedScopes?: number | null;
+  connectRequestedScopes?: number | bigint | null;
   connectScopeJustifications?: Record<string, string> | null;
 };
 
@@ -84,11 +84,11 @@ export type OffsiteChecklistData = {
  * for a non-connect listing or when every sensitive scope is justified.
  */
 export function unjustifiedSensitiveScopeKeys(data: {
-  connectRequestedScopes?: number | null;
+  connectRequestedScopes?: number | bigint | null;
   connectScopeJustifications?: Record<string, string> | null;
 }): string[] {
-  const sensitiveRequested = (data.connectRequestedScopes ?? 0) & SENSITIVE_TOKEN_SCOPES;
-  if (sensitiveRequested === 0) return [];
+  const sensitiveRequested = BigInt(data.connectRequestedScopes ?? 0) & SENSITIVE_TOKEN_SCOPES;
+  if (sensitiveRequested === 0n) return [];
   const justifications = data.connectScopeJustifications ?? {};
   return tokenScopeMaskToList(sensitiveRequested)
     .filter(({ key }) => {

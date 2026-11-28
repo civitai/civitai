@@ -3,10 +3,13 @@ import { MESSAGE_AS_CIVITAI_MAX_LENGTH } from '$lib/message-as-civitai';
 import { fail, type Actions } from '@sveltejs/kit';
 import { z } from 'zod';
 import { canAccess, denied } from './access';
+import { holdsCsamReview } from './held-media';
+import { withheldRefusal } from './retracted-media';
 import { parseForm, parseIdList, userIdSchema, checkboxField } from './query';
 import { issueStrike, restoreImages, setImageFlag } from './user-actions.service';
 import {
   capturesSkippedNote,
+  reviewImagesSkippedNote,
   countBlockedImages,
   removeImagesWithFollowUps,
 } from './bulk-image.service';
@@ -36,6 +39,12 @@ const scopedFail = (scope: Scope, message: string) => fail(400, { scope, error: 
 // Scoped like every other refusal here, so it lands on the form that was submitted — `requiresGrant`'s
 // `denied` scope has no form to show on.
 const refuse = (scope: Scope, id: PermissionId) => fail(403, { scope, error: denied(id) });
+
+/** `withheldRefusal`, scoped to the images form. */
+async function refuseWithheld(user: App.Locals['user'], imageIds: number[]) {
+  const error = await withheldRefusal(user, imageIds);
+  return error ? fail(403, { scope: 'images' as const, error }) : null;
+}
 
 const idsSchema = z.object({
   imageIds: z
@@ -116,6 +125,8 @@ export function reportModerationActions(pagePath: string) {
         await request.formData()
       );
       if (typeof input === 'string') return scopedFail('images', input);
+      const withheldRemove = await refuseWithheld(locals.user, input.imageIds);
+      if (withheldRemove) return withheldRemove;
       // Striking the owners rides on the removal, so it needs the strike grant as the strike form does.
       if (input.strikeOwners && !locals.grants['user.strike'])
         return refuse('images', 'user.strike');
@@ -144,6 +155,9 @@ export function reportModerationActions(pagePath: string) {
             : ` Struck ${result.struck.struck} owner${result.struck.struck === 1 ? '' : 's'}.`) +
           (result.struck.capturesSkipped
             ? ` ${capturesSkippedNote(result.struck.capturesSkipped)}`
+            : '') +
+          (result.struck.reviewImagesSkipped
+            ? ` ${reviewImagesSkippedNote(result.struck.reviewImagesSkipped)}`
             : '')
         : '';
 
@@ -163,10 +177,16 @@ export function reportModerationActions(pagePath: string) {
       if (!locals.grants['image.moderate']) return refuse('images', 'image.moderate');
       const input = parseForm(idsSchema, await request.formData());
       if (typeof input === 'string') return scopedFail('images', input);
+      const withheldRestore = await refuseWithheld(locals.user, input.imageIds);
+      if (withheldRestore) return withheldRestore;
 
       const wasBlocked = await countBlockedImages(input.imageIds);
 
-      const result = await restoreImages({ imageIds: input.imageIds, moderatorId: locals.user.id });
+      const result = await restoreImages({
+        imageIds: input.imageIds,
+        moderatorId: locals.user.id,
+        csamReview: holdsCsamReview(locals.user),
+      });
       if (!result.ok) return scopedFail('images', result.error);
       return {
         success: true,
@@ -183,14 +203,17 @@ export function reportModerationActions(pagePath: string) {
         await request.formData()
       );
       if (typeof input === 'string') return scopedFail('images', input);
+      const withheldFlag = await refuseWithheld(locals.user, input.imageIds);
+      if (withheldFlag) return withheldFlag;
 
       const result = await setImageFlag({
         ...splitImageFlagValue(input.flagValue),
         imageIds: input.imageIds,
         moderatorId: locals.user.id,
+        csamReview: holdsCsamReview(locals.user),
       });
       if (!result.ok) return scopedFail('images', result.error);
-      return { success: true, imageResult: `Updated ${input.imageIds.length} images.` };
+      return { success: true, imageResult: `Updated ${result.count} images.` };
     },
 
     // Retool's SendNotification2 / PostNotification / SendCorrectNotif — three call sites, one action.

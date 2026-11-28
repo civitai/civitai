@@ -19,14 +19,26 @@ import {
   withIndefiniteArticle,
 } from '~/server/notifications/comment.notifications';
 
+/**
+ * How far behind its cursor each mention read looks, as for new articles from followed creators: a
+ * row is stamped before it commits and the job takes its cursor before reading the replica, so a row
+ * stamped just before a run can first be visible after it. Re-reading tells nobody twice:
+ * UserNotification is unique per (notification, user).
+ */
+const MENTION_LOOKBACK = '5 minutes';
+const since = (lastSent: string) => `'${lastSent}'::timestamp - interval '${MENTION_LOOKBACK}'`;
+
 // Edits re-emit the comment's key, relying on UserNotification's unique (notificationId, userId) to
 // skip people already told. Those rows are cleaned up, so don't widen the window to old comments.
 // An author can still edit a comment moderation removed, hence the visibility filters.
-const liveCommentCreatedOrEditedSince = (lastSent: string) =>
+export const liveCommentCreatedOrEditedSince = (lastSent: string) =>
   `c."createdAt" > '${lastSent}'::timestamp - interval '1 day'
-          AND (c."createdAt" > '${lastSent}' OR c."updatedAt" > '${lastSent}')
+          AND (c."createdAt" > ${since(lastSent)} OR c."updatedAt" > ${since(lastSent)})
           AND c."tosViolation" = false
           AND c.hidden IS NOT TRUE`;
+
+export const modelDescriptionPublishedOrEditedSince = (lastSent: string) =>
+  `(m."publishedAt" > ${since(lastSent)} OR m."updatedAt" > ${since(lastSent)})`;
 
 export const ARTICLE_MENTION_CAP = 10;
 export const ARTICLE_MENTION_EDIT_WINDOW = '30 days';
@@ -80,7 +92,7 @@ export const articleMentionsSql = (lastSent: string) => `
         ) am
         -- Matches "Article_mention_scan_idx" exactly (expression and partial predicate), or this is
         -- a seq scan of every article each run.
-        WHERE ${ARTICLE_TOUCHED_AT} > '${lastSent}'
+        WHERE ${ARTICLE_TOUCHED_AT} > ${since(lastSent)}
           AND a.status = 'Published'
           AND a.ingestion = 'Scanned'
           AND a."publishedAt" > now() - interval '${ARTICLE_MENTION_EDIT_WINDOW}'
@@ -163,6 +175,7 @@ export const mentionNotifications = createNotificationProcessor({
         ${v3EntityJoins('c')}
         WHERE ${liveCommentCreatedOrEditedSince(lastSent)}
           AND c."deletedAt" IS NULL
+          AND c."entityType"::text <> 'featurePage'
           AND c.content LIKE '%"mention:%'
           AND (NOT ${isModelComment('c')} OR m."userId" > 0)
           -- Same slug-resolution guard the reply processors carry: those threads are addressed by
@@ -186,7 +199,7 @@ export const mentionNotifications = createNotificationProcessor({
         FROM "Model" m
         JOIN "User" u ON m."userId" = u.id
         WHERE m."userId" > 0
-          AND (m."publishedAt" > '${lastSent}' OR m."updatedAt" > '${lastSent}')
+          AND ${modelDescriptionPublishedOrEditedSince(lastSent)}
           AND m.description LIKE '%"mention:%'
           AND m.status = 'Published'
 

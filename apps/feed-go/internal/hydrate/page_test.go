@@ -1,9 +1,11 @@
 package hydrate
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"reflect"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -38,6 +40,7 @@ func perLookup(ctx context.Context, s *Sources, req PageRequest) (*Page, error) 
 		return
 	})
 	g.Go(func() (err error) { out.Reactions, err = s.Reactions(gctx, req.ImageIDs, req.ViewerID); return })
+	g.Go(func() (err error) { out.Tags, err = s.ImageTags(gctx, req.ImageIDs, req.ViewerID, req.Tags); return })
 	if err := g.Wait(); err != nil {
 		return nil, err
 	}
@@ -56,11 +59,19 @@ type pageFixture struct {
 
 func packValue(tb testing.TB, v map[string]any) []byte {
 	tb.Helper()
-	b, err := msgpack.Marshal(v)
-	if err != nil {
+	return packSorted(tb, v)
+}
+
+// packSorted is msgpack of v with every map's keys written sorted: a Go map has no order, and the
+// ordered reads (Entry.Ordered) keep the order the bytes hold, so a test value's order must be fixed
+// (sorted, the order hydrate.Wire gives an entry built in code).
+func packSorted(tb testing.TB, v any) []byte {
+	tb.Helper()
+	var buf bytes.Buffer
+	if err := msgpack.NewEncoder(&buf).SetSortMapKeys(true).Encode(v); err != nil {
 		tb.Fatal(err)
 	}
-	return b
+	return buf.Bytes()
 }
 
 func (f *pageFixture) put(tb testing.TB, key string, id int, v map[string]any) {
@@ -83,6 +94,8 @@ func (f *pageFixture) del(key string, id int) { delete(f.strings, pageNS+key+":"
 //   - tag ids: 11 and 13 hits, 12 notFound, 14 without tags
 //   - event decorations: 11 visible, 12 a hidden event, 13 and 14 notFound
 //   - metrics: every image, 12 a notFound hash
+//   - image tags (read only with PageRequest.Tags): 11 two tags, 12 notFound, 13 one tag, 14 an
+//     empty list; the viewer 1001 voted on both of 11's tags, on a tag 13 does not carry, and on 12
 func basePageFixture(tb testing.TB) *pageFixture {
 	tb.Helper()
 	f := &pageFixture{strings: map[string][]byte{}, hashes: map[string]map[string]string{}}
@@ -120,11 +133,33 @@ func basePageFixture(tb testing.TB) *pageFixture {
 	f.put(tb, KeyImageEvents, 12, map[string]any{"id": 602, "data": map[string]any{"event": "hidden"}})
 	f.put(tb, KeyImageEvents, 13, notFound)
 	f.put(tb, KeyImageEvents, 14, notFound)
+	f.put(tb, KeyImageTags, 11, map[string]any{"imageId": 11, "tags": []any{
+		map[string]any{"tagId": 21, "tagName": "red", "tagType": "UserGenerated", "score": 7, "upVotes": 2, "downVotes": 0,
+			"tagNsfwLevel": 1, "automated": false, "needsReview": false, "concrete": true, "lastUpvote": pageLastUpvote, "source": "User"},
+		map[string]any{"tagId": 22, "tagName": "fox", "tagType": "Label", "score": 2.5, "upVotes": 0, "downVotes": 1,
+			"tagNsfwLevel": 2, "automated": true, "needsReview": nil, "concrete": true, "lastUpvote": nil, "source": "WD14"},
+	}, "cachedAt": pageNow})
+	f.put(tb, KeyImageTags, 12, map[string]any{"imageId": 12, "notFound": true, "cachedAt": pageNow})
+	f.put(tb, KeyImageTags, 13, map[string]any{"imageId": 13, "tags": []any{
+		map[string]any{"tagId": 23, "tagName": "sky", "tagType": "Label", "score": 0, "upVotes": 0, "downVotes": 0,
+			"tagNsfwLevel": 1, "automated": true, "needsReview": false, "concrete": true, "lastUpvote": nil, "source": "Rekognition"},
+	}, "cachedAt": old})
+	f.put(tb, KeyImageTags, 14, map[string]any{"imageId": 14, "tags": []any{}, "cachedAt": pageNow})
 	f.hashes["metrics:Image:11"] = map[string]string{"Like": "3"}
 	f.hashes["metrics:Image:12"] = map[string]string{"notFound": "1", "_populatedAt": "1700000000000"}
 	f.hashes["metrics:Image:13"] = map[string]string{"Heart": "2"}
 	f.hashes["metrics:Image:14"] = map[string]string{"Cry": "1", "_populatedAt": "1700000000000"}
 	return f
+}
+
+// pageLastUpvote is the `lastUpvote` Date of basePageFixture's tag 21 on image 11.
+var pageLastUpvote = time.Date(2026, 6, 14, 10, 0, 0, 0, time.UTC)
+
+// tagsPageRequest is pageRequest with the 'tags' include (image.getInfinite's include: ['tags']).
+func tagsPageRequest() PageRequest {
+	r := pageRequest()
+	r.Tags = true
+	return r
 }
 
 // pageRequest is the request of basePageFixture's page, as feed.Hydrate builds it (a repeated user).
@@ -161,6 +196,19 @@ func newPageReplica() *pageReplica {
 				return testkit.NewRows([]string{"imageId", "reaction"}), nil
 			}
 			return only(args, map[int][]any{11: {int64(11), "Like"}, 13: {int64(13), "Cry"}}, "imageId", "reaction"), nil
+		}},
+		{Match: `FROM "TagsOnImageVote"`, Rows: func(args []any) (*testkit.Rows, error) {
+			if viewer, _ := args[1].(int); viewer != 1001 {
+				return testkit.NewRows([]string{"imageId", "tagId", "vote"}), nil
+			}
+			rows := testkit.NewRows([]string{"imageId", "tagId", "vote"})
+			ids, _ := args[0].([]int)
+			for _, v := range [][]any{{int64(11), int64(21), int32(3)}, {int64(11), int64(22), int32(0)}, {int64(13), int64(99), int32(1)}, {int64(12), int64(21), int32(1)}} {
+				if slices.Contains(ids, int(v[0].(int64))) {
+					rows.Data = append(rows.Data, v)
+				}
+			}
+			return rows, nil
 		}},
 		{Match: `FROM "Cosmetic"`, Rows: func(args []any) (*testkit.Rows, error) {
 			ids, _ := args[0].([]int)
@@ -397,6 +445,82 @@ func TestPageNoEventsNoCosmeticsIsOnePipeline(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Page differs from the per-lookup answer:\n got %#v\nwant %#v", got, want)
+	}
+}
+
+// Without the 'cosmetics' include (image.getInfinite's `include: []`), neither the user-cosmetics
+// nor the frames cache is read, no cosmetic record is (stage 2), no cosmetic lookup runs on the
+// replica, both maps are empty, and every other lookup answers as the full page.
+func TestPageWithoutCosmetics(t *testing.T) {
+	f := basePageFixture(t)
+	s, r, db := f.load()
+	keys := recordKeys(r)
+	req := pageRequest()
+	req.NoCosmetics = true
+	got, err := s.Page(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.UserCosmetics == nil || len(got.UserCosmetics) != 0 || got.Frames == nil || len(got.Frames) != 0 {
+		t.Fatalf("UserCosmetics %#v, Frames %#v; want two empty maps", got.UserCosmetics, got.Frames)
+	}
+	// Exact key shapes: KeyCosmetics is also a prefix of the event-decoration key
+	// (`cosmetics2:event:v2:Image:<id>`), which this page still reads.
+	cosmeticRecord := regexp.MustCompile(`^` + regexp.QuoteMeta(pageNS+KeyCosmetics) + `:\d+$`)
+	for _, k := range keys() {
+		if strings.HasPrefix(k, pageNS+KeyUserCosmetics+":") || strings.HasPrefix(k, pageNS+KeyImageFrames+":") || cosmeticRecord.MatchString(k) {
+			t.Errorf("a cosmetic key was read: %s", k)
+		}
+	}
+	// Control: the matcher sees each of the three shapes, and not the decoration key.
+	for k, want := range map[string]bool{
+		pageNS + KeyUserCosmetics + ":1001": true, pageNS + KeyImageFrames + ":11": true, pageNS + KeyCosmetics + ":501": true,
+		pageNS + KeyImageEvents + ":11": false,
+	} {
+		got := strings.HasPrefix(k, pageNS+KeyUserCosmetics+":") || strings.HasPrefix(k, pageNS+KeyImageFrames+":") || cosmeticRecord.MatchString(k)
+		if got != want {
+			t.Fatalf("matcher control: %s matched %v, want %v", k, got, want)
+		}
+	}
+	for _, c := range db.Calls {
+		if strings.Contains(c, `"UserCosmetic"`) || strings.Contains(c, `FROM "Cosmetic"`) {
+			t.Fatalf("a cosmetic replica query ran: %s", c)
+		}
+	}
+	// Positive control: the full page reads both caches and their cosmetic records, and answers some.
+	s2, r2, _ := basePageFixture(t).load()
+	keys2 := recordKeys(r2)
+	full, err := s2.Page(context.Background(), pageRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	fullRead := strings.Join(keys2(), " ")
+	for _, k := range []string{pageNS + KeyUserCosmetics + ":1001", pageNS + KeyImageFrames + ":11", pageNS + KeyCosmetics + ":501"} {
+		if !strings.Contains(fullRead, k) {
+			t.Fatalf("control: the full page never read %s: %s", k, fullRead)
+		}
+	}
+	if len(full.UserCosmetics) == 0 || len(full.Frames) == 0 {
+		t.Fatalf("control: the full page answered user cosmetics %v and frames %v", full.UserCosmetics, full.Frames)
+	}
+	got.UserCosmetics, got.Frames, full.UserCosmetics, full.Frames = nil, nil, nil, nil
+	if !reflect.DeepEqual(got, full) {
+		t.Fatalf("the rest of the page differs:\n got %#v\nwant %#v", got, full)
+	}
+
+	// The probe's seam: Presence reads exactly the keys Page reads for this request, and reports no
+	// cosmetic cache (the full fixture misses three cosmetic records, which this page never names).
+	s3, r3, _ := basePageFixture(t).load()
+	presenceKeys := recordKeys(r3)
+	misses, err := s3.Presence(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := presenceKeys(), keys(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("Presence read\n  %v\nPage read\n  %v", got, want)
+	}
+	if want := map[string]int{CacheBasicUsers: 1, CacheProfilePictures: 1, CacheThumbnails: 1}; !reflect.DeepEqual(misses, want) {
+		t.Fatalf("misses %v, want %v", misses, want)
 	}
 }
 

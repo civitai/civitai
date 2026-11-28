@@ -81,7 +81,7 @@
       },
       "packed": "3gADp2ltYWdlSWTNIG2pcmVzb3VyY2Vzkd4AC6dpbWFnZUlkzSBtrm1vZGVsVmVyc2lvbklkzRfVqHN0cmVuZ3RowKhkZXRlY3RlZMOnbW9kZWxJZM0Tiqltb2RlbE5hbWWxR29sZGVuIG1vZGVsIDUwMDKpbW9kZWxUeXBlqkNoZWNrcG9pbnSrdmVyc2lvbk5hbWWldjYxMDGpYmFzZU1vZGVsqFNEWEwgMS4wo3BvacKlbWlub3LCqGNhY2hlZEF01v9qL+gU"
     },
-    "packed:caches:profile-pictures:v3:1002": {
+    "packed:caches:profile-pictures:v4:1002": {
       "value": {
         "userId": 1002,
         "notFound": true,
@@ -173,6 +173,7 @@
         "minor": false,
         "poi": false,
         "acceptableMinor": false,
+        "restricted": false,
         "_resources": [
           {
             "modelVersionId": 6101,
@@ -226,6 +227,7 @@
         "minor": false,
         "poi": false,
         "acceptableMinor": false,
+        "restricted": false,
         "_resources": [
           {
             "modelVersionId": 6101,
@@ -264,6 +266,14 @@
       {
         "id": 6401,
         "modelId": 5005
+      },
+      {
+        "id": 6501,
+        "modelId": 5006
+      },
+      {
+        "id": 6701,
+        "modelId": 5007
       }
     ],
     "models": [
@@ -301,6 +311,22 @@
       },
       {
         "id": 5005,
+        "userId": 1002,
+        "mode": null,
+        "minor": false,
+        "sfwOnly": false,
+        "galleryLevel": null
+      },
+      {
+        "id": 5006,
+        "userId": 1001,
+        "mode": null,
+        "minor": false,
+        "sfwOnly": false,
+        "galleryLevel": null
+      },
+      {
+        "id": 5007,
         "userId": 1002,
         "mode": null,
         "minor": false,
@@ -403,6 +429,12 @@
       {
         "id": 1004,
         "username": "mod_four",
+        "image": null,
+        "deletedAt": null
+      },
+      {
+        "id": -1,
+        "username": "golden_system",
         "image": null,
         "deletedAt": null
       }

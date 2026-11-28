@@ -3,6 +3,7 @@ import { buildFliptContext } from '@civitai/flipt/context';
 import { FLIPT_FEATURE_FLAGS, getFliptVariant } from '~/server/flipt/client';
 import { isExternalModerationConfigured } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
+import { STEP_MEDIA_INPUT_KEYS } from '~/server/services/blocks/step-media-keys';
 import {
   foldStepTypeCase,
   isTrainingStepTypeIgnoringCase,
@@ -35,6 +36,7 @@ export const PROMPT_AUDITED_STEP_TYPES = [
   'aceStepAudio',
   'miniMaxMusic3',
   'soniloAudioGen',
+  'seedAudioGen',
   'yuE2',
   'textToSpeech',
   'liveTextToSpeech',
@@ -54,66 +56,8 @@ const WALK_DEPTH_MAX = 64;
 const TEXT_KEY = /prompt|lyric|text|message|style|caption|instruction/i;
 const NEGATIVE_KEY = /negative/i;
 const URL_OR_AIR = /^\s*(https?:\/\/\S+|urn:air:\S+)\s*$/i;
-/**
- * Step input fields that take media or a url, from the `@civitai/orchestration-client` input
- * types (lower-cased). A reference is readable as non-prompt only under one of these; under
- * any other key it may bind text, so it counts as an unreadable prompt.
- */
-const MEDIA_KEYS: ReadonlySet<string> = new Set([
-  'additionalvideos',
-  'audioblob',
-  'audiourl',
-  'blob',
-  'blobkey',
-  'bloburl',
-  'endimage',
-  'endsourceimage',
-  'firstframe',
-  'firstframeimage',
-  'frames',
-  'frontalimage',
-  'garmenturl',
-  'image',
-  'image_url',
-  'images',
-  'imagestylereferences',
-  'imageurl',
-  'imageurls',
-  'inputurl',
-  'keyframes',
-  'lastframe',
-  'lastframeimage',
-  'mask',
-  'mediaurl',
-  'mediaurls',
-  'middleframeimage',
-  'middleimages',
-  'personmask',
-  'refaudiourl',
-  'referenceaudios',
-  'referenceimage',
-  'referenceimages',
-  'referencevideos',
-  'referencevideourls',
-  'sampleinputimages',
-  'sourceaudio',
-  'sourceimage',
-  'sourceimages',
-  'sourceimageurl',
-  'sourceurl',
-  'sourcevideo',
-  'startimage',
-  'subjectmaskurl',
-  'subjecturl',
-  'targetaudio',
-  'textureimageurl',
-  'url',
-  'video',
-  'videoblob',
-  'videos',
-  'videourl',
-]);
-
+// A reference is readable as non-prompt only under a media key; elsewhere it may bind text.
+const MEDIA_KEYS = STEP_MEDIA_INPUT_KEYS;
 export type PromptRefSource = 'argument' | 'step';
 
 export type PassThroughAuditText = {
@@ -391,16 +335,13 @@ export async function shadowPassThroughPromptAudit(
   ctx: AuditContext,
   collected: PassThroughAuditText
 ): Promise<void> {
-  const base = {
-    name: 'app-block-pass-through-prompt-audit',
-    type: 'info' as const,
-    appBlockId: ctx.appBlockId,
-    stepTypes: collected.auditedTypes.join(','),
-    literal: collected.promptRefs.length === 0,
-    argumentRefs: collected.promptRefs.filter((r) => r === 'argument').length,
-    stepRefs: collected.promptRefs.filter((r) => r === 'step').length,
-    tooLarge: collected.tooLarge,
-  };
+  const name = 'app-block-pass-through-prompt-audit';
+  const { appBlockId } = ctx;
+  const stepTypes = collected.auditedTypes.join(',');
+  const literal = collected.promptRefs.length === 0;
+  const argumentRefs = collected.promptRefs.filter((r) => r === 'argument').length;
+  const stepRefs = collected.promptRefs.filter((r) => r === 'step').length;
+  const { tooLarge } = collected;
   const started = performance.now();
   try {
     const verdict = collected.tooLarge
@@ -424,25 +365,31 @@ export async function shadowPassThroughPromptAudit(
       verdict.outcome !== 'hard' &&
       ((externalError && env.PROMPT_CHECK_FAIL_CLOSED) || externalSkipped);
     const wouldRefuse =
-      !base.literal ||
+      !literal ||
       collected.tooLarge ||
       (verdict !== null && verdict.outcome !== 'pass') ||
       checkUnavailable;
     logToAxiom({
-      ...base,
+      name,
+      type: 'info',
+      appBlockId,
+      stepTypes,
       outcome,
       source: verdict?.source ?? null,
-      externalError,
-      externalSkipped,
       wouldRefuse,
       durationMs: Math.round(performance.now() - started),
+      // Not Axiom fields: the dataset is at its field limit (no-new-axiom-field.test.ts).
+      payload: { literal, argumentRefs, stepRefs, tooLarge, externalError, externalSkipped },
     });
   } catch (e) {
     logToAxiom({
-      ...base,
+      name,
       type: 'error',
+      appBlockId,
+      stepTypes,
       message: (e as Error).message,
       durationMs: Math.round(performance.now() - started),
+      payload: { literal, argumentRefs, stepRefs, tooLarge },
     });
   }
 }

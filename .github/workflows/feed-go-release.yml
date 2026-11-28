@@ -1,0 +1,161 @@
+name: feed-go release binaries
+
+# Prebuilt feed-go binaries for local development. `pnpm dev` (scripts/dev-feed-go/launcher.mjs)
+# downloads the asset for the version pinned in apps/feed-go/package.json from the GitHub Release of
+# its `feed-go-v<x.y.z>` tag, verifies it against that release's SHA256SUMS, and runs it next to
+# `next dev`. The deployed image is built elsewhere (the tag webhook), not here.
+#
+# - Tag push `feed-go-v*` (scripts/release-app.mjs cuts it): build linux/darwin x amd64/arm64,
+#   static (CGO off), the version embedded (`feed-go --version`), and publish them plus SHA256SUMS
+#   as that tag's release.
+# - workflow_dispatch with an existing tag: the same, for a tag cut before this workflow existed.
+# - Release assets are CREATE-ONLY: a tag that already has a release fails the publish job and
+#   nothing is uploaded or replaced (a published binary's bytes never change under its checksum).
+# - pull_request touching this file or the launcher: build only, never publish, so a broken build
+#   matrix is caught before the next tag. Off every other PR's path.
+on:
+  push:
+    tags: ['feed-go-v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to publish binaries for, e.g. feed-go-v0.0.28'
+        required: true
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - '.github/workflows/feed-go-release.yml'
+      - 'scripts/dev-feed-go/**'
+      - 'apps/feed-go/cmd/feed-go/version*.go'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: feed-go-release-${{ github.event_name == 'pull_request' && github.ref || inputs.tag || github.ref_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  binaries:
+    name: feed-go release binaries
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    env:
+      # Passed through env, never interpolated into a script: a dispatch input is user text.
+      INPUT_TAG: ${{ inputs.tag }}
+      EVENT: ${{ github.event_name }}
+      REF_NAME: ${{ github.ref_name }}
+    steps:
+      - name: Resolve tag and version
+        id: tag
+        run: |
+          set -euo pipefail
+          case "$EVENT" in
+            workflow_dispatch) TAG="$INPUT_TAG" ;;
+            push) TAG="$REF_NAME" ;;
+            *) TAG="" ;;
+          esac
+          if [ -n "$TAG" ]; then
+            if ! [[ "$TAG" =~ ^feed-go-v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+              echo "::error::'$TAG' is not a feed-go-v<x.y.z> tag"
+              exit 1
+            fi
+            echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+            echo "version=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+            echo "ref=refs/tags/$TAG" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=0.0.0-pr" >> "$GITHUB_OUTPUT"
+            echo "ref=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.tag.outputs.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: apps/feed-go/go.mod
+          # No Go cache here at all. setup-go's own saves on every ref, and the repo's
+          # restore/save actions (.github/actions/go-cache-*) cannot be used: this job builds a
+          # checkout of the release TAG, and a tag cut before those actions existed lacks them.
+          # A release build is rare enough that a cold module download costs nothing that matters.
+          cache: false
+
+      - name: Build
+        working-directory: apps/feed-go
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+            goos="${target%/*}"
+            goarch="${target#*/}"
+            CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build -trimpath \
+              -ldflags "-s -w -X main.version=${VERSION}" \
+              -o "dist/feed-go-v${VERSION}-${goos}-${goarch}" ./cmd/feed-go
+          done
+          (cd dist && sha256sum feed-go-v* > SHA256SUMS && cat SHA256SUMS)
+
+      - name: Smoke-test the linux/amd64 binary
+        working-directory: apps/feed-go
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          bin="dist/feed-go-v${VERSION}-linux-amd64"
+          file "$bin" | tee /dev/stderr | grep -q 'statically linked'
+          if grep -q 'func printVersion' cmd/feed-go/version.go 2>/dev/null; then
+            got="$("$bin" --version)"
+            if [ "$got" != "$VERSION" ]; then
+              echo "::error::$bin --version printed '$got', want '$VERSION'"
+              exit 1
+            fi
+          else
+            echo "::notice::this tag predates 'feed-go --version'; version not embedded"
+          fi
+          (cd dist && sha256sum -c SHA256SUMS)
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: feed-go-binaries
+          path: apps/feed-go/dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  # The only job with write access to contents (releases); it never runs on a pull_request.
+  publish:
+    name: feed-go publish release
+    needs: binaries
+    if: needs.binaries.outputs.tag != '' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: feed-go-binaries
+          path: dist
+
+      - name: Publish the release (create-only)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.binaries.outputs.tag }}
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum -c SHA256SUMS)
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "::error::$TAG already has a release; its assets are create-only and are not replaced"
+            exit 1
+          fi
+          gh release create "$TAG" dist/* --verify-tag --latest=false --title "$TAG" \
+            --notes "Prebuilt feed-go binaries for local development (\`pnpm dev\` fetches them; see apps/feed-go/README.md). The deployed image is built separately."

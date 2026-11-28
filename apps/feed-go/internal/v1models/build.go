@@ -5,8 +5,10 @@
 // Both endpoints build their bodies from getModelsWithVersions (src/server/services/model.service.ts)
 // over getModelsRaw: one model statement on the replica, then the per-id caches the Node path reads
 // (model data, model tags, version files, showcase images, paid access, creators, metric privacy) and
-// a few small replica reads. The caches are read, never written; a miss Node would fill from the
-// database falls back, except where the miss path is a plain read ported here.
+// a few small replica reads. A miss Node would fill from the database falls back, except where its
+// miss path is ported here (DESIGN.md §16.7, Deps.misses); of those, the model data, model tags and
+// version files are written back on a public request, as Node writes them, where
+// FEED_GO_CACHE_WRITEBACK lists them. Nothing else is written.
 package v1models
 
 import (
@@ -16,6 +18,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
+	"github.com/civitai/civitai/apps/feed-go/internal/clock"
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 	"github.com/civitai/civitai/apps/feed-go/internal/safe"
@@ -43,15 +46,85 @@ type Config struct {
 	// request.
 	BaseModelFeedMetrics bool
 	// ComputeMisses is FEED_GO_COMPUTE_MISSES: a tag-name cache miss is answered with tagCache's own
-	// lookup on the replica instead of falling back (the other caches' misses still fall back).
+	// lookup on the replica instead of falling back; the other v1 misses are computed only under it,
+	// a public request's each behind its own switch (Deps.misses).
 	ComputeMisses bool
 	// ResponseCacheTTL is the `[id]` origin cache's logical TTL (CacheTTL.sm where the Node app runs
 	// with IS_DATAPACKET); 0 = Node does not read it.
 	ResponseCacheTTL time.Duration
 	// Production is isProd: `nextPage`'s origin is https://<host> (else http://localhost:3000).
 	Production bool
+	// RedHosts are the red domain's hosts, lowercased (RedHosts): a request on one is red-capable,
+	// which lists a Training Data file whatever its rating (trainingDataServableOnHost).
+	RedHosts []string
 	// FetchConcurrency bounds the parallel reads (0 = DefaultFetchConcurrency).
 	FetchConcurrency int
+	// ServeQuery is FEED_GO_V1_MODELS_SERVE_QUERY (default off): a public list request with a text
+	// `query` is answered here (with Deps.Search) instead of falling back (`v1-models-query`).
+	ServeQuery bool
+	// ServeDataMiss is FEED_GO_V1_MODELS_SERVE_DATA_MISS (default off): on a public request (either
+	// route), a model-data cache miss is computed with the cache's own lookup (it needs
+	// FEED_GO_COMPUTE_MISSES: Sources' Compute) instead of falling back (`v1-models-data-miss`), and
+	// written back where FEED_GO_CACHE_WRITEBACK lists model-data. A shadow sample computes it
+	// whenever ComputeMisses is on, this switch or not (missServe).
+	ServeDataMiss bool
+	// ServeTagsMiss is FEED_GO_V1_MODELS_SERVE_TAGS_MISS (default off): on a public request, a
+	// model-tags miss is computed with modelTagCache's lookup (written back where
+	// FEED_GO_CACHE_WRITEBACK lists model-tags) instead of falling back (`v1-models-tags-miss`).
+	ServeTagsMiss bool
+	// ServeTagNameStale is FEED_GO_V1_MODELS_SERVE_TAG_NAME_STALE (default off): on a public request,
+	// a stale tag-name entry is named by tagCache's lookup on the replica instead of falling back
+	// (`v1-models-tag-name-stale`); nothing is written.
+	ServeTagNameStale bool
+	// ServeShowcaseMiss is FEED_GO_V1_MODELS_SERVE_SHOWCASE_MISS (default off): on a public request, a
+	// version-showcase miss Node's fetch would look up (a debounce marker; a lag-flagged version, on
+	// the primary) is decided here instead of falling back (`v1-models-showcase-miss`).
+	ServeShowcaseMiss bool
+	// ServeFilesMiss is FEED_GO_V1_MODELS_SERVE_FILES_MISS (default off): on a public request, a
+	// version-files miss is computed and a stale entry revalidated as Node's fetch does
+	// (hydrate.Sources.ComputeVersionFiles) instead of falling back (`v1-models-files-miss`,
+	// `v1-models-files-stale`).
+	ServeFilesMiss bool
+	// ServeFilename is FEED_GO_V1_MODELS_SERVE_FILENAME (default off): on a public request, a file
+	// name over a non-ASCII model or version name is computed with the Node engine's tables
+	// (jscanon.json) instead of falling back (`v1-models-filename`).
+	ServeFilename bool
+	// AnswerNotFound is FEED_GO_V1_MODELS_ANSWER_NOT_FOUND (default off): a public `[id]` request whose
+	// model statement returns no row, with the model's lag flag read clean, is answered with Node's
+	// 404 (Answer.Absent) instead of falling back (`v1-models-not-found`). Any other not-found answer
+	// still falls back.
+	AnswerNotFound bool
+}
+
+// missServe is which cache misses one computation answers instead of falling back (Deps.misses).
+type missServe struct {
+	// data: a model-data miss (computeDataMisses); tags: a model-tags miss; tagNameStale: a stale
+	// tag-name entry; showcase: a version-showcase miss Node's fetch would look up
+	// (hydrate.Sources.ShowcaseStateReadThrough).
+	data, tags, tagNameStale, showcase bool
+	// files: a version-files miss or stale entry (hydrate.Sources.ComputeVersionFiles); filename: a
+	// file name over non-ASCII text (nameModel.unicode), which reads nothing.
+	files, filename bool
+	// write: a computed entry Node would write back is written, for each cache FEED_GO_CACHE_WRITEBACK
+	// lists. A shadow sample writes nothing: Node answered it, and wrote its own entries.
+	write bool
+}
+
+// misses is the request's missServe: on a public request each miss its switch turns on (each cache
+// miss needs the miss computation, Config.ComputeMisses; the file name reads nothing); in a shadow
+// sample every cache miss whenever the miss computation is on, and the file name always, so the
+// shadow compares a computed answer before it is served.
+func (d *Deps) misses(serving bool) missServe {
+	c := d.Config.ComputeMisses
+	if serving {
+		return missServe{
+			data: c && d.Config.ServeDataMiss, tags: c && d.Config.ServeTagsMiss,
+			tagNameStale: c && d.Config.ServeTagNameStale, showcase: c && d.Config.ServeShowcaseMiss,
+			files: c && d.Config.ServeFilesMiss, filename: d.Config.ServeFilename,
+			write: true,
+		}
+	}
+	return missServe{data: c, tags: c, tagNameStale: c, showcase: c, files: c, filename: true}
 }
 
 // Deps are what the port reads.
@@ -62,6 +135,11 @@ type Deps struct {
 	Gallery GallerySettingsReader
 	// Addons returns the browsing-settings addons (feed.AddonSource.Addons).
 	Addons func(context.Context) []browsing.Addon
+	// Blocked is the blocked browsing tag list (the list's `tag` filter); nil: a `tag` falls back.
+	Blocked *feed.BlockedTags
+	// Search is the models search index the Node app's text search reads (SEARCH_HOST); nil: a text
+	// `query` falls back (`v1-models-query`).
+	Search ModelSearcher
 	Config Config
 	Now    func() time.Time
 }
@@ -70,7 +148,7 @@ func (d *Deps) now() time.Time {
 	if d.Now != nil {
 		return d.Now()
 	}
-	return time.Now()
+	return clock.Now()
 }
 
 func (d *Deps) limit() int {
@@ -132,6 +210,9 @@ type item struct {
 type withVersions struct {
 	items      []*item
 	nextCursor string
+	// statementRows is how many rows the model statement returned, before any was dropped (no model
+	// data, no version left, an excluded tag): 0 means the statement itself found no model.
+	statementRows int
 }
 
 // resolvedAddons is loadBlockedBrowsingContext's resolution: the addons at `onlySelectableLevels(level
@@ -183,11 +264,11 @@ func (d *Deps) getModelsWithVersions(ctx context.Context, in withVersionsInput) 
 		}
 	}
 
-	raws, nextCursor, err := d.getModelsRaw(ctx, &in.raw, in.hidePrivate)
+	raws, nextCursor, statementRows, err := d.getModelsRaw(ctx, &in.raw, in.hidePrivate)
 	if err != nil {
 		return nil, err
 	}
-	out := &withVersions{nextCursor: nextCursor}
+	out := &withVersions{nextCursor: nextCursor, statementRows: statementRows}
 	if len(raws) == 0 {
 		return out, nil
 	}
@@ -202,21 +283,23 @@ func (d *Deps) getModelsWithVersions(ctx context.Context, in withVersionsInput) 
 }
 
 // getModelsRaw is the model statement and its transform: each row with its model data (versions
-// filtered as getModelsRaw filters them), creator and paid-access gate.
-func (d *Deps) getModelsRaw(ctx context.Context, in *RawInput, hidePrivate bool) ([]*rawItem, string, error) {
+// filtered as getModelsRaw filters them), creator and paid-access gate. statementRows is how many
+// rows the statement returned (the lookahead row included), before the transform dropped any.
+func (d *Deps) getModelsRaw(ctx context.Context, in *RawInput, hidePrivate bool) ([]*rawItem, string, int, error) {
 	text, args, err := RawQuery(in)
 	if err != nil {
-		return nil, "", err
+		return nil, "", 0, err
 	}
 	maps, err := queryRows(ctx, d.DB, text, args...)
 	if err != nil {
-		return nil, "", err
+		return nil, "", 0, err
 	}
+	statementRows := len(maps)
 	rows := make([]ModelRow, 0, len(maps))
 	for _, m := range maps {
 		r, err := modelRowFrom(m)
 		if err != nil {
-			return nil, "", err
+			return nil, "", 0, err
 		}
 		rows = append(rows, r)
 	}
@@ -229,7 +312,7 @@ func (d *Deps) getModelsRaw(ctx context.Context, in *RawInput, hidePrivate bool)
 		rows = rows[:len(rows)-1]
 	}
 	if len(rows) == 0 {
-		return nil, nextCursor, nil
+		return nil, nextCursor, statementRows, nil
 	}
 	modelIDs := make([]int, len(rows))
 	userIDs := make([]int, len(rows))
@@ -246,10 +329,13 @@ func (d *Deps) getModelsRaw(ctx context.Context, in *RawInput, hidePrivate bool)
 	)
 	g := d.group(ctx)
 	g.Go(func(ctx context.Context) (err error) { users, pictures, err = d.Sources.Users(ctx, userIDs); return })
-	g.Go(func(ctx context.Context) (err error) { data, err = d.modelData(ctx, modelIDs); return })
+	g.Go(func(ctx context.Context) (err error) {
+		data, err = d.modelData(ctx, modelIDs, in.misses)
+		return
+	})
 	g.Go(func(ctx context.Context) (err error) { gated, err = d.paidAccessGates(ctx, modelIDs); return })
 	if err := g.Wait(); err != nil {
-		return nil, "", err
+		return nil, "", 0, err
 	}
 
 	showSfwFace := showsSfwFace(in.BrowsingLevel)
@@ -329,7 +415,7 @@ func (d *Deps) getModelsRaw(ctx context.Context, in *RawInput, hidePrivate bool)
 			sfwFace: showSfwFace,
 		})
 	}
-	return items, nextCursor, nil
+	return items, nextCursor, statementRows, nil
 }
 
 // showsSfwFace is showsSfwFace: a level with no mature bits.

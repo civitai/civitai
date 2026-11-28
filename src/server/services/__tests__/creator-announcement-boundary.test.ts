@@ -1080,3 +1080,183 @@ describe('link buttons: up to three, more than one for members only', () => {
     });
   });
 });
+
+// A mature cover made with a base model that restricts mature images is its uploader's alone: a
+// stranger gets the announcement without it, and the row's rating drops with the cover.
+describe('a model-restricted mature cover', () => {
+  const STRANGER = 999;
+  const R = 4;
+  const row = (id: number, cover: { nsfwLevel: number; modelRestricted: boolean }) => ({
+    id,
+    metadata: {},
+    cover: { id: 500 + id, url: `cover-${id}`, userId: AUTHOR, ...cover },
+    user: { id: AUTHOR, username: 'author' },
+  });
+  const RESTRICTED = 1;
+  const UNRESTRICTED = 2;
+  const RESTRICTED_SFW = 3;
+
+  beforeEach(() => {
+    dbMock.dbRead.announcement.findMany.mockResolvedValue([
+      row(RESTRICTED, { nsfwLevel: R, modelRestricted: true }),
+      row(UNRESTRICTED, { nsfwLevel: R, modelRestricted: false }),
+      row(RESTRICTED_SFW, { nsfwLevel: 1, modelRestricted: true }),
+    ] as never);
+  });
+
+  const shape = (rows: { id: number; cover: { url: string } | null; nsfwLevel: number }[]) =>
+    rows.map(({ id, cover, nsfwLevel }) => ({ id, cover: cover?.url ?? null, nsfwLevel }));
+
+  it('is dropped from the profile read for a stranger; the controls keep theirs', async () => {
+    const rows = await getCreatorAnnouncements({ userId: AUTHOR, viewerId: STRANGER });
+
+    expect(shape(rows)).toEqual([
+      { id: RESTRICTED, cover: null, nsfwLevel: 0 },
+      { id: UNRESTRICTED, cover: 'cover-2', nsfwLevel: R },
+      { id: RESTRICTED_SFW, cover: 'cover-3', nsfwLevel: 1 },
+    ]);
+  });
+
+  it('is dropped from a signed-out profile read', async () => {
+    const rows = await getCreatorAnnouncements({ userId: AUTHOR });
+
+    expect(shape(rows)[0]).toEqual({ id: RESTRICTED, cover: null, nsfwLevel: 0 });
+  });
+
+  it('is kept for its uploader', async () => {
+    const rows = await getCreatorAnnouncements({ userId: AUTHOR, viewerId: AUTHOR });
+
+    expect(shape(rows)[0]).toEqual({ id: RESTRICTED, cover: 'cover-1', nsfwLevel: R });
+  });
+
+  it('is dropped from a follower’s feed; the controls keep theirs', async () => {
+    const { items } = await getFollowedAnnouncements({ userId: STRANGER });
+
+    expect(shape(items)).toEqual([
+      { id: RESTRICTED, cover: null, nsfwLevel: 0 },
+      { id: UNRESTRICTED, cover: 'cover-2', nsfwLevel: R },
+      { id: RESTRICTED_SFW, cover: 'cover-3', nsfwLevel: 1 },
+    ]);
+  });
+});
+
+// civitai/civitai#9809
+describe('announcement covers follow the shared blocked-image rule', () => {
+  const STRANGER = 999;
+  const BLOCKED = 32;
+  const XXX = 16;
+  const row = (id: number, nsfwLevel: number) => ({
+    id,
+    metadata: {},
+    content: 'kept',
+    cover: { id: 500 + id, url: `cover-${id}`, userId: AUTHOR, nsfwLevel, modelRestricted: false },
+    user: { id: AUTHOR, username: 'author' },
+  });
+  const AT_BLOCKED = 1;
+  const AT_XXX = 2;
+
+  beforeEach(() => {
+    dbMock.dbRead.announcement.findMany.mockResolvedValue([
+      row(AT_BLOCKED, BLOCKED),
+      row(AT_XXX, XXX),
+    ] as never);
+  });
+
+  const shape = (
+    rows: { id: number; content?: string; cover: { url: string } | null; nsfwLevel: number }[]
+  ) =>
+    rows.map(({ id, content, cover, nsfwLevel }) => ({
+      id,
+      content,
+      cover: cover?.url ?? null,
+      nsfwLevel,
+    }));
+
+  it('leaves the cover out of the profile read for another viewer and keeps the text', async () => {
+    expect(shape(await getCreatorAnnouncements({ userId: AUTHOR, viewerId: STRANGER }))).toEqual([
+      { id: AT_BLOCKED, content: 'kept', cover: null, nsfwLevel: 0 },
+      { id: AT_XXX, content: 'kept', cover: 'cover-2', nsfwLevel: XXX },
+    ]);
+  });
+
+  it('leaves the cover out of a signed-out profile read', async () => {
+    expect(shape(await getCreatorAnnouncements({ userId: AUTHOR }))[0]).toEqual({
+      id: AT_BLOCKED,
+      content: 'kept',
+      cover: null,
+      nsfwLevel: 0,
+    });
+  });
+
+  it('keeps the cover for its author', async () => {
+    expect(shape(await getCreatorAnnouncements({ userId: AUTHOR, viewerId: AUTHOR }))[0]).toEqual({
+      id: AT_BLOCKED,
+      content: 'kept',
+      cover: 'cover-1',
+      nsfwLevel: BLOCKED,
+    });
+  });
+
+  it('leaves the cover out of a follower\u2019s feed', async () => {
+    const { items } = await getFollowedAnnouncements({ userId: STRANGER });
+    expect(shape(items)).toEqual([
+      { id: AT_BLOCKED, content: 'kept', cover: null, nsfwLevel: 0 },
+      { id: AT_XXX, content: 'kept', cover: 'cover-2', nsfwLevel: XXX },
+    ]);
+  });
+});
+
+// A cover is shown to others only when the shared image rule allows it; its uploader always sees it.
+describe('announcement cover fields and scan state', () => {
+  const STRANGER = 999;
+  const SCANNED = { ingestion: 'Scanned', nsfwLevel: 1, blockedFor: null };
+  const row = (
+    id: number,
+    cover: { ingestion: string; nsfwLevel: number; blockedFor: string | null }
+  ) => ({
+    id,
+    metadata: {},
+    cover: { id: 500 + id, url: `cover-${id}`, userId: AUTHOR, modelRestricted: false, ...cover },
+    user: { id: AUTHOR, username: 'author' },
+  });
+  const CONTROL = 1;
+  const LEVEL_32 = 2;
+  const INGESTION = 3;
+  const REASON = 4;
+
+  beforeEach(() => {
+    dbMock.dbRead.announcement.findMany.mockResolvedValue([
+      row(CONTROL, SCANNED),
+      row(LEVEL_32, { ...SCANNED, nsfwLevel: 32 }),
+      row(INGESTION, { ...SCANNED, ingestion: 'Blocked' }),
+      row(REASON, { ...SCANNED, ingestion: 'Error', blockedFor: 'moderated' }),
+    ] as never);
+  });
+
+  const covers = (rows: { id: number; cover: { url: string } | null; nsfwLevel: number }[]) =>
+    rows.map(({ id, cover, nsfwLevel }) => ({ id, cover: cover?.url ?? null, nsfwLevel }));
+
+  it('is left out for another viewer on the profile read and the feed; the control keeps its cover', async () => {
+    const expected = [
+      { id: CONTROL, cover: 'cover-1', nsfwLevel: 1 },
+      { id: LEVEL_32, cover: null, nsfwLevel: 0 },
+      { id: INGESTION, cover: null, nsfwLevel: 0 },
+      { id: REASON, cover: null, nsfwLevel: 0 },
+    ];
+    expect(covers(await getCreatorAnnouncements({ userId: AUTHOR, viewerId: STRANGER }))).toEqual(
+      expected
+    );
+    expect(covers(await getCreatorAnnouncements({ userId: AUTHOR }))).toEqual(expected);
+    expect(covers((await getFollowedAnnouncements({ userId: STRANGER })).items)).toEqual(expected);
+  });
+
+  it('is kept for its uploader at a Blocked rating, not under a block, without the fields only the check reads', async () => {
+    const rows = await getCreatorAnnouncements({ userId: AUTHOR, viewerId: AUTHOR });
+
+    expect(covers(rows).map((r) => r.cover)).toEqual(['cover-1', 'cover-2', null, null]);
+    for (const { cover } of rows.filter((r) => r.cover)) {
+      expect(cover).not.toHaveProperty('ingestion');
+      expect(cover).not.toHaveProperty('blockedFor');
+    }
+  });
+});

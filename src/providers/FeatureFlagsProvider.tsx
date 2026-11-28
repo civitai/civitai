@@ -2,11 +2,22 @@ import { useSession } from '~/providers/SessionProvider';
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { type FeatureAccess } from '~/server/services/feature-flags.service';
 import { setTrpcBatchingEnabled, trpc } from '~/utils/trpc';
+import { setFeedEventsEnabled } from '~/utils/feed-events';
+import { impressionTelemetryOn } from '~/components/TrackView/impressionBuffer';
 import {
   setFeedGoTransportEnabled,
+  setFeedGoTransportInfiniteEnabled,
   setFeedGoTransportModelGetAllEnabled,
+  setFeedGoTransportSignedOutEnabled,
+  setFeedGoTransportSignedOutInfiniteEnabled,
+  setFeedGoTransportSignedOutModelGetAllEnabled,
 } from '~/utils/trpc-go-transport';
 import { setTrpcUnifiedBatchWindowEnabled } from '~/utils/trpc-batch-window';
+import {
+  setClientShadowCompareEnabled,
+  setClientShadowCompareSignedOutEnabled,
+} from '~/utils/trpc-shadow-compare';
+import { ensureSignedOutRolloutBucket } from '~/shared/utils/signed-out-rollout-bucket';
 import { setSiteSearchProxyEnabled } from '~/components/Search/site-search-transport';
 import { setSemanticArticleSearchEnabled } from '~/components/Search/semanticArticleSearchFlag';
 import { setSemanticComicSearchEnabled } from '~/components/Search/semanticComicSearchFlag';
@@ -108,15 +119,26 @@ export const FeatureFlagsProvider = ({
   );
 
   // Bridge `siteSearchProxy` to the module-scope search clients, and `feedGoTransport` /
-  // `feedGoTransportModelGetAll` to the tRPC link. Written while rendering, so the searches
-  // InstantSearch starts from the first commit's effects already go the right way. Browser only: on
-  // the server this module flag would be shared across concurrent requests.
+  // `feedGoTransportModelGetAll` / `feedGoTransportInfinite` / `clientShadowCompare` to the tRPC
+  // link. Written while rendering, so the searches InstantSearch starts from the first commit's
+  // effects already go the right way. Browser only: on the server this module flag would be shared
+  // across concurrent requests.
   if (typeof window !== 'undefined') {
     setSiteSearchProxyEnabled(!!featureFlags.siteSearchProxy);
     setSemanticArticleSearchEnabled(!!featureFlags.semanticArticleSearch);
     setSemanticComicSearchEnabled(!!featureFlags.semanticComicSearch);
     setFeedGoTransportEnabled(!!featureFlags.feedGoTransport);
     setFeedGoTransportModelGetAllEnabled(!!featureFlags.feedGoTransportModelGetAll);
+    setFeedGoTransportInfiniteEnabled(!!featureFlags.feedGoTransportInfinite);
+    setClientShadowCompareEnabled(!!featureFlags.clientShadowCompare);
+    // The signed-out twins: only a browser rendered as signed out reads them (`~/utils/trpc`).
+    setFeedGoTransportSignedOutEnabled(!!featureFlags.feedGoTransportSignedOut);
+    setFeedGoTransportSignedOutModelGetAllEnabled(
+      !!featureFlags.feedGoTransportSignedOutModelGetAll
+    );
+    setFeedGoTransportSignedOutInfiniteEnabled(!!featureFlags.feedGoTransportSignedOutInfinite);
+    setClientShadowCompareSignedOutEnabled(!!featureFlags.clientShadowCompareSignedOut);
+    setFeedEventsEnabled(impressionTelemetryOn(featureFlags));
   }
 
   // Bridge `trpcBatching` to the module-scope tRPC link (see `shouldBatch` in
@@ -141,6 +163,12 @@ export const FeatureFlagsProvider = ({
   useEffect(() => {
     setTrpcUnifiedBatchWindowEnabled(!!featureFlags.trpcUnifiedBatchWindow);
   }, [featureFlags.trpcUnifiedBatchWindow]);
+  // A signed-out visitor's rollout bucket (`~/shared/utils/signed-out-rollout-bucket`): written once,
+  // by the browser, so the signed-out per-visitor flags can be decided from the next page load on.
+  const signedIn = !!session.data;
+  useEffect(() => {
+    if (!signedIn) ensureSignedOutRolloutBucket();
+  }, [signedIn]);
 
   return (
     <FeatureFlagsCtx.Provider value={featureFlags}>

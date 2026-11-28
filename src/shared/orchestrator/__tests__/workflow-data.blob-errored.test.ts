@@ -22,7 +22,6 @@ const blob = ({ status, available }: { status?: WorkflowStatus; available: boole
       step: { status, params: {}, metadata: {}, workflow: { metadata: {} } } as unknown as StepData,
       index: 0,
       domain: { green: false } as any,
-      nsfwEnabled: true,
       allowMatureContent: true,
     }
   );

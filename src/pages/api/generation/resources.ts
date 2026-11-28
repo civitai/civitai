@@ -5,6 +5,7 @@ import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
 import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
 import z from 'zod';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const schema = z.object({
   ids: z
@@ -15,7 +16,13 @@ const schema = z.object({
 export default PublicEndpoint(
   async function handler(req, res) {
     try {
-      const session = await getApiAuthSession({ req, res }, { whenBanned: 'anonymous' });
+      const session = await getApiAuthSession(
+        { req, res },
+        {
+          whenBanned: 'anonymous',
+          scope: { anyOf: [TokenScope.AIServicesRead, TokenScope.ModelsRead] },
+        }
+      );
 
       // 🔴 civitai#3845 TIER 1 — see `generation/data.ts` for the full reasoning.
       // Same shape of bug and same fix: the catch answered EVERY failure with

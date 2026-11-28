@@ -12,7 +12,7 @@ import {
   MIGRATION_SCHEMA_MAJOR_UP,
   type Harness,
 } from './doc-store.harness';
-import { BOARD, ctx, freshApp, NS_PROD, PREFS, TALLIES } from './doc-store.functional';
+import { BOARD, ctx, freshApp, NS_PROD, PREFS } from './doc-store.functional';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -93,16 +93,6 @@ describe('with the schema_major column applied', () => {
     expect(await stamps(h, app)).toEqual({ [doc.key]: 13 });
   });
 
-  it('🔴 the counter document a first increment creates is stamped; a later increment does not restamp it', async () => {
-    const app = freshApp('MAJORTALLY');
-    const c = ctx(app, NS_PROD, ALICE);
-    await store.increment(c, at(TALLIES, 17), 'song-1', 'plays');
-    expect(await stamps(h, app)).toEqual({ 'song-1': 17 });
-    // The body was not written again, so the major it was written under stands.
-    expect(await store.increment(c, at(TALLIES, 19), 'song-1', 'plays')).toEqual({ value: 2 });
-    expect(await stamps(h, app)).toEqual({ 'song-1': 17 });
-  });
-
   it('🔴 a schema migration stamps the documents it rewrites, and only those', async () => {
     const app = freshApp('MAJORMIGRATE');
     const c = ctx(app, NS_PROD, ALICE);
@@ -133,20 +123,23 @@ describe('with the schema_major column applied', () => {
   it('invariant guard: reads are unchanged — the stored body and the record shape, no major in either', async () => {
     const app = freshApp('MAJORREAD');
     const c = ctx(app, NS_PROD, ALICE);
-    const written = await store.put(c, at(PREFS, 37), 'k1', { theme: 'moss', n: 5 });
+    // A write also answers where it sits (`seq`) and which row it is (`recordId`); a read does not.
+    const { seq, recordId, ...written } = await store.put(c, at(PREFS, 37), 'k1', {
+      theme: 'moss',
+      n: 5,
+    });
+    expect(seq).toBe(1);
+    expect(typeof recordId).toBe('string');
     const read = await store.get(c, PREFS, 'k1');
     expect(read).toEqual(written);
     expect(read?.data).toEqual({ theme: 'moss', n: 5 });
     expect(Object.keys(read ?? {}).sort()).toEqual([
       'author',
-      'counters',
       'createdAt',
       'data',
       'key',
-      'marks',
       'updatedAt',
       'version',
-      'viewer',
     ]);
     const [many] = await store.getMany(c, PREFS, ['k1']);
     expect(many).toEqual(written);
@@ -205,7 +198,6 @@ describe('without the schema_major column', () => {
     expect(updated.version).toBe(2);
     const created = await store.create(ctx(app, NS_PROD, BOB), at(BOARD, 47), { title: 'hi' });
     expect(created.data).toEqual({ title: 'hi' });
-    expect(await store.increment(c, at(TALLIES, 53), 'song-1', 'plays')).toEqual({ value: 1 });
     const migrated = await createDocStoreMaintenance({ db: h.db }).migrateDocuments(
       app,
       at(PREFS, 59),

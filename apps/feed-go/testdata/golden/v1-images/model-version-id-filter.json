@@ -177,7 +177,7 @@
       },
       "packed": "3gADp2ltYWdlSWTNH0WpcmVzb3VyY2Vzkd4AC6dpbWFnZUlkzR9Frm1vZGVsVmVyc2lvbklkzRdxqHN0cmVuZ3RowKhkZXRlY3RlZMOnbW9kZWxJZM0Tialtb2RlbE5hbWWxR29sZGVuIG1vZGVsIDUwMDGpbW9kZWxUeXBlqkNoZWNrcG9pbnSrdmVyc2lvbk5hbWWldjYwMDGpYmFzZU1vZGVsqFNEWEwgMS4wo3BvacKlbWlub3LCqGNhY2hlZEF01v9qL+gU"
     },
-    "packed:caches:profile-pictures:v3:1001": {
+    "packed:caches:profile-pictures:v4:1001": {
       "value": {
         "id": 8901,
         "name": null,
@@ -199,7 +199,7 @@
       },
       "packed": "3gAMomlkzSLFpG5hbWXAo3VybNkkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDA4OTAxqW5zZndMZXZlbAGkaGFzaLJVR09MREVOUFJPRklMRTg5MDGmdXNlcklkzQPpqWluZ2VzdGlvbqdTY2FubmVkpHR5cGWlaW1hZ2Wld2lkdGjNAgCmaGVpZ2h0zQIAqG1ldGFkYXRh3gACpXdpZHRozQIApmhlaWdodM0CAKhjYWNoZWRBdNb/ai/oFA=="
     },
-    "packed:caches:profile-pictures:v3:1002": {
+    "packed:caches:profile-pictures:v4:1002": {
       "value": {
         "userId": 1002,
         "notFound": true,
@@ -255,12 +255,13 @@
         "width": 640,
         "height": 360,
         "nsfwLevel": 1,
+        "blockMarked": false,
         "parentId": 8005,
         "cachedAt": {
           "$date": "2026-06-15T11:55:00.000Z"
         }
       },
-      "packed": "3gAHomlkzSLJo3VybNkkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDA4OTA1pXdpZHRozQKApmhlaWdodM0BaKluc2Z3TGV2ZWwBqHBhcmVudElkzR9FqGNhY2hlZEF01v9qL+gU"
+      "packed": "3gAIomlkzSLJo3VybNkkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDA4OTA1pXdpZHRozQKApmhlaWdodM0BaKluc2Z3TGV2ZWwBq2Jsb2NrTWFya2VkwqhwYXJlbnRJZM0fRahjYWNoZWRBdNb/ai/oFA=="
     },
     "model:gallery-settings:5001": {
       "raw": "{\"hiddenTags\":[],\"hiddenUsers\":[{\"id\":1009,\"username\":\"hidden_nine\"}],\"hiddenImages\":{\"6001\":[8099]},\"level\":31,\"pinnedPosts\":{},\"creatorHiddenUserIds\":[],\"sfwHeld\":false}"
@@ -355,6 +356,7 @@
         "minor": false,
         "poi": false,
         "acceptableMinor": false,
+        "restricted": false,
         "_resources": [
           {
             "modelVersionId": 6001,
@@ -412,6 +414,7 @@
         "minor": false,
         "poi": false,
         "acceptableMinor": false,
+        "restricted": false,
         "_resources": [
           {
             "modelVersionId": 6001,
@@ -465,6 +468,7 @@
         "minor": false,
         "poi": false,
         "acceptableMinor": false,
+        "restricted": false,
         "_resources": [
           {
             "modelVersionId": 6001,
@@ -519,6 +523,7 @@
         "minor": false,
         "poi": false,
         "acceptableMinor": false,
+        "restricted": false,
         "_resources": [
           {
             "modelVersionId": 6001,
@@ -565,6 +570,14 @@
       {
         "id": 6401,
         "modelId": 5005
+      },
+      {
+        "id": 6501,
+        "modelId": 5006
+      },
+      {
+        "id": 6701,
+        "modelId": 5007
       }
     ],
     "models": [
@@ -602,6 +615,22 @@
       },
       {
         "id": 5005,
+        "userId": 1002,
+        "mode": null,
+        "minor": false,
+        "sfwOnly": false,
+        "galleryLevel": null
+      },
+      {
+        "id": 5006,
+        "userId": 1001,
+        "mode": null,
+        "minor": false,
+        "sfwOnly": false,
+        "galleryLevel": null
+      },
+      {
+        "id": 5007,
         "userId": 1002,
         "mode": null,
         "minor": false,
@@ -704,6 +733,12 @@
       {
         "id": 1004,
         "username": "mod_four",
+        "image": null,
+        "deletedAt": null
+      },
+      {
+        "id": -1,
+        "username": "golden_system",
         "image": null,
         "deletedAt": null
       }

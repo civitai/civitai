@@ -1,0 +1,480 @@
+import type { DB } from '@civitai/db-schema/kysely';
+import { sql, type Kysely } from 'kysely';
+
+/**
+ * Rows fetched per round-trip by the cursor-paged scans that feed an evidence bundle.
+ *
+ * The number is a round-trip/latency trade, not a correctness one: any positive value produces
+ * the same rows in the same order. It only has to be small enough that one page of full `Image`
+ * rows is comfortably resident, which is the whole reason the scans are paged.
+ *
+ * Exported so the tests can size their fixtures to cross a real page boundary. A test that
+ * hardcodes 500 goes green-and-vacuous the day this number is raised — it would be measuring a
+ * single-page scan while claiming to measure a multi-page one.
+ */
+export const ARCHIVE_SCAN_PAGE_SIZE = 500;
+
+/**
+ * Keyset-pages a query over an ascending integer primary key, yielding one page at a time.
+ *
+ * Keyset rather than `skip`/`offset` because offset paging over a large table both degrades
+ * quadratically and can skip or duplicate rows if the underlying set shifts between pages. With
+ * `id > cursor ORDER BY id ASC` every row appears exactly once, and the pages concatenate to
+ * exactly the row set a single unpaged query with the same filter would have returned.
+ *
+ * ⚠️ PRECONDITION: paging is only cheap where an index serves the caller's filter. For the
+ * user-content readers, see `userContentReaders`; for the base bundle, see its writer in
+ * csam.service-new.ts.
+ *
+ * Lazy: the first query is not issued until the generator is first pulled from. Callers depend on
+ * that.
+ */
+export async function* scanPagesById<T extends { id: number }>(
+  fetchPage: (args: { afterId: number | undefined; take: number }) => Promise<T[]>,
+  pageSize: number = ARCHIVE_SCAN_PAGE_SIZE
+): AsyncGenerator<T[], void, undefined> {
+  let afterId: number | undefined;
+  for (;;) {
+    const rows = await fetchPage({ afterId, take: pageSize });
+    if (!rows.length) return;
+    yield rows;
+    // A short page is the last page: there is no id greater than the one we just read.
+    if (rows.length < pageSize) return;
+    afterId = rows[rows.length - 1].id;
+  }
+}
+
+/** Flattens paged rows into a per-row async iterable. Also lazy. */
+export async function* flattenPages<T>(
+  pages: AsyncIterable<T[]>
+): AsyncGenerator<T, void, undefined> {
+  for await (const page of pages) for (const row of page) yield row;
+}
+
+type Db = Kysely<DB>;
+/**
+ * `incomplete` collects the passes that failed soft, and `authorDb` runs the slow author pass; see
+ * `chatMessages`.
+ */
+type Reader = (
+  db: Db,
+  userId: number,
+  pageSize?: number,
+  incomplete?: Map<string, string>,
+  authorDb?: Db
+) => AsyncIterable<unknown>;
+
+/**
+ * Text the reported user wrote, one reader per table, each selecting a fixed column list so a new
+ * column never reaches the archive unreviewed. `serviceOfferings` also carries the removal fields a
+ * moderator sets, which record why an offering's text was taken down. Rows are written as stored:
+ * nothing is recovered from any other store. A profile clear leaves nothing on the row, so `profile`
+ * names the hold decisions that cleared it in `blankedReasons`. A clear from the moderator endpoint
+ * leaves no database record, so an empty list does not prove the profile was never cleared.
+ *
+ * Index posture, read off the database rather than the Prisma schema: `Post`, `Article` and
+ * `BountyEntry` have `userId` indexes the schema does not declare; `Collection` and `ChatMember`
+ * have declared `userId` btree indexes, `Bounty` and `ResourceReview` hash indexes;
+ * `ServiceOffering` has `(sellerId, status)`, `ServiceDealReview` `(sellerId, publishedAt)` and none on
+ * `buyerId`. `PostText`, `Question` and `Answer` have none and
+ * are small. For `ChatMessage`, see `chatMessages`. Reads use the read pool `db`, except the
+ * `chatMessages` author pass and its edit reads, which use `authorDb` (see `authorPassPool`).
+ */
+export const userContentReaders: { name: string; rows: Reader }[] = [
+  {
+    name: 'posts',
+    rows: (db, userId, pageSize) =>
+      flattenPages(
+        scanPagesById(({ afterId, take }) => {
+          let q = db
+            .selectFrom('Post')
+            .select(['id', 'userId', 'title', 'detail', 'createdAt', 'updatedAt', 'publishedAt'])
+            .where('userId', '=', userId)
+            .orderBy('id', 'asc')
+            .limit(take);
+          if (afterId !== undefined) q = q.where('id', '>', afterId);
+          return q.execute();
+        }, pageSize)
+      ),
+  },
+  {
+    name: 'postTexts',
+    rows: (db, userId, pageSize) =>
+      flattenPages(
+        scanPagesById(({ afterId, take }) => {
+          let q = db
+            .selectFrom('PostText')
+            .select([
+              'id',
+              'postId',
+              'userId',
+              'index',
+              'content',
+              'csamHeld',
+              'createdAt',
+              'updatedAt',
+            ])
+            .where('userId', '=', userId)
+            .orderBy('id', 'asc')
+            .limit(take);
+          if (afterId !== undefined) q = q.where('id', '>', afterId);
+          return q.execute();
+        }, pageSize)
+      ),
+  },
+  {
+    name: 'articles',
+    rows: (db, userId, pageSize) =>
+      flattenPages(
+        scanPagesById(({ afterId, take }) => {
+          let q = db
+            .selectFrom('Article')
+            .select(['id', 'userId', 'title', 'content', 'createdAt', 'updatedAt', 'publishedAt'])
+            .where('userId', '=', userId)
+            .orderBy('id', 'asc')
+            .limit(take);
+          if (afterId !== undefined) q = q.where('id', '>', afterId);
+          return q.execute();
+        }, pageSize)
+      ),
+  },
+  {
+    name: 'chatMessages',
+    rows: (db, userId, pageSize, incomplete, authorDb) =>
+      chatMessages(db, userId, pageSize, incomplete, authorDb),
+  },
+  {
+    name: 'profile',
+    rows: async function* (db, userId) {
+      const [profiles, decisions] = await Promise.all([
+        db
+          .selectFrom('UserProfile')
+          .select([
+            'userId',
+            'bio',
+            'message',
+            'messageAddedAt',
+            'sfwBio',
+            'sfwMessage',
+            'location',
+            'about',
+          ])
+          .where('userId', '=', userId)
+          .execute(),
+        // Every decision but a dismissal confirms the hold and clears the profile's text fields.
+        db
+          .selectFrom('TextScanHold')
+          .select(['id', 'decidedAt', sql<string | null>`"meta"->>'decision'`.as('decision')])
+          .where('label', '=', 'csam')
+          .where('entityType', '=', 'UserProfile')
+          .where('entityId', '=', userId)
+          .where('status', '=', 'Confirmed')
+          .orderBy('id', 'asc')
+          .execute(),
+      ]);
+      const blankedReasons = decisions.map(
+        ({ id, decidedAt, decision }) =>
+          `blanked by decision ${decision ?? 'unknown'} on hold ${id} at ${
+            decidedAt?.toISOString() ?? 'an unknown time'
+          }`
+      );
+      for (const profile of profiles) yield { ...profile, blankedReasons };
+    },
+  },
+  {
+    name: 'resourceReviews',
+    rows: (db, userId, pageSize) =>
+      flattenPages(
+        scanPagesById(({ afterId, take }) => {
+          let q = db
+            .selectFrom('ResourceReview')
+            .select(['id', 'userId', 'modelId', 'modelVersionId', 'details', 'createdAt'])
+            .where('userId', '=', userId)
+            .orderBy('id', 'asc')
+            .limit(take);
+          if (afterId !== undefined) q = q.where('id', '>', afterId);
+          return q.execute();
+        }, pageSize)
+      ),
+  },
+  {
+    name: 'collections',
+    rows: (db, userId, pageSize) =>
+      flattenPages(
+        scanPagesById(({ afterId, take }) => {
+          let q = db
+            .selectFrom('Collection')
+            .select(['id', 'userId', 'name', 'description', 'createdAt'])
+            .where('userId', '=', userId)
+            .orderBy('id', 'asc')
+            .limit(take);
+          if (afterId !== undefined) q = q.where('id', '>', afterId);
+          return q.execute();
+        }, pageSize)
+      ),
+  },
+  {
+    name: 'bounties',
+    rows: (db, userId, pageSize) =>
+      flattenPages(
+        scanPagesById(({ afterId, take }) => {
+          let q = db
+            .selectFrom('Bounty')
+            .select(['id', 'userId', 'name', 'description', 'details', 'createdAt'])
+            .where('userId', '=', userId)
+            .orderBy('id', 'asc')
+            .limit(take);
+          if (afterId !== undefined) q = q.where('id', '>', afterId);
+          return q.execute();
+        }, pageSize)
+      ),
+  },
+  {
+    name: 'bountyEntries',
+    rows: (db, userId, pageSize) =>
+      flattenPages(
+        scanPagesById(({ afterId, take }) => {
+          let q = db
+            .selectFrom('BountyEntry')
+            .select(['id', 'userId', 'bountyId', 'description', 'createdAt'])
+            .where('userId', '=', userId)
+            .orderBy('id', 'asc')
+            .limit(take);
+          if (afterId !== undefined) q = q.where('id', '>', afterId);
+          return q.execute();
+        }, pageSize)
+      ),
+  },
+  {
+    name: 'serviceOfferings',
+    rows: (db, userId, pageSize) =>
+      flattenPages(
+        scanPagesById(({ afterId, take }) => {
+          let q = db
+            .selectFrom('ServiceOffering')
+            .select([
+              'id',
+              'sellerId',
+              'title',
+              'description',
+              'removedReason',
+              'removedDetails',
+              'removedAt',
+              'createdAt',
+            ])
+            .where('sellerId', '=', userId)
+            .orderBy('id', 'asc')
+            .limit(take);
+          if (afterId !== undefined) q = q.where('id', '>', afterId);
+          return q.execute();
+        }, pageSize)
+      ),
+  },
+  {
+    name: 'serviceDealReviews',
+    rows: (db, userId, pageSize) =>
+      flattenPages(
+        scanPagesById(({ afterId, take }) => {
+          let q = db
+            .selectFrom('ServiceDealReview')
+            .select(['id', 'dealId', 'buyerId', 'comment', 'hiddenAt', 'createdAt', 'updatedAt'])
+            .where('buyerId', '=', userId)
+            .orderBy('id', 'asc')
+            .limit(take);
+          if (afterId !== undefined) q = q.where('id', '>', afterId);
+          return q.execute();
+        }, pageSize)
+      ),
+  },
+  {
+    name: 'serviceDealReviewReplies',
+    rows: (db, userId, pageSize) =>
+      flattenPages(
+        scanPagesById(({ afterId, take }) => {
+          let q = db
+            .selectFrom('ServiceDealReview')
+            .select(['id', 'dealId', 'sellerId', 'sellerReply', 'sellerReplyAt', 'hiddenAt'])
+            .where('sellerId', '=', userId)
+            .orderBy('id', 'asc')
+            .limit(take);
+          if (afterId !== undefined) q = q.where('id', '>', afterId);
+          return q.execute();
+        }, pageSize)
+      ),
+  },
+  {
+    name: 'questions',
+    rows: (db, userId, pageSize) =>
+      flattenPages(
+        scanPagesById(({ afterId, take }) => {
+          let q = db
+            .selectFrom('Question')
+            .select(['id', 'userId', 'title', 'content', 'createdAt'])
+            .where('userId', '=', userId)
+            .orderBy('id', 'asc')
+            .limit(take);
+          if (afterId !== undefined) q = q.where('id', '>', afterId);
+          return q.execute();
+        }, pageSize)
+      ),
+  },
+  {
+    name: 'answers',
+    rows: (db, userId, pageSize) =>
+      flattenPages(
+        scanPagesById(({ afterId, take }) => {
+          let q = db
+            .selectFrom('Answer')
+            .select(['id', 'questionId', 'userId', 'content', 'createdAt'])
+            .where('userId', '=', userId)
+            .orderBy('id', 'asc')
+            .limit(take);
+          if (afterId !== undefined) q = q.where('id', '>', afterId);
+          return q.execute();
+        }, pageSize)
+      ),
+  },
+];
+
+const CHAT_MESSAGE_COLUMNS = [
+  'id',
+  'chatId',
+  'userId',
+  'content',
+  'createdAt',
+  'editedAt',
+  'deletedAt',
+  'referenceMessageId',
+] as const;
+
+/**
+ * Every message, from either side and including deleted ones, in each chat the user has a
+ * membership row in, whatever its status, in chat then id order; then, in id order, every message
+ * the user wrote in a chat they have no membership row in. Each carries the text its edits replaced.
+ *
+ * Member chats are paged per chat. The `(chatId, id)` index is partial on undeleted messages, so it
+ * cannot serve this read: each page sorts the chat's messages, which only a very long chat feels.
+ * The user's other messages are found by `userId`, which no index leads with: the read walks the
+ * primary key, so even a user with none outside their chats costs a scan of the table.
+ */
+async function* chatMessages(
+  db: Db,
+  userId: number,
+  pageSize?: number,
+  incomplete?: Map<string, string>,
+  authorDb: Db = db
+) {
+  const memberships = await db
+    .selectFrom('ChatMember')
+    .select('chatId')
+    .where('userId', '=', userId)
+    .orderBy('chatId', 'asc')
+    .execute();
+  const memberChats = [...new Set(memberships.map((m) => m.chatId))];
+  for (const chatId of memberChats)
+    yield* withEdits(
+      db,
+      userId,
+      scanPagesById(({ afterId, take }) => {
+        let q = db
+          .selectFrom('ChatMessage')
+          .select(CHAT_MESSAGE_COLUMNS)
+          .where('chatId', '=', chatId)
+          .orderBy('id', 'asc')
+          .limit(take);
+        if (afterId !== undefined) q = q.where('id', '>', afterId);
+        return q.execute();
+      }, pageSize)
+    );
+  const inMemberChat = new Set(memberChats);
+  // Given `incomplete`, this pass fails soft: the scan can outlast the statement timeout, and
+  // losing every other section to it is the worse outcome. Rows already yielded stay.
+  try {
+    yield* withEdits(
+      authorDb,
+      userId,
+      outsideChats(
+        inMemberChat,
+        scanPagesById(({ afterId, take }) => {
+          let q = authorDb
+            .selectFrom('ChatMessage')
+            .select(CHAT_MESSAGE_COLUMNS)
+            .where('userId', '=', userId)
+            .orderBy('id', 'asc')
+            .limit(take);
+          if (afterId !== undefined) q = q.where('id', '>', afterId);
+          return q.execute();
+        }, pageSize)
+      )
+    );
+  } catch (e) {
+    if (!incomplete) throw e;
+    // The cause, so a permanent break reads differently from a one-off timeout. No row data.
+    const err = e as { code?: unknown; name?: unknown };
+    incomplete.set('authorPass', String(err.code ?? err.name ?? 'unknown'));
+  }
+}
+
+/**
+ * The pool for the author pass: the long-read pool only when it is a replica, else the read pool.
+ * The long-read pool is the primary when the read replica URL is the primary's, or when no long
+ * replica URL is set.
+ */
+export function authorPassPool(urls: {
+  databaseUrl: string;
+  replicaUrl?: string;
+  replicaLongUrl?: string;
+}): 'readLong' | 'read' {
+  const { databaseUrl, replicaUrl, replicaLongUrl } = urls;
+  return replicaUrl !== databaseUrl && !!replicaLongUrl && replicaLongUrl !== databaseUrl
+    ? 'readLong'
+    : 'read';
+}
+
+/**
+ * Drops the messages of chats already archived whole. Filtered here rather than in SQL so the
+ * statement does not carry one parameter per chat; the cursor still advances on the unfiltered page.
+ */
+async function* outsideChats<T extends { chatId: number }>(
+  chats: Set<number>,
+  pages: AsyncIterable<T[]>
+) {
+  for await (const page of pages) {
+    const rest = page.filter((m) => !chats.has(m.chatId));
+    if (rest.length) yield rest;
+  }
+}
+
+/** Tags each message with its author side and the text each edit replaced, a page at a time. */
+async function* withEdits<T extends { id: number; userId: number }>(
+  db: Db,
+  userId: number,
+  pages: AsyncIterable<T[]>
+) {
+  for await (const page of pages) {
+    // An edit overwrites `content`; the text it replaced is kept only here.
+    const edits = await db
+      .selectFrom('ChatMessageEdit')
+      .select(['id', 'messageId', 'editorId', 'previousContent', 'createdAt'])
+      .where(
+        'messageId',
+        'in',
+        page.map((m) => m.id)
+      )
+      .orderBy('messageId', 'asc')
+      .orderBy('id', 'asc')
+      .execute();
+    const editsOf = new Map<number, Omit<(typeof edits)[number], 'messageId'>[]>();
+    for (const { messageId, ...edit } of edits) {
+      const list = editsOf.get(messageId) ?? [];
+      list.push(edit);
+      editsOf.set(messageId, list);
+    }
+    for (const row of page)
+      yield {
+        ...row,
+        isReportedUser: row.userId === userId,
+        previousVersions: editsOf.get(row.id) ?? [],
+      };
+  }
+}

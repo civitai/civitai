@@ -53,6 +53,9 @@ import {
 } from '~/components/Apps/reviewRelativeTime';
 import { useReviewPreview } from '~/components/Apps/useReviewPreview';
 import { reviewProvenanceLines } from '~/components/Apps/reviewSourceProvenance';
+import { reviewOnBehalfLine } from '~/components/Apps/reviewOnBehalf';
+import { reviewSdkFloorLines } from '~/components/Apps/reviewSdkFloor';
+import { reviewPlatformUpdatesLines } from '~/components/Apps/reviewPlatformUpdates';
 import type { ReviewSourceProvenance } from '~/server/schema/blocks/actions-run-source.schema';
 import { PREVIEW_CHIP_COLORS, previewChipState } from '~/components/Apps/reviewQueueSignals';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -83,6 +86,12 @@ import {
 } from '~/server/services/blocks/marketplace-categories.constants';
 import { offsiteContentRatingLabel } from '~/shared/constants/browsingLevel.constants';
 import type { FloorAsset } from '~/shared/utils/listing-publish-floor';
+import {
+  bootCheckUnavailable,
+  BOOT_CHECK_UNAVAILABLE_NOTICE,
+  reviewBootCheckSummary,
+  type ReviewBootCheckSummary,
+} from '~/shared/utils/review-boot-check';
 import {
   SCOPE_DESCRIPTIONS,
   SLOT_DESCRIPTIONS,
@@ -158,6 +167,12 @@ export type ReviewedRequestCommon = {
   approveRating?: { listingId: string; declared: string | null } | null;
   /** Icon / cover the listing this approve publishes lacks; non-empty ⇒ the server refuses Approve. */
   approveFloorMissing?: FloorAsset[];
+  /** The review boot check's result + mode (pending list + single read); null = no check
+   *  recorded. Approve is refused on the app's boot-check hold or on a recorded enforced failure
+   *  (`bootCheckOverrideMissing`); one written override reason passes both. */
+  previewBootCheck?: ReviewBootCheckSummary | null;
+  /** Under a current `enforce` flag, a pending request with no enforced pass ("not run"). */
+  previewBootCheckUnverified?: boolean;
 };
 
 export type PendingRequest = ReviewedRequestCommon;
@@ -370,6 +385,73 @@ export function ReviewSourceProvenanceMeta({
 }
 
 /**
+ * "Submitted by <staff> for <owner>" when Civitai staff filed this request on the owner's behalf
+ * (`reviewOnBehalfLine`). Renders nothing for any other request.
+ */
+export function ReviewOnBehalfMeta({ fileSummary }: { fileSummary: unknown }) {
+  const line = reviewOnBehalfLine(fileSummary);
+  if (!line) return null;
+  return (
+    <Text size="xs" data-testid="apps-review-on-behalf">
+      <Text span size="xs" c="blue">
+        {line.heading}:{' '}
+      </Text>
+      <Text span size="xs">
+        {line.value}
+      </Text>
+    </Text>
+  );
+}
+
+/**
+ * The OUTDATED-SDK lines a submit recorded (`reviewSdkFloorLines`): the bundle lockfile's packages
+ * below the platform minimum, and whether the client submitted past its own check with
+ * `--allow-outdated-sdk`. Renders nothing when the request records neither.
+ */
+export function ReviewSdkFloorMeta({ fileSummary }: { fileSummary: unknown }) {
+  const lines = reviewSdkFloorLines(fileSummary);
+  if (lines.length === 0) return null;
+  return (
+    <Stack gap={2} data-testid="apps-review-sdk-floor">
+      {lines.map((line) => (
+        <Text size="xs" key={line.key} data-review-sdk-floor-line={line.key}>
+          <Text span size="xs" c="orange">
+            {line.heading}:{' '}
+          </Text>
+          <Text span size="xs" ff="monospace">
+            {line.value}
+          </Text>
+        </Text>
+      ))}
+    </Stack>
+  );
+}
+
+/**
+ * The MISSING PLATFORM UPDATES line a submit or push recorded (`reviewPlatformUpdatesLines`): the
+ * staff platform updates, not yet shipped, that this version's files do not contain, and why it was
+ * queued anyway (the submit override, or a git push). Renders nothing when none are recorded.
+ */
+export function ReviewPlatformUpdatesMeta({ fileSummary }: { fileSummary: unknown }) {
+  const lines = reviewPlatformUpdatesLines(fileSummary);
+  if (lines.length === 0) return null;
+  return (
+    <Stack gap={2} data-testid="apps-review-platform-updates">
+      {lines.map((line) => (
+        <Text size="xs" key={line.key} data-review-platform-updates-line={line.key}>
+          <Text span size="xs" c="orange">
+            {line.heading}:{' '}
+          </Text>
+          <Text span size="xs" ff="monospace">
+            {line.value}
+          </Text>
+        </Text>
+      ))}
+    </Stack>
+  );
+}
+
+/**
  * The read-only APPROVED / REJECTED banner for a decided submission — who decided, when,
  * and the notes or reason they left.
  *
@@ -570,8 +652,8 @@ export function RegistryExportsNotice({ exports }: { exports: RegistryExportDiff
  *
  * 🔴 THE GATE IS THE COMPONENT, so no caller can re-spell it. On-site PENDING only, and
  * DARK unless the mod-only `app-blocks-agentic-review` CLIENT flag resolves — fail-closed,
- * so an absent Flipt flag means this renders nothing. External/connect requests are out of
- * scope and hidden. Two surfaces mount it now (the modal body and the page's Agent report
+ * so an absent Flipt flag means this renders nothing. External/connect requests are hidden
+ * here; the off-site modal mounts the connect lane behind `app-listings-agentic-review`. Two surfaces mount it now (the modal body and the page's Agent report
  * tab); a copied `mode === 'pending' && !!features?.… && isOnsiteReviewRequest(…)` at each
  * would be the same predicate twice, wrong at one of them eventually.
  */
@@ -763,7 +845,10 @@ export function OnsiteReviewModalBody({
   return (
     <Stack gap="md">
       <ReviewSubmitterMeta request={request} now={now} />
+      <ReviewOnBehalfMeta fileSummary={request.fileSummary} />
       <ReviewSourceProvenanceMeta provenance={request.sourceProvenance} />
+      <ReviewSdkFloorMeta fileSummary={request.fileSummary} />
+      <ReviewPlatformUpdatesMeta fileSummary={request.fileSummary} />
 
       <ReviewDecisionAlert selection={selection} now={now} />
 
@@ -920,6 +1005,17 @@ function ReviewPreviewPanel({
             data-testid="apps-review-preview-state"
           >
             {chip}
+          </Badge>
+        )}
+        {bootCheckUnavailable(reviewBootCheckSummary(state, detail)) && (
+          <Badge
+            size="sm"
+            variant="light"
+            color="yellow"
+            title={BOOT_CHECK_UNAVAILABLE_NOTICE}
+            data-testid="apps-review-boot-check-unavailable-badge"
+          >
+            Boot check couldn&apos;t run
           </Badge>
         )}
       </Group>

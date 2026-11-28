@@ -1,9 +1,14 @@
+import { keyHashSlots } from '@civitai/redis';
 import { describe, expect, it, vi } from 'vitest';
 import { VOTE_LIMITS, type VoteLimit } from '../queue/vote-rate';
 import { fakeRedis } from './fake-redis';
 import { createVoteGate, type GateClient } from './gate';
 
 const MINUTE = 60_000;
+const pauseAt = (minutes: number, windowSeconds: number | null) => ({
+  until: new Date(minutes * MINUTE),
+  windowSeconds,
+});
 const limitsOf = (perMinute: number, perHour = 600, perDay = 3000): VoteLimit[] => [
   { windowSeconds: 60, max: perMinute },
   { windowSeconds: 3600, max: perHour },
@@ -62,6 +67,32 @@ describe('vote gate in-flight cap', () => {
   });
 });
 
+// Invariant guard, not a regression test: the keys were already tagged before the gate moved to
+// the cache cluster. It pins that both scripts stay in one slot there.
+describe('vote gate on the cache cluster', () => {
+  it("runs each script over one player's keys, all in one hash slot", async () => {
+    const { client, at } = setup();
+    const calls: string[][] = [];
+    const evalScript = client.eval.bind(client);
+    const spy: GateClient = {
+      ...client,
+      eval: (script, options) => {
+        calls.push(options.keys);
+        return evalScript(script, options);
+      },
+    };
+    const spied = createVoteGate({
+      client: () => spy,
+      limits: async () => limitsOf(3),
+      timeoutMs: 2000,
+    });
+    const entry = await spied.enter(7, at());
+    if (entry.status === 'open') await entry.release();
+    expect(calls).toHaveLength(2);
+    for (const keys of calls) expect(keyHashSlots(keys), keys.join(' ')).toHaveLength(1);
+  });
+});
+
 describe('vote gate windows', () => {
   it('trips the minute window into a fixed ten-minute cooldown', async () => {
     const { gate, at, clock } = setup(limitsOf(3));
@@ -70,19 +101,25 @@ describe('vote gate windows', () => {
     }
 
     const tripped = await gate.guard(7, at(), async () => 'ok');
-    expect(tripped).toEqual({ status: 'limited', until: new Date(10 * MINUTE) });
+    expect(tripped).toEqual({
+      status: 'limited',
+      until: new Date(10 * MINUTE),
+      tripped: true,
+      windowSeconds: 60,
+    });
 
     // Well after the minute window has rolled over, the cooldown still holds.
     clock.now += 5 * MINUTE;
     expect(await gate.guard(7, at(), async () => 'ok')).toEqual({
       status: 'limited',
       until: new Date(10 * MINUTE),
+      windowSeconds: 60,
     });
-    expect(await gate.cooldownUntil(7, at())).toEqual(new Date(10 * MINUTE));
+    expect((await gate.cooldown(7, at()))?.until ?? null).toEqual(new Date(10 * MINUTE));
 
     clock.now += 5 * MINUTE;
     expect(await gate.guard(7, at(), async () => 'ok')).toBe('ok');
-    expect(await gate.cooldownUntil(7, at())).toBeNull();
+    expect((await gate.cooldown(7, at()))?.until ?? null).toBeNull();
   });
 
   it('does not run the guarded work while a cooldown holds', async () => {
@@ -97,11 +134,47 @@ describe('vote gate windows', () => {
   it('cools down for an hour when the hour window trips and a day when the day window does', async () => {
     const hour = setup(limitsOf(1000, 2, 3000));
     for (let i = 0; i < 3; i++) await hour.gate.guard(7, hour.at(), async () => 'ok');
-    expect(await hour.gate.cooldownUntil(7, hour.at())).toEqual(new Date(60 * MINUTE));
+    expect((await hour.gate.cooldown(7, hour.at()))?.until ?? null).toEqual(new Date(60 * MINUTE));
 
     const day = setup(limitsOf(1000, 600, 2));
     for (let i = 0; i < 3; i++) await day.gate.guard(7, day.at(), async () => 'ok');
-    expect(await day.gate.cooldownUntil(7, day.at())).toEqual(new Date(24 * 60 * MINUTE));
+    expect((await day.gate.cooldown(7, day.at()))?.until ?? null).toEqual(
+      new Date(24 * 60 * MINUTE)
+    );
+  });
+
+  it('remembers which window set the cooldown, for every refusal while it runs', async () => {
+    const hour = setup(limitsOf(1000, 2, 3000));
+    for (let i = 0; i < 2; i++) await hour.gate.guard(7, hour.at(), async () => 'ok');
+    expect(await hour.gate.guard(7, hour.at(), async () => 'ok')).toMatchObject({
+      tripped: true,
+      windowSeconds: 3600,
+    });
+    hour.clock.now += 30 * MINUTE;
+    expect(await hour.gate.guard(7, hour.at(), async () => 'ok')).toMatchObject({
+      status: 'limited',
+      windowSeconds: 3600,
+    });
+    expect(await hour.gate.cooldown(7, hour.at())).toEqual({
+      until: new Date(60 * MINUTE),
+      windowSeconds: 3600,
+    });
+
+    const day = setup(limitsOf(1000, 600, 2));
+    for (let i = 0; i < 3; i++) await day.gate.guard(7, day.at(), async () => 'ok');
+    expect(await day.gate.cooldown(7, day.at())).toEqual({
+      until: new Date(24 * 60 * MINUTE),
+      windowSeconds: 86400,
+    });
+  });
+
+  it('reads a cooldown set before windows were recorded as unlabelled', async () => {
+    const { gate, at, seed } = setup();
+    seed('knights:vote-limit:{7}:cooldown', '1', 10 * MINUTE);
+    expect(await gate.cooldown(7, at())).toEqual({
+      until: new Date(10 * MINUTE),
+      windowSeconds: null,
+    });
   });
 
   it('keeps one player cooling down without touching another', async () => {
@@ -109,6 +182,45 @@ describe('vote gate windows', () => {
     await gate.guard(7, at(), async () => 'ok');
     await gate.guard(7, at(), async () => 'ok');
     expect(await gate.guard(8, at(), async () => 'ok')).toBe('ok');
+  });
+});
+
+describe('vote gate freeze', () => {
+  it('extends a running cooldown but never shortens it', async () => {
+    const { gate, at, seed, pttl } = setup();
+    seed(COOLDOWN, '1', 60 * MINUTE);
+
+    expect(await gate.freeze(7, at(), pauseAt(22, 3600))).toEqual(pauseAt(60, null));
+    expect(pttl(COOLDOWN)).toBe(60 * MINUTE);
+    expect(await gate.freeze(7, at(), pauseAt(90, 86400))).toEqual(pauseAt(90, 86400));
+    expect(pttl(COOLDOWN)).toBe(90 * MINUTE);
+    expect(await gate.cooldown(7, at())).toEqual(pauseAt(90, 86400));
+    expect((await gate.cooldown(7, at()))?.until ?? null).toEqual(new Date(90 * MINUTE));
+  });
+
+  it('starts a cooldown that ends at the frozen time', async () => {
+    const { gate, at, clock } = setup(limitsOf(1000));
+    expect(await gate.freeze(7, at(), pauseAt(22, 86400))).toEqual(pauseAt(22, 86400));
+    expect(await gate.guard(7, at(), async () => 'ok')).toEqual({
+      status: 'limited',
+      until: new Date(22 * MINUTE),
+      windowSeconds: 86400,
+    });
+    clock.now = 22 * MINUTE;
+    expect(await gate.guard(7, at(), async () => 'ok')).toBe('ok');
+  });
+
+  it('answers the end it was given when Redis is down', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const down: GateClient = new Proxy({} as GateClient, {
+      get: () => async () => Promise.reject(new Error('down')),
+    });
+    const gate = createVoteGate({
+      client: () => down,
+      limits: async () => VOTE_LIMITS,
+      timeoutMs: 50,
+    });
+    expect(await gate.freeze(7, new Date(0), pauseAt(22, 3600))).toEqual(pauseAt(22, 3600));
   });
 });
 
@@ -145,7 +257,7 @@ describe('vote gate when Redis is unavailable', () => {
 
     expect(await gate.guard(7, new Date(0), work)).toBe('ok');
     expect(work).toHaveBeenCalledOnce();
-    expect(await gate.cooldownUntil(7, new Date(0))).toBeNull();
+    expect((await gate.cooldown(7, new Date(0)))?.until ?? null).toBeNull();
     expect(log).toHaveBeenCalled();
   });
 

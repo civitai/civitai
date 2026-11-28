@@ -26,7 +26,7 @@ vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn() }));
 vi.mock('../cache', () => ({ bustCachedObject: vi.fn(async () => undefined) }));
 vi.mock('../profile-picture-cache', () => ({ bustProfilePictures: vi.fn(async () => undefined) }));
 vi.mock('../image-models-reindex', () => ({
-  queueModelsForImageChildTagChanges: vi.fn(async () => undefined),
+  queueDocumentsForImageMinorChanges: vi.fn(async () => undefined),
 }));
 vi.mock('../thumbnail-cache', async (importOriginal) => ({
   ...(await importOriginal<typeof ThumbnailCache>()),
@@ -34,7 +34,7 @@ vi.mock('../thumbnail-cache', async (importOriginal) => ({
 }));
 
 const { resolveIngestionError } = await import('../ingestion.service');
-const { queueModelsForImageChildTagChanges } = await import('../image-models-reindex');
+const { queueDocumentsForImageMinorChanges } = await import('../image-models-reindex');
 
 const SCHEMA = `
 CREATE TABLE "User" (
@@ -53,9 +53,10 @@ CREATE TABLE "Image" (
   "metadata" JSONB,
   "nsfwLevel" INTEGER NOT NULL DEFAULT 0,
   "nsfwLevelLocked" BOOLEAN NOT NULL DEFAULT FALSE,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now(),
   "scannedAt" TIMESTAMP(3)
 );
-CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER,
+CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER, "data" JSONB,
   PRIMARY KEY ("entityType", "entityId", "type"));
 `;
 
@@ -130,7 +131,8 @@ const purgeRows = async () =>
     )
   ).rows.length;
 
-const resolve = () => resolveIngestionError({ id: IMAGE_ID, nsfwLevel: 1, userId: 99 });
+const resolve = () =>
+  resolveIngestionError({ csamReview: true, id: IMAGE_ID, nsfwLevel: 1, userId: 99 });
 
 describe('spoke resolveIngestionError refusals', () => {
   it.each([
@@ -209,19 +211,37 @@ describe('spoke resolveIngestionError: models index', () => {
       CREATE FUNCTION update_post_nsfw_levels(ids int[]) RETURNS void LANGUAGE sql AS $$ SELECT $$;
       UPDATE "Image" SET "postId" = 5 WHERE "id" = ${IMAGE_ID};
     `);
-    vi.mocked(queueModelsForImageChildTagChanges).mockClear();
+    vi.mocked(queueDocumentsForImageMinorChanges).mockClear();
 
     await resolve();
 
-    expect(queueModelsForImageChildTagChanges).toHaveBeenCalledWith({ levelImageIds: [IMAGE_ID] });
+    expect(queueDocumentsForImageMinorChanges).toHaveBeenCalledWith({ levelImageIds: [IMAGE_ID] });
   });
 
   it('skips an image on no post', async () => {
     await seed({});
-    vi.mocked(queueModelsForImageChildTagChanges).mockClear();
+    vi.mocked(queueDocumentsForImageMinorChanges).mockClear();
 
     await resolve();
 
-    expect(queueModelsForImageChildTagChanges).not.toHaveBeenCalled();
+    expect(queueDocumentsForImageMinorChanges).not.toHaveBeenCalled();
+  });
+});
+
+// sortAt reads scannedAt uncapped, so a resolve stamping now() would list the image as new.
+describe('spoke resolveIngestionError and the feed sort', () => {
+  it.each([
+    ['a scan that never finished takes the upload time', null, '2026-01-01T00:00:00.000Z'],
+    ['an earlier scan time stays', '2026-01-02T00:00:00.000Z', '2026-01-02T00:00:00.000Z'],
+  ])('%s', async (_label, scannedAt, expected) => {
+    await seed({});
+    await db.query(
+      `UPDATE "Image" SET "createdAt" = '2026-01-01T00:00:00Z', "scannedAt" = $2 WHERE "id" = $1`,
+      [IMAGE_ID, scannedAt]
+    );
+    await resolve();
+    const row = await imageRow();
+    expect(row.ingestion).toBe('Scanned');
+    expect((row.scannedAt as Date).toISOString()).toBe(expected);
   });
 });

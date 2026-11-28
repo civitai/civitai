@@ -50,6 +50,7 @@ vi.mock('~/server/services/blocklist.service', () => ({
 }));
 vi.mock('~/server/services/search-query-rules', () => ({ matchesQueryRule: async () => false }));
 vi.mock('~/utils/metadata/audit', () => ({
+  includesNsfw: () => false,
   includesInappropriate: h.includesInappropriate,
   includesPoi: () => false,
   includesMinor: () => false,
@@ -84,7 +85,6 @@ const SCHEMA = `
   CREATE TABLE "TagsOnImageDetails" ("imageId" int, "tagId" int, disabled boolean DEFAULT false);
   CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb NOT NULL DEFAULT '{}',
     images jsonb NOT NULL DEFAULT '[]');
-  CREATE TABLE "EvidenceHeldUser" ("userId" int);
   CREATE TABLE "PostText" (id serial PRIMARY KEY, "postId" int, "csamHeld" boolean NOT NULL);
   CREATE TABLE "TextScanHold" (id serial PRIMARY KEY, "entityType" text, "entityId" int,
     label text, status text);
@@ -240,15 +240,15 @@ describe('semantic storyline search', () => {
     expect(h.feedCalls).toEqual([expect.objectContaining({ ids: [1] })]);
   });
 
-  it("does not serve a held owner's or held chapter-1 author's storyline", async () => {
+  // Holds hide nothing; an image in CSAM review still does.
+  it("serves a held owner's or chapter-1 author's storyline, not one with an image in CSAM review", async () => {
     await storyline(1);
     await storyline(2, { owner: 77 });
     await storyline(3, { owner: 3, author: 78 });
     await storyline(4);
-    await h.pg!.exec(`INSERT INTO "EvidenceHeldUser" VALUES (77);
-      INSERT INTO "CsamReport" ("userId") VALUES (78);
+    await h.pg!.exec(`INSERT INTO "CsamReport" ("userId") VALUES (77), (78);
       UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 400;`);
-    expect(shown(await search([4, 3, 2, 1]))).toEqual([1]);
+    expect(shown(await search([4, 3, 2, 1]))).toEqual([3, 2, 1]);
   });
 
   it('does not serve a storyline that lost eligibility since it was indexed', async () => {

@@ -314,8 +314,8 @@ function AppsBuildPitch({ onRequest }: { onRequest: () => void }) {
         <Stack gap="sm" align="flex-start">
           <Text size="sm">
             You don&apos;t need to be a developer to build an app: describe what you want and the
-            App Assistant builds it with you. It is open to a small group while the platform is in
-            beta — request access and tell us what you&apos;d like to make.
+            App Assistant builds it with you. Request access and tell us what you&apos;d like to
+            make.
           </Text>
           <AppAccessRequestPanel onRequest={onRequest} />
         </Stack>

@@ -23,7 +23,8 @@ declare global {
        * the degenerate case fails closed.
        */
       grants: PermissionSet;
-      tokenClient?: 'webhook';
+      /** `cases`: the scoped takedown-intake credential, accepted only by the case actions. */
+      tokenClient?: 'webhook' | 'cases';
       /** Set to 'sheet' by `hooks.server.ts` only when the held-media sheet cookie authenticated this
        *  request in place of the web session. */
       heldCredential?: 'sheet';

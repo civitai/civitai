@@ -6,8 +6,11 @@ vi.mock('$lib/server/knights/inquisitor.service', () => ({
   getInquisitorQueue: vi.fn(),
   INQUISITOR_QUEUE_LIMIT: 100,
   ruleOnInquisitorItem: rule,
+  inquisitorItemImageId: async () => 1,
 }));
-vi.mock('$lib/server/access', () => ({ requireAccess: vi.fn() }));
+// The withheld-image gate is pinned in image-action-access.pglite.test.ts.
+vi.mock('$lib/server/retracted-media', () => ({ withheldRefusal: async () => null }));
+vi.mock('$lib/server/access', () => ({ requireAccess: vi.fn(), canAccess: () => false }));
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 
 import { actions } from '../+page.server';
@@ -35,13 +38,17 @@ describe('Knights of New Order Inquisitor queue actions', () => {
 
   it('rules as the acting moderator and shows an already-decided item as a conflict', async () => {
     rule.mockResolvedValueOnce({ ok: true });
-    expect(await actions.rule(formEvent({ itemId: '5', level: '32' }))).toEqual({ success: true });
-    expect(rule).toHaveBeenCalledWith(5, 32, 77);
+    expect(
+      await actions.rule(formEvent({ itemId: '5', level: '32', blockReason: 'Bestiality' }))
+    ).toEqual({ success: true });
+    expect(rule).toHaveBeenCalledWith(5, { level: 32, blockReason: 'Bestiality' }, 77, {
+      csamReview: false,
+    });
 
     rule.mockResolvedValueOnce({ ok: false, error: 'decided' });
     expect(await actions.rule(formEvent({ itemId: '5', level: '4' }))).toMatchObject({
       status: 409,
-      data: { error: 'decided' },
+      data: { error: 'decided', key: 5 },
     });
   });
 

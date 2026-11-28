@@ -19,7 +19,9 @@ import type { SandboxClient } from '@civitai/app-assistant';
 import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { delIfValue } from '~/server/redis/atomic';
+import { REDIS_KEYS, REDIS_SYS_KEYS, redis, sysRedis } from '~/server/redis/client';
+import { boundedClusterCall } from '~/server/utils/cluster-window-count';
 import {
   ASSISTANT_AUTHOR,
   ASSISTANT_BRANCH,
@@ -33,6 +35,7 @@ import {
   planAssistantCommit,
   planReplaceCommit,
   sourceFilesFromExport,
+  sourceRepoNeverHolds,
   treeFromMap,
   treeOf,
   type BlobTree,
@@ -40,7 +43,11 @@ import {
   type SourceFile,
 } from '~/server/services/blocks/app-source-repo.plan';
 import { isMissingTableError } from '~/server/services/blocks/app-access.service';
-import { FORGEJO_SOURCE_ORG } from '~/shared/constants/app-source-repo.constants';
+import { FORGEJO_SOURCE_ORG } from '~/server/services/blocks/forgejo-orgs';
+import {
+  latestApprovedBuild,
+  latestApprovedCommitSha,
+} from '~/server/services/blocks/latest-approved-build';
 
 export type SourceRepoOrigin = 'fork' | 'assistant' | 'backfill';
 
@@ -245,12 +252,14 @@ const LOCK_POLL_MS = 500;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** Run `fn` holding the slug's writer lock, or return `null` when it stays held for 30 s. */
-async function withSourceRepoLock<T>(slug: string, fn: () => Promise<T>): Promise<T | null> {
-  const key = `${REDIS_SYS_KEYS.BLOCKS.SOURCE_REPO_LOCK}:${slug}` as const;
+export async function withSourceRepoLock<T>(slug: string, fn: () => Promise<T>): Promise<T | null> {
+  const key = `${REDIS_KEYS.BLOCKS.SOURCE_REPO_LOCK}:${slug}` as const;
   const token = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const deadline = Date.now() + LOCK_WAIT_MS;
   for (;;) {
-    const got = await sysRedis.set(key, token, { NX: true, EX: LOCK_TTL_SECONDS });
+    const got = await boundedClusterCall('withSourceRepoLock', () =>
+      redis.set(key, token, { NX: true, EX: LOCK_TTL_SECONDS })
+    );
     if (got) break;
     if (Date.now() >= deadline) return null;
     await sleep(LOCK_POLL_MS);
@@ -259,8 +268,9 @@ async function withSourceRepoLock<T>(slug: string, fn: () => Promise<T>): Promis
     return await fn();
   } finally {
     // Release only our own lock: one that outlived its TTL may be another writer's by now.
-    const held = await sysRedis.get(key).catch(() => null);
-    if (held === token) await sysRedis.del(key).catch(() => undefined);
+    await boundedClusterCall('withSourceRepoLock.release', () =>
+      delIfValue(redis, key, token)
+    ).catch(() => undefined);
   }
 }
 
@@ -315,6 +325,11 @@ async function ensureSourceRepoLocked(args: {
   ownerUserId: number;
   origin: SourceRepoOrigin;
   seed?: { files: SourceFile[]; message: string };
+  /**
+   * Create the repo as a fork of the slug's BUILD repo (its whole history) instead of an empty repo.
+   * Exclusive with `seed`.
+   */
+  forkBuildRepo?: true;
   forkedFrom?: { appBlockId: string; commitSha: string };
 }): Promise<EnsureSourceRepoResult> {
   if (!SOURCE_SLUG_RE.test(args.slug)) return { kind: 'refused' };
@@ -325,14 +340,36 @@ async function ensureSourceRepoLocked(args: {
   if (!gate.ok) return { kind: 'refused' };
 
   const forgejo = await import('~/server/services/blocks/forgejo.service');
-  await forgejo.ensureSourceRepo(args.slug);
-  const current = treeFromMap(
-    await forgejo.listRepoTree(args.slug, SOURCE_MAIN_BRANCH, FORGEJO_SOURCE_ORG)
-  );
-  let tree = current;
+  let tree: BlobTree;
   let seedSha: string | null = null;
-  if (args.seed) {
-    const plan = planReplaceCommit(current, args.seed.files);
+  if (args.forkBuildRepo) {
+    const fork = await forgejo.forkBuildRepoIntoSourceOrg(args.slug);
+    // A repo under the name that is not our fork of the build repo (an empty one an earlier create
+    // left behind, or anything else) shares no history with the build repo: never seed on top of it.
+    if (fork.kind === 'exists' && !fork.forkOfBuildRepo) {
+      log('warning', 'a repo that is not a fork of the build repo has the name', {
+        slug: args.slug,
+      });
+      return { kind: 'refused' };
+    }
+    const head = await forgejo.getBranchHead(FORGEJO_SOURCE_ORG, args.slug, SOURCE_MAIN_BRANCH);
+    if (!head) return { kind: 'refused' };
+    // App Assistant's base is what it can see of `main`: a file a source repo never holds (the
+    // build repo's history may have one) is not in the base, so a save never plans a delete of it.
+    tree = Object.fromEntries(
+      Object.entries(
+        treeFromMap(await forgejo.listRepoTreeAtRef(args.slug, head, FORGEJO_SOURCE_ORG))
+      ).filter(([path]) => !sourceRepoNeverHolds(path))
+    );
+    seedSha = head;
+  } else {
+    await forgejo.ensureSourceRepo(args.slug);
+    tree = treeFromMap(
+      await forgejo.listRepoTree(args.slug, SOURCE_MAIN_BRANCH, FORGEJO_SOURCE_ORG)
+    );
+  }
+  if (args.seed && !args.forkBuildRepo) {
+    const plan = planReplaceCommit(tree, args.seed.files);
     if (plan.operations.length) {
       const result = await forgejo.commitOperations({
         org: FORGEJO_SOURCE_ORG,
@@ -563,6 +600,7 @@ export async function zipEntries(buffer: Buffer | ArrayBuffer): Promise<SourceFi
 export async function saveAssistantSourceFromSandbox(args: {
   userId: number;
   app: string;
+  impersonatedBy: number | null;
 }): Promise<AssistantSaveResult> {
   if (!SOURCE_SLUG_RE.test(args.app)) return { kind: 'refused' };
   // Off until the table exists: no sandbox call, no token minted.
@@ -578,7 +616,7 @@ export async function saveAssistantSourceFromSandbox(args: {
   const client = createSandboxClient({
     baseUrl,
     getToken: async () => {
-      const minted = await mintAppAssistantToken(args.userId, 'sandbox');
+      const minted = await mintAppAssistantToken(args.userId, 'sandbox', args.impersonatedBy);
       if (!minted) throw new Error('no App Assistant consent');
       return minted.token;
     },
@@ -706,17 +744,13 @@ export async function listBackfillCandidates(): Promise<BackfillCandidate[]> {
     parentSlug: string | null;
   }>;
   for (const fork of forks) {
-    const approved = await dbRead.appBlockPublishRequest.findFirst({
-      where: { appBlockId: fork.id, status: 'approved', forgejoCommitSha: { not: null } },
-      orderBy: [{ reviewedAt: 'desc' }, { submittedAt: 'desc' }],
-      select: { forgejoCommitSha: true, version: true },
-    });
-    if (!approved?.forgejoCommitSha) continue;
+    const approved = await latestApprovedBuild(fork.id);
+    if (!approved) continue;
     out.push({
       slug: fork.slug,
       ownerUserId: fork.ownerUserId,
       kind: 'approved-fork',
-      seedCommitSha: approved.forgejoCommitSha,
+      seedCommitSha: approved.commitSha,
       seedRepoSlug: fork.slug,
       lineage:
         fork.parentSlug && fork.parentAppBlockId
@@ -762,6 +796,74 @@ export async function listBackfillCandidates(): Promise<BackfillCandidate[]> {
     }
   }
   return out;
+}
+
+/**
+ * The id of the app block that governs `row` (binding an unbound row the way access does), or
+ * `null` when no block under the slug is the repo owner's. A staff writer compares it with the
+ * block it was asked to update, so a squatted slug's repo is never written for another app.
+ */
+export async function sourceRepoGoverningBlockId(row: SourceRepoRow): Promise<string | null> {
+  return (await governingBlock(row))?.id ?? null;
+}
+
+export type SeedFromBuildRepoResult = EnsureSourceRepoResult | { kind: 'no-approved-version' };
+
+/**
+ * Create `slug`'s source repo for a staff platform update, as a FORK of the app's build repo: the
+ * build repo's whole history, `main` where the build repo's `main` is (the build repo is read,
+ * never written). An update branch cut from it therefore shares history with an owner's existing
+ * checkout of the build repo, and merges into it like any branch would.
+ *
+ * The caller cuts every update to such a repo from the app's latest approved commit
+ * ({@link latestApprovedCommitSha}), never its `main`: the build repo's `main` may hold a newer
+ * push nobody approved.
+ *
+ * Only for an app with an approved version (a live app); the fork lineage is recorded from
+ * `app_blocks.fork_of_*` when the block has one. Idempotent like {@link ensureSourceRepoLocked};
+ * call it holding the slug's lock.
+ */
+export async function seedSourceRepoFromBuildRepoLocked(args: {
+  slug: string;
+  appBlockId: string;
+  ownerUserId: number;
+}): Promise<SeedFromBuildRepoResult> {
+  if (!(await latestApprovedCommitSha(args.appBlockId))) return { kind: 'no-approved-version' };
+  const lineageRows = (await dbRead.$queryRaw`SELECT
+        ab."fork_of_app_block_id" AS "parentAppBlockId",
+        ab."fork_of_commit_sha" AS "parentCommitSha",
+        parent."block_id" AS "parentSlug"
+      FROM "app_blocks" ab
+      LEFT JOIN "app_blocks" parent ON parent."id" = ab."fork_of_app_block_id"
+      WHERE ab."id" = ${args.appBlockId} AND ab."fork_of_commit_sha" IS NOT NULL
+      LIMIT 1`) as Array<{
+    parentAppBlockId: string | null;
+    parentCommitSha: string;
+    parentSlug: string | null;
+  }>;
+  const fork = lineageRows[0];
+  const lineage =
+    fork?.parentSlug && fork.parentAppBlockId
+      ? {
+          parentSlug: fork.parentSlug,
+          parentCommitSha: fork.parentCommitSha,
+          parentAppBlockId: fork.parentAppBlockId,
+        }
+      : null;
+  return ensureSourceRepoLocked({
+    slug: args.slug,
+    ownerUserId: args.ownerUserId,
+    origin: 'backfill',
+    forkBuildRepo: true,
+    ...(lineage
+      ? {
+          forkedFrom: {
+            appBlockId: lineage.parentAppBlockId,
+            commitSha: lineage.parentCommitSha,
+          },
+        }
+      : {}),
+  });
 }
 
 /** The files a candidate is seeded with. */

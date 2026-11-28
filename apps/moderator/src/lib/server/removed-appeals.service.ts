@@ -1,5 +1,6 @@
 import { NotificationCategory } from '@civitai/notifications';
 import { sql } from 'kysely';
+import { csamBlockedForSql } from '@civitai/shared/retracted-media-tier';
 import { z } from 'zod';
 import { dbRead, dbWrite } from './db';
 import { refundAppealFee } from './image-moderation-effects';
@@ -55,8 +56,9 @@ const appealExcluded = sql<boolean>`(
     SELECT 1 FROM "UserReport" ur JOIN "Report" r ON r.id = ur."reportId"
     WHERE ur."userId" = a."userId" AND r.reason = 'CSAM'
   )
-  OR EXISTS (SELECT 1 FROM "Image" o WHERE o."userId" = a."userId" AND o."blockedFor" = 'CSAM')
-  OR EXISTS (SELECT 1 FROM "EvidenceHeldUser" h WHERE h."userId" = a."userId")
+  OR EXISTS (SELECT 1 FROM "Image" o WHERE o."userId" = a."userId" AND ${sql.raw(
+    csamBlockedForSql('o')
+  )})
   OR (a."entityType" = 'Image' AND a."entityId"::text IN (
     SELECT CASE jsonb_typeof(e) WHEN 'object' THEN e->>'id' ELSE e#>>'{}' END
     FROM "CsamReport" cr, jsonb_array_elements(cr.images) e

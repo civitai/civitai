@@ -1,14 +1,14 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
-import type * as DialogStoreModule from '~/components/Dialog/dialogStore';
+import { DialogProvider } from '~/components/Dialog/DialogProvider';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import type * as DataModule from '~/components/Storyline/storyline.data';
 import type * as QueriesModule from '~/components/Storyline/storyline.queries';
 import type * as IsMobileModule from '~/hooks/useIsMobile';
 
 const mocks = vi.hoisted(() => ({
   track: vi.fn(),
-  trigger: vi.fn(),
   openContinue: vi.fn(),
   children: [] as unknown[],
   narrow: false,
@@ -41,14 +41,9 @@ vi.mock('~/components/Storyline/storyline.queries', async (importOriginal) => ({
     isSuccess: true,
   }),
 }));
-vi.mock('~/components/Dialog/dialogStore', async (importOriginal) => ({
-  ...(await importOriginal<typeof DialogStoreModule>()),
-  dialogStore: { trigger: mocks.trigger },
-}));
 vi.mock('~/components/Storyline/continue/openStorylineContinueModal', () => ({
   openStorylineContinueModal: mocks.openContinue,
 }));
-import { ModalsProvider } from '@mantine/modals';
 import { StorylineEndOfChapter } from '~/components/Storyline/StorylineEndOfChapter';
 
 /**
@@ -56,8 +51,15 @@ import { StorylineEndOfChapter } from '~/components/Storyline/StorylineEndOfChap
  * navigates to the editor and counts the click, the text link opens the existing-post flow, and the
  * waitlist link opens early access without counting as a chapter-writing click.
  */
+afterEach(() => {
+  vi.restoreAllMocks();
+  dialogStore.closeAll();
+});
+
 describe('the end-of-chapter actions', () => {
   test('each does its own thing', async () => {
+    // Recorded, not opened: the early-access modal is not what this test is about.
+    const trigger = vi.spyOn(dialogStore, 'trigger').mockImplementation(() => undefined);
     renderWithProviders(
       <StorylineEndOfChapter
         chapterId={4}
@@ -85,7 +87,7 @@ describe('the end-of-chapter actions', () => {
     expect(mocks.openContinue).toHaveBeenCalledWith({ parentPostId: 15 });
 
     await page.getByRole('button', { name: 'Story tool coming soon · get early access' }).click();
-    expect(mocks.trigger).toHaveBeenCalledWith(
+    expect(trigger).toHaveBeenCalledWith(
       expect.objectContaining({ props: { chapterId: 4, storylineId: 9 } })
     );
     expect(mocks.track).toHaveBeenCalledTimes(1);
@@ -198,7 +200,7 @@ describe('making a path the main one', () => {
   const renderFork = ({ isOwner = false } = {}) => {
     const onContinue = vi.fn();
     renderWithProviders(
-      <ModalsProvider>
+      <>
         <StorylineEndOfChapter
           chapterId={4}
           storylineId={9}
@@ -207,7 +209,8 @@ describe('making a path the main one', () => {
           isOwner={isOwner}
           onContinue={onContinue}
         />
-      </ModalsProvider>
+        <DialogProvider />
+      </>
     );
     return onContinue;
   };
@@ -225,8 +228,9 @@ describe('making a path the main one', () => {
 
     await userEvent.click(page.getByTestId('storyline-make-main'));
     expect(mocks.setMainPath).not.toHaveBeenCalled();
-    await expect.element(page.getByText('The cave', { exact: true }).last()).toBeVisible();
-    await userEvent.click(page.getByRole('button', { name: 'Make main path', exact: true }).last());
+    const confirm = page.getByRole('dialog', { name: 'Make this the main path' });
+    await expect.element(confirm.getByText('The cave', { exact: true })).toBeVisible();
+    await userEvent.click(confirm.getByRole('button', { name: 'Make main path', exact: true }));
     // The fork's own chapter names the route, for a chapter that continues several.
     expect(mocks.setMainPath).toHaveBeenCalledExactlyOnceWith({
       chapterId: 42,

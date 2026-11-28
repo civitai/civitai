@@ -60,9 +60,9 @@ import { BlockTokenService } from '~/server/services/block-token.service';
  *
  * ── WHY IT LIVES HERE ───────────────────────────────────────────────────────
  * The `no-*.test.ts` convention-guard name in THIS directory is what makes it
- * visible to `no-lint-rules-script-drift` and runnable by the fast
+ * listed in `docs/dev/convention-guards.md` and runnable by the fast
  * `pnpm run test:lint-rules` selector. A guard of this class parked beside the
- * module it protects is invisible to that ratchet and would surface only in a full
+ * module it protects is missing from both and would surface only in a full
  * unit run, minutes later, in a file nobody was looking at.
  *
  * ── RED AT BASE — AND EXACTLY WHICH PARTS ───────────────────────────────────
@@ -333,7 +333,8 @@ describe('the private-run claim is threaded to every governed router call site',
     // is not, and there it would never execute for any token that carried both markers.
     // Ordering is the cheapest of the three layers refusing that pair, and the only one
     // a reviewer cannot see by reading either guard alone.
-    const start = source.indexOf('async function reserveBlockBuzzSpendForClaims');
+    // `reserveBlockBuzzSpendForClaims` adds a recipe runner's ledger leg, then calls this.
+    const start = source.indexOf('async function reservePlatformAndConsentLegs');
     expect(start, 'the cap selector must still exist under this name').toBeGreaterThan(0);
     // Bound the region at the next top-level declaration so this reads the function
     // body rather than the rest of the file.

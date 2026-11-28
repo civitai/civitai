@@ -5,8 +5,6 @@ import type * as AppProviderModule from '~/providers/AppProvider';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 
-// Everything around the entry chip needs the app's providers; the count does not.
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', () => ({
   useBrowsingLevelDebounced: () => 1,
 }));

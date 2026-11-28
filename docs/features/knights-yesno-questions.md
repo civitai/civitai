@@ -2,7 +2,7 @@
 
 Plain yes or no questions about one image, answered by Knights and above beside the rating votes. They exist to collect human
 answers for a decision model. They are first-class votes: an answer is graded against the majority exactly as a rating vote is graded
-against its consensus. Nothing is written back to the image, and a yes/no answer never issues a smite (only hidden checks do).
+against its consensus. Nothing is written back to the image (except by the moderator tag review source below), and a yes/no answer never issues a smite (only hidden checks do).
 Code is in `apps/knights/src/lib/server/yesno`; migration `20261210120000_knights_v2_tables` (applied by hand, before the app build and the import; it creates the
 open-item index with the `"audience" IS NULL` predicate that exempts yes/no questions).
 
@@ -28,6 +28,13 @@ which follows the rating stage rule below. The item's own `votesNeeded` is unuse
 Statuses: `Open`, `Consensus`, `Closed` (reason `no-consensus`, `unplayable`, `stale`, `retired` or `moderator-retired`). A yes/no item is never `Resolved`, so write-back and the rating
 escalation and settle sweeps never touch it (it has no `expiresAt`; its own stage escalation is below). Rating `getFeed` and `castVote` exclude items with an `audience`. The partial unique index that allows one
 open rating item per question and image exempts yes/no items, which share an axis and an image.
+
+"Not sure" answers are stored in `KnightsUnsure` (migration `20271128120100_knights_unsure`, by hand, then SELECT and INSERT for
+Knights' database role plus USAGE on `KnightsUnsure_id_seq`, before deploying): one row per player and question item, with the
+question key and image as a snapshot and no foreign keys, so a count outlives the item. It is never a vote and nothing is paid, graded or decided from it. Count per question with
+`SELECT "itemId", count(*) FROM "KnightsUnsure" GROUP BY 1`. It lives in Postgres rather than ClickHouse because the game reads it
+back (a "Not sure" counts toward ending a run of questions). The `yesNoReferenceId` column is unused: Acolyte practice pairs are
+graded, so they offer no "Not sure".
 
 ## Import
 
@@ -60,7 +67,7 @@ sample-0003,false,1003,sample_axis,observable,Withdrawn question.,,
 
 `cd apps/knights && pnpm run import:yesno <file.csv> [--dry-run]` reads `DATABASE_URL` from `.env` and refuses any host other than
 localhost, 127.0.0.1 or ::1 (for a dev database, forward the port first). It keeps rows marked active, maps `observable` to `players`
-and `policy_preference` to `moderators`, skips a row whose image does not exist (`bad-image`), creates the axis questions once, and upserts items by `externalId` in batches. It never
+and `policy_preference` to `moderators`, skips a row whose image does not exist (`bad-image`) or that the public feeds would not show (`unservable-image`, the `servableImage` test), creates the axis questions once, and upserts items by `externalId` in batches. It never
 rewrites an item that has answers (a changed one is reported as `refused`; the moderation record a moderator's action adds to `meta` is not a change), and closes an open item the file marks inactive
 (`retired`, no outcome), along with any open reworded copies of it; a question it withdrew earlier and lists again, with no
 answers, is reopened. It skips an unanswered item a moderator changed (counted as `moderated`), except that a moderated item the file
@@ -70,8 +77,8 @@ reworded copy instead, if the import had closed that copy. It prints counts only
 **Temporary launch page.** The script cannot reach production, so `/admin/yesno-import` in the Knights app runs the same import once at launch.
 It is moderator-only (an explicit `isModerator` check on the page load and on its POST; others get 403), is not linked from any navigation,
 and is to be removed after the Knights v2 launch import. The browser splits the cleaned file into chunks of at most 400 rows (and 256 KB, to stay under the
-node adapter's request body limit), repeats the header in each, and posts them one after another; each chunk runs `toYesNoRows`, drops rows whose image does not exist (`bad-image`) and runs `importYesNo`,
-and the page sums the counts, showing `moderated` and each skip reason on their own. It is dry-run by default (parse, check the images exist and count; no writes). Each real chunk is logged to Axiom with the moderator id and counts.
+node adapter's request body limit), repeats the header in each, and posts them one after another; each chunk runs `toYesNoRows`, drops rows whose image does not exist (`bad-image`) or cannot be served (`unservable-image`) and runs `importYesNo`,
+and the page sums the counts, showing `moderated` and each skip reason on their own. It is dry-run by default (parse, check the images exist and can be served, and count; no writes). Each real chunk is logged to Axiom with the moderator id and counts.
 Upload only the cleaned file: a withdrawn id is retired only within its own chunk's run, which is why the file must hold no inactive rows.
 
 ## Moderator cleanup
@@ -91,12 +98,34 @@ votes, never player rows.
 
 ## Serving (`feed.ts`)
 
-- Questions come in bursts (`cadence.ts`, `BURSTS`): a gap of 5, 8 or 10 ratings, then a burst of 1 to 5 questions, each length
-  rolled anew per player. `burstDue` reads the player's last 11 votes plus the items already handed out ahead (`servedHistory`; a
+- Questions come in bursts (`cadence.ts`, `BURSTS`): a gap of 15, 18 or 20 ratings, then a burst of 5 to 10 questions, each length
+  rolled anew per player. `burstDue` reads the player's last 21 votes and "Not sure" answers (`KnightsUnsure`, a question
+  served, so a run ends at its length whatever the answer) plus the items already handed out ahead (`servedHistory`; a
   hidden check counts as a rating), and rolls each length from the item that ended the run before it, so a reload or the look-ahead
   never re-rolls. A due burst comes before the hidden-check roll; a hidden check rides only on a rating slot. When no question is
-  left, the slot is a rating; with no rating to show, a question is shown whenever there is one. `KNIGHTS_YESNO_SHARE=0` switches
-  questions off; any other value leaves the cadence as it is.
+  left, the slot is a rating; with no rating to show, a question is shown whenever there is one. A share of 0 switches questions
+  off; any other value leaves the cadence as it is. The share comes from `yesNoShare` on `system:knights-v2-sources`, set by the
+  "Yes/no questions" switch on the moderator app's Knights of New Order Config page (On stores 1, Off 0, Default clears it; read by
+  Knights at most every 30 s), else from `KNIGHTS_YESNO_SHARE`.
+  The stretch and the max age below work the same way ([game settings](knights-sources.md#game-settings)).
+- Players can turn questions off on `/settings` ("Yes/no questions", labelled beta; `KnightsPlayer.yesNoQuestions`, migration
+  `20271128120000_knights_player_question_settings`, by hand). The switch is read in `pickItem` (`playerPrefs`, on every pick, no
+  cache), the one place a queue yes/no becomes due, so it covers the generated questions, the Paladin tag review source and
+  `GET /play/next` alike. A player who never touched it follows `yesNoPlayerDefault` on the Config page (off unless set), and a
+  failed read serves no question. Items handed out before a change can still be answered. Acolytes get no switch: their practice
+  pairs (`KnightsYesNoReference`) are part of the apprenticeship. While the Config page serves no questions at all (share 0 and tag
+  review off), the Questions section is hidden; the stored choice is kept for when they come back.
+- From Knight up, `/settings` also has "Hide content": one switch per preset tag group (`KNIGHTS_TAG_GROUPS` in
+  `apps/knights/src/lib/server/knights-tag-groups.ts`: furry, male focus, feet, bondage, futanari, gore, picked from the open
+  queue's tags and agreed with Moderation; separate from the main site's browsing categories; stored as keys in
+  `KnightsPlayer.hiddenTagGroups`, where a key no longer in the list hides nothing). The queue reserves nothing per player, so a
+  hidden image stays open for every other player. An image with an enabled tag of a hidden group (`TagsOnImageDetails`) is not served to that
+  player anywhere: rating feed, rating vote, late Watch credit, yes/no pick and vote, hidden checks. `servedTo` in
+  `queue/vote-record.ts` is that one check, next to the hidden-creator one, and reads the groups inside the query, so it cannot fail
+  open. A group can also name yes/no axes about its topic (`axes`: gore covers `violence` and `subject_state`); `pickYesNo` skips
+  those axes for a player who hides it, whatever the image is tagged, since their images often carry none of the group's tags.
+  No group is a browsing level, a whole kind of sexual content or an orientation tag alone (unit tests pin it): Knights is where mature content gets rated. A
+  player's own hidden tags on the site never apply, and Acolyte practice is not filtered.
 - A stretch is `KNIGHTS_YESNO_STRETCH` questions of one axis in a row (default 8); the next axis starts with a banner. The player's
   latest yes/no answers in the ledger say where they are in a stretch, so no state is kept. `GET /play/next` hands out up to 10 items at once, so each pick also counts the yes/no questions already handed out ahead of it and not yet on the ledger (`ahead` in `pickYesNo`): the stretch cap and the new-category banner hold across the buffer, and the banner is on the first question of a stretch only.
 - A question is offered only to a rank that may judge Knight items, on an image `servableImage` accepts, if it is `Open`, if the
@@ -149,8 +178,52 @@ Each answer becomes a `knight` label in the label store, written by the tick as 
 held player: question `knights.yesno.<externalId>`, value `yes` or `no`, one label per answer, unique source ref. Each answered
 question gets its own `rule` row, so the store computes the majority per question. Details: `docs/features/label-store.md`.
 
+## Moderator tag review source (`tag-review.ts`, `tag-writeback.ts`)
+
+Paladins also answer the moderator app's image tag review queue (`/images/tags`) as yes/no questions: "Should this image have
+the tag <name>?", yes keeps the tag, no removes it. The queue itself does not change: moderators keep seeing every flagged tag,
+and whichever side rules first takes it out of the other's queue. Off unless the moderator Config page switches it on
+(`modTagReview` in `system:knights-v2-sources`, absent is off); switching on is in [Knights queue sources](knights-sources.md#paladin-tag-review).
+
+- **Items.** Source `mod-tag-review`, axis `tag_review` (heading "Tag review"), audience `players`, created at the Paladin stage
+  with no deadline (`expiresAt` null, so `escalateExpired` never moves or expires them), `externalId`
+  `mod-tag:<imageId>:<tagId>:<episode>`, `meta { tagId, episode }`. Created through `importYesNo`, like the CSV import.
+- **Create (tick).** With the switch on and an active Paladin, the tick walks the flagged tag rows a page at a time within a time
+  budget, resuming where the last run stopped (process memory; a restart starts over, and the upsert makes reruns idempotent).
+  A row gets an item when its tag is a Moderation tag below Blocked and its image passes `modReviewEligibleImage`
+  (`@civitai/db/knights`) on a published post.
+- **Eligibility.** One predicate, `modReviewEligibleImage`, keeps staff-only images away from players: it includes every image a
+  moderator without the CSAM grant may not see (`moderatorWithheldSql`), read by Knights through the gate view's `modReviewContent`
+  column. It runs where an item is
+  created, served, voted on and swept, and in the moderator app's write-back guard; an item whose image stops passing it is no
+  longer served, its vote is refused and an answered one is swept `unplayable`.
+- **Episodes.** Each time a tag is flagged after a ruling it gets a fresh item (`episode` + 1); while the latest item is open, awaiting
+  write-back, or closed without the flag ever clearing, nothing new is created. When a tag stops being flagged (a moderator ruled, or
+  it was disabled or removed), the tick closes its open item `moderator-ruled` (votes inconclusive) or stamps a finished one
+  `episodeEnded`, for items of the last 30 days. This runs with the switch off too.
+- **Deciding.** The Paladin stage rule applies, never the Inquisitors: four answers without agreement close `no-consensus` and the tag
+  stays with moderators. A "no" that would lower the image's rating (`removalLowersLevel`, read under the item lock at vote time) does
+  not settle on the 2-0 minimum and follows the 75% rule instead; keeps and level-neutral removals settle 2-0. The players'
+  answers go to the label store like any yes/no answer.
+- **Write-back (tick).** A settled item is written back through the moderator app's `image-tag-moderate` action
+  (`@civitai/moderation`), which runs the queue's own `moderateImageTags` in a guarded mode and records `moderateTagKono` for the
+  player who closed the consensus: that activity in image lookup is the history of player rulings. Outcomes `applied` and
+  `already-ruled` end the episode; `ineligible` and `missing` are final and leave the tag with moderators. A moderator app that is
+  not ready (not deployed, not configured, credential not accepted) is retried without spending attempts; other failures back off
+  and stop at the attempt cap as `attempts-exhausted` (paid, not applied). Config: `MODERATOR_APP_INTERNAL_URL` (else
+  `MODERATOR_APP_URL`) and `KNIGHTS_TAG_REVIEW_TOKEN`.
+- The moderator Questions tab leaves these items out: a reworded copy would ask something other than the tag it writes back.
+
 ## Players see
 
 `/judgments` shows the question's words and the answer; it is pending until the question closes, then right, wrong or set aside like
-any rating. The Codex has a short paragraph that says only that an answer is graded against the Order's final answer. Hotkeys, banner and the status line are in `/play`. A hidden check is rolled only on a rating slot, at its own rate
+any rating. The Codex has a short paragraph that says only that an answer is graded against the Order's final answer. Hotkeys, banner and the status line are in `/play`. On a question, Skip is a "Not sure" answer pill (Space, the same `?/skip`
+action: no pay, no smite, plus a `KnightsUnsure` row, best effort); ratings keep Skip. An Acolyte's practice pair has no "Not sure": every
+pair is graded, and abstaining would keep a wrong answer out of the promotion window (`?/apprentice` refuses `unsure` as an answer
+not on offer). A run of questions opens with "Question time" and ends with a "Questions done"
+banner ([motion](knights-motion-and-sound.md)). A hidden check is rolled only on a rating slot, at its own rate
 (`KNIGHTS_HIDDEN_CHECK_RATE`).
+
+The rules the questions test are shown as "Question rules" below the rating levels, in the Codex rating guide and in the guide
+window on `/play` (`apps/knights/src/lib/question-rules.ts`; change the text there). A yes/no question shows the guide button,
+which opens the guide at the rules.

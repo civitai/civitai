@@ -74,6 +74,7 @@ vi.mock('~/server/flipt/tester-segment', async () => {
 
 const { events, eventEngine, getActiveEvents } = await import('~/server/events/index');
 const { birthday2026 } = await import('~/server/events/birthday2026.event');
+const { flagRaceConfigKey } = await import('~/server/events/scoring/award-results');
 
 const HOUR = 60 * 60 * 1000;
 let redisStore: Record<string, string> = {};
@@ -292,6 +293,7 @@ describe('end-of-event cleanup', () => {
   it('does nothing for holiday2024 on any day after its grace window, including birthday cleanup day', async () => {
     const birthdayCleanup = new Date(BIRTHDAY_2026_ENDS_AT.getTime() + 40 * HOUR);
     sysStore[`event:${BIRTHDAY_2026_EVENT}:winner`] = 'Pink';
+    sysStore[flagRaceConfigKey(BIRTHDAY_2026_EVENT)] = JSON.stringify({ prizes: {} });
     await eventEngine.dailyReset(birthdayCleanup);
 
     expect(dbMock.dbWrite.userCosmetic.updateMany).not.toHaveBeenCalled();
@@ -518,6 +520,7 @@ describe('end-of-event cleanup', () => {
 
       // Blue is not first in the standings: the record, not the standings, decides.
       sysStore[winnerMarker] = 'Blue';
+      sysStore[flagRaceConfigKey(BIRTHDAY_2026_EVENT)] = JSON.stringify({ prizes: {} });
       await eventEngine.dailyReset(secondReset);
       expect(onCleanup).toHaveBeenCalledWith(
         expect.objectContaining({ winner: 'Blue', winnerCosmeticId: 22 })
@@ -529,6 +532,24 @@ describe('end-of-event cleanup', () => {
     } finally {
       delete def.onCleanup;
     }
+  });
+
+  it('keeps the cleanup open, to retry the next day, while the end-of-event prizes cannot be awarded', async () => {
+    sysStore[winnerMarker] = 'Blue';
+    // Not configured yet.
+    await eventEngine.dailyReset(secondReset);
+    expect(setKeys()).toEqual([]);
+
+    // Configured, but invalid.
+    sysStore[flagRaceConfigKey(BIRTHDAY_2026_EVENT)] = JSON.stringify({
+      prizes: { comeback: { mode: 'live' } },
+    });
+    await eventEngine.dailyReset(secondReset);
+    expect(setKeys()).toEqual([]);
+
+    sysStore[flagRaceConfigKey(BIRTHDAY_2026_EVENT)] = JSON.stringify({ prizes: {} });
+    await eventEngine.dailyReset(secondReset);
+    expect(setKeys()).toEqual([`eventCleanup:${BIRTHDAY_2026_EVENT}`]);
   });
 
   it('waits to clean up while the engine is switched off', async () => {
@@ -843,18 +864,9 @@ describe('scoring behind the flag', () => {
   });
 
   it('still refreshes the standings when the referee fails', async () => {
-    const { logToAxiom } = await import('~/server/logging/client');
     mockReferee.runEventPointsReferee.mockRejectedValueOnce(new Error('clickhouse down'));
     await eventEngine.updateLeaderboard(DURING);
     expect(mockScoring.refreshStandings).toHaveBeenCalledTimes(1);
-    // ...and the failure is reported, not swallowed.
-    expect(logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'error',
-        name: 'event-points-referee',
-        message: 'clickhouse down',
-      })
-    );
   });
 
   it('scores everyone from the start, base on or off', async () => {

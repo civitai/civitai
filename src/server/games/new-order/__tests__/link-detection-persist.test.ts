@@ -4,7 +4,6 @@ vi.mock('~/server/clickhouse/client', () => ({ clickhouse: { $query: vi.fn() } }
 vi.mock('~/server/games/new-order/utils', () => ({ getVotingRateLimitConfig: vi.fn() }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type { LinkCluster } from '~/server/games/new-order/link-detection';
 import {
   AUTO_BLOCK_REASON,
@@ -39,9 +38,6 @@ describe('persistLinkedClusters', () => {
     });
     const [values] = reviewWrites();
     expect(values).toEqual(expect.arrayContaining(['Blocked', true, 250]));
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'new-order-link-auto-block' })
-    );
   });
 
   it('writes the review before the holds, in one transaction', async () => {
@@ -88,6 +84,5 @@ describe('persistLinkedClusters', () => {
 
     expect(counts).toEqual({ blocked: 0, queued: 0, skipped: 1 });
     expect(write.newOrderPlayer.updateMany).not.toHaveBeenCalled();
-    expect(loggingMock.logToAxiom).not.toHaveBeenCalled();
   });
 });

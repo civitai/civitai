@@ -1,14 +1,9 @@
+import {
+  bustPublicModelResponseCache,
+  publicModelResponseKey,
+} from '~/server/services/public-model-response-cache';
 import { Prisma } from '@prisma/client';
 import { onStorySparkPostsHidden, onStorySparkPostsRestored } from '~/server/events/points/hooks';
-import { keepHeldReviewsCte, reviewsOnVersionsSql } from '~/server/services/held-review.service';
-import {
-  contentKeptError,
-  deleteUnlessHeld,
-  heldModelIdsSql,
-  isLegalHoldAbort,
-  modelRowHeldSql,
-  ownerHeld,
-} from '~/server/services/legal-hold.service';
 import { TRPCError } from '@trpc/server';
 import { asResourceValue } from '~/shared/utils/resource.utils';
 import type { GenerationResource } from '~/shared/types/generation.types';
@@ -40,6 +35,10 @@ import {
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import {
+  filterViewableModelVersions,
+  modelVersionVisibilitySelect,
+} from '~/server/services/model-version-visibility.service';
 import { readDownedVersion } from '~/server/services/model-takedown-lock';
 import {
   getDbWithoutLag,
@@ -252,9 +251,11 @@ export const getVersionById = async <TSelect extends Prisma.ModelVersionSelect>(
 export const getVersionsByIds = async ({
   ids,
   browsingLevel,
+  viewer,
 }: {
   ids: number[];
   browsingLevel?: number;
+  viewer: Parameters<typeof filterViewableModelVersions>[1];
 }) => {
   if (ids.length === 0) return [];
   const showSfwFace = showsSfwFace(browsingLevel);
@@ -262,11 +263,12 @@ export const getVersionsByIds = async ({
   const results = await dbRead.modelVersion.findMany({
     where: { id: { in: ids } },
     select: {
-      id: true,
+      ...modelVersionVisibilitySelect,
       name: true,
       baseModel: true,
       model: {
         select: {
+          ...modelVersionVisibilitySelect.model.select,
           id: true,
           name: true,
           sfwName: true,
@@ -277,7 +279,7 @@ export const getVersionsByIds = async ({
     },
   });
 
-  return results.map((v) => ({
+  return (await filterViewableModelVersions(results, viewer)).map((v) => ({
     id: v.id,
     name: v.name,
     baseModel: v.baseModel,
@@ -478,6 +480,7 @@ export const getLicensingRoots = async ({
       licensingFeeType: LicensingFeeType | null;
       licensingFeeSettlementCurrency: LicensingFeeSettlementCurrency | null;
       isDefault: boolean;
+      restricted: boolean;
     }>
   >`
     SELECT
@@ -487,7 +490,8 @@ export const getLicensingRoots = async ({
       mv."licensingFee"::float8 AS "licensingFee",
       mv."licensingFeeType",
       mv."licensingFeeSettlementCurrency",
-      lr."isDefault"
+      lr."isDefault",
+      lr.restricted
     FROM "LicensingRoot" lr
     JOIN "ModelVersion" mv ON mv.id = lr."modelVersionId"
     JOIN "Model" m ON m.id = mv."modelId"
@@ -500,7 +504,9 @@ export const getLicensingRoots = async ({
     ORDER BY lr."isDefault" DESC, m.name, mv.index
   `;
 
-  const defaultVersionId = roots.find((r) => r.isDefault)?.id ?? null;
+  // Restricted roots stay in the returned list (the editor needs them to recognise a root's own version);
+  // only the pre-selected default skips them.
+  const defaultVersionId = roots.find((r) => r.isDefault && !r.restricted)?.id ?? null;
   return { roots, defaultVersionId };
 };
 
@@ -621,6 +627,24 @@ function assertOwnerTrainingStatusChange(
     (!isDatasetEditable(stored) && isDatasetEditable(next))
   )
     throw throwBadRequestError("A version's training status can't be changed here.");
+}
+
+// Internal and External generation are set by moderators: an owner can neither set them nor move a
+// version out of them. Replaying the stored value is not a change.
+const MODERATOR_MANAGED_USAGE_CONTROLS: ModelUsageControl[] = [
+  ModelUsageControl.InternalGeneration,
+  ModelUsageControl.ExternalGeneration,
+];
+function assertOwnerUsageControlChange(
+  stored: ModelUsageControl,
+  next: ModelUsageControl | undefined
+) {
+  if (next === undefined || next === stored) return;
+  if (
+    MODERATOR_MANAGED_USAGE_CONTROLS.includes(stored) ||
+    MODERATOR_MANAGED_USAGE_CONTROLS.includes(next)
+  )
+    throw throwBadRequestError("This version's usage control is managed by moderators.");
 }
 
 type PublishState = {
@@ -1092,6 +1116,7 @@ export const upsertModelVersion = async ({
         usageControl: true,
         flags: true,
         licensingFee: true,
+        licensingFeeType: true,
         // Read for the audit diff, not for the write. `watchedEntityFields` compares before/after by
         // key, so a watched field missing from this select silently produces no row rather than an
         // error — the audit would look wired up and record nothing.
@@ -1136,12 +1161,6 @@ export const upsertModelVersion = async ({
     // them computes the refund that unpublishModelVersionById owes its buyers. So this refuses
     // LEAVING Published rather than listing the values that do it: an enumeration of forbidden
     // statuses is not a control, and ModelStatus has eight members.
-    //
-    // ⚠️ This closes the take-down, NOT every way this route can defeat the gate. The same save
-    // clears the PaidAccess row when `paidAccess` is omitted (writePaidAccessForModelVersion →
-    // deleteMany), and the requirement returns empty with no active gate — so one save then an
-    // ordinary unpublish still refunds nobody. That is tracked separately; do not read this guard
-    // as "the editor can no longer strand a buyer".
     if (
       existingVersion.status === ModelStatus.Published &&
       data.status !== undefined &&
@@ -1166,6 +1185,7 @@ export const upsertModelVersion = async ({
       }
       assertOwnerTrainingStatusChange(existingVersion.trainingStatus, data.trainingStatus);
       assertOwnerBaseModelChange(existingVersion, data.baseModel);
+      assertOwnerUsageControlChange(existingVersion.usageControl, data.usageControl);
     }
 
     const baseModel = data.baseModel ?? existingVersion.baseModel;
@@ -1211,20 +1231,23 @@ export const upsertModelVersion = async ({
             name: string;
             trainedWords: string[];
             trainingStatus: TrainingStatus | null;
+            usageControl: ModelUsageControl;
           } & PublishState & { baseModel: string })[]
         >`
-          SELECT name, "trainedWords", "trainingStatus", "baseModel", status, "publishedAt",
-            "initialPublishedAt"
+          SELECT name, "trainedWords", "trainingStatus", "baseModel", "usageControl", status,
+            "publishedAt", "initialPublishedAt"
           FROM "ModelVersion" WHERE id = ${id} FOR UPDATE
         `;
         if (storedText && locked && !sameVersionText(locked, storedText))
           throw throwConflictError(
             'This version changed while you were saving. Reload and try again.'
           );
-        // A run can start, or the version publish, between the read above and this lock.
+        // A run can start, the version publish, or a moderator change its usage control between the read
+        // above and this lock.
         if (!isModerator && locked) {
           assertOwnerTrainingStatusChange(locked.trainingStatus, data.trainingStatus);
           assertOwnerBaseModelChange(locked, data.baseModel);
+          assertOwnerUsageControlChange(locked.usageControl, data.usageControl);
         }
 
         const updated = await tx.modelVersion.update({
@@ -1374,7 +1397,11 @@ export const upsertModelVersion = async ({
     const feeBefore =
       existingVersion.licensingFee != null ? Number(existingVersion.licensingFee) : null;
     const feeAfter = feeProvided ? data.licensingFee ?? null : feeBefore;
-    if (feeBefore !== feeAfter)
+    // The type changes what the number means (Buzz per image or a percent), so it busts too.
+    const typeChanged =
+      data.licensingFeeType !== undefined &&
+      data.licensingFeeType !== existingVersion.licensingFeeType;
+    if (feeBefore !== feeAfter || typeChanged)
       await bustMvCache(version.id, version.modelId, actorUserId).catch(() => undefined);
 
     if (version.description !== existingVersion.description)
@@ -1640,19 +1667,6 @@ async function purgeModelVersionByHashCacheById(modelVersionIds: number[]) {
   await purgeModelVersionByHashCache(hashes.map((h) => h.hash));
 }
 
-/** A statement whose hold check could not be read is refused as held, as `deleteUnlessHeld` does. */
-const refuseOnHoldAbort = <T>(statement: Promise<T>) =>
-  statement.catch((e: unknown) => {
-    throw isLegalHoldAbort(e) ? contentKeptError(false) : e;
-  });
-
-/** The versions `ids` with their model owner as `m."userId"`, for `deleteUnlessHeld`. */
-const versionOwnerSql = (ids: number[]) => Prisma.sql`
-  FROM "ModelVersion" mv
-  JOIN "Model" m ON m.id = mv."modelId"
-  WHERE mv.id = ANY(${ids}::int[])
-`;
-
 export const deleteVersionById = async ({
   id,
   isModerator,
@@ -1730,26 +1744,8 @@ export const deleteVersionById = async ({
 
     // The caller returns the whole row, so it is read here, under the lock taken above.
     const deleted = await tx.modelVersion.findUniqueOrThrow({ where: { id } });
-    // A held owner's version is refused, and the throw rolls back the access rows removed above.
-    const reviews = Prisma.sql`SELECT r.id FROM "ResourceReview" r WHERE r."modelVersionId" = ${id}`;
-    const outcome = await deleteUnlessHeld(
-      tx.$executeRaw`
-        WITH ${keepHeldReviewsCte(reviews, true)}
-        DELETE FROM "ModelVersion" mv
-        USING "Model" m
-        WHERE mv.id = ${id}
-          AND m.id = mv."modelId"
-          AND NOT ${modelRowHeldSql()}
-      `,
-      {
-        expected: 1,
-        isModerator,
-        db: tx,
-        ownerFrom: versionOwnerSql([id]),
-        held: modelRowHeldSql(),
-      }
-    );
-    if (outcome === 'short') throw throwNotFoundError(`No model version with id ${id}`);
+    const removed = await tx.$executeRaw`DELETE FROM "ModelVersion" WHERE id = ${id}`;
+    if (!removed) throw throwNotFoundError(`No model version with id ${id}`);
     await updateModelLastVersionAt({ id: deleted.modelId, tx });
 
     return deleted;
@@ -2996,6 +2992,8 @@ export const earlyAccessPurchase = async ({
       meta: {
         [buzzTransactionKey]: buzzTransactionId,
         [purchase.purchasedAtKey]: new Date().toISOString(),
+        [purchase.amountKey]: amount,
+        [purchase.buzzTypeKey]: buzzType,
       },
       addedById: userId,
     });
@@ -3204,38 +3202,7 @@ export const modelVersionDonationGoal = async ({
   return (await getOwnerDonationGoals('ModelVersion', [id]))[id] ?? null;
 };
 
-// Public-response cache (origin-side cache for GET /api/v1/models/[id]) toggle —
-// only populated on Datapacket (see PUBLIC_MODEL_RESPONSE_TTL in the handler).
-const PUBLIC_MODEL_RESPONSE_CACHE_ENABLED = env.IS_DATAPACKET;
-
-export function publicModelResponseKey(
-  modelId: number,
-  browsingLevel: number
-): RedisKeyTemplateCache {
-  // `v2`: bodies whose card images are held to the level. Bump when the body's filtering changes,
-  // so entries built by the previous code are not read.
-  return `${REDIS_KEYS.CACHES.PUBLIC_MODEL_RESPONSE}:v2:${modelId}:${browsingLevel}`;
-}
-
-// Best-effort, fail-open invalidation of the origin-side public response cache for
-// GET /api/v1/models/[id] (see the handler). Called from bustMvCache so an
-// unpublish / takedown / update / delete drops the cached 200 immediately rather
-// than serving stale for up to the cache TTL globally. Busts BOTH browsing-level
-// keys the handler can write (all-levels for unrestricted regions, sfw-only for
-// region-restricted ones). Deletes the physical key — the handler's read keys off
-// key PRESENCE, so a clean delete forces a rebuild. A Redis error here must NOT
-// throw into the mutation path, so it is swallowed (the entry otherwise expires
-// via its TTL).
-export async function bustPublicModelResponseCache(modelId: number | number[]) {
-  if (!PUBLIC_MODEL_RESPONSE_CACHE_ENABLED) return;
-  const modelIds = Array.isArray(modelId) ? modelId : [modelId];
-  if (modelIds.length === 0) return;
-  const keys = modelIds.flatMap((id) => [
-    publicModelResponseKey(id, allBrowsingLevelsFlag),
-    publicModelResponseKey(id, sfwBrowsingLevelsFlag),
-  ]);
-  await redis.del(keys).catch(() => undefined);
-}
+export { bustPublicModelResponseCache, publicModelResponseKey };
 
 /**
  * The model-level caches that carry a version's data. Both callers below reach it: `bustMvCache`
@@ -3388,10 +3355,11 @@ export const createModelVersionPostFromTraining = async ({
   });
 
   await Promise.all(
-    uploadedImages.map((image) =>
+    uploadedImages.map((image, index) =>
       addPostImage({
         type: image.type,
         postId: post.id,
+        index,
         modelVersionId,
         width: image.metadata?.width,
         height: image.metadata?.height,
@@ -3769,12 +3737,6 @@ export const mergeVersions = async ({
     }
   }
 
-  // Checked again in the delete below; this only spares a held owner the long transaction.
-  if (
-    await ownerHeld(dbWrite, Prisma.sql`FROM "Model" m WHERE m.id = ${modelId}`, modelRowHeldSql())
-  )
-    throw contentKeptError(false);
-
   // Populated inside the tx after files are moved to the target — captures any
   // file row that slipped past the move and would be orphaned by the cascade.
   let sourceFileUrls: string[] = [];
@@ -4061,18 +4023,12 @@ export const mergeVersions = async ({
             SELECT "userId" FROM "ResourceReview"
             WHERE "modelVersionId" = ${targetVersionId}
           )`;
-      await refuseOnHoldAbort(tx.$executeRaw`
-        WITH ${keepHeldReviewsCte(supersededByTarget, true)}
-        DELETE FROM "ResourceReview" WHERE id IN (${supersededByTarget})
-      `);
+      await tx.$executeRaw`DELETE FROM "ResourceReview" WHERE id IN (${supersededByTarget})`;
       const supersededBySource = Prisma.sql`SELECT a.id FROM "ResourceReview" a
         JOIN "ResourceReview" b ON a."userId" = b."userId" AND a.id < b.id
         WHERE a."modelVersionId" IN (${Prisma.join(sourceVersionIds)})
           AND b."modelVersionId" IN (${Prisma.join(sourceVersionIds)})`;
-      await refuseOnHoldAbort(tx.$executeRaw`
-        WITH ${keepHeldReviewsCte(supersededBySource, true)}
-        DELETE FROM "ResourceReview" WHERE id IN (${supersededBySource})
-      `);
+      await tx.$executeRaw`DELETE FROM "ResourceReview" WHERE id IN (${supersededBySource})`;
       await tx.resourceReview.updateMany({
         where: { modelVersionId: { in: sourceVersionIds } },
         data: { modelVersionId: targetVersionId },
@@ -4122,29 +4078,10 @@ export const mergeVersions = async ({
       await tx.paidAccess.deleteMany({
         where: { entityType: 'ModelVersion', entityId: { in: sourceVersionIds } },
       });
-      // A held owner's merge is refused, and the throw rolls back the whole merge.
-      const outcome = await deleteUnlessHeld(
-        tx.$executeRaw`
-          WITH ${keepHeldReviewsCte(
-            reviewsOnVersionsSql(Prisma.sql`SELECT unnest(${sourceVersionIds}::int[])`),
-            true
-          )}
-          DELETE FROM "ModelVersion" mv
-          USING "Model" m
-          WHERE mv.id = ANY(${sourceVersionIds}::int[])
-            AND m.id = mv."modelId"
-            -- One model: its owners, present and past, checked once rather than once per version.
-            AND m.id NOT IN (${heldModelIdsSql(Prisma.sql`SELECT ${modelId}::int`, true)})
-        `,
-        {
-          expected: new Set(sourceVersionIds).size,
-          isModerator: false,
-          db: tx,
-          ownerFrom: versionOwnerSql(sourceVersionIds),
-          held: modelRowHeldSql(),
-        }
-      );
-      if (outcome === 'short')
+      const removed = await tx.$executeRaw`
+        DELETE FROM "ModelVersion" WHERE id = ANY(${sourceVersionIds}::int[])
+      `;
+      if (removed < new Set(sourceVersionIds).size)
         throw throwNotFoundError('One or more source versions no longer exist.');
 
       // 13. Update the model's lastVersionAt
@@ -4167,6 +4104,9 @@ export const mergeVersions = async ({
     preventReplicationLag('model', modelId),
     preventReplicationLag('modelVersion', targetVersionId),
   ]);
+  // A showcase failure never fails the merge.
+  const { repointVersionShowcases } = await import('~/server/services/version-showcase.service');
+  await repointVersionShowcases(targetVersionId, sourceVersionIds);
   // Then the AIRs read before the write, and the file-pinned AIRs, which version busts never reach: a
   // pinned AIR names its version, so a moved file is cached under its source's AIR, and the target's
   // coverage now counts the moved files.

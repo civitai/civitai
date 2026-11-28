@@ -1,3 +1,4 @@
+import { serverCopyTablesSql } from '@civitai/db-queries/test/image-uses';
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -66,11 +67,14 @@ beforeAll(async () => {
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
     CREATE TYPE "Availability" AS ENUM ('Public', 'Unsearchable', 'Private', 'EarlyAccess');
     CREATE TYPE "CollectionContributorPermission" AS ENUM ('VIEW', 'ADD', 'ADD_REVIEW', 'MANAGE');
+    CREATE TABLE "ServiceDealReviewImage" ("reviewId" int NOT NULL, "imageId" int NOT NULL);
     CREATE TABLE "Image" (
+      minor boolean DEFAULT false,
       id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, "nsfwLevel" int DEFAULT 1,
       "needsReview" text, "blockedFor" text, ingestion "ImageIngestionStatus" DEFAULT 'Scanned',
       "nsfwLevelLocked" boolean DEFAULT false, metadata jsonb NOT NULL DEFAULT '{}',
-      "scanJobs" jsonb, "acceptableMinor" boolean NOT NULL DEFAULT false
+      "scanJobs" jsonb, "acceptableMinor" boolean NOT NULL DEFAULT false,
+      "modelRestricted" boolean NOT NULL DEFAULT false
     );
     CREATE TABLE "Post" (
       id int PRIMARY KEY, "userId" int NOT NULL, "publishedAt" timestamp,
@@ -78,7 +82,7 @@ beforeAll(async () => {
     );
     CREATE TABLE "Article" (
       id int PRIMARY KEY, "coverId" int, status text, "publishedAt" timestamp, ingestion text,
-      "bannerId" int
+      "bannerId" int, availability "Availability" DEFAULT 'Public', "userId" int
     );
     CREATE TABLE "CollectionContributor" (
       "collectionId" int, "userId" int, permissions "CollectionContributorPermission"[]
@@ -93,6 +97,8 @@ beforeAll(async () => {
       id serial PRIMARY KEY, "collectionId" int NOT NULL, "imageId" int, "addedById" int,
       status text NOT NULL
     );
+    ${serverCopyTablesSql};
+    ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS url text;
   `);
   const raw = pgliteRaw(db);
   // Tagged-template calls, and `managesPostCollection`'s single prebuilt `Prisma.sql` argument.
@@ -177,9 +183,9 @@ function ctxFor(viewer: Viewer, { canViewNsfw = true, crawler = false, scopedTok
   } as unknown as MediaViewer & { cache: { edgeTTL: number } };
 }
 
-async function sees(viewer: Viewer) {
+async function sees(viewer: Viewer, { scopedToken = false } = {}) {
   try {
-    const data = await getImageGenerationData({ id: 1, viewer: ctxFor(viewer) });
+    const data = await getImageGenerationData({ id: 1, viewer: ctxFor(viewer, { scopedToken }) });
     // The payload itself, so a stubbed early return can't pass as "visible".
     expect(data.meta?.prompt).toBe('a prompt');
     return true;
@@ -190,7 +196,11 @@ async function sees(viewer: Viewer) {
 }
 
 const HIDDEN: Array<[string, Parameters<typeof seed>[0]]> = [
-  ['awaiting review', { image: { '"needsReview"': `'minor'` } }],
+  ['awaiting review', { image: { '"needsReview"': `'poi'` } }],
+  [
+    'rated R on a restricted base model',
+    { image: { '"nsfwLevel"': '4', '"modelRestricted"': 'true' } },
+  ],
   ['not yet scanned', { image: { ingestion: `'Pending'` } }],
   [
     'with a mod-locked rating from a Knights vote whose scan errored',
@@ -206,7 +216,7 @@ const HIDDEN: Array<[string, Parameters<typeof seed>[0]]> = [
     'removed at ingestion, even with a locked rating',
     { image: { ingestion: `'Blocked'`, '"nsfwLevelLocked"': 'true' } },
   ],
-  ['awaiting review, with no post', { image: { '"needsReview"': `'minor'` }, post: null }],
+  ['awaiting review, with no post', { image: { '"needsReview"': `'poi'` }, post: null }],
   [
     'rated Blocked, with no post',
     { image: { '"nsfwLevelLocked"': 'false', '"nsfwLevel"': '32' }, post: null },
@@ -352,13 +362,43 @@ describe('getImageGenerationData visibility', () => {
   });
 
   it('serves an unreviewed image to a manager of the collection its post was submitted to', async () => {
-    await seed({ image: { '"needsReview"': `'minor'` }, post: { '"collectionId"': '7' } });
+    await seed({ image: { '"needsReview"': `'poi'` }, post: { '"collectionId"': '7' } });
     await db.exec(
       `INSERT INTO "CollectionContributor" VALUES (7, ${MANAGER}, ARRAY['MANAGE']::"CollectionContributorPermission"[]),
         (7, ${VIEWER}, ARRAY['ADD']::"CollectionContributorPermission"[])`
     );
     expect(await sees({ userId: MANAGER })).toBe(true);
     expect(await sees(OTHER)).toBe(false);
+  });
+
+  describe.each(['csam', 'minor'])('an image held for %s review', (hold) => {
+    beforeEach(async () => {
+      await seed({ image: { '"needsReview"': `'${hold}'` }, post: { '"collectionId"': '7' } });
+      await db.exec(
+        `INSERT INTO "CollectionContributor" VALUES (7, ${MANAGER}, ARRAY['MANAGE']::"CollectionContributorPermission"[])`
+      );
+    });
+
+    it('is found for its owner, and not for a manager of the collection or a stranger', async () => {
+      expect(await sees(SELF)).toBe(true);
+      expect(await sees({ userId: MANAGER })).toBe(false);
+      expect(await sees(OTHER)).toBe(false);
+    });
+
+    it("is not found for its owner on a scoped key: the owner's view needs a session or full-access key", async () => {
+      expect(await sees(SELF, { scopedToken: true })).toBe(false);
+    });
+
+    it('is served to a moderator', async () => {
+      expect(await sees(MOD)).toBe(true);
+    });
+
+    // Control: the manager loses held rows only. The same image under another review still opens.
+    it('is served again to its owner and the manager once under another review', async () => {
+      await db.exec(`UPDATE "Image" SET "needsReview" = 'poi'`);
+      expect(await sees(SELF)).toBe(true);
+      expect(await sees({ userId: MANAGER })).toBe(true);
+    });
   });
 
   it.each(['Pending', 'Error'])(
@@ -377,7 +417,7 @@ describe('getImageGenerationData visibility', () => {
   it("does not serve it to a manager when the post's author does not own the image", async () => {
     // Another user's unreviewed image in OWNER's post: OWNER chose the collection, not its owner.
     await seed({
-      image: { '"needsReview"': `'minor'`, '"userId"': String(VIEWER) },
+      image: { '"needsReview"': `'poi'`, '"userId"': String(VIEWER) },
       post: { '"collectionId"': '7' },
     });
     await db.exec(
@@ -627,7 +667,7 @@ describe('getImageGenerationData source media', () => {
 
   it('withholds a source the viewer could not open', async () => {
     await seedEdit(1);
-    await db.exec(`UPDATE "Image" SET "needsReview" = 'minor' WHERE id = 2`);
+    await db.exec(`UPDATE "Image" SET "needsReview" = 'poi' WHERE id = 2`);
     expect(await linksFor(OTHER, {})).toBe(false);
     expect(await linksFor({ userId: SOURCE_OWNER }, {})).toBe(true);
     await db.exec(`
@@ -842,10 +882,10 @@ describe('imageVisibilityConditions for image.get', () => {
 });
 
 describe('blockedFor on a single-image read', () => {
-  async function visibleTo(viewer: Viewer) {
+  async function visibleTo(viewer: Viewer, ownerKeepsBlockedRow = false) {
     const raw = pgliteRaw(db);
     const where = Prisma.join(
-      [Prisma.sql`i.id = 1`, ...imageVisibilityConditions(viewer)],
+      [Prisma.sql`i.id = 1`, ...imageVisibilityConditions({ ...viewer, ownerKeepsBlockedRow })],
       ' AND '
     );
     const rows =
@@ -862,13 +902,21 @@ describe('blockedFor on a single-image read', () => {
     }
   }
 
-  it.each(['moderated', 'AiNotVerified', 'a prompt audit reason'])(
-    'shows an image blocked for %s only to its owner and moderators',
-    async (reason) => {
+  // civitai/civitai#10505: by default a read serves media, so a block refuses the owner too,
+  // except the metadata hold; a read that strips the media itself keeps the owner the row.
+  it.each([
+    ['moderated', false],
+    ['AiNotVerified', true],
+    ['a prompt audit reason', false],
+  ] as const)(
+    'shows an image blocked for %s to moderators, and to its owner where the rule allows',
+    async (reason, ownerServed) => {
       await seed({ image: { '"blockedFor"': `'${reason}'` } });
       expect(await visibleTo(ANON)).toBe(false);
       expect(await visibleTo(OTHER)).toBe(false);
-      expect(await visibleTo(SELF)).toBe(true);
+      expect(await visibleTo(SELF)).toBe(ownerServed);
+      expect(await visibleTo(SELF, true)).toBe(true);
+      expect(await visibleTo(OTHER, true)).toBe(false);
       expect(await visibleTo(MOD)).toBe(true);
     }
   );

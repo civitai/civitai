@@ -11,6 +11,7 @@ import {
 import {
   EARLY_ACCESS_PURCHASES,
   giftedPermissions,
+  purchaseMetaKeys,
   revokeModelVersionAccess,
 } from '~/server/services/model-version-access.service';
 import { paidAccessPayoutAccount } from '~/server/utils/buzz-helpers';
@@ -137,7 +138,7 @@ const getEarlyAccessRefundRequirementForVersions = async (
         narrow: {
           revokePermissions:
             refunded.reduce((bits, purchase) => bits | purchase.kind.permissions, 0) & ~keptBits,
-          removeKeys: refunded.flatMap(({ kind }) => [kind.transactionKey, kind.purchasedAtKey]),
+          removeKeys: refunded.flatMap(({ kind }) => purchaseMetaKeys(kind)),
         },
       }),
     });

@@ -1,5 +1,6 @@
 import { env } from '$env/dynamic/private';
-import { civitaiAppUrl } from './civitai-url';
+import { tryCivitaiInternalUrl } from './civitai-url';
+import { mainAppHostFetch } from './main-app-fetch';
 
 // HARD RULE: a spoke→main callback is allowed ONLY where main owns a fan-out the spoke cannot
 // reproduce without becoming a second source of truth. Port everything else as a direct Kysely
@@ -14,6 +15,9 @@ import { civitaiAppUrl } from './civitai-url';
 //                                          index, recompute nsfwLevel and write ClickHouse tracking
 //   6. `/api/v1/model-versions/bust-cache` — `bustMvCache` spans six caches, a CDN purge and the search
 //                                          queue; `resourceDataCache` holds `Model.nsfw` for an hour
+//   7. `home-block-evict` (home-blocks.ts) — main owns the home-block cache: its keys, the lookup of
+//                                          the collections showing an image, and the second refresh
+//                                          once replicas catch up
 //
 // Adding to this list requires writing the capability next to it. An entry that cannot name one is a
 // port that was skipped.
@@ -53,16 +57,20 @@ export async function syncSearchIndexBulk(
 
 /** `logContext` is what reaches the console on failure — never the id array, which can be 1,000 long. */
 async function postSync(body: unknown, logContext: unknown, strict = false): Promise<void> {
-  const base = civitaiAppUrl();
   const token = env.WEBHOOK_TOKEN;
   if (!token) {
     console.warn('[search-index] WEBHOOK_TOKEN not set — skipping Meilisearch sync', logContext);
     if (strict) throw new Error('search-index sync skipped: WEBHOOK_TOKEN not set');
     return;
   }
+  const base = tryCivitaiInternalUrl();
+  if (base === null) {
+    if (strict) throw new Error('search-index sync skipped: CIVITAI_INTERNAL_URL not set');
+    return;
+  }
 
   try {
-    const res = await fetch(`${base}/api/internal/search-index-update?token=${token}`, {
+    const res = await mainAppHostFetch(`${base}/api/internal/search-index-update?token=${token}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
@@ -74,8 +82,10 @@ async function postSync(body: unknown, logContext: unknown, strict = false): Pro
       if (strict) throw new Error(`search-index sync failed: ${res.status}`);
     }
   } catch (err) {
-    console.error('[search-index] sync error', err);
-    // A fresh error, not `err`: a URL parse error carries the request URL, token included.
-    if (strict) throw new Error(`search-index sync error: ${(err as Error)?.name ?? 'unknown'}`);
+    // Neither `err` nor its message, logged or rethrown: a URL parse error carries the request URL,
+    // token included.
+    const { name = 'unknown', cause } = (err ?? {}) as { name?: string; cause?: { code?: string } };
+    console.error('[search-index] sync error', name, cause?.code ?? '', logContext);
+    if (strict) throw new Error(`search-index sync error: ${name}`);
   }
 }

@@ -1,5 +1,10 @@
-import type { Handle, HandleServerError } from '@sveltejs/kit';
-import { isNavigationRequest, spokeReauthResponse, withSetCookies } from '@civitai/auth';
+import type { Handle, HandleServerError, ServerInit } from '@sveltejs/kit';
+import {
+  isNavigationRequest,
+  spokeReauthResponse,
+  spokeUnavailableResponse,
+  withSetCookies,
+} from '@civitai/auth';
 import { guard } from '$lib/server/auth';
 import { accessFor } from '$lib/server/access';
 import { logToAxiom } from '$lib/server/axiom';
@@ -7,6 +12,8 @@ import { closedPageHtml } from '$lib/server/closed-page';
 import { db } from '$lib/server/db';
 import { JOB_PATHS } from '$lib/server/jobs-auth';
 import { metrics } from '$lib/server/metrics';
+import { readiness } from '$lib/server/readiness';
+import { getCacheRedis, getSysRedis } from '$lib/server/redis';
 import { getStanding } from '$lib/server/standing';
 import { isWelcomeRequest, safeNext, showsNotFound, signedOutLocation } from '$lib/welcome';
 
@@ -18,11 +25,30 @@ const PUBLIC_PATHS = new Set([
   '/api/auth/callback',
 ]);
 
-// The liveness/readiness probe. Not a job and not a sign-in route: exempt on its own, before any
-// session, access or standing lookup, so a probe never depends on the hub, Flipt or the database.
-const HEALTH_PATH = '/healthz';
-// Prometheus scrapes, exempt for the same reason; the route itself serves in-cluster scrapes only.
-const METRICS_PATH = '/metrics';
+// The probes (liveness, readiness) and Prometheus scrapes: exempt before any session, access or standing
+// lookup, so a probe never depends on the hub, Flipt or the database.
+const PROBE_PATHS = new Set(['/healthz', '/readyz', '/metrics']);
+
+// Open both Redis connections at boot instead of on the first request that needs one. Not awaited: a
+// connect that hangs must not hold up serving, and @civitai/redis logs and retries a failed connect. A client
+// that cannot even be built (bad config) is logged, not thrown: the first request that needs it retries.
+export const init: ServerInit = () => {
+  for (const [name, open] of [
+    ['sys', getSysRedis],
+    ['cache', getCacheRedis],
+  ] as const) {
+    try {
+      open();
+    } catch (err) {
+      // Only the error's name and code: a bad node URL error carries the raw URL, credentials included.
+      console.error(`[knights] redis-init-failed (${name})`, {
+        error: err instanceof Error ? err.name : typeof err,
+        code: (err as { code?: unknown } | null)?.code,
+      });
+    }
+  }
+  void readiness.check();
+};
 
 const FORBIDDEN_REDIRECT = 'https://civitai.com';
 
@@ -36,7 +62,7 @@ const closedPage = (user: { username?: string }, reason: 'closed' | 'banned' = '
   );
 
 export const handle: Handle = async ({ event, resolve }) => {
-  if (event.url.pathname === HEALTH_PATH || event.url.pathname === METRICS_PATH) {
+  if (PROBE_PATHS.has(event.url.pathname)) {
     return resolve(event);
   }
   if (PUBLIC_PATHS.has(event.url.pathname) || JOB_PATHS.has(event.url.pathname)) {
@@ -54,6 +80,7 @@ export const handle: Handle = async ({ event, resolve }) => {
     navigation,
   });
 
+  if (result.status === 'unavailable') return spokeUnavailableResponse();
   // A signed-in user must fall through to the checks below (ban, access); only signed-out visitors get the page.
   if (onWelcome && (result.status === 'login' || result.status === 'reauth')) {
     event.locals.signInUrl = result.status === 'login' ? result.redirect : result.authorize;
@@ -82,7 +109,9 @@ export const handle: Handle = async ({ event, resolve }) => {
   }
 
   // Read from the database, not the session: a ban lands at once. Moderators are not exempt.
-  if ((await getStanding(db, result.user.id)).banned) {
+  const standing = getStanding(db, result.user.id);
+  event.locals.standing = standing;
+  if ((await standing).banned) {
     return withSetCookies(closedPage(result.user, 'banned'), result.setCookies);
   }
 

@@ -19,6 +19,7 @@ import { blurbFanoutJob } from '~/server/jobs/blurb-fanout';
 import { botAccountDetection } from '~/server/jobs/bot-account-detection';
 import { linkedAccountReview } from '~/server/jobs/linked-account-review';
 import { relabelBuildBatchJob } from '~/server/jobs/relabel-build-batch';
+import { caseTickJob } from '~/server/jobs/case-tick';
 import { feedbackHqSyncJob } from '~/server/jobs/feedback-hq-sync';
 import { pushSubscriptionCleanupJob } from '~/server/jobs/push-subscription-cleanup';
 import { reactionWithdrawalDetection } from '~/server/jobs/reaction-withdrawal-detection';
@@ -55,9 +56,11 @@ import { sweepStaleAgentReviewsJob } from '~/server/jobs/sweep-stale-agent-revie
 import { sweepReviewStorageJob } from '~/server/jobs/sweep-review-storage';
 import { drainReviewPreviewQueueJob } from '~/server/jobs/drain-review-preview-queue';
 import { runStorageMigrationsJob } from '~/server/jobs/run-storage-migrations';
+import { expireStorageMaintenanceDumpsJob } from '~/server/jobs/expire-storage-maintenance-dumps';
 import { reapDeletedAppStorageJob } from '~/server/jobs/reap-deleted-app-storage';
 import { removeDeletedAccountAppDataJob } from '~/server/jobs/remove-deleted-account-app-data';
 import { sweepHibernationObjectsJob } from '~/server/jobs/sweep-hibernation-objects';
+import { sweepAppAssistantTracesJob } from '~/server/jobs/sweep-app-assistant-traces';
 import { reconcileNowpaymentsJob } from '~/server/jobs/reconcile-nowpayments';
 import { reconcileSubscriptionHistoryJob } from '~/server/jobs/reconcile-subscription-history';
 import { notifyStuckCryptoDepositsJob } from '~/server/jobs/notify-stuck-crypto-deposits';
@@ -69,7 +72,6 @@ import { challengeActivationJob } from '~/server/jobs/challenge-activation';
 import { challengeAutoQueueJob } from '~/server/jobs/challenge-auto-queue';
 import { challengeCompletionJob } from '~/server/jobs/challenge-completion';
 import { challengeHealthCheckJob } from '~/server/jobs/challenge-health-check';
-import { evidenceHoldExpiryAlertJob } from '~/server/jobs/evidence-hold-expiry-alert';
 import { revokeUserTokensJob } from '~/server/jobs/revoke-user-tokens';
 import { dailyChallengeJobs } from '~/server/jobs/daily-challenge-processing';
 import { gdprStripeScrubJob } from '~/server/jobs/gdpr-stripe-scrub';
@@ -85,6 +87,10 @@ import {
 import { prepaidMembershipJobs } from '~/server/jobs/prepaid-membership-jobs';
 import { updateCreatorResourceCompensation } from '~/server/jobs/deliver-creator-compensation';
 import { settleBlockAuthorFeesJob } from '~/server/jobs/settle-block-author-fees';
+import {
+  reconcileRunnerAttemptsJob,
+  sweepRunnerAttemptsJob,
+} from '~/server/jobs/recipe-runner-ledger';
 import { deliverLeaderboardCosmetics } from '~/server/jobs/deliver-leaderboard-cosmetics';
 import { deliverPurchasedCosmetics } from '~/server/jobs/deliver-purchased-cosmetics';
 import { dummyJob } from '~/server/jobs/dummy-job';
@@ -99,6 +105,13 @@ import {
 import { handleAuctions } from '~/server/jobs/handle-auctions';
 // import { refreshImageGenerationCoverage } from '~/server/jobs/refresh-image-generation-coverage';
 import { cdnAccessReconcile, cdnAccessSync } from '~/server/jobs/cdn-access-sync';
+import {
+  featurePagesMirror,
+  featurePagesReconcile,
+  featurePagesSweep,
+} from '~/server/jobs/feature-pages-mirror';
+import { missedNotificationDigest } from '~/server/jobs/missed-notification-digest';
+import { idempotencyKeyPurge } from '~/server/jobs/idempotency-key-purge';
 import { ingestImages, removeBlockedImages } from '~/server/jobs/image-ingestion';
 import { imagesCreatedEvents } from '~/server/jobs/images-created-events';
 import type { Job } from '~/server/jobs/job';
@@ -130,12 +143,14 @@ import { archiveStudioTrainingDatasetsJob } from '~/server/jobs/archive-studio-t
 import { storageUsageMediaJob, storageUsageNightlyJob } from '~/server/jobs/storage-usage';
 import { processRewards, rewardsDailyReset } from '~/server/jobs/process-rewards';
 import { processScheduledPublishing } from '~/server/jobs/process-scheduled-publishing';
+import { knightsPublishSampling } from '~/server/jobs/knights-publish-sampling';
 import { processVaultItems } from '~/server/jobs/process-vault-items';
 import { auditWildcardSetCategoriesJob } from '~/server/jobs/audit-wildcard-set-categories';
 import { clickhouseRefreshJobs } from '~/server/jobs/clickhouse-refresh-monitor';
 import { providerFetchSpikeMonitorJob } from '~/server/jobs/provider-fetch-spike-monitor';
 import { userActivityRollupJob } from '~/server/jobs/user-activity-rollup';
 import { userPopulationSnapshotJob } from '~/server/jobs/user-population-snapshot';
+import { modelHotRankSnapshotJob } from '~/server/jobs/model-hot-rank-snapshot';
 import { metricReconciliationJobs } from '~/server/jobs/metric-reconciliation-audit';
 import { reconcileWildcardSetsJob } from '~/server/jobs/reconcile-wildcard-sets';
 import { pushDiscordMetadata } from '~/server/jobs/push-discord-metadata';
@@ -149,6 +164,7 @@ import { birthday2026IdleHatNudge } from '~/server/jobs/birthday2026-idle-hat-nu
 import { resetToDraftWithoutRequirements } from '~/server/jobs/reset-to-draft-without-requirements';
 import { resourceGenerationAvailability } from '~/server/jobs/resource-generation-availability';
 import { minorHashSweep } from '~/server/jobs/minor-hash-sweep';
+import { csamBlocklistSelfHeal } from '~/server/jobs/csam-blocklist-self-heal';
 import { poiHashSweep } from '~/server/jobs/poi-hash-sweep';
 import { retroactiveHashBlocking } from '~/server/jobs/retroactive-hash-blocking';
 import { rewardsAdImpressions } from '~/server/jobs/rewards-ad-impressions';
@@ -166,12 +182,16 @@ import { notificationCursorMonitor } from '~/server/jobs/notification-cursor-mon
 import { sendWebhooksJob } from '~/server/jobs/send-webhooks';
 import { tempSetMissingNsfwLevel } from '~/server/jobs/temp-set-missing-nsfw-level';
 import { retryFailedTextModeration } from '~/server/jobs/text-moderation-retry';
+import { appDocRaterJob } from '~/server/jobs/app-doc-rater';
+import { versionShowcaseCoverSweepJob } from '~/server/jobs/version-showcase-cover-sweep';
 import { textScanRetention } from '~/server/jobs/text-scan-retention';
 import { textScanChatWindowsJob, textScanNewUsersJob } from '~/server/jobs/text-scan-sweeps';
+import { articleCategoryRetryJob } from '~/server/jobs/article-category-retry';
 import { articleIngestionReconcile } from '~/server/jobs/article-ingestion-reconcile';
 import { serviceOfferingIngestionReconcile } from '~/server/jobs/service-offering-ingestion-reconcile';
 import { articleContentLinkHold } from '~/server/jobs/article-content-link-hold';
 import { metricJobs } from '~/server/jobs/update-metrics';
+import { updateModelImageCountsJob } from '~/server/jobs/update-model-image-counts';
 import { updateModelVersionNsfwLevelsJob } from '~/server/jobs/update-model-version-nsfw-levels';
 import { updateUserScore } from '~/server/jobs/update-user-score';
 import { grantCreatorMilestones } from '~/server/jobs/grant-creator-milestones';
@@ -181,7 +201,8 @@ import { userDeletedCleanup } from '~/server/jobs/user-deleted-cleanup';
 import { removeDeletedUserImages } from '~/server/jobs/remove-deleted-user-images';
 import { removeReplacedImages } from '~/server/jobs/remove-replaced-images';
 import { purgeFeedbackCaptures } from '~/server/jobs/purge-feedback-captures';
-import { retryImageStorageDeletes } from '~/server/jobs/retry-image-storage-deletes';
+import { imageStorageDeletes } from '~/server/jobs/image-storage-deletes';
+import { pendingDeletes } from '~/server/jobs/pending-deletes';
 import { retryUploadPromptScansJob } from '~/server/jobs/retry-upload-prompt-scans';
 import { restoreUserImages } from '~/server/jobs/restore-user-images';
 import { expireStrikesJob, processTimedUnmutesJob } from '~/server/jobs/process-strikes';
@@ -226,11 +247,18 @@ export const jobs: Job[] = [
   removeBlockedImages,
   cdnAccessSync,
   cdnAccessReconcile,
+  featurePagesMirror,
+  featurePagesSweep,
+  featurePagesReconcile,
+  missedNotificationDigest,
+  idempotencyKeyPurge,
   removeReplacedImages,
   purgeFeedbackCaptures,
-  retryImageStorageDeletes,
+  imageStorageDeletes,
+  pendingDeletes,
   retryUploadPromptScansJob,
   processScheduledPublishing,
+  knightsPublishSampling,
   // refreshImageGenerationCoverage,
   cleanImageResources,
   deleteOldTrainingData,
@@ -241,6 +269,7 @@ export const jobs: Job[] = [
   autoFeatureImages,
   autoFeatureHealthCheckJob,
   ...metricJobs,
+  updateModelImageCountsJob,
   ...searchIndexJobs,
   searchIndexUserCleanupJob,
   searchIndexCleanupJob,
@@ -276,6 +305,7 @@ export const jobs: Job[] = [
   providerFetchSpikeMonitorJob,
   userActivityRollupJob,
   userPopulationSnapshotJob,
+  modelHotRankSnapshotJob,
   ...jobQueueJobs,
   countReviewImages,
   processingEngingEarlyAccess,
@@ -291,10 +321,13 @@ export const jobs: Job[] = [
   imagesCreatedEvents,
   updateCreatorResourceCompensation,
   settleBlockAuthorFeesJob,
+  reconcileRunnerAttemptsJob,
+  sweepRunnerAttemptsJob,
   confirmMutes,
   botAccountDetection,
   linkedAccountReview,
   relabelBuildBatchJob,
+  caseTickJob,
   feedbackHqSyncJob,
   reactionWithdrawalDetection,
   bluePaidAccessDetection,
@@ -309,9 +342,11 @@ export const jobs: Job[] = [
   sweepReviewStorageJob,
   drainReviewPreviewQueueJob,
   runStorageMigrationsJob,
+  expireStorageMaintenanceDumpsJob,
   reapDeletedAppStorageJob,
   removeDeletedAccountAppDataJob,
   sweepHibernationObjectsJob,
+  sweepAppAssistantTracesJob,
   checkImageExistence,
   rewardsAdImpressions,
   collectionAiReview,
@@ -324,7 +359,6 @@ export const jobs: Job[] = [
   challengeCompletionJob,
   challengeAutoQueueJob,
   challengeHealthCheckJob,
-  evidenceHoldExpiryAlertJob,
   revokeUserTokensJob,
   contestCollectionYoutubeUpload,
   contestCollectionVimeoUpload,
@@ -332,6 +366,7 @@ export const jobs: Job[] = [
   retroactiveHashBlocking,
   minorHashSweep,
   poiHashSweep,
+  csamBlocklistSelfHeal,
   ...creatorProgramJobs,
   handleAuctions,
   refreshAuctionCache,
@@ -351,9 +386,12 @@ export const jobs: Job[] = [
   creatorBoxPayoutSweepJob,
   mysteryBoxOverPoolRefundsJob,
   retryFailedTextModeration,
+  appDocRaterJob,
+  versionShowcaseCoverSweepJob,
   textScanRetention,
   textScanChatWindowsJob,
   textScanNewUsersJob,
+  articleCategoryRetryJob,
   articleIngestionReconcile,
   serviceOfferingIngestionReconcile,
   articleContentLinkHold,

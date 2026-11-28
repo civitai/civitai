@@ -1,6 +1,10 @@
 import { escape as escapeHtml } from 'he';
 import { createEmail } from '~/server/email/templates/base.email';
-import { simpleEmailWithTemplate } from '~/server/email/templates/util';
+import {
+  renderEmailCallout,
+  renderEmailSummary,
+  simpleEmailWithTemplate,
+} from '~/server/email/templates/util';
 import { titleCase } from '~/utils/string-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 
@@ -20,20 +24,33 @@ const describeGift = ({ tier, months }: Pick<MembershipGiftReceivedData, 'tier' 
 const describeGifter = (from: string | null) => (from ? `@${from}` : 'Someone');
 
 export const membershipGiftReceivedEmail = createEmail({
+  template: 'membershipGiftReceived',
+  mailClass: 'transactional',
   header: ({ to, from, tier, months }: MembershipGiftReceivedData) => ({
     subject: `${describeGifter(from)} gifted you ${describeGift({ tier, months })}! 🎁`,
     to,
   }),
   html({ username, tier, months, from, message }: MembershipGiftReceivedData) {
-    const note = message ? `<p><strong>They said:</strong><br/>${escapeHtml(message)}</p>` : '';
+    const note = message
+      ? renderEmailCallout(`<strong>They said:</strong><br/>${escapeHtml(message)}`, {
+          accent: 'violet',
+        })
+      : '';
 
     return simpleEmailWithTemplate({
-      header: `Hi ${escapeHtml(username)}, you've received a gift! 🎁`,
+      icon: '🎁',
+      accent: 'violet',
+      eyebrow: 'Membership gift',
+      header: `Hi ${escapeHtml(username)}, you've received a gift!`,
       body: `
-        <p>
+        <p style="margin: 0;">
           <strong>${escapeHtml(describeGifter(from))}</strong> gifted you
           <strong>${describeGift({ tier, months })}</strong> on Civitai.
         </p>
+        ${renderEmailSummary([
+          { label: 'From', value: escapeHtml(describeGifter(from)) },
+          { label: 'Gift', value: describeGift({ tier, months }) },
+        ])}
         ${note}
         <p>
           It's waiting for you on your membership page. Accept it whenever you like — you'll see

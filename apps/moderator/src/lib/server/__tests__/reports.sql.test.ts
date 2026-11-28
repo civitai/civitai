@@ -60,6 +60,8 @@ const EXPECTED: [string, string, string][] = [
   ['crucible', 'CrucibleReport', 'crucibleId'],
   ['storyline', 'StorylineReport', 'storylineId'],
   ['serviceOffering', 'ServiceOfferingReport', 'serviceOfferingId'],
+  // Worked in the offering queue, keyed by the review's offering.
+  ['serviceDealReview', 'ServiceDealReviewReport', 'serviceOfferingId'],
   ['challenge', 'ChallengeReport', 'challengeId'],
   ['gameFrameGame', 'GameFrameGameReport', 'gameFrameGameId'],
   ['chat', 'ChatReport', 'chatId'],

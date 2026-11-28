@@ -5,13 +5,47 @@ export const CIVITAI_SDK = '@civitai/sdk';
  * The lowest `@civitai/sdk` an app should declare: the minor the host (this repo's own root
  * `package.json`) speaks. An app pinned below it is upgraded to it by the runner (`checkSdkPin`, the runner's `SdkUpgrades`). A `^0.x` range
  * never moves to a newer minor, so an app scaffolded on an older SDK never gets the host's newer
- * bridge messages on its own (0.21.0 added `VIEWER_ACTIVITY`, which keeps the preview awake).
+ * bridge messages on its own (0.21.0 added `VIEWER_ACTIVITY`, which keeps the preview awake). A
+ * minor can also remove calls, so an upgrade can break an app's typecheck (the runner's
+ * `SDK_REMOVED_APIS`).
  *
  * Bump it together with the root `package.json`'s `@civitai/sdk` on each SDK minor release: the
  * runner's `sdk-floor.test.ts` fails while the two disagree. It only reaches the runner with a runner
  * release.
+ *
+ * Keep its patch at 0: the runner judges major.minor, the server's submit advisory full SemVer,
+ * and the two agree only while the floor is `X.Y.0`.
  */
-export const CIVITAI_SDK_FLOOR = '0.24.0';
+export const CIVITAI_SDK_FLOOR = '0.33.0';
+
+/** The React bindings most App Blocks use alongside `@civitai/sdk`. */
+export const CIVITAI_BLOCKS_REACT = '@civitai/blocks-react';
+
+/**
+ * The lowest `@civitai/blocks-react` the platform publishes as its minimum. Nothing here pins it;
+ * raise it by hand to the blocks-react the starters pair with the SDK floor.
+ */
+export const CIVITAI_BLOCKS_REACT_FLOOR = '0.87.0';
+
+/** One package the platform publishes a minimum version for. */
+export interface PlatformSdkFloor {
+  name: string;
+  minimum: string;
+}
+
+/**
+ * THE minimums the platform publishes (`GET /api/v1/blocks/sdk-floor`): the CLI's `app submit`
+ * refuses below them unless told `--allow-outdated-sdk`, and the submit itself answers a
+ * `sdk-below-floor` advisory for a bundle whose lockfile is below them. A version is below when
+ * SemVer orders it before `minimum` (a pre-release of the minimum is below it).
+ *
+ * The `@civitai/sdk` entry follows `CIVITAI_SDK_FLOOR`; `CIVITAI_BLOCKS_REACT_FLOOR` is raised by
+ * hand. Raising either refuses apps below it at submit until they upgrade or pass the override.
+ */
+export const PLATFORM_SDK_FLOORS: readonly PlatformSdkFloor[] = [
+  { name: CIVITAI_SDK, minimum: CIVITAI_SDK_FLOOR },
+  { name: CIVITAI_BLOCKS_REACT, minimum: CIVITAI_BLOCKS_REACT_FLOOR },
+];
 
 /** What an app's `package.json` declares for `@civitai/sdk`, as `checkSdkPin` judges it. */
 export type SdkPinCheck =

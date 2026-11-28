@@ -25,6 +25,13 @@ import {
 } from '~/server/services/apps/shared-content-safety';
 import { newAppSubListingId } from '~/server/utils/app-block-ids';
 import {
+  appRateLimitMeta,
+  STANDING_LIMIT_RETRY_SECONDS,
+  type AppRateLimitCounts,
+  type AppRateLimitId,
+} from '~/server/utils/app-rate-limit';
+import type { RateLimitMeta } from '~/shared/utils/rate-limit-meta';
+import {
   checkSubListingSyncRateLimit,
   checkSubListingWriteRateLimit,
 } from '~/server/utils/shared-storage-rate-limit';
@@ -35,6 +42,7 @@ import {
   APP_SUB_LISTING_TAGLINE_MAX,
   APP_SUB_LISTING_TITLE_MAX,
   effectiveSubListingRating,
+  subListingRatingFromNsfwLevel,
   isAppSubListingId,
   isRatingAtLeastAsStrict,
   isValidSubListingExternalId,
@@ -46,7 +54,6 @@ import type { SessionUser } from '~/types/session';
 import { NsfwLevel } from '~/server/common/enums';
 import type { DocRating } from '~/server/services/apps/doc-store.types';
 import { isSharedDocLevelsOn } from '~/server/services/apps/doc-levels';
-import { contentRatingFromNsfwLevel } from '~/shared/constants/browsingLevel.constants';
 import type {
   ListSubListingQueueInput,
   ModerateSubListingInput,
@@ -108,7 +115,7 @@ function cardRatingFromItem(rating: DocRating, chosen: string | null): string | 
   if (rating.level == null || rating.level & NsfwLevel.Blocked) {
     throw new SubListingError(404, 'item_not_found', 'Item not found');
   }
-  return effectiveSubListingRating(contentRatingFromNsfwLevel(rating.level), chosen);
+  return effectiveSubListingRating(subListingRatingFromNsfwLevel(rating.level), chosen);
 }
 
 /**
@@ -142,26 +149,31 @@ export async function syncSubListingRatingFromDoc(args: {
       });
       return;
     }
-    const rating = contentRatingFromNsfwLevel(args.level);
+    const rating = subListingRatingFromNsfwLevel(args.level);
     // Through `effectiveSubListingRating`, as publishing is: a card the author rated stricter
     // than its item keeps that rating (picked `x`, re-rated `r`: stays `x`).
     const rows = await dbWrite.appSubListing.findMany({
       where,
       select: { id: true, contentRating: true, pendingContentRating: true },
     });
+    // Only a card whose rating moves is written, and the catalog is busted only then: the rater
+    // calls this on every rating, and most items have no card.
+    let changed = false;
     for (const row of rows) {
+      const contentRating = effectiveSubListingRating(rating, row.contentRating);
+      const pendingContentRating =
+        row.pendingContentRating == null
+          ? null
+          : effectiveSubListingRating(rating, row.pendingContentRating);
+      if (contentRating === row.contentRating && pendingContentRating === row.pendingContentRating)
+        continue;
+      changed = true;
       await dbWrite.appSubListing.update({
         where: { id: row.id },
-        data: {
-          contentRating: effectiveSubListingRating(rating, row.contentRating),
-          pendingContentRating:
-            row.pendingContentRating == null
-              ? null
-              : effectiveSubListingRating(rating, row.pendingContentRating),
-        },
+        data: { contentRating, pendingContentRating },
       });
     }
-    await bustCatalog();
+    if (changed) await bustCatalog();
   } catch (err) {
     if (isMissingTableError(err)) return;
     logToAxiom({
@@ -194,11 +206,41 @@ export class SubListingError extends Error {
     readonly status: number,
     readonly code: SubListingErrorCode,
     message: string,
-    readonly retryAfterSeconds?: number
+    readonly retryAfterSeconds?: number,
+    /** On a 429: the refusal's `rateLimit` meta, sent on the REST body and lifted by tRPC. */
+    readonly rateLimit?: RateLimitMeta
   ) {
     super(message);
     this.name = 'SubListingError';
   }
+}
+
+/** The 429 refusal by `id`, carrying its meta (`appRateLimitMeta`). */
+function subListingRateLimited(
+  id: AppRateLimitId,
+  code: 'rate_limited' | 'author_cap',
+  message: string,
+  retryAfterSeconds: number,
+  counts?: AppRateLimitCounts
+): SubListingError {
+  return new SubListingError(
+    429,
+    code,
+    message,
+    retryAfterSeconds,
+    appRateLimitMeta(id, retryAfterSeconds, counts)
+  );
+}
+
+/** A creator's store items held per parent listing: a standing allowance, so no reset time. */
+function storeItemCapReached(limit: number, used: number): SubListingError {
+  return subListingRateLimited(
+    'apps.store-items',
+    'author_cap',
+    'You have reached the store item limit',
+    STANDING_LIMIT_RETRY_SECONDS,
+    { limit, used }
+  );
 }
 
 /** Map a missing table or column to the 503 every caller expects; rethrow anything else. */
@@ -534,8 +576,8 @@ export async function upsertSubListing(args: {
       userId: user.id,
       status: 429,
     });
-    throw new SubListingError(
-      429,
+    throw subListingRateLimited(
+      'apps.store-item-writes',
       'rate_limited',
       'Too many store item updates, retry later',
       rate.retryAfterSeconds
@@ -616,9 +658,8 @@ async function writeSubListing(
   });
 
   if (!existing) {
-    if ((await activeCount()) >= parent.maxPerAuthor) {
-      throw new SubListingError(429, 'author_cap', 'You have reached the store item limit');
-    }
+    const held = await activeCount();
+    if (held >= parent.maxPerAuthor) throw storeItemCapReached(parent.maxPerAuthor, held);
     // Always `pending`: moderator approval is mandatory.
     try {
       const created = await dbWrite.appSubListing.create({
@@ -664,9 +705,8 @@ async function writeSubListing(
   };
 
   if (status === 'withdrawn') {
-    if ((await activeCount()) >= parent.maxPerAuthor) {
-      throw new SubListingError(429, 'author_cap', 'You have reached the store item limit');
-    }
+    const held = await activeCount();
+    if (held >= parent.maxPerAuthor) throw storeItemCapReached(parent.maxPerAuthor, held);
     const written = await casUpdate({
       ...liveColumns(content),
       ...CLEAR_PENDING,
@@ -782,8 +822,8 @@ export async function withdrawSubListing(args: {
       userId: args.userId,
       status: 429,
     });
-    throw new SubListingError(
-      429,
+    throw subListingRateLimited(
+      'apps.store-item-writes',
       'rate_limited',
       'Too many store item updates, retry later',
       rate.retryAfterSeconds
@@ -1055,8 +1095,8 @@ export async function upsertCatalogSubListing(args: {
 
   const rate = await checkSubListingSyncRateLimit(parent.id);
   if (!rate.allowed) {
-    throw new SubListingError(
-      429,
+    throw subListingRateLimited(
+      'apps.store-item-sync',
       'rate_limited',
       'Too many store item updates, retry later',
       rate.retryAfterSeconds
@@ -1109,6 +1149,7 @@ export async function withdrawCatalogSubListing(args: {
     parentListingId: args.parentListingId,
     itemKey: args.externalId,
     checkRate: () => checkSubListingSyncRateLimit(args.parentListingId),
+    rateLimitId: 'apps.store-item-sync',
   });
 }
 
@@ -1120,7 +1161,9 @@ async function withdrawCatalogItem(args: {
   parentListingId: string;
   itemKey: string;
   authorUserId?: number;
-  checkRate: () => Promise<{ allowed: boolean; retryAfterSeconds?: number }>;
+  checkRate: () => Promise<{ allowed: true } | { allowed: false; retryAfterSeconds: number }>;
+  /** The id `checkRate`'s refusal names. */
+  rateLimitId: 'apps.store-item-sync' | 'apps.store-item-writes';
 }): Promise<{ ok: true; withdrawn: boolean }> {
   const key = { parentListingId: args.parentListingId, itemKey: args.itemKey };
   const where: Prisma.AppSubListingWhereInput =
@@ -1145,8 +1188,8 @@ async function withdrawCatalogItem(args: {
       if (!charged) {
         const rate = await args.checkRate();
         if (!rate.allowed) {
-          throw new SubListingError(
-            429,
+          throw subListingRateLimited(
+            args.rateLimitId,
             'rate_limited',
             'Too many store item updates, retry later',
             rate.retryAfterSeconds
@@ -1287,6 +1330,7 @@ export async function withdrawMyCatalogSubListing(args: {
     itemKey,
     authorUserId: args.userId,
     checkRate: () => checkSubListingWriteRateLimit(args.userId, parentListingId),
+    rateLimitId: 'apps.store-item-writes',
   });
 }
 
@@ -1823,13 +1867,17 @@ export async function moderateSubListing(args: {
 /** The REST shape of a `SubListingError`; `null` for anything else (the caller rethrows). */
 export function subListingErrorResponse(err: unknown): {
   status: number;
-  body: { error: string; code: SubListingErrorCode };
+  body: { error: string; code: SubListingErrorCode; rateLimit?: RateLimitMeta };
   retryAfter?: number;
 } | null {
   if (!(err instanceof SubListingError)) return null;
   return {
     status: err.status,
-    body: { error: err.message, code: err.code },
-    retryAfter: err.retryAfterSeconds,
+    body: {
+      error: err.message,
+      code: err.code,
+      ...(err.rateLimit ? { rateLimit: err.rateLimit } : {}),
+    },
+    retryAfter: err.rateLimit?.retryAfterSeconds ?? err.retryAfterSeconds,
   };
 }

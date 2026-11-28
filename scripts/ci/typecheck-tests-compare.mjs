@@ -127,7 +127,7 @@ const PLAIN_DIAG = /^(.*?)\((\d+),(\d+)\): error TS(\d+):/;
 // clean text. The leading path may not contain a colon-digit run of its own.
 const PRETTY_DIAG = /^(.*?):(\d+):(\d+) - error TS(\d+):/;
 // eslint-disable-next-line no-control-regex
-const ANSI = /\[[0-9;]*m/g;
+const ANSI = /\x1b\[[0-9;]*m/g;
 
 /**
  * Parse tsc output into per-file error counts.
@@ -144,6 +144,9 @@ const ANSI = /\[[0-9;]*m/g;
  *                  is checked for ANY divergence, not only for a total of zero.
  *   unparsedSample the first few such lines, verbatim, so a refusal can name the
  *                  actual text instead of asserting one exists.
+ *   diagnostics    `{ file, line, col, code, message }` per counted line, for CI
+ *                  annotations only; a plain-format message keeps its indented
+ *                  continuation lines.
  *
  * `total <= sawAnyErrorTs` is structural: `total` only increments on a line that
  * matched, and every matching line contains the marker. So `unparsed` is never
@@ -154,12 +157,21 @@ export function parseDiagnostics(output) {
   const counts = new Map();
   const formats = new Set();
   const unparsedSample = [];
+  const diagnostics = [];
+  let lastPlain = null;
   let total = 0;
   let sawAnyErrorTs = 0;
 
   for (const rawLine of String(output ?? '').split('\n')) {
-    const line = rawLine.replace(ANSI, '');
-    if (!line.includes('error TS')) continue;
+    const line = rawLine.replace(/\r$/, '').replace(ANSI, '');
+    if (!line.includes('error TS')) {
+      // In the plain format a message chain continues on indented lines
+      // ("  The types of 'a.b' are incompatible…"). Anything else ends it.
+      if (lastPlain && /^\s+\S/.test(line)) lastPlain.message += `\n${line.trimEnd()}`;
+      else lastPlain = null;
+      continue;
+    }
+    lastPlain = null;
     sawAnyErrorTs++;
     const plain = PLAIN_DIAG.exec(line);
     const m = plain ?? PRETTY_DIAG.exec(line);
@@ -178,9 +190,26 @@ export function parseDiagnostics(output) {
     // test files.
     const file = toPosixPath(m[1]).replace(/^\.\//, '');
     counts.set(file, (counts.get(file) || 0) + 1);
+    const diagnostic = {
+      file,
+      line: Number(m[2]),
+      col: Number(m[3]),
+      code: Number(m[4]),
+      message: line.slice(m[0].length).trim(),
+    };
+    diagnostics.push(diagnostic);
+    if (plain) lastPlain = diagnostic;
   }
 
-  return { counts, total, formats, sawAnyErrorTs, unparsed: sawAnyErrorTs - total, unparsedSample };
+  return {
+    counts,
+    total,
+    formats,
+    sawAnyErrorTs,
+    unparsed: sawAnyErrorTs - total,
+    unparsedSample,
+    diagnostics,
+  };
 }
 
 /**

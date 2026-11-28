@@ -1,3 +1,4 @@
+import { serverCopyTablesSql } from '@civitai/db-queries/test/image-uses';
 import { PGlite } from '@electric-sql/pglite';
 import sharp from 'sharp';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -43,6 +44,10 @@ vi.mock('~/server/flipt/client', () => ({
     APP_BLOCK_REFUSE_EXTERNAL_SOURCES: 'app-block-refuse-external-sources',
   },
   isFlipt: async (flag: string) => flag === 'app-block-source-scanned-rows' && holder.scannedRows,
+  isFliptSync: (flag: string) => flag === 'app-block-source-scanned-rows' && holder.scannedRows,
+  readFliptBoolean: async (flag: string) =>
+    flag === 'app-block-source-scanned-rows' && holder.scannedRows,
+  ensureFliptInitialized: async () => undefined,
 }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: { $query: async () => [] } }));
 vi.mock('~/env/client', async (importOriginal) => {
@@ -120,9 +125,9 @@ function workflow(over: Record<string, unknown> = {}) {
         $type: 'textToImage',
         output: {
           images: [
-            { url: ALLOWED_OUTPUT, available: true, width: 640, height: 320 },
-            { url: OFF_HOST_OUTPUT, available: true, width: 640, height: 320 },
-            { url: SECOND_OUTPUT, available: true, width: 640, height: 320 },
+            { url: ALLOWED_OUTPUT, available: true, width: 640, height: 320, nsfwLevel: 'pg' },
+            { url: OFF_HOST_OUTPUT, available: true, width: 640, height: 320, nsfwLevel: 'pg' },
+            { url: SECOND_OUTPUT, available: true, width: 640, height: 320, nsfwLevel: 'pg' },
           ],
         },
       },
@@ -202,8 +207,10 @@ beforeAll(async () => {
   await holder.db.exec(`
     CREATE TABLE "Post" (id int PRIMARY KEY, "publishedAt" timestamp(3),
       availability text NOT NULL DEFAULT 'Public', "tosViolation" boolean NOT NULL DEFAULT false);
+    ${serverCopyTablesSql};
     CREATE TABLE "Image" (
       id int PRIMARY KEY,
+      "modelRestricted" boolean NOT NULL DEFAULT false,
       "userId" int NOT NULL,
       url text NOT NULL,
       "postId" int,
@@ -220,6 +227,15 @@ beforeAll(async () => {
       metadata jsonb
     );
     CREATE TABLE "TagsOnImageDetails" ("imageId" int, "tagId" int, disabled boolean);
+    -- What the held-url check in the gated read reads, as minimal stand-ins.
+    ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "modelVersionId" int;
+    ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS metadata jsonb;
+    CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int, meta jsonb);
+    CREATE TABLE "Model" (id int PRIMARY KEY, meta jsonb);
+    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb NOT NULL DEFAULT '{}',
+      images jsonb NOT NULL DEFAULT '[]', "reportSentAt" timestamp(3));
+    CREATE TABLE "ImageCdnModeratorDelete" (url text, "userId" int, "imageId" int, "csamReview" boolean NOT NULL DEFAULT false);
+    CREATE TABLE "ImageCdnShopTakedown" (url text, "userId" int);
   `);
 });
 
@@ -434,13 +450,26 @@ describe('ownership: refused before anything is fetched or written', () => {
       expect(createImage).not.toHaveBeenCalled();
     });
 
+    // The controls schedule the scan (persistAfterScan): a bare persist() of an accepted output
+    // waits out the whole scan deadline in real time (~30 s each) to say nothing more.
     it('CONTROL: the rated output beside it persists', async () => {
-      await persist({ imageIndex: 1, ceiling: SERVING }, withNa());
+      const wf = withNa();
+      await persistAfterScan({ imageIndex: 1, ceiling: SERVING, getWorkflow: async () => wf });
       expect(createImage).toHaveBeenCalledTimes(1);
     });
 
-    it('CONTROL: with serving off the `na` output persists', async () => {
-      await persist({ imageIndex: 0 }, withNa());
+    it('with serving off the `na` output is refused too, and nothing is fetched or written', async () => {
+      await expect(persist({ imageIndex: 0 }, withNa())).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: 'output 0 is restricted',
+      });
+      expect(fetch).not.toHaveBeenCalled();
+      expect(createImage).not.toHaveBeenCalled();
+    });
+
+    it('CONTROL: with serving off the rated output beside it persists', async () => {
+      const wf = withNa();
+      await persistAfterScan({ imageIndex: 1, getWorkflow: async () => wf });
       expect(createImage).toHaveBeenCalledTimes(1);
     });
   });
@@ -466,7 +495,7 @@ describe('the written row is private', () => {
     expect(row.metadata).not.toHaveProperty('blockUploadedAppId');
   });
 
-  it('🔴 the app’s shared grid read never returns it — not to the viewer, not to anyone else', async () => {
+  it('🔴 the app’s shared grid read returns it to its owner only, never to anyone else', async () => {
     const out = await persistAfterScan();
     // Positive control: a scanned image this app PUBLISHED, by another viewer, IS returned.
     await holder.db.query(
@@ -474,14 +503,17 @@ describe('the written row is private', () => {
        VALUES (77, $1, 'published-key', 1, 'Scanned', 512, 512, $2::jsonb)`,
       [OTHER_USER, JSON.stringify({ blockPublishedAppId: APP })]
     );
-    for (const userId of [VIEWER, OTHER_USER]) {
+    for (const [userId, expected] of [
+      [VIEWER, [out.imageId, 77]],
+      [OTHER_USER, [77]],
+    ] as const) {
       const { images } = await getBlockGatedImagesByIds({
         imageIds: [out.imageId, 77],
         browsingLevel: 1,
         appId: APP,
         userId,
       });
-      expect(images.map((i) => i.imageId)).toEqual([77]);
+      expect(images.map((i) => i.imageId)).toEqual(expected);
     }
   });
 
@@ -805,10 +837,13 @@ describe('🔴 the deadline bounds the whole request, the fetch included', () =>
   });
 
   it('the budget is the request’s: a call whose budget is already spent writes nothing', async () => {
+    // The budget's own timer never fires here, so a spent budget must be refused without it.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const error = await persist({ budgetMs: 0 }).then(
       () => null,
       (e: unknown) => e
     );
+    vi.useRealTimers();
     expect(error).toMatchObject({ code: 'TIMEOUT' });
     expect(createImage).not.toHaveBeenCalled();
   });

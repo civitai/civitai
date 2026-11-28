@@ -10,6 +10,7 @@ import (
 
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
+	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 )
 
 // GallerySettings is the cached `model:gallery-settings:<modelId>` value (getGallerySettingsByModelId),
@@ -30,12 +31,12 @@ type GalleryStore struct {
 // Settings returns a model's gallery settings, nil for "none". A key that Node would rebuild (absent,
 // or built before the SFW hold) falls back: the rebuild reads the model and the creator's hidden users.
 func (g *GalleryStore) Settings(ctx context.Context, modelID int) (*GallerySettings, error) {
-	raw, err := g.Cache.Get(ctx, g.Prefix+"model:gallery-settings:"+strconv.Itoa(modelID)).Bytes()
+	raw, err := g.Cache.Get(ctx, hydrate.GallerySettingsKey(g.Prefix, modelID)).Bytes()
 	if errors.Is(err, redis.Nil) {
 		return nil, fallback.New("gallery-settings-miss")
 	}
 	if err != nil {
-		return nil, fallback.Newf("gallery-settings-read-failed", "%v", err)
+		return nil, fallback.Wrap("gallery-settings-read-failed", err)
 	}
 	return ParseGallerySettings(raw)
 }
@@ -43,30 +44,99 @@ func (g *GalleryStore) Settings(ctx context.Context, modelID int) (*GallerySetti
 // SettingsMany is Settings for several models in one pipelined round trip (getShowcaseHeldLevels'
 // mGet). The first model whose key Node would rebuild falls back, as Settings does.
 func (g *GalleryStore) SettingsMany(ctx context.Context, modelIDs []int) (map[int]*GallerySettings, error) {
+	out, missing, err := g.settingsRead(ctx, modelIDs)
+	if err != nil {
+		return nil, err
+	}
+	if len(missing) > 0 {
+		return nil, fallback.New("gallery-settings-miss")
+	}
+	return out, nil
+}
+
+// settingsRead is SettingsMany's read, with the models whose key is absent listed in missing (in
+// modelIDs' order) rather than falling back; every other key Node would rebuild still falls back.
+func (g *GalleryStore) settingsRead(ctx context.Context, modelIDs []int) (map[int]*GallerySettings, []int, error) {
 	out := make(map[int]*GallerySettings, len(modelIDs))
 	if len(modelIDs) == 0 {
-		return out, nil
+		return out, nil, nil
 	}
 	cmds := make([]*redis.StringCmd, len(modelIDs))
 	_, _ = g.Cache.Pipelined(ctx, func(p redis.Pipeliner) error {
 		for i, id := range modelIDs {
-			cmds[i] = p.Get(ctx, g.Prefix+"model:gallery-settings:"+strconv.Itoa(id))
+			cmds[i] = p.Get(ctx, hydrate.GallerySettingsKey(g.Prefix, id))
 		}
 		return nil
 	})
+	var missing []int
 	for i, cmd := range cmds {
 		raw, err := cmd.Bytes()
 		if errors.Is(err, redis.Nil) {
-			return nil, fallback.New("gallery-settings-miss")
+			missing = append(missing, modelIDs[i])
+			continue
 		}
 		if err != nil {
-			return nil, fallback.Newf("gallery-settings-read-failed", "%v", err)
+			return nil, nil, fallback.Wrap("gallery-settings-read-failed", err)
 		}
 		s, err := ParseGallerySettings(raw)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		out[modelIDs[i]] = s
+	}
+	return out, missing, nil
+}
+
+// GalleryHoldSource computes the hold of the models whose gallery-settings key is absent
+// (*hydrate.Sources: GalleryHolds).
+type GalleryHoldSource interface {
+	GalleryHolds(ctx context.Context, modelIDs []int) (map[int]hydrate.GalleryHold, error)
+}
+
+// holdComputingGallery is the gallery the hold gates read with a gallery-settings miss served
+// (image.getInfinite's InfinitePorts.GallerySettingsMiss, GET /api/v1/images'
+// FEED_GO_V1_IMAGES_SERVE_GALLERY_SETTINGS_MISS): its SettingsMany answers an absent key from the
+// model's own row via GalleryHoldSource (which, with gallery-settings write-back on, also writes the
+// whole entry Node would), as getShowcaseHeldLevels' getGallerySettingsByModelId rebuild does,
+// keeping only `sfwHeld` and `level`. A model with no row is no settings (nil), as Node's null. Every
+// other read is the store's.
+type holdComputingGallery struct {
+	*GalleryStore
+	holds GalleryHoldSource
+}
+
+// HoldComputingGallery is store with an absent gallery-settings key's hold computed by holds
+// (holdComputingGallery), for GET /api/v1/images' hold gates with
+// FEED_GO_V1_IMAGES_SERVE_GALLERY_SETTINGS_MISS on; nil holds is the store itself (the miss falls
+// back).
+func HoldComputingGallery(store *GalleryStore, holds GalleryHoldSource) V1Gallery {
+	if holds == nil {
+		return store
+	}
+	return holdComputingGallery{GalleryStore: store, holds: holds}
+}
+
+func (g holdComputingGallery) SettingsMany(ctx context.Context, modelIDs []int) (map[int]*GallerySettings, error) {
+	out, missing, err := g.settingsRead(ctx, modelIDs)
+	if err != nil || len(missing) == 0 {
+		return out, err
+	}
+	holds, err := g.holds.GalleryHolds(ctx, missing)
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range missing {
+		h, found := holds[id]
+		if !found {
+			out[id] = nil
+			continue
+		}
+		held, level := h.Held, h.Level
+		s := &GallerySettings{SfwHeld: &held}
+		if held {
+			s.Level = &level
+		}
+		out[id] = s
 	}
 	return out, nil
 }
@@ -147,6 +217,40 @@ func (g *GalleryStore) Withheld(ctx context.Context, modelIDs []int, viewerID in
 		}
 	}
 	return false, rows.Err()
+}
+
+// ModelOwners is getHeldLevelsByPost's owner read (`dbRead.model.findMany({ where: { id: { in } },
+// select: { id, userId } })`): each existing model's owner.
+func (g *GalleryStore) ModelOwners(ctx context.Context, modelIDs []int) (map[int]int, error) {
+	out := make(map[int]int, len(modelIDs))
+	if len(modelIDs) == 0 {
+		return out, nil
+	}
+	rows, err := g.DB.Query(ctx, `SELECT id, "userId" FROM "Model" WHERE id = ANY($1::int[])`, modelIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, userID int
+		if err := rows.Scan(&id, &userID); err != nil {
+			return nil, err
+		}
+		out[id] = userID
+	}
+	return out, rows.Err()
+}
+
+// SystemUserPostOnVersion is getAllImages' hasSystemPosts read (`dbRead.post.findFirst({ where: {
+// userId: -1, modelVersionId }, select: { id } })`): whether the system user has a post on the version.
+func (g *GalleryStore) SystemUserPostOnVersion(ctx context.Context, versionID int) (bool, error) {
+	rows, err := g.DB.Query(ctx, `SELECT id FROM "Post" WHERE "userId" = -1 AND "modelVersionId" = $1 LIMIT 1`, versionID)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	found := rows.Next()
+	return found, rows.Err()
 }
 
 // Reviews is the handler's resourceReview.findMany: the post creators' visible reviews of this model

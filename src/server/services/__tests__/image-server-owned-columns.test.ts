@@ -43,6 +43,7 @@ import {
   type AssertPostOwnedBy,
 } from '~/server/services/image.service';
 import { CLIENT_IMAGE_COLUMNS, pickClientImageColumns } from '~/server/utils/image-columns';
+import { dealCopyCheckFor } from '~/server/services/__tests__/deal-file-copy.fake';
 
 const URL_KEY = '3f6c2b91-0d84-4a15-9e70-c2b8a4d15e33';
 const OWNER = 7;
@@ -461,6 +462,27 @@ describe('entity image writers', () => {
     });
   });
 
+  it("updateEntityImages refuses to link the caller's own image when it is a deal file's scan copy", async () => {
+    dbMock.dbWrite.imageConnection.findMany.mockResolvedValue([] as never);
+    dbMock.dbWrite.image.count.mockResolvedValue(1 as never);
+    const prior = dbMock.dbWrite.$queryRaw.getMockImplementation();
+    dbMock.dbWrite.$queryRaw.mockImplementation(dealCopyCheckFor(555));
+    try {
+      await expect(
+        updateEntityImages({
+          images: [{ id: 555, url: URL_KEY, type: 'image' }],
+          userId: OWNER,
+          entityType: 'Bounty',
+          entityId: 1,
+        })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(dbMock.dbWrite.imageConnection.createMany).not.toHaveBeenCalled();
+    } finally {
+      if (prior) dbMock.dbWrite.$queryRaw.mockImplementation(prior);
+      else dbMock.dbWrite.$queryRaw.mockReset();
+    }
+  });
+
   describe('links the edit form was not shown', () => {
     let linked: number[];
     // Applies each deleteMany to `linked`, so a test reads which links survive the save.
@@ -660,6 +682,7 @@ describe('resolveCoverImageId', () => {
       assertUrlUsable: vi.fn().mockResolvedValue(undefined),
       createImage: createImageDep,
       logExistenceUnknown: vi.fn(),
+      assertUsableAsCover: vi.fn().mockResolvedValue(undefined),
     };
     const { id: _id, ...cover } = withServerColumns();
 

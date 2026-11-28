@@ -364,6 +364,28 @@ describe('App Assistant’s gate on the runner', () => {
     );
   });
 
+  it('report_ready notes an app with Civitai’s stock look, read from its sandbox, and stays ready', async () => {
+    fake.add('my-app');
+    let css = 'body { color: var(--civitai-color-text); }';
+    const plain = fake.tools.get('run_command')!;
+    // The runner's theme read, answered as a shell would over the app's files (its mark echoed).
+    fake.tools.set('run_command', (args, signal, sandbox) => {
+      const mark = /'(@@theme-[0-9a-f]+@@)'/.exec(String(args.command))?.[1];
+      if (!mark) return plain(args, signal, sandbox);
+      return `exit_code: 0\ntimed_out: false\n---\n\n${mark} ./src/index.css\n${css}\n${mark} END\n`;
+    });
+    const { tools } = await open();
+    await passAll(tools.tools);
+    expect(await call(tools.tools, 'report_ready', CIVITAI)).toMatchObject({
+      ready: true,
+      advisories: [{ code: 'default-theme' }],
+    });
+    css = '.app { --civitai-color-primary: #7c3aed; }';
+    const own = (await call(tools.tools, 'report_ready', CIVITAI)) as Record<string, unknown>;
+    expect(own.ready).toBe(true);
+    expect(own).not.toHaveProperty('advisories');
+  });
+
   it('offers submit_for_review only once the app is ready, and a file change withdraws it', async () => {
     fake.add('my-app');
     const { tools, reported } = await open();
@@ -899,6 +921,69 @@ describe('the runner’s prompt', () => {
       previewHost: null,
     })}`;
     expect(page).toMatch(/sandbox__tunnel_\*/);
+  });
+});
+
+/** The chat's own rule on asking, as `defaultRules` writes it. */
+const ASK_CHOICE_SENTENCE =
+  'When the user should pick between directions, call ask_choice instead of listing options in text.';
+
+describe('asking the user on the runner', () => {
+  it('offers ask_choice: options shown end the reply, for the page to show as buttons', async () => {
+    fake.add('my-app');
+    const { tools } = await open();
+    expect(Object.keys(tools.tools)).toContain('ask_choice');
+    expect(
+      await call(tools.tools, 'ask_choice', {
+        question: 'Which layout?',
+        options: [{ label: 'Grid' }, { label: 'List', description: 'One per row' }],
+      })
+    ).toEqual({
+      shown: true,
+      awaitsUser: true,
+      note: 'The options are on screen. Stop and wait for the user to choose; do not list them again.',
+    });
+  });
+
+  it('refuses options the page could not show, without ending the reply', async () => {
+    fake.add('my-app');
+    const { tools } = await open();
+    const refused = await call(tools.tools, 'ask_choice', {
+      question: 'Which?',
+      options: [{ label: 'Only' }],
+    });
+    // The wording is the chat's own; what the runner relies on is an error and no awaitsUser.
+    expect(refused).toMatchObject({ error: expect.any(String) });
+    expect(refused).not.toHaveProperty('awaitsUser');
+    expect(refused).not.toHaveProperty('shown');
+  });
+
+  it('keeps the chat’s ask_choice rule in the system prompt, as the page does', async () => {
+    fake.add('my-app');
+    const { tools } = await open();
+    const system = buildSystemPrompt({
+      now: new Date(),
+      tools: Object.keys(tools.tools),
+      host: { tools: tools.hostTools ?? [], instructs: true },
+      ...(tools.rules ? { rules: tools.rules } : {}),
+    });
+    expect(system).toContain(
+      `- Ask at most one short clarifying question, and only when the request is genuinely ambiguous. ${ASK_CHOICE_SENTENCE}`
+    );
+    expect(system).toContain(
+      'Ask the user only when their request is ambiguous or needs a decision from them, and then ask with ask_choice (2 to 4 options; they can still type their own answer), never with a question typed at the end of your reply.'
+    );
+  });
+
+  it('tells the runner to name the docs page before claiming a platform limit', async () => {
+    fake.add('my-app');
+    const { tools } = await open();
+    const rule =
+      '- Before you tell the user something cannot be done on Civitai, or offer a smaller version because of a platform limit, look it up with read_docs (https://developer.civitai.com/llms.txt lists the pages, or read the reference page for that area) and name the page that shows the limit. If no page shows it, do not claim the limit.';
+    expect(tools.rules?.('DEFAULTS')).toContain(rule);
+    expect(Object.keys(tools.tools)).toContain('read_docs');
+    // The page's assistant has no read_docs, so its rules do not carry it.
+    expect(assistantRules('browser')).not.toContain(rule);
   });
 });
 

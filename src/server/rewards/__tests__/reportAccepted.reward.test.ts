@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Same mocked surface as stickerPlacementAccepted.reward.test.ts: base.reward builds a ClickHouse
-// client and buzz.service at import time.
+// Same mocked surface as stickerPlacementAccepted.reward.test.ts: base.reward builds the ClickHouse
+// and Buzz clients at import time.
 const h = vi.hoisted(() => ({
   insert: vi.fn(async () => undefined),
   createBuzzTransactionMany: vi.fn(async () => ({ transactions: [] })),
@@ -9,14 +9,20 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock('~/server/clickhouse/client', () => ({
-  clickhouse: { insert: (...args: unknown[]) => h.insert(...(args as [])) },
+  clickhouse: {
+    insert: (...args: unknown[]) => h.insert(...(args as [])),
+    // The monthly cap lookup: nothing awarded yet.
+    $query: vi.fn(async () => []),
+  },
 }));
-vi.mock('~/server/services/buzz.service', () => ({
+vi.mock('~/server/services/buzz-payout', () => ({
   createBuzzTransactionMany: (...args: unknown[]) => h.createBuzzTransactionMany(...(args as [])),
-  getMultipliersForUser: (...args: unknown[]) => h.getMultipliersForUser(...(args as [])),
   getTransactionByExternalId: vi.fn(async () => null),
+  getMultipliersForUser: (...args: unknown[]) => h.getMultipliersForUser(...(args as [])),
 }));
 
+import { fakeClickhouse } from '~/server/events/points/__tests__/clickhouse-wire';
+import type { BuzzEventLog } from '~/server/rewards/base.reward';
 import { reportAcceptedReward } from '~/server/rewards/passive/reportAccepted.reward';
 
 /** The buzzEvents rows written, as `toUserId:forId`. A pending row is what process-rewards pays. */
@@ -39,5 +45,155 @@ describe('the report accepted reward', () => {
 
     // The person's report is the control: it shows a write would have been seen.
     expect(written()).toEqual(['42:10']);
+  });
+});
+
+/** buzzEvents rows the job has already settled, as the preprocess lookup reads them. */
+type Row = { type: string; toUserId: number; forId: number; status: string; version: number };
+let table: Row[] = [];
+const ch = {
+  // Applies the type and status filters only when the SQL asks for them, so a query that loses
+  // one is seen to. The id filters only bound the read: the reward looks each event up by key.
+  query: vi.fn(
+    async ({
+      query,
+      query_params: { type, toUserIds, forIds },
+    }: {
+      query: string;
+      query_params: { type: string; toUserIds: number[]; forIds: number[] };
+    }) => {
+      const sql = query.replace(/\s+/g, ' ');
+      const byType = sql.includes('type = {type:String}');
+      const settledOnly = sql.includes("status != 'pending'");
+      const byUser = sql.includes('toUserId IN {toUserIds:Array(Int32)}');
+      const byFor = sql.includes('forId IN {forIds:Array(Int32)}');
+      const latest = new Map<string, { toUserId: number; forId: number; version: number }>();
+      for (const row of table) {
+        const key = `${row.toUserId}:${row.forId}`;
+        if (byType && row.type !== type) continue;
+        if (settledOnly && row.status === 'pending') continue;
+        if (byUser && !toUserIds.includes(row.toUserId)) continue;
+        if (byFor && !forIds.includes(row.forId)) continue;
+        if ((latest.get(key)?.version ?? -1) < row.version) latest.set(key, { ...row });
+      }
+      return { json: async () => [...latest.values()] };
+    }
+  ),
+};
+
+/** A pending row as `process-rewards` reads it back from buzzEvents. */
+const pending = (reportId: number, version: number): BuzzEventLog => ({
+  type: 'reportAccepted',
+  forId: reportId,
+  toUserId: 42,
+  byUserId: 42,
+  awardAmount: 50,
+  multiplier: 1,
+  status: 'pending',
+  version,
+  transactionDetails: '{}',
+});
+
+/** The externalTransactionId of each transaction sent to the buzz service. */
+const paid = () =>
+  h.createBuzzTransactionMany.mock.calls.flatMap((call) => {
+    const [transactions] = call as unknown as [{ externalTransactionId: string }[]];
+    return transactions.map((t) => t.externalTransactionId);
+  });
+
+const run = (toProcess: BuzzEventLog[]) =>
+  reportAcceptedReward.process({
+    ch: ch as never,
+    db: {} as never,
+    lastUpdate: new Date(0),
+    toProcess,
+  });
+
+describe('paying an accepted report', () => {
+  beforeEach(() => {
+    table = [];
+  });
+
+  it('pays a report once, however many times it is accepted', async () => {
+    // Report 10 was accepted and paid before; report 11 is accepted for the first time.
+    table = [
+      { type: 'reportAccepted', toUserId: 42, forId: 10, status: 'pending', version: 1 },
+      { type: 'reportAccepted', toUserId: 42, forId: 10, status: 'awarded', version: 2 },
+      // Settled rows for report 11's id under another reward, and under another reporter.
+      { type: 'goodContent:image', toUserId: 42, forId: 11, status: 'awarded', version: 2 },
+      { type: 'reportAccepted', toUserId: 7, forId: 11, status: 'awarded', version: 2 },
+    ];
+    const again = pending(10, 1);
+    const first = pending(11, 1);
+
+    await run([again, first]);
+
+    // type:forId-toUserId-byUserId. Report 11 is the control: it shows a payment would be seen.
+    expect(paid()).toEqual(['reportAccepted:11-42-42']);
+    expect(again.status).toBe('unqualified');
+  });
+
+  // Keep: the row recording the repeat shares the payment row's key, and buzzEvents keeps the
+  // highest version per key. Written at the payment's version or above, it would replace the
+  // payment, and the monthly cap would stop counting money already paid.
+  it('records a repeated acceptance below the version of the original payment', async () => {
+    table = [{ type: 'reportAccepted', toUserId: 42, forId: 10, status: 'awarded', version: 2 }];
+
+    await run([pending(10, 1)]);
+
+    const written = h.insert.mock.calls.flatMap((call) => {
+      const [{ values }] = call as unknown as [{ values: { forId: number; version: number }[] }];
+      return values.filter((v) => v.forId === 10).map((v) => v.version);
+    });
+    expect(written).toEqual([1]);
+  });
+
+  it('keeps a repeated acceptance below the original payment when the batch fails to send', async () => {
+    table = [{ type: 'reportAccepted', toUserId: 42, forId: 10, status: 'awarded', version: 2 }];
+    h.createBuzzTransactionMany.mockRejectedValue(new Error('buzz service down'));
+
+    try {
+      await expect(run([pending(10, 1), pending(11, 1)])).rejects.toThrow('Failed to send');
+    } finally {
+      h.createBuzzTransactionMany.mockResolvedValue({ transactions: [] });
+    }
+
+    const written = h.insert.mock.calls.flatMap((call) => {
+      const [{ values }] = call as unknown as [{ values: { forId: number; version: number }[] }];
+      return values.filter((v) => v.forId === 10).map((v) => v.version);
+    });
+    expect(written).toEqual([1]);
+  });
+
+  it('still pays a report whose earlier payment failed and was reset to pending', async () => {
+    // A failed send rewrites the row as pending one version above the awarded one it replaced.
+    table = [
+      { type: 'reportAccepted', toUserId: 42, forId: 10, status: 'awarded', version: 2 },
+      { type: 'reportAccepted', toUserId: 42, forId: 10, status: 'pending', version: 3 },
+    ];
+
+    await run([pending(10, 3)]);
+
+    expect(paid()).toEqual(['reportAccepted:10-42-42']);
+  });
+});
+
+// The lookup's params as the real client puts them on the wire. ClickHouse rejects a nested JS
+// array bound to a tuple type, and a lookup that throws stops the whole rewards job.
+describe('the settled-row lookup on the wire', () => {
+  it('sends each param in a form ClickHouse accepts for its type', async () => {
+    const fake = await fakeClickhouse();
+    try {
+      await reportAcceptedReward.process({
+        ch: fake.client,
+        db: {} as never,
+        lastUpdate: new Date(0),
+        toProcess: [pending(10, 1), pending(11, 1)],
+      });
+    } finally {
+      await fake.close();
+    }
+
+    expect(fake.sent[0]).toEqual({ type: 'reportAccepted', toUserIds: '[42]', forIds: '[10,11]' });
   });
 });

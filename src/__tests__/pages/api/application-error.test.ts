@@ -2,17 +2,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type * as EnvOther from '~/env/other';
 import type * as AuthSession from '~/server/auth/get-server-auth-session';
-import type * as ErrorHandling from '~/server/utils/errorHandling';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 const mockLogToAxiom = loggingMock.logToAxiom;
 
-// Covers the `resolveStack` opt-out and the same-origin beacon guard on `/api/application-error`.
-//
-// 🔴 Why this file exists rather than only client-side assertions: the client tests pin what the
-// browser SENDS, and a mutation that made this handler IGNORE the flag — resolving every stack
-// regardless — left that whole suite green. The amplification this opt-out exists to prevent could
-// therefore return through a server-side edit with nothing going red. This pins the other half of
-// the seam: that the handler HONOURS what the client asked for.
+// Covers the stored report and the same-origin beacon guard on `/api/application-error`.
 //
 // The guard block below is the seam the guard's own unit suite
 // (`src/server/utils/__tests__/beacon-same-origin.test.ts`) structurally CANNOT see: that suite
@@ -30,9 +23,8 @@ const mockLogToAxiom = loggingMock.logToAxiom;
 // and `scripts/test-perf/codemod-shared-mocks.mjs --write <file>` performs the conversion. Found by
 // CI, not locally — running only this file and the ErrorBoundary suites never executes that gate.
 
-const { mockGetServerAuthSession, mockApplySourceMaps, prodFlag, devFlag } = vi.hoisted(() => ({
+const { mockGetServerAuthSession, prodFlag, devFlag } = vi.hoisted(() => ({
   mockGetServerAuthSession: vi.fn(),
-  mockApplySourceMaps: vi.fn(),
   prodFlag: { value: true },
   devFlag: { value: false },
 }));
@@ -65,11 +57,6 @@ vi.mock('~/env/other', async (importOriginal) => ({
 vi.mock('~/server/auth/get-server-auth-session', async (importOriginal) => ({
   ...(await importOriginal<typeof AuthSession>()),
   getServerAuthSession: mockGetServerAuthSession,
-}));
-
-vi.mock('~/server/utils/errorHandling', async (importOriginal) => ({
-  ...(await importOriginal<typeof ErrorHandling>()),
-  applySourceMaps: mockApplySourceMaps,
 }));
 
 const importHandler = async () => (await import('~/pages/api/application-error')).default;
@@ -137,50 +124,27 @@ beforeEach(() => {
   prodFlag.value = true;
   devFlag.value = false;
   mockGetServerAuthSession.mockResolvedValue(null);
-  mockApplySourceMaps.mockImplementation(async (s: string) => `RESOLVED:${s}`);
   mockLogToAxiom.mockResolvedValue(undefined);
 });
 
-describe('/api/application-error — the resolveStack opt-out', () => {
-  it('SKIPS sourcemap resolution when the caller sets resolveStack false', async () => {
-    const { res } = await post({ message: 'boom', stack: MINIFIED, resolveStack: false });
+describe('/api/application-error — the stored report', () => {
+  it('stores the stack exactly as sent', async () => {
+    const { res } = await post({ message: 'boom', stack: MINIFIED });
 
     expect(res.status).toHaveBeenCalledWith(200);
-    expect(mockApplySourceMaps).not.toHaveBeenCalled();
-    expect(mockLogToAxiom).toHaveBeenCalledTimes(1);
-    // The stack is still STORED — unresolved, and resolvable offline against the maps artifact.
     expect(mockLogToAxiom.mock.calls[0][0]).toMatchObject({ stack: MINIFIED });
   });
 
-  it('resolves as before when the flag is absent, so existing callers are unchanged', async () => {
-    await post({ message: 'boom', stack: MINIFIED });
-
-    expect(mockApplySourceMaps).toHaveBeenCalledTimes(1);
-    expect(mockLogToAxiom.mock.calls[0][0]).toMatchObject({ stack: `RESOLVED:${MINIFIED}` });
-  });
-
-  it('resolves when the flag is explicitly true', async () => {
-    await post({ message: 'boom', stack: MINIFIED, resolveStack: true });
-
-    expect(mockApplySourceMaps).toHaveBeenCalledTimes(1);
-  });
-
-  // Positive control on the mock wiring: if the schema rejected the new field, every assertion
-  // above would pass vacuously via the 400 path without `logToAxiom` ever being reached. This
-  // asserts the 200 path is the one being exercised.
-  it('accepts the field rather than 400ing on it', async () => {
+  // Browsers still running a bundle from before the flag was dropped keep sending it until they
+  // reload; a strict schema would 400 their reports, and `fetch` does not reject on a 4xx.
+  it('accepts a body that still carries the retired resolveStack flag', async () => {
     const { res } = await post({ message: 'boom', stack: MINIFIED, resolveStack: false });
 
     expect(res.status).toHaveBeenCalledWith(200);
-    // Reaching `logToAxiom` is only possible past `schema.parse`, so this distinguishes the 200
-    // path from the 400 path that a rejected field would take — without which the three
-    // assertions above could all pass vacuously.
     expect(mockLogToAxiom).toHaveBeenCalledTimes(1);
   });
 
-  it('does not disturb the absent-name default that reporting depends on', async () => {
-    // Requirement pinned next to the change that could have broken it: an absent `name` still
-    // arrives downstream as the literal default, unchanged by the guard sitting in front.
+  it('defaults an absent name, which reporting depends on', async () => {
     await post({ message: 'boom', stack: MINIFIED });
     expect(mockLogToAxiom.mock.calls[0][0]).toMatchObject({ name: 'application-error' });
   });
@@ -246,7 +210,7 @@ describe('/api/application-error — the same-origin beacon guard', () => {
     expect(res.status).not.toHaveBeenCalledWith(200);
   });
 
-  it('SHEDS the work: a rejected post writes no report and resolves no sourcemap', async () => {
+  it('SHEDS the work: a rejected post writes no report and reads no session', async () => {
     // A 400 alone would be satisfied by a handler that did all its work and then changed the
     // status code. This asserts the guard actually bounds what the endpoint contributes
     // downstream, which is why it sits ahead of the session read and the parse.
@@ -256,7 +220,6 @@ describe('/api/application-error — the same-origin beacon guard', () => {
     );
 
     expect(mockLogToAxiom).not.toHaveBeenCalled();
-    expect(mockApplySourceMaps).not.toHaveBeenCalled();
     expect(mockGetServerAuthSession).not.toHaveBeenCalled();
   });
 

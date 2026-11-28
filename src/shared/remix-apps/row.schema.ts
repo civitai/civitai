@@ -36,7 +36,7 @@ export const REMIX_APP_ICONS = [
 
 export const REMIX_CODE_APP_SLUGS = ['pick-of-four'] as const;
 
-const ASPECT_RATIOS = [
+export const REMIX_ASPECT_RATIOS = [
   '21:9',
   '16:9',
   '3:2',
@@ -95,13 +95,26 @@ const choiceAsk = z.strictObject({
     .max(12),
 });
 
+/** The user hands the app one of their own images; a step names it in `references`. */
+const imageAsk = z.strictObject({
+  id,
+  kind: z.literal('image'),
+  prompt: text(120),
+  optional: z.boolean().optional(),
+});
+
+/** Beside a step's input; the edit engines take at most 3 images in all. */
+export const REMIX_STEP_MAX_REFERENCES = 2;
+
 const imageStep = z.strictObject({
   kind: z.literal('image'),
   prompt: text(2000),
-  aspectRatio: z.enum(['source', ...ASPECT_RATIOS]),
+  aspectRatio: z.enum(['source', ...REMIX_ASPECT_RATIOS]),
   quantity: z.union([z.literal(1), z.literal(2), z.literal(4)]),
   /** `previous`: the first image the step before returned. */
   input: z.enum(['source', 'previous']),
+  /** Image asks whose answers go to the engine after `input`; a skipped optional one is left out. */
+  references: z.array(id).min(1).max(REMIX_STEP_MAX_REFERENCES).optional(),
 });
 
 const upscaleStep = z.strictObject({
@@ -112,7 +125,7 @@ const upscaleStep = z.strictObject({
 const declarativeSpec = z.strictObject({
   icon: z.enum(REMIX_APP_ICONS),
   engine: z.strictObject({ safe: engine, mature: engine.optional() }),
-  asks: z.array(z.discriminatedUnion('kind', [textAsk, choiceAsk])).max(4),
+  asks: z.array(z.discriminatedUnion('kind', [textAsk, choiceAsk, imageAsk])).max(4),
   steps: z
     .array(z.discriminatedUnion('kind', [imageStep, upscaleStep]))
     .min(1)
@@ -122,6 +135,22 @@ const declarativeSpec = z.strictObject({
 const codeSpec = z.strictObject({
   icon: z.enum(REMIX_APP_ICONS),
   code: z.enum(REMIX_CODE_APP_SLUGS),
+});
+
+export const REMIX_USER_SOURCE_MAX_BYTES = 32 * 1024;
+
+const userSource = z
+  .string()
+  .min(1)
+  .refine((source) => new TextEncoder().encode(source).length <= REMIX_USER_SOURCE_MAX_BYTES, {
+    message: `At most ${REMIX_USER_SOURCE_MAX_BYTES / 1024} KiB`,
+  });
+
+/** An app whose `run` is the author's JavaScript module, run in the sandbox, never in-process. */
+const userSpec = z.strictObject({
+  icon: z.enum(REMIX_APP_ICONS),
+  engine: z.strictObject({ safe: engine, mature: engine.optional() }),
+  source: userSource,
 });
 
 const PLACEHOLDER = /\{\{([^{}]*)\}\}/g;
@@ -134,7 +163,7 @@ export function placeholdersOf(prompt: string) {
  * Where `spec` names an engine other than today's remix edit engine for its tier. Checked on save
  * only: a stored row keeps serving after an engine version bump moves the allowlist on.
  */
-export function remixEngineIssues(spec: RemixAppSpec) {
+export function remixEngineIssues(spec: RemixAppSpec | RemixStoredSpec) {
   if ('code' in spec) return [];
   const issues: { path: (string | number)[]; message: string }[] = [];
   for (const tier of ['safe', 'mature'] as const) {
@@ -152,14 +181,17 @@ export function remixEngineIssues(spec: RemixAppSpec) {
   return issues;
 }
 
-/** A spec's shape and wiring, without the engine allowlist: what a stored row must satisfy. */
-const storedSpecSchema = z.union([declarativeSpec, codeSpec]).superRefine((spec, ctx) => {
-  if ('code' in spec) return;
+function checkWiring(
+  spec: z.infer<typeof declarativeSpec> | z.infer<typeof codeSpec> | z.infer<typeof userSpec>,
+  ctx: z.RefinementCtx
+) {
+  if (!('steps' in spec)) return;
   const issue = (path: (string | number)[], message: string) =>
     ctx.addIssue({ code: 'custom', path, message });
 
   // Every name in use, and whether a prompt can fill it: a choice's own id fills nothing.
   const names = new Map<string, boolean>();
+  const imageAsks = new Set(spec.asks.filter((a) => a.kind === 'image').map((a) => a.id));
   const claim = (name: string, fills: boolean, path: (string | number)[]) => {
     if (names.has(name)) issue(path, `"${name}" is already used`);
     names.set(name, fills);
@@ -183,18 +215,33 @@ const storedSpecSchema = z.union([declarativeSpec, codeSpec]).superRefine((spec,
     if (s === 0 && (step.kind === 'upscale' || step.input === 'previous'))
       issue(['steps', s], 'The first step works on the source image');
     if (step.kind !== 'image') return;
+    const references = new Set<string>();
+    step.references?.forEach((name, r) => {
+      if (!imageAsks.has(name))
+        issue(['steps', s, 'references', r], `"${name}" is not an image ask`);
+      else if (references.has(name)) issue(['steps', s, 'references', r], `"${name}" is repeated`);
+      references.add(name);
+    });
     for (const name of placeholdersOf(step.prompt))
       if (!names.get(name)) issue(['steps', s, 'prompt'], `{{${name}}} is not an ask or fragment`);
   });
-});
+}
 
-/** What a save must satisfy: the stored shape, on today's engines. */
-export const remixAppSpecSchema = storedSpecSchema.superRefine((spec, ctx) => {
-  for (const { path, message } of remixEngineIssues(spec))
-    ctx.addIssue({ code: 'custom', path, message });
-});
+/** A spec's shape and wiring, without the engine allowlist: what a stored row must satisfy. */
+const storedSpecSchema = z.union([declarativeSpec, codeSpec, userSpec]).superRefine(checkWiring);
+
+/** What a mod save must satisfy: a declarative or code spec, on today's engines. */
+export const remixAppSpecSchema = z
+  .union([declarativeSpec, codeSpec])
+  .superRefine(checkWiring)
+  .superRefine((spec, ctx) => {
+    for (const { path, message } of remixEngineIssues(spec))
+      ctx.addIssue({ code: 'custom', path, message });
+  });
 
 export type RemixAppSpec = z.infer<typeof remixAppSpecSchema>;
+export type RemixStoredSpec = z.infer<typeof storedSpecSchema>;
+export type RemixUserSpec = z.infer<typeof userSpec>;
 export type RemixDeclarativeSpec = Extract<RemixAppSpec, { steps: unknown }>;
 export type RemixCodeSpec = Extract<RemixAppSpec, { code: unknown }>;
 
@@ -217,14 +264,114 @@ export const remixAppInputSchema = z.object({
 });
 export type RemixAppInput = z.infer<typeof remixAppInputSchema>;
 
-/** The manifest stored on the row. `version` mirrors `app_blocks.version`. */
-export const remixManifestSchema = z.object({
-  kind: z.literal('remix'),
-  name: text(40),
-  description: z.string().max(200).optional(),
-  /** `<run version>.0.0`: semver like every block's, with the run version as its major. */
-  version: z.string().regex(/^[1-9][0-9]*\.0\.0$/),
-  targets: z.tuple([z.object({ slotId: z.enum(REMIX_SLOT_IDS) })]),
-  remix: storedSpecSchema,
+export const REMIX_REVIEW_STATES = ['submitted', 'rejected', 'approved'] as const;
+
+export const REMIX_REJECT_REASONS = [
+  'minor-themed',
+  'unsafe-prompts',
+  'broken',
+  'spam',
+  'other',
+] as const;
+export type RemixRejectReason = (typeof REMIX_REJECT_REASONS)[number];
+
+/** A user app's review log keeps its latest entries only, so toggling cannot grow the row. */
+export const REMIX_REVIEW_LOG_MAX = 50;
+
+/** `by` on a review-log entry the run-time audit wrote, not a person. */
+export const REMIX_SYSTEM_ACTOR = -1;
+
+/** Distinct viewers whose refused runs of a user app take it out of menus. */
+export const REMIX_COMBINATION_BLOCKS_MAX = 3;
+
+const reviewLogEntry = z.strictObject({
+  by: z.union([z.number().int().positive(), z.literal(REMIX_SYSTEM_ACTOR)]),
+  at: z.string(),
+  action: z.enum([
+    'submitted',
+    'approved',
+    'rejected',
+    'enabled',
+    'disabled',
+    'cleared-minor-themed',
+    'mature-revoked',
+    'held-author-prompt',
+    'held-combination-blocks',
+    'held-classifier-error',
+    'held-runner-quarantine',
+    'held-runner-quarantine-observed',
+  ]),
+  sha256: z.string().optional(),
+  mature: z.boolean().optional(),
+  reason: z.enum(REMIX_REJECT_REASONS).optional(),
+  note: z.string().max(200).optional(),
 });
+export type RemixReviewLogEntry = z.infer<typeof reviewLogEntry>;
+
+/** Apps one author may hold: each row's source is read into the shared registry cache. */
+export const REMIX_USER_APPS_PER_AUTHOR = 10;
+
+/** What an author submits. The server sets the engine, the author and the review state. */
+export const remixAppSubmitSchema = z.object({
+  /** The slug after `u<authorId>-`. */
+  name: z.string().regex(/^[a-z][a-z0-9-]{0,22}[a-z0-9]$/),
+  title: text(40),
+  description: z.string().trim().max(200).optional(),
+  icon: z.enum(REMIX_APP_ICONS),
+  source: userSource,
+});
+export type RemixAppSubmitInput = z.infer<typeof remixAppSubmitSchema>;
+
+/** A user app's slug starts with its author's id, so no author can write another's or a system app. */
+export const userRemixSlugPrefix = (authorId: number) => `u${authorId}-`;
+/** Its group is the author's user id. */
+export const USER_REMIX_SLUG = /^u([1-9][0-9]*)-/;
+
+/**
+ * The manifest stored on the row. `version` mirrors `app_blocks.version`. `author` and `review`
+ * mark a user app; only the server writes them, and no input schema accepts them.
+ */
+export const remixManifestSchema = z
+  .object({
+    kind: z.literal('remix'),
+    name: text(40),
+    description: z.string().max(200).optional(),
+    /** `<run version>.0.0`: semver like every block's, with the run version as its major. */
+    version: z.string().regex(/^[1-9][0-9]*\.0\.0$/),
+    targets: z.tuple([z.object({ slotId: z.enum(REMIX_SLOT_IDS) })]),
+    remix: storedSpecSchema,
+    author: z.strictObject({ userId: z.number().int().positive() }).optional(),
+    review: z.enum(REMIX_REVIEW_STATES).optional(),
+    /** Written by the server only, and never part of what a review hashes. */
+    reviewLog: z.array(reviewLogEntry).max(REMIX_REVIEW_LOG_MAX).optional(),
+    /** A rejection as minor-themed: it survives resubmits and bars the mature engine. */
+    minorThemed: z.strictObject({ by: z.number().int().positive(), at: z.string() }).optional(),
+    /** Viewers whose call tripped the runner's quarantine of this source, keyed as `combinationBlocks`. */
+    runnerQuarantines: z
+      .strictObject({
+        sha256: z.string().regex(/^[0-9a-f]{64}$/),
+        viewers: z
+          .array(z.strictObject({ key: z.string().regex(/^[0-9a-f]{16}$/), at: z.string() }))
+          .max(REMIX_COMBINATION_BLOCKS_MAX),
+      })
+      .optional(),
+    /**
+     * Viewers whose own audit refused a run of this source, each as an unkeyed hash of the slug and
+     * their id: distinct, not secret, so no listing returns it. A submit starts it again; an
+     * approval clears it.
+     */
+    combinationBlocks: z
+      .array(z.string().regex(/^[0-9a-f]{16}$/))
+      .max(REMIX_COMBINATION_BLOCKS_MAX)
+      .optional(),
+  })
+  .superRefine((manifest, ctx) => {
+    const user = 'source' in manifest.remix;
+    if (user !== !!manifest.author || user !== !!manifest.review)
+      ctx.addIssue({
+        code: 'custom',
+        path: ['author'],
+        message: 'A user app has source, an author and a review state; any other app has none',
+      });
+  });
 export type RemixManifest = z.infer<typeof remixManifestSchema>;

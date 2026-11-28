@@ -18,6 +18,18 @@ describe('fetchPreviewFrame', () => {
     expect(fetchMock.mock.calls[0][0]).toBe('/api/apps/assistant/preview?blockId=my%20app');
   });
 
+  // The route's contract (`/api/apps/assistant/preview`): `check=1` marks the pane's liveness poll,
+  // which must not move a direct preview's idle clock; a frame fetch without it does.
+  it('marks a liveness check with check=1, and only that', async () => {
+    const fetchMock = respond(200, FRAME);
+    await fetchPreviewFrame('my app', fetchMock, { check: true });
+    await fetchPreviewFrame('my app', fetchMock, { check: false });
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      '/api/apps/assistant/preview?blockId=my%20app&check=1',
+      '/api/apps/assistant/preview?blockId=my%20app',
+    ]);
+  });
+
   it('reports a preview that is still coming online, with nothing to frame', async () => {
     expect(await fetchPreviewFrame('my-app', respond(200, { preparing: true }))).toEqual({
       preparing: true,

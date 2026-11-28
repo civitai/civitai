@@ -49,14 +49,24 @@ vi.mock('../mod-activity', () => ({ recordModActivity: vi.fn(async () => undefin
 vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn() }));
 // The models-index requeue is covered in image-models-reindex.pglite.test.ts; this schema has no Post table.
 vi.mock('../image-models-reindex', () => ({
-  queueModelsForImageChildTagChanges: vi.fn(async () => undefined),
+  queueDocumentsForImageMinorChanges: vi.fn(async () => undefined),
 }));
 
-const { acceptImage } = await import('../image-moderation.service');
+// The article lookup is covered in article-cover-reindex.pglite.test.ts; this schema has no Article table.
+vi.mock('../article-cover-reindex', () => ({
+  queueArticlesForCoverImages: vi.fn(async () => undefined),
+}));
+
+const { acceptImage, ImageChangedError } = await import('../image-moderation.service');
+const { queueArticlesForCoverImages } = await import('../article-cover-reindex');
+const { queueDocumentsForImageMinorChanges } = await import('../image-models-reindex');
 
 const SCHEMA = `
 CREATE TYPE "EntityType" AS ENUM ('Image', 'Post', 'Model');
 CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected');
+CREATE DOMAIN "ImageIngestionStatus" AS TEXT;
+CREATE TABLE "ModerationRule" ("id" INTEGER PRIMARY KEY, "action" TEXT NOT NULL);
+CREATE TABLE "ModerationRuleVersion" ("ruleId" INTEGER, "action" TEXT);
 CREATE TABLE "Image" (
   "id" INTEGER PRIMARY KEY,
   "type" TEXT,
@@ -74,7 +84,7 @@ CREATE TABLE "Image" (
   "scannedAt" TIMESTAMP(3)
 );
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
-CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER,
+CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER, "data" JSONB,
   PRIMARY KEY ("entityType", "entityId", "type"));
 CREATE TABLE "TagsOnImageDetails" ("imageId" INTEGER, "disabled" BOOLEAN);
 ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS "scanJobs" JSONB;
@@ -92,7 +102,7 @@ CREATE TABLE "Appeal" (
   "buzzTransactionId" TEXT,
   "entityRemovedAt" TIMESTAMP(3)
 );
-CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "email" TEXT, "username" TEXT);
+CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "deletedAt" TIMESTAMP(3), "bannedAt" TIMESTAMP(3), "email" TEXT, "username" TEXT);
 CREATE FUNCTION update_nsfw_levels_new(ids INTEGER[]) RETURNS VOID LANGUAGE SQL AS $$ SELECT $$;
 CREATE TYPE "CsamQueueSetAsideOutcome" AS ENUM ('AfterReport', 'Dismissed');
 CREATE TABLE "CsamQueueSetAside" (
@@ -140,11 +150,77 @@ afterAll(async () => {
 
 describe('minor queue Accept', () => {
   it('clears the minor flag on mature images and keeps it on safe ones', async () => {
-    for (const [i] of LEVELS.entries()) await acceptImage({ imageId: i + 1, userId: 2 });
+    for (const [i] of LEVELS.entries())
+      await acceptImage({ csamReview: true, imageId: i + 1, userId: 2 });
 
     const { rows } = await db.query<{ nsfwLevel: number; minor: boolean }>(
       `SELECT "nsfwLevel", "minor" FROM "Image" ORDER BY "id"`
     );
     expect(rows.map((row) => [row.nsfwLevel, row.minor])).toEqual(LEVELS);
+  });
+
+  // The accept rewrites "minor", which no trigger watches.
+  it('queues the articles each accepted image covers', async () => {
+    await db.query(`UPDATE "Image" SET "needsReview" = 'minor' WHERE "id" = 1`);
+    vi.mocked(queueArticlesForCoverImages).mockClear();
+    await acceptImage({ csamReview: true, imageId: 1, userId: 2 });
+    expect(queueArticlesForCoverImages).toHaveBeenCalledWith([1]);
+  });
+
+  it('queues the models whose showcase can hold each accepted image', async () => {
+    await db.query(`UPDATE "Image" SET "needsReview" = 'minor' WHERE "id" = 1`);
+    vi.mocked(queueDocumentsForImageMinorChanges).mockClear();
+    await acceptImage({ csamReview: true, imageId: 1, userId: 2 });
+    expect(queueDocumentsForImageMinorChanges).toHaveBeenCalledWith({ minorImageIds: [1] });
+  });
+
+  it('queues neither for an accept out of another queue (control)', async () => {
+    await db.query(`UPDATE "Image" SET "needsReview" = 'newUser' WHERE "id" = 1`);
+    vi.mocked(queueArticlesForCoverImages).mockClear();
+    vi.mocked(queueDocumentsForImageMinorChanges).mockClear();
+    await acceptImage({ csamReview: true, imageId: 1, userId: 2 });
+    expect(queueArticlesForCoverImages).not.toHaveBeenCalled();
+    expect(queueDocumentsForImageMinorChanges).not.toHaveBeenCalledWith(
+      expect.objectContaining({ minorImageIds: expect.anything() })
+    );
+  });
+
+  // A moderator removed it after the page loaded: the removal cleared the flag the page showed.
+  it("refuses an accept from a page loaded before a moderator's removal", async () => {
+    await db.query(
+      `UPDATE "Image" SET "needsReview" = NULL, "blockedFor" = 'moderated', ingestion = 'Blocked',
+         "nsfwLevel" = 32 WHERE "id" = 1`
+    );
+
+    await expect(
+      acceptImage({ csamReview: true, imageId: 1, userId: 2, shownNeedsReview: 'minor' })
+    ).rejects.toBeInstanceOf(ImageChangedError);
+
+    const { rows } = await db.query(`SELECT ingestion FROM "Image" WHERE "id" = 1`);
+    expect(rows).toEqual([{ ingestion: 'Blocked' }]);
+  });
+
+  // The reported queue shows one image on several cards and does not reload between verdicts.
+  it("does not refuse a report verdict over a flag another card's verdict already cleared", async () => {
+    await db.query(
+      `UPDATE "Image" SET "needsReview" = NULL, "blockedFor" = NULL, ingestion = 'Scanned' WHERE "id" = 1`
+    );
+
+    await acceptImage({
+      csamReview: true,
+      imageId: 1,
+      userId: 2,
+      keepModeratorRemoved: true,
+      shownNeedsReview: 'minor',
+    });
+  });
+
+  it('accepts when the flag is still the one the page showed', async () => {
+    await db.query(`UPDATE "Image" SET "needsReview" = 'minor' WHERE "id" = 1`);
+
+    await acceptImage({ csamReview: true, imageId: 1, userId: 2, shownNeedsReview: 'minor' });
+
+    const { rows } = await db.query(`SELECT "needsReview" FROM "Image" WHERE "id" = 1`);
+    expect(rows).toEqual([{ needsReview: null }]);
   });
 });

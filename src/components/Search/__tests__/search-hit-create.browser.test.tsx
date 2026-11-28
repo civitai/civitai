@@ -53,10 +53,10 @@ vi.mock('~/components/Cards/ModelCardContext', async (importOriginal) => ({
   useModelSaleBadges: () => undefined,
 }));
 vi.mock('~/hooks/useEngagedModelMembership', () => ({ useEngagedModelsPrefetch: () => undefined }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 vi.mock('~/components/InView/InViewLoader', () => ({ InViewLoader: () => null }));
 vi.mock('~/components/Search/search.utils2', () => ({
   useInfiniteHitsTransformed: () => ({ hits: h.hits, showMore: () => undefined, isLastPage: true }),
+  useSearchFeedHits: () => undefined,
 }));
 vi.mock('react-instantsearch', () => ({
   useInstantSearch: () => ({ status: 'idle', uiState: {} }),

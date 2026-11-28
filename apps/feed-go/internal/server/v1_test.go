@@ -57,7 +57,7 @@ func TestV1ShadowSampleIsLabelledAndComparedAsJSON(t *testing.T) {
 	if n, _ := metricValue(t, reg, "feed_go_shadow_phase_seconds", map[string]string{"feed_endpoint": EndpointV1Images, "phase": "compute", "outcome": "served"}); n != 1 {
 		t.Fatalf("v1 compute phase count = %v, want 1", n)
 	}
-	if _, found := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"feed_endpoint": EndpointAsPosts, "result": "match"}); found {
+	if v, _ := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"feed_endpoint": EndpointAsPosts, "result": "match"}); v != 0 {
 		t.Fatal("a v1 sample must not be counted under the as-posts endpoint")
 	}
 	// A value diff is counted by category under the endpoint.
@@ -108,7 +108,7 @@ func TestV1TrivialAnswerIsKeptOutOfServedAndMatch(t *testing.T) {
 		v, _ := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"feed_endpoint": EndpointV1Images, "result": "match_empty"})
 		return v == 1 && len(s.ShadowQueue) == 0
 	})
-	if _, found := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"feed_endpoint": EndpointV1Images, "result": "match"}); found {
+	if v, _ := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"feed_endpoint": EndpointV1Images, "result": "match"}); v != 0 {
 		t.Fatal("a trivial answer must not count as a match")
 	}
 	if n, _ := metricValue(t, reg, "feed_go_shadow_phase_seconds", map[string]string{"feed_endpoint": EndpointV1Images, "phase": "compute", "outcome": "served_empty"}); n != 1 {
@@ -122,5 +122,30 @@ func TestV1TrivialAnswerIsKeptOutOfServedAndMatch(t *testing.T) {
 		if v, found := metricValue(t, reg, "feed_go_shadow_dropped_total", map[string]string{"feed_endpoint": e}); !found || v != 0 {
 			t.Fatalf("dropped{%s} = %v found=%v, want a 0 series", e, v, found)
 		}
+	}
+}
+
+// The v1-images sample is compared with shadow.CompareV1Images: an image's `modelVersionIds` holding
+// the same ids in another order is a match (the image-resources cache's order, which the endpoint never
+// promised, differed between the two sides' lookups), while a differing id is still a fields diff under
+// its category.
+func TestV1ShadowComparesModelVersionIDsAsAMultiset(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	s := newPhaseServer(reg, 2, nil)
+	s.computeV1Fn = func(context.Context, *http.Request) (*computed, error) {
+		return &computed{payload: []byte(`{"items":[{"id":79140094,"modelVersionIds":[331598,454217,1768080],"baseModel":"Pony"}],"metadata":{}}`)}, nil
+	}
+	v1 := func(result string) func() bool {
+		return func() bool {
+			v, _ := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"feed_endpoint": EndpointV1Images, "result": result})
+			return v == 1 && len(s.ShadowQueue) == 0
+		}
+	}
+	postV1(t, s, `{"items":[{"id":79140094,"modelVersionIds":[1768080,454217,331598],"baseModel":"Pony"}],"metadata":{}}`)
+	waitFor(t, "the permuted ids' match", v1("match"))
+	postV1(t, s, `{"items":[{"id":79140094,"modelVersionIds":[1768080,454218,331598],"baseModel":"Pony"}],"metadata":{}}`)
+	waitFor(t, "the differing id's fields diff", v1("fields"))
+	if n, _ := metricValue(t, reg, "feed_go_shadow_field_diffs_total", map[string]string{"feed_endpoint": EndpointV1Images, "category": "items.*.modelVersionIds.*", "kind": "value"}); n != 1 {
+		t.Fatalf("modelVersionIds diff count = %v, want 1", n)
 	}
 }

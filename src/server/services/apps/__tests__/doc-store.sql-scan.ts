@@ -18,16 +18,32 @@
 // APP-PURGE ENUMERATION: a SELECT on `usage_app` / `doc` only, whose every alias carries
 // `<alias>.app_id = $1` and `<alias>.ns > $2::text` (a keyset cursor) in place of `ns = $2`. It
 // only works inside the store's app-purge transaction; `isAppPurgeStatement` names it.
+// RATER LOOKUP: a SELECT on `doc` only, whose every alias carries `<alias>.rating_id = $1::int`
+// and `<alias>.scope_uid = 0` in place of the app and namespace predicates. It only works inside
+// the store's rater-lookup transaction; `isRaterLookupStatement` names it. The rating-id sequence
+// (`appdata.doc_rating_id_seq`) is named only as `nextval`'s argument, never as a relation.
 
+/** The appdata tables the store names: every statement's table is one of these. */
 export const APPDATA_TABLES = [
   'doc',
   'doc_index',
-  'doc_tally',
   'doc_mark',
   'doc_tomb',
+  'maint_run',
   'usage_app',
   'usage_user',
 ] as const;
+
+/**
+ * The tables of marks, counters and their tallies, removed from the store
+ * (docs/app-storage-generic-core.md, rollout step 5). Still in the schema (and so in the RLS
+ * probes and the harness) until the hand-applied cleanup drops them, but a statement naming one
+ * is a violation: nothing may read or write them any more.
+ */
+export const APPDATA_RETIRED_TABLES = ['doc_tally', 'mark_head'] as const;
+
+/** Every table in the `appdata` schema today: the store's and the retired ones. */
+export const APPDATA_SCHEMA_TABLES = [...APPDATA_TABLES, ...APPDATA_RETIRED_TABLES] as const;
 
 /** The RLS settings (`appdata.<name>`), which are not relations. */
 const SETTING_NAMES = new Set([
@@ -36,7 +52,11 @@ const SETTING_NAMES = new Set([
   'review_maintenance',
   'account_wipe_uid',
   'app_purge_id',
+  'rater_lookup_id',
 ]);
+
+/** Sequences, named only as a quoted `nextval` argument: not relations. */
+const SEQUENCE_NAMES = new Set(['doc_rating_id_seq']);
 
 /** The two tables that record which namespaces a user has rows in. */
 const ACCOUNT_WIPE_TABLES = new Set(['usage_user', 'doc_mark']);
@@ -73,13 +93,24 @@ export function scanStatement(sql: string): string[] {
     /\bappdata\b/i.test(
       sql
         .replace(/appdata\.(?:[a-z_]+)/g, '')
-        .replace(/'appdata\.(?:app_id|ns|review_maintenance|account_wipe_uid|app_purge_id)'/g, '')
+        .replace(
+          /'appdata\.(?:app_id|ns|review_maintenance|account_wipe_uid|app_purge_id|rater_lookup_id)'/g,
+          ''
+        )
     )
   ) {
     violations.push('appdata referenced in a non-canonical spelling');
   }
   if (/--|\/\*/.test(sql)) violations.push('comment inside an appdata statement');
-  const all = [...sql.matchAll(/appdata\.([a-z_]+)/g)].filter((m) => !SETTING_NAMES.has(m[1]));
+  for (const m of sql.matchAll(/appdata\.([a-z_]+)_seq\b/g)) {
+    if (!SEQUENCE_NAMES.has(`${m[1]}_seq`)) violations.push(`unknown appdata sequence ${m[1]}_seq`);
+    else if (!new RegExp(`nextval\\('appdata\\.${m[1]}_seq'\\)`).test(sql)) {
+      violations.push(`appdata sequence ${m[1]}_seq named outside nextval`);
+    }
+  }
+  const all = [...sql.matchAll(/appdata\.([a-z_]+)/g)].filter(
+    (m) => !SETTING_NAMES.has(m[1]) && !SEQUENCE_NAMES.has(m[1])
+  );
   const refs = [
     ...sql.matchAll(
       /\b(FROM|JOIN|UPDATE|INTO)\s+appdata\.([a-z_]+)\b(?:\s+AS)?(?:\s+([A-Za-z_][A-Za-z0-9_]*))?/gi
@@ -94,6 +125,10 @@ export function scanStatement(sql: string): string[] {
     const keyword = m[1].toUpperCase();
     const table = m[2];
     const alias = m[3] && !NOT_AN_ALIAS.has(m[3].toLowerCase()) ? m[3] : null;
+    if ((APPDATA_RETIRED_TABLES as readonly string[]).includes(table)) {
+      violations.push(`retired appdata relation ${table}: no statement may name it`);
+      continue;
+    }
     if (!(APPDATA_TABLES as readonly string[]).includes(table)) {
       violations.push(`unknown appdata relation ${table}`);
       continue;
@@ -125,6 +160,19 @@ export function scanStatement(sql: string): string[] {
       }
       continue;
     }
+    if (
+      new RegExp(
+        `\\(\\s*${a}\\.app_id\\s*,\\s*${a}\\.ns\\s*\\)\\s*>\\s*\\(\\$2::text\\s*,\\s*\\$3::text\\)`
+      ).test(sql) &&
+      table === 'maint_run'
+    ) {
+      // Account-wipe enumeration of the maintenance runs: read only, keyed on the user by the
+      // runs' content (`maintRunNamesUser`), which the wipe policy on `maint_run` admits.
+      if (!/^\s*SELECT\b/i.test(sql)) {
+        violations.push(`account-wipe statement on appdata.${table} is not a SELECT`);
+      }
+      continue;
+    }
     if (new RegExp(`\\b${a}\\.user_id\\s*=\\s*\\$1::int\\b`).test(sql)) {
       // Account-wipe enumeration: read only, and only the two per-user tables.
       if (!/^\s*SELECT\b/i.test(sql)) {
@@ -148,6 +196,17 @@ export function scanStatement(sql: string): string[] {
       }
       continue;
     }
+    if (new RegExp(`\\b${a}\\.rating_id\\s*=\\s*\\$1::int\\b`).test(sql)) {
+      // Rater lookup: read only, only `doc`, only shared rows.
+      if (!/^\s*SELECT\b/i.test(sql)) {
+        violations.push(`rater-lookup statement on appdata.${table} is not a SELECT`);
+      }
+      if (table !== 'doc') violations.push(`rater-lookup statement reads appdata.${table}`);
+      if (!new RegExp(`\\b${a}\\.scope_uid\\s*=\\s*0\\b`).test(sql)) {
+        violations.push(`appdata.${table} ${alias} lacks ${alias}.scope_uid = 0`);
+      }
+      continue;
+    }
     if (!new RegExp(`\\b${a}\\.app_id\\s*=\\s*\\$1(?![0-9])`).test(sql)) {
       violations.push(`appdata.${table} ${alias} lacks ${alias}.app_id = $1`);
     }
@@ -163,12 +222,25 @@ export function isReviewMaintenanceStatement(sql: string): boolean {
   return /\.ns\s+LIKE\s+'rev:%'/.test(sql);
 }
 
-/** A statement written in the account-wipe enumeration shape (`user_id = $1::int`). */
+/**
+ * A statement written in the account-wipe enumeration shape: `user_id = $1::int`, or the
+ * maintenance runs' `(app_id, ns) > ($2::text, $3::text)` keyset over `maint_run`.
+ */
 export function isAccountWipeStatement(sql: string): boolean {
-  return /\.user_id\s*=\s*\$1::int\b/.test(sql);
+  return (
+    /\.user_id\s*=\s*\$1::int\b/.test(sql) ||
+    /FROM\s+appdata\.maint_run\s+\w+[\s\S]*\(\s*\w+\.app_id\s*,\s*\w+\.ns\s*\)\s*>\s*\(\$2::text\s*,\s*\$3::text\)/.test(
+      sql
+    )
+  );
 }
 
 /** A statement written in the app-purge enumeration shape (`ns > $2::text`). */
 export function isAppPurgeStatement(sql: string): boolean {
   return /\.ns\s*>\s*\$2::text\b/.test(sql);
+}
+
+/** A statement written in the rater-lookup shape (`rating_id = $1::int`). */
+export function isRaterLookupStatement(sql: string): boolean {
+  return /\.rating_id\s*=\s*\$1::int\b/.test(sql);
 }

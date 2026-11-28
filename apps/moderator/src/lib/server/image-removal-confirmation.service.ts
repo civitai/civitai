@@ -1,10 +1,14 @@
 import { sql } from '@civitai/db/kysely';
 import { ReportStatus } from '$lib/reports';
 import { dbRead, dbWrite } from './db';
-import { blockImage, isModerationBlocked } from './image-moderation.service';
+import { blockImage, isBannedOwnerBlocked, isModerationBlocked } from './image-moderation.service';
 import { recordModActivity } from './mod-activity';
 import { setReportStatus } from './reports.service';
-import { getLatestApprovedImageAppeals } from '@civitai/db-queries/image-removal-confirmation';
+import {
+  getLatestApprovedImageAppeals,
+  OPEN_REPORT_STATUSES,
+} from '@civitai/db-queries/image-removal-confirmation';
+import { restrictedImageIds, withheldRow } from './retracted-media';
 
 // Removals held by `holdRemovals` because they repeat the reason an approved appeal overturned. A
 // moderator holding `image.removal.confirm` decides each one on /images/re-removals. Confirming runs
@@ -25,9 +29,11 @@ export async function countPendingRemovalConfirmations(): Promise<number> {
 export async function getRemovalConfirmations({
   status,
   limit,
+  csamReview,
 }: {
   status: RemovalConfirmationStatus;
   limit: number;
+  csamReview: boolean;
 }) {
   const rows = await dbRead
     .selectFrom('ImageRemovalConfirmation as c')
@@ -71,14 +77,48 @@ export async function getRemovalConfirmations({
     .orderBy('c.id', status === 'Pending' ? 'asc' : 'desc')
     .limit(limit + 1)
     .execute();
-  return { items: rows.slice(0, limit), hasMore: rows.length > limit };
+  const page = rows.slice(0, limit);
+  const withheld = await restrictedImageIds(
+    page.map((row) => row.imageId),
+    { csamReview }
+  );
+  const items = page.map((row) =>
+    withheld.has(row.imageId)
+      ? {
+          ...withheldRow(row),
+          mediaType: null,
+          violationType: null,
+          violationDetails: null,
+          reportIds: [] as number[],
+          removalLabel: null,
+          appealMessage: null,
+          resolvedReason: null,
+          resolvedMessage: null,
+          decisionNote: null,
+        }
+      : { ...row, restricted: false }
+  );
+  return { items, hasMore: rows.length > limit };
 }
 
 export type DecideResult =
   | { ok: true; status: RemovalConfirmationStatus; note?: string }
   | { ok: false; error: string };
 
+/** Removal paths whose unheld run also actions every open TOS report on the image. */
+const TOS_SETTLING_SOURCES = ['api.removeImages', 'site.setTosViolation'];
+
 const NOT_PENDING = 'This removal was decided or changed since the page loaded. Reload.';
+
+/** The image a removal confirmation is about; `null` for one that does not exist. */
+export async function removalConfirmationImageId(id: number): Promise<number | null> {
+  const row = await dbWrite
+    .selectFrom('ImageRemovalConfirmation')
+    .select('imageId')
+    .where('id', '=', id)
+    .executeTakeFirst();
+  return row?.imageId ?? null;
+}
 
 /**
  * Confirms a held removal and runs it. The requester cannot confirm their own: the hold exists so a
@@ -117,6 +157,10 @@ export async function confirmRemoval({
     ? 'A later appeal was approved'
     : null;
   const status: RemovalConfirmationStatus = voidNote ? 'Void' : 'Confirmed';
+  // Voided because another removal already took it down: that block decides the payout. Read before
+  // the claim, so a failure here leaves the request Pending.
+  const voidUnpaid =
+    voidNote === 'Already removed' ? await isBannedOwnerBlocked(row.imageId) : false;
 
   // Claimed in one statement so two confirmers cannot both run the removal. A removal that joined
   // the request since the read above moved its appeal or added reports: refused, or read back here.
@@ -138,8 +182,10 @@ export async function confirmRemoval({
   if (voidNote === 'A later appeal was approved') return { ok: true, status, note: voidNote };
 
   let skipped = false;
+  let unpaid = voidUnpaid;
   if (!voidNote)
     try {
+      unpaid = await isBannedOwnerBlocked(row.imageId);
       const result = await blockImage({
         imageId: row.imageId,
         userId: row.requestedById,
@@ -158,10 +204,37 @@ export async function confirmRemoval({
       throw e;
     }
   // The image is down either way, so the reports the removal answered are actioned, unless it is
-  // held.
-  if (!skipped)
-    for (const reportId of claimed.reportIds)
-      await setReportStatus({ id: reportId, status: ReportStatus.Actioned, userId });
+  // held: the ones kept on the request, and, when this removal ran and its path settles the image's
+  // TOS reports unheld, any TOS report filed since the hold. Only reports on this image; one a
+  // moderator has reviewed since the hold keeps its status.
+  const settlesTos = !voidNote && TOS_SETTLING_SOURCES.includes(row.source);
+  const openReportIds =
+    skipped || (!settlesTos && !claimed.reportIds.length)
+      ? []
+      : (
+          await dbWrite
+            .selectFrom('ImageReport as ir')
+            .innerJoin('Report as r', 'r.id', 'ir.reportId')
+            .select('r.id')
+            .where('ir.imageId', '=', row.imageId)
+            .where('r.status', 'in', OPEN_REPORT_STATUSES)
+            .where((eb) =>
+              eb.or([
+                ...(claimed.reportIds.length ? [eb('r.id', 'in', claimed.reportIds)] : []),
+                ...(settlesTos ? [eb(sql<string>`r.reason::text`, '=', 'TOSViolation')] : []),
+              ])
+            )
+            .orderBy('r.id')
+            .execute()
+        ).map((r) => r.id);
+  for (const reportId of openReportIds)
+    await setReportStatus({
+      id: reportId,
+      status: ReportStatus.Actioned,
+      userId,
+      noReward: unpaid,
+      fromStatuses: OPEN_REPORT_STATUSES,
+    });
   await recordModActivity({
     userId,
     entityType: 'image',

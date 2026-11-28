@@ -21,7 +21,6 @@ const SCHEMA = `
     minor boolean DEFAULT false, poi boolean DEFAULT false, "nsfwLevel" int DEFAULT 1);
   CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb NOT NULL DEFAULT '{}',
     images jsonb NOT NULL DEFAULT '[]');
-  CREATE TABLE "EvidenceHeldUser" ("userId" int);
   CREATE TABLE "PostText" (id serial PRIMARY KEY, "postId" int, "csamHeld" boolean NOT NULL);
   CREATE TABLE "TextScanHold" (id serial PRIMARY KEY, "entityType" text, "entityId" int,
     label text, status text);
@@ -148,6 +147,7 @@ describe('storyline removal', () => {
   // point. Storyline 2 (another owner) is the control and keeps its point.
   const leaves: [string, string][] = [
     ['taken down', `UPDATE "Storyline" SET "tosViolation" = true WHERE id = 1`],
+    ['row deleted', `DELETE FROM "Storyline" WHERE id = 1`],
     ['owner banned', `UPDATE "User" SET "bannedAt" = now() WHERE id = 7`],
     ['owner deleted', `UPDATE "User" SET "deletedAt" = now() WHERE id = 7`],
     ['title flagged by the scan', `UPDATE "Storyline" SET "minorByScan" = true WHERE id = 1`],
@@ -156,8 +156,6 @@ describe('storyline removal', () => {
       `INSERT INTO "Image" (id, "userId", minor) VALUES (900, 7, true);
        UPDATE "Storyline" SET "coverImageId" = 900 WHERE id = 1`,
     ],
-    ['owner reported', `INSERT INTO "CsamReport" ("userId") VALUES (7)`],
-    ['owner under an evidence hold', `INSERT INTO "EvidenceHeldUser" VALUES (7)`],
     ['chapter 1 removed', `UPDATE "StorylineChapter" SET "removedAt" = now() WHERE id = 10`],
     ['chapter 1 post deleted', `UPDATE "StorylineChapter" SET "postId" = NULL WHERE id = 10`],
     ['chapter 1 post taken down', `UPDATE "Post" SET "tosViolation" = true WHERE id = 10`],
@@ -173,6 +171,23 @@ describe('storyline removal', () => {
        VALUES ('PostText', 500, 'csam', 'Pending')`,
     ],
   ];
+  // A held owner does not hide the row (civitai/civitai#10360).
+  test('a reported owner keeps the storyline in search', async () => {
+    const { PGlite } = await import('@electric-sql/pglite');
+    const pg = new PGlite();
+    try {
+      await pg.exec(`${SCHEMA}
+      INSERT INTO "User" VALUES (7, 'someone', NULL, NULL), (8, 'other', NULL, NULL);
+      ${eligibleStoryline(1)} ${eligibleStoryline(2, 8)}
+      INSERT INTO "CsamReport" ("userId") VALUES (7);`);
+      const { points, deps } = fakes(pg);
+      await syncIds(getStorylineDocs, [1, 2], deps);
+      expect([...points.keys()].sort()).toEqual([1, 2]);
+    } finally {
+      await pg.close();
+    }
+  }, 60_000);
+
   test.each(leaves)(
     'a storyline whose %s loses its point on the next sync',
     async (_, change) => {

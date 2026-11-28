@@ -7,6 +7,7 @@ import { credentialLogFields, getRequestCredential } from '~/server/auth/request
 import { dbWrite } from '~/server/db/client';
 import { observeTokenIdentityMismatch } from '~/server/orchestrator/orchestrator-identity-metrics';
 import { getOrMintCachedToken } from '~/server/orchestrator/orchestrator-token-cache';
+import { ownKeyOrchestratorToken } from '~/server/orchestrator/offline-spend-cap';
 import {
   decodeOwnedToken,
   encodeOwnedToken,
@@ -19,8 +20,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { getAccountStanding } from '~/server/services/account-standing.service';
 import { getTemporaryUserApiKey } from '~/server/services/api-key.service';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
-import { Flags } from '~/shared/utils/flags';
+import { hasScope, TokenScope } from '~/shared/constants/token-scope.constants';
 
 /** The caller's request, whose credential is checked. Server-side callers with no request in hand
  *  (e.g. the publish → workflow stamp) omit it. */
@@ -76,6 +76,13 @@ export async function getOrchestratorToken(
     throw new TRPCError({ code: 'FORBIDDEN', message: 'This account has been banned' });
   if (!standing || !standing.exists || (standing.muted && !options.allowRestricted))
     throw new TRPCError({ code: 'FORBIDDEN', message: RESTRICTED_ACCOUNT_MESSAGE });
+
+  // Before both caches and never written to them: a cached limited key would be served to the
+  // user's later requests made with other credentials.
+  if (ctx?.req) {
+    const own = await callerOwnOrchestratorToken(userId, ctx.req);
+    if (own) return own;
+  }
 
   const redisKey = userId.toString();
   // Fail open on sysRedis: fall through to the getTemporaryUserApiKey
@@ -180,6 +187,20 @@ export async function getOrchestratorToken(
   return token;
 }
 
+/**
+ * The caller's own key when getOrchestratorToken sends it instead of the user's System token (a
+ * limited personal key or a capped offline OAuth token, each behind its flag; offline-spend-cap.ts),
+ * else null. Work queued for a job to submit later would run on the System token, so a path that
+ * queues refuses a request this returns a token for.
+ */
+export function callerOwnOrchestratorToken(
+  userId: number,
+  req: NextApiRequest
+): Promise<string | null> {
+  if (env.ORCHESTRATOR_MODE === 'dev') return Promise.resolve(null);
+  return ownKeyOrchestratorToken(userId, req);
+}
+
 type RequestSessionUser = { id?: number; meta?: unknown };
 
 /**
@@ -193,7 +214,7 @@ async function assertCredentialMayUseOrchestrator(userId: number, ctx?: Context)
   const credential = getRequestCredential(ctx.req);
   const { tokenScope, apiKeyId, apiKeyType, subject } = credential;
   const presentedBearer = apiKeyId != null || apiKeyType != null || subject != null;
-  if (!presentedBearer || Flags.hasFlag(tokenScope, TokenScope.AIServicesWrite)) return;
+  if (!presentedBearer || hasScope(tokenScope, TokenScope.AIServicesWrite)) return;
 
   const sessionUser = (ctx.req as { context?: { session?: { user?: RequestSessionUser } | null } })
     .context?.session?.user;

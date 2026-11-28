@@ -30,6 +30,10 @@ vi.mock('../image-moderation-effects', () => ({
 }));
 vi.mock('../tags-on-image.service', () => ({ upsertTagsOnImageNew: vi.fn() }));
 vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn() }));
+// Covered in image-models-reindex.pglite.test.ts; this schema has no Post table.
+vi.mock('../image-models-reindex', () => ({
+  queueDocumentsForImageMinorChanges: vi.fn(async () => undefined),
+}));
 
 const { acceptImage } = await import('../image-moderation.service');
 const { getYouToday } = await import('../moderation-board.service');
@@ -37,6 +41,8 @@ const { getYouToday } = await import('../moderation-board.service');
 const SCHEMA = `
 CREATE TYPE "EntityType" AS ENUM ('Image', 'Post', 'Model');
 CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected');
+CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "deletedAt" TIMESTAMP(3));
+CREATE DOMAIN "ImageIngestionStatus" AS TEXT;
 CREATE TABLE "Image" (
   "id" INTEGER PRIMARY KEY,
   "needsReview" TEXT,
@@ -53,7 +59,7 @@ CREATE TABLE "Image" (
   "nsfwLevelLocked" BOOLEAN NOT NULL DEFAULT FALSE
 );
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
-CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER,
+CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER, "data" JSONB,
   PRIMARY KEY ("entityType", "entityId", "type"));
 CREATE TABLE "Appeal" (
   "id" SERIAL PRIMARY KEY,
@@ -124,7 +130,7 @@ const minorOf = async (imageId: number) =>
 
 describe('acceptImage: minor-queue activity', () => {
   it('logs clearMinor when "Accept + clear minor" lifts the flag', async () => {
-    await acceptImage({ imageId: MINOR_PG, userId: MOD, removeMinorFlag: true });
+    await acceptImage({ csamReview: true, imageId: MINOR_PG, userId: MOD, removeMinorFlag: true });
 
     expect(await minorOf(MINOR_PG)).toBe(false);
     expect(await activitiesFor(MINOR_PG)).toEqual([
@@ -134,14 +140,14 @@ describe('acceptImage: minor-queue activity', () => {
   });
 
   it('logs clearMinor when a plain accept on an R-rated image lifts the flag', async () => {
-    await acceptImage({ imageId: MINOR_R, userId: MOD });
+    await acceptImage({ csamReview: true, imageId: MINOR_R, userId: MOD });
 
     expect(await minorOf(MINOR_R)).toBe(false);
     expect((await activitiesFor(MINOR_R)).map((r) => r.activity)).toEqual(['review', 'clearMinor']);
   });
 
   it('logs minorQueueAccept when a plain accept leaves the flag on', async () => {
-    await acceptImage({ imageId: MINOR_PG, userId: MOD });
+    await acceptImage({ csamReview: true, imageId: MINOR_PG, userId: MOD });
 
     expect(await minorOf(MINOR_PG)).toBe(true);
     expect((await activitiesFor(MINOR_PG)).map((r) => r.activity)).toEqual([
@@ -151,7 +157,12 @@ describe('acceptImage: minor-queue activity', () => {
   });
 
   it('logs minorQueueAccept, not clearMinor, when there was no flag to lift', async () => {
-    await acceptImage({ imageId: MINOR_UNFLAGGED, userId: MOD, removeMinorFlag: true });
+    await acceptImage({
+      csamReview: true,
+      imageId: MINOR_UNFLAGGED,
+      userId: MOD,
+      removeMinorFlag: true,
+    });
 
     expect((await activitiesFor(MINOR_UNFLAGGED)).map((r) => r.activity)).toEqual([
       'review',
@@ -160,7 +171,7 @@ describe('acceptImage: minor-queue activity', () => {
   });
 
   it('logs only review for an accept from another queue', async () => {
-    await acceptImage({ imageId: TAG_QUEUE, userId: MOD, removeMinorFlag: true });
+    await acceptImage({ csamReview: true, imageId: TAG_QUEUE, userId: MOD, removeMinorFlag: true });
 
     expect(await minorOf(TAG_QUEUE)).toBe(true);
     expect((await activitiesFor(TAG_QUEUE)).map((r) => r.activity)).toEqual(['review']);
@@ -169,9 +180,9 @@ describe('acceptImage: minor-queue activity', () => {
 
 describe('getYouToday', () => {
   it('counts the accept and not the companion row written beside it', async () => {
-    await acceptImage({ imageId: MINOR_PG, userId: MOD, removeMinorFlag: true });
-    await acceptImage({ imageId: MINOR_UNFLAGGED, userId: MOD });
-    await acceptImage({ imageId: TAG_QUEUE, userId: MOD });
+    await acceptImage({ csamReview: true, imageId: MINOR_PG, userId: MOD, removeMinorFlag: true });
+    await acceptImage({ csamReview: true, imageId: MINOR_UNFLAGGED, userId: MOD });
+    await acceptImage({ csamReview: true, imageId: TAG_QUEUE, userId: MOD });
 
     expect((await getYouToday(MOD)).actions).toBe(3);
   });

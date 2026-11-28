@@ -8,16 +8,28 @@ const { enqueue, openCount } = vi.hoisted(() => ({
 }));
 vi.mock('~/server/db/kyselyDb', async () => ({
   kyselyWrite: { tag: 'write' },
-  kyselyRead: (await import('~/test-utils/kysely-raw-fake')).fakeKysely(openCount),
+  // `readWithoutJit` turns JIT and parallel workers off before the count; only the count reaches `openCount`.
+  kyselyRead: await (async () => {
+    const { JIT_OFF_STATEMENT } = await import('@civitai/db/knights');
+    return (await import('~/test-utils/kysely-raw-fake')).fakeKysely(
+      (strings: readonly string[], ...values: unknown[]) =>
+        strings.join('') === JIT_OFF_STATEMENT
+          ? Promise.resolve([])
+          : openCount(strings, ...values)
+    );
+  })(),
 }));
 vi.mock('~/server/services/knights/enqueue.service', () => ({ enqueueKnightsItems: enqueue }));
 
 const {
   clearKnightsSourcesConfigCache,
   parseKnightsSourcesConfig,
+  queueLeftPrivateForKnights,
   queueOwnerRatingForKnights,
   queueScanSampleForKnights,
+  readKnightsSourcesConfig,
 } = await import('~/server/services/knights/sources');
+const { knightsSampleDraw } = await import('~/server/services/knights/sampling');
 
 const configured = (value: unknown) =>
   redisMock.sysRedis.get.mockResolvedValue(value === null ? null : JSON.stringify(value));
@@ -66,21 +78,33 @@ describe('queueScanSampleForKnights', () => {
     expect(enqueue).not.toHaveBeenCalled();
   });
 
-  it('queues a safe-looking scan at priority 1 and an NSFW one at priority 2', async () => {
+  it('queues a safe-looking scan at priority 1 and an NSFW one at priority 2, only on a live post and only once per image', async () => {
     configured({ enabled: true });
     await queueScanSampleForKnights({ imageId: 1, nsfw: false }, () => 0.99);
     await queueScanSampleForKnights({ imageId: 2, nsfw: true }, () => 0.29);
 
-    expect(enqueue).toHaveBeenNthCalledWith(1, expect.anything(), {
-      source: 'scan-sample',
-      questionKey: 'knights.image.nsfwLevel',
-      items: [{ imageId: 1, priority: 1 }],
-    });
-    expect(enqueue).toHaveBeenNthCalledWith(2, expect.anything(), {
-      source: 'scan-sample',
-      questionKey: 'knights.image.nsfwLevel',
-      items: [{ imageId: 2, priority: 2 }],
-    });
+    expect(enqueue).toHaveBeenNthCalledWith(
+      1,
+      expect.anything(),
+      {
+        source: 'scan-sample',
+        questionKey: 'knights.image.nsfwLevel',
+        items: [{ imageId: 1, priority: 1 }],
+      },
+      undefined,
+      { requirePublished: true, oncePerImage: true }
+    );
+    expect(enqueue).toHaveBeenNthCalledWith(
+      2,
+      expect.anything(),
+      {
+        source: 'scan-sample',
+        questionKey: 'knights.image.nsfwLevel',
+        items: [{ imageId: 2, priority: 2 }],
+      },
+      undefined,
+      { requirePublished: true, oncePerImage: true }
+    );
   });
 
   it('samples each pool by its configured rate', async () => {
@@ -94,6 +118,18 @@ describe('queueScanSampleForKnights', () => {
     expect(enqueue.mock.calls.map(([, input]) => input.items[0].imageId)).toEqual([3, 4]);
   });
 
+  it('draws each image once from its id, so a repeated scan of the same image decides the same way', async () => {
+    configured({ enabled: true, sfwRate: 0, nsfwRate: 0.5 });
+    const ids = Array.from({ length: 40 }, (_, i) => 2000 + i);
+    for (const imageId of [...ids, ...ids])
+      await queueScanSampleForKnights({ imageId, nsfw: true });
+
+    const picked = ids.filter((id) => knightsSampleDraw(id) < 0.5);
+    expect(picked.length).toBeGreaterThan(5);
+    expect(picked.length).toBeLessThan(35);
+    expect(queuedIds()).toEqual([...picked, ...picked]);
+  });
+
   it('never throws into the scan when the enqueue or the config read fails', async () => {
     configured({ enabled: true });
     enqueue.mockRejectedValue(new Error('db down'));
@@ -105,7 +141,6 @@ describe('queueScanSampleForKnights', () => {
     await expect(
       queueScanSampleForKnights({ imageId: 1, nsfw: false }, () => 0)
     ).resolves.toBeUndefined();
-    expect(loggingMock.logToAxiom).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -136,6 +171,17 @@ describe('the switch read', () => {
     expect(enqueue).not.toHaveBeenCalled();
   });
 
+  it('tells a switch that is off from one that could not be read in time', async () => {
+    vi.useFakeTimers();
+    redisMock.sysRedis.get.mockReturnValueOnce(new Promise(() => undefined));
+    const unread = readKnightsSourcesConfig();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(await unread).toBeNull();
+
+    configured({ enabled: false });
+    expect(await readKnightsSourcesConfig()).toMatchObject({ enabled: false });
+  });
+
   it('does not remember a timed-out read as off, so the next scan reads Redis again', async () => {
     vi.useFakeTimers();
     redisMock.sysRedis.get.mockReturnValueOnce(new Promise(() => undefined));
@@ -152,18 +198,23 @@ describe('the switch read', () => {
 });
 
 describe('queueOwnerRatingForKnights', () => {
-  it('queues an owner self-rating at priority 1 only when the switch is on', async () => {
+  it('queues an owner self-rating at priority 1, on a live post only, only when the switch is on', async () => {
     await queueOwnerRatingForKnights(7);
     expect(enqueue).not.toHaveBeenCalled();
 
     clearKnightsSourcesConfigCache();
     configured({ enabled: true, sfwRate: 0, nsfwRate: 0 });
     await queueOwnerRatingForKnights(7);
-    expect(enqueue).toHaveBeenCalledWith(expect.anything(), {
-      source: 'owner-rating',
-      questionKey: 'knights.image.nsfwLevel',
-      items: [{ imageId: 7, priority: 1 }],
-    });
+    expect(enqueue).toHaveBeenCalledWith(
+      expect.anything(),
+      {
+        source: 'owner-rating',
+        questionKey: 'knights.image.nsfwLevel',
+        items: [{ imageId: 7, priority: 1 }],
+      },
+      undefined,
+      { requirePublished: true, stillImagesOnly: true }
+    );
   });
 
   it('swallows a failure', async () => {
@@ -183,12 +234,9 @@ describe('intake backpressure', () => {
 
     expect(queuedIds()).toEqual([3]);
     // Only rating items count: open yes/no questions never hold image intake back.
-    expect(openCount.mock.calls[0].slice(1)).toEqual([
-      'Open',
-      'Knight',
-      'knights.image.nsfwLevel',
-      11,
-    ]);
+    const values = openCount.mock.calls[0].slice(1);
+    expect(values.slice(0, 3)).toEqual(['Open', 'Knight', 'knights.image.nsfwLevel']);
+    expect(values.at(-1)).toBe(11);
   });
 
   it('queues scan samples again at the cap', async () => {
@@ -203,12 +251,10 @@ describe('intake backpressure', () => {
     openItems(5001);
     await queueScanSampleForKnights({ imageId: 1, nsfw: false }, () => 0);
     expect(enqueue).not.toHaveBeenCalled();
-    expect(openCount.mock.calls[0].slice(1)).toEqual([
-      'Open',
-      'Knight',
-      'knights.image.nsfwLevel',
-      5001,
-    ]);
+    // The servable filter's values sit between the item filter and the limit (the pglite test covers the filter).
+    const values = openCount.mock.calls[0].slice(1);
+    expect(values.slice(0, 3)).toEqual(['Open', 'Knight', 'knights.image.nsfwLevel']);
+    expect(values.at(-1)).toBe(5001);
 
     clearKnightsSourcesConfigCache();
     openItems(5000);
@@ -258,7 +304,7 @@ describe('intake backpressure', () => {
     expect(queuedIds()).toEqual([1, 2]);
   });
 
-  it('runs one slow count, queues while it is out, logs it once, and uses its answer when it lands', async () => {
+  it('runs one slow count, queues while it is out, and uses its answer when it lands', async () => {
     vi.useFakeTimers();
     configured({ enabled: true, maxOpen: 10 });
     let answer: (rows: unknown[]) => void = () => undefined;
@@ -275,12 +321,34 @@ describe('intake backpressure', () => {
     }
     expect(queuedIds()).toEqual([1, 2]);
     expect(openCount).toHaveBeenCalledTimes(1);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledTimes(1);
 
     answer([{ n: '11' }]);
     await vi.advanceTimersByTimeAsync(0);
     await queueScanSampleForKnights({ imageId: 3, nsfw: false }, () => 0);
     expect(openCount).toHaveBeenCalledTimes(1);
     expect(queuedIds()).toEqual([1, 2]);
+  });
+});
+
+describe('queueLeftPrivateForKnights', () => {
+  // The fake write client has no query builder, so any read through it fails.
+  const failures = () =>
+    loggingMock.logToAxiom.mock.calls.filter(
+      ([data]) => (data as { type?: string }).type === 'knights-v2-left-private-error'
+    );
+
+  it('reads nothing while the switch is off or unset', async () => {
+    await queueLeftPrivateForKnights({ postIds: [1] });
+    configured({ enabled: false });
+    await queueLeftPrivateForKnights({ postIds: [1] });
+
+    expect(failures()).toEqual([]);
+  });
+
+  it('logs a failure instead of throwing it into the caller', async () => {
+    configured({ enabled: true });
+
+    await expect(queueLeftPrivateForKnights({ imageIds: [7] })).resolves.toBeUndefined();
+    expect(failures()).toEqual([[expect.objectContaining({ ids: [7] }), 'knights-v2-sources']]);
   });
 });

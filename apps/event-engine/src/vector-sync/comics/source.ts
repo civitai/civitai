@@ -1,6 +1,6 @@
 import type { Pool } from 'pg';
 import { normalizeTitle } from '../models/document';
-import { coverImageCleanSql, heldImageSql, heldUserSql } from '../held';
+import { coverImageCleanSql, csamFlaggedImageSql } from '../image-flags';
 import { comicDocument } from './document';
 
 /**
@@ -13,10 +13,9 @@ export const COMIC_ELIGIBLE_SQL = `cp."status" = 'Active' AND cp."tosViolation" 
   AND cp."nsfwLevel" NOT IN (0, 32)
   AND EXISTS (SELECT 1 FROM "User" u WHERE u.id = cp."userId" AND u."bannedAt" IS NULL
     AND u."deletedAt" IS NULL)
-  AND NOT ${heldUserSql('cp."userId"')}
   AND ${coverImageCleanSql('cp."coverImageId"')}
   AND NOT EXISTS (SELECT 1 FROM "ComicPanel" hp JOIN "Image" hi ON hi.id = hp."imageId"
-    WHERE hp."projectId" = cp.id AND ${heldImageSql('hi')})
+    WHERE hp."projectId" = cp.id AND ${csamFlaggedImageSql('hi')})
   AND NOT EXISTS (SELECT 1 FROM "ComicChapter" fc
     JOIN "ComicPanel" fp ON fp."projectId" = fc."projectId" AND fp."chapterPosition" = fc."position"
     JOIN "Image" fi ON fi.id = fp."imageId"

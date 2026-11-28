@@ -58,6 +58,20 @@ export const RUM_EXPERIMENT_ATTR_PREFIX = 'exp_';
 export const RUM_EXPERIMENT_FLAGS = [
   { flag: 'genTabDeferView', attr: 'exp_gen_tab_defer_view' },
   { flag: 'modelPageDeferBelowFold', attr: 'exp_model_page_defer_below_fold' },
+  // Go feed transport cohorts, for `feed_transport` (~/utils/faro/feedTransport).
+  { flag: 'feedGoTransport', attr: 'exp_feed_go_transport' },
+  { flag: 'feedGoTransportModelGetAll', attr: 'exp_feed_go_transport_model_get_all' },
+  { flag: 'feedGoTransportInfinite', attr: 'exp_feed_go_transport_infinite' },
+  // Client shadow compare cohort, for `shadow_compare` (~/utils/faro/shadowCompare) and its cost.
+  { flag: 'clientShadowCompare', attr: 'exp_client_shadow_compare' },
+  // Their signed-out twins (per-visitor bucket, `~/server/services/signed-out-rollout`).
+  { flag: 'feedGoTransportSignedOut', attr: 'exp_feed_go_transport_signed_out' },
+  {
+    flag: 'feedGoTransportSignedOutModelGetAll',
+    attr: 'exp_feed_go_transport_signed_out_model_get_all',
+  },
+  { flag: 'feedGoTransportSignedOutInfinite', attr: 'exp_feed_go_transport_signed_out_infinite' },
+  { flag: 'clientShadowCompareSignedOut', attr: 'exp_client_shadow_compare_signed_out' },
 ] as const satisfies ReadonlyArray<{ flag: FeatureFlagKey; attr: string }>;
 
 /**

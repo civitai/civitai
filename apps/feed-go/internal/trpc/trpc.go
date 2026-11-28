@@ -17,6 +17,7 @@ import (
 	"strconv"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/apipolicy"
+	"github.com/civitai/civitai/apps/feed-go/internal/devalue"
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
 )
 
@@ -98,11 +99,13 @@ var jsonRPCCode = map[string]int{
 	"NOT_FOUND":             -32004,
 	"METHOD_NOT_SUPPORTED":  -32005,
 	"TOO_MANY_REQUESTS":     -32029,
+	"SERVICE_UNAVAILABLE":   -32603,
 }
 
-// WriteError writes a tRPC error envelope (superjson-wrapped, as the app's error formatter output is).
-func WriteError(w http.ResponseWriter, path string, e *Error) {
-	body := superjson.Object{
+// errorShape is getErrorShape's default shape (@trpc/server) for e on path, in a production build:
+// `{message, code, data: {code, httpStatus, path}}`, no `data.stack` (isDev is off).
+func errorShape(path string, e *Error) superjson.Object {
+	return superjson.Object{
 		{Key: "message", Val: e.Message},
 		{Key: "code", Val: jsonRPCCode[e.Code]},
 		{Key: "data", Val: superjson.Object{
@@ -111,6 +114,54 @@ func WriteError(w http.ResponseWriter, path string, e *Error) {
 			{Key: "path", Val: path},
 		}},
 	}
+}
+
+// WriteAppError writes e as the main app's tRPC route answers one unbatched query whose procedure
+// threw it, in a production build:
+//
+//   - the status is e.HTTPStatus (getHTTPStatusCode of the one call);
+//   - the body is `{"error":<shape>}`, the shape errorShape's, through the app's errorFormatter
+//     (src/server/trpc/error-formatter.ts) unchanged — so only for an error it does not rewrite: a 4xx,
+//     or a 503 (getClientSafeError keeps a 503's message; every other 5xx gets a generic one with an
+//     errorRef), carrying no cause flag and no rate-limit meta;
+//   - the shape is serialized by the response transformer (responseWriteSerialize): devalue when
+//     asDevalue (DevalueWrite: an error is never edge-cacheable, so never pinned to superjson), as a
+//     JSON string, superjson's `{"json":…}` otherwise, and superjson when devalue refuses the value
+//     (writeSerializeWithFallback);
+//   - Content-Type application/json and Vary (resolveResponse), and Cache-Control the API policy's
+//     private default (applyApiRequestPolicy: responseMeta sets no Cache-Control on an error, and on a
+//     devalue answer sets that same value).
+//
+// The route's per-caller and per-pod headers are not written, as on WriteResult (DESIGN.md §7).
+func WriteAppError(w http.ResponseWriter, path string, e *Error, asDevalue bool) {
+	shape := errorShape(path, e)
+	var (
+		enc []byte
+		err error
+	)
+	if asDevalue {
+		enc, err = devalue.Payload(shape)
+	}
+	if !asDevalue || err != nil {
+		enc, err = superjson.Serialize(shape)
+	}
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	h := w.Header()
+	h.Set("Content-Type", "application/json")
+	h.Set("Cache-Control", apipolicy.PrivateCacheControl())
+	h.Set("Vary", Vary)
+	w.WriteHeader(e.HTTPStatus)
+	_, _ = w.Write([]byte(`{"error":`))
+	_, _ = w.Write(enc)
+	_, _ = w.Write([]byte(`}`))
+}
+
+// WriteError writes a tRPC error envelope (superjson-wrapped, as the app's error formatter output is).
+func WriteError(w http.ResponseWriter, path string, e *Error) {
+	body := errorShape(path, e)
 	// A plain (owned) Serialize: an error body is tiny and rare, so it does not hold a pooled buffer.
 	enc, err := superjson.Serialize(body)
 	if err != nil {
@@ -138,7 +189,7 @@ var SignedOutTTL = CacheTTL{Browser: 60, Edge: 60, StaleWhileRevalidate: 30}
 // `public, max-age=<browser>, s-maxage=<edge>, stale-while-revalidate=<swr>` for a cacheable answer,
 // else the app's private default (PRIVATE_CACHE_CONTROL).
 func ResultCacheControl(ttl *CacheTTL) string {
-	if ttl != nil && ttl.Edge > 0 {
+	if EdgeCached(ttl) {
 		return "public, max-age=" + strconv.Itoa(ttl.Browser) + ", s-maxage=" + strconv.Itoa(ttl.Edge) +
 			", stale-while-revalidate=" + strconv.Itoa(ttl.StaleWhileRevalidate)
 	}

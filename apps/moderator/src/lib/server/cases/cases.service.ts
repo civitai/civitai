@@ -53,6 +53,42 @@ export async function listBatches({ db = casesDb() }: { db?: CasesDb } = {}) {
 }
 
 /**
+ * Cases filed through the public forms (no import batch), for the queue: minor-flagged first, then by
+ * deadline. No party or contact details, so the `cases` grant is enough.
+ */
+export async function listFiledCases({
+  db = casesDb(),
+  limit = 200,
+}: { db?: CasesDb; limit?: number } = {}) {
+  return db
+    .selectFrom('case_record as c')
+    .innerJoin('process_definition_version as v', 'v.id', 'c.definition_version_id')
+    .select([
+      'c.public_ref as publicRef',
+      sql<string>`v.definition->>'title'`.as('title'),
+      'c.state',
+      'c.received_at as receivedAt',
+      'c.due_at as dueAt',
+      'c.minor_flag as minor',
+      'c.is_test as isTest',
+      sql<
+        string | null
+      >`(SELECT n.status FROM case_notice n WHERE n.case_id = c.id ORDER BY n.id DESC LIMIT 1)`.as(
+        'receipt'
+      ),
+      sql<boolean>`EXISTS (SELECT 1 FROM case_event e WHERE e.case_id = c.id AND e.type = 'receipt-unsent')`.as(
+        'receiptUnsent'
+      ),
+    ])
+    .where('c.import_batch_id', 'is', null)
+    .orderBy('c.minor_flag', 'desc')
+    .orderBy(sql`c.due_at`, sql`asc nulls last`)
+    .orderBy('c.received_at', 'desc')
+    .limit(limit)
+    .execute();
+}
+
+/**
  * Every notice of a batch with its recipient and exact text, for the preview Legal approves. Recipients
  * are personal data: the caller holds `cases.pii`, and each case read is recorded as a `pii_read` event.
  */

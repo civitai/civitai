@@ -13,6 +13,7 @@
     selected,
     imageIds,
     verdictImageIds,
+    verdictFlags,
     reportIds,
     submit,
     appeal,
@@ -25,6 +26,8 @@
     /** The subset Accept, Remove and the rating tools act on; the rest have only their review flag
      *  left, which is dismissed per card. */
     verdictImageIds: string;
+    /** JSON of each verdict image's shown review flag, posted with Accept so a flag changed since is refused. */
+    verdictFlags: string;
     reportIds: string;
     submit: SubmitFunction;
     /** Appeals resolve rather than accept, and their images are `Blocked` (so: no rating). */
@@ -88,9 +91,9 @@
           </RulingForm>
         {/key}
       {:else if verdictCount}
-        {@render bulkButton('?/bulkAccept', verdictImageIds, `${acceptLabel} ${verdictCount}`, acceptTip, 'border-teal-600/40 text-teal-400 hover:bg-teal-500/10')}
+        {@render bulkButton('?/bulkAccept', verdictImageIds, `${acceptLabel} ${verdictCount}`, acceptTip, 'border-teal-600/40 text-teal-400 hover:bg-teal-500/10', { needsReviewByImage: verdictFlags })}
         {#if minorQueue}
-          {@render bulkButton('?/bulkAccept', verdictImageIds, `Accept ${verdictCount} + clear minor`, 'Approve the selected images and remove their minor flag.', 'border-cyan-600/40 text-cyan-400 hover:bg-cyan-500/10', { removeMinorFlag: 'true' })}
+          {@render bulkButton('?/bulkAccept', verdictImageIds, `Accept ${verdictCount} + clear minor`, 'Approve the selected images and remove their minor flag.', 'border-cyan-600/40 text-cyan-400 hover:bg-cyan-500/10', { removeMinorFlag: 'true', needsReviewByImage: verdictFlags })}
         {/if}
         {#key verdictImageIds}
           <TosDeleteButton

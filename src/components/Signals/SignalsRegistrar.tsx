@@ -17,8 +17,7 @@ import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { useMetricSignalsListener } from '~/components/Signals/MetricSignalsRegistrar';
 import { useSignalRegistry } from '~/components/Signals/signals-registry.store';
 import { SignalMessages } from '~/server/common/enums';
-import { imageStore } from '~/store/image.store';
-import { useSchedulerDownloadSignal } from '~/store/scheduler-download.store';
+import { imageStore, storeUpdateFromIngestionSignal } from '~/store/image.store';
 
 const TrainingSignals = dynamic(
   () =>
@@ -35,8 +34,6 @@ const GenerationSignals = dynamic(
 
 export function SignalsRegistrar() {
   const groups = useSignalRegistry((s) => s.groups);
-
-  useSchedulerDownloadSignal();
 
   useBuzzSignalUpdate();
   useSessionRefreshSignal();
@@ -63,11 +60,10 @@ export function SignalsRegistrar() {
       blockedFor?: string;
       nsfwLevel?: number;
     }) => {
-      imageStore.setImage(imageId, {
-        ingestion,
-        blockedFor,
-        ...(nsfwLevel !== undefined && { nsfwLevel }),
-      });
+      imageStore.setImage(
+        imageId,
+        storeUpdateFromIngestionSignal({ ingestion, blockedFor, nsfwLevel })
+      );
     }
   );
 

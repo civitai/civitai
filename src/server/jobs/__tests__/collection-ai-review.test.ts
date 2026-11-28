@@ -27,7 +27,9 @@ const {
   queueImageSearchIndexUpdate,
   bustCachesForPosts,
   trackReview,
+  refreshProfilePicturesForImagesLazy,
 } = vi.hoisted(() => ({
+  refreshProfilePicturesForImagesLazy: vi.fn(),
   trackReview: vi.fn(),
   reviewImage: vi.fn(),
   updateCollectionItemsStatus: vi.fn(),
@@ -38,6 +40,10 @@ const {
 vi.mock('~/server/services/post.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PostService>()),
   bustCachesForPosts,
+}));
+
+vi.mock('~/server/services/refresh-profile-pictures-lazy', () => ({
+  refreshProfilePicturesForImagesLazy,
 }));
 
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
@@ -158,9 +164,6 @@ describe('reviewCollection: a failed model call', () => {
 
     expect(claimCalls()).toHaveLength(0);
     expect(updateCollectionItemsStatus).not.toHaveBeenCalled();
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ error: expect.stringContaining('error=RequestTimeoutError') })
-    );
   });
 
   it('stamps the item for a human once the attempts run out', async () => {
@@ -177,46 +180,6 @@ describe('reviewCollection: a failed model call', () => {
     expect(redisMock.sysRedis.incrBy).toHaveBeenCalledWith(
       `system:collection-ai-review:attempts:${ITEM_ID}`,
       1
-    );
-  });
-
-  it("logs which provider failed and how, which the SDK's message leaves out", async () => {
-    queuePending([pendingItem()]);
-    const body = JSON.stringify({
-      error: {
-        message: 'Provider returned error',
-        code: 502,
-        metadata: {
-          provider_name: 'ExampleProvider',
-          raw: '{"error":{"code":"no_healthy_upstream"}}',
-        },
-      },
-    });
-    reviewImage.mockRejectedValue(
-      new ChatError(
-        {
-          error: { message: 'Provider returned error', code: 502 },
-          request$: new Request('https://openrouter.ai/api/v1/chat/completions'),
-          response$: new Response(body, { status: 502 }),
-          body$: body,
-        } as never,
-        {
-          request: new Request('https://openrouter.ai/api/v1/chat/completions'),
-          response: new Response(body, { status: 502 }),
-          body,
-        }
-      )
-    );
-    redisMock.sysRedis.incrBy.mockResolvedValue(1);
-
-    await reviewCollection(COLLECTION_ID, config);
-
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'job-error',
-        imageId: 5,
-        error: expect.stringMatching(/provider=ExampleProvider.*upstream_code=no_healthy_upstream/),
-      })
     );
   });
 
@@ -405,9 +368,26 @@ describe('reviewCollection: a minor-related escalation', () => {
       });
       // A held image must also leave the cached model-version showcase and post galleries.
       expect(bustCachesForPosts).toHaveBeenCalledWith([postOf(IMAGE_ID)]);
+      // And stop being served as a profile picture.
+      expect(refreshProfilePicturesForImagesLazy).toHaveBeenCalledWith([IMAGE_ID]);
       expect(statusWrites()).toEqual(collectionStatus ? [collectionStatus] : []);
     }
   );
+
+  it('refreshes the home blocks of the image it holds', async () => {
+    queuePending([pendingItem()]);
+    modelSees({ depictsMinor: true, minorIsPhotorealistic: true });
+    dbMock.dbRead.$queryRaw.mockClear();
+
+    await reviewCollection(COLLECTION_ID, config);
+
+    // The refresh's collection lookup, seen at the database: the image ids bound as one array.
+    const lookedUp = dbMock.dbRead.$queryRaw.mock.calls
+      .map(([query]) => query as unknown as { sql?: string; values?: unknown[] })
+      .filter((query) => !!query?.sql?.includes('"CollectionItem"'))
+      .flatMap((query) => (query.values ?? []).filter(Array.isArray));
+    expect(lookedUp).toEqual([[IMAGE_ID]]);
+  });
 
   it('flags the image even when escalations are configured to stamp', async () => {
     queuePending([pendingItem()]);

@@ -30,17 +30,18 @@ the index is a candidate set, not the gate.
 (`VECTOR_MODEL_ALIAS`): cosine, INT8 scalar quantization in RAM (quantile 0.99), HNSW m 16 /
 ef_construct 128, vectors and payload on disk.
 
-| Payload                                               | Index                                            | Notes                                                                                                                     |
-| ----------------------------------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
-| `title_normalized`                                    | keyword                                          | NFKC, lowercase, split on Python `str.isspace` whitespace, joined by one space; must equal the search service's query key |
-| `search_text`                                         | text: word tokenizer, lowercase, phrase matching | the embedded document                                                                                                     |
-| `type`, `checkpointType`                              | keyword                                          |                                                                                                                           |
-| `baseModels`                                          | keyword                                          | from published versions                                                                                                   |
-| `nsfwLevel`                                           | integer                                          | the set bits of `Model.nsfwLevel`; filter with `match.any` of the viewer's levels                                         |
-| `publishedAt`                                         | datetime                                         | RFC 3339 UTC                                                                                                              |
-| `userId`                                              | integer                                          | for hidden-user exclusion                                                                                                 |
-| `versionIds`                                          | integer                                          | the versions the document was built from (up to 8); live sync only                                                        |
-| `name`, `username`, `tags`, `triggerWords`, `docHash` | none                                             | display and the search service's dictionaries                                                                             |
+| Payload                                       | Index                                            | Notes                                                                                                                     |
+| --------------------------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| `title_normalized`                            | keyword                                          | NFKC, lowercase, split on Python `str.isspace` whitespace, joined by one space; must equal the search service's query key |
+| `search_text`                                 | text: word tokenizer, lowercase, phrase matching | the embedded document                                                                                                     |
+| `type`, `checkpointType`                      | keyword                                          |                                                                                                                           |
+| `baseModels`                                  | keyword                                          | from published versions                                                                                                   |
+| `nsfwLevel`                                   | integer                                          | the set bits of `Model.nsfwLevel`; filter with `match.any` of the viewer's levels                                         |
+| `publishedAt`                                 | datetime                                         | RFC 3339 UTC                                                                                                              |
+| `userId`                                      | integer                                          | for hidden-user exclusion                                                                                                 |
+| `versionIds`                                  | integer                                          | the versions the document was built from (up to 8); live sync only                                                        |
+| `name`                                        | text: word tokenizer, lowercase                  | the site's name-match pass; also display and the dictionaries                                                             |
+| `username`, `tags`, `triggerWords`, `docHash` | none                                             | display and the search service's dictionaries                                                                             |
 
 Collection metadata holds the model stamp (`model`, `modelRevision`, `profile`, `dimensions`) and,
 after a full backfill, `catalogBuiltAt` and `catalogPointsAtBuild`.
@@ -112,6 +113,10 @@ query (`modelFeedUrlFromLegacySearch`). Off, the feed's `?query=` stays the Meil
   feed filter, the private-model rule and moderation apply as on the feed. It never accepts `ids`.
 - The index filters on level, type, checkpoint type, base models, the feed's user and the
   published range. Period is not applied, as on today's searched feed. Sort is Best match.
+- Name matches rank first (`withWordMatchesFirst`): up to 200 models whose `name` (a word index,
+  lowercase) holds every query word, in similarity order, then the rest of the ranking without
+  them. The service's own exact-title pass still leads. A word in many names (e.g. `WAI`) leaves the model it names wherever similarity puts it among those
+  matches.
 - Hidden models and users are dropped on the server; hidden tags by the feed's client-side
   preferences. A failed search falls back to the keyword feed with a Retry banner.
 

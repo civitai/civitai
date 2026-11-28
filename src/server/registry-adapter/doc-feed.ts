@@ -48,7 +48,7 @@ import type { SnapshotStore } from '~/server/registry-adapter/cursor';
 import { newValidator } from '~/server/registry-adapter/json-schema';
 import type { AdapterContext, Change, Entity } from '~/server/registry-adapter/protocol';
 import { ProtocolError, cursorExpired } from '~/server/registry-adapter/protocol';
-import { sortedKeyJson, sha256Hex } from '~/server/registry-adapter/release';
+import { compareCodeUnits, sortedKeyJson, sha256Hex } from '~/server/registry-adapter/release';
 import { registryUrn } from '~/server/registry-adapter/urn';
 
 export type FeedDocument = {
@@ -101,6 +101,14 @@ export type CollectionStream = {
   /** Every major's schema document, `@v1` first. */
   family: Array<{ urn: string; body: Record<string, unknown> }>;
   /**
+   * The collection's CURRENT major: the major a document written now is stamped with, by the
+   * document store's own rule (`currentCollectionMajors` over `manifestHistory`, in
+   * `doc-streams.ts` `collectionFamily`). The private and level streams name it in their `meta`
+   * as `currentMajor`, so app-data-go can read a collection at its current major when a read
+   * names none (`apps/app-data-go/internal/api/major.go`). Undefined when not known.
+   */
+  currentMajor?: number;
+  /**
    * Content levels are on for the app (`app-blocks-shared-doc-levels`): each document is also
    * gated on its own rating, at the audience's level (`audienceDocLevel`), so an unrated, pending
    * or above-level document is not sent.
@@ -142,8 +150,9 @@ type FeedState = {
 };
 
 // The claim set is part of the rev: a mint that makes a document claim one more major changes
-// it, so every stream that carries the document re-sends it with its new label set.
-const docRev = (d: FeedDocument, schemas: readonly string[]) =>
+// it, so every stream that carries the document re-sends it with its new label set. Exported so a
+// record built from the same document (`services/apps/app-record.ts`) carries the same rev.
+export const docRev = (d: Pick<FeedDocument, 'version' | 'data'>, schemas: readonly string[]) =>
   sha256Hex(sortedKeyJson({ version: d.version, data: d.data, schemas })).slice(0, 16);
 
 const emptyState = (schema: string, audience: Audience): FeedState => ({
@@ -401,7 +410,7 @@ export function createDocFeed(opts: DocFeedOptions) {
         witness,
         served: [...served]
           .map(([urn, s]) => [urn, s.rev, s.seq] as [string, string, number])
-          .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)),
+          .sort((a, b) => compareCodeUnits(a[0], b[0])),
         ...(level !== undefined ? { levels: true as const } : {}),
       },
       entities,
@@ -441,9 +450,7 @@ export function createDocFeed(opts: DocFeedOptions) {
       }
       const was = new Map(before.served.map(([urn, rev]) => [urn, rev]));
       const still = new Set(next.served.map(([urn]) => urn));
-      const deletes = [...was.keys()]
-        .filter((urn) => !still.has(urn))
-        .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+      const deletes = [...was.keys()].filter((urn) => !still.has(urn)).sort(compareCodeUnits);
       const upserts = next.served
         .filter(([urn, rev]) => was.get(urn) !== rev)
         .map(([urn]) => entities.get(urn))

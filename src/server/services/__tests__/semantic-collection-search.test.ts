@@ -45,6 +45,7 @@ vi.mock('~/server/services/blocklist.service', () => ({
 }));
 vi.mock('~/server/services/search-query-rules', () => ({ matchesQueryRule: async () => false }));
 vi.mock('~/utils/metadata/audit', () => ({
+  includesNsfw: () => false,
   includesInappropriate: h.includesInappropriate,
   includesPoi: () => false,
   includesMinor: () => false,
@@ -67,7 +68,6 @@ const SCHEMA = `
   CREATE TABLE "User" (id int PRIMARY KEY, "bannedAt" timestamp, "deletedAt" timestamp);
   CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb NOT NULL DEFAULT '{}',
     images jsonb NOT NULL DEFAULT '[]');
-  CREATE TABLE "EvidenceHeldUser" ("userId" int);
   CREATE TABLE "Collection" (id int PRIMARY KEY, "userId" int, read text DEFAULT 'Public',
     availability text DEFAULT 'Public', "nsfwLevel" int, type text);
   CREATE TABLE "CollectionItem" (id serial PRIMARY KEY, "collectionId" int,
@@ -170,11 +170,11 @@ describe('semantic collection search', () => {
       UPDATE "User" SET "bannedAt" = now() WHERE id = 2;
       UPDATE "Collection" SET read = 'Private' WHERE id = 3;
       UPDATE "CollectionItem" SET status = 'REJECTED' WHERE "collectionId" = 4;
-      INSERT INTO "EvidenceHeldUser" VALUES (5);
+      INSERT INTO "CsamReport" ("userId") VALUES (5);
       UPDATE "Collection" SET "nsfwLevel" = 33 WHERE id = 6;`);
-    expect(shown(await search([6, 5, 4, 3, 2, 1]))).toEqual([1]);
-    // Dropped before the card read, so nothing of theirs is fetched.
-    expect(h.fetched).toEqual([[1]]);
+    // 5's owner is held. A held owner does not hide the row (civitai/civitai#10360).
+    expect(shown(await search([6, 5, 4, 3, 2, 1]))).toEqual([5, 1]);
+    expect(h.fetched).toEqual([[5, 1]]);
   });
 
   it("re-checks the collection's level against the viewer's", async () => {

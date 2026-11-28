@@ -1,6 +1,5 @@
 import { TRPCError } from '@trpc/server';
 import type { BuzzReadOptions, BuzzWriteOptions } from '@civitai/buzz';
-import { createBuzzClient } from '@civitai/buzz';
 import type { Dayjs } from 'dayjs';
 import dayjs from '~/shared/utils/dayjs';
 import { env } from '~/env/server';
@@ -14,7 +13,6 @@ import {
 import { CacheTTL, specialCosmeticRewards } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { userMultipliersCache } from '~/server/redis/caches';
 import { REDIS_KEYS } from '~/server/redis/client';
 import type {
   BuzzAccountType,
@@ -50,7 +48,6 @@ import {
   createMultiAccountBuzzTransactionResponse,
   refundMultiAccountTransactionResponse,
   previewMultiAccountTransactionResponse,
-  getBuzzTransactionResponse,
   getTransactionsReportResultSchema,
 } from '~/server/schema/buzz.schema';
 import {
@@ -61,6 +58,7 @@ import {
   coercePurchasedBuzzType,
   TransactionType,
 } from '~/shared/constants/buzz.constants';
+import { PLATFORM_REVENUE_SOURCES_SQL } from '@civitai/buzz';
 import { clampRewardMultiplier } from '~/server/rewards/multiplier';
 import type { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
 import { paymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
@@ -82,41 +80,31 @@ import { isDefined } from '~/utils/type-guards';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { grantCosmetics } from '~/server/services/cosmetic.service';
 import { getBuzzBulkMultiplier } from '~/server/utils/buzz-helpers';
-import { isDev } from '~/env/other';
 import { toPascalCase } from '~/utils/string-helpers';
 import { redactTransactionCounterparty } from '~/server/services/buzz-transaction-redaction';
 import { createBalanceDisplayReader } from '~/server/services/buzz-balance-display';
+import { buzzService } from '~/server/services/buzz-client';
+import {
+  createBuzzTransactionMany,
+  getMultipliersForUser,
+  getTransactionByExternalId,
+} from '~/server/services/buzz-payout';
+
+export {
+  buzzService,
+  createBuzzTransactionMany,
+  getMultipliersForUser,
+  getTransactionByExternalId,
+};
+export {
+  deleteMultipliersForUserCache,
+  getGlobalRewardsBonusMultiplier,
+  getMultipliersForUserCache,
+} from '~/server/services/buzz-payout';
 // import type { BuzzAccountType as PrismaBuzzAccountType } from '~/shared/utils/prisma/enums';
 // import { adWatchedReward } from '~/server/rewards';
 
 type AccountType = 'User' | 'CreatorProgramBank' | 'CashPending' | 'CashSettled';
-
-// Shared buzz-service client. Typed per-endpoint methods (buzzService.getAccount,
-// getUserBuzzByAccountType, createTransaction, …) are used directly by the wrappers below;
-// `mapError` centralises the buzz-status → tRPC-error mapping the app relied on.
-export const buzzService = createBuzzClient({
-  endpoint: env.BUZZ_ENDPOINT,
-  log: isDev ? (message, ...args) => console.log(message, ...args) : undefined,
-  // Every branch carries the BuzzApiError as `cause`: the mapping is lossy (400 and 409 share one
-  // code and message), so a caller that has to tell them apart has nothing else to read. Recover it
-  // with `getBuzzApiStatus`; tRPC's error shape does not send `cause` to clients.
-  mapError: (error) => {
-    switch (error.status) {
-      case 400:
-        throw throwBadRequestError(null, error);
-      case 404:
-        throw new TRPCError({ code: 'NOT_FOUND', message: 'Not found', cause: error });
-      case 409:
-        throw throwBadRequestError('There is a conflict with the transaction', error);
-      default:
-        throw new TRPCError({
-          code: 'INTERNAL_SERVER_ERROR',
-          message: 'An unexpected error ocurred, please try again later',
-          cause: error,
-        });
-    }
-  },
-});
 
 type BuzzAccountsResponse<T extends BuzzAccountType = BuzzAccountType> = Record<T, number>;
 type BuzzAccountResponse = {
@@ -204,88 +192,6 @@ export async function getUserBuzzAccount({
   }
 
   return res;
-}
-
-export function getMultipliersForUserCache(userIds: number[]) {
-  return userMultipliersCache.fetch(userIds);
-}
-
-const MAX_GLOBAL_BONUS = 5;
-
-/**
- * Returns the global rewards bonus multiplier from the active RewardsBonusEvent.
- * The event's `multiplier` column stores value * 10 (e.g. 20 = 2x, 5 = 0.5x).
- * Returns 1 when no event is active or the value is invalid.
- * Capped at MAX_GLOBAL_BONUS to prevent config mistakes from breaking the economy.
- */
-export async function getGlobalRewardsBonusMultiplier(): Promise<number> {
-  try {
-    const { getActiveRewardsBonusEvent } = await import(
-      '~/server/services/rewards-bonus-event.service'
-    );
-    const event = await getActiveRewardsBonusEvent();
-    if (!event) return 1;
-
-    const parsed = event.multiplier / 10;
-    if (!Number.isFinite(parsed) || parsed < 1) return 1;
-
-    return Math.min(parsed, MAX_GLOBAL_BONUS);
-  } catch {
-    return 1;
-  }
-}
-
-export async function getMultipliersForUser(userId: number, refresh = false) {
-  if (refresh) await deleteMultipliersForUserCache(userId);
-
-  const multipliers = await getMultipliersForUserCache([userId]);
-  const base = multipliers[userId] ?? {
-    purchasesMultiplier: 1,
-    rewardsMultiplier: 1,
-    rewardsIneligible: false,
-    userId,
-  };
-
-  const { getActiveRewardsBonusEvent } = await import(
-    '~/server/services/rewards-bonus-event.service'
-  );
-  const event = await getActiveRewardsBonusEvent();
-
-  const rawMultiplier = event ? event.multiplier / 10 : 1;
-  const globalRewardsBonus = Number.isFinite(rawMultiplier)
-    ? Math.min(Math.max(rawMultiplier, 1), MAX_GLOBAL_BONUS)
-    : 1;
-
-  // `globalRewardsBonus` is guarded above; `base.rewardsMultiplier` is read straight off
-  // operator-authored `Product.metadata`, and this is the value the award computation and the Redis
-  // Lua cap script are handed. `foldUserMultipliers` floors it on the way in, but that runs on a
-  // cache MISS: `userMultipliersCache` has a 1-day TTL, so entries folded before this shipped are
-  // served unfloored until they expire.
-  const baseRewardsMultiplier = clampRewardMultiplier(base.rewardsMultiplier);
-
-  return {
-    ...base,
-    rewardsMultiplier: baseRewardsMultiplier * globalRewardsBonus,
-    baseRewardsMultiplier,
-    globalRewardsBonus,
-    rewardsBonusEvent:
-      event && globalRewardsBonus > 1
-        ? {
-            id: event.id,
-            name: event.name,
-            description: event.description,
-            articleId: event.articleId,
-            bannerLabel: event.bannerLabel,
-            multiplier: event.multiplier,
-            startsAt: event.startsAt,
-            endsAt: event.endsAt,
-          }
-        : null,
-  };
-}
-
-export function deleteMultipliersForUserCache(userId: number) {
-  return userMultipliersCache.refresh(userId);
 }
 
 export async function getUserBuzzTransactions({
@@ -968,51 +874,6 @@ export async function upsertBuzzTip({
   }
 }
 
-/*
- * Consider using singular transactions instead
- * Ask Koen for details!
- */
-export async function createBuzzTransactionMany(
-  transactions: (CreateBuzzTransactionInput & {
-    fromAccountId: number;
-    externalTransactionId: string;
-    fromAccountType?: BuzzAccountType;
-  })[]
-) {
-  // Protect against transactions that are not valid. A transaction with from === to
-  // breaks the entire request.
-  const validTransactions = transactions.filter(
-    (t) => t.toAccountId !== undefined && t.fromAccountId !== t.toAccountId && t.amount > 0
-  );
-
-  const result = await buzzService.createTransactions(validTransactions);
-
-  // The batch endpoint only reports successes + conflicts. A `conflict` is the idempotency guard
-  // (a duplicate externalTransactionId — the money already moved), so it's benign. But an
-  // `insufficientFunds` (or any other non-success) result is dropped from BOTH arrays: the money did
-  // NOT move and it is otherwise invisible. Reconcile the counts and surface any shortfall — we can't
-  // name the exact failures because successes come back as opaque ids, not externalTransactionIds.
-  const unaccounted =
-    validTransactions.length - result.transactions.length - result.conflicts.length;
-  if (unaccounted > 0) {
-    logToAxiom({
-      type: 'buzz-transaction-many-dropped',
-      expected: validTransactions.length,
-      succeeded: result.transactions.length,
-      conflicted: result.conflicts.length,
-      unaccounted,
-      batch: validTransactions.slice(0, 500).map((t) => ({
-        externalTransactionId: t.externalTransactionId,
-        fromAccountId: t.fromAccountId,
-        toAccountId: t.toAccountId,
-        amount: t.amount,
-      })),
-    });
-  }
-
-  return result;
-}
-
 const MAX_RETRIES = 3;
 
 export async function completeStripeBuzzTransaction({
@@ -1335,12 +1196,6 @@ export async function pingBuzzService() {
   return buzzService.ping();
 }
 
-export async function getTransactionByExternalId(externalId: string, opts?: BuzzReadOptions) {
-  const data = await buzzService.getTransactionByExternalId(externalId, opts);
-  if (data === null) return null;
-  return getBuzzTransactionResponse.parse(data);
-}
-
 type BuzzClaimRequest = { id: string; userId: number };
 type BuzzClaimDetails = {
   title: string;
@@ -1637,10 +1492,10 @@ type Row = {
 // lower-cased variants elsewhere, so both are listed.
 const CASH_ACCOUNT_TYPES_SQL = "'CashSettled', 'cashSettled', 'CashPending', 'cashPending'";
 
-// Compensation is everything that is neither a license fee nor a tip, so one-off sources such as
-// `compensation_recovered_20260507` stay in it. Tips are generator-chosen, so they get their own tab.
+// Compensation is everything that is neither a license fee, a tip nor platform revenue, so one-off sources
+// such as `compensation_recovered_20260507` stay in it. Tips are generator-chosen, so they get their own tab.
 const COMPENSATION_SOURCE_SQL: Record<CompensationSource, string> = {
-  compensation: "NOT IN ('licenseFee', 'tip')",
+  compensation: `NOT IN ('licenseFee', 'tip', ${PLATFORM_REVENUE_SOURCES_SQL})`,
   licenseFee: "= 'licenseFee'",
   tip: "= 'tip'",
 };

@@ -6,9 +6,10 @@ import { bustAfterWrite } from './bust-after-write';
 import { bustPostGalleryCaches } from './image-moderation-effects';
 import { bustProfilePictures } from './profile-picture-cache';
 import { invalidateThumbnails, thumbnailParentId } from './thumbnail-cache';
-import { syncKonoFinalize } from './kono';
 import { recordModActivity } from './mod-activity';
-import { queueModelsForImageChildTagChanges } from './image-models-reindex';
+import { queueDocumentsForImageMinorChanges } from './image-models-reindex';
+import { ratingRecordedUnderGrace } from '@civitai/shared/account-deletion-grace';
+import { assertNotWithheld, notWithheldTarget } from './withheld-write';
 
 type ReportStatus = 'Pending' | 'Processing' | 'Actioned' | 'Unactioned';
 
@@ -20,12 +21,16 @@ export async function updateImageNsfwLevel({
   status,
   reason,
   userId,
+  csamReview,
 }: {
   id: number;
   nsfwLevel: number;
   status?: ReportStatus;
   reason?: string;
   userId: number;
+  /** The moderator's CSAM grant: an image withheld from them is left as it is, and this throws
+   *  `WithheldImageError`. */
+  csamReview: boolean;
 }): Promise<void> {
   const image = await dbWrite
     .selectFrom('Image')
@@ -34,12 +39,14 @@ export async function updateImageNsfwLevel({
     .executeTakeFirst();
   if (!image) throw new Error('Image not found');
 
+  const stored = (image.metadata as Record<string, unknown> | null) ?? {};
   const metadata = {
-    ...((image.metadata as Record<string, unknown> | null) ?? {}),
+    ...stored,
     nsfwLevelReason: reason ?? null,
+    ...ratingRecordedUnderGrace(stored, nsfwLevel),
   };
 
-  await dbWrite
+  const written = await dbWrite
     .updateTable('Image')
     .set({
       nsfwLevel,
@@ -47,10 +54,9 @@ export async function updateImageNsfwLevel({
       metadata: sql`${JSON.stringify(metadata)}::jsonb`,
     })
     .where('id', '=', id)
-    .execute();
-  await invalidateThumbnails(id, [image.parentId]);
-  await bustProfilePictures({ imageIds: [id] });
-
+    .where(notWithheldTarget(csamReview))
+    .executeTakeFirst();
+  if (Number(written.numUpdatedRows) === 0) await assertNotWithheld([id], csamReview);
   if (status) {
     await dbWrite
       .updateTable('ImageRatingRequest')
@@ -59,6 +65,8 @@ export async function updateImageNsfwLevel({
       .where('status', '=', 'Pending')
       .execute();
   }
+  await invalidateThumbnails(id, [image.parentId]);
+  await bustProfilePictures({ imageIds: [id] });
 
   // Thumbnails are never posted, so a non-null postId means this image can't be a Model3D thumbnail.
   if (image.postId == null) {
@@ -93,6 +101,5 @@ export async function updateImageNsfwLevel({
     ])
   );
 
-  if (image.postId != null) await queueModelsForImageChildTagChanges({ levelImageIds: [id] });
-  void syncKonoFinalize(id, nsfwLevel);
+  if (image.postId != null) await queueDocumentsForImageMinorChanges({ levelImageIds: [id] });
 }

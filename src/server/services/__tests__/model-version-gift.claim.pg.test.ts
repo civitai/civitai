@@ -20,12 +20,16 @@ const DB_NAME = 'model_gift_claim_test';
 
 vi.mock('~/server/services/orchestrator/models', () => ({ bustOrchestratorModelCache: vi.fn() }));
 const { getFeatureFlagsAsync } = vi.hoisted(() => ({ getFeatureFlagsAsync: vi.fn() }));
-vi.mock('~/server/services/feature-flags.service', () => ({ getFeatureFlagsAsync }));
+// Partial: the claim path now imports modules that read other exports of this one at load.
+vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  getFeatureFlagsAsync,
+}));
 vi.mock('~/server/services/paid-access.service', () => ({ getPaidAccess: vi.fn() }));
 const { insertWithinLiveCap, queryGiftList, redeemGiftLink, revokeGiftRedemption } = await import(
   '~/server/services/model-version-gift.service'
 );
-const { GIFT_CLAIM_LOCK_CLASS, GIFT_LIVE_CODES_MAX_PER_VERSION: CAP } = await import(
+const { GIFT_CREATOR_LIMIT_LOCK_CLASS, GIFT_LIVE_CODES_MAX_PER_VERSION: CAP } = await import(
   '~/server/services/model-version-gift.constants'
 );
 const { grantModelVersionAccess } = await import('~/server/services/model-version-access.service');
@@ -40,6 +44,7 @@ describe.runIf(!!process.env.CI)('CI provides a real Postgres', () => {
 const MIGRATIONS = [
   '20261229120000_model_version_gift_link',
   '20261231000100_model_version_gift_redemption_revoked',
+  '20271120150000_model_version_gift_link_created_by_idx',
 ].map((dir) =>
   path.resolve(
     __dirname,
@@ -98,11 +103,11 @@ describe.skipIf(!URL_BASE)('gift claim on Postgres', () => {
     );
   });
 
-  async function newLink(maxRedemptions: number | null) {
+  async function newLink(maxRedemptions: number | null, createdById = OWNER) {
     const { rows } = await sql.query(
       `INSERT INTO "ModelVersionGiftLink" ("modelVersionId", "createdById", "codeHash", "codeHint", "maxRedemptions")
        VALUES ($1, $2, md5(random()::text), 'XXXX', $3) RETURNING id`,
-      [VERSION, OWNER, maxRedemptions]
+      [VERSION, createdById, maxRedemptions]
     );
     return rows[0].id as number;
   }
@@ -539,8 +544,9 @@ describe.skipIf(!URL_BASE)('gift claim on Postgres', () => {
     });
   });
 
-  describe('monthly claim allowance', () => {
-    const CLAIMER = 2;
+  describe("monthly limit on claims of a creator's links", () => {
+    const CREATOR = OWNER;
+    const OTHER_CREATOR = USERS + 1;
     // This UTC month: claims made by the test itself are recorded at now().
     const today = new Date();
     const START = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1));
@@ -549,59 +555,71 @@ describe.skipIf(!URL_BASE)('gift claim on Postgres', () => {
     const at = (ms: number) =>
       new Date(START.getTime() + ms).toISOString().replace('T', ' ').replace('Z', '');
     const DAY_MS = 24 * 60 * 60 * 1000;
-    const claimWithin = (giftLinkId: number, limit: number, userId = CLAIMER) =>
+    const claimWithin = (giftLinkId: number, limit: number, userId: number, creatorId = CREATOR) =>
       redeemGiftLink(prisma, {
         giftLinkId,
         userId,
         modelVersionId: VERSION,
         permissions: 3,
         addedById: userId,
-        allowance: { limit, start: START, end: END },
+        creatorLimit: { creatorId, limit, start: START, end: END },
       });
-    /** A claim recorded at `claimedAt`, as if made then. */
-    async function pastClaim(claimedAt: string, revoked = false) {
-      const id = await newLink(null);
+    /** A claim of a new link by `creatorId`, recorded at `claimedAt` as if made then. */
+    async function pastClaim(
+      claimedAt: string,
+      { revoked = false, creatorId = CREATOR, userId = 2 } = {}
+    ) {
+      const id = await newLink(null, creatorId);
       await sql.query(
         `INSERT INTO "ModelVersionGiftRedemption" ("giftLinkId", "userId", "claimedAt", "revokedAt")
          VALUES ($1, $2, $3, $4)`,
-        [id, CLAIMER, claimedAt, revoked ? claimedAt : null]
+        [id, userId, claimedAt, revoked ? claimedAt : null]
       );
       return id;
     }
-    const redemptions = () =>
-      count(`SELECT count(*) AS n FROM "ModelVersionGiftRedemption" WHERE "userId" = ${CLAIMER}`);
+    const redemptions = () => count(`SELECT count(*) AS n FROM "ModelVersionGiftRedemption"`);
 
-    it('refuses the claim past the limit and takes no slot or grant for it', async () => {
-      await pastClaim(at(DAY_MS));
-      await pastClaim(at(2 * DAY_MS));
-      const id = await newLink(5);
+    it("refuses the claim past the creator's limit across their links, and takes no slot or grant", async () => {
+      const first = await newLink(5);
+      const second = await newLink(5);
+      expect(await claimWithin(first, 2, 2)).toBe('granted');
+      expect(await claimWithin(second, 2, 3)).toBe('granted');
 
-      await expect(claimWithin(id, 2)).rejects.toMatchObject({ used: 2 });
+      await expect(claimWithin(second, 2, 4)).rejects.toMatchObject({ used: 2 });
       expect(
-        await count(`SELECT "redemptionCount" AS n FROM "ModelVersionGiftLink" WHERE id = ${id}`)
-      ).toBe(0);
+        await count(
+          `SELECT "redemptionCount" AS n FROM "ModelVersionGiftLink" WHERE id = ${second}`
+        )
+      ).toBe(1);
       expect(await redemptions()).toBe(2);
-      expect(await count(`SELECT count(*) AS n FROM "EntityAccess"`)).toBe(0);
-    });
-
-    it('counts only claims in [start, end), removed ones included', async () => {
-      await pastClaim(at(-1));
-      await pastClaim(at(END.getTime() - START.getTime()));
-      await pastClaim(at(0), true);
-
-      expect(await claimWithin(await newLink(null), 2)).toBe('granted');
-      await expect(claimWithin(await newLink(null), 2)).rejects.toMatchObject({ used: 2 });
-    });
-
-    it('reports on /me/limits the same count the claim enforces', async () => {
-      await pastClaim(at(-1));
-      await pastClaim(at(END.getTime() - START.getTime()));
-      await pastClaim(at(0), true);
-      await pastClaim(at(DAY_MS));
-      await sql.query(
-        `INSERT INTO "ModelVersionGiftRedemption" ("giftLinkId", "userId", "claimedAt") VALUES ($1, 3, $2)`,
-        [await newLink(null), at(DAY_MS)]
+      expect(await count(`SELECT count(*) AS n FROM "EntityAccess" WHERE "accessorId" = 4`)).toBe(
+        0
       );
+    });
+
+    it('never limits the claimer: one user claims past the limit across creators', async () => {
+      const links = [await newLink(null), await newLink(null, OTHER_CREATOR)];
+      expect(await claimWithin(links[0], 1, 2)).toBe('granted');
+      expect(await claimWithin(links[1], 1, 2, OTHER_CREATOR)).toBe('granted');
+    });
+
+    it("counts only this month's claims of this creator's links that were not removed", async () => {
+      await pastClaim(at(-1));
+      await pastClaim(at(END.getTime() - START.getTime()));
+      await pastClaim(at(0), { revoked: true });
+      await pastClaim(at(DAY_MS), { creatorId: OTHER_CREATOR });
+      await pastClaim(at(DAY_MS));
+
+      expect(await claimWithin(await newLink(null), 2, 3)).toBe('granted');
+      await expect(claimWithin(await newLink(null), 2, 4)).rejects.toMatchObject({ used: 2 });
+    });
+
+    it('reports on /me/limits the same count the claim enforces, to the creator', async () => {
+      await pastClaim(at(-1));
+      await pastClaim(at(0), { revoked: true });
+      await pastClaim(at(DAY_MS), { userId: 3 });
+      await pastClaim(at(DAY_MS), { userId: 4 });
+      await pastClaim(at(DAY_MS), { creatorId: OTHER_CREATOR });
 
       // The `/me/limits` counter reads through dbRead: point it at the throwaway database.
       vi.mocked(dbMock.dbRead.$queryRaw).mockImplementation(
@@ -609,43 +627,56 @@ describe.skipIf(!URL_BASE)('gift claim on Postgres', () => {
       );
       getFeatureFlagsAsync.mockResolvedValue({ modelGiftLinks: true });
       const counter = usageLimitCounters['gifts.monthly']!;
-      const args = { user: { id: CLAIMER } as SessionUser, req: {} as NextApiRequest };
-      expect(await counter({ ...args, start: START, end: END })).toBe(2);
+      const req = {} as NextApiRequest;
+      const forUser = (id: number) => ({
+        user: { id } as SessionUser,
+        req,
+        start: START,
+        end: END,
+      });
+      expect(await counter(forUser(CREATOR))).toBe(2);
+      // A claimer's own claims are not theirs to count.
+      expect(await counter(forUser(3))).toBe(0);
 
       // No row for a user the gift feature is not released to.
       getFeatureFlagsAsync.mockResolvedValue({ modelGiftLinks: false });
-      expect(await counter({ ...args, start: START, end: END })).toBeNull();
+      expect(await counter(forUser(CREATOR))).toBeNull();
     });
 
     it('lets a repeat claim of the same link through, even past a since-lowered limit', async () => {
       await pastClaim(at(DAY_MS));
       const id = await newLink(null);
-      expect(await claimWithin(id, 2)).toBe('granted');
+      expect(await claimWithin(id, 2, 3)).toBe('granted');
       await sql.query(`DELETE FROM "EntityAccess"`);
 
-      expect(await claimWithin(id, 1)).toBe('granted');
+      expect(await claimWithin(id, 1, 3)).toBe('granted');
       expect(await redemptions()).toBe(2);
     });
 
-    it(`grants exactly the limit when ${USERS} claims by one user on different links race`, async () => {
-      const ids = await Promise.all(Array.from({ length: USERS }, () => newLink(null)));
-      const outcomes = await Promise.allSettled(ids.map((id) => claimWithin(id, 3)));
+    it(`grants exactly the limit when ${
+      USERS - 1
+    } users race to claim one creator's links`, async () => {
+      const claimers = Array.from({ length: USERS - 1 }, (_, i) => i + 2);
+      const ids = await Promise.all(claimers.map(() => newLink(null)));
+      const outcomes = await Promise.allSettled(
+        ids.map((id, i) => claimWithin(id, 3, claimers[i]))
+      );
 
       expect(outcomes.filter((o) => o.status === 'fulfilled')).toHaveLength(3);
       expect(await redemptions()).toBe(3);
     });
 
-    it('makes a new claim wait for one in flight, then count it', async () => {
+    it("makes a new claim wait for one in flight on the same creator's links, then count it", async () => {
       await pastClaim(at(DAY_MS));
       const other = await newLink(null);
-      // Another new claim by the same user: holding the allowance lock, recorded, not committed.
+      // Another new claim of this creator's links: holding the limit lock, recorded, not committed.
       const inFlight = await openTransaction([
-        `INSERT INTO "ModelVersionGiftRedemption" ("giftLinkId", "userId") VALUES (${other}, ${CLAIMER})`,
-        `SELECT pg_advisory_xact_lock(${GIFT_CLAIM_LOCK_CLASS}, ${CLAIMER})`,
+        `INSERT INTO "ModelVersionGiftRedemption" ("giftLinkId", "userId") VALUES (${other}, 3)`,
+        `SELECT pg_advisory_xact_lock(${GIFT_CREATOR_LIMIT_LOCK_CLASS}, ${CREATOR})`,
       ]);
 
       let settled = false;
-      const attempt = claimWithin(await newLink(null), 2).finally(() => (settled = true));
+      const attempt = claimWithin(await newLink(null), 2, 4).finally(() => (settled = true));
       await lockWaiters(1, () => settled);
       await inFlight.commit();
 

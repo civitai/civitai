@@ -8,6 +8,7 @@ import { getRequestDomainColor } from '~/server/utils/server-domain';
 import { requestVerifiedCrawler } from '~/server/utils/browsing-level';
 import { isAllowedOriginRequest } from '~/server/utils/origin-helpers';
 import { getRequestCredential } from '~/server/auth/request-credential';
+import { withModeratorRightsFor } from '~/server/auth/full-user-credential';
 import { trpcViewer } from '~/server/auth/api-auth-session';
 
 type CacheSettings = {
@@ -26,7 +27,7 @@ export const createContext = async ({
   req: NextApiRequest;
   res: NextApiResponse;
 }) => {
-  const session = await getServerAuthSession({ req, res });
+  const session = await getServerAuthSession({ req, res, scope: 'defer' });
   // ATTRIBUTION surface. `ctx.ip` labels a caller for tracking, audit trails and
   // actor hashing; it is not an input to an allow/deny decision, so it takes the
   // derivation that always yields a label rather than the fail-closed one that
@@ -87,18 +88,26 @@ export const createContext = async ({
   // Modeled as optional (undefined when absent) so DeepNonNullable<Context> in
   // controller signatures can collapse them to required fields when the caller
   // already knows the request is token-auth'd.
-  const { tokenScope, apiKeyId, apiKeyType, subject } = getRequestCredential(req);
+  const credential = getRequestCredential(req);
+  const { tokenScope, apiKeyId, apiKeyType, subject } = credential;
+  // A banned viewer stays here (trpcViewer moves it to `bannedUser`), so the appeal flags still reach it.
+  const viewer = withModeratorRightsFor(session?.user, credential);
+  // The author capability is the account's, not the credential's: read it only via `appBlocksAuthorAccount`.
+  const authorSubject: { appBlocksAuthorSubject?: typeof viewer } = {
+    appBlocksAuthorSubject: session?.user,
+  };
 
   // Tag content-creation tracking with how the request was authenticated (web vs.
   // personal API key vs. OAuth app) so moderators can trace agent/API activity.
   track.setProvenance({ subject, apiKeyId });
 
   return {
-    ...trpcViewer(session?.user),
+    ...trpcViewer(viewer),
+    ...authorSubject,
     acceptableOrigin,
     // The full session's flags: the site appeal form's procedures are flag-gated, and a banned
     // account must still reach them.
-    features: getFeatureFlagsLazy({ user: session?.user, req }),
+    features: getFeatureFlagsLazy({ user: viewer, req }),
     track,
     ip,
     cache,
@@ -110,6 +119,8 @@ export const createContext = async ({
     apiKeyId,
     apiKeyType,
     subject,
+    // Optional, so the contexts built outside a session (public API, server-side helpers) omit it.
+    ...(session?.impersonatedBy != null ? { impersonatedBy: session.impersonatedBy } : {}),
   };
 };
 
@@ -137,12 +148,22 @@ export type Context = AsyncReturnType<typeof createContext>;
 
 /**
  * Context shape for protected procedures, where `user` (and other base fields)
- * are guaranteed non-null but `apiKeyId`/`apiKeyType`/`subject` legitimately remain
- * nullable (session auth has no apiKeyId). Replaces `DeepNonNullable<Context>` for
+ * are guaranteed non-null but `apiKeyId`/`apiKeyType`/`subject`/`impersonatedBy` legitimately
+ * remain nullable (session auth has no apiKeyId; most sessions are no impersonation), and
+ * `appBlocksAuthorSubject` stays optional (contexts built outside `createContext` do not set it).
+ * Replaces `DeepNonNullable<Context>` for
  * controllers, which would otherwise strip the nullability of these fields.
  */
 export type ProtectedContext = Omit<
   DeepNonNullable<Context>,
-  'apiKeyId' | 'apiKeyType' | 'subject' | 'bannedUser'
+  'apiKeyId' | 'apiKeyType' | 'subject' | 'bannedUser' | 'impersonatedBy' | 'appBlocksAuthorSubject'
 > &
-  Pick<Context, 'apiKeyId' | 'apiKeyType' | 'subject' | 'bannedUser'>;
+  Pick<
+    Context,
+    | 'apiKeyId'
+    | 'apiKeyType'
+    | 'subject'
+    | 'bannedUser'
+    | 'impersonatedBy'
+    | 'appBlocksAuthorSubject'
+  >;

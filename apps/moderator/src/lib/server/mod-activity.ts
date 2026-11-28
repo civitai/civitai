@@ -1,6 +1,11 @@
 import type { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import type { ReviewTier } from '@civitai/shared/review-batch';
+import {
+  LIKENESS_REQUEST_ACTIVITY,
+  writeLikenessMark,
+} from '@civitai/db-queries/image-removal-confirmation';
+import { logToAxiom } from './axiom';
 import { dbRead, dbWrite } from './db';
 import { usersByIds } from './users.service';
 
@@ -19,6 +24,33 @@ export async function recordModActivity(input: ModActivityInsert): Promise<void>
   }
 }
 
+/**
+ * Marks an image removed for a likeness/DMCA request. The main app's appeal-decision-records sweep
+ * deletes the image's appeal training copies by this row. Retried like the main app's
+ * `trackLikenessRequests`; a mark that never lands is logged as `likeness-request-mark-failed`.
+ */
+export const recordLikenessRequest = (
+  userId: number,
+  imageId: number,
+  retry?: { tries?: number; backoffMs?: number }
+) =>
+  writeLikenessMark(
+    () =>
+      insertModActivityBatch(dbWrite, {
+        userId,
+        entityType: 'image',
+        entityIds: [imageId],
+        activity: LIKENESS_REQUEST_ACTIVITY,
+      }),
+    (e, tries) =>
+      logToAxiom({
+        type: 'error',
+        name: 'likeness-request-mark-failed',
+        message: `1 image after ${tries} tries: ${e instanceof Error ? e.message : String(e)}`,
+      }),
+    retry
+  );
+
 type ModActivityInsert = {
   userId: number;
   entityType: string | null;
@@ -30,8 +62,11 @@ type ModActivityInsert = {
 };
 
 /** The same row, throwing when it is not written: for a caller that must not go on without it. */
-export async function insertModActivity(input: ModActivityInsert): Promise<void> {
-  const row = await dbWrite
+export async function insertModActivity(
+  input: ModActivityInsert,
+  db: Kysely<DB> = dbWrite
+): Promise<number> {
+  const row = await db
     .insertInto('ModActivity')
     .values({
       userId: input.userId,
@@ -52,6 +87,17 @@ export async function insertModActivity(input: ModActivityInsert): Promise<void>
     .returning('id')
     .executeTakeFirst();
   if (!row) throw new Error(`ModActivity ${input.activity} row was not written`);
+  return row.id;
+}
+
+/** Read from the primary, so a row just written is seen. */
+export async function modActivityRowExists(id: number): Promise<boolean> {
+  const row = await dbWrite
+    .selectFrom('ModActivity')
+    .select('id')
+    .where('id', '=', id)
+    .executeTakeFirst();
+  return !!row;
 }
 
 /**

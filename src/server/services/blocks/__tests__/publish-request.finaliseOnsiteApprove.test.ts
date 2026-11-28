@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // The on-site approve's last step runs after the code is committed, so its hold check must be
@@ -23,7 +24,15 @@ const SHA = 'a'.repeat(40);
 function fakeTx() {
   return {
     appBlockPublishRequest: { update: vi.fn(async () => ({})) },
-    appBlock: { update: vi.fn(async () => ({})) },
+    appBlock: {
+      update: vi.fn(async () => ({})),
+      findUnique: vi.fn(async () => ({ appId: 'appblk-app-a', status: 'suspended' })),
+      count: vi.fn(async () => 0),
+    },
+    apiKey: {
+      findMany: vi.fn(async () => [{ userId: 7 }]),
+      deleteMany: vi.fn(async () => ({ count: 1 })),
+    },
     oauthClient: { update: vi.fn(async () => ({})) },
     appListing: {
       findUnique: vi.fn(async (): Promise<unknown> => null),
@@ -56,19 +65,61 @@ describe('finaliseOnsiteApprove', () => {
     );
   });
 
+  it('🔴 a late hold on a row that matches no store status (P2025) fails the transaction: no token revoke, no ceiling restore', async () => {
+    resolveHoldsAtApprove.mockResolvedValue({ overridden: [], late: [12] });
+    const tx = fakeTx();
+    tx.appBlock.update.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('No record was found for an update.', {
+        code: 'P2025',
+        clientVersion: 'test',
+      })
+    );
+    await expect(
+      finaliseOnsiteApprove(
+        tx as never,
+        {
+          ...input,
+          priorVersion: { block: {}, oauthClientId: 'oc_1', allowedScopes: 5n },
+        } as never
+      )
+    ).rejects.toMatchObject({ code: 'P2025' });
+    expect(tx.apiKey.deleteMany).not.toHaveBeenCalled();
+    expect(tx.oauthClient.update).not.toHaveBeenCalled();
+    expect(tx.appListing.updateMany).not.toHaveBeenCalled();
+  });
+
   it('🔴 a late hold re-suspends the block in the same transaction and leaves the request pending', async () => {
     resolveHoldsAtApprove.mockResolvedValue({ overridden: [], late: [12] });
     const tx = fakeTx();
     await expect(finaliseOnsiteApprove(tx as never, input)).resolves.toEqual({
       lateHoldIds: [12],
+      revokedTokens: { clientId: 'appblk-app-a', userIds: [7] },
     });
     // The held sha is not marked current, so no restore or rebuild can serve it.
     expect(tx.appBlock.update).toHaveBeenCalledWith({
-      where: { id: 'apb_1' },
+      where: { id: 'apb_1', status: { notIn: ['remix', 'remix_disabled'] } },
       data: { status: 'suspended' },
     });
     // 🔴 The held request stays pending, so the next version is reviewed against the live one.
     expect(tx.appBlockPublishRequest.update).not.toHaveBeenCalled();
+  });
+
+  it('🔴 a late hold revokes the app tokens in the same transaction; no late hold revokes none', async () => {
+    const late = fakeTx();
+    resolveHoldsAtApprove.mockResolvedValue({ overridden: [], late: [12] });
+    await finaliseOnsiteApprove(late as never, input);
+    expect(late.apiKey.deleteMany).toHaveBeenCalledWith({
+      where: { clientId: 'appblk-app-a', type: { in: ['Access', 'Refresh'] } },
+    });
+    // The client's block rows are locked before the re-suspend, so a concurrent suspension waits on it.
+    expect(late.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      late.appBlock.update.mock.invocationCallOrder[0]
+    );
+
+    const clean = fakeTx();
+    resolveHoldsAtApprove.mockResolvedValue({ overridden: [], late: [] });
+    await finaliseOnsiteApprove(clean as never, input);
+    expect(clean.apiKey.deleteMany).not.toHaveBeenCalled();
   });
 
   it('🔴 a late hold puts back the manifest, scopes and tier the app ran under', async () => {
@@ -84,15 +135,15 @@ describe('finaliseOnsiteApprove', () => {
     };
     await finaliseOnsiteApprove(tx as never, {
       ...input,
-      priorVersion: { block, oauthClientId: 'oc_1', allowedScopes: 5 },
+      priorVersion: { block, oauthClientId: 'oc_1', allowedScopes: 5n },
     });
     expect(tx.appBlock.update).toHaveBeenCalledWith({
-      where: { id: 'apb_1' },
+      where: { id: 'apb_1', status: { notIn: ['remix', 'remix_disabled'] } },
       data: { status: 'suspended', ...block },
     });
     expect(tx.oauthClient.update).toHaveBeenCalledWith({
       where: { id: 'oc_1' },
-      data: { allowedScopes: 5 },
+      data: { allowedScopes: 5n },
     });
   });
 
@@ -224,7 +275,7 @@ describe('finaliseOnsiteApprove', () => {
           trustTier: 'unverified',
         },
         oauthClientId: 'oc_1',
-        allowedScopes: 5,
+        allowedScopes: 5n,
       },
     });
     const [{ data }] = tx.appBlock.update.mock.calls[0] as unknown as [{ data: object }];

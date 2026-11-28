@@ -19,18 +19,18 @@ vi.mock('~/utils/s3-utils', () => ({
 import type { CoverImageDeps, ReusableCoverImageCandidate } from '../cover-image.service';
 import {
   COVER_IMAGE_EXISTS_TIMEOUT_MS,
-  COVER_IMAGE_EXISTS_UNKNOWN_LOG,
   COVER_IMAGE_UNAVAILABLE_MESSAGE,
   isReusableCoverImage,
   productionCoverImageDeps,
+  RESTRICTED_COVER_IMAGE_MESSAGE,
   resolveCoverImageId,
 } from '../cover-image.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { imageUrlOwnersFake } from '~/server/services/__tests__/image-url-ownership.fake';
+import { dealCopyCheckFor } from '~/server/services/__tests__/deal-file-copy.fake';
+
 const dbWriteMock = dbMock.dbWrite;
-const logToAxiomMock = loggingMock.logToAxiom;
 
 const coverImage = { url: '0d5f0a4e-0000-4000-8000-000000000001', name: 'cover.png' } as any;
 
@@ -41,6 +41,7 @@ function makeDeps(overrides: Partial<CoverImageDeps> = {}): CoverImageDeps {
     assertUrlUsable: vi.fn().mockResolvedValue(undefined),
     createImage: vi.fn().mockResolvedValue({ id: 999 }),
     logExistenceUnknown: vi.fn(),
+    assertUsableAsCover: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };
 }
@@ -68,7 +69,7 @@ describe('resolveCoverImageId — the client supplied an id (the hot path)', () 
 
     expect(result).toBe(42);
     // 🔴 This is the whole point of keeping the check off the hot path: an id-carrying cover
-    // must not pay for a db probe or a HeadObject.
+    // must not pay for a url lookup or a HeadObject.
     expect(deps.findReusableImageId).not.toHaveBeenCalled();
     expect(deps.objectExists).not.toHaveBeenCalled();
     expect(deps.createImage).not.toHaveBeenCalled();
@@ -90,9 +91,95 @@ describe('resolveCoverImageId — the client supplied an id (the hot path)', () 
   });
 });
 
+describe('resolveCoverImageId — an image restricted by its base model', () => {
+  const refuse = () => vi.fn().mockRejectedValue(new Error(RESTRICTED_COVER_IMAGE_MESSAGE));
+
+  it('refuses a client-supplied id', async () => {
+    const deps = makeDeps({ assertUsableAsCover: refuse() });
+    await expect(
+      resolveCoverImageId({ coverImage: { ...coverImage, id: 42 }, userId: 7 }, deps)
+    ).rejects.toThrow(RESTRICTED_COVER_IMAGE_MESSAGE);
+    expect(deps.assertUsableAsCover).toHaveBeenCalledWith(42);
+  });
+
+  it("keeps the entity's current cover, so a later flag doesn't block unrelated edits", async () => {
+    const deps = makeDeps({ assertUsableAsCover: refuse() });
+    await expect(
+      resolveCoverImageId(
+        { coverImage: { ...coverImage, id: 42 }, userId: 7, currentCoverId: 42 },
+        deps
+      )
+    ).resolves.toBe(42);
+  });
+
+  it('keeps the current cover sent back with no url, as an editor who may not see it sends it', async () => {
+    const deps = makeDeps({ assertUsableAsCover: refuse() });
+    await expect(
+      resolveCoverImageId(
+        { coverImage: { ...coverImage, id: 42, url: '' }, userId: 7, currentCoverId: 42 },
+        deps
+      )
+    ).resolves.toBe(42);
+  });
+
+  it('refuses a reused row', async () => {
+    const deps = makeDeps({
+      findReusableImageId: vi.fn().mockResolvedValue({ id: 1234, restricted: true }),
+    });
+    await expect(resolveCoverImageId({ coverImage, userId: 7 }, deps)).rejects.toThrow(
+      RESTRICTED_COVER_IMAGE_MESSAGE
+    );
+  });
+
+  it('keeps a reused row that is already the current cover', async () => {
+    const deps = makeDeps({
+      findReusableImageId: vi.fn().mockResolvedValue({ id: 1234, restricted: true }),
+    });
+    await expect(
+      resolveCoverImageId({ coverImage, userId: 7, currentCoverId: 1234 }, deps)
+    ).resolves.toBe(1234);
+  });
+
+  it.each([
+    ['a mature restricted image', { nsfwLevel: 4, modelRestricted: true }, true],
+    ['a SFW image from a restricting model', { nsfwLevel: 1, modelRestricted: true }, false],
+    ['a mature unrestricted image', { nsfwLevel: 8, modelRestricted: false }, false],
+  ])('in production, decides %s (refused: %s)', async (_, row, refused) => {
+    dbWriteMock.image.findUnique.mockResolvedValue(row as never);
+    const result = productionCoverImageDeps.assertUsableAsCover(42);
+    if (refused) await expect(result).rejects.toThrow(RESTRICTED_COVER_IMAGE_MESSAGE);
+    else await expect(result).resolves.toBeUndefined();
+  });
+
+  it("in production, refuses a deal file's scan copy, which no cover may use", async () => {
+    dbWriteMock.image.findUnique.mockResolvedValue({
+      nsfwLevel: 1,
+      modelRestricted: false,
+    } as never);
+    dbWriteMock.$queryRaw.mockImplementationOnce(dealCopyCheckFor(42));
+    await expect(productionCoverImageDeps.assertUsableAsCover(42)).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+  });
+
+  it('runs the same check on a reused row that is not the current cover', async () => {
+    const deps = makeDeps({
+      findReusableImageId: vi.fn().mockResolvedValue({ id: 1234, restricted: false }),
+      assertUsableAsCover: refuse(),
+    });
+    await expect(resolveCoverImageId({ coverImage, userId: 7 }, deps)).rejects.toThrow();
+    expect(deps.assertUsableAsCover).toHaveBeenCalledWith(1234);
+    await expect(
+      resolveCoverImageId({ coverImage, userId: 7, currentCoverId: 1234 }, deps)
+    ).resolves.toBe(1234);
+  });
+});
+
 describe('resolveCoverImageId — no id (a raw upload key)', () => {
   it('reuses an existing row for the same url instead of minting a duplicate', async () => {
-    const deps = makeDeps({ findReusableImageId: vi.fn().mockResolvedValue(1234) });
+    const deps = makeDeps({
+      findReusableImageId: vi.fn().mockResolvedValue({ id: 1234, restricted: false }),
+    });
 
     const result = await resolveCoverImageId({ coverImage, userId: 7, currentCoverId: 1234 }, deps);
 
@@ -164,47 +251,6 @@ describe('resolveCoverImageId — no id (a raw upload key)', () => {
   });
 });
 
-describe('resolveCoverImageId — the fail-open branch is observable', () => {
-  // 🔴 Failing open is correct, but it is SILENT: while it is happening the guard is off, and
-  // "no bad drafts found" is indistinguishable from "the check never ran". These pin the signal
-  // that tells those apart.
-  it('reports the indeterminate check when it proceeds unverified', async () => {
-    const deps = makeDeps({ objectExists: vi.fn().mockResolvedValue(null) });
-
-    await expect(resolveCoverImageId({ coverImage, userId: 7 }, deps)).resolves.toBe(999);
-
-    expect(deps.logExistenceUnknown).toHaveBeenCalledTimes(1);
-    expect(deps.logExistenceUnknown).toHaveBeenCalledWith({ userId: 7 });
-  });
-
-  it('stays quiet when the object was definitively present', async () => {
-    const deps = makeDeps({ objectExists: vi.fn().mockResolvedValue(true) });
-
-    await resolveCoverImageId({ coverImage, userId: 7 }, deps);
-
-    expect(deps.logExistenceUnknown).not.toHaveBeenCalled();
-  });
-
-  it('stays quiet when the object was definitively absent', async () => {
-    const deps = makeDeps({ objectExists: vi.fn().mockResolvedValue(false) });
-
-    await resolveCoverImageId({ coverImage, userId: 7 }, deps).catch(() => undefined);
-
-    // A rejection is a decision the user sees; it is not the silent no-op this signal counts.
-    expect(deps.logExistenceUnknown).not.toHaveBeenCalled();
-  });
-
-  it('stays quiet on the hot path and on reuse — neither consults the bucket', async () => {
-    const idDeps = makeDeps();
-    await resolveCoverImageId({ coverImage: { ...coverImage, id: 42 }, userId: 7 }, idDeps);
-    expect(idDeps.logExistenceUnknown).not.toHaveBeenCalled();
-
-    const reuseDeps = makeDeps({ findReusableImageId: vi.fn().mockResolvedValue(1234) });
-    await resolveCoverImageId({ coverImage, userId: 7 }, reuseDeps);
-    expect(reuseDeps.logExistenceUnknown).not.toHaveBeenCalled();
-  });
-});
-
 describe('isReusableCoverImage', () => {
   it('accepts a row attached to nothing', () => {
     expect(isReusableCoverImage(unattached)).toBe(true);
@@ -241,7 +287,7 @@ describe('productionCoverImageDeps.findReusableImageId', () => {
       userId: 7,
     });
 
-    expect(result).toBe(10);
+    expect(result).toEqual({ id: 10, restricted: false });
     // 🔴 `Image.url` is the bare object key and is visible in public image URLs. An unscoped
     // lookup would let anyone attach someone else's image by reading a key off the site.
     expect(dbWriteMock.image.findMany).toHaveBeenCalledWith(
@@ -313,22 +359,6 @@ describe('productionCoverImageDeps.objectExists', () => {
     // failure mode this bound exists to prevent) does not.
     expect(COVER_IMAGE_EXISTS_TIMEOUT_MS).toBeGreaterThan(0);
     expect(COVER_IMAGE_EXISTS_TIMEOUT_MS).toBeLessThanOrEqual(5000);
-  });
-});
-
-describe('productionCoverImageDeps.logExistenceUnknown', () => {
-  it('emits a structured warning naming the branch, and never throws', () => {
-    expect(() => productionCoverImageDeps.logExistenceUnknown({ userId: 7 })).not.toThrow();
-
-    expect(logToAxiomMock).toHaveBeenCalledTimes(1);
-    expect(logToAxiomMock.mock.calls[0][0]).toMatchObject({
-      type: 'warning',
-      name: COVER_IMAGE_EXISTS_UNKNOWN_LOG,
-      reason: 'proceeded-unverified',
-      userId: 7,
-    });
-    // The object key is deliberately NOT logged — the decision is what needs counting.
-    expect(logToAxiomMock.mock.calls[0][0]).not.toHaveProperty('url');
   });
 });
 

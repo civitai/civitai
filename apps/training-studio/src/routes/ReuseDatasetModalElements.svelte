@@ -1,0 +1,125 @@
+<script lang="ts">
+  import '$lib/civitai-elements';
+  import { backend, browser } from '$lib/host';
+  import type { TrainingRow } from '$lib/data/trainingRows';
+  import type { Media } from '$lib/data/trainingModels';
+  import { isPairDataset, toReuseItems } from '$lib/reuse';
+  import { RETENTION_DAYS } from '$lib/orchestrator-core';
+
+  // Emits items in addFromBlobs shape so the Data step can seed them with no re-upload.
+  let {
+    open = $bindable(false),
+    media,
+    onReuse,
+  }: {
+    open: boolean;
+    /** Only same-media runs are reusable — an image dataset can't seed an audio run, etc. */
+    media: Media;
+    onReuse: (
+      items: { blobId: string; name: string; caption: string; previewWorkflowId: string }[]
+    ) => void;
+  } = $props();
+
+  // Derive the fetch from `open` so the list re-loads each time it's opened; never rejects the panel.
+  const trainings = $derived(browser && open ? backend().listTrainings() : null);
+
+  // Time as well as date: same-day re-runs of one dataset are exactly the duplicates this tells apart.
+  const createdLabel = (iso: string) =>
+    new Date(iso).toLocaleString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+
+  let loadingId = $state<string | null>(null);
+  let error = $state('');
+
+  async function pick(row: TrainingRow) {
+    if (!row.workflowId || loadingId) return;
+    loadingId = row.workflowId;
+    error = '';
+    try {
+      const dataset = await backend().getRunDataset(row.workflowId);
+      if (dataset.length === 0) {
+        error = "That run's dataset can't be reused (no per-image blobs).";
+        return;
+      }
+      if (isPairDataset(dataset)) {
+        error = 'That run trained on edit pairs — use Train again on its page with an Image edit model.';
+        return;
+      }
+      onReuse(
+        toReuseItems(dataset, row.workflowId).map((i) => ({
+          blobId: i.air,
+          name: i.name,
+          caption: i.caption,
+          previewWorkflowId: i.workflowId,
+          repeats: i.repeats,
+        }))
+      );
+      open = false;
+    } catch {
+      error = "Couldn't load that dataset.";
+    } finally {
+      loadingId = null;
+    }
+  }
+</script>
+
+<civitai-modal
+  size="lg"
+  {open}
+  heading="Reuse a dataset"
+  with-close-button
+  close-label="Close"
+  onclose={() => (open = false)}
+>
+    <p class="m-0 mb-3 text-sm text-dark-2">
+      Pick a training from the last {RETENTION_DAYS} days to load its images + captions — no
+      re-upload.
+    </p>
+
+    {#if error}
+      <civitai-alert class="mb-3 block" color="error">{error}</civitai-alert>
+    {/if}
+
+    {#if trainings}
+      {#await trainings}
+        <div class="py-10 text-center font-mono text-sm text-dark-2">Loading your trainings…</div>
+      {:then rows}
+        {@const shown = rows.filter((r) => r.media === media)}
+        {#if shown.length === 0}
+          <div class="py-10 text-center font-mono text-sm text-dark-2">
+            No {media} trainings from the last {RETENTION_DAYS} days to reuse.
+          </div>
+        {:else}
+          <div class="flex max-h-[60vh] flex-col gap-2 overflow-y-auto">
+            {#each shown as row (row.workflowId)}
+              <button
+                type="button"
+                onclick={() => pick(row)}
+                disabled={loadingId != null}
+                class="flex items-center gap-3 rounded-lg border border-dark-4 bg-dark-6 p-3 text-left transition-colors hover:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
+              >
+                <div class="min-w-0">
+                  <div class="truncate text-sm font-semibold text-dark-0">{row.name}</div>
+                  <div class="truncate font-mono text-xs text-dark-2">
+                    {row.base}{row.sub ? ` · ${row.sub}` : ''}
+                  </div>
+                  {#if row.createdAt}
+                    <div class="font-mono text-xs text-dark-2">{createdLabel(row.createdAt)}</div>
+                  {/if}
+                </div>
+                <span class="ml-auto font-mono text-xs text-dark-2">
+                  {loadingId === row.workflowId ? 'Loading…' : 'Use'}
+                </span>
+              </button>
+            {/each}
+          </div>
+        {/if}
+      {:catch}
+        <div class="py-10 text-center font-mono text-sm text-red-400">Couldn't load your trainings.</div>
+      {/await}
+    {/if}
+</civitai-modal>

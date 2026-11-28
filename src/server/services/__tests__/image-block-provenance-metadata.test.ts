@@ -28,6 +28,7 @@ const CLIENT_METADATA = {
   blockPublishedAppId: 'client-app-1',
   blockUploadedAppId: 'client-app-2',
   blockGenerationSourceAppId: 'client-app-3',
+  blockSharedUploadAppId: 'client-app-4',
   size: 12345,
   width: 640,
   blockedAppId: 'not-provenance',
@@ -54,11 +55,12 @@ beforeEach(() => {
 });
 
 describe('block provenance metadata keys', () => {
-  it('lists the published, the uploaded and the private generation-source key', () => {
+  it('lists the published, the uploaded, the private generation-source and the shared-upload key', () => {
     expect([...BLOCK_PROVENANCE_METADATA_KEYS]).toEqual([
       'blockPublishedAppId',
       'blockUploadedAppId',
       'blockGenerationSourceAppId',
+      'blockSharedUploadAppId',
     ]);
   });
 
@@ -66,6 +68,7 @@ describe('block provenance metadata keys', () => {
     ['blockPublishedAppId', true],
     ['blockUploadedAppId', true],
     ['blockGenerationSourceAppId', true],
+    ['blockSharedUploadAppId', true],
     ['blockGenerationSourceRef', false],
     ['blockUploadedAppIds', false],
     ['blockedAppId', false],
@@ -191,6 +194,44 @@ describe('createImage', () => {
       type: 'image',
       skipIngestion: true,
       metadata: { ...CLIENT_METADATA, judgeRating: forged },
+    } as never);
+    expect(createdMetadata()).toEqual(UNRELATED);
+  });
+
+  it('drops a client moderation rule id, which decides whether a removal reads as a rule block', async () => {
+    const parsed = imageSchema.parse({
+      url: KEY,
+      metadata: { size: 1, ruleId: 999999999, ruleReason: 'x' },
+    });
+    expect(parsed.metadata).toEqual({ size: 1 });
+
+    await createImage({
+      url: KEY,
+      userId: 1,
+      type: 'image',
+      skipIngestion: true,
+      metadata: { ...CLIENT_METADATA, ruleId: 999999999, ruleReason: 'x' },
+    } as never);
+    expect(createdMetadata()).toEqual(UNRELATED);
+  });
+
+  it('drops a client account-deletion prior state, which an account restore writes back', async () => {
+    const forged = {
+      accountDeletionPriorIngestion: 'Scanned',
+      accountDeletionPriorBlockedFor: null,
+      accountDeletionPriorNeedsReview: 'minor',
+      accountDeletionPriorNsfwLevel: 1,
+      accountDeletionPriorNsfwLevelLocked: true,
+    };
+    const parsed = imageSchema.parse({ url: KEY, metadata: { size: 1, ...forged } });
+    expect(parsed.metadata).toEqual({ size: 1 });
+
+    await createImage({
+      url: KEY,
+      userId: 1,
+      type: 'image',
+      skipIngestion: true,
+      metadata: { ...CLIENT_METADATA, ...forged },
     } as never);
     expect(createdMetadata()).toEqual(UNRELATED);
   });

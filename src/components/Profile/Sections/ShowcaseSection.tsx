@@ -1,22 +1,34 @@
 import { keepPreviousData } from '@tanstack/react-query';
 import type { ProfileSectionProps } from '~/components/Profile/ProfileSection';
 import { ProfileSection, ProfileSectionPreview } from '~/components/Profile/ProfileSection';
-import { IconHeart } from '@tabler/icons-react';
+import { IconHeart, IconPin } from '@tabler/icons-react';
 import React, { useMemo } from 'react';
 import { MAX_ENTITIES_COVER_IMAGE } from '~/server/schema/image.schema';
 import type { ShowcaseItemSchema } from '~/server/schema/user-profile.schema';
 import { trpc } from '~/utils/trpc';
 import { GenericImageCard } from '~/components/Cards/GenericImageCard';
 import { TurfSummaryProvider } from '~/components/HatTurf/TurfSummaryProvider';
-import { ShowcaseGrid } from '~/components/Profile/Sections/ShowcaseGrid';
+import { ShowcaseGrid, useShowcaseViewAll } from '~/components/Profile/Sections/ShowcaseGrid';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import classes from '~/components/Profile/ProfileSection.module.css';
 import clsx from 'clsx';
 
-export const ShowcaseSection = ({ user }: ProfileSectionProps) => {
+export const ShowcaseSection = ({
+  user,
+  pinnedItems,
+}: ProfileSectionProps & {
+  /** The About tab's "Pinned": the items the owner pinned, in one row, instead of the showcase. */
+  pinnedItems?: ShowcaseItemSchema[];
+}) => {
   const [ref, inView] = useInViewDynamic({ id: 'profile-showcase-section' });
-  const showcaseItems = user.profile.showcaseItems as ShowcaseItemSchema[];
+  const pinned = !!pinnedItems;
+  const allShowcaseItems = user.profile.showcaseItems as ShowcaseItemSchema[];
+  const showcaseItems = useMemo(
+    () => pinnedItems ?? allShowcaseItems,
+    [allShowcaseItems, pinnedItems]
+  );
+  const rows = pinned ? 1 : 2;
   // Clamped to the schema's own bound rather than sent whole. `isNullState` below is
   // computed from `!coverImages.length`, so a refused query would take the entire
   // Showcase section off the profile — and it would stay off, since each render sends
@@ -58,6 +70,7 @@ export const ShowcaseSection = ({ user }: ProfileSectionProps) => {
   );
 
   const isNullState = showcaseItems.length === 0 || (!isLoading && !coverImages.length);
+  const viewAll = useShowcaseViewAll({ rows, itemCount: coverImages.length });
 
   if (showcaseItems.length === 0 || (isNullState && inView)) {
     return null;
@@ -70,20 +83,23 @@ export const ShowcaseSection = ({ user }: ProfileSectionProps) => {
       style={
         {
           '--count': showcaseItems.length,
-          '--row-count': 2,
+          '--row-count': rows,
           '--width-grid': '280px',
         } as React.CSSProperties
       }
     >
       {inView &&
         (isLoading ? (
-          <ProfileSectionPreview rowCount={2} />
+          <ProfileSectionPreview rowCount={rows} />
         ) : (
-          <ProfileSection title="Showcase" icon={<IconHeart />}>
+          <ProfileSection
+            title={pinned ? 'Pinned' : 'Showcase'}
+            icon={pinned ? <IconPin /> : <IconHeart />}
+          >
             <TurfSummaryProvider imageIds={hatImageIds}>
               <ShowcaseGrid
                 itemCount={showcaseItems.length}
-                rows={2}
+                {...viewAll.gridProps}
                 className={clsx({
                   [classes.nullState]: !coverImages.length,
                   [classes.loading]: isRefetching,
@@ -98,6 +114,7 @@ export const ShowcaseSection = ({ user }: ProfileSectionProps) => {
                   />
                 ))}
               </ShowcaseGrid>
+              {viewAll.toggle}
             </TurfSummaryProvider>
           </ProfileSection>
         ))}

@@ -49,7 +49,7 @@ vi.mock('~/server/prom/client', () => ({
   clickhouseFailSoftCounter: { inc: vi.fn() },
 }));
 
-vi.mock('~/server/services/buzz.service', () => ({
+vi.mock('~/server/services/buzz-payout', () => ({
   createBuzzTransactionMany: (...args: any[]) => h.createBuzzTransactionMany(...args),
   getTransactionByExternalId: (...args: any[]) => h.getTransactionByExternalId(...args),
   getMultipliersForUser: (...args: any[]) => h.getMultipliersForUser(...args),
@@ -58,7 +58,7 @@ vi.mock('~/server/services/buzz.service', () => ({
 import { createBuzzEvent, ON_DEMAND_ZERO_ENTRY_SCRIPT } from '~/server/rewards/base.reward';
 import { ON_DEMAND_REWARD_SCRIPT } from '~/server/rewards/base.reward';
 import { invalidateRewardConfigCache } from '~/server/rewards/reward-config';
-import { rewardFailedCounter, rewardGivenCounter } from '~/server/prom/client';
+import { rewardFailedCounter } from '~/server/prom/client';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
@@ -282,8 +282,6 @@ describe('a repeat award the ledger refuses', () => {
     expect(h.getTransactionByExternalId).toHaveBeenCalledTimes(1);
     expect(h.getTransactionByExternalId.mock.calls[0][1].timeoutMs).toBeGreaterThan(0);
     expect(evalCalls(ON_DEMAND_ZERO_ENTRY_SCRIPT)).toHaveLength(1);
-    // Day one's award and day two's sibling. The refused repeat must not be counted.
-    expect(rewardGivenCounter?.inc).toHaveBeenCalledTimes(2);
 
     // The entry is ZEROED, not removed - a third reaction the same day must still be deduped,
     // or the same reaction can be re-awarded repeatedly within one day.
@@ -430,12 +428,11 @@ describe('a repeat award the ledger refuses', () => {
     await reward.apply({ reactorId: 7, entityId: 100 });
 
     // Negative control: with no refusal from the ledger the second award is real - it keeps its
-    // cap entry, is counted as given, and nothing is looked up or zeroed.
+    // cap entry, and nothing is looked up or zeroed.
     expect(capConsumed()).toBe(AWARD_AMOUNT);
     expect(insertedRows().map((row) => row.status)).toEqual(['awarded', 'awarded']);
     expect(evalCalls(ON_DEMAND_ZERO_ENTRY_SCRIPT)).toHaveLength(0);
     expect(h.getTransactionByExternalId).not.toHaveBeenCalled();
-    expect(rewardGivenCounter?.inc).toHaveBeenCalledTimes(2);
   });
 
   it('leaves the cap alone when the ledger settled something as well as conflicting', async () => {

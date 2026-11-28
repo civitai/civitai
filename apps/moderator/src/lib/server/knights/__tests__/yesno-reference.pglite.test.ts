@@ -74,12 +74,21 @@ const rows = async () =>
 
 beforeAll(async () => {
   db = await freshPglite();
-  await db.exec(`CREATE TABLE "Post" ("id" INTEGER PRIMARY KEY, "publishedAt" TIMESTAMP);
+  await db.exec(`CREATE TABLE "Post" ("id" INTEGER PRIMARY KEY, "publishedAt" TIMESTAMP, "availability" TEXT NOT NULL DEFAULT 'Public');
     CREATE TABLE "Image" (
       "id" INTEGER PRIMARY KEY, "url" TEXT NOT NULL, "name" TEXT, "type" TEXT NOT NULL DEFAULT 'image',
       "nsfwLevel" INTEGER NOT NULL DEFAULT 0, "ingestion" TEXT NOT NULL DEFAULT 'Scanned',
-      "blockedFor" TEXT, "needsReview" TEXT, "acceptableMinor" BOOLEAN NOT NULL DEFAULT false, "postId" INTEGER
-    );`);
+      "blockedFor" TEXT, "needsReview" TEXT, "acceptableMinor" BOOLEAN NOT NULL DEFAULT false, "minor" BOOLEAN NOT NULL DEFAULT false,
+      "poi" BOOLEAN NOT NULL DEFAULT false,
+      "postId" INTEGER
+    );
+    ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS "tosViolation" BOOLEAN NOT NULL DEFAULT false, ADD COLUMN IF NOT EXISTS "userId" INTEGER;
+    ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "modelVersionId" INTEGER;
+    CREATE TABLE "User" (id INTEGER PRIMARY KEY, "deletedAt" TIMESTAMP, "bannedAt" TIMESTAMP, muted BOOLEAN NOT NULL DEFAULT false);
+    CREATE TABLE "Model" (id INTEGER PRIMARY KEY, status TEXT NOT NULL, availability TEXT NOT NULL, "deletedAt" TIMESTAMP);
+    CREATE TABLE "ModelVersion" (id INTEGER PRIMARY KEY, "modelId" INTEGER NOT NULL, status TEXT NOT NULL, availability TEXT NOT NULL);
+    CREATE TABLE "CsamReport" (id SERIAL PRIMARY KEY, "userId" INTEGER, images JSONB NOT NULL DEFAULT '[]', details JSONB);
+    CREATE TABLE "ImageCdnModeratorDelete" ("imageId" INTEGER PRIMARY KEY, url TEXT NOT NULL, "csamReview" BOOLEAN NOT NULL DEFAULT true);`);
   await db.exec(
     readFileSync(path.join(MIGRATIONS, '20261210120000_knights_v2_tables', 'migration.sql'), 'utf8')
   );
@@ -129,6 +138,17 @@ describe('addYesNoReference', () => {
     await seedQuestion('q.safe');
     await addYesNoReference({ ...pair, explanation: '   ' });
     expect((await rows())[0].explanation).toBeNull();
+  });
+
+  it('refuses an image flagged minor, and still stores the same pair on an unflagged image', async () => {
+    await seedImage(1);
+    await seedImage(2);
+    await seedQuestion('q.safe');
+    await db.query(`UPDATE "Image" SET "minor" = true WHERE "id" = 1`);
+
+    expect(await addYesNoReference(pair)).toEqual({ ok: false, error: expect.any(String) });
+    expect(await addYesNoReference({ ...pair, imageId: 2 })).toEqual({ ok: true });
+    expect((await rows()).map((r) => r.imageId)).toEqual([2]);
   });
 
   it('refuses a pair without a question, whatever else it carries', async () => {
@@ -208,7 +228,28 @@ describe('setYesNoReferenceActive', () => {
     expect(await setYesNoReferenceActive(1, true)).toEqual({ ok: true });
     expect((await rows())[0].active).toBe(true);
     expect(await setYesNoReferenceActive(99, false)).toMatchObject({ ok: false });
+    expect(await setYesNoReferenceActive(99, true)).toMatchObject({ ok: false });
   });
+
+  it.each([
+    ['flagged minor', `UPDATE "Image" SET "minor" = true WHERE "id" = 1`],
+    ['put on review hold', `UPDATE "Image" SET "needsReview" = 'poi' WHERE "id" = 1`],
+  ])(
+    'will not reactivate a pair whose image was since %s, but can still deactivate it',
+    async (_, hold) => {
+      await seedImage(1);
+      await seedQuestion('q.safe');
+      await addYesNoReference(pair);
+      await db.query(hold);
+
+      expect(await setYesNoReferenceActive(1, false)).toEqual({ ok: true });
+      expect(await setYesNoReferenceActive(1, true)).toEqual({
+        ok: false,
+        error: expect.any(String),
+      });
+      expect((await rows())[0].active).toBe(false);
+    }
+  );
 });
 
 describe('deleteYesNoReference', () => {

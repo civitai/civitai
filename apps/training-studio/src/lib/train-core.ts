@@ -1,7 +1,16 @@
+import { ZodError } from 'zod';
+import { parseAiToolkitOptions, type AiToolkitOptions } from '@civitai/shared/training-options';
+import {
+  CLIP_SKIP_AS_SENT,
+  KOHYA_CONTINUE_KEYS as SHARED_KOHYA_CONTINUE_KEYS,
+  copyKohyaInput,
+} from '@civitai/shared/training-kohya-replay';
+import type { AiToolkitTrainingInput } from '@civitai/orchestration-client';
 import { buildKohyaInput } from './kohya-training';
 import { engineTakesRepeats, expandRepeats, isRepeatExt, MAX_REPEATS } from './repeats';
 import { kohyaFamily, type KohyaOptions, type KohyaInput } from './data/kohya';
 import { formatYue2SamplePrompt } from '@civitai/shared/training-audio';
+import { getTrainingLicenseTerms } from '@civitai/shared/generation-license';
 // Client-safe training submit builders: pure body construction + SDK calls against a provided
 // client. Env-derived concerns are parameters — the shell's server wrappers (lib/server/train.ts)
 // pass the trace mode from env and the per-user signal callbacks; the web-component backend passes
@@ -30,6 +39,7 @@ import {
   forEachPooled,
   isTrainingDataNotReady,
   isFlux2,
+  MAX_DATASET_BLOBS,
   queryRecentWorkflows,
   readWorkflow,
   resolveCurrencies,
@@ -37,6 +47,7 @@ import {
 } from './orchestrator-core';
 import {
   isProdigy,
+  trainingLearningRates,
   MAX_NON_PRODIGY_LR,
   teTrainingUnsupportedReason,
   type ExtraParamField,
@@ -52,7 +63,6 @@ import {
   workflowToRow,
 } from '$lib/data/trainingRows';
 import {
-  EXTRA_PARAM_FIELDS,
   TARGET_STEPS,
   ecosystemAllowsCustomBase,
   ecosystemTakesSampleImages,
@@ -68,9 +78,11 @@ import {
   UNAVAILABLE_LABEL,
 } from '$lib/service-status-core';
 import { FILES_PROCESSING_PARTIAL_REASON, FilesProcessingError } from '$lib/files-processing';
-import { MatureAckRequiredError } from '$lib/mature-charge';
-import { isMatureRating, type DatasetRating, type StoredRating } from '$lib/dataset-rating';
+import type { DatasetRating, StoredRating } from '$lib/dataset-rating';
 import { slugify } from '$lib/slug';
+import { MAX_RUNS } from '$lib/submit-limits';
+import { datasetCharge, DatasetUnreadableError, MatureRepriceError } from '$lib/mature-charge';
+import { isMatureNsfwLevel } from '$lib/nsfw-rating';
 import type { TrainingTextCheck } from '$lib/training-text';
 
 /** Captions remain raw until the engine-specific submit builder applies the trigger word. */
@@ -89,7 +101,7 @@ export interface TrainingItem {
 
 /** Everything the client assembles for one training run. Params arrive as the numbers the orchestrator
  *  wants (the Review step's string inputs are parsed client-side). */
-export interface TrainingRunInput {
+export interface TrainingRunInput extends AiToolkitOptions {
   ecosystem: string;
   modelVariant?: string;
   /** Ecosystem version selector (e.g. qwen's `version`). */
@@ -135,9 +147,6 @@ export interface TrainingRunInput {
   /** Which Buzz accounts to charge, in priority order (the user's choice on Review). Validated + defaulted
    *  by `resolveCurrencies` — never trusted from the wire. */
   currencies?: string[];
-  /** The user ticked Review's mature-dataset confirm: the run unlocks mature content at submit and is
-   *  charged in Yellow (after Blue when `currencies` spends Blue). */
-  matureAck?: boolean;
   /**
    * One per run per Start attempt, minted by the flow (`newSubmitKey`) and REUSED when the user
    * starts the same batch again. It rides on the workflow as a tag, so a submit whose response was
@@ -185,32 +194,20 @@ export function unavailableRunMessage(
 const CURRENCIES: BuzzClientAccount[] = ['blue', 'yellow'];
 const runCurrencies = (input?: string[]) => resolveCurrencies(input, CURRENCIES);
 
-/** The accounts that may pay for mature content: Yellow, after Blue only if the user's order spends Blue
- *  (members may pay for mature content in Blue; the orchestrator drops it for everyone else). Never Green. */
+/** A mature dataset is never charged in Green: Blue first if the user's order spends Blue, then Yellow. */
 function matureCurrencies(currencies: string[] | undefined): BuzzClientAccount[] {
   return runCurrencies(currencies).includes('blue') ? ['blue', 'yellow'] : ['yellow'];
 }
 
-/** How a submit is charged. Always `manual`, so viewing a run never changes what it was charged; a run the
- *  user confirmed as mature unlocks at submit instead, and is charged once, in the accounts that may pay
- *  for mature content. */
-function chargeFields(currencies: string[] | undefined, matureUnlock: boolean) {
-  return matureUnlock
-    ? {
-        upgradeMode: 'manual' as const,
-        allowMatureContent: true,
-        currencies: matureCurrencies(currencies),
-      }
-    : { upgradeMode: 'manual' as const, currencies: runCurrencies(currencies) };
-}
-
-/** The orchestrator's reason for a refused charge; the workflow is refunded in full before it answers. */
-const INSUFFICIENT_BUZZ = 'insufficientBuzz';
-const MATURE_SHORT_OF_YELLOW =
-  'Not enough Yellow Buzz. Training on mature images is charged in Yellow; this run was not charged.';
-
-function chargeFailureReason(reason: string, matureUnlock: boolean): string {
-  return matureUnlock && reason === INSUFFICIENT_BUZZ ? MATURE_SHORT_OF_YELLOW : reason;
+/** How a submit is charged. Always `manual`, so viewing a run never changes what it was charged. Never
+ *  `allowMatureContent`: with it the orchestrator drops a non-member's Blue and charges Yellow, and Blue pays
+ *  for training whatever the dataset (as in the Classic trainer). The cost: a non-member's mature sample
+ *  images stay blurred unless the run was paid only in Yellow; the trained model is never restricted. */
+function chargeFields(currencies: string[] | undefined, mature: boolean) {
+  return {
+    upgradeMode: 'manual' as const,
+    currencies: mature ? matureCurrencies(currencies) : runCurrencies(currencies),
+  };
 }
 
 /** Identity of the blob an item's `air` names, for dedupe. Keys are case-insensitive base32. */
@@ -219,7 +216,7 @@ export function trainingBlobKey(air: string): string {
 }
 
 /** The extra knobs `obj` actually carries — a submit or continuation sends only what was set, never
- *  an invented default. Iterates `EXTRA_PARAM_FIELDS` so a sixth knob can't be dropped here. */
+ *  an invented default. */
 function pick(obj: object, keys: readonly ExtraParamField[]): Record<string, unknown> {
   const source = obj as Record<string, unknown>;
   const out: Record<string, unknown> = {};
@@ -255,13 +252,12 @@ function buildStep(run: TrainingRunInput, traceMode: string): WorkflowStepTempla
   // Prodigy finds its own step size and expects lr 1 (the main trainer forces it the same way);
   // forced here so a stale or saved run can't send a model's normal rate. A 0 TE rate stays 0 (TE off), and an ecosystem
   // that can't train the TE is forced to 0 before Prodigy is considered.
-  const prodigy = isProdigy(run.optimizer);
-  const lr = prodigy ? 1 : run.unetLr;
-  const textEncoderLr = teTrainingUnsupportedReason(run.ecosystem)
-    ? 0
-    : prodigy && run.textEncoderLr > 0
-    ? 1
-    : run.textEncoderLr;
+  const { lr, textEncoderLr } = trainingLearningRates(
+    run.ecosystem,
+    run.optimizer,
+    run.unetLr,
+    run.textEncoderLr
+  );
 
   const step = isFlux2(run.engine)
     ? {
@@ -297,13 +293,19 @@ function buildStep(run: TrainingRunInput, traceMode: string): WorkflowStepTempla
           batchSize: run.batchSize,
           lr,
           textEncoderLr,
-          trainTextEncoder: textEncoderLr > 0,
+          trainTextEncoder: (textEncoderLr ?? 0) > 0,
           lrScheduler: run.lrScheduler,
           optimizerType,
           networkDim: run.networkDim,
           networkAlpha: run.networkAlpha,
-          resolution: run.resolution,
-          ...pick(run, EXTRA_PARAM_FIELDS),
+          ...(parseAiToolkitOptions(
+            { ...run, engine: run.engine ?? 'ai-toolkit' },
+            run
+          ) satisfies Pick<AiToolkitTrainingInput, keyof AiToolkitOptions>),
+          ...pick(run, ['shuffleTokens', 'keepTokens', 'noiseOffset', 'flipAugmentation']),
+          ...(['sd1', 'sdxl'].includes(run.ecosystem) && run.minSnrGamma !== undefined
+            ? { minSnrGamma: run.minSnrGamma }
+            : {}),
           triggerWord: run.trigger,
           // "Keep training": continue from a previous checkpoint's weights instead of the base model.
           ...(run.continueFrom ? { continueFrom: run.continueFrom } : {}),
@@ -346,9 +348,11 @@ async function findSubmittedRun(client: OrchestratorClient, key: string) {
 export async function submitTraining(
   client: OrchestratorClient,
   run: TrainingRunInput,
-  { callbacks, traceMode = 'events' }: SubmitOptions = {}
+  { callbacks, traceMode = 'events' }: SubmitOptions = {},
+  /** The server's rating found the dataset mature: the charge stays out of Green. */
+  mature = false
 ): Promise<string> {
-  const metadata: TrainingStudioMeta = { ...run.meta, v: META_VERSION };
+  const metadata: TrainingStudioMeta = { ...run.meta, v: META_VERSION, ...CLIP_SKIP_AS_SENT };
   const slug = run.meta.name ? slugify(run.meta.name) : '';
   const key = run.submitKey && SUBMIT_KEY.test(run.submitKey) ? run.submitKey : undefined;
 
@@ -379,7 +383,7 @@ export async function submitTraining(
       body: {
         tags,
         metadata: metadata as Record<string, unknown>,
-        ...trainingSteps(run, traceMode, run.matureAck === true),
+        ...trainingSteps(run, traceMode, mature),
         ...(callbacks ? { callbacks } : {}),
       },
       query: { wait: 0 },
@@ -404,15 +408,12 @@ export async function submitTraining(
     if (landed) return landed;
   }
   if (thrown !== undefined) throw thrown;
-  throw new TrainingSubmitError(
-    chargeFailureReason(describeSubmitError(error), run.matureAck === true),
-    status
-  );
+  throw new TrainingSubmitError(describeSubmitError(error), status);
 }
 
 /** The step and charge fields of a training submit; the readiness whatif sends the same. */
-function trainingSteps(run: TrainingRunInput, traceMode: string, matureUnlock: boolean) {
-  return { steps: [buildStep(run, traceMode)], ...chargeFields(run.currencies, matureUnlock) };
+function trainingSteps(run: TrainingRunInput, traceMode: string, mature: boolean) {
+  return { steps: [buildStep(run, traceMode)], ...chargeFields(run.currencies, mature) };
 }
 
 const READINESS_WHATIF_TIMEOUT_MS = 30_000;
@@ -542,9 +543,20 @@ function validateRun(run: TrainingRunInput | undefined, field: string): void {
     if (run[key] !== undefined && typeof run[key] !== 'boolean')
       fail(`${field}.${key}`, 'must be a boolean.');
   }
+  try {
+    parseAiToolkitOptions({ ...run, engine: run.engine ?? 'ai-toolkit' }, run);
+  } catch (error) {
+    if (error instanceof ZodError) {
+      const issue = error.issues[0]!;
+      fail(`${field}.${issue.path.join('.')}`, issue.message);
+    }
+    throw error;
+  }
   if (!isString(run.trigger)) fail(`${field}.trigger`, 'must be a string.');
   if (!Array.isArray(run.items) || run.items.length === 0)
     fail(`${field}.items`, 'must be a non-empty array.');
+  if (run.items.length > MAX_DATASET_BLOBS)
+    fail(`${field}.items`, `must hold at most ${MAX_DATASET_BLOBS} items.`);
   if (run.editTraining !== undefined && typeof run.editTraining !== 'boolean')
     fail(`${field}.editTraining`, 'must be a boolean.');
   if (run.editTraining) validatePairs(run, field);
@@ -589,8 +601,6 @@ function validateRun(run: TrainingRunInput | undefined, field: string): void {
     (!Array.isArray(run.currencies) || run.currencies.some((c) => !isString(c)))
   )
     fail(`${field}.currencies`, 'must be an array of strings.');
-  if (run.matureAck !== undefined && typeof run.matureAck !== 'boolean')
-    fail(`${field}.matureAck`, 'must be a boolean.');
   if (!run.meta || typeof run.meta !== 'object') fail(`${field}.meta`, 'must be an object.');
   if (run.meta.name !== undefined && !isString(run.meta.name))
     fail(`${field}.meta.name`, 'must be a string.');
@@ -672,23 +682,18 @@ async function assertCustomModelTrainable(
     );
 }
 
-/** Refuse, before anything is charged, a run whose dataset is mature but carries no confirm: the client's
- *  own mature count is not trusted. Under the v2 rating a confirm is dropped (no Yellow) when a clean count
- *  finds nothing mature, since Review may have sent it before its own count answered. Every run of a sweep
- *  shares its dataset, so it is rated once. Returns the runs as they will be charged. */
-async function assertMatureAcked(
+/** Whether each run's dataset is mature, which keeps its charge out of Green. The client's own count is not
+ *  trusted: a run it priced as not mature (no positive `meta.matureCount`) that would spend Green is refused
+ *  when the server counts mature images or can't read some (datasetCharge), before anything in the batch is
+ *  charged. Every run of a sweep shares its dataset, so it is rated once. */
+async function rateRuns(
   client: OrchestratorClient,
   runs: TrainingRunInput[],
   opts: Pick<SubmitOptions, 'datasetRating' | 'onMatureCount'> = {}
-): Promise<TrainingRunInput[]> {
+): Promise<boolean[]> {
   const counts = new Map<string, Promise<MatureCount>>();
-  const resolved: TrainingRunInput[] = [];
+  const mature: boolean[] = [];
   for (const run of runs) {
-    const acked = run.matureAck === true;
-    if (acked && !opts.datasetRating) {
-      resolved.push(run);
-      continue;
-    }
     const airs = [...new Set(run.items.map((item) => item.air))].sort();
     const key = airs.join('\n');
     if (!counts.has(key))
@@ -699,11 +704,18 @@ async function assertMatureAcked(
           return r;
         })
       );
-    const { mature, failed } = await counts.get(key)!;
-    if (!acked && mature > 0) throw new MatureAckRequiredError(mature);
-    resolved.push(acked && mature === 0 && failed === 0 ? { ...run, matureAck: false } : run);
+    const { mature: count, failed } = await counts.get(key)!;
+    const charge = datasetCharge({
+      mature: count,
+      failed,
+      pricedMature: typeof run.meta.matureCount === 'number' && run.meta.matureCount > 0,
+      spendsGreen: runCurrencies(run.currencies).includes('green'),
+    });
+    if (charge === 'reprice') throw new MatureRepriceError(count);
+    if (charge === 'unreadable') throw new DatasetUnreadableError(failed);
+    mature.push(charge === 'mature');
   }
-  return resolved;
+  return mature;
 }
 
 export interface SubmittedBatch {
@@ -732,6 +744,8 @@ export async function submitTrainingBatch(
 ): Promise<SubmittedBatch> {
   if (!Array.isArray(runs) || runs.length === 0)
     throw new TrainingBatchValidationError('runs must be a non-empty array.');
+  if (runs.length > MAX_RUNS)
+    throw new TrainingBatchValidationError(`At most ${MAX_RUNS} runs can start together.`);
   runs.forEach((run, i) => validateRun(run, `runs[${i}]`));
   if (opts.kohyaAllowed !== true && runs.some((run) => run.engine === 'kohya'))
     throw new TrainingBatchValidationError(KOHYA_UNAVAILABLE);
@@ -739,12 +753,14 @@ export async function submitTrainingBatch(
     const unavailable = unavailableRunMessage(run, opts.status);
     if (unavailable) throw new TrainingBatchValidationError(unavailable);
   }
-  const charged = await assertMatureAcked(client, runs, opts);
+  const mature = await rateRuns(client, runs, opts);
 
   // Every run's trigger word is checked before ANY submit, so a refused batch never part-charges. A
   // sweep repeats one trigger word across runs; each distinct one is checked once.
   for (const triggerWord of new Set(runs.map((run) => run.trigger)))
     await opts.checkText({ triggerWord });
+  for (const ecosystem of new Set(runs.map((run) => run.ecosystem)))
+    if (getTrainingLicenseTerms(ecosystem)) await opts.checkText({ licenseEcosystem: ecosystem });
 
   // All custom-model checks happen before ANY submit, so a refused batch never part-charges.
   const customModels = new Map<string, string>();
@@ -756,7 +772,8 @@ export async function submitTrainingBatch(
 
   const workflowIds: string[] = [];
   try {
-    for (const run of charged) workflowIds.push(await submitTraining(client, run, opts));
+    for (const [i, run] of runs.entries())
+      workflowIds.push(await submitTraining(client, run, opts, mature[i]));
   } catch (err) {
     opts.onRunError?.(err, workflowIds.length);
     if (workflowIds.length === 0) throw err;
@@ -798,17 +815,20 @@ export interface ContinueOpts {
   /** Clamped to 1–20 at build time — callers pass the raw value. */
   addEpochs: number;
   currencies?: string[];
-  /** The user confirmed the mature-dataset Yellow charge on the continue panel. */
-  matureAck?: boolean;
+  /** The mature count the user's quote showed. A submit that rates the source mature when the quote did
+   *  not, and would spend Green, is refused so the user sees the Yellow price first. */
+  quotedMatureCount?: number;
 }
 
-export { MatureAckRequiredError };
+export { DatasetUnreadableError, MatureRepriceError };
 
-const MATURE_NSFW_LEVELS = new Set(['r', 'x', 'xxx']);
 const PROBE_CONCURRENCY = 8;
 const PROBE_TTL_MS = 10 * 60 * 1000;
 const PROBE_CACHE_MAX = 200;
-const probeCache = new Map<string, { at: number; count: Promise<number> }>();
+const probeCache = new Map<
+  string,
+  { at: number; count: Promise<{ mature: number; failed: number }> }
+>();
 
 export interface MatureCount {
   images: number;
@@ -819,6 +839,11 @@ export interface MatureCount {
   rated: number;
   /** Blob ids the caller can read that have no stored v2 rating yet (always empty without a rating). */
   unratedKeys: string[];
+  /** The stored v2 verdict by the id the caller sent, only for blobs its HEAD could read. */
+  verdicts: Record<string, boolean>;
+  /** Of the `rated` images: v2 not mature where the upload rating was mature, and the reverse. */
+  v2NotMatureUploadMature: number;
+  v2MatureUploadNotMature: number;
 }
 
 /** How many of a dataset's blobs are mature. Each blob's X-NSFW-Level header counts R and above;
@@ -835,26 +860,41 @@ async function countMatureBlobs(
   let mature = 0;
   let failed = 0;
   let rated = 0;
+  let v2NotMatureUploadMature = 0;
+  let v2MatureUploadNotMature = 0;
   const unratedKeys: string[] = [];
+  const verdicts: Record<string, boolean> = {};
   await forEachPooled(airs, PROBE_CONCURRENCY, async (air) => {
     try {
       const { response } = await headBlob({ client, path: { blobId: blobIdFromAir(air) } });
       if (!response?.ok) failed++;
+      const uploadMature = isMatureNsfwLevel(response?.headers.get('x-nsfw-level'));
       // Only for a blob this caller's HEAD could read: the cache is shared across users.
       const v2 = rating && response?.ok ? stored.get(trainingBlobKey(air)) : undefined;
       if (v2) {
         rated++;
-        if (isMatureRating(v2, rating!.matureLevel)) mature++;
+        verdicts[air] = v2.mature;
+        if (v2.mature) mature++;
+        if (v2.mature && !uploadMature) v2MatureUploadNotMature++;
+        if (!v2.mature && uploadMature) v2NotMatureUploadMature++;
         return;
       }
       if (rating && response?.ok) unratedKeys.push(blobIdFromAir(air));
-      const level = response?.headers.get('x-nsfw-level')?.toLowerCase();
-      if (level && MATURE_NSFW_LEVELS.has(level)) mature++;
+      if (uploadMature) mature++;
     } catch {
       failed++;
     }
   });
-  return { images: airs.length, mature, failed, rated, unratedKeys };
+  return {
+    images: airs.length,
+    mature,
+    failed,
+    rated,
+    unratedKeys,
+    verdicts,
+    v2NotMatureUploadMature,
+    v2MatureUploadNotMature,
+  };
 }
 
 /** A dataset's mature count for Review, the same count the submit makes. */
@@ -876,7 +916,7 @@ function sourceMatureCount(
   airs: string[],
   rating?: DatasetRating,
   onMatureCount?: (count: MatureCount) => void
-): Promise<number> {
+): Promise<{ mature: number; failed: number }> {
   const now = Date.now();
   const key = rating ? `${workflowId}\nv2:${rating.matureLevel}` : workflowId;
   const hit = probeCache.get(key);
@@ -887,13 +927,13 @@ function sourceMatureCount(
     const { mature, failed, unratedKeys } = counted;
     if ((failed > 0 || unratedKeys.length > 0) && probeCache.get(key)?.count === count)
       probeCache.delete(key);
-    return mature;
+    return { mature, failed };
   });
   probeCache.set(key, { at: now, count });
   return count;
 }
 
-/** Quote and submit share continuation training parameters; mature-content charging fields can differ. */
+/** The continuation body the quote and the submit share. */
 async function buildContinuation(
   client: OrchestratorClient,
   opts: ContinueOpts,
@@ -909,7 +949,9 @@ async function buildContinuation(
   body: WorkflowTemplate;
   steps: number | undefined;
   triggerWord: string;
+  ecosystem: string;
   matureCount: number;
+  unreadable: number;
 }> {
   const addEpochs = Math.min(20, Math.max(1, Math.round(opts.addEpochs)));
   const { data: wf, error: getError } = await readWorkflow(client, opts.workflowId);
@@ -973,22 +1015,29 @@ async function buildContinuation(
         .filter((a): a is string => typeof a === 'string' && a.length > 0)
     ),
   ];
-  // A stamped positive count is trusted (it can only ask the user to confirm); 0 or none is re-checked.
-  const matureCount =
+  // A stamped positive count is trusted (it can only keep the charge out of Green); 0 or none is re-checked.
+  const { mature: matureCount, failed: unreadable } =
     typeof srcMeta.matureCount === 'number' && srcMeta.matureCount > 0
-      ? srcMeta.matureCount
+      ? { mature: srcMeta.matureCount, failed: 0 }
       : await sourceMatureCount(client, opts.workflowId, airs, datasetRating, onMatureCount);
-  const matureUnlock = matureCount > 0 && opts.matureAck === true;
   const name = srcMeta.name ? `${srcMeta.name} (further)` : undefined;
+  // Publish state belongs to the source's model; carried over, the new run shows as published and can't be published.
+  const {
+    published: _published,
+    modelId: _modelId,
+    modelVersionId: _modelVersionId,
+    ...inherited
+  } = srcMeta;
   // Lineage always points at the IMMEDIATE parent — a copied-through sourceWorkflowId from the
   // source's own metadata would skip a link in the chain.
   const metadata: TrainingStudioMeta = {
-    ...srcMeta,
+    ...inherited,
     name: name ?? srcMeta.name,
     v: META_VERSION,
     sourceWorkflowId: opts.workflowId,
     sourceEpoch: opts.fromEpoch,
     matureCount,
+    ...CLIP_SKIP_AS_SENT,
   };
   const slug = name ? slugify(name) : '';
 
@@ -996,7 +1045,7 @@ async function buildContinuation(
   // back (defaultSteps, storageBuzzPerEpoch, …), which it rejects on re-submit.
   const continuedInput =
     input.engine === 'kohya'
-      ? continueKohyaInput(input, addEpochs, steps, continueFrom, traceMode)
+      ? continueKohyaInput(input, srcMeta, addEpochs, steps, continueFrom, traceMode)
       : {
           engine: 'ai-toolkit',
           ecosystem: input.ecosystem,
@@ -1019,8 +1068,28 @@ async function buildContinuation(
           optimizerType: input.optimizerType,
           networkDim: input.networkDim,
           networkAlpha: input.networkAlpha,
-          resolution: input.resolution,
-          ...pick(input, EXTRA_PARAM_FIELDS),
+          ...parseAiToolkitOptions(
+            {
+              engine: 'ai-toolkit',
+              ecosystem: String(input.ecosystem),
+              lrScheduler: typeof input.lrScheduler === 'string' ? input.lrScheduler : undefined,
+              steps,
+            },
+            {
+              lrWarmupSteps:
+                typeof input.lrWarmupSteps === 'number'
+                  ? Math.min(input.lrWarmupSteps, steps ?? 10000)
+                  : undefined,
+              captionDropoutRate:
+                typeof input.captionDropoutRate === 'number' ? input.captionDropoutRate : undefined,
+              rankDropout: typeof input.rankDropout === 'number' ? input.rankDropout : undefined,
+              trainConv: typeof input.trainConv === 'boolean' ? input.trainConv : undefined,
+            }
+          ),
+          ...pick(input, ['shuffleTokens', 'keepTokens', 'noiseOffset', 'flipAugmentation']),
+          ...(['sd1', 'sdxl'].includes(String(input.ecosystem))
+            ? { minSnrGamma: input.minSnrGamma }
+            : {}),
           triggerWord: input.triggerWord,
           continueFrom,
           ...(traceMode !== 'none' ? { trace: traceMode } : {}),
@@ -1040,49 +1109,23 @@ async function buildContinuation(
         : [CIVITAI_TAG, TRAINING_TAG],
       metadata: metadata as Record<string, unknown>,
       steps: [continuedStep],
-      ...chargeFields(opts.currencies, matureUnlock),
+      // A quote that showed mature keeps it out of Green, even if this count has a failed lookup.
+      ...chargeFields(opts.currencies, matureCount > 0 || (opts.quotedMatureCount ?? 0) > 0),
       ...(callbacks ? { callbacks } : {}),
     },
     steps,
     triggerWord: String(input.engine === 'kohya' ? srcMeta.trigger ?? '' : input.triggerWord ?? ''),
+    ecosystem,
     matureCount,
+    unreadable,
   };
 }
 
-const KOHYA_CONTINUE_KEYS = [
-  'model',
-  'numRepeats',
-  'trainBatchSize',
-  'resolution',
-  'enableBucket',
-  'shuffleCaption',
-  'keepTokens',
-  'clipSkip',
-  'flipAugmentation',
-  'unetLR',
-  'textEncoderLR',
-  'trainTextEncoder',
-  'lrScheduler',
-  'lrSchedulerNumCycles',
-  'minSnrGamma',
-  'networkDim',
-  'networkAlpha',
-  'noiseOffset',
-  'optimizerType',
-  'seed',
-  'fp8Base',
-  'blocksToSwap',
-  'vParameterization',
-  'zeroTerminalSnr',
-  'trainingData',
-  'samples',
-  'clipLModel',
-  'textEncoderModel',
-  'vaeModel',
-] as const satisfies readonly (keyof KohyaInput)[];
+const KOHYA_CONTINUE_KEYS = SHARED_KOHYA_CONTINUE_KEYS satisfies readonly (keyof KohyaInput)[];
 
 function continueKohyaInput(
   input: Record<string, unknown>,
+  sourceMeta: TrainingStudioMeta,
   epochs: number,
   steps: number | undefined,
   continueFrom: string,
@@ -1093,9 +1136,7 @@ function continueKohyaInput(
       'keep training: Kohya supports at most 20 checkpoints and 10,000 steps per run.'
     );
   return {
-    ...Object.fromEntries(
-      KOHYA_CONTINUE_KEYS.filter((key) => input[key] !== undefined).map((key) => [key, input[key]])
-    ),
+    ...copyKohyaInput(input, KOHYA_CONTINUE_KEYS, sourceMeta),
     engine: 'kohya',
     maxTrainEpochs: epochs,
     ...(steps ? { steps } : {}),
@@ -1110,16 +1151,28 @@ export async function continueTraining(
   opts: ContinueOpts,
   submitOpts: SubmitOptions & { checkText: TrainingTextCheck }
 ): Promise<string> {
-  const { body, triggerWord, matureCount } = await buildContinuation(client, opts, submitOpts);
-  if (matureCount > 0 && opts.matureAck !== true) throw new MatureAckRequiredError(matureCount);
+  const { body, triggerWord, ecosystem, matureCount, unreadable } = await buildContinuation(
+    client,
+    opts,
+    submitOpts
+  );
+  const charge = datasetCharge({
+    mature: matureCount,
+    failed: unreadable,
+    pricedMature: typeof opts.quotedMatureCount === 'number' && opts.quotedMatureCount > 0,
+    spendsGreen: runCurrencies(opts.currencies).includes('green'),
+  });
+  if (charge === 'reprice') throw new MatureRepriceError(matureCount);
+  if (charge === 'unreadable') throw new DatasetUnreadableError(unreadable);
   // The source run may predate the check, so its trigger word is checked again before it trains again.
   await submitOpts.checkText({ triggerWord });
+  if (getTrainingLicenseTerms(ecosystem))
+    await submitOpts.checkText({ licenseEcosystem: ecosystem });
   const { data, error, response } = await submitWorkflow({ client, body, query: { wait: 0 } });
   if (!data?.id) {
-    const reason = describeSubmitError(error, response?.status);
-    if (body.allowMatureContent === true && reason === INSUFFICIENT_BUZZ)
-      throw new Error(MATURE_SHORT_OF_YELLOW);
-    throw new Error(`keep training: submit failed (${reason})`);
+    throw new Error(
+      `keep training: submit failed (${describeSubmitError(error, response?.status)})`
+    );
   }
   return data.id;
 }
@@ -1131,12 +1184,7 @@ export async function continueTrainingWhatIf(
   opts: ContinueOpts,
   submitOpts: SubmitOptions = {}
 ): Promise<{ cost: number | null; steps: number | undefined; matureCount: number }> {
-  // Priced without the unlock: the total is the same, and a whatif needs no Yellow on hand.
-  const { body, steps, matureCount } = await buildContinuation(
-    client,
-    { ...opts, matureAck: false },
-    submitOpts
-  );
+  const { body, steps, matureCount } = await buildContinuation(client, opts, submitOpts);
   const { data, error, response } = await submitWorkflow({ client, body, query: { whatif: true } });
   if (!data)
     throw new Error(`keep training quote failed: ${describeSubmitError(error, response?.status)}`);

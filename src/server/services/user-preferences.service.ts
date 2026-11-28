@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
 import { isImageReviewed } from '~/server/common/image-visibility';
+import { hasBlockMarker } from '~/server/common/image-block-marker';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { setUserFollowCached, userFollowsCache } from '~/server/redis/caches';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
@@ -31,6 +32,7 @@ import {
   UserEngagementType,
 } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
+import { isRestrictedImage } from '~/shared/utils/restricted-image';
 
 const HIDDEN_CACHE_EXPIRY_BASE = 60 * 60 * 4; // 4 hours
 const HIDDEN_CACHE_JITTER_MAX = 60 * 30; // up to 30 minutes of jitter
@@ -273,6 +275,14 @@ export const BlockedByUsers = createUserCache({
         WHERE ue."targetUserId" = ${userId} AND ue.type = ${UserEngagementType.Block}::"UserEngagementType"
       `,
 });
+
+/** Users who blocked this viewer, for hiding their content; none for signed-out viewers and moderators. */
+export async function getUsersBlockingViewer(
+  viewer: { id?: number; isModerator?: boolean | null } | undefined
+): Promise<Set<number>> {
+  if (viewer?.id === undefined || viewer.isModerator) return new Set();
+  return new Set((await BlockedByUsers.getCached({ userId: viewer.id })).map((u) => u.id));
+}
 
 // User ids the given user has a block relationship with, in either direction.
 // A block hides the pair's shop content from each other and forbids purchases
@@ -1036,7 +1046,7 @@ async function removeBlockedUsersFollow({
   if (!unfollowed) return;
   await setUserFollowCached({ userId: targetUserId, targetUserId: userId, following: false });
   // The metric job finds changed pairs by `createdAt`, which a deleted row lacks.
-  // Dynamic: a static import closes an import cycle through the search index.
+  // Dynamic import, but not a cycle cut: the cycle guards count dynamic imports (docs/dev/import-cycles.md).
   const { userMetrics } = await import('~/server/metrics/user.metrics');
   await userMetrics.queueUpdate([userId, targetUserId]);
 }
@@ -1132,6 +1142,13 @@ async function toggleBlockUser({
 
   await BlockedUsers.refreshCache({ userId });
   await BlockedByUsers.refreshCache({ userId: targetUserId });
+  const { bustVersionShowcasesForUser } = await import(
+    '~/server/services/version-showcase.service'
+  );
+  await Promise.all([
+    bustVersionShowcasesForUser(targetUserId, userId),
+    bustVersionShowcasesForUser(userId, targetUserId),
+  ]);
 
   // Every block cascades, not only a newly established one. `declinePlacementsOnBlock`
   // touches only `pending` rows and caps at 200 per run, so a user with a larger
@@ -1248,6 +1265,8 @@ export async function getHiddenImagesForUser({
             // spreads it), and swaps the tile for the ToS notice on `tosViolation`.
             tosViolation: true,
             needsReview: true,
+            modelRestricted: true,
+            blockedFor: true,
             post: { select: { publishedAt: true, availability: true, userId: true } },
           },
         },
@@ -1271,7 +1290,16 @@ export async function getHiddenImagesForUser({
 
   return {
     items: engagements.slice(0, limit).map(({ image, createdAt }) => {
-      const { post, ingestion, nsfwLevelLocked, metadata, scanJobs, ...rest } = image;
+      const {
+        post,
+        ingestion,
+        nsfwLevelLocked,
+        metadata,
+        scanJobs,
+        modelRestricted,
+        blockedFor,
+        ...rest
+      } = image;
       const isProfileCover = coverImageIds.has(image.id);
       const isOwner = image.userId === userId;
 
@@ -1289,9 +1317,11 @@ export async function getHiddenImagesForUser({
             ?.nsfwLevelReason,
           scanJobs,
         }) &&
+          !hasBlockMarker({ ingestion, nsfwLevel: rest.nsfwLevel, blockedFor }) &&
           rest.nsfwLevel !== NsfwLevel.Blocked &&
           !rest.tosViolation &&
           !rest.needsReview &&
+          !isRestrictedImage({ nsfwLevel: rest.nsfwLevel, modelRestricted }) &&
           (post
             ? !!post.publishedAt &&
               post.publishedAt <= now &&

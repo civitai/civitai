@@ -1,5 +1,6 @@
 import { withPlaceholderData } from '~/hooks/trpcHelpers';
 import type { SemanticModelSearchRequest } from '~/server/schema/semantic-model-search.schema';
+import { spellcheckFor, useSearchAsTyped } from '~/components/Search/useSearchAsTyped';
 import { keepPreviousData } from '@tanstack/react-query';
 import { isEqual } from 'lodash-es';
 import { useRouter } from 'next/router';
@@ -37,6 +38,7 @@ import { trpc } from '~/utils/trpc';
 import { booleanString } from '~/utils/zod-helpers';
 import { baseModels } from '~/shared/constants/basemodel.constants';
 import { usernameSchema } from '~/shared/zod/username.schema';
+import { pageRefusal } from '~/components/Search/search-refusal';
 
 export const modelQueryParamSchema = z
   .object({
@@ -338,10 +340,12 @@ export const useSemanticModelFeed = (
       ? []
       : browsingSettingsAddons.settings.excludedTagIds ?? []),
   ];
+  const { asTyped } = useSearchAsTyped(query);
   const { cursor, ids, modelVersionIds, query: _feedQuery, limit, ...feedFilters } = filters;
   const input: SemanticModelSearchRequest = {
     ...feedFilters,
     query: query ?? '',
+    ...spellcheckFor(asTyped),
     browsingLevel,
     excludedTagIds,
     disablePoi: browsingSettingsAddons.settings.disablePoi ? true : undefined,
@@ -351,7 +355,7 @@ export const useSemanticModelFeed = (
     enabled: !!query,
     getNextPageParam: (lastPage) => lastPage.nextCursor,
     ...withPlaceholderData({ keepPreviousData: true }),
-    // The feed's retry banner and its fall-back to the plain feed drive every attempt.
+    // The feed's retry banner drives every attempt; a failure never falls back to the keyword feed.
     retry: 0,
     trpc: { context: { skipBatch: true }, abortOnUnmount: true },
   });
@@ -363,6 +367,7 @@ export const useSemanticModelFeed = (
     ...rest,
     models: items,
     isLoading: rest.isLoading || loadingPreferences,
+    serverRefusal: pageRefusal(data?.pages[0], rest.isPlaceholderData),
     correctedQuery: data?.pages[0]?.correctedQuery,
     // Identifies the search, so the feed can scroll to the top when it changes.
     searchKey: query ? JSON.stringify(input) : undefined,
@@ -427,7 +432,14 @@ export const useToggleCheckpointCoverageMutation = () => {
  */
 const SHOWCASE_PAGE_SIZE = 50;
 
-export const useModelShowcaseCollection = ({ modelId }: { modelId: number }) => {
+export const useModelShowcaseCollection = ({
+  modelId,
+  withModels = true,
+}: {
+  modelId: number;
+  /** False reads only the collection: its models are a feed load, so fetch them where shown. */
+  withModels?: boolean;
+}) => {
   const queryUtils = trpc.useUtils();
 
   const { data: showcase, isLoading: loadingCollection } =
@@ -446,7 +458,7 @@ export const useModelShowcaseCollection = ({ modelId }: { modelId: number }) => 
       periodMode: 'published',
       limit: SHOWCASE_PAGE_SIZE,
     },
-    { enabled: !loadingCollection && !!showcase?.id, keepPreviousData: true }
+    { enabled: withModels && !loadingCollection && !!showcase?.id, keepPreviousData: true }
   );
 
   const setShowcaseMutation = trpc.model.setCollectionShowcase.useMutation({

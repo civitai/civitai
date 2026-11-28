@@ -206,6 +206,9 @@ beforeAll(async () => {
   const [addValue, partition] = migration('20270108094000_post_text_comment_type').split('\n-- 2.');
   await db.pg.exec(addValue);
   await db.pg.exec(`-- 2.${partition}`);
+  const [fpValue, fpRest] = migration('20271125140000_feature_page_comments').split('\n-- 2.');
+  await db.pg.exec(fpValue);
+  await db.pg.exec(`-- 2.${fpRest}`);
   await db.pg.exec(COMMENTS);
   holder.kysely = new Kysely({ dialect: dialect(db.pg) });
 });
@@ -498,6 +501,52 @@ describe('notification queries on CommentV3', () => {
             expect(ours(await emitted('new-comment-reply'))).toEqual([[404, 1]]);
             expect(ours(await emitted('new-thread-response'))).toEqual([]);
           }
+        );
+      }
+    );
+  });
+
+  it('replies on an article under the availability rule reach only its owner', async () => {
+    const ours = (out: Emitted[]) => pairs(out).filter(([commentId]) => commentId >= 401);
+    await temporarily(
+      `INSERT INTO "CommentV3"(id, "entityType", "entityId", "parentId", "replyToId", "userId", content, "createdAt") VALUES
+         (401, 'article', 10, NULL, NULL, 2, 'a', now()), (402, 'article', 10, 106, NULL, 3, 'b', now()),
+         (403, 'article', 10, 401, NULL, 1, 'c', now()), (404, 'article', 10, 401, 403, 3, 'd', now())`,
+      `DELETE FROM "CommentV3" WHERE id BETWEEN 401 AND 404`,
+      async () => {
+        expect(ours(await emitted('new-comment-reply'))).toEqual([
+          [402, 10],
+          [403, 2],
+          [404, 1],
+        ]);
+        await temporarily(
+          `UPDATE "Article" SET availability = 'Private' WHERE id = 10`,
+          `UPDATE "Article" SET availability = 'Public' WHERE id = 10`,
+          async () => {
+            // The owner (1) still hears the reply to their own comment.
+            expect(ours(await emitted('new-comment-reply'))).toEqual([[404, 1]]);
+            expect(ours(await emitted('new-thread-response'))).toEqual([]);
+          }
+        );
+      }
+    );
+  });
+
+  it('new-mention follows the article availability rule', async () => {
+    const mentioned = async () =>
+      pairs(await run(mentionNotifications['new-mention'].prepareQuery)).filter(
+        ([commentId]) => commentId === 400
+      );
+    await temporarily(
+      `INSERT INTO "CommentV3"(id, "entityType", "entityId", "userId", content, "createdAt")
+         VALUES (400, 'article', 10, 2, 'see "mention:9"', now())`,
+      `DELETE FROM "CommentV3" WHERE id = 400`,
+      async () => {
+        expect(await mentioned()).toEqual([[400, 9]]);
+        await temporarily(
+          `UPDATE "Article" SET availability = 'Private' WHERE id = 10`,
+          `UPDATE "Article" SET availability = 'Public' WHERE id = 10`,
+          async () => expect(await mentioned()).toEqual([])
         );
       }
     );
@@ -1012,4 +1061,56 @@ describe('a comment hidden for ToS', () => {
     );
     expect(rows[0].n).toBe(1);
   });
+});
+
+describe('a Feature Pages comment', () => {
+  // Topic 1: 880 (by 2) names user 9, and 881 (by 3) answers it. Image 10's 101, which names user 6
+  // and answers 100 by 2, is the control in each check.
+  const FP = `
+    INSERT INTO "FeaturePageTopic"(id, urn, kind) VALUES (1, 'urn:data.civitai.com:feature-pages/requests/r1', 'request');
+    INSERT INTO "CommentTopic"("entityType", "entityId") VALUES ('featurePage', 1);
+    INSERT INTO "CommentV3"(id, "entityType", "entityId", "parentId", "userId", content, "createdAt") VALUES
+      (880, 'featurePage', 1, NULL, 2, 'on a feature "mention:9"', now()),
+      (881, 'featurePage', 1, 880, 3, 'a reply on the feature', now());`;
+  const UNDO = `DELETE FROM "CommentV3" WHERE id IN (881, 880);
+    DELETE FROM "CommentTopic" WHERE "entityType" = 'featurePage';
+    DELETE FROM "FeaturePageTopic";`;
+  const ids = (out: Emitted[]) => out.map((r) => r.details.commentId as number);
+
+  it('notifies no one of a reply or a response, while a reply on an image still notifies', () =>
+    temporarily(FP, UNDO, async () => {
+      for (const type of [
+        'new-comment-reply',
+        'new-thread-response',
+        'new-comment-response',
+      ] as const) {
+        const out = ids(await emitted(type));
+        expect(out).not.toContain(880);
+        expect(out).not.toContain(881);
+      }
+      expect(ids(await emitted('new-comment-reply'))).toContain(101);
+    }));
+
+  it('sends no mention, while a mention on an image still goes out', () =>
+    temporarily(FP, UNDO, async () => {
+      const out = ids(await run(mentionNotifications['new-mention'].prepareQuery));
+      expect(out).not.toContain(880);
+      expect(out).toContain(101);
+    }));
+
+  it('is never previewed in a notification, while an image comment is', () =>
+    temporarily(FP, UNDO, async () => {
+      const notifications = [881, 101].map((commentId) => ({
+        type: 'new-comment-reply',
+        details: { version: 3, commentId } as Record<string, unknown>,
+      }));
+      await commentDetailFetcher.fetcher(
+        notifications as never,
+        {
+          db: { user: { findMany: async () => [] } },
+        } as never
+      );
+      expect(notifications[0].details.content).toBeUndefined();
+      expect(notifications[1].details.content).toBeDefined();
+    }));
 });

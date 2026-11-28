@@ -1,3 +1,4 @@
+import { trainingPreview } from './orchestrator-core';
 import { describe, expect, it, vi } from 'vitest';
 import { trainingWhatIf } from './orchestrator-core';
 import { buildKohyaInput } from './kohya-training';
@@ -13,7 +14,8 @@ import {
   continueTrainingWhatIf,
   countDatasetMature,
   KOHYA_UNAVAILABLE,
-  MatureAckRequiredError,
+  DatasetUnreadableError,
+  MatureRepriceError,
   submitTraining,
   submitTrainingBatch,
   TrainingBatchValidationError,
@@ -74,6 +76,103 @@ const baseRun = (): TrainingRunInput => ({
 });
 
 describe('extra ai-toolkit fields on the wire', () => {
+  it('quotes and submits the same new settings, and returns ignored-field warnings', async () => {
+    const run = {
+      ...baseRun(),
+      lrScheduler: 'constant',
+      lrWarmupSteps: 250,
+      captionDropoutRate: 0,
+      rankDropout: 0.1,
+      trainConv: true,
+    };
+    submitWorkflow.mockResolvedValueOnce({
+      data: {
+        cost: { total: 100 },
+        steps: [{ warnings: [{ code: 'fieldIgnored', message: 'Setting is not supported.' }] }],
+      },
+    });
+    expect(await trainingPreview(client, run)).toEqual({
+      cost: 100,
+      warnings: ['Setting is not supported.'],
+    });
+    const quoted = submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input;
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-options' } });
+    await submitTraining(client, run);
+    const submitted = submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input;
+    for (const field of [
+      'lrWarmupSteps',
+      'captionDropoutRate',
+      'rankDropout',
+      'trainConv',
+    ] as const) {
+      expect(quoted[field]).toBe(run[field]);
+      expect(submitted[field]).toBe(run[field]);
+    }
+    expect(submitted).not.toHaveProperty('resolution');
+  });
+
+  it('normalizes Prodigy and locked text encoder rates identically in previews and submissions', async () => {
+    for (const ecosystem of ['sdxl', 'minimaxh3']) {
+      const run = {
+        ...baseRun(),
+        ecosystem,
+        optimizer: 'Prodigy',
+        unetLr: 0.0004,
+        textEncoderLr: 0.00005,
+      };
+      submitWorkflow.mockResolvedValueOnce({ data: { cost: { total: 100 } } });
+      await trainingPreview(client, run);
+      const quoted = submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input;
+      submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-lr' } });
+      await submitTraining(client, run);
+      const submitted = submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input;
+      expect(quoted.lr).toBe(1);
+      expect(quoted.textEncoderLr).toBe(ecosystem === 'sdxl' ? 1 : 0);
+      expect(submitted).toMatchObject({
+        lr: quoted.lr,
+        textEncoderLr: quoted.textEncoderLr,
+        trainTextEncoder: quoted.trainTextEncoder,
+      });
+    }
+  });
+
+  it('drops stale options after changing the model, scheduler or engine', async () => {
+    for (const override of [{ ecosystem: 'yue2' }, { engine: 'flux2-dev' }]) {
+      submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-gated' } });
+      await submitTraining(client, {
+        ...baseRun(),
+        ...override,
+        lrWarmupSteps: 200,
+        captionDropoutRate: 0.5,
+        rankDropout: 0.1,
+        trainConv: true,
+      });
+      const input = submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input;
+      expect(input).not.toHaveProperty('lrWarmupSteps');
+      expect(input).not.toHaveProperty('captionDropoutRate');
+      expect(input).not.toHaveProperty('trainConv');
+      if (override.engine) expect(input).not.toHaveProperty('rankDropout');
+    }
+  });
+
+  it('refuses invalid dropout and warmup values before spending Buzz', async () => {
+    const calls = submitWorkflow.mock.calls.length;
+    for (const options of [
+      { rankDropout: 1 },
+      { captionDropoutRate: -0.1 },
+      { captionDropoutRate: 1.01 },
+      { lrWarmupSteps: 2001 },
+      { lrWarmupSteps: 0.5 },
+    ]) {
+      await expect(
+        submitTrainingBatch(client, [{ ...baseRun(), lrScheduler: 'constant', ...options }], {
+          checkText,
+        })
+      ).rejects.toBeInstanceOf(TrainingBatchValidationError);
+    }
+    expect(submitWorkflow.mock.calls.length).toBe(calls);
+  });
+
   it('sends only the fields the run set', async () => {
     submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-1' } });
     await submitTraining(client, {
@@ -83,7 +182,7 @@ describe('extra ai-toolkit fields on the wire', () => {
       noiseOffset: 0.1,
       flipAugmentation: false,
     });
-    const body = submitWorkflow.mock.calls[0]![0].body;
+    const body = submitWorkflow.mock.calls.at(-1)![0].body;
     const input = body.steps[0].input;
     expect(input).toMatchObject({
       shuffleTokens: true,
@@ -169,13 +268,63 @@ describe('the trigger word check', () => {
   });
 });
 
+describe('the base model licence check', () => {
+  const h3Image = (): TrainingRunInput => ({
+    ...baseRun(),
+    ecosystem: 'minimaxh3image',
+    batchSize: 1,
+    textEncoderLr: 0,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  });
+
+  it('asks about a licensed model once, before submitting any run', async () => {
+    const events: unknown[] = [];
+    const check = async (input: unknown) => void events.push(input);
+    submitWorkflow
+      .mockImplementationOnce(async () => (events.push('submit'), { data: { id: 'wf-7' } }))
+      .mockImplementationOnce(async () => (events.push('submit'), { data: { id: 'wf-8' } }));
+    await submitTrainingBatch(client, [h3Image(), { ...h3Image(), steps: 999 }], {
+      checkText: check,
+    });
+    expect(events).toEqual([
+      { triggerWord: baseRun().trigger },
+      { licenseEcosystem: 'minimaxh3image' },
+      'submit',
+      'submit',
+    ]);
+  });
+
+  it('a licence not yet accepted stops the whole batch, so nothing is charged', async () => {
+    const calls = submitWorkflow.mock.calls.length;
+    const refuse = async (input: Parameters<TrainingTextCheck>[0]) => {
+      if ('licenseEcosystem' in input) throw new TrainingTextRefusedError('Accept the licence.');
+    };
+    await expect(
+      submitTrainingBatch(client, [baseRun(), h3Image()], { checkText: refuse })
+    ).rejects.toBeInstanceOf(TrainingTextRefusedError);
+    expect(submitWorkflow.mock.calls.length).toBe(calls);
+  });
+});
+
 describe('keep-training currencies', () => {
   const sourceRun = {
     data: {
       steps: [
         {
           $type: 'training',
-          input: { engine: 'ai-toolkit', ecosystem: 'sdxl', epochs: 10, steps: 2000 },
+          input: {
+            engine: 'ai-toolkit',
+            ecosystem: 'sdxl',
+            epochs: 10,
+            steps: 2000,
+            lrScheduler: 'constant',
+            lrWarmupSteps: 1500,
+            rankDropout: 0.1,
+            captionDropoutRate: 0,
+            trainConv: true,
+            resolution: 2048,
+          },
           output: { epochs: [{ epochNumber: 10, model: { id: 'blob-10', available: true } }] },
         },
       ],
@@ -192,6 +341,17 @@ describe('keep-training currencies', () => {
     const [quoted, submitted] = submitWorkflow.mock.calls.slice(-2);
     expect(quoted![0].body.currencies).toEqual(['blue', 'green']);
     expect(submitted![0].body.currencies).toEqual(['blue', 'green']);
+    for (const call of [quoted, submitted]) {
+      const input = call![0].body.steps[0].input;
+      expect(input).toMatchObject({
+        steps: 1000,
+        lrWarmupSteps: 1000,
+        rankDropout: 0.1,
+        captionDropoutRate: 0,
+        trainConv: true,
+      });
+      expect(input).not.toHaveProperty('resolution');
+    }
   });
 
   it("checks the source run's trigger word again, and submits nothing when it is refused", async () => {
@@ -216,6 +376,28 @@ describe('keep-training currencies', () => {
       TrainingTextRefusedError
     );
     expect(refuse).toHaveBeenCalledWith({ triggerWord: 'mystyle' });
+    expect(submitWorkflow.mock.calls.length).toBe(calls);
+  });
+
+  it("checks the licence of the source run's model again, and submits nothing when it is not accepted", async () => {
+    getWorkflow.mockResolvedValue({
+      data: {
+        steps: [
+          {
+            ...sourceRun.data.steps[0],
+            input: { ...sourceRun.data.steps[0].input, ecosystem: 'minimaxh3image' },
+          },
+        ],
+      },
+    });
+    const calls = submitWorkflow.mock.calls.length;
+    const refuse = vi.fn(async (input: Parameters<TrainingTextCheck>[0]) => {
+      if ('licenseEcosystem' in input) throw new TrainingTextRefusedError('Accept the licence.');
+    });
+    await expect(continueTraining(client, opts, { checkText: refuse })).rejects.toBeInstanceOf(
+      TrainingTextRefusedError
+    );
+    expect(refuse).toHaveBeenCalledWith({ licenseEcosystem: 'minimaxh3image' });
     expect(submitWorkflow.mock.calls.length).toBe(calls);
   });
 
@@ -280,6 +462,41 @@ describe('keep-training base model pin', () => {
     submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-next' } });
     await continueTraining(client, opts, { checkText });
     expect(submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input.samples).toEqual(samples);
+  });
+});
+
+describe('keep-training a published run', () => {
+  it("starts unpublished, with no link to the source run's model", async () => {
+    getWorkflow.mockResolvedValue({
+      data: {
+        metadata: {
+          name: 'phaser',
+          trigger: 'ohwx',
+          matureCount: 0,
+          published: true,
+          modelId: 3057695,
+          modelVersionId: 3478834,
+        },
+        steps: [
+          {
+            $type: 'training',
+            input: { engine: 'ai-toolkit', ecosystem: 'sdxl', epochs: 10, steps: 2000 },
+            output: { epochs: [{ epochNumber: 10, model: { id: 'blob-10', available: true } }] },
+          },
+        ],
+      },
+    });
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-next' } });
+    await continueTraining(
+      client,
+      { workflowId: 'wf-src', fromEpoch: 10, addEpochs: 5 },
+      { checkText }
+    );
+    const { metadata } = submitWorkflow.mock.calls.at(-1)![0].body;
+    expect(metadata).not.toHaveProperty('published');
+    expect(metadata).not.toHaveProperty('modelId');
+    expect(metadata).not.toHaveProperty('modelVersionId');
+    expect(metadata).toMatchObject({ name: 'phaser (further)', trigger: 'ohwx' });
   });
 });
 
@@ -706,9 +923,7 @@ describe('text encoder on a model that cannot train it', () => {
   });
 });
 
-// Mature training data is charged in Yellow only after the user confirms: every body is `manual`, and only a
-// confirmed mature run carries the unlock.
-describe('mature charge: Yellow only after the user confirms', () => {
+describe('mature charge: Blue first, never Green', () => {
   const nsfwHead = (level: string | null) => ({
     response: new Response(null, {
       status: 204,
@@ -762,28 +977,15 @@ describe('mature charge: Yellow only after the user confirms', () => {
       expect(body.currencies).toEqual(['blue', 'yellow']);
     });
 
-    it('an acked mature run unlocks at submit and is charged from Blue + Yellow, never Green', async () => {
-      submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-c' } });
-      await submitTraining(client, {
-        ...baseRun(),
-        currencies: ['blue', 'green'],
-        matureAck: true,
-      });
-      const body = submitWorkflow.mock.calls.at(-1)![0].body;
-      expect(body.upgradeMode).toBe('manual');
-      expect(body.allowMatureContent).toBe(true);
-      expect(body.currencies).toEqual(['blue', 'yellow']);
-    });
-
     it('a paid-only mature run is charged in Yellow only — no Blue, never Green', async () => {
       submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-c2' } });
-      await submitTraining(client, { ...baseRun(), currencies: ['green'], matureAck: true });
+      await submitTraining(client, { ...baseRun(), currencies: ['green'] }, {}, true);
       const body = submitWorkflow.mock.calls.at(-1)![0].body;
-      expect(body.allowMatureContent).toBe(true);
+      expect('allowMatureContent' in body).toBe(false);
       expect(body.currencies).toEqual(['yellow']);
     });
 
-    it('refuses an unconfirmed mature dataset before anything is charged, rating a sweep once', async () => {
+    it('refuses a Green-paid sweep priced as not mature that the server rates mature, rating it once', async () => {
       headBlob.mockReset();
       headBlob.mockImplementation(rateSpicy);
       const before = submitWorkflow.mock.calls.length;
@@ -795,52 +997,93 @@ describe('mature charge: Yellow only after the user confirms', () => {
         submitTrainingBatch(
           client,
           [
-            { ...baseRun(), items },
-            { ...baseRun(), epochs: 12, items },
+            { ...baseRun(), items, currencies: ['blue', 'green'] },
+            { ...baseRun(), epochs: 12, items, currencies: ['blue', 'green'] },
           ],
           { checkText }
         )
-      ).rejects.toBeInstanceOf(MatureAckRequiredError);
+      ).rejects.toBeInstanceOf(MatureRepriceError);
       expect(submitWorkflow.mock.calls.length).toBe(before);
       expect(headBlob).toHaveBeenCalledTimes(2);
       for (const [args] of headBlob.mock.calls) expect(args.query?.workflowId).toBeUndefined();
     });
 
-    it('submits a confirmed mature sweep without re-rating it', async () => {
+    // An unreadable image on a Green charge is refused, not priced (civitai/civitai#10541).
+    const unreadableSpicy = (args: { path: { blobId: string } }) =>
+      args.path.blobId === 'spicy-2'
+        ? Promise.resolve({ response: new Response(null, { status: 503 }) })
+        : Promise.resolve(nsfwHead('PG'));
+    const twoItems = [
+      { air: 'urn:air:other:blob:civitai:blob@safe-1', caption: 'a' },
+      { air: 'urn:air:other:blob:civitai:blob@spicy-2', caption: 'b' },
+    ];
+
+    it('refuses a Green run priced as not mature when an image cannot be read, charging nothing', async () => {
       headBlob.mockReset();
-      submitWorkflow
-        .mockResolvedValueOnce({ data: { id: 'wf-s1' } })
-        .mockResolvedValueOnce({ data: { id: 'wf-s2' } });
-      const { workflowIds } = await submitTrainingBatch(
+      headBlob.mockImplementation(unreadableSpicy);
+      const before = submitWorkflow.mock.calls.length;
+      const refused = submitTrainingBatch(
         client,
-        [
-          { ...baseRun(), matureAck: true },
-          { ...baseRun(), epochs: 12, matureAck: true },
-        ],
+        [{ ...baseRun(), items: twoItems, currencies: ['blue', 'green'] }],
         { checkText }
       );
-      expect(workflowIds).toEqual(['wf-s1', 'wf-s2']);
-      expect(headBlob).not.toHaveBeenCalled();
-    });
-
-    it('refuses a non-boolean ack before anything is submitted', async () => {
-      const before = submitWorkflow.mock.calls.length;
-      await expect(
-        submitTrainingBatch(client, [{ ...baseRun(), matureAck: 'yes' as unknown as boolean }], {
-          checkText,
-        })
-      ).rejects.toThrow(/matureAck/);
+      await expect(refused).rejects.toBeInstanceOf(DatasetUnreadableError);
+      await expect(refused).rejects.toMatchObject({ unreadable: 1 });
+      await expect(refused).rejects.not.toThrow(/mature/i);
       expect(submitWorkflow.mock.calls.length).toBe(before);
     });
 
-    it('names Yellow when an acked mature run is short of it', async () => {
-      submitWorkflow.mockResolvedValueOnce({
-        error: { detail: 'insufficientBuzz' },
-        response: { status: 400 },
-      });
-      await expect(submitTraining(client, { ...baseRun(), matureAck: true })).rejects.toThrow(
-        /Yellow/
+    it('refuses the whole batch when one run of it has an unreadable image: no run is submitted', async () => {
+      headBlob.mockReset();
+      headBlob.mockImplementation(unreadableSpicy);
+      const before = submitWorkflow.mock.calls.length;
+      await expect(
+        submitTrainingBatch(
+          client,
+          [
+            {
+              ...baseRun(),
+              items: [{ air: 'urn:air:other:blob:civitai:blob@safe-1', caption: 'a' }],
+              currencies: ['blue', 'green'],
+            },
+            { ...baseRun(), items: twoItems, currencies: ['blue', 'green'] },
+          ],
+          { checkText }
+        )
+      ).rejects.toBeInstanceOf(DatasetUnreadableError);
+      expect(submitWorkflow.mock.calls.length).toBe(before);
+    });
+
+    it('an unreadable image on a charge with no Green submits on the currencies picked', async () => {
+      headBlob.mockReset();
+      headBlob.mockImplementation(unreadableSpicy);
+      submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-ny' } });
+      const { workflowIds } = await submitTrainingBatch(
+        client,
+        [{ ...baseRun(), items: twoItems, currencies: ['blue', 'yellow'] }],
+        { checkText }
       );
+      expect(workflowIds).toEqual(['wf-ny']);
+      expect(submitWorkflow.mock.calls.at(-1)![0].body.currencies).toEqual(['blue', 'yellow']);
+    });
+
+    it('an unreadable image on a run priced as mature submits out of Green', async () => {
+      headBlob.mockReset();
+      headBlob.mockImplementation(unreadableSpicy);
+      submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-pm' } });
+      await submitTrainingBatch(
+        client,
+        [
+          {
+            ...baseRun(),
+            items: twoItems,
+            currencies: ['blue', 'green'],
+            meta: { name: 'm', matureCount: 1 },
+          },
+        ],
+        { checkText }
+      );
+      expect(submitWorkflow.mock.calls.at(-1)![0].body.currencies).toEqual(['blue', 'yellow']);
     });
   });
 
@@ -858,55 +1101,25 @@ describe('mature charge: Yellow only after the user confirms', () => {
       expect('allowMatureContent' in body).toBe(false);
     });
 
-    it('refuses a mature source without the ack, and submits nothing', async () => {
-      getWorkflow.mockResolvedValue(matureSource('wf-r1'));
-      headBlob.mockImplementation(rateSpicy);
-      const before = submitWorkflow.mock.calls.length;
-      await expect(
-        continueTraining(client, { ...opts, workflowId: 'wf-r1' }, { checkText })
-      ).rejects.toBeInstanceOf(MatureAckRequiredError);
-      expect(submitWorkflow.mock.calls.length).toBe(before);
-    });
-
-    it('with the ack, unlocks at submit and charges Blue + Yellow, never Green', async () => {
-      getWorkflow.mockResolvedValue(matureSource('wf-r2'));
-      headBlob.mockImplementation(rateSpicy);
-      submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-next' } });
-      await continueTraining(
-        client,
-        { ...opts, workflowId: 'wf-r2', matureAck: true },
-        { checkText }
-      );
-      const body = submitWorkflow.mock.calls.at(-1)![0].body;
-      expect(body.upgradeMode).toBe('manual');
-      expect(body.allowMatureContent).toBe(true);
-      expect(body.currencies).toEqual(['blue', 'yellow']);
-      expect(body.metadata.matureCount).toBe(1);
-    });
-
     it('a paid-only mature continuation is charged in Yellow only — no Blue, never Green', async () => {
       getWorkflow.mockResolvedValue(matureSource('wf-r3'));
       headBlob.mockImplementation(rateSpicy);
       submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-next' } });
       await continueTraining(
         client,
-        { ...opts, workflowId: 'wf-r3', currencies: ['green'], matureAck: true },
+        { ...opts, workflowId: 'wf-r3', currencies: ['green'], quotedMatureCount: 1 },
         { checkText }
       );
       const body = submitWorkflow.mock.calls.at(-1)![0].body;
-      expect(body.allowMatureContent).toBe(true);
+      expect('allowMatureContent' in body).toBe(false);
       expect(body.currencies).toEqual(['yellow']);
     });
 
-    it('a non-mature source: manual, no unlock, currencies unchanged, ack or not', async () => {
+    it('a non-mature source: manual, no unlock, currencies unchanged', async () => {
       getWorkflow.mockResolvedValue(matureSource('wf-n1'));
       headBlob.mockImplementation(() => Promise.resolve(nsfwHead('PG13')));
       submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-next' } });
-      await continueTraining(
-        client,
-        { ...opts, workflowId: 'wf-n1', matureAck: true },
-        { checkText }
-      );
+      await continueTraining(client, { ...opts, workflowId: 'wf-n1' }, { checkText });
       const body = submitWorkflow.mock.calls.at(-1)![0].body;
       expect(body.upgradeMode).toBe('manual');
       expect('allowMatureContent' in body).toBe(false);
@@ -952,30 +1165,10 @@ describe('mature charge: Yellow only after the user confirms', () => {
       submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-next' } });
       await continueTraining(
         client,
-        { ...opts, workflowId: 'wf-c1', matureAck: true },
+        { ...opts, workflowId: 'wf-c1', quotedMatureCount: 1 },
         { checkText }
       );
       expect(headBlob).toHaveBeenCalledTimes(2);
-    });
-
-    it('ignores an ack on the quote: it is priced without the unlock', async () => {
-      getWorkflow.mockResolvedValue(matureSource('wf-qa'));
-      headBlob.mockImplementation(rateSpicy);
-      submitWorkflow.mockResolvedValueOnce({ data: { cost: { total: 900 } } });
-      await continueTrainingWhatIf(client, { ...opts, workflowId: 'wf-qa', matureAck: true });
-      expect('allowMatureContent' in submitWorkflow.mock.calls.at(-1)![0].body).toBe(false);
-    });
-
-    it('names Yellow when a confirmed continuation is short of it', async () => {
-      getWorkflow.mockResolvedValue(matureSource('wf-y1'));
-      headBlob.mockImplementation(rateSpicy);
-      submitWorkflow.mockResolvedValueOnce({
-        error: { detail: 'insufficientBuzz' },
-        response: { status: 400 },
-      });
-      await expect(
-        continueTraining(client, { ...opts, workflowId: 'wf-y1', matureAck: true }, { checkText })
-      ).rejects.toThrow(/Yellow/);
     });
 
     it('rates the dataset again after a probe with a failed HEAD', async () => {
@@ -1004,6 +1197,199 @@ describe('mature charge: Yellow only after the user confirms', () => {
       const probed = await continueTrainingWhatIf(client, { ...opts, workflowId: 'wf-m0' });
       expect(probed.matureCount).toBe(1);
       expect(headBlob).toHaveBeenCalledTimes(2);
+    });
+
+    const unreadableSource = (args: { path: { blobId: string } }) =>
+      args.path.blobId === 'spicy-2'
+        ? Promise.resolve({ response: new Response(null, { status: 503 }) })
+        : Promise.resolve(nsfwHead('PG'));
+
+    it('refuses a Green continuation quoted as not mature when a source image cannot be read', async () => {
+      getWorkflow.mockResolvedValue(matureSource('wf-u1'));
+      headBlob.mockReset();
+      headBlob.mockImplementation(unreadableSource);
+      const before = submitWorkflow.mock.calls.length;
+      const refused = continueTraining(client, { ...opts, workflowId: 'wf-u1' }, { checkText });
+      await expect(refused).rejects.toBeInstanceOf(DatasetUnreadableError);
+      await expect(refused).rejects.toMatchObject({ unreadable: 1 });
+      expect(submitWorkflow.mock.calls.length).toBe(before);
+    });
+
+    it('a continuation quoted as mature with an unreadable source image submits out of Green', async () => {
+      getWorkflow.mockResolvedValue(matureSource('wf-u2'));
+      headBlob.mockReset();
+      headBlob.mockImplementation(unreadableSource);
+      submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-next' } });
+      await continueTraining(
+        client,
+        { ...opts, workflowId: 'wf-u2', quotedMatureCount: 1 },
+        { checkText }
+      );
+      expect(submitWorkflow.mock.calls.at(-1)![0].body.currencies).toEqual(['blue', 'yellow']);
+    });
+
+    it('a continuation with no Green and an unreadable source image submits', async () => {
+      getWorkflow.mockResolvedValue(matureSource('wf-u3'));
+      headBlob.mockReset();
+      headBlob.mockImplementation(unreadableSource);
+      submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-next' } });
+      await continueTraining(
+        client,
+        { ...opts, workflowId: 'wf-u3', currencies: ['blue', 'yellow'] },
+        { checkText }
+      );
+      expect(submitWorkflow.mock.calls.at(-1)![0].body.currencies).toEqual(['blue', 'yellow']);
+    });
+  });
+
+  // Why no unlock: see chargeFields in train-core.ts.
+  describe('Blue pays for a mature dataset, member or not', () => {
+    const items = [
+      { air: 'urn:air:other:blob:civitai:blob@safe-1', caption: 'a' },
+      { air: 'urn:air:other:blob:civitai:blob@spicy-2', caption: 'b' },
+    ];
+
+    // Mirrors the orchestrator's payer rule and must change with it: with allowMatureContent true it
+    // won't charge a non-member's Blue (only Yellow); otherwise it charges the body's currencies, in order.
+    const nonMemberPayers = (body: { allowMatureContent?: boolean; currencies?: string[] }) =>
+      body.allowMatureContent === true
+        ? (body.currencies ?? []).filter((c) => c === 'yellow')
+        : body.currencies ?? [];
+
+    it("a non-member's mature run is paid Blue first, not forced to Yellow, and never Green", async () => {
+      headBlob.mockReset();
+      headBlob.mockImplementation(rateSpicy);
+      submitWorkflow
+        .mockResolvedValueOnce({ data: { id: 'wf-pay-safe' } })
+        .mockResolvedValueOnce({ data: { id: 'wf-pay-mature' } });
+      const run = { ...baseRun(), currencies: ['blue', 'green'] };
+      await submitTrainingBatch(client, [run], { checkText });
+      const safe = nonMemberPayers(submitWorkflow.mock.calls.at(-1)![0].body);
+      await submitTrainingBatch(client, [{ ...run, items, meta: { name: 'm', matureCount: 1 } }], {
+        checkText,
+      });
+      const mature = nonMemberPayers(submitWorkflow.mock.calls.at(-1)![0].body);
+      expect(safe).toEqual(['blue', 'green']);
+      expect(mature).toEqual(['blue', 'yellow']);
+    });
+
+    it('a fresh mature run needs no confirm and sends no unlock: Blue first, then Yellow', async () => {
+      headBlob.mockReset();
+      headBlob.mockImplementation(rateSpicy);
+      submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-blue1' } });
+      const { workflowIds } = await submitTrainingBatch(
+        client,
+        [{ ...baseRun(), items, currencies: ['blue', 'yellow'] }],
+        { checkText }
+      );
+      expect(workflowIds).toEqual(['wf-blue1']);
+      const body = submitWorkflow.mock.calls.at(-1)![0].body;
+      expect(body.upgradeMode).toBe('manual');
+      expect('allowMatureContent' in body).toBe(false);
+      expect(body.currencies).toEqual(['blue', 'yellow']);
+    });
+
+    it('a fresh mature run never charges Green: the paid part moves to Yellow', async () => {
+      headBlob.mockReset();
+      headBlob.mockImplementation(rateSpicy);
+      submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-blue2' } });
+      await submitTrainingBatch(
+        client,
+        [
+          {
+            ...baseRun(),
+            items,
+            currencies: ['blue', 'green'],
+            meta: { name: 'm', matureCount: 1 },
+          },
+        ],
+        { checkText }
+      );
+      const body = submitWorkflow.mock.calls.at(-1)![0].body;
+      expect('allowMatureContent' in body).toBe(false);
+      expect(body.currencies).toEqual(['blue', 'yellow']);
+    });
+
+    it('refuses a Green-paid continuation the submit rates mature after a quote that was not', async () => {
+      getWorkflow.mockResolvedValue(matureSource('wf-blue4'));
+      headBlob.mockReset();
+      headBlob.mockImplementation(rateSpicy);
+      const before = submitWorkflow.mock.calls.length;
+      const opts = { fromEpoch: 10, addEpochs: 5, workflowId: 'wf-blue4' };
+      await expect(
+        continueTraining(client, { ...opts, currencies: ['blue', 'green'] }, { checkText })
+      ).rejects.toBeInstanceOf(MatureRepriceError);
+      await expect(
+        continueTraining(
+          client,
+          { ...opts, currencies: ['blue', 'green'], quotedMatureCount: 0 },
+          { checkText }
+        )
+      ).rejects.toMatchObject({ matureCount: 1 });
+      expect(submitWorkflow.mock.calls.length).toBe(before);
+    });
+
+    it('a quote that showed mature keeps the continuation out of Green when the submit lookup fails', async () => {
+      getWorkflow.mockResolvedValue(matureSource('wf-blue5'));
+      headBlob.mockReset();
+      headBlob.mockImplementation(async () => ({ response: new Response(null, { status: 503 }) }));
+      submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-next' } });
+      await continueTraining(
+        client,
+        {
+          fromEpoch: 10,
+          addEpochs: 5,
+          currencies: ['blue', 'green'],
+          workflowId: 'wf-blue5',
+          quotedMatureCount: 1,
+        },
+        { checkText }
+      );
+      expect(submitWorkflow.mock.calls.at(-1)![0].body.currencies).toEqual(['blue', 'yellow']);
+    });
+
+    // Unlike a fresh run, a continuation can't tell a clean zero count from a stale cache, so the
+    // Yellow the user was shown wins.
+    it('a quote that showed mature keeps the continuation out of Green even when the submit counts none', async () => {
+      getWorkflow.mockResolvedValue(matureSource('wf-blue6'));
+      headBlob.mockReset();
+      headBlob.mockImplementation(() => Promise.resolve(nsfwHead('PG')));
+      submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-next' } });
+      await continueTraining(
+        client,
+        {
+          fromEpoch: 10,
+          addEpochs: 5,
+          currencies: ['blue', 'green'],
+          workflowId: 'wf-blue6',
+          quotedMatureCount: 1,
+        },
+        { checkText }
+      );
+      expect(submitWorkflow.mock.calls.at(-1)![0].body.currencies).toEqual(['blue', 'yellow']);
+    });
+
+    it('a mature continuation needs no confirm and sends no unlock: Blue first, then Yellow', async () => {
+      getWorkflow.mockResolvedValue(matureSource('wf-blue3'));
+      headBlob.mockReset();
+      headBlob.mockImplementation(rateSpicy);
+      submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-next' } });
+      await continueTraining(
+        client,
+        {
+          fromEpoch: 10,
+          addEpochs: 5,
+          currencies: ['blue', 'green'],
+          workflowId: 'wf-blue3',
+          quotedMatureCount: 1,
+        },
+        { checkText }
+      );
+      const body = submitWorkflow.mock.calls.at(-1)![0].body;
+      expect(body.upgradeMode).toBe('manual');
+      expect('allowMatureContent' in body).toBe(false);
+      expect(body.currencies).toEqual(['blue', 'yellow']);
+      expect(body.metadata.matureCount).toBe(1);
     });
   });
 });
@@ -1296,7 +1682,7 @@ describe('Kohya training', () => {
     expect(config.items[0]!.caption).toBe('1girl');
   });
 
-  it.each(['sd1', 'sdxl', 'pony', 'illustrious', 'noobai', 'flux1', 'chroma'])(
+  it.each(['sd1', 'sdxl', 'pony', 'illustrious', 'noobai', 'flux1', 'chroma', 'anima'])(
     'accepts an arbitrary compatible %s checkpoint',
     async (family) => {
       const ecosystem = ['pony', 'illustrious', 'noobai'].includes(family) ? 'sdxl' : family;
@@ -1310,16 +1696,16 @@ describe('Kohya training', () => {
       });
       const input = submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input;
       expect(input.model).toBe(customModel);
-      if (family === 'flux1' || family === 'chroma') {
-        expect(input).toMatchObject({
-          noiseOffset: 0,
-          minSnrGamma: 0,
-          clipSkip: 1,
-          fp8Base: true,
-          blocksToSwap: 18,
-        });
+      if (['sdxl', 'pony', 'illustrious', 'noobai'].includes(family))
+        expect(input).toMatchObject({ clipSkip: 2 });
+      if (family === 'sd1') expect(input).toMatchObject({ clipSkip: 1 });
+      if (family === 'flux1' || family === 'chroma' || family === 'anima') {
+        expect(input).toMatchObject({ noiseOffset: 0, minSnrGamma: 0, clipSkip: 1 });
         expect(input).not.toHaveProperty('vParameterization');
       }
+      if (family === 'flux1' || family === 'chroma')
+        expect(input).toMatchObject({ fp8Base: true, blocksToSwap: 18 });
+      if (family === 'anima') expect(input).not.toHaveProperty('fp8Base');
       if (family === 'chroma')
         expect(input).toMatchObject({ textEncoderLR: 0, trainTextEncoder: false });
     }
@@ -1332,6 +1718,8 @@ describe('Kohya training', () => {
     { resolution: 1000 },
     { kohya: { numRepeats: 0 } },
     { kohya: { seed: -1 } },
+    { kohya: { clipSkip: 0 } },
+    { kohya: { clipSkip: 5 } },
     { minSnrGamma: 2.5 },
     { optimizer: 'Automagic' },
     { customModel: 'urn:air:flux1:checkpoint:civitai:1@2' },
@@ -1342,6 +1730,89 @@ describe('Kohya training', () => {
       submitTrainingBatch(client, [{ ...run(), ...invalid }], { checkText, kohyaAllowed: true })
     ).rejects.toThrow();
     expect(submitWorkflow.mock.calls.length).toBe(calls);
+  });
+
+  it('sends a picked clip skip of 1 for SD1 and SDXL', () => {
+    const data: Parameters<typeof buildKohyaInput>[1] = { type: 'blobs', items: [] };
+    const sd1 = {
+      ...run(),
+      ecosystem: 'sd1',
+      customModel: 'urn:air:sd1:checkpoint:civitai:1@2',
+      kohya: { clipSkip: 1 },
+    };
+    expect(buildKohyaInput(sd1, data, 'none')).toMatchObject({ clipSkip: 1 });
+    expect(buildKohyaInput({ ...run(), kohya: { clipSkip: 1 } }, data, 'none')).toMatchObject({
+      clipSkip: 1,
+    });
+  });
+
+  describe('clip skip copied by train further', () => {
+    const sourceInput = (model: string, clipSkip: number) => ({
+      ...buildKohyaInput(run(), { type: 'blobs', items: [] }, 'none'),
+      model,
+      clipSkip,
+    });
+    const continued = async (input: Record<string, unknown>, metadata: object) => {
+      getWorkflow.mockResolvedValue({
+        data: {
+          metadata,
+          steps: [
+            {
+              $type: 'training',
+              input,
+              output: { epochs: [{ epochNumber: 10, model: { id: 'blob-10', available: true } }] },
+            },
+          ],
+        },
+      });
+      submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-kohya-further' } });
+      const opts = { workflowId: 'wf-kohya-source', fromEpoch: 10, addEpochs: 5 };
+      await continueTraining(client, opts, { checkText, kohyaAllowed: true });
+      return submitWorkflow.mock.calls.at(-1)![0].body as {
+        metadata: Record<string, unknown>;
+        steps: { input: Record<string, unknown> }[];
+      };
+    };
+    const SDXL = 'urn:air:sdxl:checkpoint:civitai:1@2';
+
+    // On a run from before 1 was selectable for SDXL, a stored 1 stands for 2: copied as stored, a
+    // continuation would train on the last layer.
+    it.each(['sdxl', 'pony', 'illustrious', 'noobai'])(
+      'copies an unstamped %s clip skip of 1 as 2',
+      async (family) => {
+        const model = `urn:air:${family}:checkpoint:civitai:1@2`;
+        const body = await continued(sourceInput(model, 1), { trigger: 'ohwx' });
+        expect(body.steps[0]!.input.clipSkip).toBe(2);
+      }
+    );
+
+    it.each([
+      ['a 1 picked on a stamped SDXL run', SDXL, 1, { clipSkipAsSent: true }, 1],
+      ['an unstamped SDXL 3', SDXL, 3, {}, 3],
+      ['an unstamped SD1 1', 'urn:air:sd1:checkpoint:civitai:1@2', 1, {}, 1],
+    ])('keeps %s', async (_label, model, clipSkip, metadata, expected) => {
+      const body = await continued(sourceInput(model, clipSkip), metadata);
+      expect(body.steps[0]!.input.clipSkip).toBe(expected);
+    });
+
+    it('keeps a flow run at 1', async () => {
+      const model = 'urn:air:flux1:checkpoint:civitai:1@2';
+      const input = buildKohyaInput(
+        { ...run(), ecosystem: 'flux1', customModel: model },
+        { type: 'blobs', items: [] },
+        'none'
+      );
+      const body = await continued(input, {});
+      expect(body.steps[0]!.input.clipSkip).toBe(1);
+    });
+
+    it('stamps the continuation and a fresh submit', async () => {
+      const body = await continued(sourceInput(SDXL, 2), {});
+      expect(body.metadata.clipSkipAsSent).toBe(true);
+      submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-kohya' } });
+      await submitTraining(client, run());
+      expect(submitWorkflow.mock.calls.at(-1)![0].body.metadata.clipSkipAsSent).toBe(true);
+    });
   });
 
   it('leaves SDXL prediction mode to checkpoint metadata by default', () => {
@@ -1438,43 +1909,42 @@ describe('dataset maturity under the v2 rating', () => {
     read:
       read ?? (async (keys) => new Map(keys.flatMap((k) => (stored[k] ? [[k, stored[k]]] : [])))),
   });
+  // Green in the order makes the verdict observable: a run rated mature that was priced as not mature is
+  // refused with its count; one rated not mature keeps Green.
   const submitWith = (rating: DatasetRating | undefined, run: Partial<TrainingRunInput>) =>
-    submitTrainingBatch(client, [{ ...baseRun(), ...run }], { checkText, datasetRating: rating });
+    submitTrainingBatch(client, [{ ...baseRun(), currencies: ['blue', 'green'], ...run }], {
+      checkText,
+      datasetRating: rating,
+    });
   const lastBody = () => submitWorkflow.mock.calls.at(-1)![0].body;
 
-  describe.each([1, 2, 3, 4])('mature from level %i', (level) => {
-    it('a clothed dataset the upload rating called mature, rated below the level, trains unconfirmed', async () => {
+  // The main app decides mature at the user's level (its service test covers levels); this counts its verdicts.
+  describe('a stored verdict', () => {
+    const level = 2;
+    it('a clothed dataset the upload rating called mature, rated not mature, trains unconfirmed', async () => {
       uploadRatings({ 'outfit-1': 'R', 'outfit-2': 'X' });
       submitWorkflow.mockResolvedValueOnce({ data: { id: `wf-sfw-${level}` } });
       const rating = ratingAt(level, {
-        'outfit-1': { s: level - 1, r: false },
-        'outfit-2': { s: 0, r: false },
+        'outfit-1': { mature: false },
+        'outfit-2': { mature: false },
       });
       await submitWith(rating, { items: items('outfit-1', 'outfit-2') });
-      expect('allowMatureContent' in lastBody()).toBe(false);
+      expect(lastBody().currencies).toEqual(['blue', 'green']);
     });
 
-    it('a nude image rated at the level still needs the confirm', async () => {
+    it('a nude image rated mature is mature', async () => {
       uploadRatings({ 'nude-1': 'PG' });
       const calls = submitWorkflow.mock.calls.length;
-      const rating = ratingAt(level, { 'nude-1': { s: level, r: false } });
+      const rating = ratingAt(level, { 'nude-1': { mature: true } });
       await expect(submitWith(rating, { items: items('nude-1') })).rejects.toMatchObject({
         matureCount: 1,
       });
       expect(submitWorkflow.mock.calls.length).toBe(calls);
     });
 
-    it('a restricted image is mature whatever its level', async () => {
-      uploadRatings({ 'r-1': 'PG' });
-      const rating = ratingAt(level, { 'r-1': { s: 0, r: true } });
-      await expect(submitWith(rating, { items: items('r-1') })).rejects.toBeInstanceOf(
-        MatureAckRequiredError
-      );
-    });
-
     it('an unrated image is counted from its upload rating', async () => {
       uploadRatings({ 'rated-1': 'R', 'unrated-2': 'R' });
-      const rating = ratingAt(level, { 'rated-1': { s: 0, r: false } });
+      const rating = ratingAt(level, { 'rated-1': { mature: false } });
       await expect(
         submitWith(rating, { items: items('rated-1', 'unrated-2') })
       ).rejects.toMatchObject({ matureCount: 1 });
@@ -1491,13 +1961,14 @@ describe('dataset maturity under the v2 rating', () => {
     });
   });
 
-  it("never uses a stored rating for a blob this caller's HEAD could not read", async () => {
+  it("refuses a blob this caller's HEAD could not read rather than use its stored rating", async () => {
     uploadRatings({ 'theirs-1': null });
-    const read = vi.fn(async () => new Map([['theirs-1', { s: 4, r: true }]]));
-    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-theirs' } });
-    // Counted as the upload path counts a failed HEAD (not mature), not by the shared cache's entry.
-    await submitWith(ratingAt(1, {}, read), { items: items('theirs-1') });
-    expect('allowMatureContent' in lastBody()).toBe(false);
+    const read = vi.fn(async () => new Map([['theirs-1', { mature: true }]]));
+    const before = submitWorkflow.mock.calls.length;
+    await expect(
+      submitWith(ratingAt(1, {}, read), { items: items('theirs-1') })
+    ).rejects.toBeInstanceOf(DatasetUnreadableError);
+    expect(submitWorkflow.mock.calls.length).toBe(before);
   });
 
   it('keep training counts an unstamped source under the v2 rating', async () => {
@@ -1527,7 +1998,7 @@ describe('dataset maturity under the v2 rating', () => {
       { workflowId: 'wf-src-v2', fromEpoch: 10, addEpochs: 2 },
       {
         checkText,
-        datasetRating: ratingAt(2, { 'spicy-2': { s: 1, r: false }, 'safe-1': { s: 0, r: false } }),
+        datasetRating: ratingAt(2, { 'spicy-2': { mature: false }, 'safe-1': { mature: false } }),
       }
     );
     expect('allowMatureContent' in lastBody()).toBe(false);
@@ -1550,33 +2021,76 @@ describe('dataset maturity under the v2 rating', () => {
     }
   );
 
-  it('a confirmed dataset v2 rates mature unlocks at submit', async () => {
-    uploadRatings({ 'nude-1': 'PG' });
-    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-acked-v2' } });
-    await submitWith(ratingAt(1, { 'nude-1': { s: 4, r: false } }), {
-      items: items('nude-1'),
-      matureAck: true,
-    });
-    expect(lastBody().allowMatureContent).toBe(true);
+  it("hands back a stored verdict only for a blob this caller's HEAD could read", async () => {
+    headBlob.mockReset();
+    headBlob.mockImplementation(async ({ path }: { path: { blobId: string } }) => ({
+      response: new Response(null, { status: path.blobId === 'theirs.png' ? 403 : 204 }),
+    }));
+    const count = await countDatasetMature(
+      client,
+      ['mine.png', 'theirs.png'],
+      ratingAt(1, { 'mine.png': { mature: false }, 'theirs.png': { mature: true } })
+    );
+    expect(count.verdicts).toEqual({ 'mine.png': false });
   });
 
-  it('a confirm sent for a dataset v2 rates below the level is not charged Yellow', async () => {
-    uploadRatings({ 'outfit-1': 'X' });
-    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-acked-sfw' } });
-    await submitWith(ratingAt(2, { 'outfit-1': { s: 1, r: false } }), {
-      items: items('outfit-1'),
-      currencies: ['blue', 'green'],
-      matureAck: true,
+  it('counts where the v2 verdict and the upload rating disagree, each way', async () => {
+    headBlob.mockReset();
+    const upload: Record<string, string> = {
+      'a.png': 'R',
+      'b.png': 'PG',
+      'c.png': 'R',
+      'd.png': 'PG',
+    };
+    headBlob.mockImplementation(async ({ path }: { path: { blobId: string } }) => ({
+      response: new Response(null, {
+        status: 204,
+        headers: { 'x-nsfw-level': upload[path.blobId]! },
+      }),
+    }));
+    const count = await countDatasetMature(
+      client,
+      ['a.png', 'b.png', 'c.png', 'd.png'],
+      ratingAt(1, {
+        'a.png': { mature: false },
+        'b.png': { mature: true },
+        'c.png': { mature: true },
+      })
+    );
+    expect(count.v2NotMatureUploadMature).toBe(1);
+    expect(count.v2MatureUploadNotMature).toBe(1);
+    expect(count.verdicts).toEqual({ 'a.png': false, 'b.png': true, 'c.png': true });
+    expect(count.mature).toBe(2);
+  });
+
+  const pricedMature = { meta: { name: 'test', matureCount: 1 } };
+
+  it('a dataset v2 rates mature, priced as mature, is charged Blue then Yellow with no unlock', async () => {
+    uploadRatings({ 'nude-1': 'PG' });
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-priced-v2' } });
+    await submitWith(ratingAt(1, { 'nude-1': { mature: true } }), {
+      items: items('nude-1'),
+      ...pricedMature,
     });
     expect('allowMatureContent' in lastBody()).toBe(false);
+    expect(lastBody().currencies).toEqual(['blue', 'yellow']);
+  });
+
+  it('a dataset priced as mature that v2 rates below the level keeps Green', async () => {
+    uploadRatings({ 'outfit-1': 'X' });
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-priced-sfw' } });
+    await submitWith(ratingAt(2, { 'outfit-1': { mature: false } }), {
+      items: items('outfit-1'),
+      ...pricedMature,
+    });
     expect(lastBody().currencies).toEqual(['blue', 'green']);
   });
 
-  it('a confirm is kept when a HEAD fails, so the count cannot clear it', async () => {
+  it('a failed HEAD cannot clear a dataset priced as mature: it stays out of Green', async () => {
     headBlob.mockImplementation(async () => ({ response: new Response(null, { status: 503 }) }));
-    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-acked-failed' } });
-    await submitWith(ratingAt(2, {}), { items: items('x-1'), matureAck: true });
-    expect(lastBody().allowMatureContent).toBe(true);
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-priced-failed' } });
+    await submitWith(ratingAt(2, {}), { items: items('x-1'), ...pricedMature });
+    expect(lastBody().currencies).toEqual(['blue', 'yellow']);
   });
 
   describe('keep training quotes', () => {
@@ -1613,10 +2127,9 @@ describe('dataset maturity under the v2 rating', () => {
 
     it('a count made at one setting, or without the rating, is not reused for another', async () => {
       uploadRatings({ 'q-1': 'R' });
-      const stored = { 'q-1': { s: 2, r: false } };
       expect(await quote('wf-q-set', undefined)).toBe(1);
-      expect(await quote('wf-q-set', ratingAt(4, stored))).toBe(0);
-      expect(await quote('wf-q-set', ratingAt(1, stored))).toBe(1);
+      expect(await quote('wf-q-set', ratingAt(4, { 'q-1': { mature: false } }))).toBe(0);
+      expect(await quote('wf-q-set', ratingAt(1, { 'q-1': { mature: true } }))).toBe(1);
     });
 
     it('a count with unrated images is made again once they are rated', async () => {
@@ -1624,7 +2137,7 @@ describe('dataset maturity under the v2 rating', () => {
       const stored: Record<string, StoredRating> = {};
       const rating = ratingAt(4, stored);
       expect(await quote('wf-q-warm', rating)).toBe(1);
-      stored['q-1'] = { s: 0, r: false };
+      stored['q-1'] = { mature: false };
       expect(await quote('wf-q-warm', rating)).toBe(0);
     });
   });
@@ -1634,7 +2147,7 @@ describe('dataset maturity under the v2 rating', () => {
     // Mature by its upload rating, not by v2: only the rating gets it past the mature check.
     const sfw = () => {
       uploadRatings({ 'sfw-1': 'R' });
-      return ratingAt(1, { 'sfw-1': { s: 0, r: false } });
+      return ratingAt(1, { 'sfw-1': { mature: false } });
     };
 
     it('the trigger word check', async () => {
@@ -1714,7 +2227,7 @@ describe('dataset maturity under the v2 rating', () => {
             checkText: async () => {
               throw new TrainingTextRefusedError('blocked');
             },
-            datasetRating: ratingAt(1, { 'sfw-1': { s: 0, r: false } }),
+            datasetRating: ratingAt(1, { 'sfw-1': { mature: false } }),
           }
         )
       ).rejects.toBeInstanceOf(TrainingTextRefusedError);
@@ -1992,5 +2505,40 @@ describe('per-image repeats', () => {
         { checkText }
       )
     ).rejects.toThrow(/repeats are not supported/);
+  });
+});
+
+describe('the size of one Start', () => {
+  const items = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({ air: `blob-${i}`, caption: 'ohwx, 1girl' }));
+  const refused = (runs: TrainingRunInput[]) =>
+    expect(submitTrainingBatch(client, runs, { checkText })).rejects.toBeInstanceOf(
+      TrainingBatchValidationError
+    );
+
+  it('refuses more runs than a Start offers, before spending Buzz', async () => {
+    const calls = submitWorkflow.mock.calls.length;
+    await refused(Array.from({ length: 6 }, baseRun));
+    expect(submitWorkflow.mock.calls.length).toBe(calls);
+  });
+
+  it('refuses a run with more dataset items than the Studio handles, before spending Buzz', async () => {
+    const calls = submitWorkflow.mock.calls.length;
+    await refused([{ ...baseRun(), items: items(2001) }]);
+    expect(submitWorkflow.mock.calls.length).toBe(calls);
+  });
+
+  it('control: five runs of 2,000 items each are submitted', async () => {
+    submitWorkflow.mockResolvedValue({ data: { id: 'wf-full', cost: { total: 0 } } });
+    try {
+      const batch = await submitTrainingBatch(
+        client,
+        Array.from({ length: 5 }, () => ({ ...baseRun(), items: items(2000) })),
+        { checkText }
+      );
+      expect(batch.workflowIds).toHaveLength(5);
+    } finally {
+      submitWorkflow.mockReset();
+    }
   });
 });

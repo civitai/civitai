@@ -20,7 +20,7 @@ const TEST_FILE = /\.test\.tsx?$|(^|\/)__tests__\//;
 
 const COALESCE_META_CONCAT = /COALESCE\(\s*"?\w*\.?meta"?\s*,\s*'\{\}'(::jsonb)?\s*\)\s*\|\|/;
 
-const ALLOWLIST = new Set(['pages/api/admin/temp/clamp-publishedat-bumps.ts']);
+const ALLOWLIST = new Set(['server/api-routes/admin/temp/clamp-publishedat-bumps.ts']);
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {

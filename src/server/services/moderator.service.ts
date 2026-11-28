@@ -1,5 +1,12 @@
 import type { shownActivity } from '@civitai/shared/held-media';
+import type { LIFT_KEPT_ACTIVITY } from '@civitai/shared/account-deletion-grace';
+import {
+  LIKENESS_REQUEST_ACTIVITY,
+  writeLikenessMark,
+} from '@civitai/db-queries/image-removal-confirmation';
 import { dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
+import { likenessRequestMarkFailedCounter } from '~/server/prom/likeness-request.metrics';
 
 type TagActivities = 'moderateTag' | 'disableTag' | 'addTag' | 'deleteTag';
 
@@ -26,6 +33,8 @@ type ModelModActivity = {
     | 'rejectLockReview'
     // A ruling on a restricted-verdict lead in Needs review (`restrictedNsfwVerdict:keep`).
     | `restrictedNsfwVerdict:${'keep' | 'dismiss' | 'rateNsfw' | 'autoApply'}`
+    // A moderator closed a held detection on a flag the model already carries (`textScanRedetection:closed:minor`).
+    | `textScanRedetection:closed:${'minor' | 'poi'}`
     // A moderator's model save added or removed one locked property (`lockProperty:poi`).
     | `lockProperty:${string}`
     | `unlockProperty:${string}`;
@@ -46,12 +55,16 @@ export type ImageModActivity = {
   activity:
     | TagActivities
     | 'review'
+    | typeof LIFT_KEPT_ACTIVITY
     | 'setNsfwLevel'
     | 'resolveAppeal'
     | 'setNsfwLevelKono'
     | 'heldMedia:view'
     | 'retractedMedia:view'
-    | ReturnType<typeof shownActivity>;
+    // A version showcase removal: the version it was removed from.
+    | `versionShowcaseRemove:${number}`
+    | ReturnType<typeof shownActivity>
+    | typeof LIKENESS_REQUEST_ACTIVITY;
 };
 
 type ArticleModActivity = {
@@ -78,6 +91,10 @@ type UserModActivity = {
     // The account was already muted by a moderator, so a scam verdict hid its content and opened no case.
     | 'scamCleanup'
     | 'mutePendingReview'
+    // A moderator cleared, or edited, another user's profile text or links.
+    | 'clearProfile'
+    | 'editProfile'
+    | 'removeLink'
     | 'overturnPendingReviewMute'
     | 'mute'
     | 'unmute'
@@ -101,6 +118,9 @@ type UserModActivity = {
     | 'tipaltiResync:status'
     // A moderator released a built personal-data export to the account owner (personal-data-export.service).
     | 'releasePersonalDataExport'
+    | 'memorialPropose'
+    | 'memorialConfirm'
+    | 'memorialReverse'
     // Written from /api/admin/reaction-abuse so the moderator app can show that an account was
     // dropped from reaction metrics/ranking, and by whom. Named for WHAT happened, not who did it —
     // `userId` carries the actor (the -1 sentinel for the scheduled poller, a real moderator id when
@@ -122,6 +142,11 @@ type UserModActivity = {
     // Support minted a membership code for this account (`mintMembershipCode:<tier>:<months>`). The
     // daily per-moderator cap counts these rows; the code itself lives on RedeemableCode, never here.
     | `mintMembershipCode:${string}`
+    // A moderator comped a membership gift to this account (`compMembershipGift:<tier>:<months>`). The
+    // daily per-moderator cap counts these rows; the gift itself lives on MembershipGift.
+    | `compMembershipGift:${string}`
+    // A moderator took back a comped gift (`revokeCompMembershipGift:<giftId>`).
+    | `revokeCompMembershipGift:${string}`
     // Support withdrew an unredeemed code it minted (`revokeMembershipCode:<tier>:<months>`).
     | `revokeMembershipCode:${string}`
     // Support ended a Buzz-purchased membership early (`endBuzzMembership:<productId>`).
@@ -201,6 +226,11 @@ type SearchQueryRuleModActivity = {
   activity: 'dryRun';
 };
 
+type ProfanityListModActivity = {
+  entityType: 'profanityList';
+  activity: 'dryRun';
+};
+
 type PublishRequestHoldModActivity = {
   entityType: 'publishRequestHold';
   activity: 'publishRequestHoldOverride' | 'publishRequestHoldLateResuspend';
@@ -209,6 +239,11 @@ type PublishRequestHoldModActivity = {
 type PostTextModActivity = {
   entityType: 'postText';
   activity: 'refuse' | 'restore' | 'csamHold';
+};
+
+type ServiceDealReviewModActivity = {
+  entityType: 'serviceDealReview';
+  activity: 'csamHold';
 };
 
 type CsamReportModActivity = {
@@ -220,6 +255,8 @@ type ModActivity = {
   entityId?: number | number[];
 } & (
   | PublishRequestHoldModActivity
+  | ServiceDealReviewModActivity
+  | ProfanityListModActivity
   | CsamReportModActivity
   | ModelModActivity
   | ModelVersionModActivity
@@ -275,4 +312,36 @@ export async function trackModActivity(
     SELECT ${userId}, ${input.entityType}, ${input.activity}, UNNEST(${input.entityId}::int[])
     ON CONFLICT DO NOTHING
   `;
+}
+
+/**
+ * Marks images removed on a likeness request. The appeal-decision-records sweep deletes their appeal
+ * training copies by this row; the moderator app's `recordLikenessRequest` writes the same row.
+ * Never throws: it runs after the removal committed, and the steps after it (report actioning, the
+ * search-index delete, the DeleteTOS events) must still run. A failed insert is retried; one that
+ * still fails is counted on `likeness_request_mark_failed_total` for alerting.
+ */
+export async function trackLikenessRequests(
+  userId: number,
+  imageIds: number[],
+  retry?: { tries?: number; backoffMs?: number }
+) {
+  if (!imageIds.length) return;
+  await writeLikenessMark(
+    () =>
+      trackModActivity(userId, {
+        entityType: 'image',
+        entityId: imageIds,
+        activity: LIKENESS_REQUEST_ACTIVITY,
+      }),
+    (e, tries) => {
+      likenessRequestMarkFailedCounter.inc();
+      logToAxiom({
+        type: 'error',
+        name: 'likeness-request-mark-failed',
+        message: `${imageIds.length} images after ${tries} tries: ${(e as Error).message}`,
+      });
+    },
+    retry
+  );
 }

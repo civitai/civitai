@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -344,7 +345,7 @@ func newResolveFixture(t *testing.T) *resolveFixture {
 			f.reports = append(f.reports, err)
 		}},
 		Sessions:    &hydrate.PackedReader{Redis: f.cache, Prefix: "ns:"},
-		CookieNames: []string{"__Secure-civ-token", "__Host-civ-token"},
+		CookieNames: FixedCookieNames("__Secure-civ-token", "__Host-civ-token"),
 	}
 	return f
 }
@@ -384,6 +385,14 @@ func TestResolve(t *testing.T) {
 	unknownUser := f.token(t, func(m map[string]any) { m["sub"] = "44"; m["jti"] = "tok-44" })
 	revoked := f.token(t, func(m map[string]any) { m["jti"] = "tok-revoked" })
 	f.sys.SetHash("session:token-state", map[string]string{"tok-revoked": "invalid"})
+	f.session(t, 60, map[string]any{"id": 60, "username": "memorialized-c", "memorialized": true})
+	f.session(t, 61, map[string]any{"id": 61, "username": "viewer-d", "memorialized": false})
+	memorialized := f.token(t, func(m map[string]any) { m["sub"] = "60"; m["jti"] = "tok-60" })
+	impersonatingMemorialized := f.token(t, func(m map[string]any) {
+		m["sub"], m["jti"] = "60", "tok-60-imp"
+		m["impersonatedBy"], m["impExp"] = 7, f.now.Add(time.Hour).UnixMilli()
+	})
+	notMemorialized := f.token(t, func(m map[string]any) { m["sub"] = "61"; m["jti"] = "tok-61" })
 
 	type want struct {
 		id        int
@@ -403,12 +412,15 @@ func TestResolve(t *testing.T) {
 		{"bearer wins over a valid cookie", map[string]string{"Authorization": "Bearer abc", "Cookie": "__Secure-civ-token=" + good}, "/x", want{reason: "bearer-token"}},
 		{"shared-slot cookie", map[string]string{"Cookie": "a=1; __Secure-civ-token=" + good}, "/x", want{id: 42, moderator: true}},
 		{"host-slot cookie", map[string]string{"Cookie": "__Host-civ-token=" + good}, "/x", want{id: 42, moderator: true}},
-		{"both slots", map[string]string{"Cookie": "__Secure-civ-token=" + good + "; __Host-civ-token=" + good}, "/x", want{reason: "multiple-session-cookies"}},
+		{"both slots: the first name read wins", map[string]string{"Cookie": "__Secure-civ-token=" + good + "; __Host-civ-token=not.a.token"}, "/x", want{id: 42, moderator: true}},
 		{"unconfigured cookie name ignored", map[string]string{"Cookie": "civ-token=" + good}, "/x", want{}},
 		{"invalid token", map[string]string{"Cookie": "__Secure-civ-token=not.a.token"}, "/x", want{}},
 		{"expired token", map[string]string{"Cookie": "__Secure-civ-token=" + f.token(t, func(m map[string]any) { m["exp"] = f.now.Add(-time.Minute).Unix() })}, "/x", want{}},
 		{"revoked", map[string]string{"Cookie": "__Secure-civ-token=" + revoked}, "/x", want{}},
 		{"banned", map[string]string{"Cookie": "__Secure-civ-token=" + banned}, "/x", want{id: 43, banned: true}},
+		{"memorialized", map[string]string{"Cookie": "__Secure-civ-token=" + memorialized}, "/x", want{}},
+		{"memorialized, impersonated by a moderator", map[string]string{"Cookie": "__Secure-civ-token=" + impersonatingMemorialized}, "/x", want{id: 60}},
+		{"memorialized false", map[string]string{"Cookie": "__Secure-civ-token=" + notMemorialized}, "/x", want{id: 61}},
 		{"session miss", map[string]string{"Cookie": "__Secure-civ-token=" + unknownUser}, "/x", want{reason: "session-cache-miss"}},
 	}
 	for _, c := range cases {
@@ -595,5 +607,26 @@ func TestJWKSMaxStalenessDefaultsToThreeIntervals(t *testing.T) {
 	}
 	if got := (&Verifier{RefreshInterval: time.Minute, MaxStaleness: 7 * time.Minute}).maxStaleness(); got != 7*time.Minute {
 		t.Fatalf("explicit = %v, want 7m", got)
+	}
+}
+
+// Each resolved session reports the slot its cookie was read from; a signed-out request reports none.
+func TestResolveReportsTheCookieSlot(t *testing.T) {
+	f := newResolveFixture(t)
+	f.session(t, 42, map[string]any{"id": 42, "username": "viewer-a"})
+	good := f.token(t, nil)
+	var slots []string
+	f.r.OnSlot = func(slot string) { slots = append(slots, slot) }
+	for _, cookie := range []string{
+		"__Secure-civ-token=" + good,
+		"__Host-civ-token=" + good,
+		"__Secure-civ-token=not.a.token",
+	} {
+		if _, err := f.r.Resolve(context.Background(), request(map[string]string{"Cookie": cookie}, "/x")); err != nil {
+			t.Fatalf("%s: %v", cookie, err)
+		}
+	}
+	if want := []string{"shared", "host"}; !slices.Equal(slots, want) {
+		t.Fatalf("slots %v, want %v", slots, want)
 	}
 }

@@ -81,6 +81,7 @@ const MOD_ACTIVITY_LABELS: Record<string, string> = {
   review: 'reviews',
   setNsfwLevel: 'ratings',
   setNsfwLevelKono: 'ratings (KoNO)',
+  moderateTagKono: 'tag reviews (KoNO)',
   resolveAppeal: 'appeals',
   ratingReview: 'rating disputes',
   clearMinor: 'minor flags cleared',
@@ -111,6 +112,7 @@ export async function getRecentModActivity(): Promise<QueueActivity[]> {
     .leftJoin('User as u', 'u.id', 'ma.userId')
     .select(['ma.entityType', 'ma.activity', 'ma.createdAt', 'u.username'])
     .where('ma.userId', '>', AUTOMATED_USER_ID)
+    .where('ma.activity', 'not like', HIDDEN_ACTIVITY_PREFIX)
     .orderBy('ma.createdAt', 'desc')
     .limit(RECENT_ACTIVITY_ROWS)
     .execute();
@@ -360,7 +362,9 @@ const MIN_RECENTLY_ACTIVE = 3;
 const RECENTLY_ACTIVE_DAYS = 2;
 
 /** Rating-game (KoNO) votes: a moderator who plays is not working a queue. */
-const NON_MODERATOR_ACTIVITIES = ['setNsfwLevelKono'];
+const NON_MODERATOR_ACTIVITIES = ['setNsfwLevelKono', 'moderateTagKono'];
+/** The preserved-file review is a hidden page: who works it, and when, stays off the shared board. */
+const HIDDEN_ACTIVITY_PREFIX = 'preservedFile:%';
 
 export type WorkingNow = { username: string | null; label: string; at: Date; active: boolean };
 export type YouToday = { actions: number; actioned: number; dismissed: number };
@@ -385,6 +389,7 @@ async function fetchRecentlyActive() {
     )
     .where('ma.userId', '>', AUTOMATED_USER_ID)
     .where('ma.activity', 'not in', NON_MODERATOR_ACTIVITIES)
+    .where('ma.activity', 'not like', HIDDEN_ACTIVITY_PREFIX)
     .where('u.isModerator', '=', true)
     .orderBy('ma.userId')
     .orderBy('ma.createdAt', 'desc')

@@ -3,6 +3,7 @@ import { dev } from '$app/environment';
 import {
   isNavigationRequest,
   spokeReauthResponse,
+  spokeUnavailableResponse,
   withSetCookies,
   type SessionUser,
 } from '@civitai/auth';
@@ -19,7 +20,7 @@ const DEV_USER = { id: 0, username: 'dev-preview' } as unknown as SessionUser;
 // AUTH ADAPTER — read the Cookie header → ask the shared spoke guard → act. The guard's decision logic is
 // framework-agnostic (@civitai/auth `createSpokeGuard`); only this hook is SvelteKit-specific.
 //
-//   login     → no valid session → redirect to the hub login, returning here afterward
+//   login     → no valid session → redirect to this app's /api/auth/authorize, returning here afterward
 //   forbidden → signed in but fails `require` → redirect to civitai.com (not a 403 — re-login can't help)
 //   ok        → authenticated user → populate locals.user and continue
 //
@@ -76,6 +77,7 @@ export const handle: Handle = async ({ event, resolve }) => {
     navigation: isNavigationRequest(event.request),
   });
 
+  if (result.status === 'unavailable') return spokeUnavailableResponse();
   if (result.status === 'login') {
     return new Response(null, { status: 302, headers: { location: result.redirect } });
   }

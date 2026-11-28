@@ -1,6 +1,8 @@
+import { credentialViews } from '~/server/services/oauth/enforce-token-scope';
 import { TRPCError } from '@trpc/server';
 import { timeSemanticSearch } from '~/server/metrics/semantic-search.metrics';
 import { rateLimit } from '~/server/middleware.trpc';
+import { refuseProfaneSearch } from '~/server/utils/refuse-profane-search';
 import {
   type SemanticImageSearchInput,
   semanticImageSearchSchema,
@@ -74,8 +76,23 @@ const holdOwnImages = async (started: number) => {
   if (wait > 0) await sleep(wait);
 };
 
+// Refused, not dropped: results that ignore the image or resource asked for would read as answering it.
+const refuseUnflaggedFilters = (
+  ctx: Parameters<typeof guardFlagEnabled>[0],
+  { imageId, modelVersionIds }: SemanticImageSearchInput
+) => {
+  if (imageId && !guardFlagEnabled(ctx, 'moreLikeThis'))
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'More like this is not available yet' });
+  if (modelVersionIds?.length && !guardFlagEnabled(ctx, 'imageSearchResources'))
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'Searching by resource is not available yet',
+    });
+};
+
 // Timed first, so flag and rate-limit refusals land on the dashboard too.
 const semanticSearchProcedure = publicProcedure.use(timeSemanticSearch('images'));
+const semanticVideoSearchProcedure = publicProcedure.use(timeSemanticSearch('videos'));
 
 export const semanticImageSearchRouter = router({
   search: semanticSearchProcedure
@@ -87,18 +104,26 @@ export const semanticImageSearchRouter = router({
       ])
     )
     .input(semanticImageSearchSchema)
+    .use(refuseProfaneSearch)
     .use(imageSearchOrOwnImages)
     .use(ownImagesRateLimit)
     .query(async ({ input, ctx }) => {
       const started = Date.now();
       const { ownImagesOf } = ctx;
-      const searched = ownImagesOf ? ownImagesInput(input, ownImagesOf) : input;
+      const asked = ownImagesOf ? ownImagesInput(input, ownImagesOf) : input;
+      // Dropped, not refused: a shared ?prefer= link or a stale tab gets plain "more like this".
+      const steer =
+        guardFlagEnabled(ctx, 'moreLikeThis') && guardFlagEnabled(ctx, 'moreLikeThisSteer');
+      const searched = steer ? asked : { ...asked, preferTagIds: undefined };
+      refuseUnflaggedFilters(ctx, searched);
       const result = await searchSemanticImages({
         input: searched,
         user: ctx.user,
+        ...credentialViews(ctx),
         domain: getRequestBoardDomainColor(ctx.req),
         track: ctx.track,
         refuseNarrowing: !!ownImagesOf,
+        tagMatchesFirst: !!ownImagesOf,
       }).catch(async (error) => {
         if (ownImagesOf) await holdOwnImages(started);
         throw error;
@@ -131,7 +156,47 @@ export const semanticImageSearchRouter = router({
           nextCursor: undefined,
           correctedQuery: undefined,
           latencyMs: 0,
+          refused: result.refused,
+          ...('refusedBy' in result && result.refusedBy !== undefined
+            ? { refusedBy: result.refusedBy }
+            : {}),
         };
+      }
+      return { ...result, latencyMs };
+    }),
+
+  searchVideos: semanticVideoSearchProcedure
+    .use(isFlagProtected('semanticVideoSearch'))
+    // As search: signed-out visitors share an IP bucket, so theirs is lower.
+    .use(
+      rateLimit([
+        { limit: 20, period: 60 },
+        { limit: 60, period: 60, userReq: () => true },
+      ])
+    )
+    .input(semanticImageSearchSchema)
+    .use(refuseProfaneSearch)
+    .query(async ({ input, ctx }) => {
+      const started = Date.now();
+      refuseUnflaggedFilters(ctx, input);
+      const result = await searchSemanticImages({
+        input,
+        user: ctx.user,
+        ...credentialViews(ctx),
+        domain: getRequestBoardDomainColor(ctx.req),
+        track: ctx.track,
+        collection: 'videos',
+      });
+      const latencyMs = Date.now() - started;
+      if (!input.cursor) {
+        const { query, imageId, cursor, limit, ...filters } = input;
+        void ctx.track
+          .search({
+            query: query ?? '',
+            index: 'videos_semantic',
+            filters: { ...filters, imageId, resultCount: result.items.length, latencyMs },
+          })
+          .catch(() => undefined);
       }
       return { ...result, latencyMs };
     }),

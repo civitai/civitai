@@ -4,7 +4,7 @@ import { NsfwLevel } from '~/server/common/enums';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import type * as DbLagHelpers from '~/server/db/db-lag-helpers';
 import type * as SystemCache from '~/server/services/system-cache';
-import type * as UserService from '~/server/services/user.service';
+import type * as UserPreferencesService from '~/server/services/user-preferences.service';
 import type * as FileService from '~/server/services/file.service';
 
 /**
@@ -21,9 +21,9 @@ vi.mock('~/server/services/system-cache', async (importOriginal) => ({
   ...(await importOriginal<typeof SystemCache>()),
   getCategoryTags: vi.fn(async () => []),
 }));
-vi.mock('~/server/services/user.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof UserService>()),
-  amIBlockedByUser: vi.fn(async () => false),
+vi.mock('~/server/services/user-preferences.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof UserPreferencesService>()),
+  getUsersBlockingViewer: vi.fn(async () => new Set<number>()),
 }));
 vi.mock('~/server/services/file.service', async (importOriginal) => ({
   ...(await importOriginal<typeof FileService>()),
@@ -68,6 +68,7 @@ function image(id: number, url: string, extra: Record<string, unknown> = {}) {
       ingestion: 'Scanned',
       needsReview: null,
       tosViolation: false,
+      modelRestricted: false,
       userId: OWNER_ID,
       hash: null,
       width: 1,
@@ -153,11 +154,13 @@ describe('article.getById body media', () => {
     expect(sent(ABOVE_LEVEL)).toBe(true);
   });
 
-  it('🔴 the owner gets their own unscanned, blocked and violation media, but not csam-held', async () => {
+  it('🔴 the owner gets their own unscanned and violation media, but not blocked or csam-held', async () => {
     const sent = await getById(owner);
 
-    for (const id of [SERVABLE, ABOVE_LEVEL, PENDING, BLOCKED, VIOLATION, UNLINKED])
+    for (const id of [SERVABLE, ABOVE_LEVEL, PENDING, VIOLATION, UNLINKED])
       expect(sent(id)).toBe(true);
+    // A block refuses its owner the media (`ownerMediaAllowed`).
+    expect(sent(BLOCKED)).toBe(false);
     expect(sent(CSAM_HELD)).toBe(false);
   });
 

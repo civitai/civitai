@@ -4,15 +4,17 @@ import { loadAuthEnv } from './env';
 export interface MintAppTokenInput {
   userId: number;
   clientId: string;
-  scope: number;
+  scope: bigint;
   ttlSeconds?: number;
+  /** The moderator acting as `userId`, or null. The hub mints nothing for an impersonation. */
+  impersonatedBy: number | null;
 }
 
 export interface MintedAppToken {
   accessToken: string;
   expiresAt: string;
   expiresIn: number;
-  scope: number;
+  scope: bigint;
 }
 
 export class AppTokenError extends Error {
@@ -29,7 +31,7 @@ export async function mintAppToken(input: MintAppTokenInput): Promise<MintedAppT
   const res = await hubFetch('/api/auth/oauth/app-token', {
     method: 'POST',
     headers: { authorization: `Bearer ${internal}`, 'content-type': 'application/json' },
-    body: JSON.stringify(input),
+    body: JSON.stringify({ ...input, scope: Number(input.scope) }),
   });
   const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   if (!res.ok) {
@@ -43,6 +45,6 @@ export async function mintAppToken(input: MintAppTokenInput): Promise<MintedAppT
     accessToken: data.access_token as string,
     expiresAt: data.expires_at as string,
     expiresIn: data.expires_in as number,
-    scope: data.scope as number,
+    scope: BigInt(data.scope as number),
   };
 }

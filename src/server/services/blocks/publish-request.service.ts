@@ -1,4 +1,5 @@
 import { appDisplayName } from '~/shared/utils/app-display-name';
+import { REMIX_STATUSES } from '~/shared/remix-apps/row.schema';
 import {
   agentReviewSummaryFromQueueRow,
   isImpersonationCheckStale,
@@ -12,6 +13,7 @@ import {
   type ReviewPreviewState,
   type StoredReviewPreviewState,
 } from '~/shared/constants/app-review-preview.constants';
+import type { RateLimitMeta } from '~/shared/utils/rate-limit-meta';
 import type {
   NewPendingSubmission,
   ReviewPreviewActor,
@@ -42,7 +44,10 @@ import {
 } from '~/server/schema/blocks/publish-request.schema';
 // Pure shared module (only depends on token-scope.constants) — safe to import
 // statically without coupling to env/Prisma, so the pure-helper tests still run.
-import { assertSensitiveScopesJustified } from '~/shared/constants/block-scope.constants';
+import {
+  appBlockOauthCeiling,
+  assertSensitiveScopesJustified,
+} from '~/shared/constants/block-scope.constants';
 // Pure (no env/Prisma) — stamps the platform-owned iframe.src onto a manifest and trims the
 // string fields the validator measures trimmed.
 import {
@@ -57,6 +62,17 @@ import { registryExportDiff } from '~/shared/constants/block-storage.constants';
 // the submitting developer of the moderator decision — best-effort, wrapped in a
 // try/catch at each call site so a notification failure can never fail the decision.
 import { notifyAppBlockSubmitter } from '~/server/services/blocks/app-block-notify';
+import type { AppBlockModerationNotificationDetails } from '~/server/notifications/app-block.notifications';
+import type { AppReviewAttribution } from '~/server/notifications/app-review-attribution';
+import { readOnBehalf } from '~/shared/utils/publish-request-on-behalf';
+// The platform-update RECORD module, not app-platform-update.service: that service imports the
+// source-repo and access services, which reach back here (an import cycle).
+import { supersedePlatformUpdate } from '~/server/services/blocks/app-platform-update.record';
+import { MANIFEST_PATH } from '~/server/services/blocks/app-source-repo.plan';
+import { deterministicBundleZip } from '~/server/services/blocks/bundle-zip';
+import type { dbRead as DbReadClient } from '~/server/db/client';
+import { manifestDeclaresPage } from '~/shared/utils/app-manifest-page';
+import { isMatureContentRating } from '~/server/utils/server-domain';
 // Pure const (no env/Prisma) — the marketplace category taxonomy + type guard.
 // approveRequest copies a validated manifest `category` onto AppBlock.category.
 import { isMarketplaceCategory } from '~/server/services/blocks/marketplace-categories.constants';
@@ -64,6 +80,8 @@ import { isMarketplaceCategory } from '~/server/services/blocks/marketplace-cate
 // AppBlock→AppListing mapper consumes (see the (3b) auto-create block in
 // approveRequest). The mapper VALUE itself is dynamically imported at use.
 import type { SourceAppBlock } from '~/server/services/blocks/app-listing-mapper';
+import type { SourceRepoReadClient } from '~/server/services/blocks/app-listing-source-repo.service';
+import type { IssueTrackerReadClient } from '~/server/services/blocks/app-listing-issue-tracker.service';
 import type {
   ActionsRunSource,
   ReviewSourceProvenance,
@@ -78,7 +96,18 @@ import {
   listingFloorNoListingNextStep,
   type FloorAsset,
 } from '~/shared/utils/listing-publish-floor';
+import {
+  bootCheckNotVerified,
+  reviewBootCheckSummary,
+  type ReviewBootCheckMode,
+  type ReviewBootCheckRecord,
+} from '~/shared/utils/review-boot-check';
 import type { ListingProblem } from '~/server/services/blocks/listing-problems';
+import type { Advisory } from '~/server/services/blocks/submit-advisories';
+import type {
+  MissingPlatformUpdate,
+  PlatformUpdatesMissingRecord,
+} from '~/server/services/blocks/platform-update-bundle-check';
 // Pure util (no env/Prisma) — folds a blockId to the appsDb schema slug. Used by
 // the (3c) storage-provision-on-approve block; matches the admin backfill's
 // derivation exactly. The provisioner VALUE is dynamically imported at use so
@@ -101,9 +130,11 @@ import {
   appOwnerTermsRefusalMessage,
   AppDeveloperTermsNotAcceptedError,
 } from '~/shared/constants/app-developer-terms.constants';
+import { FORGEJO_REVIEW_ORG } from '~/server/services/blocks/forgejo-orgs';
 import type { BuildAttemptSignals } from '~/shared/constants/app-block-build.constants';
 import type { ReviewStorageCleanupOutcome } from '~/server/metrics/app-block-runtime.metrics';
 import type { ApproveClaim } from '~/server/services/blocks/publish-request-holds.service';
+import { APP_PLATFORM_UPDATE_SENDER } from '~/shared/constants/app-assistant.constants';
 
 // dbRead/dbWrite/newUlid/bundle-s3 are dynamically imported inside the
 // functions that need them so the pure helpers (extract/diff) can be
@@ -221,6 +252,60 @@ export type SubmitVersionParams = {
    * 🔴 A credential: never logged or echoed.
    */
   githubOidcToken?: string;
+  /**
+   * The packages the client reported submitting below the platform minimum with
+   * `--allow-outdated-sdk` (`sdk-floor.ts`). A claim, recorded beside the server's own lockfile
+   * reading under `fileSummary.sdkFloor`; it changes nothing else.
+   */
+  sdkFloorOverride?: { package: string; installed: string; minimum: string }[];
+  /**
+   * `civitai app submit --allow-unmerged-platform-update`: queue the bundle even when it lacks a
+   * staff platform update no approved version has shipped (`platform-update-bundle-check.ts`).
+   * What it left out is recorded for the moderator under `fileSummary.platformUpdatesMissing`.
+   * Absent or false: such a bundle is refused (`PlatformUpdateMissingRefusal`).
+   */
+  allowUnmergedPlatformUpdate?: boolean;
+  /**
+   * A staff submit on the owner's behalf: its bundle is the approved version plus one update, so
+   * it is never refused for the app's other unshipped updates (recorded as
+   * platformUpdatesMissing with via 'on-behalf'). Its approve ships no update. Moderator only;
+   * passed with onBehalf.
+   */
+  submittedOnBehalf?: boolean;
+  /**
+   * A STAFF SUBMIT ON THE OWNER'S BEHALF of a recorded platform update
+   * (`app-platform-update-submit.service.ts`), the only caller that passes it. The submitter
+   * (`submittedByUserId`) is the moderator; this names the update and the owner it was submitted
+   * for. Stored under `fileSummary.onBehalf` for the review UI ("submitted by <staff> for
+   * <owner>"). Refused unless the submitter is a moderator.
+   */
+  onBehalf?: OnBehalfSubmission;
+};
+
+/**
+ * The refusal of a submit while a STAFF SUBMISSION of a platform update (`fileSummary.onBehalf`)
+ * is pending for the app: the owner cannot withdraw it, so it says what it is and when their own
+ * submit can go through.
+ */
+export function staffPendingSubmitRefusal(slug: string): string {
+  // The owner reads it as from the official sender, never the staff member (operator decision).
+  return (
+    `slug ${slug} has a pending Civitai staff submission of a platform update by ` +
+    `${APP_PLATFORM_UPDATE_SENDER}, under review; your submit can go through once it is ` +
+    `reviewed`
+  );
+}
+
+/** An on-behalf submit whose recorded owner is not the app's owner (or whose app is gone). */
+export const ON_BEHALF_OWNER_MISMATCH =
+  "the app's owner is not the owner this update was submitted for; reload and retry";
+
+/** What `fileSummary.onBehalf` records for a staff submit on the owner's behalf. */
+export type OnBehalfSubmission = {
+  platformUpdateId: string;
+  staffUsername: string | null;
+  ownerUserId: number;
+  ownerUsername: string | null;
 };
 
 export type SubmitVersionResult = {
@@ -251,6 +336,13 @@ export type SubmitVersionResult = {
    * (the manual-apply columns are not there yet). Absent when no token was verified.
    */
   actionsRunSourceRecorded?: boolean;
+  /**
+   * Notes that never refuse or delay the submit: `default-theme` (`submitAdvisories`), when the
+   * bundle reads as Civitai's stock look, and `sdk-below-floor` (`sdk-floor.ts`), one per package
+   * the bundle's lockfile installs below the platform minimum. Empty when there is nothing to
+   * say, or when they could not be worked out in time. Part of the submit API's response (both routes).
+   */
+  advisories: Advisory[];
 };
 
 /**
@@ -278,13 +370,6 @@ export type SubmitListingReadiness = {
   /** Every listing problem, `blocking` and `advisory` (`computeListingProblems`). */
   problems: ListingProblem[];
 };
-
-const MANIFEST_PATH = 'block.manifest.json';
-
-/** Org holding the per-slug in-review snapshot repos a review preview builds
- *  from. Deliberately separate from the canonical build org so commits here
- *  never fire the production build webhook. */
-const REVIEW_REPO_ORG = 'civitai-apps-review';
 
 // Diff threshold: fields that exceed N bytes when serialized are summarised
 // rather than embedded verbatim in the diff so manifestDiffSummary stays
@@ -1127,10 +1212,20 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     sourceCommit,
     sourceDirty,
     githubOidcToken,
+    sdkFloorOverride,
+    onBehalf,
+    allowUnmergedPlatformUpdate,
+    submittedOnBehalf,
   } = params;
+  if ((onBehalf || submittedOnBehalf) && !submitterIsModerator)
+    throw new Error('only a moderator can submit on behalf of an app owner');
 
-  const { assertAcceptedAppDeveloperTerms } = await import('./app-developer-terms.service');
-  await assertAcceptedAppDeveloperTerms(submittedByUserId);
+  // A staff submit on the owner's behalf ships the OWNER's app in the owner's name: their
+  // acceptance is required below (with the editor case), and the moderator's own is not.
+  if (!onBehalf) {
+    const { assertAcceptedAppDeveloperTerms } = await import('./app-developer-terms.service');
+    await assertAcceptedAppDeveloperTerms(submittedByUserId);
+  }
 
   if (bundleBuffer.length > MAX_BUNDLE_SIZE_BYTES) {
     throw new Error(`bundle is ${bundleBuffer.length} bytes (max ${MAX_BUNDLE_SIZE_BYTES})`);
@@ -1197,6 +1292,16 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   // known); here we only assert they pass every cap/magic-byte/name gate.
   await extractScreenshots(bundleBuffer);
 
+  // MODULE-GRAPH LINT — REFUSED HERE, before any upload, build or review: a no-build bundle whose
+  // page imports a module the app server would not send as JavaScript (`./main.ts`, `./App.jsx`),
+  // or one it never shipped, loads and never starts. The refusal names the importing file and the
+  // specifier (`ModuleGraphRefusal`, returned as `moduleGraphErrors`). A bundle the platform
+  // builds (a root package.json) ships source and is not linted. See `bundle-module-graph.ts`.
+  {
+    const { assertBundleModuleGraphLoads } = await import('./bundle-module-graph');
+    await assertBundleModuleGraphLoads(bundleBuffer);
+  }
+
   // iframe.src is PLATFORM-OWNED, not developer-authored. The only valid value
   // is the canonical per-app subdomain root (`https://<slug>.<APPS_DOMAIN>/`),
   // so we DERIVE + stamp it here instead of making the developer hand-type a
@@ -1231,7 +1336,10 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   const ownerUserId = existingApp
     ? await resolveAppTermsOwner(existingApp.id, existingApp.app?.userId)
     : undefined;
-  if (typeof ownerUserId === 'number' && ownerUserId !== submittedByUserId) {
+  // On-behalf: the owner the request names must BE the app's owner, whose acceptance is then the
+  // one checked (even when that owner is the submitting moderator, whose own check was skipped).
+  if (onBehalf && ownerUserId !== onBehalf.ownerUserId) throw new Error(ON_BEHALF_OWNER_MISMATCH);
+  if (typeof ownerUserId === 'number' && (ownerUserId !== submittedByUserId || onBehalf)) {
     const { hasAcceptedAppDeveloperTerms } = await import('./app-developer-terms.service');
     if (!(await hasAcceptedAppDeveloperTerms(ownerUserId)))
       throw new AppDeveloperTermsNotAcceptedError(
@@ -1252,7 +1360,8 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   // act on it).
   const conflicting = await dbRead.appBlockPublishRequest.findFirst({
     where: { slug, status: 'pending' },
-    select: { id: true, submittedByUserId: true },
+    // fileSummary: a staff submit on the owner's behalf is named as one in the refusal.
+    select: { id: true, submittedByUserId: true, fileSummary: true },
   });
   if (conflicting) {
     if (conflicting.submittedByUserId === submittedByUserId) {
@@ -1260,6 +1369,9 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
         `you already have a pending submission for slug ${slug} (${conflicting.id}); withdraw it first with \`civitai app withdraw ${conflicting.id}\` before resubmitting`
       );
     }
+    // The owner cannot withdraw a staff submission, so say what it is and when theirs can go in.
+    const staffPending = readOnBehalf(conflicting.fileSummary);
+    if (staffPending) throw new Error(staffPendingSubmitRefusal(slug));
     throw new Error(
       `slug ${slug} already has a pending submission from another user; wait for it to be reviewed before submitting a different bundle`
     );
@@ -1399,8 +1511,13 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   ]);
   const baseline = existingApp
     ? await loadStorageMigrationBaseline({ slug })
-    : { prev: null, history: [] };
-  const storageMigrations = checkStorageMigrations(baseline.prev, manifest, baseline.history);
+    : { prev: null, history: [], approved: [] };
+  const storageMigrations = checkStorageMigrations(
+    baseline.prev,
+    manifest,
+    baseline.history,
+    baseline.approved
+  );
   assertStorageMigrationsCover(storageMigrations);
 
   // 🔴 APP STORAGE PERMISSION HOOKS — refused HERE too, before the upload and the review-repo push:
@@ -1418,6 +1535,28 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
       readFiles: (paths) => readBundleFiles(bundleBuffer, paths),
     });
   }
+
+  // STAFF PLATFORM UPDATES — refused HERE too, before the upload and the review-repo push: a bundle
+  // of an existing app that lacks a staff update no approved version has shipped, unless the
+  // client sent `allowUnmergedPlatformUpdate` (then what it left out is recorded below for the
+  // moderator). Reads only the paths the updates touch. Off with the flag, or while the manual
+  // migrations are missing. See `platform-update-bundle-check.ts`.
+  const {
+    assertBundleHasPlatformUpdates,
+    platformUpdatesMissingRecord,
+    platformUpdateMissingAdvisories,
+  } = await import('./platform-update-bundle-check');
+  const platformUpdatesVia = submittedOnBehalf === true ? 'on-behalf' : 'override';
+  const platformUpdatesMissing = await assertBundleHasPlatformUpdates({
+    appBlockId: existingApp?.id ?? null,
+    readFiles: (paths) => readBundleFiles(bundleBuffer, paths),
+    allow: allowUnmergedPlatformUpdate === true || submittedOnBehalf === true,
+  });
+  const platformUpdatesRecorded = platformUpdatesMissingRecord(
+    platformUpdatesMissing.missing,
+    platformUpdatesVia,
+    platformUpdatesMissing
+  );
 
   // GITHUB ACTIONS OIDC — verified HERE: after the validation gates above and before the first
   // side effect (the upload), so a refused token leaves nothing behind. The token is present only
@@ -1481,7 +1620,7 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     }
     await ensureReviewRepo(slug);
     await commitFiles({
-      org: REVIEW_REPO_ORG,
+      org: FORGEJO_REVIEW_ORG,
       slug,
       files: reviewFiles,
       message: `Publish request ${version} bundle (sha ${bundleSha256.slice(0, 12)})`,
@@ -1490,6 +1629,14 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   } catch (err) {
     throw new Error(`could not push bundle to review repo: ${(err as Error).message}`);
   }
+
+  // OUTDATED SDK: the server's own lockfile reading (never throws, time-bounded) and the client's
+  // `--allow-outdated-sdk` claim, stored for the moderator under `fileSummary.sdkFloor` (absent
+  // when there is nothing to say). Never refuses. The lockfile read is the one the manifest's
+  // `buildCommand` installs from, chosen as the CLI chooses it. See `sdk-floor.ts`.
+  const { judgeBundleSdkFloor, sdkFloorRecord, sdkFloorAdvisories } = await import('./sdk-floor');
+  const sdkFloor = await judgeBundleSdkFloor(bundleBuffer, manifest.buildCommand);
+  const sdkFloorRecorded = sdkFloorRecord(sdkFloor, sdkFloorOverride);
 
   const publishRequestId = `pubreq_${newUlid()}`;
   try {
@@ -1504,7 +1651,12 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
         bundleKey: key,
         bundleSha256,
         bundleSizeBytes: BigInt(bundleBuffer.length),
-        fileSummary: fileSummary as object,
+        fileSummary: {
+          ...fileSummary,
+          ...(sdkFloorRecorded ? { sdkFloor: sdkFloorRecorded } : {}),
+          ...(onBehalf ? { onBehalf: { ...onBehalf, staffUserId: submittedByUserId } } : {}),
+          ...(platformUpdatesRecorded ? { platformUpdatesMissing: platformUpdatesRecorded } : {}),
+        } as object,
         manifestDiffSummary: manifestDiffSummary as object,
         status: 'pending',
         // #4059 — the client's UNVERIFIED provenance claim, stored as a claim.
@@ -1565,6 +1717,14 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     await applyForkSessionToFirstPublishRequest({ publishRequestId, slug, submittedByUserId });
   }
 
+  // App Assistant session trace: fired, never awaited, never throws, so a trace that fails or
+  // hangs can neither fail nor slow a submit.
+  void import('~/server/services/app-assistant/submission-trace.service')
+    .then(({ recordSubmissionTrace }) =>
+      recordSubmissionTrace({ publishRequestId, slug, submittedByUserId, bundleBuffer })
+    )
+    .catch(() => undefined);
+
   // (submit-draft) W13 draft-at-submit — mint the pre-approval on-site draft
   // `AppListing` now that the pending request exists. Ordered AFTER the request create
   // so there is never a draft orphaned without a request: a request without a draft
@@ -1579,15 +1739,28 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   // submit that didn't reuse an existing orphan draft.
   if (createDraftListing) {
     try {
-      const { buildListingScalarSync } = await import('./app-listing-mapper');
+      const { buildListingScalarSync, buildListingIssueTrackerSync } = await import(
+        './app-listing-mapper'
+      );
+      // The manifest's `repository` / `bugs` links are manifest-governed like name/tagline/
+      // description, so the draft carries them from the start instead of showing both links
+      // empty until approve. Both columns are manual-apply, so each is probed first; a probe
+      // that cannot answer reads as "absent" and the link is simply left for approve's re-sync
+      // to write, rather than failing the draft create.
+      const { sourceRepoAvailable, issueTrackerAvailable } = await probeDraftLinkColumns(
+        dbWrite,
+        slug
+      );
       const scalars = buildListingScalarSync({
         manifest,
         blockId: slug,
         category: typeof manifest.category === 'string' ? manifest.category : null,
+        sourceRepoAvailable,
       });
+      const draftListingId = newAppListingId();
       await dbWrite.appListing.create({
         data: {
-          id: newAppListingId(),
+          id: draftListingId,
           kind: 'onsite',
           status: 'draft',
           slug,
@@ -1595,6 +1768,8 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
           tagline: scalars.tagline,
           description: scalars.description,
           category: scalars.category,
+          // Absent (not null) when the column is unavailable — see `buildListingScalarSync`.
+          ...(scalars.sourceRepoUrl !== undefined ? { sourceRepoUrl: scalars.sourceRepoUrl } : {}),
           // Seed the maturity rating from the submitted manifest (approve re-syncs it
           // authoritatively from the AppBlock); default SFW so an omitted rating is never
           // mature. Drives the asset NSFW-scan threshold while pending.
@@ -1605,6 +1780,18 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
           userId: submittedByUserId,
         },
       });
+      // `issue_tracker_url` is a no-type column, so it is written by raw SQL after the create,
+      // best-effort (a failed write leaves the link for approve's re-sync).
+      const tracker = buildListingIssueTrackerSync({ manifest, issueTrackerAvailable });
+      if (tracker.write && tracker.value !== null) {
+        const { writeIssueTrackerBestEffort, writeListingIssueTrackerUrl } = await import(
+          './app-listing-issue-tracker.service'
+        );
+        const value = tracker.value;
+        await writeIssueTrackerBestEffort(`submit draft ${slug}`, () =>
+          writeListingIssueTrackerUrl(dbWrite, draftListingId, value)
+        );
+      }
     } catch (err) {
       // eslint-disable-next-line no-console
       console.warn(
@@ -1617,12 +1804,18 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     }
   }
 
-  const listing = await submitListingReadiness({
-    slug,
-    submittedByUserId,
-    existingAppBlockId: existingApp?.id ?? null,
-    manifest,
-  });
+  // WARN, NEVER BLOCK: never throws; its bundle read is time-bounded (not its scan: `submitAdvisories`).
+  const [listing, advisories] = await Promise.all([
+    submitListingReadiness({
+      slug,
+      submittedByUserId,
+      existingAppBlockId: existingApp?.id ?? null,
+      manifest,
+    }),
+    import('./submit-advisories')
+      .then(({ submitAdvisories }) => submitAdvisories(bundleBuffer))
+      .catch(() => []),
+  ]);
 
   announceNewPendingRequest({
     publishRequestId,
@@ -1643,6 +1836,15 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     listing,
     storageMigrationWarnings: storageMigrations.warnings,
     ...(actionsRunSourceRecorded === undefined ? {} : { actionsRunSourceRecorded }),
+    advisories: [
+      ...advisories,
+      ...sdkFloorAdvisories(sdkFloor.lockfile, sdkFloor.below),
+      ...platformUpdateMissingAdvisories(
+        platformUpdatesMissing.missing,
+        platformUpdatesVia,
+        platformUpdatesMissing
+      ),
+    ],
   };
 }
 
@@ -1655,6 +1857,39 @@ class ListingFloorRefusal extends Error {
     super(message);
     this.name = 'ListingFloorRefusal';
   }
+}
+
+/**
+ * Which manual-apply link columns the submit-time draft may name. Each probe that THROWS (a
+ * transient fault, not a missing column) reads as `false`: at draft mint an omitted link is
+ * harmless — approve re-syncs both from the manifest — whereas a throw here would cost the
+ * author the whole draft.
+ */
+async function probeDraftLinkColumns(
+  db: SourceRepoReadClient & IssueTrackerReadClient,
+  slug: string
+): Promise<{ sourceRepoAvailable: boolean; issueTrackerAvailable: boolean }> {
+  const [{ isSourceRepoColumnAvailable }, { isIssueTrackerColumnAvailable }] = await Promise.all([
+    import('./app-listing-source-repo.service'),
+    import('./app-listing-issue-tracker.service'),
+  ]);
+  const probe = async (name: string, run: () => Promise<boolean>) => {
+    try {
+      return await run();
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[submitVersion] ${name} column probe failed (slug=${slug}); the draft is minted without ` +
+          `that link and approve writes it: ${err instanceof Error ? err.message : String(err)}`
+      );
+      return false;
+    }
+  };
+  const [sourceRepoAvailable, issueTrackerAvailable] = await Promise.all([
+    probe('source_repo_url', () => isSourceRepoColumnAvailable(db)),
+    probe('issue_tracker_url', () => isIssueTrackerColumnAvailable(db)),
+  ]);
+  return { sourceRepoAvailable, issueTrackerAvailable };
 }
 
 /**
@@ -1747,8 +1982,9 @@ async function submitListingReadiness(args: {
       [{ id: row.id, iconId: row.iconId, coverId: row.coverId }],
       dbWrite
     );
-    // The trust-link nudge. On-site links are manifest-governed and reach the listing only at
-    // approve, so the SUBMITTED manifest is what this submit is about: its `repository` / `bugs`
+    // The trust-link nudge. On-site links are manifest-governed: a NEW draft is minted with them,
+    // but an existing listing (a reused draft, an update) only takes them at approve, so the
+    // SUBMITTED manifest is what this submit is about: its `repository` / `bugs`
     // decide the nudge. The columns are still read, for one thing only — whether each exists
     // here: a link whose column is absent is reported as unknown (no nudge), never as missing.
     const kind = row.kind === 'offsite' ? 'offsite' : 'onsite';
@@ -2279,11 +2515,7 @@ export async function reconstructBundleFromForgejo(slug: string, ref: string): P
   }
 
   // Build an in-memory ZIP — same shape a developer would have uploaded.
-  // `date: new Date(0)` zeroes per-entry timestamps so re-runs with identical
-  // repo state produce an identical bundleSha256 (mirrors backfill).
-  const zip = new JSZip();
-  for (const f of files) zip.file(f.path, f.content, { date: new Date(0) });
-  return Buffer.from(await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' }));
+  return deterministicBundleZip(files);
 }
 
 export type ListPendingRequestsOptions = {
@@ -2339,7 +2571,9 @@ export async function computePushDiffSummaries(
 export async function enrichPushRequestRow(
   publishRequestId: string,
   slug: string,
-  ref: string
+  ref: string,
+  /** Recorded at park time (`recordPendingFromPush`) and kept: the diff replaces the summary. */
+  carry: { platformUpdatesMissing?: PlatformUpdatesMissingRecord | null } = {}
 ): Promise<void> {
   try {
     const { fileSummary, manifestDiffSummary, bundleSizeBytes } = await computePushDiffSummaries(
@@ -2350,7 +2584,12 @@ export async function enrichPushRequestRow(
     await dbWrite.appBlockPublishRequest.updateMany({
       where: { id: publishRequestId, status: 'pending' },
       data: {
-        fileSummary: fileSummary as object,
+        fileSummary: {
+          ...fileSummary,
+          ...(carry.platformUpdatesMissing
+            ? { platformUpdatesMissing: carry.platformUpdatesMissing }
+            : {}),
+        } as object,
         manifestDiffSummary: manifestDiffSummary as object,
         bundleSizeBytes: BigInt(bundleSizeBytes),
       },
@@ -2399,7 +2638,7 @@ export async function recordPendingFromPush(args: {
   version: string;
   /** The civitai user who pushed, when the pushing Forgejo account maps to one. */
   pusherUserId?: number | null;
-}): Promise<{ publishRequestId: string }> {
+}): Promise<{ publishRequestId: string; advisories: Advisory[] }> {
   // Single sink for every push-recorded manifest.
   trimManifestStringFields(args.manifest as Record<string, unknown>);
   const [{ dbWrite, dbRead }, { newUlid }] = await Promise.all([
@@ -2464,8 +2703,35 @@ export async function recordPendingFromPush(args: {
       where: { id: existingForSha.id },
       data: { manifest: args.manifest, version: args.version, appBlockId: args.appBlockId },
     });
-    return { publishRequestId: existingForSha.id };
+    return { publishRequestId: existingForSha.id, advisories: [] };
   }
+
+  // STAFF PLATFORM UPDATES — the commit is checked like a bundle (only the paths the updates
+  // touch are read, at the pushed sha) but NEVER refused: it is already in the repo, and a push
+  // has no client to send the override, so refusing would only drop the review request. What it
+  // left out is recorded for the moderator (`via: 'push'`) and returned as an advisory. A check
+  // that fails is logged and records nothing. See `platform-update-bundle-check.ts`.
+  const { checkPlatformUpdates, platformUpdatesMissingRecord, platformUpdateMissingAdvisories } =
+    await import('./platform-update-bundle-check');
+  let pushMissing: MissingPlatformUpdate[] = [];
+  let pushTruncated = false;
+  try {
+    const pushCheck = await checkPlatformUpdates({
+      appBlockId: args.appBlockId,
+      readFiles: (paths) => readForgejoFilesAtRef(args.slug, args.sha, paths),
+    });
+    pushMissing = pushCheck?.missing ?? [];
+    pushTruncated = pushCheck?.truncated === true;
+  } catch (err) {
+    console.warn(
+      `[recordPendingFromPush] platform-update check failed for ${args.slug}@${
+        args.sha
+      }; recorded without it: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+  const pushPlatformUpdates = platformUpdatesMissingRecord(pushMissing, 'push', {
+    truncated: pushTruncated,
+  });
 
   // Supersede any OTHER still-pending request for this slug (older sha or a
   // dev submitVersion) so the partial unique index (one pending per slug)
@@ -2518,7 +2784,13 @@ export async function recordPendingFromPush(args: {
         bundleKey: '',
         bundleSha256: '',
         bundleSizeBytes: BigInt(0),
-        fileSummary: { files: [], added: [], removed: [], changed: [] },
+        fileSummary: {
+          files: [],
+          added: [],
+          removed: [],
+          changed: [],
+          ...(pushPlatformUpdates ? { platformUpdatesMissing: pushPlatformUpdates } : {}),
+        },
         manifestDiffSummary: {
           kind: 'first-version' as const,
           fields: Object.keys(args.manifest as Record<string, unknown>).sort(),
@@ -2550,7 +2822,7 @@ export async function recordPendingFromPush(args: {
         select: { id: true },
       }));
     if (!winner) throw err; // index fired but no pending row visible — re-throw
-    return { publishRequestId: winner.id };
+    return { publishRequestId: winner.id, advisories: [] };
   }
 
   // FORK PROVENANCE — same carry as `submitVersion`: the block's own server-written pair onto the
@@ -2566,7 +2838,9 @@ export async function recordPendingFromPush(args: {
   // Fire-and-forget: fill in the real diff + bundle size. enrichPushRequestRow
   // has its own try/catch + is scoped to status='pending', so it never gates the
   // park and can't clobber a row that was approved/rejected/superseded.
-  void enrichPushRequestRow(publishRequestId, args.slug, args.sha).catch(() => undefined);
+  void enrichPushRequestRow(publishRequestId, args.slug, args.sha, {
+    platformUpdatesMissing: pushPlatformUpdates,
+  }).catch(() => undefined);
 
   announceNewPendingRequest({
     publishRequestId,
@@ -2577,7 +2851,10 @@ export async function recordPendingFromPush(args: {
     origin: 'push',
   });
 
-  return { publishRequestId };
+  return {
+    publishRequestId,
+    advisories: platformUpdateMissingAdvisories(pushMissing, 'push', { truncated: pushTruncated }),
+  };
 }
 
 // Type-only, so the big store service stays out of this module's runtime graph (the
@@ -2680,6 +2957,179 @@ function listingBelongsToRequest(listing: JoinedListing, req: ListingJoinSubject
   // and "someone else's app on my released slug" are indistinguishable from the columns this
   // join has.
   return listing.userId === req.submittedBy?.id;
+}
+
+/**
+ * What approving this pending version does to the rating of its app's existing on-site listing
+ * ((3b-sync)), for the approve bar: the listing's rating now (`from`) and after the approve
+ * (`to`), from the same `resolveVersionListingRating` the approve writes with. `null` when the
+ * approve re-rates no listing this way (no app yet, no on-site listing keyed to it, or a request
+ * that is not pending). The app's rating is read as it is now, which is the previous version's
+ * declaration until the approve runs.
+ *
+ * Asked once per opened request, not in `listingFactsForRequests`: the floor reads the
+ * listing's media, which is a query per listing, and the queue pages must stay a fixed count.
+ */
+export async function previewVersionListingRating(
+  publishRequestId: string
+): Promise<{ listingId: string; from: string | null; to: string | null } | null> {
+  const { dbRead } = await import('~/server/db/client');
+  const request = await dbRead.appBlockPublishRequest.findUnique({
+    where: { id: publishRequestId },
+    select: { status: true, appBlockId: true, manifest: true },
+  });
+  if (!request || request.status !== 'pending' || !request.appBlockId) return null;
+  const listing = await dbRead.appListing.findFirst({
+    where: { appBlockId: request.appBlockId, kind: 'onsite' },
+    select: { id: true, contentRating: true },
+  });
+  const block = await dbRead.appBlock.findUnique({
+    where: { id: request.appBlockId },
+    select: { contentRating: true },
+  });
+  if (!listing || !block) return null;
+  const { resolveVersionListingRating } = await import(
+    '~/server/services/blocks/app-listing-assets.service'
+  );
+  const to = await resolveVersionListingRating(dbRead, {
+    appListingId: listing.id,
+    current: listing.contentRating,
+    earlierDeclared: [
+      block.contentRating,
+      ...(await approvedVersionRatings(dbRead, request.appBlockId)),
+    ],
+    nextDeclared: manifestRatingOrDefault(request.manifest),
+  });
+  return { listingId: listing.id, from: listing.contentRating, to };
+}
+
+/**
+ * The ratings an app's APPROVED versions declared, newest first — the "earlier" declarations
+ * `resolveVersionListingRating` tells an approve's rating from a moderator's raise by. Bounded:
+ * the newest 200 versions.
+ */
+async function approvedVersionRatings(
+  db: Prisma.TransactionClient,
+  appBlockId: string
+): Promise<string[]> {
+  const rows = await db.appBlockPublishRequest.findMany({
+    where: { appBlockId, status: 'approved' },
+    orderBy: [{ reviewedAt: 'desc' }, { id: 'desc' }],
+    take: 200,
+    select: { manifest: true },
+  });
+  return rows.map((r) => manifestRatingOrDefault(r.manifest));
+}
+
+export type ListingRatingResync = { listingId: string; from: string | null; to: string | null };
+
+/** Typed failure from {@link resyncListingRating}; `code` drives the tRPC mapping. */
+export class ListingRatingResyncError extends Error {
+  constructor(public code: 'NOT_FOUND' | 'CONFLICT', message: string) {
+    super(message);
+    this.name = 'ListingRatingResyncError';
+  }
+}
+
+/**
+ * The (3b-sync) rating an APPROVED app's approved on-site listing would get if its current
+ * version were approved now: `resolveVersionListingRating` with the current version's declared
+ * rating as the new one and every approved version's as the earlier ones. `null` when the app is
+ * not approved or has no approved on-site listing.
+ */
+async function resolveListingRatingResync(
+  db: Prisma.TransactionClient,
+  appBlockId: string
+): Promise<(ListingRatingResync & { slug: string }) | null> {
+  const block = await db.appBlock.findUnique({
+    where: { id: appBlockId },
+    select: { status: true, contentRating: true },
+  });
+  if (!block || block.status !== 'approved') return null;
+  const listing = await db.appListing.findFirst({
+    where: { appBlockId, kind: 'onsite', status: 'approved' },
+    select: { id: true, slug: true, contentRating: true },
+  });
+  if (!listing) return null;
+  const { resolveVersionListingRating } = await import(
+    '~/server/services/blocks/app-listing-assets.service'
+  );
+  const to = await resolveVersionListingRating(db, {
+    appListingId: listing.id,
+    current: listing.contentRating,
+    earlierDeclared: [block.contentRating, ...(await approvedVersionRatings(db, appBlockId))],
+    nextDeclared: block.contentRating,
+  });
+  return { listingId: listing.id, slug: listing.slug, from: listing.contentRating, to };
+}
+
+/** MOD: what {@link resyncListingRating} would do to this app's listing (read on the replica). */
+export async function previewListingRatingResync(
+  appBlockId: string
+): Promise<ListingRatingResync | null> {
+  const { dbRead } = await import('~/server/db/client');
+  const target = await resolveListingRatingResync(dbRead, appBlockId);
+  return target ? { listingId: target.listingId, from: target.from, to: target.to } : null;
+}
+
+/**
+ * MOD: re-run the subsequent-version rating sync for one approved app's on-site listing, without
+ * approving anything — for a listing approved before the sync existed. Same rule and helper as
+ * the approve ({@link resolveListingRatingResync}). The write is guarded on the rating it was
+ * computed from, so a rating that moved in between refuses (CONFLICT) instead of being
+ * overwritten. A change is recorded as a `rating-change` event by the acting moderator, and
+ * the catalog cache is busted.
+ */
+export async function resyncListingRating(args: {
+  appBlockId: string;
+  actorUserId: number;
+}): Promise<ListingRatingResync & { changed: boolean }> {
+  const { dbWrite } = await import('~/server/db/client');
+  const target = await resolveListingRatingResync(dbWrite, args.appBlockId);
+  if (!target)
+    throw new ListingRatingResyncError(
+      'NOT_FOUND',
+      'No approved app with an approved on-site listing for that id.'
+    );
+  const result = { listingId: target.listingId, from: target.from, to: target.to };
+  if (target.to === target.from) return { ...result, changed: false };
+  const written = await dbWrite.appListing.updateMany({
+    where: {
+      id: target.listingId,
+      appBlockId: args.appBlockId,
+      kind: 'onsite',
+      status: 'approved',
+      contentRating: target.from,
+    },
+    data: { contentRating: target.to },
+  });
+  if (written.count === 0)
+    throw new ListingRatingResyncError(
+      'CONFLICT',
+      'The listing changed while it was being re-rated. Check the preview again.'
+    );
+  await recordListingRatingChangeAfterCommit({
+    appListingId: target.listingId,
+    slug: target.slug,
+    before: target.from,
+    after: target.to,
+    actorUserId: args.actorUserId,
+  });
+  try {
+    const { bustAppListingCatalogCache } = await import(
+      '~/server/services/blocks/app-listing.service'
+    );
+    await bustAppListingCatalogCache();
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[resyncListingRating] catalog cache bust failed (listing=${target.listingId}); ` +
+        `the store grid self-corrects within CacheTTL.sm: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+    );
+  }
+  return { ...result, changed: true };
 }
 
 /** The rating a manifest declares; an app that declares none is approved as `g`. */
@@ -2856,10 +3306,9 @@ async function listingFactsForRequests(
     );
     const target = pickPublishTarget<Candidate>(draft, reset);
     if (!target) return null;
-    // A draft is rated from the request's manifest; a reset listing keeps the rating it has.
-    const declared = target.firstGoLive
-      ? manifestRatingOrDefault(req.manifest)
-      : target.listing.contentRating ?? null;
+    // Both are rated from the request's manifest: a draft by (3b-transition), a reset
+    // listing by (3b-sync), which writes it before (3b-reset) floors it again at the media.
+    const declared = manifestRatingOrDefault(req.manifest);
     return { ...target, declared };
   };
   const approveRatingFor = (req: ListingJoinSubject): RequestListingFacts['approveRating'] => {
@@ -3018,6 +3467,16 @@ async function liveListingFingerprints(
   return out;
 }
 
+/** The review boot check's CURRENT rollout mode (off on any read error). */
+async function currentBootCheckMode(): Promise<ReviewBootCheckMode> {
+  try {
+    const { readReviewBootCheckMode } = await import('./review-boot-check.service');
+    return await readReviewBootCheckMode();
+  } catch {
+    return 'off';
+  }
+}
+
 /** The `where` for the on-site PENDING queue — shared by the list and its count. */
 const PENDING_REQUEST_WHERE = { status: 'pending' } as const;
 
@@ -3112,6 +3571,7 @@ export async function listPendingRequests(
     };
   };
   const now = Date.now();
+  const bootCheckMode = await currentBootCheckMode();
   return {
     items: items.map(
       ({
@@ -3133,6 +3593,14 @@ export async function listPendingRequests(
         // The SAME reported state `getReviewStatus` gives the review page (one rule, including
         // #8240's expiry from the build's start), so the queue chip and the page agree.
         previewState: reportedReviewPreviewState(deployState, deployDetail, deployUpdatedAt, now),
+        // The review boot check's result + mode (never the rest of the detail), for the action
+        // bar's notices and the fast lane. Approve itself is refused by the boot-check HOLD.
+        previewBootCheck: reviewBootCheckSummary(deployState, parseReviewDetail(deployDetail)),
+        // Under a current `enforce` flag: no enforced pass yet ("Boot check not run").
+        previewBootCheckUnverified: bootCheckNotVerified(
+          bootCheckMode,
+          reviewBootCheckSummary(deployState, parseReviewDetail(deployDetail))
+        ),
         // Absent (not null) when the viewer has no agentic surface: the chip is hidden, not
         // "not run". `null` = the surface is on and this request has no report.
         ...(agentSummaries ? { agentReview: withStaleness(r.id) } : {}),
@@ -3447,13 +3915,38 @@ async function approveRequestUnderClaim(
   if (request.status !== 'pending') {
     throw new Error(`cannot approve a request in status ${request.status}`);
   }
-  const { checkHoldsBeforeApprove, claimApprove } = await import('./publish-request-holds.service');
+  // 🔴 An enforced review boot check that failed is refused HERE, as a review hold
+  // (`BOOT_CHECK_HOLD_LABEL`, placed by the build watcher): the holds are read from the primary,
+  // and again under the app lock by claimApprove. Not from this row's preview detail, which a
+  // teardown or rebuild replaces.
+  const { checkReviewGatesBeforeApprove, claimApprove } = await import(
+    './publish-request-holds.service'
+  );
   const holdDecision = {
     slug: request.slug,
     overrideReason: params.holdOverrideReason,
     shownHoldIds: params.holdOverrideIds,
   };
-  await checkHoldsBeforeApprove(dbWrite, holdDecision);
+  const { bootCheckOverridden } = await checkReviewGatesBeforeApprove(dbWrite, {
+    ...holdDecision,
+    publishRequestId: request.id,
+  });
+  if (bootCheckOverridden) {
+    // The audit record of approving past a recorded boot-check failure (a hold override is
+    // recorded on the hold itself; this one may have no hold to record it on).
+    // Called through the module (not destructured), so the Axiom-field scan reads it as a call.
+    (await import('~/server/logging/client')).logToAxiom(
+      {
+        name: 'app-blocks.review.boot-check-override',
+        type: 'info',
+        publishRequestId: request.id,
+        slug: request.slug,
+        reviewerUserId: params.reviewerUserId,
+        overrideReason: params.holdOverrideReason ?? null,
+      },
+      'webhooks'
+    );
+  }
   // Captured BEFORE markRequestDeployState below flips deploy_state to a
   // production 'building' value — drives the end-of-flow review teardown.
   const hadReviewPreview =
@@ -3495,17 +3988,22 @@ async function approveRequestUnderClaim(
       appId: true,
       repoUrl: true,
       trustTier: true,
+      status: true,
       app: { select: { allowedScopes: true, allowedOrigins: true, userId: true } },
     },
   });
+  // A remix app is edited only at /moderator/remix-apps. The update below re-checks status, so no lock.
+  if (existingAppBlock && REMIX_STATUSES.includes(existingAppBlock.status))
+    throw new Error(`Cannot approve: ${request.slug} is a remix app.`);
   const isFirstVersion = !existingAppBlock;
 
   // A request filed before the owner accepted must not go live.
   // A first version has no app yet, so its submitter is the owner.
-  const termsOwnerUserId =
-    (existingAppBlock &&
-      (await resolveAppTermsOwner(existingAppBlock.id, existingAppBlock.app?.userId))) ??
-    request.submittedByUserId;
+  // The app's owner NOW, which an on-behalf request's owner notification also goes to.
+  const currentOwnerUserId = existingAppBlock
+    ? await resolveAppTermsOwner(existingAppBlock.id, existingAppBlock.app?.userId)
+    : undefined;
+  const termsOwnerUserId = currentOwnerUserId ?? request.submittedByUserId;
   {
     const { hasAcceptedAppDeveloperTerms } = await import('./app-developer-terms.service');
     if (!(await hasAcceptedAppDeveloperTerms(termsOwnerUserId)))
@@ -3606,13 +4104,18 @@ async function approveRequestUnderClaim(
     import('~/server/services/apps/storage-migration-run.service'),
   ]);
   const baseline = isFirstVersion
-    ? { prev: null, history: [] }
+    ? { prev: null, history: [], approved: [] }
     : await loadStorageMigrationBaseline({
         slug: request.slug,
         excludePublishRequestId: request.id,
         selfManifest: manifest,
       });
-  const storageMigrations = checkStorageMigrations(baseline.prev, manifest, baseline.history);
+  const storageMigrations = checkStorageMigrations(
+    baseline.prev,
+    manifest,
+    baseline.history,
+    baseline.approved
+  );
   assertStorageMigrationsCover(storageMigrations);
 
   // APP STORAGE PERMISSION HOOKS — the submit pin, again, against the bytes this approve will
@@ -3784,9 +4287,10 @@ async function approveRequestUnderClaim(
       // matches the pattern used by buzz-attribution.service.ts.
       const code = (err as { code?: unknown })?.code;
       if (code !== 'P2002') throw err;
-      const existing = await dbRead.oauthClient.findUnique({
+      // primary: the ceiling re-derived below must keep a bit granted just before this approve.
+      const existing = await dbWrite.oauthClient.findUnique({
         where: { id: oauthClientId },
-        select: { id: true },
+        select: { id: true, allowedScopes: true },
       });
       if (!existing) {
         // P2002 without a hit on findUnique would indicate a foreign
@@ -3799,7 +4303,10 @@ async function approveRequestUnderClaim(
       // the inherited interactive grants.
       await dbWrite.oauthClient.update({
         where: { id: oauthClientId },
-        data: { grants: [], allowedScopes: derivedOauthCeiling },
+        data: {
+          grants: [],
+          allowedScopes: appBlockOauthCeiling(derivedOauthCeiling, existing.allowedScopes),
+        },
       });
     }
 
@@ -3910,8 +4417,9 @@ async function approveRequestUnderClaim(
     // Subsequent version: refresh manifest + version + approvedScopes
     // on the existing row. currentVersionSha is stamped in step (6) below,
     // right after the Forgejo commit returns the approved sha.
+    // Throws (P2025) for a row that became a remix app since the guard above.
     await dbWrite.appBlock.update({
-      where: { id: appBlockId },
+      where: { id: appBlockId, status: { notIn: REMIX_STATUSES } },
       data: {
         manifest: manifest as object,
         version: request.version,
@@ -3922,14 +4430,18 @@ async function approveRequestUnderClaim(
       },
     });
     // A1 fix — keep the OauthClient ceiling in sync with the newly-approved
-    // manifest. Re-cap to the derived bitmask so the policy ceiling never
-    // exceeds what this version's manifest declares, and force grants:[] so an
+    // manifest. Re-cap to the derived bitmask (plus any operator-granted bit the
+    // client already holds, via appBlockOauthCeiling) so the ceiling does not
+    // exceed what this version's manifest declares, and force grants:[] so an
     // older row created before this fix (Full + interactive grants) is
     // self-healed on its next approve. This is byte-for-byte scoped to the
     // app-block client (existingAppBlock.appId is the `appblk-<slug>` id).
     await dbWrite.oauthClient.update({
       where: { id: existingAppBlock.appId },
-      data: { grants: [], allowedScopes: derivedOauthCeiling },
+      data: {
+        grants: [],
+        allowedScopes: appBlockOauthCeiling(derivedOauthCeiling, client.allowedScopes),
+      },
     });
   }
 
@@ -4252,8 +4764,9 @@ async function approveRequestUnderClaim(
       // changes without re-review.
       //
       // WHAT WE DO NOT TOUCH (curated / mod-owned): assets (icon / cover /
-      // screenshots), `featured` / `featuredOrder`, `contentRating` (mod override,
-      // floored at the derived rating), `status`, `slug`, `externalUrl`.
+      // screenshots), `featured` / `featuredOrder`, `status`, `slug`, `externalUrl`.
+      // `contentRating` IS written, by `resolveVersionListingRating` (see 🔴 RATING SYNC
+      // below).
       //
       // `category` comes from `AppBlock.category` — NOT the manifest — because
       // step (3a) writes the manifest category onto that column ONLY when it is
@@ -4281,18 +4794,59 @@ async function approveRequestUnderClaim(
       } else {
         const ab = await dbWrite.appBlock.findUnique({
           where: { id: appBlockId },
-          select: { blockId: true, manifest: true, category: true },
+          select: { blockId: true, manifest: true, category: true, contentRating: true },
         });
         if (ab) {
+          // 🔴 RATING SYNC (`resolveVersionListingRating`): the approved manifest's declared
+          // rating (`AppBlock.contentRating`, written from it above), raised to the store
+          // media's rating when that is more mature, so it LOWERS as well as raises (an app
+          // that drops `x` → `pg13` is re-rated `pg13`). The approve bar shows the moderator
+          // the change first (`previewVersionListingRating`). A rating above what every
+          // earlier approved version's declaration gives is a moderator's raise and is kept;
+          // the last one is `priorVersion`, read before the update above.
+          //
+          // A missing row leaves the column out of the write.
+          // primary: the rating written below must be computed from the row as it is now.
+          const ratingListing = await dbWrite.appListing.findFirst({
+            where: { appBlockId, kind: 'onsite' },
+            select: { id: true, contentRating: true },
+          });
+          let syncedRating: string | null = null;
+          if (ratingListing) {
+            const { resolveVersionListingRating } = await import(
+              '~/server/services/blocks/app-listing-assets.service'
+            );
+            syncedRating = await resolveVersionListingRating(dbWrite, {
+              appListingId: ratingListing.id,
+              current: ratingListing.contentRating,
+              earlierDeclared: [
+                priorVersion?.block.contentRating ?? null,
+                ...(await approvedVersionRatings(dbWrite, appBlockId)),
+              ],
+              nextDeclared: ab.contentRating,
+            });
+          }
           const synced = await dbWrite.appListing.updateMany({
             where: { appBlockId, kind: 'onsite' },
-            data: buildListingScalarSync({
-              manifest: ab.manifest,
-              blockId: ab.blockId,
-              category: ab.category,
-              sourceRepoAvailable,
-            }),
+            data: {
+              ...buildListingScalarSync({
+                manifest: ab.manifest,
+                blockId: ab.blockId,
+                category: ab.category,
+                sourceRepoAvailable,
+              }),
+              ...(ratingListing ? { contentRating: syncedRating } : {}),
+            },
           });
+          if (ratingListing && synced.count > 0 && syncedRating !== ratingListing.contentRating) {
+            await recordListingRatingChangeAfterCommit({
+              appListingId: ratingListing.id,
+              slug: request.slug,
+              before: ratingListing.contentRating,
+              after: syncedRating,
+              actorUserId: params.reviewerUserId,
+            });
+          }
           // Re-synced from the manifest on every approved version, like `repository`: removing
           // `bugs` clears the link.
           const tracker = buildListingIssueTrackerSync({
@@ -4369,8 +4923,10 @@ async function approveRequestUnderClaim(
   // count 0) does NOT touch the block, and a delisted-then-resubmitted app is never
   // auto-un-suspended here (its listing is `removed`, not `pending`, so count 0 too).
   // Both flips are status-guarded (never clobber a drifted/curated state) — the listing
-  // flip touches `status` and the go-live rating floor (see the 🔴 note at the flip; the
-  // floor is raise-only, so it can never lower a curated rating). Same log-and-continue
+  // flip touches `status` and the go-live rating floor (see the 🔴 note at the flip). The
+  // floor here is raise-only, but it starts from the rating (3b-sync) above has just
+  // written from the manifest, so the restored listing carries this version's declared
+  // rating, raised by its media. Same log-and-continue
   // posture: the store listing +
   // block restore are a convenience and must NEVER gate the approve/deploy.
   try {
@@ -4681,7 +5237,7 @@ async function approveRequestUnderClaim(
   // whose sha is NOT this approved one is treated as unreviewed and parked in
   // the review queue instead of deploying.
   const { finaliseOnsiteApprove } = await import('./publish-request-finalise.service');
-  const { lateHoldIds } = await dbWrite.$transaction((tx) =>
+  const { lateHoldIds, revokedTokens } = await dbWrite.$transaction((tx) =>
     finaliseOnsiteApprove(tx, {
       holdDecision,
       reviewerUserId: params.reviewerUserId,
@@ -4712,8 +5268,18 @@ async function approveRequestUnderClaim(
           }`
       );
     }
-    const { takeDownLiveApp } = await import('./live-unpublish.service');
-    const { liveNote } = await takeDownLiveApp(request.slug).catch(() => ({ liveNote: undefined }));
+    // Before the takedown wait: the orchestrator must stop honouring the revoked tokens at once.
+    const { forgetRevokedAppTokens } = await import('./app-block-token-revoke.service');
+    await forgetRevokedAppTokens(revokedTokens);
+    // Awaited, not fire-and-forget: the moderator must hear if the previous version may still serve.
+    const { takeDownLiveApp, LATE_HOLD_TAKEDOWN_WAIT_MS, unconfirmedTakedownNote } = await import(
+      './live-unpublish.service'
+    );
+    const { liveNote } = await takeDownLiveApp(request.slug, {
+      awaitMs: LATE_HOLD_TAKEDOWN_WAIT_MS,
+    }).catch(() => ({
+      liveNote: unconfirmedTakedownNote(request.slug, 'its live takedown could not be started'),
+    }));
     return {
       publishRequestId: request.id,
       appBlockId,
@@ -4722,6 +5288,22 @@ async function approveRequestUnderClaim(
       lateHoldIds,
       liveNote,
     };
+  }
+
+  // STAFF PLATFORM UPDATES — this version is going live now (a late hold returned above, leaving
+  // it pending; the re-approve after the hold is cleared runs this): every unshipped update the
+  // approved bytes contain is marked shipped by it, so no later submit is checked for it.
+  // Re-checked here against these bytes; the submit-time answer is not reused. A staff on-behalf
+  // request ships nothing: only an owner's build does. Never throws (a failure leaves the updates
+  // unshipped). See `platform-update-bundle-check.ts`.
+  {
+    const { markShippedPlatformUpdates } = await import('./platform-update-bundle-check');
+    await markShippedPlatformUpdates({
+      appBlockId,
+      publishRequestId: request.id,
+      fileSummary: request.fileSummary,
+      readFiles: (paths) => readBundleFiles(bundleBuffer, paths),
+    });
   }
 
   // (6a) VERSION TAG — an annotated `v<version>` on the approved commit (or, when that tag
@@ -4885,24 +5467,24 @@ async function approveRequestUnderClaim(
   // whole call is wrapped so a notification failure can NEVER fail or roll back the
   // approve — the decision is already durable. Keyed by the request id for
   // idempotency (a re-approve of the same request notifies once).
-  try {
-    await notifyAppBlockSubmitter({
-      type: 'app-block-approved',
-      userId: request.submittedByUserId,
-      key: `app-block-approved:${params.publishRequestId}`,
-      details: {
-        slug: request.slug,
-        name: typeof manifest.name === 'string' ? manifest.name : null,
-        version: request.version,
-      },
-    });
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.warn(
-      `[approveRequest] submitter notification failed (id=${params.publishRequestId}); ` +
-        `approve stands: ${err instanceof Error ? err.message : String(err)}`
-    );
-  }
+  await notifyReviewOutcome({
+    outcome: 'approved',
+    publishRequestId: params.publishRequestId,
+    submittedByUserId: request.submittedByUserId,
+    fileSummary: request.fileSummary,
+    currentOwnerUserId,
+    attribution: { kind: 'moderator', requestId: params.publishRequestId },
+    details: {
+      slug: request.slug,
+      name: typeof manifest.name === 'string' ? manifest.name : null,
+      version: request.version,
+      approvalNote: params.approvalNotes?.trim() || null,
+      hasPage: manifestDeclaresPage(manifest),
+      mature: isMatureContentRating(
+        typeof manifest.contentRating === 'string' ? manifest.contentRating : null
+      ),
+    },
+  });
 
   // Catalog bust: an onsite approve mints/flips the AppListing to `approved`, i.e. it
   // puts the app INTO the store catalog.
@@ -5041,10 +5623,13 @@ export async function markRequestDeployState(
 /** Typed failure from {@link retriggerBuild}; `code` drives the tRPC mapping. */
 export class RetriggerBuildError extends Error {
   code: string;
-  constructor(code: string, message: string) {
+  /** On a `RATE_LIMITED` refusal: its meta, which `blocks.retriggerBuild` answers with. */
+  readonly rateLimit?: RateLimitMeta;
+  constructor(code: string, message: string, rateLimit?: RateLimitMeta) {
     super(message);
     this.name = 'RetriggerBuildError';
     this.code = code;
+    this.rateLimit = rateLimit;
   }
 }
 
@@ -5295,21 +5880,28 @@ export async function retriggerBuild(params: RetriggerBuildParams): Promise<Retr
 
   // (7) Abuse controls — redis-backed, because the tRPC `rateLimit` middleware
   //     short-circuits for moderators and would be a no-op here.
-  const { acquireRetriggerLock, releaseRetriggerLock, checkRetriggerModeratorQuota } = await import(
-    '~/server/utils/blocks-retrigger-rate-limit'
-  );
+  const {
+    acquireRetriggerLock,
+    releaseRetriggerLock,
+    checkRetriggerModeratorQuota,
+    RETRIGGER_LOCK_TTL_SECONDS,
+  } = await import('~/server/utils/blocks-retrigger-rate-limit');
+  const { appRateLimitMeta } = await import('~/server/utils/app-rate-limit');
   const quota = await checkRetriggerModeratorQuota(params.reviewerUserId);
   if (!quota.allowed) {
     throw new RetriggerBuildError(
       'RATE_LIMITED',
-      `Too many build re-triggers — try again in ${quota.retryAfterSeconds}s.`
+      `Too many build re-triggers — try again in ${quota.retryAfterSeconds}s.`,
+      appRateLimitMeta('apps.build-retrigger', quota.retryAfterSeconds)
     );
   }
   // Single-flight: a double-click must not create two PipelineRuns.
   if (!(await acquireRetriggerLock(request.id))) {
     throw new RetriggerBuildError(
       'RATE_LIMITED',
-      'A re-trigger for this request is already in flight.'
+      'A re-trigger for this request is already in flight.',
+      // The lock lapses by its TTL at the latest.
+      appRateLimitMeta('apps.build-retrigger', RETRIGGER_LOCK_TTL_SECONDS)
     );
   }
 
@@ -5565,6 +6157,17 @@ export type ReviewPreviewDetail = {
    * value.
    */
   sharedServer?: boolean;
+  /**
+   * Set (with state `preview-failed`) when the review build PASSED in a build-only environment
+   * (APPS_REVIEW_BUILD_ONLY, PR previews): the build is recorded and no preview is served.
+   */
+  buildOnly?: boolean;
+  /**
+   * The review boot check's result (`~/shared/utils/review-boot-check`), written by the build
+   * watcher when the `app-blocks-review-boot-check` flag is not off. A new build's
+   * `preview-building` write replaces the detail, so a rebuild never inherits an old result.
+   */
+  bootCheck?: ReviewBootCheckRecord;
 };
 
 /** Pack a ReviewPreviewDetail into the deploy_detail string column. */
@@ -5712,7 +6315,7 @@ async function reviewRepoAlreadyHoldsTree(
 ): Promise<boolean> {
   try {
     const { listRepoTree } = await import('./forgejo.service');
-    const tree = await listRepoTree(slug, 'main', REVIEW_REPO_ORG);
+    const tree = await listRepoTree(slug, 'main', FORGEJO_REVIEW_ORG);
     if (tree.size !== files.length) return false;
     const seen = new Set<string>();
     for (const file of files) {
@@ -5793,7 +6396,7 @@ async function resolveReviewSourceSha(request: {
   }
 
   const { sha } = await commitFiles({
-    org: REVIEW_REPO_ORG,
+    org: FORGEJO_REVIEW_ORG,
     slug: request.slug,
     files,
     message: `Review source for pushed commit ${request.forgejoCommitSha.slice(0, 12)}`,
@@ -6077,10 +6680,9 @@ export async function getReviewStatus(opts: {
 
   let previewUrl: string | undefined;
   if (state === 'preview-live' && opts.modUserId != null && detail.host && detail.url) {
-    const { signReviewAccessToken } = await import('./review-session');
+    const { signReviewAccessToken, withReviewEntryToken } = await import('./review-session');
     const token = signReviewAccessToken({ modUserId: opts.modUserId, host: detail.host });
-    const sep = detail.url.includes('?') ? '&' : '?';
-    previewUrl = `${detail.url}${sep}mr=${encodeURIComponent(token)}`;
+    previewUrl = withReviewEntryToken(detail.url, token);
   }
 
   return {
@@ -6228,6 +6830,9 @@ export async function getReviewRequestById(publishRequestId: string): Promise<{
       sourceDirty: true,
       submittedBy: { select: reviewUserChipSelect },
       reviewedBy: { select: reviewUserChipSelect },
+      // Read only for the boot-check projection below; never returned.
+      deployState: true,
+      deployDetail: true,
     },
   });
   if (!r) return null;
@@ -6237,7 +6842,7 @@ export async function getReviewRequestById(publishRequestId: string): Promise<{
   // Match the list builders' row mapping exactly (bundle bigint → string,
   // Forgejo review-repo deep link, push-row canonical-commit link, and the
   // slug-joined store-listing facts the review surfaces render).
-  const { status, sourceCommit, sourceDirty, ...rest } = r;
+  const { status, sourceCommit, sourceDirty, deployState, deployDetail, ...rest } = r;
   const { readActionsRunSourcesForRender } = await import('./actions-run-source.service');
   const [listingFacts, actionsRuns] = await Promise.all([
     listingFactsForRequests([r as ListingJoinSubject]),
@@ -6247,6 +6852,14 @@ export async function getReviewRequestById(publishRequestId: string): Promise<{
     ...rest,
     ...listingFacts(r.id),
     sourceProvenance: reviewSourceProvenance({ sourceCommit, sourceDirty }, actionsRuns.get(r.id)),
+    // Same projections as listPendingRequests.
+    previewBootCheck: reviewBootCheckSummary(deployState, parseReviewDetail(deployDetail)),
+    previewBootCheckUnverified:
+      mode === 'pending' &&
+      bootCheckNotVerified(
+        await currentBootCheckMode(),
+        reviewBootCheckSummary(deployState, parseReviewDetail(deployDetail))
+      ),
     bundleSizeBytes: r.bundleSizeBytes.toString(),
     reviewRepoUrl: reviewRepoUrl(r.slug),
     pushCommitUrl:
@@ -7015,12 +7628,18 @@ export async function getPublishRequestScreenshots(opts: {
  * fileSummary), the line diff needs the actual bytes, so this GETs the prior
  * bundle from MinIO (ZIP path) or reconstructs it from Forgejo (push path).
  */
-async function getPreviousApprovedFiles(
+export async function getPreviousApprovedFiles(
   slug: string,
-  excludePublishRequestId?: string
+  excludePublishRequestId?: string,
+  /**
+   * The client the approved row is read from: the replica unless given. A caller that builds on
+   * the approved version (the staff on-behalf submit) passes the primary, so a version approved a
+   * moment ago is not missed.
+   */
+  db?: Pick<typeof DbReadClient, 'appBlockPublishRequest'>
 ): Promise<Array<{ path: string; content: Buffer }> | null> {
-  const { dbRead } = await import('~/server/db/client');
-  const prior = await dbRead.appBlockPublishRequest.findFirst({
+  const client = db ?? (await import('~/server/db/client')).dbRead;
+  const prior = await client.appBlockPublishRequest.findFirst({
     where: {
       slug,
       status: 'approved',
@@ -7055,26 +7674,52 @@ async function getPreviousApprovedFiles(
 export async function getPublishRequestDiff(opts: {
   publishRequestId: string;
 }): Promise<BundleLineDiff> {
+  return diffPendingBundle(opts.publishRequestId, await loadPendingBundle(opts.publishRequestId));
+}
+
+/**
+ * The line diff of a pending bundle already loaded with {@link loadPendingBundle}, so a caller
+ * that also reads the files (the review agent chat) extracts the bundle once.
+ */
+export async function diffPendingBundle(
+  publishRequestId: string,
+  pending: PendingBundle
+): Promise<BundleLineDiff> {
+  // A row with neither bundle pointer is unexpected → no diffable artifact.
+  if (!pending.files) return { files: [], truncated: false };
+  // Diff against the version BEFORE this row (exclude self so re-reviewing an
+  // approved row doesn't compare it to itself → an all-empty diff).
+  const previousFiles = await getPreviousApprovedFiles(pending.slug, publishRequestId);
+  return computeBundleLineDiff(pending.files, previousFiles);
+}
+
+/** Whether a bundle file is binary, by the same rule the line diff elides binaries with. */
+export function isBinaryBundleFile(path: string, content: Buffer): boolean {
+  return isBinaryExtension(path) || looksBinary(content);
+}
+
+export type PendingBundle = {
+  slug: string;
+  files: Array<{ path: string; content: Buffer }> | null;
+};
+
+/**
+ * A publish request's pending bundle, extracted (same caps as the diff, `readZipEntryCapped`).
+ * PUSH-ORIGINATED requests carry an empty bundleKey, so they are reconstructed from Forgejo at
+ * the pushed sha (as approveRequest does). `files` is null for a row with neither pointer.
+ */
+export async function loadPendingBundle(publishRequestId: string): Promise<PendingBundle> {
   const { dbRead } = await import('~/server/db/client');
   const row = await dbRead.appBlockPublishRequest.findUnique({
-    where: { id: opts.publishRequestId },
+    where: { id: publishRequestId },
     select: { bundleKey: true, slug: true, forgejoCommitSha: true },
   });
-  if (!row) throw new Error(`publish request ${opts.publishRequestId} not found`);
-  // PUSH-ORIGINATED requests carry an empty bundleKey — reconstruct from Forgejo
-  // at the pushed sha (as approveRequest / getPublishRequestScreenshots do). A
-  // row with neither pointer is unexpected → no diffable artifact.
-  if (!row.bundleKey && !row.forgejoCommitSha) {
-    return { files: [], truncated: false };
-  }
+  if (!row) throw new Error(`publish request ${publishRequestId} not found`);
+  if (!row.bundleKey && !row.forgejoCommitSha) return { slug: row.slug, files: null };
   const bundleBuffer = row.bundleKey
     ? await fetchBundleBuffer(row.bundleKey)
     : await reconstructBundleFromForgejo(row.slug, row.forgejoCommitSha as string);
-  const currentFiles = await extractBundleFilesFromBuffer(bundleBuffer);
-  // Diff against the version BEFORE this row (exclude self so re-reviewing an
-  // approved row doesn't compare it to itself → an all-empty diff).
-  const previousFiles = await getPreviousApprovedFiles(row.slug, opts.publishRequestId);
-  return computeBundleLineDiff(currentFiles, previousFiles);
+  return { slug: row.slug, files: await extractBundleFilesFromBuffer(bundleBuffer) };
 }
 
 export type RejectRequestParams = {
@@ -7110,12 +7755,25 @@ export async function rejectRequest(params: RejectRequestParams): Promise<void> 
       version: true,
       manifest: true,
       submittedByUserId: true,
+      // A staff on-behalf submit (`fileSummary.onBehalf`) also notifies the app's owner.
+      fileSummary: true,
     },
   });
   if (!row) throw new Error(`publish request ${params.publishRequestId} not found`);
   if (row.status !== 'pending') {
     throw new Error(`cannot reject a request in status ${row.status}`);
   }
+  // A staff on-behalf submit also notifies the app's owner: the owner NOW, read with the decision.
+  const currentOwnerUserId = readOnBehalf(row.fileSummary)
+    ? await currentAppOwner(row.slug).catch((err: unknown) => {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[rejectRequest] current owner not read (id=${params.publishRequestId}); the recorded ` +
+            `owner is notified: ${err instanceof Error ? err.message : String(err)}`
+        );
+        return undefined;
+      })
+    : undefined;
   const hadReviewPreview =
     typeof row.deployState === 'string' && row.deployState.startsWith('preview-');
 
@@ -7192,23 +7850,133 @@ export async function rejectRequest(params: RejectRequestParams): Promise<void> 
     row.manifest && typeof row.manifest === 'object'
       ? (row.manifest as Record<string, unknown>)
       : {};
+  // A rejected STAFF SUBMIT ON THE OWNER'S BEHALF withdraws the platform update it carried, so
+  // the owner's checkout is no longer offered it. Before the notifications, which say whether it
+  // was withdrawn.
+  const onBehalf = readOnBehalf(row.fileSummary);
+  const updateWithdrawn = onBehalf
+    ? await withdrawRejectedPlatformUpdate({
+        platformUpdateId: onBehalf.platformUpdateId,
+        reviewerUserId: params.reviewerUserId,
+        publishRequestId: params.publishRequestId,
+      })
+    : false;
+  await notifyReviewOutcome({
+    outcome: 'rejected',
+    publishRequestId: params.publishRequestId,
+    submittedByUserId: row.submittedByUserId,
+    fileSummary: row.fileSummary,
+    currentOwnerUserId,
+    updateWithdrawn,
+    attribution: { kind: 'moderator', requestId: params.publishRequestId },
+    details: {
+      slug: row.slug,
+      name: typeof rejectManifest.name === 'string' ? rejectManifest.name : null,
+      version: row.version,
+      reason,
+    },
+  });
+}
+
+/**
+ * Withdraws the platform update a rejected on-behalf request carried. `true` when it is withdrawn
+ * (now or already); `false` when it could not be (an approved version shipped it already, or the
+ * table is unavailable).
+ */
+async function withdrawRejectedPlatformUpdate(args: {
+  platformUpdateId: string;
+  reviewerUserId: number;
+  publishRequestId: string;
+}): Promise<boolean> {
   try {
-    await notifyAppBlockSubmitter({
-      type: 'app-block-rejected',
-      userId: row.submittedByUserId,
-      key: `app-block-rejected:${params.publishRequestId}`,
-      details: {
-        slug: row.slug,
-        name: typeof rejectManifest.name === 'string' ? rejectManifest.name : null,
-        version: row.version,
-        reason,
-      },
-    });
+    await supersedePlatformUpdate({ staffUserId: args.reviewerUserId, id: args.platformUpdateId });
+    return true;
   } catch (err) {
     // eslint-disable-next-line no-console
     console.warn(
-      `[rejectRequest] submitter notification failed (id=${params.publishRequestId}); ` +
-        `reject stands: ${err instanceof Error ? err.message : String(err)}`
+      `[rejectRequest] platform update ${args.platformUpdateId} not withdrawn ` +
+        `(id=${args.publishRequestId}); reject stands: ` +
+        (err instanceof Error ? err.message : String(err))
     );
+    return false;
   }
+}
+
+/**
+ * The app's owner now, resolved as `submitVersion` and `approveRequest` resolve it
+ * (`AppBlock.app.userId`, through the listing's canonical owner); `undefined` when the app or its
+ * owner is not found.
+ */
+async function currentAppOwner(slug: string): Promise<number | undefined> {
+  const { dbRead } = await import('~/server/db/client');
+  const block = await dbRead.appBlock.findFirst({
+    where: { blockId: slug },
+    select: { id: true, app: { select: { userId: true } } },
+  });
+  if (!block) return undefined;
+  return resolveAppTermsOwner(block.id, block.app?.userId);
+}
+
+/**
+ * Notifies the submitter and, for an on-behalf request, the owner as of the decision, not the one
+ * recorded at submit (ownership may have transferred; the recorded one only when the current was
+ * not read). Best-effort.
+ */
+async function notifyReviewOutcome(args: {
+  outcome: 'approved' | 'rejected';
+  publishRequestId: string;
+  submittedByUserId: number;
+  fileSummary: unknown;
+  /** The app's owner at the decision; `undefined` when it was not read. */
+  currentOwnerUserId: number | undefined;
+  /** A reject only: the platform update the on-behalf request carried was withdrawn. */
+  updateWithdrawn?: boolean;
+  attribution: AppReviewAttribution;
+  details: AppBlockModerationNotificationDetails;
+}): Promise<void> {
+  const fn = args.outcome === 'approved' ? 'approveRequest' : 'rejectRequest';
+  const verb = args.outcome === 'approved' ? 'approve' : 'reject';
+  const send = async (
+    who: string,
+    opts: Parameters<typeof notifyAppBlockSubmitter>[0]
+  ): Promise<void> => {
+    try {
+      await notifyAppBlockSubmitter(opts);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[${fn}] ${who} notification failed (id=${args.publishRequestId}); ` +
+          `${verb} stands: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  };
+
+  const submitterType = args.outcome === 'approved' ? 'app-block-approved' : 'app-block-rejected';
+  await send('submitter', {
+    type: submitterType,
+    userId: args.submittedByUserId,
+    key: `${submitterType}:${args.publishRequestId}`,
+    attribution: args.attribution,
+    details: args.details,
+  });
+
+  const onBehalf = readOnBehalf(args.fileSummary);
+  if (!onBehalf) return;
+  // After an ownership transfer the recorded owner is the former one: only the current is told.
+  const ownerUserId = args.currentOwnerUserId ?? onBehalf.ownerUserId;
+  if (ownerUserId === args.submittedByUserId) return;
+  const ownerType =
+    args.outcome === 'approved' ? 'app-platform-update-approved' : 'app-platform-update-rejected';
+  await send('owner', {
+    type: ownerType,
+    userId: ownerUserId,
+    key: `${ownerType}:${args.publishRequestId}`,
+    attribution: args.attribution,
+    details: {
+      ...args.details,
+      updateId: onBehalf.platformUpdateId,
+      byUsername: onBehalf.staffUsername ?? 'Civitai staff',
+      ...(args.updateWithdrawn ? { updateWithdrawn: true } : {}),
+    },
+  });
 }

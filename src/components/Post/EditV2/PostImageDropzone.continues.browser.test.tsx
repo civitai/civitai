@@ -39,7 +39,6 @@ vi.mock('~/components/Post/showCreatePostError', async (orig) => ({
   ...(await orig<typeof ShowCreatePostErrorMod>()),
   useShowCreatePostError: () => vi.fn(),
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 1, muted: false }) }));
 vi.mock('~/hooks/useS3Upload', () => ({
   useS3Upload: () => ({
     files: [],
@@ -67,7 +66,8 @@ const drop = async () => {
   renderWithProviders(
     <div data-testid="post-dropzone">
       <PostImageDropzone />
-    </div>
+    </div>,
+    { user: { id: 1, muted: false } }
   );
   const input = await vi.waitFor(() => {
     const el = document.querySelector<HTMLInputElement>(

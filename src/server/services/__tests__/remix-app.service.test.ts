@@ -1,5 +1,8 @@
 import { TRPCError } from '@trpc/server';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { fakeRemixRunner } from '~/__tests__/mocks/remix-runner.fake';
+import { setEnv } from '~/__tests__/mocks/env.mock';
+import { createHash } from 'crypto';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as CacheHelpers from '~/server/utils/cache-helpers';
 import type * as ImageVisibility from '~/server/services/image-visibility.service';
 import type * as InputUrls from '~/server/services/generation-input-urls';
@@ -602,9 +605,9 @@ describe('team remix', () => {
   });
 
   it('is not in the remix menu, so nobody is offered it without a team', async () => {
-    expect((await listRemixApps()).map((app) => app.slug)).not.toContain(TEAM_REMIX_SLUG);
+    expect((await listRemixApps(caller())).map((app) => app.slug)).not.toContain(TEAM_REMIX_SLUG);
     // POSITIVE CONTROL: the menu does list the seed apps.
-    expect((await listRemixApps()).map((app) => app.slug)).toContain('make-it-real');
+    expect((await listRemixApps(caller())).map((app) => app.slug)).toContain('make-it-real');
   });
 
   it('submits the prompt with the team the server resolved, on the Edit safe engine', async () => {
@@ -734,5 +737,126 @@ describe('team remix', () => {
     await runTeam(34);
     const whatIf = (h.whatIfFromGraph.mock.calls as unknown as [SubmitArgs][])[0][0].input;
     expect(whatIf).toEqual(submitted()[0].input);
+  });
+});
+
+describe('a user app in the menu', () => {
+  const userRow = {
+    id: 'ab_rx_u5_mine_______________',
+    blockId: 'remix-u5-mine',
+    version: '1.0.0',
+    status: 'remix',
+    featuredOrder: 99,
+    manifest: {
+      kind: 'remix',
+      name: 'Mine',
+      version: '1.0.0',
+      targets: [{ slotId: 'image.remix' }],
+      remix: {
+        icon: 'sparkles',
+        engine: {
+          safe: {
+            ecosystem: REMIX_ENGINES.edit.safe.ecosystemKey,
+            versionId: REMIX_ENGINES.edit.safe.modelVersionId,
+          },
+        },
+        source: 'export default defineRemixApp({ async run(ctx) { return []; } });',
+      },
+      author: { userId: 5 },
+      review: 'approved',
+    },
+  };
+  const systemRow = {
+    id: remixAppBlockRowId(MENU_APPS[0].slug),
+    blockId: remixBlockId(MENU_APPS[0].slug),
+    version: '1.0.0',
+    manifest: manifestOf(MENU_APPS[0], 1),
+    status: 'remix',
+    featuredOrder: 0,
+  };
+  const flagOn = caller({
+    features: { isGreen: false, remixAppsUserCode: true } as RemixAppCaller['features'],
+  });
+
+  beforeEach(() =>
+    dbMock.dbWrite.appBlock.findMany.mockResolvedValue([systemRow, userRow] as never)
+  );
+
+  it('is listed only behind its flag', async () => {
+    expect((await listRemixApps(caller())).map((app) => app.slug)).toEqual([MENU_APPS[0].slug]);
+    // POSITIVE CONTROL: the same rows with the flag on.
+    expect((await listRemixApps(flagOn)).map((app) => app.slug)).toEqual([
+      MENU_APPS[0].slug,
+      'u5-mine',
+    ]);
+  });
+
+  it('is never priced by the menu quote, flag on or off', async () => {
+    for (const viewer of [caller(), flagOn]) {
+      addImage(22);
+      const { prices } = await quoteRemixApps({ imageId: 22, caller: viewer });
+      expect(prices.map((p) => p.slug)).toEqual([MENU_APPS[0].slug]);
+    }
+  });
+
+  describe('priced alone when its modal opens', () => {
+    const SECRET = 'r'.repeat(32);
+    const runnerFor = (answer?: () => unknown) => {
+      const source = (userRow.manifest.remix as { source: string }).source;
+      const runner = fakeRemixRunner({
+        secret: SECRET,
+        apps: {
+          [createHash('sha256').update(source).digest('hex')]: {
+            async run(ctx) {
+              const style = await ctx.ask({
+                kind: 'choice',
+                prompt: 'Style?',
+                options: [{ value: 'ink', label: 'Ink' }],
+              });
+              await ctx.workflow({
+                kind: 'image',
+                prompt: `in ${style}`,
+                images: [ctx.source],
+                aspectRatio: 'source',
+                quantity: 1,
+              });
+              return [];
+            },
+          },
+        },
+        answer,
+      });
+      setEnv({ REMIX_RUNNER_URL: 'http://runner', REMIX_RUNNER_SECRET: SECRET });
+      vi.stubGlobal('fetch', runner.fetchImpl);
+      dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(userRow as never);
+      return runner;
+    };
+    afterEach(() => {
+      vi.unstubAllGlobals();
+      setEnv({ REMIX_RUNNER_URL: '', REMIX_RUNNER_SECRET: '' });
+    });
+
+    it('in one runner call, through its asks on their first answers', async () => {
+      const runner = runnerFor();
+      addImage(23);
+      const { prices } = await quoteRemixApps({ imageId: 23, slug: 'u5-mine', caller: flagOn });
+      expect(prices).toMatchObject([{ slug: 'u5-mine', cost: 30 }]);
+      expect(runner.calls).toHaveLength(1);
+      expect(runner.calls[0]).toMatchObject({ input: { base: [], autoAnswer: 'first' } });
+      // The menu quote with the same runner up makes no runner call at all.
+      addImage(24);
+      await quoteRemixApps({ imageId: 24, caller: flagOn });
+      expect(runner.calls).toHaveLength(1);
+    });
+
+    it.each([
+      ['the app faults', () => [{ cause: 'timeout', detail: 'x' }]],
+      ['the runner cannot answer', () => []],
+    ])('is refused a price, not an error, when %s', async (_, answer) => {
+      runnerFor(answer);
+      addImage(25);
+      const { prices } = await quoteRemixApps({ imageId: 25, slug: 'u5-mine', caller: flagOn });
+      expect(prices).toEqual([{ slug: 'u5-mine', refusal: 'Price unavailable' }]);
+    });
   });
 });

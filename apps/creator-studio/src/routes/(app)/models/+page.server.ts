@@ -414,6 +414,7 @@ export const actions: Actions = {
     return {
       bulk: true,
       usageUpdated: result.updated,
+      usageSkipped: result.skipped,
       migrated: result.migrated,
       failed: result.migrationFailures,
     };
@@ -443,7 +444,10 @@ export const actions: Actions = {
     );
     if (!result.ok) return fail(result.status, { versionId: versionId.data, error: result.error });
     if (result.updated === 0)
-      return fail(404, { versionId: versionId.data, error: 'Version not found or not yours.' });
+      return fail(404, {
+        versionId: versionId.data,
+        error: 'Version not found, not yours, or its usage control is set by moderators.',
+      });
 
     await bustVersionCache(request.headers.get('cookie') ?? '', [versionId.data]);
     if (result.migrationFailures > 0)

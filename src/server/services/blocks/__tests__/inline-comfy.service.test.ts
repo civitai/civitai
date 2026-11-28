@@ -529,7 +529,7 @@ describe('assertViewerEntitledToInlineResources — the silent fail-opens', () =
   });
 });
 
-describe('assertViewerEntitledToInlineResources — Private / epoch subscription', () => {
+describe('assertViewerEntitledToInlineResources — Private subscription', () => {
   it('rejects a Private resource for a viewer with no subscription', async () => {
     mockGetResourceData.mockResolvedValue([resourceRow({ availability: 'Private' })]);
     mockGetHighestTierSubscription.mockResolvedValue(null);
@@ -546,14 +546,14 @@ describe('assertViewerEntitledToInlineResources — Private / epoch subscription
     ).resolves.toBeUndefined();
   });
 
-  it('an EPOCH resource takes the same subscription path', async () => {
+  it('an owned EPOCH resource needs no subscription', async () => {
     mockGetResourceData.mockResolvedValue([
       resourceRow({ epochDetails: { epochNumber: 3, isExpired: false } }),
     ]);
     mockGetHighestTierSubscription.mockResolvedValue(null);
     await expect(
       assertViewerEntitledToInlineResources({ airs: [LORA_AIR], user: VIEWER })
-    ).rejects.toThrow(/requires an active subscription/);
+    ).resolves.toBeUndefined();
   });
 
   it('an EXPIRED epoch is rejected even for a subscriber', async () => {
@@ -773,6 +773,13 @@ describe('checkInlineComfyGraph — nodes the host does not run inline', () => {
     ['FetchImage', { src: ['2', 0] }, LINKED],
     ['DownloadMedia', { src: ['2', 0] }, LINKED],
     ['LoraLoader', { model: ['1', 0], clip: ['1', 1], lora_name: ['2', 0] }, LINKED],
+    // An array that is not a `[nodeId, slot]` link is a value, even in an input that may be linked.
+    [
+      'LoraLoader',
+      { model: [{ $ref: '$arguments', path: 'm' }], clip: ['1', 1], lora_name: AIR },
+      'as an object',
+    ],
+    ['LoraLoader', { model: ['1', 0, 'x'], clip: ['1', 1], lora_name: AIR }, 'as an object'],
     ['CreateHookLora', { lora_name: ['2', 0], strength_model: 1 }, LINKED],
     ['LoadImage', { image: 'x.png' }, LOCAL],
     ['LoadImage', { image: '../x.png' }, LOCAL],

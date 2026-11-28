@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import type * as BlockScopeMiddleware from '~/server/middleware/block-scope.middleware';
 
 /**
  * `blocks.persistUploadedGenerationSource` — the server half of a picked generation source
@@ -37,10 +38,21 @@ vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksAuthorEnabled: vi.fn(),
   isAppBlocksPostCreationEnabled: vi.fn(),
 }));
-vi.mock('~/server/flipt/client', async (importOriginal) => ({
-  ...((await importOriginal()) as Record<string, unknown>),
-  isFlipt: (...a: unknown[]) => h.isFlipt(...a),
-}));
+vi.mock('~/server/flipt/client', async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown> & {
+    readFliptBoolean: (...a: unknown[]) => Promise<boolean | null>;
+  };
+  return {
+    ...actual,
+    isFlipt: async (...a: unknown[]) => h.isFlipt(...a),
+    isFliptSync: (...a: unknown[]) => h.isFlipt(...a),
+    readFliptBoolean: async (flag: string, ...rest: unknown[]) =>
+      flag.startsWith('app-block-')
+        ? h.isFlipt(flag, ...rest)
+        : actual.readFliptBoolean(flag, ...rest),
+    ensureFliptInitialized: async () => undefined,
+  };
+});
 vi.mock('~/server/auth/session-client', () => ({
   sessionClient: { getSessionUserById: (...a: unknown[]) => h.sessionUser(...a) },
 }));
@@ -165,7 +177,7 @@ beforeEach(() => {
   h.sessionUser.mockImplementation(async (id: number) => ({ id }));
   h.persistUploaded.mockResolvedValue(RESULT);
   h.persistOutput.mockResolvedValue(RESULT);
-  h.isFlipt.mockImplementation(async (flag: string) => flag === 'app-block-source-scanned-rows');
+  h.isFlipt.mockImplementation((flag: string) => flag === 'app-block-source-scanned-rows');
 });
 
 describe('blocks.persistUploadedGenerationSource — the preamble', () => {
@@ -204,7 +216,8 @@ describe('blocks.persistUploadedGenerationSource — the preamble', () => {
 
   it('applies the per-user 60-per-hour rateLimit to THIS procedure', async () => {
     await call();
-    expect(h.rateLimitApplied).toEqual([expect.objectContaining({ limit: 60, period: 3600 })]);
+    // The registry entry (60 an hour by default, pinned in app-usage-limits.registry.test.ts).
+    expect(h.rateLimitApplied).toEqual([{ usageLimitIds: ['apps.generation-source-saves'] }]);
   });
 
   it.each([
@@ -243,6 +256,16 @@ describe('blocks.persistUploadedGenerationSource — the preamble', () => {
     expect(h.persistUploaded).not.toHaveBeenCalled();
   });
 
+  it('refuses a malformed token subject with the real parser’s error, and never reaches the service', async () => {
+    const { parseSubjectUserId } = await vi.importActual<typeof BlockScopeMiddleware>(
+      '~/server/middleware/block-scope.middleware'
+    );
+    h.parseSubject.mockImplementation((sub: string) => parseSubjectUserId(sub));
+    h.authorize.mockResolvedValue(claims({ sub: 'user:abc' }));
+    await expect(call()).rejects.toMatchObject({ message: 'malformed sub claim' });
+    expect(h.persistUploaded).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['an empty url', { url: '' }],
     ['a url past 2048 characters', { url: `${BLOB_URL}&p=${'a'.repeat(2048)}` }],
@@ -255,7 +278,7 @@ describe('blocks.persistUploadedGenerationSource — the preamble', () => {
 
 describe('blocks.persistUploadedGenerationSource — the scanned-rows flag', () => {
   it('🔴 refuses while app-block-source-scanned-rows is OFF, and persists nothing', async () => {
-    h.isFlipt.mockResolvedValue(false);
+    h.isFlipt.mockReturnValue(false);
     await expect(call()).rejects.toMatchObject({
       code: 'FORBIDDEN',
       message: 'picked generation sources are not enabled',
@@ -270,7 +293,7 @@ describe('blocks.persistUploadedGenerationSource — the scanned-rows flag', () 
 
   it('🔴 per app: ON for the token’s app persists; OFF for another app refuses', async () => {
     h.isFlipt.mockImplementation(
-      async (flag: string, entityId?: string) =>
+      (flag: string, entityId?: string) =>
         flag === 'app-block-source-scanned-rows' && entityId === 'apb_alpha'
     );
     await expect(call()).resolves.toEqual(RESULT);

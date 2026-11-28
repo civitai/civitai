@@ -27,14 +27,9 @@ export class HuggingFaceError extends Error {
   }
 }
 
-const WEIGHT_EXTENSIONS = /\.(safetensors|sft|ckpt|pt|pth|bin|gguf|onnx)$/i;
 /** Per part, not per file — the run's budget is only checked BETWEEN parts, so one stalled read
  *  otherwise defers that check indefinitely and the next tick starts a second run. */
 const RANGE_READ_TIMEOUT_MS = 90_000;
-
-export function isWeightFile(path: string) {
-  return WEIGHT_EXTENSIONS.test(path);
-}
 
 /**
  * A `ModelFile.type` guess from the file's path, or null when the path doesn't say.

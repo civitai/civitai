@@ -68,3 +68,59 @@ describe('an unparseable completion', () => {
     expect(JSON.stringify(consoleError.mock.calls)).not.toContain('PROMPT_ECHO');
   });
 });
+
+describe('getJsonCompletionWithUsage provider', () => {
+  const pin = { order: ['wafer/us'], allowFallbacks: false, dataCollection: 'deny' as const };
+  const messages = [{ role: 'user' as const, content: 'x' }];
+
+  it('sends the pin over the default, and keeps it on both retry paths', async () => {
+    send
+      .mockResolvedValueOnce({ ...replyWith(''), id: 'gen-1' })
+      .mockResolvedValueOnce({ ...replyWith('not json'), id: 'gen-2' })
+      .mockResolvedValueOnce({ ...replyWith('{}'), id: 'gen-3' });
+
+    const result = await openrouter!.getJsonCompletionWithUsage({
+      messages,
+      retries: 2,
+      provider: pin,
+    });
+
+    expect(result.generationId).toBe('gen-3');
+    expect(send).toHaveBeenCalledTimes(3);
+    for (const call of send.mock.calls) expect(call[0].provider).toEqual(pin);
+  });
+
+  it('keeps the default when no pin is given', async () => {
+    send.mockResolvedValueOnce(replyWith('{}'));
+
+    await openrouter!.getJsonCompletionWithUsage({ messages });
+
+    expect(send.mock.calls[0][0].provider).toEqual({ allowFallbacks: true });
+  });
+});
+
+describe('getTextCompletion', () => {
+  const messages = [{ role: 'user' as const, content: 'x' }];
+
+  it('returns the reason the generation stopped, so a reply cut at maxTokens can be told apart', async () => {
+    send.mockResolvedValueOnce({
+      choices: [{ message: { content: 'half an answer' }, finishReason: 'length' }],
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+    });
+    const res = await openrouter!.getTextCompletion({ messages });
+    expect(res.content).toBe('half an answer');
+    expect(res.finishReason).toBe('length');
+  });
+
+  it('never returns the model reasoning as the answer when content is null', async () => {
+    send.mockResolvedValueOnce({
+      choices: [
+        { message: { content: null, reasoning: 'REASONING_TEXT so far' }, finishReason: 'length' },
+      ],
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+    });
+    const res = await openrouter!.getTextCompletion({ messages });
+    expect(res.content).toBe('');
+    expect(res.finishReason).toBe('length');
+  });
+});

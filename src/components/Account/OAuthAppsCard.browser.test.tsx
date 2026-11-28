@@ -21,7 +21,6 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 }));
 
 import { OAuthAppsCard } from '~/components/Account/OAuthAppsCard';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -42,8 +41,7 @@ describe('OAuthAppsCard register scope', () => {
     await userEvent.click(dialog.getByRole('button', { name: 'Register App' }));
 
     await vi.waitFor(() => expect(mutate).toHaveBeenCalledTimes(1));
-    expect((mutate.mock.calls[0][0] as { allowedScopes: number }).allowedScopes).toBe(
-      TokenScope.UserRead
-    );
+    // Sent as a JSON number (UserRead = 1): tRPC scope inputs stay numbers.
+    expect((mutate.mock.calls[0][0] as { allowedScopes: number }).allowedScopes).toBe(1);
   });
 });

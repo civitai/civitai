@@ -1,4 +1,3 @@
-import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { ActionIcon, Anchor, Box, Group, Text } from '@mantine/core';
@@ -60,6 +59,7 @@ import { BlockConsentNotice } from './BlockConsentNotice';
 import { openBlockConsentModal } from './openBlockConsentModal';
 import { hideBlock } from './hiddenBlocks';
 import { isPageSlot } from '~/shared/constants/slot-registry';
+import { BLOCK_READY_TIMEOUT_MS } from '~/shared/constants/block-ready.constants';
 import { APP_STORAGE_PUBLISH_SCOPE } from '~/shared/constants/block-storage.constants';
 import { sanitizeAppChromeName } from './appChromeName';
 import { resolveChromeGeometry } from './chromeGeometry';
@@ -87,8 +87,8 @@ import type { BlockHostSurface } from './blockInitFragmentGate';
 import { useBlockIframeSrc } from './useBlockIframeSrc';
 import { usePostMessage } from './usePostMessage';
 import type { BlockInitPayload, BlockInstall, ModelSlotContext, SlotContext } from './types';
-import { dialogStore } from '~/components/Dialog/dialogStore';
-import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
+import { openDialog } from '~/components/Dialog/openDialog';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import {
   buildCollectionFollowConsentCopy,
   createCollectionFollowSettlement,
@@ -104,7 +104,6 @@ import {
   resolveGetEntityReactionsRequest,
   resolveSetEntityReactionRequest,
 } from './reactionGate';
-import type { BuyBuzzModalProps } from '~/components/Modals/BuyBuzzModal';
 import type { AppFeedbackRecentError } from '~/server/schema/app-feedback.schema';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import { getBaseModelGroup, getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
@@ -113,6 +112,7 @@ import {
   sharedStorageErrorReply,
   storageErrorMessage,
 } from '~/components/AppBlocks/sharedStorageError';
+import { rateLimitReplyFields } from '~/components/AppBlocks/bridgeRateLimit';
 import {
   BLOCK_STORAGE_READ_OPTS,
   invalidatePrivateStorageReads,
@@ -124,7 +124,6 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { openLoginPopup } from '~/utils/auth-helpers';
 import { appsRunBackTarget, type AppsRunOrigin } from '~/shared/utils/apps-run-origin';
 
-const BuyBuzzModal = dynamic(() => import('~/components/Modals/BuyBuzzModal'));
 // The lazy-consent UI's dynamic import USED to live here, duplicated verbatim in
 // PageBlockHost, and this copy carried NO dedupe id. Both surfaces now go through
 // `openBlockConsentModal`, which owns the lazy component reference alongside the id
@@ -181,12 +180,14 @@ interface IframeHostProps {
    *  `projectBlockInitMaturity`). Absent → the block falls back to
    *  `maxBrowsingLevel`, i.e. the pre-field behaviour. */
   effectiveBrowsingLevel?: number;
+  /** The mint's `viewerImage`, raw → `BLOCK_INIT.viewer.image` (see
+   *  `projectBlockInitViewerImage`). Absent → the key is absent. */
+  viewerImage?: unknown;
   /** Re-mint the block token after a consent grant so it carries the newly
    *  granted scopes (pushed to the iframe via TOKEN_REFRESH). */
   onConsentGranted?: () => void;
 }
 
-const BLOCK_READY_TIMEOUT_MS = 10_000;
 // If the token never arrives within this window, surface a token_error so the
 // user isn't stuck behind an indefinite skeleton.
 const TOKEN_WAIT_TIMEOUT_MS = 15_000;
@@ -1272,6 +1273,7 @@ export function IframeHost({
   domain,
   maxBrowsingLevel,
   effectiveBrowsingLevel,
+  viewerImage,
   onConsentGranted,
 }: IframeHostProps) {
   // Treat the slot context as ModelSlotContext when the optional viewer/theme
@@ -1657,7 +1659,7 @@ export function IframeHost({
     // Contract `viewer` object (null for anon) — the only place viewer
     // id/username/status are exposed to the iframe. Built via the same pure
     // projection module so the allowlist lives in one tested place.
-    viewer: projectBlockInitViewer(context),
+    viewer: projectBlockInitViewer(context, viewerImage),
     theme: activeTheme,
     renderMode: install.renderMode,
     // Advisory maturity signal — server-authoritative values from the mint.
@@ -2438,24 +2440,24 @@ export function IframeHost({
               slotId: typeof modelCtx.slotId === 'string' ? modelCtx.slotId : undefined,
             }
           : undefined;
-        dialogStore.trigger<BuyBuzzModalProps>({
-          // Per-request id so multiple OPEN_BUZZ_PURCHASE calls don't dedup
-          // against each other in the dialog store's exists-check.
-          id: `block-buy-buzz-${requestId}`,
-          component: BuyBuzzModal,
-          props: {
+        openDialog(
+          () => import('~/components/Modals/BuyBuzzModal'),
+          {
             minBuzzAmount: amount,
             attribution,
             onPurchaseSuccess: () => {
               purchased = true;
             },
           },
-          options: {
+          {
+            // Per-request id so multiple OPEN_BUZZ_PURCHASE calls don't dedup
+            // against each other in the dialog store's exists-check.
+            id: `block-buy-buzz-${requestId}`,
             onClose: () => {
               send('BUZZ_PURCHASE_RESULT', { requestId, purchased });
             },
-          },
-        });
+          }
+        );
       }
     );
     return off;
@@ -2607,6 +2609,7 @@ export function IframeHost({
             requestId,
             ok: false,
             error: err instanceof Error ? err.message : 'unknown',
+            ...rateLimitReplyFields(err),
           });
         }
       }
@@ -2703,6 +2706,7 @@ export function IframeHost({
         send('BUZZ_BALANCE_RESULT', {
           requestId,
           error: err instanceof Error ? err.message : 'unknown',
+          ...rateLimitReplyFields(err),
         });
       }
     });
@@ -2762,6 +2766,7 @@ export function IframeHost({
             requestId,
             value: null,
             error: storageErrorMessage(err),
+            ...rateLimitReplyFields(err),
           });
         }
       }
@@ -2794,6 +2799,7 @@ export function IframeHost({
             requestId,
             ok: false,
             error: storageErrorMessage(err),
+            ...rateLimitReplyFields(err),
           });
         }
       }
@@ -2826,6 +2832,7 @@ export function IframeHost({
             ok: false,
             deleted: false,
             error: storageErrorMessage(err),
+            ...rateLimitReplyFields(err),
           });
         }
       }
@@ -2875,6 +2882,7 @@ export function IframeHost({
           requestId,
           keys: [],
           error: storageErrorMessage(err),
+          ...rateLimitReplyFields(err),
         });
       }
     });
@@ -2905,6 +2913,7 @@ export function IframeHost({
           limitBytes: 0,
           limitRows: 0,
           error: storageErrorMessage(err),
+          ...rateLimitReplyFields(err),
         });
       }
     });
@@ -3003,7 +3012,10 @@ export function IframeHost({
           nextCursor: result.nextCursor,
         });
       } catch (err) {
-        send('SHARED_LIST_RESULT', { requestId, error: storageErrorMessage(err) });
+        send('SHARED_LIST_RESULT', {
+          requestId,
+          ...sharedStorageErrorReply(err),
+        });
       }
     });
     return off;
@@ -3025,7 +3037,10 @@ export function IframeHost({
           );
           send('SHARED_GET_COUNT_RESULT', { requestId, count: result.count });
         } catch (err) {
-          send('SHARED_GET_COUNT_RESULT', { requestId, error: storageErrorMessage(err) });
+          send('SHARED_GET_COUNT_RESULT', {
+            requestId,
+            ...sharedStorageErrorReply(err),
+          });
         }
       }
     );
@@ -3048,7 +3063,10 @@ export function IframeHost({
           );
           send('SHARED_GET_COUNTS_RESULT', { requestId, counts: result.counts });
         } catch (err) {
-          send('SHARED_GET_COUNTS_RESULT', { requestId, error: storageErrorMessage(err) });
+          send('SHARED_GET_COUNTS_RESULT', {
+            requestId,
+            ...sharedStorageErrorReply(err),
+          });
         }
       }
     );
@@ -3224,7 +3242,11 @@ export function IframeHost({
               : null,
           });
         } catch (err) {
-          send('SHARED_GET_RESULT', { requestId, item: null, error: storageErrorMessage(err) });
+          send('SHARED_GET_RESULT', {
+            requestId,
+            item: null,
+            ...sharedStorageErrorReply(err),
+          });
         }
       }
     );
@@ -3343,42 +3365,42 @@ export function IframeHost({
           collectionId,
           collection: identity.identity,
         });
-        dialogStore.trigger({
+        openConfirm({
           // Per-request id so two SET_COLLECTION_FOLLOW calls can't dedup against
           // each other in the dialog store's silent `if (!exists)` drop — a
           // dropped dialog would be a request that never replies, i.e. a hang.
           // (Insurance, matching the OPEN_IMAGE_UPLOAD handler; the collision was
           // not reproducible, since rendering a Mantine modal costs >1 ms.)
           id: `block-collection-follow-${requestId}`,
-          component: ConfirmDialog,
-          props: {
-            title: copy.title,
-            message: copy.message,
-            labels: { confirm: copy.confirmLabel, cancel: 'Cancel' },
-            confirmProps: { color: 'blue' },
-            onConfirm: async () => {
-              // SYNCHRONOUS, before any await: from here on a dismissal must not
-              // be able to claim `declined` for a write that is under way.
-              settlement.markConsented();
-              try {
-                // Self-bound server-side: the handlers pass `ctx.user.id` as BOTH
-                // actor and target, so `collectionId` is the ONLY thing the block
-                // influences.
-                if (follow) await followCollectionMutation.mutateAsync({ collectionId });
-                else await unfollowCollectionMutation.mutateAsync({ collectionId });
-                settlement.reply({ result: { collectionId, followed: follow } });
-              } catch (err) {
-                // FORBIDDEN from the collection services (e.g. a private
-                // collection this viewer may not follow) lands here as a message,
-                // never as a hang.
-                settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
-              }
-            },
-            // Dismiss (Cancel / X / escape / overlay) = consent DECLINED. Settle
-            // the block's promise explicitly rather than leaving it to time out —
-            // unless consent was already given, in which case this is a no-op.
-            onCancel: settlement.decline,
+          title: copy.title,
+          message: copy.message,
+          labels: { confirm: copy.confirmLabel, cancel: 'Cancel' },
+          confirmProps: { color: 'blue' },
+          onConfirm: async () => {
+            // SYNCHRONOUS, before any await: from here on a dismissal must not
+            // be able to claim `declined` for a write that is under way.
+            settlement.markConsented();
+            try {
+              // Self-bound server-side: the handlers pass `ctx.user.id` as BOTH
+              // actor and target, so `collectionId` is the ONLY thing the block
+              // influences.
+              if (follow) await followCollectionMutation.mutateAsync({ collectionId });
+              else await unfollowCollectionMutation.mutateAsync({ collectionId });
+              settlement.reply({ result: { collectionId, followed: follow } });
+            } catch (err) {
+              // FORBIDDEN from the collection services (e.g. a private
+              // collection this viewer may not follow) lands here as a message,
+              // never as a hang.
+              settlement.reply({
+                error: err instanceof Error ? err.message : 'unknown',
+                ...rateLimitReplyFields(err),
+              });
+            }
           },
+          // Dismiss (Cancel / X / escape / overlay) = consent DECLINED. Settle
+          // the block's promise explicitly rather than leaving it to time out —
+          // unless consent was already given, in which case this is a no-op.
+          onCancel: settlement.decline,
         });
       })();
     });
@@ -3441,7 +3463,7 @@ export function IframeHost({
         } catch (err) {
           const error = classifyEntityReactionError(err);
           reviveConsentNoticeOnRefusal(entityReactionRefusedScopes(error));
-          latch.reply({ error });
+          latch.reply({ error, ...rateLimitReplyFields(err) });
         }
       })();
     });
@@ -3490,7 +3512,7 @@ export function IframeHost({
           });
           latch.reply({ result });
         } catch (err) {
-          latch.reply({ error: classifyEntityReactionError(err) });
+          latch.reply({ error: classifyEntityReactionError(err), ...rateLimitReplyFields(err) });
         }
       })();
     });

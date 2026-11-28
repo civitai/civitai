@@ -28,8 +28,8 @@ const family = (key: string) => key.split(':')[0];
 
 // Unlocks with no page to send a creator to. Adding an unlock to the registry fails the test below
 // until it is either linked in `unlockLinks` or listed here on purpose.
-// `creator-services`: its page is per-username and the ladder links are static.
-const UNLINKED = ['comment-rate-limit', 'reaction-rate-limit', 'creator-services'];
+// `creator-services` and `creator-shop`: their pages are per-username and the ladder links are static.
+const UNLINKED = ['comment-rate-limit', 'reaction-rate-limit', 'creator-services', 'creator-shop'];
 
 // MantineProvider prepends a <style> block; drop it, then the tags, to read what a person sees.
 const visibleText = (html: string) =>

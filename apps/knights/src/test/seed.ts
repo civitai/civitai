@@ -18,14 +18,14 @@ export async function seedImage(
   {
     nsfwLevel = 4,
     publishedAt = '2020-01-01',
-  }: { nsfwLevel?: number; publishedAt?: string | null } = {}
+    userId = null,
+  }: { nsfwLevel?: number; publishedAt?: string | null; userId?: number | null } = {}
 ) {
   await pg.query(`INSERT INTO "Post" ("id","publishedAt") VALUES ($1,$2)`, [id, publishedAt]);
-  await pg.query(`INSERT INTO "Image" ("id","url","nsfwLevel","postId") VALUES ($1,$2,$3,$1)`, [
-    id,
-    `key-${id}`,
-    nsfwLevel,
-  ]);
+  await pg.query(
+    `INSERT INTO "Image" ("id","url","nsfwLevel","postId","userId") VALUES ($1,$2,$3,$1,$4)`,
+    [id, `key-${id}`, nsfwLevel, userId]
+  );
 }
 
 /** Settled, graded votes in the player's history, newest last; they need the current month's vote partition. */
@@ -60,7 +60,7 @@ export async function setGold(
   );
 }
 
-/** One settled vote on the rating question; it needs the vote partition of `createdAt`'s month. */
+/** One settled, graded vote on the rating question; it needs the vote partition of `createdAt`'s month. */
 export async function seedSettledVote(
   pg: PGlite,
   {
@@ -69,6 +69,7 @@ export async function seedSettledVote(
     imageId,
     gold = 0,
     answer = '4',
+    verdict = 'correct',
     createdAt = '2026-12-10 10:00:00',
     settledAt = '2026-12-10 11:00:00',
   }: {
@@ -77,13 +78,57 @@ export async function seedSettledVote(
     imageId: number;
     gold?: number;
     answer?: string;
+    verdict?: string;
     createdAt?: string;
     settledAt?: string;
   }
 ) {
   await pg.query(
     `INSERT INTO "KnightsVote" ("itemId","playerId","createdAt","questionKey","imageId","stage","answer","weight","verdict","gold","xp","settledAt")
-     VALUES ($1,$2,$3::timestamp,'knights.image.nsfwLevel',$4,'Knight',$5,1,'correct',$6,0,$7::timestamp)`,
-    [itemId, playerId, createdAt, imageId, answer, gold, settledAt]
+     VALUES ($1,$2,$3::timestamp,'knights.image.nsfwLevel',$4,'Knight',$5,1,$8,$6,0,$7::timestamp)`,
+    [itemId, playerId, createdAt, imageId, answer, gold, settledAt, verdict]
+  );
+}
+
+/** Locks the image's level with `reason` as its `nsfwLevelReason`, the way a moderator or the Knights write-back does. */
+export async function lockImage(
+  pg: PGlite,
+  id: number,
+  { reason, level }: { reason: string; level: number }
+) {
+  await pg.query(
+    `UPDATE "Image" SET "nsfwLevelLocked"=true, "nsfwLevel"=$2, metadata=jsonb_build_object('nsfwLevelReason',$3::text) WHERE id=$1`,
+    [id, level, reason]
+  );
+}
+
+/** The player's engagement with a creator (one row per pair), as the main app writes it when they follow, hide or block them. */
+export async function engage(
+  pg: PGlite,
+  userId: number,
+  targetUserId: number,
+  type: 'Follow' | 'Hide' | 'Block'
+) {
+  await pg.query(
+    `INSERT INTO "UserEngagement" ("userId","targetUserId","type") VALUES ($1,$2,$3)
+     ON CONFLICT ("userId","targetUserId") DO UPDATE SET "type" = EXCLUDED."type"`,
+    [userId, targetUserId, type]
+  );
+}
+
+/** The player hides `keys` (preset tag groups) in Knights settings. */
+export async function hideTagGroups(pg: PGlite, playerId: number, keys: string[]) {
+  await pg.query(
+    `INSERT INTO "KnightsPlayer" ("playerId","shieldWeek","hiddenTagGroups") VALUES ($1, '2026-01-05', $2)
+     ON CONFLICT ("playerId") DO UPDATE SET "hiddenTagGroups" = EXCLUDED."hiddenTagGroups"`,
+    [playerId, keys]
+  );
+}
+
+/** A tag on the image (enabled unless `disabled`), in the base harness's "TagsOnImageDetails" table; a suite that boots tag review has the real view instead. */
+export async function tagImage(pg: PGlite, imageId: number, tagId: number, disabled = false) {
+  await pg.query(
+    `INSERT INTO "TagsOnImageDetails" ("imageId","tagId","disabled") VALUES ($1,$2,$3)`,
+    [imageId, tagId, disabled]
   );
 }

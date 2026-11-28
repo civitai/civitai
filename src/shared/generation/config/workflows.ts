@@ -480,7 +480,7 @@ export const workflowConfigs: WorkflowConfigs = {
     modeLabel: 'Text to Music',
     description: 'Generate music from text description and lyrics',
     category: 'audio',
-    ecosystemIds: [ECO.AceAudio, ECO.MiniMaxMusic3, ECO.YuE2, ECO.Sonilo],
+    ecosystemIds: [ECO.AceAudio, ECO.MiniMaxMusic3, ECO.YuE2, ECO.Sonilo, ECO.SeedAudio],
     stepDisplay: 'separate',
   },
 
@@ -512,15 +512,14 @@ export const workflowConfigs: WorkflowConfigs = {
     // Image segment, where txt2img/img2img both title as "Create Image").
     label: 'Create 3D Model',
     modeLabel: 'Image to 3D',
-    description:
-      'Generate a 3D model from a source image (Meshy, Tripo, Hunyuan3D, Pixal3D, or Trellis.2)',
+    description: 'Generate a 3D model from a source image (Meshy, Tripo, Pixal3D, or Trellis.2)',
     category: 'model3d',
     // Image-to-3D is supported by all the 3D ecosystems; the user picks one
     // via the `BaseModelInput` "Eco" picker. Text-to-3D (txt2model3d) is
-    // PolyGen and Tripo only — Hunyuan3D/Pixal3D/Trellis.2 have no text-to-3D
+    // PolyGen and Tripo only — Pixal3D/Trellis.2 have no text-to-3D
     // operation, and neither do Meshy v7 or Tripo v2.5 (versions inside their
     // ecosystems).
-    ecosystemIds: [ECO.PolyGen, ECO.Tripo, ECO.Hunyuan3D, ECO.Pixal3D, ECO.Trellis2],
+    ecosystemIds: [ECO.PolyGen, ECO.Tripo, ECO.Pixal3D, ECO.Trellis2],
     featureFlag: 'model3dGenerator',
     isNew: true,
   },

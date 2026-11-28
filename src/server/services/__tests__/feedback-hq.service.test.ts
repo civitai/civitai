@@ -44,15 +44,46 @@ const intakeCalls = () => fetchMock.mock.calls.filter(([url]) => String(url).sta
 const sentForm = () => intakeCalls()[0][1].body as FormData;
 const loggedStatuses = () => loggingMock.logToAxiom.mock.calls.map(([line]) => line.status);
 
+/** The cluster MULTI behind the per-reporter cap: records its SET and INCR, answers the count. */
+const cap = {
+  counts: [] as number[],
+  fail: false,
+  sets: [] as unknown[][],
+  incrs: [] as string[],
+};
+function installCapMulti() {
+  cap.counts = [];
+  cap.fail = false;
+  cap.sets = [];
+  cap.incrs = [];
+  redisMock.redis.multi.mockImplementation(() => {
+    const chain = {
+      set: vi.fn((...a: unknown[]) => {
+        cap.sets.push(a);
+        return chain;
+      }),
+      incr: vi.fn((key: string) => {
+        cap.incrs.push(key);
+        return chain;
+      }),
+      exec: vi.fn(async () => {
+        if (cap.fail) throw new Error('redis down');
+        return ['OK', cap.counts.shift() ?? 1];
+      }),
+    };
+    return chain;
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  installCapMulti();
   dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
   loggingMock.logToAxiom.mockResolvedValue(undefined);
   envMock.set({ HQ_INTAKE_URL: HQ_ORIGIN, HQ_INTAKE_TOKEN: TOKEN });
   vi.stubGlobal('fetch', fetchMock);
   fetchMock.mockReset();
   fetchMock.mockResolvedValue(created());
-  redisMock.sysRedis.incrBy.mockResolvedValue(1);
   isFliptMock.mockResolvedValue(false);
 });
 
@@ -158,33 +189,29 @@ describe('the per-reporter cap', () => {
   const KEY = 'system:feedback:hq-filing:42';
 
   it('files the tenth attempt in a window and refuses the eleventh', async () => {
-    redisMock.sysRedis.incrBy.mockResolvedValueOnce(10).mockResolvedValueOnce(11);
+    cap.counts = [10, 11];
     await fileFeedbackToHq(report());
     await fileFeedbackToHq(report());
 
     expect(intakeCalls()).toHaveLength(1);
     expect(loggedStatuses()).toEqual(['filed', 'user-cap']);
-    expect(redisMock.sysRedis.incrBy).toHaveBeenCalledWith(KEY, 1);
+    expect(loggingMock.logToAxiom.mock.calls[1][0]).toEqual(
+      expect.objectContaining({ status: 'user-cap', userId: 42 })
+    );
+    expect(cap.incrs).toEqual([KEY, KEY]);
+    // A rate limit: it lives on the cache cluster, not in system Redis.
+    expect(redisMock.sysRedis.incrBy).not.toHaveBeenCalled();
+    expect(redisMock.sysRedis.multi).not.toHaveBeenCalled();
   });
 
-  it('starts a 24-hour window on the first attempt', async () => {
+  it('creates the window with its 24-hour TTL in the same MULTI as the count', async () => {
     await fileFeedbackToHq(report());
 
-    expect(redisMock.sysRedis.expire).toHaveBeenCalledWith(KEY, 24 * 60 * 60);
-  });
-
-  it('re-arms a window that lost its expiry, and leaves a live one alone', async () => {
-    redisMock.sysRedis.incrBy.mockResolvedValue(5);
-    redisMock.sysRedis.ttl.mockResolvedValueOnce(-1).mockResolvedValueOnce(100);
-    await fileFeedbackToHq(report());
-    await fileFeedbackToHq(report());
-
-    expect(redisMock.sysRedis.expire).toHaveBeenCalledTimes(1);
-    expect(redisMock.sysRedis.expire).toHaveBeenCalledWith(KEY, 24 * 60 * 60);
+    expect(cap.sets).toEqual([[KEY, '0', { NX: true, EX: 24 * 60 * 60 }]]);
   });
 
   it('files nothing when the count cannot be read', async () => {
-    redisMock.sysRedis.incrBy.mockRejectedValue(new Error('redis down'));
+    cap.fail = true;
     await fileFeedbackToHq(report());
 
     expect(fetchMock).not.toHaveBeenCalled();
@@ -502,8 +529,9 @@ describe('what HQ gets of the session and the failed requests', () => {
       { moderatorUrl: 'https://moderator.example.test/feedback/7', screenshotAttached: false }
     );
 
-  it('leaves out the session id', () => {
-    expect(body()).not.toContain('faro-session-abc123');
+  // The session id is how a report is joined to its Faro telemetry; dropping it breaks that join.
+  it('carries the Faro session id', () => {
+    expect(body()).toContain('- Faro session: `faro-session-abc123`');
   });
 
   it('lists a failed request as status and path only', () => {

@@ -1,6 +1,10 @@
 import semver from 'semver';
 import type { AppReviewAgentReport } from '@prisma/client';
 import { dbRead } from '~/server/db/client';
+import {
+  agentReviewLaneFor,
+  type ConnectCivitaiChecksView,
+} from '~/shared/constants/connect-agent-review.constants';
 
 // App Blocks — agentic mod code-review report (P0 read/lookup layer).
 //
@@ -29,17 +33,64 @@ export type AppReviewAgentReportStatus = (typeof APP_REVIEW_AGENT_REPORT_STATUSE
 
 /**
  * The agent report for a given review (publish request), or null. If a review
- * was re-run and has more than one report, the most recently started one wins.
+ * was re-run and has more than one report, the most recently started one wins —
+ * unless `reportId` names one of them. A `reportId` belonging to another request
+ * finds nothing: the lookup is always scoped to `publishRequestId`.
  */
 export async function getAgentReport(
-  publishRequestId: string
-): Promise<AppReviewAgentReport | null> {
+  publishRequestId: string,
+  reportId?: string
+): Promise<AgentReportWithChecks | null> {
   if (!publishRequestId) return null;
-  return dbRead.appReviewAgentReport.findFirst({
-    where: { publishRequestId },
+  const report = await dbRead.appReviewAgentReport.findFirst({
+    where: reportId ? { publishRequestId, id: reportId } : { publishRequestId },
     orderBy: { startedAt: 'desc' },
   });
+  // Connect lane: the "Checked by Civitai" view, from its own server-written table (never from
+  // the runner's sections) with the stale flag. On-site reports are returned exactly as before.
+  if (!report || agentReviewLaneFor(publishRequestId) !== 'connect') return report;
+  const { getConnectChecksView } = await import('./connect-agent-review.service');
+  return { ...report, civitaiChecks: await getConnectChecksView(report.id, publishRequestId) };
 }
+
+/** How many runs the report picker lists for one request, newest first. */
+export const AGENT_REPORT_LIST_LIMIT = 50;
+
+/**
+ * Every run for a review (publish request), newest first, in the report picker's shape: enough
+ * to tell the runs apart (model, status, when, cost), none of the report content.
+ */
+export async function listAgentReports(publishRequestId: string): Promise<AgentReportListItem[]> {
+  if (!publishRequestId) return [];
+  const rows = await dbRead.appReviewAgentReport.findMany({
+    where: { publishRequestId },
+    orderBy: { startedAt: 'desc' },
+    take: AGENT_REPORT_LIST_LIMIT,
+    select: {
+      id: true,
+      model: true,
+      status: true,
+      startedAt: true,
+      completedAt: true,
+      costUsd: true,
+    },
+  });
+  return rows.map((r) => ({ ...r, costUsd: r.costUsd == null ? null : Number(r.costUsd) }));
+}
+
+export type AgentReportListItem = {
+  id: string;
+  model: string | null;
+  status: string;
+  startedAt: Date;
+  completedAt: Date | null;
+  costUsd: number | null;
+};
+
+/** A report row, plus (connect lane only) what Civitai checked itself. */
+export type AgentReportWithChecks = AppReviewAgentReport & {
+  civitaiChecks?: ConnectCivitaiChecksView | null;
+};
 
 export type GetPriorAgentReportArgs = {
   /** The stable app key (= blockId). Present on every publish request, so a
@@ -78,7 +129,9 @@ export async function getPriorAgentReport(
     throw new Error(`getPriorAgentReport: invalid semver version "${version}"`);
   }
 
-  const where = { slug, status: 'complete' as const };
+  // `kind: 'onsite'`: a connect-listing report (kind 'external') is keyed by the listing slug
+  // with a placeholder version, and must never become an on-site app's diff base.
+  const where = { slug, status: 'complete' as const, kind: 'onsite' as const };
 
   // Recency-bounded superset of the semver answer: take the N most recently
   // started complete reports. The true semver-latest-older report is always

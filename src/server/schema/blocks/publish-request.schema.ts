@@ -2,6 +2,10 @@ import * as z from 'zod';
 import { BLOCK_SLUG } from '@civitai/app-assistant';
 import { OFFSITE_MOD_REASON_MIN } from '~/server/schema/blocks/offsite-moderation.schema';
 import { AGENT_REVIEW_SECTIONS } from '~/shared/constants/agent-review-section.constants';
+import {
+  AGENT_REVIEW_MODEL_ID_MAX,
+  AGENT_REVIEW_MODEL_ID_RE,
+} from '~/shared/constants/agent-review-model.constants';
 import { LISTING_MEDIA_SPLIT_DECISIONS } from '~/shared/constants/listing-media-split.constants';
 import {
   HOLD_LABEL_MAX,
@@ -154,6 +158,31 @@ export const submitVersionSchema = z.object({
     .max(16_384)
     .nullish()
     .transform((v) => v ?? undefined),
+  // `civitai app submit --allow-outdated-sdk`: the packages the CLI found below the platform
+  // minimum (`GET /api/v1/blocks/sdk-floor`) and submitted anyway. OPTIONAL, same wire contract
+  // as the fields above (omit or `null` = none sent). An UNTRUSTED CLIENT CLAIM, stored as one
+  // beside the server's own reading of the bundle's lockfile and shown to the moderator labelled
+  // as the client's. A malformed value rejects, for the reason `sourceCommit`'s does.
+  sdkFloorOverride: z
+    .array(
+      z.object({
+        package: z.string().min(1).max(214),
+        installed: z.string().min(1).max(64),
+        minimum: z.string().min(1).max(64),
+      })
+    )
+    .max(8)
+    .nullish()
+    .transform((v) => v ?? undefined),
+  // `civitai app submit --allow-unmerged-platform-update`: queue the bundle even though it lacks a
+  // staff platform update no approved version has shipped. Without it such a bundle is refused
+  // (`platform_update_missing`); with it, what the bundle left out is recorded for the moderator.
+  // OPTIONAL, same wire contract as the fields above (omit or `null` = not sent). A malformed value
+  // rejects, for the reason `sourceCommit`'s does.
+  allowUnmergedPlatformUpdate: z
+    .boolean()
+    .nullish()
+    .transform((v) => v ?? undefined),
 });
 
 export type SubmitVersionInput = z.infer<typeof submitVersionSchema>;
@@ -167,6 +196,9 @@ const SUBMIT_VERSION_FIELD_HINTS: Record<string, string> = {
   sourceCommit: 'sourceCommit must be a 40-character lowercase hex git commit sha',
   sourceDirty: 'sourceDirty must be a boolean',
   githubOidcToken: 'githubOidcToken must be a non-empty string of at most 16384 characters',
+  sdkFloorOverride:
+    'sdkFloorOverride must be a list of at most 8 { package, installed, minimum } strings',
+  allowUnmergedPlatformUpdate: 'allowUnmergedPlatformUpdate must be a boolean',
 };
 
 /** The message both submit routes have always returned for a parse failure. */
@@ -287,6 +319,12 @@ export const getPublishRequestScreenshotsSchema = z.object({
 
 export type GetPublishRequestScreenshotsInput = z.infer<typeof getPublishRequestScreenshotsSchema>;
 
+/** MOD: preview or re-run the version rating sync for one approved app's on-site listing. */
+export const listingRatingResyncSchema = z.object({
+  appBlockId: z.string().min(1).max(64),
+});
+export type ListingRatingResyncInput = z.infer<typeof listingRatingResyncSchema>;
+
 /** Input for the MOD-ONLY `blocks.getPublishRequestDiff` (line-level code diff). */
 export const getPublishRequestDiffSchema = z.object({
   publishRequestId: z.string().min(1).max(64),
@@ -341,6 +379,14 @@ export type MintReviewBlockTokenInput = z.infer<typeof mintReviewBlockTokenSchem
  * client renderer cannot disagree about which analyses exist.
  */
 
+/** An OpenRouter model id a moderator chose for an agent review run. */
+export const agentReviewModelIdSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(AGENT_REVIEW_MODEL_ID_MAX)
+  .regex(AGENT_REVIEW_MODEL_ID_RE, 'Not an OpenRouter model id (expected vendor/model)');
+
 /** Input for the MOD-ONLY agentic code-review `blocks.startAgentReview` (P1) —
  *  dispatches an ephemeral review agent for a PENDING request. */
 export const startAgentReviewSchema = z.object({
@@ -365,6 +411,14 @@ export const startAgentReviewSchema = z.object({
     .min(1)
     .max(AGENT_REVIEW_SECTIONS.length)
     .optional(),
+  /**
+   * Run on this OpenRouter model (`vendor/model`, as OpenRouter lists it) instead of the review
+   * agent's default. Omitted on a full run ⇒ the default, and the provisioned Job sets no model
+   * values. On a targeted re-run it must be the
+   * latest run's own model. An id OpenRouter does not list as tool-capable is refused (the
+   * service needs its price for the cost cap).
+   */
+  model: agentReviewModelIdSchema.optional(),
 });
 
 export type StartAgentReviewInput = z.infer<typeof startAgentReviewSchema>;
@@ -374,29 +428,17 @@ export type StartAgentReviewInput = z.infer<typeof startAgentReviewSchema>;
  *  shape as previewRequest (the pending request id). */
 export const getAgentReviewSchema = z.object({
   publishRequestId: z.string().min(1).max(64),
+  /** One run of this request (the report picker). Omitted ⇒ the latest run. */
+  reportId: z.string().min(1).max(64).optional(),
+});
+
+/** Input for the MOD-ONLY `blocks.listAgentReviews` (every run of a request, for the report
+ *  picker) and `blocks.getAgentReviewModels` (the re-run model picker). */
+export const agentReviewRequestSchema = z.object({
+  publishRequestId: z.string().min(1).max(64),
 });
 
 export type GetAgentReviewInput = z.infer<typeof getAgentReviewSchema>;
-
-/** One turn of the MOD-ONLY in-modal agent chat (P3). The CLIENT sends the
- *  running conversation; the server prepends its own grounding system context. */
-export const agentReviewChatMessageSchema = z.object({
-  role: z.enum(['user', 'assistant']),
-  content: z.string().min(1).max(4000),
-});
-
-export type AgentReviewChatMessage = z.infer<typeof agentReviewChatMessageSchema>;
-
-/** Input for the MOD-ONLY in-modal agent chat proxy `blocks.agentReviewChat`
- *  (P3). The client sends the pending request id + the running conversation
- *  (bounded); the server prepends a grounding system message and proxies to the
- *  review agent pod's in-cluster gateway. */
-export const agentReviewChatSchema = z.object({
-  publishRequestId: z.string().min(1).max(64),
-  messages: z.array(agentReviewChatMessageSchema).min(1).max(20),
-});
-
-export type AgentReviewChatInput = z.infer<typeof agentReviewChatSchema>;
 
 export const teardownPreviewSchema = z.object({
   publishRequestId: z.string().min(1).max(64),

@@ -53,7 +53,8 @@ import { sourceMetadataStore, useSourceMetadataStore } from '~/store/source-meta
 import { remixProvenanceStore } from '~/store/remix-provenance.store';
 import { transferSourceRating } from '~/components/form-graph/generation/useFlux3MatureSource';
 import { recentSourceImagesStore, sourceImageKey } from '~/store/recent-source-images.store';
-import { isConsumerBlobUrl } from '~/shared/orchestrator/blob-url';
+import { isConsumerBlobUrl, refreshableBlobId } from '~/shared/orchestrator/blob-url';
+import { refreshBlobUrls } from './refresh-blob-urls';
 import {
   extractSourceMetadata,
   extractSourceMetadataFromUrl,
@@ -309,7 +310,11 @@ function reportImagePrepFailure(
   const errorName = REPORTED_ERROR_NAMES.includes(causeName) ? causeName : 'other';
   const urlFields =
     source === 'url' && typeof src === 'string'
-      ? [origin && `origin:${origin}`, `host:${imageHostClass(src)}`]
+      ? [
+          origin && `origin:${origin}`,
+          `host:${imageHostClass(src)}`,
+          isConsumerBlobUrl(src) ? `expired:${!!refreshableBlobId(src)}` : undefined,
+        ]
       : [];
   void reportApplicationError(
     new Error(`source image prep failed: ${error.stage}${error.timedOut ? ':timeout' : ''}`),
@@ -326,7 +331,6 @@ function reportImagePrepFailure(
       ]
         .filter(Boolean)
         .join(' '),
-      resolveStack: false,
     }
   );
 }
@@ -389,6 +393,8 @@ export function SourceImageUploadMultiple({
   // Type and size of picked files by preview url, for the load-failure report only.
   const pickedFilesRef = useRef(new Map<string, PickedFileInfo>());
   const reportedLoadFailuresRef = useRef(new Set<string>());
+  // Expired urls already sent for refresh; each is asked once.
+  const refreshTriedRef = useRef(new Set<string>());
   // Urls whose dimensions could not be read. They no longer hold back the crop/upload effect, which
   // otherwise waits on every url in play and would never start any other card.
   const [unreadableUrls, setUnreadableUrls] = useState<ReadonlySet<string>>(new Set());
@@ -731,10 +737,31 @@ export function SourceImageUploadMultiple({
             trackedVerifyingUrlsRef.current.delete(url);
           });
       })
-    ).then((results) => {
+    ).then(async (results) => {
       const verified = results.filter(
         (r): r is { url: string; width: number; height: number } => r !== null
       );
+
+      // Refresh only after a load fails, never up front; the swap below re-runs this effect on the new url.
+      const expired = [...failures.keys()].filter(
+        (url) =>
+          snapshot?.some((v) => v.url === url) &&
+          !refreshTriedRef.current.has(url) &&
+          !!refreshableBlobId(url)
+      );
+      const freshUrls = new Map<string, string>();
+      if (expired.length) {
+        for (const url of expired) refreshTriedRef.current.add(url);
+        for (const [url, result] of await refreshBlobUrls(expired)) {
+          if (result.status !== 'refreshed') continue;
+          freshUrls.set(url, result.url);
+          failures.delete(url);
+          // Carry provenance and metadata over to the new url.
+          remixProvenanceStore.transfer(url, result.url);
+          const metadata = sourceMetadataStore.getMetadata(url);
+          if (metadata) sourceMetadataStore.setMetadata(result.url, metadata);
+        }
+      }
 
       // A url the browser cannot read never gets dimensions, so its queued cards would never
       // start: end them on an error the user can act on. The url stays retryable (above).
@@ -785,17 +812,20 @@ export function SourceImageUploadMultiple({
         sourceMetadataStore.setMetadata(url, { width, height });
       }
 
-      // Correct value entries that have missing/wrong dimensions
+      // Correct value entries that have missing/wrong dimensions, and swap in refreshed links. The
+      // refresh awaited a request, so swap on the current value; the snapshot may be stale.
       if (snapshot?.length) {
         const corrections = verified.filter((r) => {
           const orig = snapshot.find((v) => v.url === r.url);
           return orig && (orig.width !== r.width || orig.height !== r.height);
         });
-        if (corrections.length) {
+        const base = freshUrls.size ? valueRef.current : snapshot;
+        if (base?.length && (corrections.length || freshUrls.size)) {
           onChange?.(
-            snapshot.map((img) => {
+            base.map((img) => {
               const fix = corrections.find((c) => c.url === img.url);
-              return fix ? { ...img, width: fix.width, height: fix.height } : img;
+              const url = freshUrls.get(img.url) ?? img.url;
+              return fix ? { ...img, url, width: fix.width, height: fix.height } : { ...img, url };
             })
           );
         }

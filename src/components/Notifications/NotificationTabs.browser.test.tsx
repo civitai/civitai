@@ -22,7 +22,6 @@ vi.mock('~/components/Notifications/useNotificationSettings', () => ({
     hasCategory: { Comments: true, Update: true, Milestone: true, Bounty: true, Buzz: true },
   }),
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 1, onboarding: 0 }) }));
 
 import { NotificationTabs } from './NotificationTabs';
 import { renderWithProviders } from '../../../test/component-setup';
@@ -35,7 +34,8 @@ async function renderTabs() {
   renderWithProviders(
     <div style={{ width: NARROW }}>
       <NotificationTabs onTabChange={() => undefined} />
-    </div>
+    </div>,
+    { user: { id: 1, onboarding: 0 } }
   );
 
   await vi.waitFor(() => {

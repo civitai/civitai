@@ -10,6 +10,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
+	"github.com/civitai/civitai/apps/feed-go/internal/clock"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/feedsvc"
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
@@ -28,6 +29,10 @@ type Config struct {
 	// ImageIndexFeed mirrors `image-index-feed`: on, the pages come from the feed service
 	// (getAllImagesIndex) instead of the Postgres query (getAllImages).
 	ImageIndexFeed bool
+	// PrioritizedVersionCache mirrors `use-model-version-cache-for-images` (image.getInfinite only):
+	// on, a prioritizedUserIds request on the Postgres path takes its ids from
+	// imagesForModelVersionsCache in Node, which is not ported, so it falls back here.
+	PrioritizedVersionCache bool
 	// VisibleDecorationEvents is the set of event decorations every viewer may see.
 	VisibleDecorationEvents map[string]bool
 	// CompletionConcurrency caps the lazy-post-images completion fetches one request runs at once
@@ -66,6 +71,9 @@ type Deps struct {
 	Addons   *AddonSource
 	// Feed is the feed service; nil = not configured (index-path requests fall back).
 	Feed FeedFetcher
+	// Blocked is the blocked browsing tag list a `tags` filter is stripped against; nil = not
+	// configured (a request with `tags` falls back). image.getInfinite reads InfiniteDeps.Blocked.
+	Blocked *BlockedTags
 	// Promotions and Resources default to Gallery (tests replace them).
 	Promotions PromotionStore
 	Resources  ImageResourceReader
@@ -97,6 +105,9 @@ type Request struct {
 	BannedSession bool
 	// Cap is the domain cap (browsing.DomainCap); 0 = uncapped.
 	Cap int
+	// BoardColor is getRequestBoardDomainColor of the request's host: getAllImages' `domain` in each of
+	// the handler's calls (ImagesQuery.Domain).
+	BoardColor string
 }
 
 // AddonFilters is what enforceBlockedBrowsingTags (the addon half; tag filters are a fallback
@@ -105,6 +116,30 @@ type AddonFilters struct {
 	ExcludedTagIDs []int
 	DisablePoi     bool
 	DisableMinor   bool
+}
+
+// stripBlockedTags is enforceBlockedBrowsingTags' W2 (stripBlockedTagIds) on an input's `tags`: the
+// ids the blocked browsing tag list does not hold, in order. allBlocked: every id was blocked, which
+// getAllImages and getAllImagesIndex each answer with their own empty page. No tags reads nothing. A
+// list that cannot be read falls back (BlockedTags), as does a nil list (not configured).
+func stripBlockedTags(ctx context.Context, blocked *BlockedTags, tags []int) (kept []int, allBlocked bool, err error) {
+	if len(tags) == 0 {
+		return tags, false, nil
+	}
+	if blocked == nil {
+		return nil, false, fallback.New("blocked-tags-unconfigured")
+	}
+	ids, err := blocked.IDs(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	kept = make([]int, 0, len(tags))
+	for _, t := range tags {
+		if !ids[t] {
+			kept = append(kept, t)
+		}
+	}
+	return kept, len(kept) == 0, nil
 }
 
 // ResolveAddonFilters is those two steps for one getAllImages call at browsingLevel: Node runs them
@@ -148,7 +183,7 @@ var empty = &Result{}
 // Serve is getImagesAsPostsInfiniteHandler for the supported subset.
 func Serve(ctx context.Context, d *Deps, req Request) (*Result, error) {
 	in := req.Input
-	now := time.Now()
+	now := clock.Now()
 	if d.Now != nil {
 		now = d.Now()
 	}
@@ -160,7 +195,7 @@ func Serve(ctx context.Context, d *Deps, req Request) (*Result, error) {
 	if req.Viewer != nil {
 		viewer = *req.Viewer
 	}
-	browsingLevel, preCap := in.ApplyDomainCap(req.Cap)
+	browsingLevel, preCap := in.ApplyDomainCap(req.Cap, viewer.IsModerator)
 
 	// Model-gallery gates: settings, the held level of minor / SFW-only models, taken-down models.
 	var modelIDs []int
@@ -232,6 +267,17 @@ func Serve(ctx context.Context, d *Deps, req Request) (*Result, error) {
 	}
 	pinned := settings.PinnedFor(in.ModelVersionID)
 
+	// Every getAllImages call below (the pinned and sponsored posts, each page, each completion)
+	// strips the blocked tags from its own copy of `tags`: when all of them are blocked, each call is
+	// an empty page, so the gallery is empty.
+	tags, allBlocked, err := stripBlockedTags(ctx, d.Blocked, in.Tags)
+	if err != nil {
+		return nil, err
+	}
+	if allBlocked {
+		return empty, nil
+	}
+
 	// getAllImages resolves its addon exclusions at each call's own browsing level, so the page and
 	// the sponsored fetch (which runs at the sponsored level) each get their own.
 	addons := d.Addons.Addons(ctx)
@@ -260,6 +306,16 @@ func Serve(ctx context.Context, d *Deps, req Request) (*Result, error) {
 		ExcludedUsers:  in.ExcludedUserIDs,
 		ViewerID:       viewer.ID,
 		IsModerator:    viewer.IsModerator,
+		// Every fetch below reads it: the page, the post completion, the hydrate of the feed's ids,
+		// and the pinned and sponsored posts (`...input` in each of the handler's getAllImages calls).
+		// So do the tags and the techniques.
+		Tools:      in.Tools,
+		TagIDs:     tags,
+		Techniques: in.Techniques,
+		// So does `requiringMeta`, with the request's `domain`. On the feed path the mapper refuses it
+		// (an empty page, so no hydrate reads it); the pinned and sponsored posts still apply it.
+		RequiringMeta: in.RequiringMeta,
+		Domain:        req.BoardColor,
 	}
 
 	overscan := int(math.Ceil(float64(in.Limit) * 2)) // so posts can be merged
@@ -289,6 +345,9 @@ func Serve(ctx context.Context, d *Deps, req Request) (*Result, error) {
 				HasGeneration:   len(in.Generation) > 0,
 				HasRemixOfID:    in.HasRemixOfID,
 				RequiringMeta:   in.RequiringMeta,
+				Tools:           in.Tools,
+				Tags:            tags,
+				Techniques:      in.Techniques,
 			},
 			hydrate: func(ctx context.Context, ids, postIDs []int) ([]Image, error) {
 				h := hq
@@ -525,7 +584,7 @@ func buildPost(postID int, images []Image, sortBy string, reviews map[int]Review
 		{Key: "nsfwLevel", Val: int64(nsfw)},
 		{Key: "modelVersionId", Val: first.ModelVerID},
 		{Key: "publishedAt", Val: first.PublishedAt},
-		{Key: "sortAt", Val: first.SortAt},
+		{Key: "sortAt", Val: first.SortAtWire()},
 		{Key: "createdAt", Val: createdAt},
 		{Key: "user", Val: first.User},
 	}

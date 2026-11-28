@@ -13,6 +13,8 @@ import {
 } from '@mantine/core';
 import { IconDownload, IconTrash, IconUpload } from '@tabler/icons-react';
 import { useRef } from 'react';
+import { useRedHref } from '~/hooks/useRedHref';
+import { OffDomainNotice } from '~/components/OffDomain/OffDomainNotice';
 import { useDealFileUploads } from '~/components/CreatorShop/Services/deals/useDealFileUploads';
 import { roundLabel } from '~/components/CreatorShop/Services/deals/deal-ui';
 import {
@@ -24,9 +26,16 @@ import {
   finalsCopy,
   sellerFileStatus,
   serviceDealDownloadHref,
+  showsRetentionNotice,
   sortPicked,
+  previewAccept,
   uploadSlotsLeft,
 } from '~/components/CreatorShop/Services/deals/deal-files';
+import {
+  isVideoPreviewMime,
+  SERVICE_DEAL_FILE_RETENTION_NOTICE,
+  SERVICE_FINAL_VIDEO_HELP,
+} from '~/shared/constants/creator-services.constants';
 import { DEAL_FRESHNESS } from '~/components/CreatorShop/Services/deals/deal.util';
 import type { ServiceDealView } from '~/components/CreatorShop/Services/deals/deal.util';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -64,6 +73,11 @@ export function DealFilesPanel({ deal }: { deal: ServiceDealView }) {
     <Paper withBorder radius="md" p="md">
       <Stack gap="md">
         <Text fw={600}>Delivery</Text>
+        {showsRetentionNotice(deal.status) && files.length > 0 && (
+          <Text size="xs" c="dimmed">
+            {SERVICE_DEAL_FILE_RETENTION_NOTICE}
+          </Text>
+        )}
         {canUpload && <SellerUploader deal={deal} files={files} />}
         {deal.viewerRole === 'buyer' ? (
           <BuyerFiles deal={deal} files={files} />
@@ -110,7 +124,7 @@ function SellerUploader({ deal, files }: { deal: ServiceDealView; files: DealFil
     // So the same file can be picked again after a failed attempt.
     (kind === 'Preview' ? resetPreview : resetFinal).current?.();
     const slots = uploadSlotsLeft(kind, deal.previewKind, files, round);
-    const { send, refused, overflow } = sortPicked(kind, picked, slots);
+    const { send, refused, overflow } = sortPicked(kind, picked, slots, deal.previewKind);
     for (const { name, reason } of refused)
       showErrorNotification({ title: `Can't upload ${name}`, error: { message: reason } });
     if (overflow > 0)
@@ -148,12 +162,15 @@ function SellerUploader({ deal, files }: { deal: ServiceDealView; files: DealFil
           ? 'Upload a preview and your final files. The buyer sees a low-resolution, watermarked copy of the preview. The final files stay sealed until they accept.'
           : 'Upload your final files. They stay sealed until the buyer accepts.'}
       </Text>
+      <Text size="xs" c="dimmed">
+        {SERVICE_FINAL_VIDEO_HELP}
+      </Text>
       <Group gap="sm">
         {takesPreview && (
           <FileButton
             onChange={(picked) => upload('Preview', picked)}
             resetRef={resetPreview}
-            accept="image/jpeg,image/png,image/webp,image/gif"
+            accept={previewAccept(deal.previewKind)}
             multiple
           >
             {(props) => (
@@ -268,6 +285,7 @@ function PartyFiles({
                         <IconDownload size={16} />
                       </Anchor>
                     )}
+                    {file.downloadOffDomain && <DownloadOffDomain />}
                     {canEdit && round === currentRound && file.status === 'Uploading' && (
                       <Button
                         size="compact-xs"
@@ -298,9 +316,7 @@ function PartyFiles({
                     {file.failReason}
                   </Text>
                 )}
-                {file.previewUrl && (
-                  <Image src={file.previewUrl} alt="Watermarked preview" radius="sm" maw={256} />
-                )}
+                <PreviewMedia file={file} maw={256} />
               </Stack>
             );
           })}
@@ -308,6 +324,44 @@ function PartyFiles({
       ))}
     </Stack>
   );
+}
+
+/** Where this domain may not show a preview, says so and links to the same page on civitai.red. */
+function PreviewOffDomain() {
+  return <OffDomainNotice noun="preview" href={useRedHref()()} />;
+}
+
+function DownloadOffDomain() {
+  const redHref = useRedHref();
+  return (
+    <Text size="xs" c="dimmed">
+      Not downloadable on civitai.com.{' '}
+      <Anchor href={redHref()} inherit>
+        Download on civitai.red
+      </Anchor>
+    </Text>
+  );
+}
+
+function PreviewMedia({ file, maw }: { file: DealFile; maw?: number }) {
+  if (file.previewOffDomain) return <PreviewOffDomain />;
+  if (!file.previewUrl) return null;
+  // EdgeVideo builds its URL from a key; previewUrl is already the finished edge URL.
+  if (isVideoPreviewMime(file.mimeType))
+    return (
+      <video
+        src={file.previewUrl}
+        aria-label="Watermarked preview"
+        className="w-full rounded-sm"
+        style={maw ? { maxWidth: maw } : undefined}
+        controls
+        muted
+        loop
+        playsInline
+        preload="metadata"
+      />
+    );
+  return <Image src={file.previewUrl} alt="Watermarked preview" radius="sm" maw={maw} />;
 }
 
 /** The buyer sees ready, watermarked previews, and final files only as the server unlocks them. */
@@ -322,7 +376,9 @@ function BuyerFiles({ deal, files }: { deal: ServiceDealView; files: DealFile[] 
   return (
     <Stack gap="md">
       {filesByRound(files).map(({ round, files: roundFiles }) => {
-        const previews = roundFiles.filter((file) => file.kind === 'Preview' && file.previewUrl);
+        const previews = roundFiles.filter(
+          (file) => file.kind === 'Preview' && (file.previewUrl || file.previewOffDomain)
+        );
         const finals = roundFiles.filter((file) => file.kind === 'Final');
         const state = buyerRoundFinalsState(deal, round, finals);
         return (
@@ -333,12 +389,7 @@ function BuyerFiles({ deal, files }: { deal: ServiceDealView; files: DealFile[] 
             {previews.length > 0 && (
               <SimpleGrid cols={{ base: 2, sm: 3 }} spacing="xs">
                 {previews.map((file) => (
-                  <Image
-                    key={file.id}
-                    src={file.previewUrl}
-                    alt="Watermarked preview"
-                    radius="sm"
-                  />
+                  <PreviewMedia key={file.id} file={file} />
                 ))}
               </SimpleGrid>
             )}
@@ -360,6 +411,13 @@ function BuyerFiles({ deal, files }: { deal: ServiceDealView; files: DealFile[] 
                         </Text>
                       </Group>
                     </Anchor>
+                  ) : file.downloadOffDomain ? (
+                    <Group key={file.id} gap={6} wrap="nowrap">
+                      <Text size="sm" className="truncate">
+                        {file.fileName}
+                      </Text>
+                      <DownloadOffDomain />
+                    </Group>
                   ) : (
                     <Text key={file.id} size="sm" c="dimmed">
                       Sealed file · {formatBytes(file.size)}

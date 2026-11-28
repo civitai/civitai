@@ -264,6 +264,8 @@ export type AppealCoverImage = {
   acceptableMinor?: boolean;
   /** Names what the tile is when the set is not one entity's gallery, e.g. a profile's avatar. */
   caption?: string;
+  /** Withheld from this moderator (`withheldCoverImages`): `url` is empty. */
+  restricted?: boolean;
 };
 
 export type MinorFlagAppealRow = {
@@ -318,6 +320,9 @@ export type MinorFlagAppealRow = {
   alsoInAutoFlagged: boolean;
   /** Needs review lists this model too (a held detection or a file match). */
   alsoInNeedsReview: boolean;
+  /** One of those leads is a held detection on a flag the model already carries: ruling it only
+   *  closes the lead. */
+  needsReviewMootLead: boolean;
   scanRows: ScanRows;
   /** The model's civitai.com face, null when it has none. */
   comFace: ComFace | null;
@@ -607,7 +612,8 @@ export async function getMinorFlagAppealsForReview({
            ${sameFileAppealsSelect},
            ya.nth AS "appealNthThisYear",
            ${inAutoFlaggedSql(sql.ref('pg.modelId'))} AS "alsoInAutoFlagged",
-           ${inNeedsReviewSql(sql.ref('pg.modelId'))} AS "alsoInNeedsReview"
+           ${inNeedsReviewSql(sql.ref('pg.modelId'))} AS "alsoInNeedsReview",
+           ${mootLeadSql(sql.ref('pg.modelId'))} AS "needsReviewMootLead"
     FROM pg
     ${modelFactsJoin}
     ${coverImagesJoin}
@@ -775,12 +781,25 @@ const hashBranch = (label: FlagLabel, search: MinorSearch | undefined) => {
 `;
 };
 
+/** The label entry is this detection's own unfinished keep: the flag fields are written but the marker
+ *  stays until the keep completes. Same test as `ownEntry` in the text-scan resolver. `entry` is the
+ *  label's `textScanFlags` entry. */
+const ownUnfinishedKeep = (entry: RawBuilder<unknown>) => sql`(
+  ${entry}->>'workflowId' IS NOT NULL
+  AND ${entry}->>'workflowId' = ${entry}->'redetected'->>'workflowId'
+  AND ${entry}->>'textHash' = ${entry}->'redetected'->>'textHash'
+)`;
+
 const redetectedBranch = (search: MinorSearch | undefined, flag: FlaggedFlag) => sql`
   SELECT m.id AS "modelId",
          l.label::text AS label, 'redetected'::text AS source,
          l.entry->'redetected'->>'textHash' AS "textHash",
          ${redetectedAt} AS "flaggedAt",
-         l.entry->'redetected' AS redetected, NULL::jsonb AS "scanEntry",
+         l.entry->'redetected'
+           || jsonb_build_object('unfinishedKeep', ${ownUnfinishedKeep(
+             sql`l.entry`
+           )}) AS redetected,
+         NULL::jsonb AS "scanEntry",
          l.entry->'appealGranted' AS granted,
          gu.username AS "grantedByUsername", l.entry->'rulings' AS rulings,
          NULL::boolean AS "prevNsfw", NULL::int AS "prevGalleryLevel"
@@ -833,6 +852,18 @@ const inAutoFlaggedSql = (modelId: RawBuilder<unknown>) => sql`EXISTS (
     AND ((l.label = 'minor' AND ${hashFlaggedPredicate('minor')})
       OR (l.label = 'poi' AND ${hashFlaggedPredicate('poi')})
       OR (${textScanFlaggedPredicate}))
+)`;
+
+/** A held detection waits on a flag the model already carries. Ruling it closes the lead and leaves
+ *  the flag alone. Same marker the `redetectedIndexPredicate` tests, narrowed to a set label and not an
+ *  unfinished keep of that same detection (there Keep completes the flag). */
+const mootLeadSql = (modelId: RawBuilder<unknown>) => sql`EXISTS (
+  SELECT 1 FROM "Model" m
+  WHERE m.id = ${modelId}
+    AND ((m.minor AND m.meta->'textScanFlags'->'minor' ? 'redetected'
+          AND NOT ${ownUnfinishedKeep(sql`(m.meta->'textScanFlags'->'minor')`)})
+      OR (m.poi AND m.meta->'textScanFlags'->'poi' ? 'redetected'
+          AND NOT ${ownUnfinishedKeep(sql`(m.meta->'textScanFlags'->'poi')`)}))
 )`;
 
 /** Needs review lists the model: a held detection, or a file shared with a moderator's minor seed
@@ -1194,6 +1225,13 @@ function needsReviewKeyedCtes(
   const matches = matchLabels(use, flag);
   if (matches.minor) {
     ctes.push(minorSrcCte, matchCandidatesCte);
+    if (search && 'modelOrUserId' in search)
+      // minor_src has no index, so the per-candidate EXISTS below reads this id-filtered copy.
+      ctes.push(sql`
+      searched_seeds AS MATERIALIZED (
+        SELECT hash, "userId" FROM minor_src
+        WHERE "minorModelId" = ${search.modelOrUserId} OR "userId" = ${search.modelOrUserId}
+      )`);
     ctes.push(sql`
       matched AS (
         SELECT c."modelId", c."uploadedAt" AS at,
@@ -1217,10 +1255,9 @@ function needsReviewKeyedCtes(
               userId: 'c.userId',
               username: 'u.username',
             },
-            (id) => sql`EXISTS (
-              SELECT 1 FROM minor_src s3
+            () => sql`EXISTS (
+              SELECT 1 FROM searched_seeds s3
               WHERE s3.hash = c.hash AND s3."userId" <> c."userId"
-                AND (s3."minorModelId" = ${id} OR s3."userId" = ${id})
             )`
           )}
       )`);
@@ -1476,13 +1513,20 @@ export async function getHeldDetectionModelCount() {
 }
 
 export type MinorHashMatchDetail = {
+  modelCoverId: number | null;
   modelCoverUrl: string | null;
   modelCoverType: string | null;
+  modelCoverRestricted: boolean | null;
   modelCreatedAt: Date | null;
   uploaderModelCount: number;
   uploaderJoinedAt: Date | null;
+  minorModelCoverId: number | null;
   minorModelCoverUrl: string | null;
+  /** Set by `withheldHashDetail` when a cover is withheld from this moderator. */
+  modelCoverWithheld?: boolean;
+  minorModelCoverWithheld?: boolean;
   minorModelCoverType: string | null;
+  minorModelCoverRestricted: boolean | null;
   minorModelStatus: string | null;
   /** `TakenDown` sits on top of `status`, so a taken-down seed can still read Published. */
   minorModelMode: string | null;
@@ -1512,8 +1556,14 @@ export async function getMinorHashMatchDetail({
 }) {
   // Every seed-side id is cast rather than left to inference: a null bind reaches Postgres untyped,
   // and `col = $1` with no type to resolve against fails.
-  const cover = (id: number | null, field: 'url' | 'type') => sql`
-    (SELECT i.${sql.raw(`"${field}"`)}::text
+  const cover = (id: number | null, column: 'id' | 'url' | 'type' | 'modelRestricted') => sql`
+    (SELECT ${
+      column === 'modelRestricted'
+        ? sql`i."modelRestricted"`
+        : column === 'id'
+        ? sql`i.id`
+        : sql`i.${sql.ref(column)}::text`
+    }
      FROM "ModelVersion" mv
      JOIN "Post" p ON p."modelVersionId" = mv.id
      JOIN "Image" i ON i."postId" = p.id
@@ -1524,14 +1574,18 @@ export async function getMinorHashMatchDetail({
 
   const result = await sql<MinorHashMatchDetail>`
     SELECT
+      ${cover(modelId, 'id')} AS "modelCoverId",
       ${cover(modelId, 'url')} AS "modelCoverUrl",
       ${cover(modelId, 'type')} AS "modelCoverType",
+      ${cover(modelId, 'modelRestricted')} AS "modelCoverRestricted",
       m."createdAt" AS "modelCreatedAt",
       (SELECT count(*)::int FROM "Model" om WHERE om."userId" = m."userId" AND om.status <> 'Deleted')
         AS "uploaderModelCount",
       u."createdAt" AS "uploaderJoinedAt",
+      ${cover(minorModelId, 'id')} AS "minorModelCoverId",
       ${cover(minorModelId, 'url')} AS "minorModelCoverUrl",
       ${cover(minorModelId, 'type')} AS "minorModelCoverType",
+      ${cover(minorModelId, 'modelRestricted')} AS "minorModelCoverRestricted",
       mm.status::text AS "minorModelStatus",
       mm.mode::text AS "minorModelMode",
       mm.meta->>'unpublishedAt' AS "minorModelUnpublishedAt",
@@ -1774,10 +1828,7 @@ export async function getModelFlagDetail({
       ) f ON TRUE
       LEFT JOIN LATERAL (
         SELECT count(*) FILTER (WHERE o.status::text = 'Published')::int AS "uploaderPublished",
-               count(*) FILTER (
-                 WHERE o.status::text = 'UnpublishedViolation'
-                   AND o.meta ->> 'removedWithOwner' IS DISTINCT FROM 'true'
-               )::int AS "uploaderModUnpublished",
+               count(*) FILTER (WHERE o.status::text = 'UnpublishedViolation')::int AS "uploaderModUnpublished",
                count(*) FILTER (WHERE o.id <> m.id AND ${revertedSql})::int AS "revertedCount",
                to_char(max(${revertedAtSql}) FILTER (WHERE o.id <> m.id) AT TIME ZONE 'UTC',
                        'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "revertedLastAt"

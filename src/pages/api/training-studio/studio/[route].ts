@@ -3,11 +3,12 @@ import {
   sessionCookiesOf,
   STUDIO_FORWARD_ROUTES,
 } from '~/server/services/training-studio-forward.service';
+import { logToAxiom } from '~/server/logging/client';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 import { allowTrainingStudio } from '~/server/utils/training-studio-access';
 
-// The Studio's own limit on a request body (SvelteKit's default).
-export const config = { api: { bodyParser: { sizeLimit: '512kb' } } };
+// The Studio's own limit on a request body (BODY_SIZE_LIMIT in apps/training-studio/Dockerfile).
+export const config = { api: { bodyParser: { sizeLimit: '16mb' } } };
 
 /**
  * The embedded Training Studio's `studioServer` hook (docs/training-studio-web-component.md):
@@ -28,7 +29,7 @@ export default AuthedEndpoint(
 
     if (!(await allowTrainingStudio(req, res, user))) return;
 
-    const sessionCookies = sessionCookiesOf(req.headers.cookie);
+    const sessionCookies = sessionCookiesOf(req.headers.cookie, req.headers.host);
     if (!sessionCookies) return res.status(401).json({ message: 'Sign in again to continue.' });
 
     // The query minus the route segment Next adds to it.
@@ -47,6 +48,19 @@ export default AuthedEndpoint(
       body: req.method === 'POST' ? req.body : undefined,
       sessionCookies,
     });
+    // The Studio's own log of a refusal is not shipped anywhere readable.
+    if (status >= 400 && status < 500 && status !== 401) {
+      const { message, code } = (body ?? {}) as { message?: unknown; code?: unknown };
+      logToAxiom({
+        name: 'training-studio-forward-refused',
+        type: 'warning',
+        userId: user.id,
+        route,
+        status,
+        message: typeof message === 'string' ? message : undefined,
+        code: typeof code === 'string' ? code : undefined,
+      });
+    }
     return res.status(status).json(body);
   },
   ['GET', 'POST']

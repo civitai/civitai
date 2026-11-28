@@ -22,7 +22,7 @@ hosts.
 | `feed` | every call the request makes to the image feed service: the exact `query` string (asserted: an unlisted query fails, and on a served fixture an unasked one fails) and the reply `status` / `body` |
 | `redis` | cache-cluster keys: `packed` (base64 of msgpackr bytes, with the readable `value`; `compressed: true` marks a `compress: true` cache's value, the 0x01 sentinel then brotli of those bytes), `raw` (JSON strings such as gallery settings) or `hash` (metric hashes) |
 | `sysRedis` | system-redis keys (the browsing-settings addons) |
-| `db` | Postgres tables (`images` rows as the getAllImages SELECT returns them, plus `_resources`, their ImageResourceNew rows, in `infinite/` `_tags`, their TagsOnImageDetails tag ids, and in `v1-images/` with `withMeta` `_meta`, their meta jsonb as Postgres prints it; `posts`, `modelVersions`, `models`, `reviews`, `reactions`, `placements`, `users`; for the cache-miss lookups `userCosmetics`, `cosmetics`, `cosmeticShopItems`, their jsonb columns as the text Postgres prints). The harness answers each query feed-go sends from these, evaluating the clauses the fixtures reach |
+| `db` | Postgres tables (`images` rows as the getAllImages SELECT returns them, plus `_resources`, their ImageResourceNew rows, in `infinite/` `_tags`, their TagsOnImageDetails tag ids, and in `v1-images/` with `withMeta` `_meta`, their meta jsonb as Postgres prints it; `posts`, `modelVersions`, `models`, `reviews`, `reactions`, `placements`, `users`; for the cache-miss lookups `userCosmetics`, `cosmetics`, `cosmeticShopItems`, their jsonb columns as the text Postgres prints; in an `infinite/` fixture naming a collection, `collections` with their contributor rows and `collectionItems`, every item of it; in one sending `prioritizedUserIds: [-1]` with a version, `systemPosts`, the system user's posts on each version Node looked one up for). The harness answers each query feed-go sends from these, evaluating the clauses the fixtures reach |
 | `expect` | `fallback` (the reason feed-go must fall back with), or the Node answer: `envelope` (`{json, meta}`) plus `cacheable` (signed out), or `body` (REST); for tRPC also `writes`, every cache key Node's fetches write on the request's misses (`packed` + `value` + `ex`). The harness runs each served fixture twice: write-back off (the cache must be untouched) and on (it must change by exactly `writes`) |
 
 A `cold-*` fixture holds some cache keys absent (the spec's `cold` list): the mirror runs the cache's
@@ -86,8 +86,43 @@ rows Postgres answered. The Go harness fails when a bound value is not among fee
 arguments (so a token both sides receive but read as different instants is caught), when feed-go
 asks for more pages, or fewer.
 The SQL itself is pinned by `internal/modelfeed`'s unit tests and run against Postgres by its
-integration tests. Extra keys: `config` holds the model flag mirrors; `db` holds `paidAccess`,
-`coverImages`, `tags` (by name) and `creators` (by username). Raise `goldenMinModels` with the count.
+integration tests. A page of the official-checkpoint pin (Hot with a base-model filter) also records
+the ids Node binds (`onlyModelIds` on the pinned page, `excludeModelIds` on every other), which the
+harness requires feed-go to bind in the same order. A fixture's `cold` keys (dataForModelsCache,
+modelTagCache) are held out of its cache: the mirror runs the cache's lookup over the world, records
+the rows its queries return (`db.modelDataVersions`, `db.modelHashes`, `db.tagsOnModels`) and what
+the fetch writes (`expect.writes`); the harness runs every served fixture with write-back off (the
+cache untouched) and on (exactly those writes). Extra keys: `config` holds the model flag mirrors;
+`db` holds `paidAccess`, `coverImages`, `tags` (by name) and `creators` (by username), each `paidAccess` row with the gated model's `versionIds` (what Hide Paid drops). A page
+also records the `newCreators` board Node binds (`newCreatorUserIds`, or `newCreatorsNone` for an
+empty board's `1 = 0`) and a published range's bounds (`published: {gte, lt}`); the harness requires
+feed-go to bind them (the bounds in the WHERE and in the `ranged` CTE, which must lead the statement
+and be joined in every keyset branch). `spec.addons` replaces the system-redis addons
+(the `newCreators`-scoped entry), `spec.newCreatorBoards` a board's entry (null: no key), and a
+`spec.node400` fallback is checked against Node's own schema helpers or range check first. Raise
+`goldenMinModels` with the count.
+
+## model-assoc
+
+`gen-assoc.mjs` writes them (model.getAssociatedResourcesCardData, DESIGN.md §17). Like
+`gen-models.mjs` it runs the REAL Node functions for every pure step (the input schemas, the level
+middleware, the addons, the .com face, the viewer image filter, the minor content rule, metric
+privacy, `isGenerationEligible`, the gate rule schema and its helpers, `superjson`) and transcribes
+the orchestration that reads the database and the caches. Its own format: `request` (the raw input,
+the viewer, the domain cap), `config` (the coverage and promotions mirrors), `world` (the source
+model, the association rows, the approved promotion count, the page-query rows and the image-query
+rows Node's queries returned, the model-data cache entries, the users, the gallery settings, the
+privacy defaults and memberships, the hidden-preferences ids, the stored gate rules, the addons),
+`binds` (the model ids and level Node bound on the page query, the version ids of the image read) and
+`expect` (`envelope` or `fallback`). `internal/modelfeed/assoc_golden_test.go` runs each through
+`ParseAssociated` and `ServeAssociated` over fakes holding that world (the real hidden-preferences
+and gate-rule readers over in-memory Redis), requires the binds, and compares with `shadow.Compare`.
+
+```bash
+TZ=UTC node --import tsx apps/feed-go/testdata/golden/gen-assoc.mjs   # model-assoc/
+```
+
+Raise `assocGoldenMin` with the count.
 
 ## v1-models
 
@@ -101,6 +136,20 @@ that test fails with `GOLDEN-ACTUAL <file> <json>`, the real answer, which is co
 
 ```bash
 GOLDEN_NODE_MODULES=<clone>/node_modules node apps/feed-go/testdata/golden/gen-v1-models.mjs
+```
+
+`v1-models-headers/` holds the response headers of the same two routes (DESIGN.md §16.8):
+`gen-v1-models-headers.mjs` writes one case per header arm, naming a `v1-models/` body fixture, extra
+request headers, and the headers Node's route sets on its 200 (written by hand there), plus the ETag,
+which it computes with Next's own `generateETag` over the fixture's `expect.body`: re-run it after a
+body fixture changes. The same Node golden test runs each case through the REAL endpoint wrappers and
+requires exactly those headers (`HEADERS-ACTUAL <file> <json>` on a mismatch);
+`internal/v1models/headers_golden_test.go` requires them from Go. The router's `headers()` from
+next.config (X-Frame-Options) are not in the cases: `internal/v1models/configheaders.json` holds them,
+pinned to the real config by `src/server/__tests__/feed-go-v1-models-config-headers.test.ts`.
+
+```bash
+GOLDEN_NODE_MODULES=<clone>/node_modules node apps/feed-go/testdata/golden/gen-v1-models-headers.mjs
 ```
 
 ## metrics
@@ -118,3 +167,47 @@ answer and, with write-back on, the same cache afterwards from Go.
 ```bash
 TZ=UTC node --import tsx apps/feed-go/testdata/golden/gen-metrics.mjs   # from a clone with pnpm install done
 ```
+
+## devalue
+
+`devalue/<dir>/<fixture>.txt` is the body the Node app writes for a served fixture's answer with
+`TRPC_WRITE_DEVALUE=true`: tRPC's envelope around `devalue.stringify(value)`, exact bytes, no trailing
+newline. `gen.mjs` and `gen-models.mjs` write it (`devalue-body.mjs`) from the same value they encode
+as `expect.envelope`, with the devalue the lockfile resolves, so the identity Node's value has (one
+Date for a post's `sortAt` and its image's, one `user` object, a creator's shared `cosmetics`) is in
+the bytes. `internal/server/golden_devalue_test.go` requires feed-go's devalue body for the same
+fixture to equal it (DESIGN.md §5.2) and every served fixture to have one: regenerate after adding a
+fixture.
+
+`devalue/special.json` is `gen-devalue.mjs`'s: Node's output for values that exercise each rule of
+the writer (escapes, numbers, special values, Dates, shared and empty objects, key order, Map / Set /
+BigInt, JSON.parse'd values); `internal/devalue/golden_test.go` builds the same values by name.
+
+```bash
+GOLDEN_NODE_MODULES=<clone>/node_modules node apps/feed-go/testdata/golden/gen-devalue.mjs
+```
+
+## region-blocked
+
+`region-blocked/responses.json` is the Node app's answer to a request from a blocked region (`cf-ipcountry:
+GB` on the default `REGION_BLOCK_CONFIG`) on each public route: status, every response header but the
+transport ones (lowercased), and body. It is written by hand and held to the app by
+`src/server/__tests__/feed-go-region-blocked-451.test.ts`, which runs the real tRPC route over a socket
+and the real `/api/v1` proxy middleware chain, adds the next.config.mjs headers the router sets in a
+production build, and fails when the app's answer differs from the file. `internal/server/region_blocked_test.go`
+requires feed-go's answer with `FEED_GO_ANSWER_REGION_BLOCKED` on to equal it on every route
+(DESIGN.md §6.2). When the Node test fails, correct the file from the app's answer; never from feed-go's.
+
+## `site-search/`
+
+One file per `POST /api/search/*` case: `request` (`path`, the JSON `body` as text, `host`:
+`green.example.test` is the SFW site, `red.example.test` the mature one), `viewer` (the session
+user's `id`, `isModerator`, `browsingLevel`, `showNsfw`; null when signed out), `config.passthrough`
+(`site-search-passthrough`), `upstream` (the search backend's `status` and `body` text), and
+`expect`: either `call` (the backend path and the JSON body Node sends, compared as values) and `body`
+(the exact text Node writes), or `fallback` (the reason feed-go's public route must hand the
+request back with; the harness runs those fixtures as the public route) and
+`nodeStatus` (what Node then answers). Written by hand from the Node code; held to the real handler by
+`src/server/__tests__/feed-go-site-search.golden.test.ts`, whose failure prints `GOLDEN-ACTUAL` — set a
+fixture's expectation from that output only. `internal/server/sitesearch_golden_test.go` runs feed-go
+over the same files. Upstream bodies are written in `JSON.stringify`'s form, so the bytes compare equal.

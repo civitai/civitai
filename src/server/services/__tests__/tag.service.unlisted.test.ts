@@ -401,7 +401,7 @@ describe('getVotableTags — model votable-tags cache invalidation contract', ()
   });
 
   it('disableTags(model) busts the model cache for the affected modelIds', async () => {
-    await disableTags({ tags: [304], entityIds: [7, 8], entityType: 'model' });
+    await disableTags({ csamReview: true, tags: [304], entityIds: [7, 8], entityType: 'model' });
     expect(modelVotableTagsBust).toHaveBeenCalledWith([7, 8]);
   });
 

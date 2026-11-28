@@ -63,6 +63,7 @@ vi.mock('~/server/services/blocklist.service', () => ({
 }));
 vi.mock('~/server/services/search-query-rules', () => ({ matchesQueryRule: async () => false }));
 vi.mock('~/utils/metadata/audit', () => ({
+  includesNsfw: () => false,
   includesInappropriate: h.includesInappropriate,
   includesPoi: () => false,
   includesMinor: () => false,
@@ -85,7 +86,6 @@ const SCHEMA = `
   CREATE TABLE "User" (id int PRIMARY KEY, "bannedAt" timestamp, "deletedAt" timestamp);
   CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb NOT NULL DEFAULT '{}',
     images jsonb NOT NULL DEFAULT '[]');
-  CREATE TABLE "EvidenceHeldUser" ("userId" int);
   CREATE TABLE "Bounty" (id int PRIMARY KEY, "userId" int, availability text DEFAULT 'Public',
     poi boolean DEFAULT false, nsfw boolean DEFAULT false, "nsfwLevel" int);
 `;
@@ -198,9 +198,9 @@ describe('semantic bounty search', () => {
       UPDATE "Bounty" SET poi = true WHERE id = 4;
       INSERT INTO "CsamReport" ("userId") VALUES (5);
       UPDATE "Bounty" SET "nsfwLevel" = 33 WHERE id = 6;`);
-    expect(shown(await search([6, 5, 4, 3, 2, 1]))).toEqual([1]);
-    // Dropped before the feed read, so nothing of theirs is fetched.
-    expect(h.fetched).toEqual([[1]]);
+    // 5's owner is named on a report. A held owner does not hide the row (civitai/civitai#10360).
+    expect(shown(await search([6, 5, 4, 3, 2, 1]))).toEqual([5, 1]);
+    expect(h.fetched).toEqual([[5, 1]]);
   });
 
   it('re-checks the level the feed serves at, XXX for a bounty marked nsfw', async () => {
@@ -239,6 +239,26 @@ describe('semantic bounty search', () => {
     await bounty(1);
     expect(shown(await search([1], { user: MOD }))).toEqual([]);
     expect(sent).toEqual([]);
+  });
+
+  it('searched as typed, still refuses a refused query before asking the index', async () => {
+    h.includesInappropriate.mockReturnValue('poi');
+    await bounty(1);
+    expect(shown(await search([1], { user: MOD, spellcheck: false } as never))).toEqual([]);
+    expect(sent).toEqual([]);
+  });
+
+  it('searched as typed, asks the index for the text with its spelling correction off', async () => {
+    const queries: unknown[] = [];
+    await searchSemanticBounties({
+      input: { query: 'Shikata nee', browsingLevel: PG, limit: 10, spellcheck: false },
+      ctx: { user: undefined, features: {}, req: {} } as never,
+      candidateSource: async ({ query }) => {
+        queries.push(query);
+        return { ids: [] };
+      },
+    });
+    expect(queries[0]).toEqual({ text: 'Shikata nee', spellcheck: false });
   });
 });
 

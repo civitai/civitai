@@ -36,10 +36,6 @@ const mocks = vi.hoisted(() => ({
   lastQueryInput: undefined as unknown,
 }));
 
-// AppBlockChrome gates its "Review" item on the viewer's moderator flag and would
-// otherwise throw for want of a CivitaiSessionContext. Anon, non-mod.
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-
 // 🔴 `useOptionalFeatureFlags` IS THE ONE THAT MATTERS — the crumb reads the flags
 // through it (fail-closed outside a provider), not through `useFeatureFlags`.
 // Overriding only the latter would leave the crumb resolving the REAL

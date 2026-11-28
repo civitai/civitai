@@ -5,6 +5,8 @@ import { canAccess } from '$lib/server/access';
 import { parseForm, parseQuery } from '$lib/server/query';
 import { validNsfwLevels } from '@civitai/shared';
 import { updateImageNsfwLevel } from '$lib/server/image-nsfw-level';
+import { holdsCsamReview } from '$lib/server/held-media';
+import { withheldRefusal, withheldRow, withheldRows } from '$lib/server/retracted-media';
 import {
   getSweep,
   voteOnTag,
@@ -76,7 +78,13 @@ export const load: PageServerLoad = async ({ params, url, locals }) => {
       )
     : windowed;
 
-  const items = await getSweep({ nsfwLevels, order, media, since });
+  const items = await withheldRows(
+    await getSweep({ nsfwLevels, order, media, since }),
+    locals.user,
+    'front-page-audit',
+    (i) => i.id,
+    (i) => ({ ...withheldRow(i), aiNsfwLevel: null, moderatedTags: [] as never[] })
+  );
 
   return {
     nsfwLevels,
@@ -112,6 +120,8 @@ export const actions: Actions = {
     );
     if (typeof input === 'string') return actionFail(input);
     if (!validNsfwLevels.has(input.nsfwLevel)) return actionFail('Not a rating a sweep can set.');
+    const withheld = await withheldRefusal(locals.user, [input.imageId]);
+    if (withheld) return fail(403, { error: withheld });
 
     // BEFORE the update: this is the level being swept, and it is half of the audit row below.
     const originalRating = await getImageRating(input.imageId);
@@ -125,6 +135,7 @@ export const actions: Actions = {
         nsfwLevel: input.nsfwLevel,
         reason: 'front-page-audit',
         userId: locals.user.id,
+        csamReview: holdsCsamReview(locals.user),
       });
     } catch (e) {
       console.error('[front-page-audit] setRating failed', e);
@@ -228,6 +239,8 @@ export const actions: Actions = {
       await request.formData()
     );
     if (typeof input === 'string') return actionFail(input);
+    const withheld = await withheldRefusal(locals.user, [input.imageId]);
+    if (withheld) return fail(403, { error: withheld });
 
     // BEFORE the vote, for the same reason `setRating` reads it before the update: it is the level the
     // sweep is looking at, which is what Retool recorded as `originalRating`.

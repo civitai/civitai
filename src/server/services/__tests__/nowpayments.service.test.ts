@@ -79,11 +79,6 @@ vi.mock('~/server/utils/distributed-lock', () => ({
   withDistributedLock: mockWithDistributedLock,
 }));
 
-vi.mock('~/server/common/enums', () => ({
-  SignalMessages: { CryptoDepositUpdate: 'crypto-deposit:update' },
-  NotificationCategory: { Buzz: 'buzz' },
-}));
-
 vi.mock('~/server/common/constants', () => ({
   CacheTTL: { sm: 180, hour: 3600 },
 }));
@@ -1589,15 +1584,6 @@ describe('watchOpenDeposits', () => {
         );
         expect(rowStatus[831]).toBe('finished');
         expect(result).toMatchObject({ checked: 1, lateFinished: 1, closed: 0 });
-        expect(lateLogs()).toEqual([
-          expect.objectContaining({
-            paymentId: 831,
-            userId: 42,
-            credited: true,
-            buzz: 5000,
-            previousStatus: closed,
-          }),
-        ]);
       }
     );
 
@@ -1633,7 +1619,6 @@ describe('watchOpenDeposits', () => {
         expect(mockDbWrite.cryptoDeposit.updateMany).not.toHaveBeenCalled();
         expect(rowStatus[832]).toBe('failed');
         expect(result).toMatchObject({ lateFinished: 0, closed: 0 });
-        expect(lateLogs()).toEqual([]);
       }
     );
 
@@ -1655,14 +1640,6 @@ describe('watchOpenDeposits', () => {
           update: expect.objectContaining({ buzzCredited: 397, bonusBuzz: null, multiplier: null }),
         })
       );
-      expect(lateLogs()).toEqual([
-        expect.objectContaining({
-          paymentId: 833,
-          transactionId: 'already_granted',
-          buzz: 397,
-          status: 'finished',
-        }),
-      ]);
     });
 
     it("keeps NP's figure and the bonus on an already-credited deposit outside the late path", async () => {
@@ -1764,7 +1741,7 @@ describe('watchOpenDeposits', () => {
     });
 
     // buzz_failed would hand it to retryFailedDeposits, which credits without failing closed.
-    it('leaves a late finish whose grant fails on its row for the next late sweep, and logs the error', async () => {
+    it('leaves a late finish whose grant fails on its row for the next late sweep', async () => {
       mockGrantBuzzPurchase.mockRejectedValueOnce(new Error('buzz service 503'));
 
       const result = await watch([openRow(838, 'failed', 23)], { 838: 'finished' });
@@ -1772,9 +1749,6 @@ describe('watchOpenDeposits', () => {
       expect(ledger.size).toBe(0);
       expect(rowStatus[838]).toBe('failed');
       expect(result.lateFinished).toBe(0);
-      expect(lateLogs()).toEqual([
-        expect.objectContaining({ paymentId: 838, credited: false, error: 'buzz service 503' }),
-      ]);
     });
 
     it.each([

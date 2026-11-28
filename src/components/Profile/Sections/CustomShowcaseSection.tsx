@@ -1,4 +1,4 @@
-import { Button, Text } from '@mantine/core';
+import { Button, Group, Text } from '@mantine/core';
 import { IconArrowRight, IconExternalLink, IconLayoutGrid } from '@tabler/icons-react';
 import React, { useMemo } from 'react';
 import { useQueryArticles } from '~/components/Article/article.utils';
@@ -17,7 +17,8 @@ import { isExternalHref } from '~/utils/external-link';
 import type { ProfileSectionProps } from '~/components/Profile/ProfileSection';
 import { ProfileSection, ProfileSectionPreview } from '~/components/Profile/ProfileSection';
 import classes from '~/components/Profile/ProfileSection.module.css';
-import { ShowcaseGrid } from '~/components/Profile/Sections/ShowcaseGrid';
+import { ShowcaseGrid, useShowcaseViewAll } from '~/components/Profile/Sections/ShowcaseGrid';
+import { ShowcaseEditButton } from '~/components/Profile/ShowcaseEditButton';
 import { ImageSort } from '~/server/common/enums';
 import type { ShowcaseSectionSchema } from '~/server/schema/user-profile.schema';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
@@ -66,6 +67,7 @@ function ModelShowcase({ section, user }: CustomShowcaseSectionProps) {
   return (
     <ShowcaseShell
       section={section}
+      user={user}
       sectionRef={ref}
       inView={inView}
       isLoading={isLoading}
@@ -98,6 +100,7 @@ function ArticleShowcase({ section, user }: CustomShowcaseSectionProps) {
   return (
     <ShowcaseShell
       section={section}
+      user={user}
       sectionRef={ref}
       inView={inView}
       isLoading={isLoading}
@@ -134,6 +137,7 @@ function ImageShowcase({ section, user }: CustomShowcaseSectionProps) {
   return (
     <ShowcaseShell
       section={section}
+      user={user}
       sectionRef={ref}
       inView={inView}
       isLoading={isLoading}
@@ -151,14 +155,14 @@ function ImageShowcase({ section, user }: CustomShowcaseSectionProps) {
 
 function ShowcaseShell({
   section,
+  user,
   sectionRef,
   inView,
   isLoading,
   count,
   rows,
   children,
-}: {
-  section: ShowcaseSectionSchema;
+}: CustomShowcaseSectionProps & {
   sectionRef: React.RefObject<HTMLDivElement>;
   inView: boolean;
   isLoading: boolean;
@@ -166,6 +170,7 @@ function ShowcaseShell({
   rows: number;
   children: React.ReactNode;
 }) {
+  const viewAll = useShowcaseViewAll({ rows, itemCount: count });
   if (inView && !isLoading && !count) return null;
 
   return (
@@ -187,11 +192,17 @@ function ShowcaseShell({
           <ProfileSection
             title={section.title}
             icon={<IconLayoutGrid />}
-            action={section.button && <ShowcaseButton {...section.button} />}
+            action={
+              <Group gap="xs" wrap="nowrap">
+                {section.button && <ShowcaseButton {...section.button} />}
+                <ShowcaseEditButton user={user} sectionId={section.id} />
+              </Group>
+            }
           >
-            <ShowcaseGrid itemCount={count} rows={rows}>
+            <ShowcaseGrid itemCount={count} {...viewAll.gridProps}>
               {children}
             </ShowcaseGrid>
+            {viewAll.toggle}
           </ProfileSection>
         ))}
     </div>

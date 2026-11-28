@@ -10,31 +10,22 @@ import {
 import type { ChatToolResult } from '@civitai/components-chat/runner-protocol';
 
 import type { Logger } from '../core/interfaces';
+import { npmInstallCommand, runNpmInstall } from './npm-install';
 import { exitCodeOf, manifestOf, outputOf, projectDirOf } from './preview';
 
 /** How long a reply's start waits for the pin check's reads: past it, the reply goes without. */
 export const SDK_PIN_READ_TIMEOUT_MS = 5_000;
-/**
- * The sandbox's own bound on the upgrade's `npm install` (its `timeout_ms`: the sandbox kills the
- * install's whole process group past it, and answers). An App Block has a handful of dependencies
- * and keeps its `node_modules` across a pause, so bumping one of them is an install of seconds to a
- * few tens of seconds; 90 s leaves room for a cold npm cache without letting a wedged registry hold
- * the reply.
- */
-export const SDK_INSTALL_TIMEOUT_MS = 90_000;
 /**
  * The upgrade's budget, judged between its steps: a step that ends past it is followed by the
  * rollback, never by the next step. No step is cut off mid-call: cancelling an MCP call does not stop
  * the command in the sandbox (sandbox-mcp answers each request on its own server, so a cancel never
  * reaches the install; only closing the connection kills it), so an install "abandoned" by the
  * runner would keep running beside the rollback's. Every step has its own bound instead: the
- * install's `SDK_INSTALL_TIMEOUT_MS` in the sandbox, the dev server's wait to listen
+ * install's `NPM_INSTALL_TIMEOUT_MS` in the sandbox, the dev server's wait to listen
  * (`DEV_SERVER_WAIT_MS`), and each call's MCP timeout. 150 s is the install's 90 s, a restart's
  * ~30 s, and the reads and writes around them.
  */
 export const SDK_UPGRADE_TIMEOUT_MS = 150_000;
-/** How long one MCP call waits past the sandbox's own bound on its command, for its answer. */
-const CALL_SLACK_MS = 10_000;
 /** The most of `package-lock.json` that is kept to put back: an app's lockfile larger than this is not upgraded. */
 const LOCKFILE_MAX_BYTES = 1024 * 1024;
 /** How many tries an app gets per conversation for one (declared, installed) pair: once, and once more. */
@@ -45,10 +36,21 @@ const REMEMBERED = 10_000;
 const TARGET_RANGE = `^${CIVITAI_SDK_FLOOR}`;
 const FLOOR_MINOR = CIVITAI_SDK_FLOOR.split('.').slice(0, 2).join('.');
 /** The one line a reply starts with after the runner upgraded its app. */
-export const SDK_UPGRADED_LINE = `Updated this app's Civitai SDK to ${FLOOR_MINOR} so the preview stays awake while you use it.`;
+export const SDK_UPGRADED_LINE = `Updated this app's Civitai SDK to ${FLOOR_MINOR} to match the current Civitai app host.`;
+
+/**
+ * What an upgraded app that no longer typechecks most likely hit, told to the assistant with every
+ * upgrade: the storage calls @civitai/sdk 0.33.0 removed, and what replaces each one.
+ */
+export const SDK_REMOVED_APIS =
+  "If the typecheck fails after this upgrade because the app calls something @civitai/sdk 0.33 removed, tell the user that Civitai has removed it, and offer to move the app to its replacement. The removed calls and their replacements: " +
+  "collection update, increment, mark and unmark, the markedBy and mark list options, the counter: and mark: sorts, and the counters, marks and viewer fields of a document: a vote, like or per-viewer entry is the viewer's own document in a viewer-keyed collection (keyedBy: 'viewer' or 'parent+viewer' in the manifest, with getMine, putMine and deleteMine), counted by listing with keyPrefix; " +
+  'a report (a report mark): app.moderation.report({ collection, key }); ' +
+  'collection publish and unpublish: put each shared copy, and delete it, one by one; ' +
+  "app.storage.get, set, delete, list and getQuota, and app.sharedStorage: a private collection for each viewer's own data, a shared collection for data every viewer sees, through app.storage.collection(name).";
 
 /** What `submit_for_review` answers when the runner upgraded the app's SDK as it was offered. */
-export const SDK_UPGRADED_BEFORE_SUBMIT = `Not submitted yet: the runner just updated this app's Civitai SDK to ${TARGET_RANGE} and reinstalled its packages, so the app changed after its checks. Tell the user in one line: ${SDK_UPGRADED_LINE} Then run the preview check, the tests and the typecheck again, call report_ready, and call submit_for_review again.`;
+export const SDK_UPGRADED_BEFORE_SUBMIT = `Not submitted yet: the runner just updated this app's Civitai SDK to ${TARGET_RANGE} and reinstalled its packages, so the app changed after its checks. Tell the user in one line: ${SDK_UPGRADED_LINE} Then run the preview check, the tests and the typecheck again, call report_ready, and call submit_for_review again. ${SDK_REMOVED_APIS}`;
 
 /** What `submit_for_review` answers when the upgrade it ran first failed after changing the app. */
 export const SDK_UPGRADE_FAILED_BEFORE_SUBMIT = `Not submitted yet: the runner tried to update this app's Civitai SDK to ${TARGET_RANGE} and it failed, so it put the app's packages back; the app changed after its checks all the same. Do not tell the user about the SDK. Run the preview check, the tests and the typecheck again, call report_ready, and call submit_for_review again.`;
@@ -392,6 +394,7 @@ export class SdkUpgrades {
         }: do not do that again.`,
         `Start your reply with this one line for the user, then go on with what they asked: ${SDK_UPGRADED_LINE}`,
         'Change no code for this upgrade unless the user asks. If the typecheck or tests fail because of the newer SDK, tell the user what broke instead of rewriting the app.',
+        SDK_REMOVED_APIS,
       ].join(' ');
       return { kind: 'upgraded', instructions };
     } catch (error) {
@@ -421,15 +424,10 @@ export class SdkUpgrades {
 
   /** `cd <dir> && npm install`, told to the gates; whether it exited 0. */
   async #install(input: SdkUpgradeInput, dir: string): Promise<boolean> {
-    const command = `cd ${dir} && npm install --no-audit --no-fund`;
+    const command = npmInstallCommand(dir);
     let result: { text: string; isError: boolean };
     try {
-      result = await input.sandbox.call(
-        'run_command',
-        { command, timeout_ms: SDK_INSTALL_TIMEOUT_MS },
-        undefined,
-        { timeoutMs: SDK_INSTALL_TIMEOUT_MS + CALL_SLACK_MS }
-      );
+      result = await runNpmInstall(input.sandbox, dir);
     } catch (error) {
       // No answer: it may have changed files all the same.
       input.report?.({

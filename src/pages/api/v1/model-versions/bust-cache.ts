@@ -4,6 +4,7 @@ import { dbRead } from '~/server/db/client';
 import { bustMvCache } from '~/server/services/model-version.service';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 import type { SessionUser } from '~/types/session';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const schema = z.object({
   versionIds: z.array(z.number().int().positive()).min(1).max(500),
@@ -44,5 +45,6 @@ export default AuthedEndpoint(
 
     return res.status(200).json({ busted: rows.length });
   },
-  ['POST']
+  ['POST'],
+  { scope: { scope: TokenScope.ModelsWrite } }
 );

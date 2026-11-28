@@ -3,6 +3,7 @@ package modelfeed
 import (
 	"reflect"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -42,6 +43,7 @@ func TestBuildHighestRatedFirstPage(t *testing.T) {
 		mm."userId", CONCAT(mm."thumbsUpCount", '|', mm."downloadCount", '|', mm."modelId")::text as "cursorId"
 		FROM "ModelMetric" mm JOIN "Model" m ON m."id" = mm."modelId"
 		WHERE (mm."mode" IS NULL OR mm."mode" != 'Archived'::"ModelModifier")
+		AND (mm."mode" IS DISTINCT FROM 'TakenDown'::"ModelModifier")
 		AND (mm."poi" = false OR mm."userId" = $1)
 		AND NOT EXISTS (SELECT 1 FROM "TagsOnModels" tom WHERE tom."modelId" = m."id" AND tom."tagId" = ANY($2::int[]))
 		AND mm."status" = 'Published'::"ModelStatus"
@@ -190,7 +192,7 @@ func TestBuildFilters(t *testing.T) {
 		t.Error("archived: no mode clause")
 	}
 	want := []any{7, []int{4}, 7, 9, 8, []string{"Checkpoint", "LORA"}, cutoff, []string{"Sell"}, false, true, false, "Merge",
-		[]string{"LORA"}, []int{3}, 3, 11}
+		[]string{"LORA"}, []int{3}, 3, 11, 7}
 	if !reflect.DeepEqual(stmt.Args, want) {
 		t.Fatalf("args\n got  %#v\n want %#v", stmt.Args, want)
 	}
@@ -276,6 +278,7 @@ func TestDecreaseDate(t *testing.T) {
 func TestBuildCollection(t *testing.T) {
 	stmt := build(t, PageQuery{Take: 2, Sort: SortHighestRated, BrowsingLevel: 1, ViewerID: 7, CollectionID: 42, CollectionTagID: 88, ExcludedUserIDs: []int{9}})
 	wantWhere := `WHERE (mm."mode" IS NULL OR mm."mode" != 'Archived'::"ModelModifier")
+		AND (mm."mode" IS DISTINCT FROM 'TakenDown'::"ModelModifier" OR mm."userId" = $7)
 		AND mm."status" = 'Published'::"ModelStatus"
 		AND mm."availability" != 'Private'::"Availability"
 		AND EXISTS (SELECT 1 FROM "CollectionItem" ci WHERE ci."modelId" = mm."modelId" AND ci."collectionId" = $1
@@ -287,7 +290,7 @@ func TestBuildCollection(t *testing.T) {
 	if got := norm(stmt.Text); !strings.Contains(got, norm(wantWhere)) {
 		t.Fatalf("SQL:\n got  %s\n want …%s…", got, norm(wantWhere))
 	}
-	if want := []any{42, 7, 88, []int{9}, 1, 3}; !reflect.DeepEqual(stmt.Args, want) {
+	if want := []any{42, 7, 88, []int{9}, 1, 3, 7}; !reflect.DeepEqual(stmt.Args, want) {
 		t.Fatalf("args %#v, want %#v", stmt.Args, want)
 	}
 	// Signed out: accepted items only, nothing bound for a viewer; no tag clause without a tag.
@@ -333,5 +336,114 @@ func TestReadGranted(t *testing.T) {
 		if got := readGranted(c.read, c.owner, c.perms, c.viewer); got != c.want {
 			t.Errorf("read %s owner %d perms %v viewer %d: %v, want %v", c.read, c.owner, c.perms, c.viewer, got, c.want)
 		}
+	}
+}
+
+// The official pin's id filters (getModelsRaw's onlyModelIds / excludeModelIds, `mm."modelId" IN (…)`
+// and `NOT IN (…)`): placed after the licensing filters as Node pushes them, the ids bound as one array
+// each in the order given; neither is emitted for an empty list. On a single base model the filters
+// still read mm, which every path joins.
+func TestBuildOfficialPinFilters(t *testing.T) {
+	no := false
+	stmt := build(t, PageQuery{Take: 2, Sort: SortHot, BrowsingLevel: 1, BaseModels: []string{"Pony"}, AllowNoCredit: &no,
+		OnlyModelIDs: []int{30, 10}})
+	if !strings.Contains(norm(stmt.Text), `AND m."allowNoCredit" = $2 AND mm."modelId" = ANY($3::int[]) AND mbm."availability" != 'Private'::"Availability"`) {
+		t.Fatalf("onlyModelIds clause:\n%s", norm(stmt.Text))
+	}
+	if strings.Contains(stmt.Text, `!= ALL(`) {
+		t.Fatal("an exclusion with no excludeModelIds")
+	}
+	if want := []any{"Pony", false, []int{30, 10}, 1, 3}; !reflect.DeepEqual(stmt.Args, want) {
+		t.Fatalf("args %#v, want %#v", stmt.Args, want)
+	}
+	stmt = build(t, PageQuery{Take: 2, Sort: SortHot, BrowsingLevel: 1, BaseModels: []string{"Pony"}, ExcludeModelIDs: []int{30, 10}})
+	if !strings.Contains(norm(stmt.Text), `AND mm."modelId" != ALL($2::int[]) AND mbm."availability" != 'Private'::"Availability"`) {
+		t.Fatalf("excludeModelIds clause:\n%s", norm(stmt.Text))
+	}
+	if strings.Contains(stmt.Text, `= ANY($`) && strings.Contains(stmt.Text, `mm."modelId" = ANY(`) {
+		t.Fatal("a restriction with no onlyModelIds")
+	}
+	if want := []any{"Pony", []int{30, 10}, 1, 3}; !reflect.DeepEqual(stmt.Args, want) {
+		t.Fatalf("args %#v, want %#v", stmt.Args, want)
+	}
+	for _, q := range []PageQuery{{Take: 2, Sort: SortHot, BrowsingLevel: 1}, {Take: 2, Sort: SortHot, BrowsingLevel: 1,
+		OnlyModelIDs: []int{}, ExcludeModelIDs: []int{}}} {
+		if s := build(t, q).Text; strings.Contains(s, `mm."modelId" = ANY(`) || strings.Contains(s, `mm."modelId" != ALL(`) {
+			t.Fatalf("an id filter for no ids:\n%s", s)
+		}
+	}
+}
+
+// modelNotWithheldSql: a taken-down model is listed only to its owner and to moderators.
+func TestBuildTakenDown(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		q    PageQuery
+		want string // "" = no clause
+	}{
+		{"signed out", PageQuery{}, `(mm."mode" IS DISTINCT FROM 'TakenDown'::"ModelModifier")`},
+		// The viewer is bound last, renumbering nothing else.
+		{"signed in", PageQuery{ViewerID: 7}, `(mm."mode" IS DISTINCT FROM 'TakenDown'::"ModelModifier" OR mm."userId" = $3)`},
+		{"moderator", PageQuery{ViewerID: 8, IsModerator: true}, ""},
+	} {
+		c.q.Take, c.q.Sort, c.q.BrowsingLevel = 2, SortHighestRated, 1
+		stmt := build(t, c.q)
+		got := norm(stmt.Text)
+		if c.q.ViewerID != 0 && !c.q.IsModerator && stmt.Args[len(stmt.Args)-1] != c.q.ViewerID {
+			t.Errorf("%s: last arg %v, want the viewer %d", c.name, stmt.Args[len(stmt.Args)-1], c.q.ViewerID)
+		}
+		if c.want == "" {
+			if strings.Contains(got, "'TakenDown'") {
+				t.Errorf("%s: unexpected taken-down clause", c.name)
+			}
+		} else if !strings.Contains(got, c.want) {
+			t.Errorf("%s: missing %s", c.name, c.want)
+		}
+	}
+}
+
+// A cursored page of a multi-field DESC sort splits into UNION ALL branches, each with the WHERE:
+// the viewer must be bound in both, with no slot left for Postgres to reject.
+func TestBuildTakenDownSplitCursor(t *testing.T) {
+	stmt := build(t, PageQuery{Take: 2, Sort: SortHighestRated, BrowsingLevel: 1, ViewerID: 7, Cursor: "50|10|3101002"})
+	if strings.Contains(stmt.Text, withheldViewerSlot) {
+		t.Fatal("unbound viewer slot left in the SQL")
+	}
+	n := strconv.Itoa(len(stmt.Args))
+	if stmt.Args[len(stmt.Args)-1] != 7 {
+		t.Fatalf("last arg %v, want the viewer 7", stmt.Args[len(stmt.Args)-1])
+	}
+	clause := `OR mm."userId" = $` + n + `)`
+	if got := strings.Count(norm(stmt.Text), clause); got != 2 {
+		t.Fatalf("%s appears %d times, want once per UNION branch:\n%s", clause, got, norm(stmt.Text))
+	}
+}
+
+// Hide Paid is getModelsRaw's clause since the free-version rule: no live gate on the model, or a
+// Published version with no live gate (freePublishedVersionExistsSql), which must also be Public when
+// private models are hidden. HidePrivate alone adds nothing.
+func TestBuildHidePaidFreeVersion(t *testing.T) {
+	const gated = `(NOT EXISTS (SELECT 1 FROM "PaidAccess" pa JOIN "ModelVersion" mv ON mv.id = pa."entityId" WHERE pa."entityType" = 'ModelVersion' AND (pa."endsAt" IS NULL OR pa."endsAt" > NOW()) AND mv.status = 'Published'::"ModelStatus" AND mv."modelId" = m.id) OR EXISTS (SELECT 1 FROM "ModelVersion" fv WHERE fv."modelId" = m.id AND fv.status = 'Published'::"ModelStatus"`
+	const free = ` AND NOT EXISTS (SELECT 1 FROM "PaidAccess" pa JOIN "ModelVersion" mv ON mv.id = pa."entityId" WHERE pa."entityType" = 'ModelVersion' AND (pa."endsAt" IS NULL OR pa."endsAt" > NOW()) AND mv.status = 'Published'::"ModelStatus" AND mv.id = fv.id)))`
+	const public = ` AND fv.availability = 'Public'::"Availability"`
+	base := PageQuery{Take: 10, Sort: SortNewest, BrowsingLevel: 1}
+	for _, c := range []struct {
+		name                  string
+		hidePaid, hidePrivate bool
+		want                  string
+	}{
+		{"hide paid, private models hidden", true, true, gated + public + free},
+		{"hide paid, private models shown", true, false, gated + free},
+	} {
+		q := base
+		q.HidePaid, q.HidePrivate = c.hidePaid, c.hidePrivate
+		if got := norm(build(t, q).Text); !strings.Contains(got, c.want) {
+			t.Errorf("%s: missing\n%s\nin\n%s", c.name, c.want, got)
+		}
+	}
+	q := base
+	q.HidePrivate = true
+	if got := norm(build(t, q).Text); strings.Contains(got, `"PaidAccess"`) || strings.Contains(got, `fv.`) {
+		t.Errorf("hide private alone: a paid-access clause in\n%s", got)
 	}
 }

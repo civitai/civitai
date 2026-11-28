@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/router';
 import { useDisclosure } from '@mantine/hooks';
-import { openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { trpc } from '~/utils/trpc';
 import {
   Text,
@@ -25,6 +25,7 @@ import {
   IconCoinOff,
   IconCalendar,
   IconClock,
+  IconHourglass,
 } from '@tabler/icons-react';
 import { formatDate } from '~/utils/date-helpers';
 import { ApiKeyModal } from '~/components/Account/ApiKeyModal';
@@ -132,10 +133,9 @@ export function ApiKeysCard({ flat }: { flat?: boolean } = {}) {
   });
 
   const handleDeleteApiKey = (id: number) => {
-    openConfirmModal({
+    openConfirm({
       title: 'Delete API Key',
-      children: <Text size="sm">Are you sure you want to delete this API Key?</Text>,
-      centered: true,
+      message: <Text size="sm">Are you sure you want to delete this API Key?</Text>,
       labels: { confirm: 'Delete API Key', cancel: "No, don't delete it" },
       confirmProps: { color: 'red' },
       onConfirm: () => deleteApiKeyMutation.mutateAsync({ id }),
@@ -233,6 +233,14 @@ export function ApiKeysCard({ flat }: { flat?: boolean } = {}) {
                             {apiKey.lastUsedAt ? formatDate(apiKey.lastUsedAt) : 'Never used'}
                           </Text>
                         </Group>
+                        {apiKey.expiresAt && (
+                          <Group gap={4} wrap="nowrap">
+                            <IconHourglass size={12} color="var(--mantine-color-dimmed)" />
+                            <Text size="xs" c="dimmed">
+                              Expires {formatDate(apiKey.expiresAt)}
+                            </Text>
+                          </Group>
+                        )}
                         {features.apiKeyBuzzLimit &&
                           (hasLimit && simpleLimit ? (
                             (() => {

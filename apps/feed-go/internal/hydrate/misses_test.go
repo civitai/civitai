@@ -52,6 +52,8 @@ type missDB struct {
 	tagRows    map[int][][]any // imageId -> [imageId, source, tagId]
 	tags       map[int][]any   // tagId -> [id, name, type]
 	fail       string          // a route name below, answered with errMissDB
+	// before, when set, runs as a route is queried (before it answers), with the route's name.
+	before func(name string)
 
 	mu    sync.Mutex
 	asked map[string][][]int
@@ -68,6 +70,9 @@ func (m *missDB) route(name, match string, cols []string, rows func(id int) [][]
 		}
 		m.asked[name] = append(m.asked[name], append([]int(nil), ids...))
 		m.mu.Unlock()
+		if m.before != nil {
+			m.before(name)
+		}
 		if m.fail == name {
 			return nil, errMissDB
 		}
@@ -112,7 +117,7 @@ func (m *missDB) load(f *pageFixture, c *MissCompute) (*Sources, *testkit.Redis)
 	if c.Now == nil {
 		c.Now = func() time.Time { return pageNow }
 	}
-	if c.WriteBack && c.Primary == nil {
+	if c.WriteBack.Any() && c.Primary == nil {
 		c.Primary = db // the same rows: TestWriteBackReadsPrimary tells the two apart
 	}
 	s.Compute = c
@@ -196,12 +201,12 @@ func TestPageComputesUserCosmeticsMiss(t *testing.T) {
 			f.del(KeyUserCosmetics, 1003)
 			m := userCosmeticsMissDB()
 			obs := &observed{}
-			s, r := m.load(f, &MissCompute{WriteBack: writeBack, FrameNegative: true, Observe: obs.observe})
+			s, r := m.load(f, &MissCompute{WriteBack: writeSet(writeBack), FrameNegative: true, Observe: obs.observe})
 			got, err := s.Page(context.Background(), pageRequest())
 			if err != nil {
 				t.Fatalf("Page: %v (fallback %q)", err, fallback.Reason(err))
 			}
-			if s, want := pagePlain(t, got.UserCosmetics[1002]), `[{"cosmeticId":503,"data":{"a":2,"b":1},"cosmetic":{"id":503,"name":"c503","type":"NamePlate","data":{},"source":"Claim","flags":3}}]`; s != want {
+			if s, want := pagePlain(t, got.UserCosmetics[1002]), `[{"cosmeticId":503,"data":{"b":1,"a":2},"cosmetic":{"id":503,"name":"c503","type":"NamePlate","data":{},"source":"Claim","flags":3}}]`; s != want {
 				t.Fatalf("user 1002 cosmetics:\n got %s\nwant %s", s, want)
 			}
 			if _, ok := got.UserCosmetics[1003]; ok {
@@ -236,7 +241,7 @@ func TestComputedMissWritesOnlyWhereNodeWould(t *testing.T) {
 	f.put(t, KeyUserCosmetics, 1002, map[string]any{"debounce": true})
 	f.del(KeyUserCosmetics, 1003)
 	m := userCosmeticsMissDB()
-	s, r := m.load(f, &MissCompute{WriteBack: true, FrameNegative: true})
+	s, r := m.load(f, &MissCompute{WriteBack: AllWrites(), FrameNegative: true})
 	r.KeyErr = func(k string) error {
 		if k == pageNS+missKey(KeyUserCosmetics, 1003) {
 			return testkit.ErrDown
@@ -283,7 +288,7 @@ func TestComputedMissLookupFailureFallsBack(t *testing.T) {
 			m := userCosmeticsMissDB()
 			m.fail = c.fail
 			obs := &observed{}
-			s, r := m.load(f, &MissCompute{WriteBack: true, FrameNegative: true, Observe: obs.observe})
+			s, r := m.load(f, &MissCompute{WriteBack: AllWrites(), FrameNegative: true, Observe: obs.observe})
 			_, err := s.Page(context.Background(), pageRequest())
 			if got := fallback.Reason(err); got != c.reason {
 				t.Fatalf("err %v (reason %q), want %q", err, got, c.reason)
@@ -311,7 +316,7 @@ func TestPageComputesFrameMiss(t *testing.T) {
 		f.del(KeyImageFrames, 13)
 		f.del(KeyImageFrames, 14)
 		m := frames()
-		s, r := m.load(f, &MissCompute{WriteBack: true, FrameNegative: true})
+		s, r := m.load(f, &MissCompute{WriteBack: AllWrites(), FrameNegative: true})
 		got, err := s.Page(context.Background(), pageRequest())
 		if err != nil {
 			t.Fatalf("Page: %v (fallback %q)", err, fallback.Reason(err))
@@ -345,7 +350,7 @@ func TestPageComputesFrameMiss(t *testing.T) {
 	t.Run("negative-off", func(t *testing.T) {
 		f := basePageFixture(t) // 13 and 14 hold notFound markers
 		m := frames()
-		s, r := m.load(f, &MissCompute{WriteBack: true, FrameNegative: false})
+		s, r := m.load(f, &MissCompute{WriteBack: AllWrites(), FrameNegative: false})
 		before13, _ := r.String(pageNS + missKey(KeyImageFrames, 13))
 		got, err := s.Page(context.Background(), pageRequest())
 		if err != nil {
@@ -386,7 +391,7 @@ func TestPageComputesEventDecorationMiss(t *testing.T) {
 				"data", jspack.O("event", "ev", "url", "x.png"), "source", "Event", "flags", 0, "cachedAt", pageNow))
 			m := eventsMissDB()
 			obs := &observed{}
-			s, r := m.load(f, &MissCompute{WriteBack: writeBack, FrameNegative: true, Observe: obs.observe})
+			s, r := m.load(f, &MissCompute{WriteBack: writeSet(writeBack), FrameNegative: true, Observe: obs.observe})
 			got, err := s.Page(context.Background(), pageRequest())
 			if err != nil {
 				t.Fatalf("Page: %v (fallback %q)", err, fallback.Reason(err))
@@ -394,7 +399,7 @@ func TestPageComputesEventDecorationMiss(t *testing.T) {
 			if s, want := pagePlain(t, got.Decorations[12]), `{"id":602,"name":"deco2","type":"ContentDecoration","source":"Event","data":{"event":"ev","url":"x.png"},"equippedToId":12,"equippedToType":"Image"}`; s != want {
 				t.Fatalf("decoration 12:\n got %s\nwant %s", s, want)
 			}
-			if s, want := pagePlain(t, got.Decorations[14]), `{"id":603,"name":"deco3","type":"ContentDecoration","source":"Event","data":{"event":"ev","url":"y.png"},"equippedToId":14,"equippedToType":"Image"}`; s != want {
+			if s, want := pagePlain(t, got.Decorations[14]), `{"id":603,"name":"deco3","type":"ContentDecoration","source":"Event","data":{"url":"y.png","event":"ev"},"equippedToId":14,"equippedToType":"Image"}`; s != want {
 				t.Fatalf("decoration 14 (replica cosmetic):\n got %s\nwant %s", s, want)
 			}
 			if keys := sortedKeys(got.Decorations); !reflect.DeepEqual(keys, []int{11, 12, 14}) {
@@ -546,7 +551,7 @@ func TestWriteBackReadsPrimary(t *testing.T) {
 		pf := basePageFixture(t)
 		ps, _ := primary.load(pf, &MissCompute{})
 		pdb.Routes = ps.Replica.(*pageReplica).Routes
-		s, _ := replica.load(f, &MissCompute{WriteBack: writeBack, FrameNegative: true, Primary: pdb})
+		s, _ := replica.load(f, &MissCompute{WriteBack: writeSet(writeBack), FrameNegative: true, Primary: pdb})
 		return s, primary, replica
 	}
 	for _, writeBack := range []bool{true, false} {
@@ -576,7 +581,7 @@ func TestWriteBackReadsPrimary(t *testing.T) {
 	f.del(KeyImageFrames, 13)
 	m := &missDB{}
 	s, _ := m.load(f, &MissCompute{FrameNegative: true})
-	s.Compute.WriteBack = true
+	s.Compute.WriteBack = AllWrites()
 	if _, err := s.Page(context.Background(), pageRequest()); fallback.Reason(err) != "image-frame-miss-failed" {
 		t.Fatalf("no primary: %v, want image-frame-miss-failed", err)
 	}
