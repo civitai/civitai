@@ -107,10 +107,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       event = JSON.parse(rawPayload) as TipaltiWebhookEventData;
 
-      // Claimed only once the signature holds, and for as long as a signature stays valid, so a
-      // copy of a delivery cannot be processed twice. A copy arriving mid-processing gets a 409 so
-      // Tipalti retries it; the claim is released if processing fails. Without Redis the event is
-      // processed unguarded.
+      // Claimed only after the signature verifies, so an unsigned request cannot take an id, and
+      // held for the signature's whole lifetime, so no still-valid copy outlives it.
       if (event.id) {
         const key = `${REDIS_KEYS.WEBHOOKS.TIPALTI_EVENT}:${event.id}` as const;
         const claimed: string | null = await redis

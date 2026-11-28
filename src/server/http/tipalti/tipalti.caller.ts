@@ -85,7 +85,7 @@ export class TipaltiCaller extends HttpCaller {
     return new TipaltiCaller(undefined, token);
   }
 
-  // A revoked token can outlive its expires_in; drop it so the next instance re-authenticates.
+  // A token can be revoked before its expires_in; drop the cached copy so the next instance re-authenticates.
   private static forgetTokenIfRejected(response: Response) {
     if (response.status === 401) TipaltiCaller.acessToken = undefined;
     return response;

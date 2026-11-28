@@ -236,6 +236,24 @@ describe('POST /api/webhooks/tipalti delivered more than once', () => {
     expect(updateByTipaltiAccount).toHaveBeenCalledTimes(1);
   });
 
+  it('still treats a copy as a duplicate late in its signature lifetime', async () => {
+    const start = Date.now();
+    const now = vi.spyOn(Date, 'now').mockReturnValue(start);
+    try {
+      // Signed at the furthest accepted clock skew, so it stays valid the longest.
+      const signature = sign(body, Math.floor(start / 1000) + 60);
+      await post(signature);
+      now.mockReturnValue(start + 355_000);
+      const copy = await post(signature);
+
+      expect(copy.status).toBe(200);
+      expect(await copy.json()).toMatchObject({ duplicate: true });
+      expect(updateByTipaltiAccount).toHaveBeenCalledTimes(1);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
   it('processes events with different ids', async () => {
     await post(sign(withId('evt-a')), withId('evt-a'));
     await post(sign(withId('evt-b')), withId('evt-b'));
