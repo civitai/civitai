@@ -5,7 +5,7 @@ import { instrumentationRegistry, registerInstrumentationMetric } from '@civitai
 //
 // One increment per SAMPLED beacon request, by what became of the sample. Requests that were not
 // sampled are not counted. Labels: `outcome`, from the fixed set below, and `beacon_endpoint`
-// (ping | pulse). Not `endpoint`: that is a reserved scrape target label, which would move ours to
+// (ping | pulse | track-batch). Not `endpoint`: that is a reserved scrape target label, which would move ours to
 // `exported_endpoint` (as for feed-go's `feed_endpoint`). beacon-go's own beacon_go_* series use the
 // same label name.
 
@@ -28,7 +28,7 @@ export const BEACON_GO_SHADOW_OUTCOMES = [
 
 export type BeaconGoShadowOutcome = (typeof BEACON_GO_SHADOW_OUTCOMES)[number];
 
-export const BEACON_GO_SHADOW_ENDPOINTS = ['ping', 'pulse'] as const;
+export const BEACON_GO_SHADOW_ENDPOINTS = ['ping', 'pulse', 'track-batch'] as const;
 export type BeaconGoShadowEndpoint = (typeof BEACON_GO_SHADOW_ENDPOINTS)[number];
 
 const NAME = 'civitai_app_beacon_go_shadow_samples_total';
@@ -39,9 +39,10 @@ const beaconGoShadowCounter = registerInstrumentationMetric(
     new client.Counter({
       name: NAME,
       help:
-        'Sampled /api/internal/ping and /api/internal/pulse requests mirrored to the beacon-go ' +
-        'shadow comparator (flag beacon-go-shadow), by outcome and endpoint. Only sampled requests ' +
-        'are counted (BEACON_GO_SHADOW_URL set, BEACON_GO_SHADOW_SAMPLE_RATE > 0).',
+        'Sampled /api/internal/ping, /api/internal/pulse and /api/track/batch requests mirrored to ' +
+        'the beacon-go shadow comparator (flag beacon-go-shadow), by outcome and endpoint. Only ' +
+        'sampled requests are counted (BEACON_GO_SHADOW_URL set, and BEACON_GO_SHADOW_SAMPLE_RATE ' +
+        '> 0, or BEACON_GO_SHADOW_TRACK_BATCH_SAMPLE_RATE > 0 for track-batch).',
       labelNames: ['outcome', 'beacon_endpoint'],
       registers: [instrumentationRegistry],
     })

@@ -1,0 +1,37 @@
+{
+  "name": "action-app-store-no-actor-meta",
+  "endpoint": "track-batch",
+  "request": {
+    "method": "POST",
+    "target": "/api/track/batch",
+    "headers": {
+      "host": "www.example.test",
+      "origin": "https://www.example.test",
+      "content-type": "application/json",
+      "user-agent": "Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0",
+      "cf-connecting-ip": "203.0.113.7"
+    },
+    "body": "[{\"kind\":\"action\",\"data\":{\"type\":\"AppStore_Action\",\"details\":{\"queryLength\":\"4-10\",\"hasQuery\":true,\"category\":\"games\",\"sort\":\"newest\",\"position\":10000,\"surface\":\"store_card\",\"listingId\":\"lst_01-ABC\",\"action\":\"impression\"}}}]"
+  },
+  "session": null,
+  "trackerEnabled": true,
+  "fallback": "",
+  "expect": {
+    "status": 200,
+    "headers": {
+      "vary": "Authorization",
+      "access-control-allow-origin": "*",
+      "access-control-allow-headers": "Authorization, Content-Type, *",
+      "access-control-allow-methods": "POST",
+      "cache-control": "public, s-maxage=300, stale-while-revalidate=150"
+    },
+    "body": "",
+    "writes": [
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"type\":\"AppStore_Action\",\"details\":\"{\\\"action\\\":\\\"impression\\\",\\\"listingId\\\":\\\"lst_01-ABC\\\",\\\"surface\\\":\\\"store_card\\\",\\\"position\\\":10000,\\\"sort\\\":\\\"newest\\\",\\\"category\\\":\\\"games\\\",\\\"hasQuery\\\":true,\\\"queryLength\\\":\\\"4-10\\\"}\"}"
+      }
+    ]
+  },
+  "shadow": "{\"method\":\"POST\",\"target\":\"/api/track/batch\",\"query\":\"\",\"headers\":{\"host\":\"www.example.test\",\"origin\":\"https://www.example.test\",\"user-agent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"content-type\":\"application/json\",\"cf-connecting-ip\":\"203.0.113.7\"},\"body\":\"[{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"AppStore_Action\\\",\\\"details\\\":{\\\"queryLength\\\":\\\"4-10\\\",\\\"hasQuery\\\":true,\\\"category\\\":\\\"games\\\",\\\"sort\\\":\\\"newest\\\",\\\"position\\\":10000,\\\"surface\\\":\\\"store_card\\\",\\\"listingId\\\":\\\"lst_01-ABC\\\",\\\"action\\\":\\\"impression\\\"}}}]\",\"bodyIsString\":false,\"node\":{\"status\":200,\"headers\":{\"access-control-allow-origin\":\"*\",\"access-control-allow-headers\":\"Authorization, Content-Type, *\",\"access-control-allow-methods\":\"POST\",\"vary\":\"Authorization\",\"cache-control\":\"public, s-maxage=300, stale-while-revalidate=150\"},\"body\":\"\",\"writes\":[{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"type\\\":\\\"AppStore_Action\\\",\\\"details\\\":\\\"{\\\\\\\"action\\\\\\\":\\\\\\\"impression\\\\\\\",\\\\\\\"listingId\\\\\\\":\\\\\\\"lst_01-ABC\\\\\\\",\\\\\\\"surface\\\\\\\":\\\\\\\"store_card\\\\\\\",\\\\\\\"position\\\\\\\":10000,\\\\\\\"sort\\\\\\\":\\\\\\\"newest\\\\\\\",\\\\\\\"category\\\\\\\":\\\\\\\"games\\\\\\\",\\\\\\\"hasQuery\\\\\\\":true,\\\\\\\"queryLength\\\\\\\":\\\\\\\"4-10\\\\\\\"}\\\"}\"}]}}"
+}

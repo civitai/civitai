@@ -1,0 +1,26 @@
+{
+  "name": "invalid-json-body",
+  "endpoint": "track-batch",
+  "request": {
+    "method": "POST",
+    "target": "/api/track/batch",
+    "headers": {
+      "host": "www.example.test",
+      "origin": "https://www.example.test",
+      "content-type": "application/json",
+      "user-agent": "Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0",
+      "cf-connecting-ip": "203.0.113.7"
+    },
+    "body": "[{\"kind\":"
+  },
+  "session": null,
+  "trackerEnabled": true,
+  "fallback": "",
+  "expect": {
+    "status": 400,
+    "headers": {},
+    "body": "Invalid JSON",
+    "writes": []
+  },
+  "shadow": ""
+}

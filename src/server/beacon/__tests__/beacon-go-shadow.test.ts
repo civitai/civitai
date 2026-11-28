@@ -23,7 +23,15 @@ import {
 const BASE = 'http://beacon-go.test:9090/';
 
 function config(overrides: Partial<BeaconGoShadowConfig> = {}): BeaconGoShadowConfig {
-  return { base: BASE, rate: 1, timeoutMs: 500, maxInFlight: 4, maxPerSecond: 1000, ...overrides };
+  return {
+    base: BASE,
+    rate: 1,
+    trackBatchRate: 0,
+    timeoutMs: 500,
+    maxInFlight: 4,
+    maxPerSecond: 1000,
+    ...overrides,
+  };
 }
 
 function request(overrides: Record<string, unknown> = {}) {
@@ -105,6 +113,28 @@ describe('beacon-go shadow gating', () => {
       expect(shadow.inFlight()).toBe(0);
       expect(record).not.toHaveBeenCalled();
     }
+  });
+
+  // /api/track/batch has its own rate (BEACON_GO_SHADOW_TRACK_BATCH_SAMPLE_RATE, default 0), so the
+  // ping / pulse shadow being on samples no batch, and the batch rate samples no beacon.
+  it('samples track-batch at its own rate only', () => {
+    const beaconsOnly = harness({ config: { rate: 1, trackBatchRate: 0 } });
+    expect(beaconsOnly.shadow.begin(request(), new FakeRes(), 'track-batch')).toBeUndefined();
+    expect(beaconsOnly.shadow.begin(request(), new FakeRes(), 'ping')).toBeDefined();
+    expect(beaconsOnly.record).not.toHaveBeenCalled();
+
+    const batchOnly = harness({ config: { rate: 0, trackBatchRate: 1 } });
+    expect(batchOnly.shadow.begin(request(), new FakeRes(), 'ping')).toBeUndefined();
+    expect(batchOnly.shadow.begin(request(), new FakeRes(), 'pulse')).toBeUndefined();
+    expect(batchOnly.shadow.begin(request(), new FakeRes(), 'track-batch')).toBeDefined();
+
+    const half = harness({ config: { rate: 1, trackBatchRate: 0.25 }, random: 0.25 });
+    expect(half.shadow.begin(request(), new FakeRes(), 'track-batch')).toBeUndefined();
+    const inside = harness({ config: { rate: 0, trackBatchRate: 0.25 }, random: 0.24 });
+    expect(inside.shadow.begin(request(), new FakeRes(), 'track-batch')).toBeDefined();
+    // The flag still gates it.
+    const flagOff = harness({ config: { trackBatchRate: 1 }, enabled: false });
+    expect(flagOff.shadow.begin(request(), new FakeRes(), 'track-batch')).toBeUndefined();
   });
 
   it('samples inside the rate', () => {
@@ -220,6 +250,49 @@ describe('beacon-go shadow payload', () => {
     expect(sent.node.body).toBe('');
   });
 
+  it('posts a track-batch sample to its own path, with every row in send order', async () => {
+    const { shadow, fetchMock, record } = harness({ config: { trackBatchRate: 1 } });
+    const res = new FakeRes();
+    const body = [{ kind: 'search', data: { query: 'q', index: 'i' } }];
+    const sample = shadow.begin(
+      request({ url: '/api/track/batch', headers: { host: 'www.example.test' }, body }),
+      res,
+      'track-batch'
+    )!;
+    let resolveRows!: () => void;
+    shadow.waitFor(sample, new Promise<void>((r) => (resolveRows = r)));
+    res.end();
+    res.emit('finish');
+    await flush();
+    expect(fetchMock).not.toHaveBeenCalled();
+    shadow.captureWrite(sample, 'search', { userId: 0, query: 'q' });
+    shadow.captureWrite(sample, 'actions', { userId: 0, type: 'AwardBounty_Click' });
+    resolveRows();
+    await flush();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('http://beacon-go.test:9090/internal/shadow/api/track/batch');
+    expect(JSON.parse(init.body as string)).toEqual({
+      method: 'POST',
+      target: '/api/track/batch',
+      query: '',
+      headers: { host: 'www.example.test' },
+      body: '[{"kind":"search","data":{"query":"q","index":"i"}}]',
+      bodyIsString: false,
+      node: {
+        status: 200,
+        headers: {},
+        body: '',
+        writes: [
+          { table: 'search', body: '{"userId":0,"query":"q"}' },
+          { table: 'actions', body: '{"userId":0,"type":"AwardBounty_Click"}' },
+        ],
+      },
+    });
+    await flush();
+    expect(record).toHaveBeenCalledWith('sent', 'track-batch');
+  });
+
   it('counts a non-2xx answer, a timeout and a network error', async () => {
     const answers: [() => Promise<Response>, string][] = [
       [() => Promise.resolve(new Response(null, { status: 503 })), 'rejected'],
@@ -320,6 +393,15 @@ describe('beacon-go shadow pure helpers', () => {
     const off = readBeaconGoShadowConfig({});
     expect(off.base).toBeUndefined();
     expect(off.rate).toBe(0);
+    expect(off.trackBatchRate).toBe(0);
+    // The beacons' rate leaves track-batch off; its own rate is clamped the same way.
+    expect(readBeaconGoShadowConfig({ BEACON_GO_SHADOW_SAMPLE_RATE: '1' }).trackBatchRate).toBe(0);
+    expect(
+      readBeaconGoShadowConfig({ BEACON_GO_SHADOW_TRACK_BATCH_SAMPLE_RATE: '0.05' }).trackBatchRate
+    ).toBe(0.05);
+    expect(
+      readBeaconGoShadowConfig({ BEACON_GO_SHADOW_TRACK_BATCH_SAMPLE_RATE: '7' }).trackBatchRate
+    ).toBe(1);
     const c = readBeaconGoShadowConfig({
       BEACON_GO_SHADOW_URL: 'http://beacon-go.test:9090',
       BEACON_GO_SHADOW_SAMPLE_RATE: '2',
@@ -331,6 +413,12 @@ describe('beacon-go shadow pure helpers', () => {
     expect(readBeaconGoShadowConfig({ BEACON_GO_SHADOW_URL: 'ftp://x' }).base).toBeUndefined();
     expect(beaconGoShadowUrl('http://h:1/', 'pulse')).toBe(
       'http://h:1/internal/shadow/api/internal/pulse'
+    );
+    expect(beaconGoShadowUrl('http://h:1/', 'ping')).toBe(
+      'http://h:1/internal/shadow/api/internal/ping'
+    );
+    expect(beaconGoShadowUrl('http://h:1/', 'track-batch')).toBe(
+      'http://h:1/internal/shadow/api/track/batch'
     );
   });
 });

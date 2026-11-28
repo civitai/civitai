@@ -5,7 +5,8 @@
 //
 // Like the Node path it is fire-and-forget: the beacon's response never waits for the tracker. Unlike
 // it, the backlog is bounded (a queue of Queue rows, drained by Workers goroutines): a full queue
-// drops the row and counts it, where Node would keep piling up promises. When Close gives up, every
+// drops the row and counts it, where Node would keep piling up promises. EnqueueAll queues a batch's
+// rows all or none, so a caller can hand a batch the queue cannot take whole back to Node instead. When Close gives up, every
 // row still queued and every row inside a POST that is still running is counted as dropped too (and
 // reported back, per table), so every queued row ends in exactly one result; the running POSTs are
 // then cancelled and no row starts another attempt.
@@ -163,6 +164,23 @@ func (c *Client) Enqueue(w beacon.Write) bool {
 		c.record(w.Table, ResultDropped)
 		return false
 	}
+}
+
+// EnqueueAll queues every row of ws or none of them, without blocking: false when the client is
+// closed or the queue has room for fewer than len(ws) rows, and then nothing is queued and nothing is
+// counted (the caller hands the whole request to the Node app, which writes the rows). It holds the
+// write lock, so no Enqueue or other EnqueueAll can queue a row between its room check and its
+// sends; the workers only take rows off meanwhile, which only adds room, so no send below blocks.
+func (c *Client) EnqueueAll(ws []beacon.Write) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed || cap(c.queue)-len(c.queue) < len(ws) {
+		return false
+	}
+	for _, w := range ws {
+		c.queue <- w
+	}
+	return true
 }
 
 // Depth is the number of rows waiting in the queue (not counting the ones being sent).

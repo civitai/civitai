@@ -5,6 +5,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -346,5 +348,131 @@ func TestObserveSkipsDroppedRows(t *testing.T) {
 	cl.Enqueue(beacon.Write{Table: "views"})
 	if observed.Load() != 0 {
 		t.Fatalf("observed %d rows, want 0", observed.Load())
+	}
+}
+
+// idleClient is a Client with a queue of size rows and no workers, so nothing takes a row off and
+// the queue's room is exactly what the test leaves.
+func idleClient(size int, record func(table, result string)) *Client {
+	return &Client{Record: record, queue: make(chan beacon.Write, size)}
+}
+
+// rows is n distinct rows: table "search", bodies tag-0 … tag-(n-1).
+func rows(tag string, n int) []beacon.Write {
+	ws := make([]beacon.Write, n)
+	for i := range ws {
+		ws[i] = beacon.Write{Table: "search", Body: []byte(tag + "-" + strconv.Itoa(i))}
+	}
+	return ws
+}
+
+// EnqueueAll is all or nothing at the queue's boundary: a batch one row bigger than the room queues
+// nothing and counts nothing (the caller falls back to Node), a batch exactly the room's size is
+// queued whole and in order.
+func TestEnqueueAllIsAllOrNothing(t *testing.T) {
+	cases := []struct {
+		name    string
+		size    int
+		prefill int
+		batch   int
+		closed  bool
+		ok      bool
+		depth   int
+	}{
+		{"one slot short", 5, 3, 3, false, false, 3},
+		{"exactly the room", 5, 2, 3, false, true, 5},
+		{"the whole empty queue", 5, 0, 5, false, true, 5},
+		{"one past the whole queue", 5, 0, 6, false, false, 0},
+		{"full queue, one row", 5, 5, 1, false, false, 5},
+		{"full queue, no rows", 5, 5, 0, false, true, 5},
+		{"closed client", 5, 0, 1, true, false, 0},
+	}
+	for _, c := range cases {
+		var recorded []string
+		cl := idleClient(c.size, func(table, result string) { recorded = append(recorded, table+":"+result) })
+		for _, w := range rows("pre", c.prefill) {
+			if !cl.Enqueue(w) {
+				t.Fatalf("%s: prefill refused", c.name)
+			}
+		}
+		cl.closed = c.closed
+		if got := cl.EnqueueAll(rows("batch", c.batch)); got != c.ok {
+			t.Errorf("%s: EnqueueAll %v, want %v", c.name, got, c.ok)
+		}
+		if cl.Depth() != c.depth {
+			t.Errorf("%s: depth %d, want %d", c.name, cl.Depth(), c.depth)
+		}
+		if len(recorded) != 0 {
+			t.Errorf("%s: recorded %v, want nothing (a refused batch is Node's to write)", c.name, recorded)
+		}
+		var bodies []string
+		for cl.Depth() > 0 {
+			bodies = append(bodies, string((<-cl.queue).Body))
+		}
+		var want []string
+		for i := 0; i < c.prefill; i++ {
+			want = append(want, "pre-"+strconv.Itoa(i))
+		}
+		if c.ok {
+			for i := 0; i < c.batch; i++ {
+				want = append(want, "batch-"+strconv.Itoa(i))
+			}
+		}
+		if strings.Join(bodies, ",") != strings.Join(want, ",") {
+			t.Errorf("%s: queued %v, want %v", c.name, bodies, want)
+		}
+	}
+}
+
+// Concurrent batches cannot both pass the room check and then overflow: 40 batches of 7 rows race
+// for a queue of 100, so exactly 14 are queued (98 rows, then 2 slots, too few for any other) and
+// each one's rows sit together in its own order.
+func TestEnqueueAllConcurrentBatches(t *testing.T) {
+	const size, batches, per = 100, 40, 7
+	cl := idleClient(size, nil)
+	var wg sync.WaitGroup
+	var accepted atomic.Int32
+	start := make(chan struct{})
+	for b := 0; b < batches; b++ {
+		wg.Add(1)
+		go func(b int) {
+			defer wg.Done()
+			<-start
+			if cl.EnqueueAll(rows("b"+strconv.Itoa(b), per)) {
+				accepted.Add(1)
+			}
+		}(b)
+	}
+	close(start)
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("EnqueueAll blocked: two batches passed the room check and overflowed the queue")
+	}
+	if accepted.Load() != 14 || cl.Depth() != 98 {
+		t.Fatalf("accepted %d batches, depth %d; want 14 and 98", accepted.Load(), cl.Depth())
+	}
+	seen := map[string]bool{}
+	for g := 0; g < 14; g++ {
+		var tag string
+		for i := 0; i < per; i++ {
+			body := string((<-cl.queue).Body)
+			cut := strings.LastIndexByte(body, '-')
+			if i == 0 {
+				tag = body[:cut]
+				if seen[tag] {
+					t.Fatalf("batch %s queued twice", tag)
+				}
+				seen[tag] = true
+			}
+			if body != tag+"-"+strconv.Itoa(i) {
+				t.Fatalf("group %d row %d is %q, want %s-%d: a batch was split", g, i, body, tag, i)
+			}
+		}
 	}
 }

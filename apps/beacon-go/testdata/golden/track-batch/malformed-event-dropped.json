@@ -1,0 +1,41 @@
+{
+  "name": "malformed-event-dropped",
+  "endpoint": "track-batch",
+  "request": {
+    "method": "POST",
+    "target": "/api/track/batch",
+    "headers": {
+      "host": "www.example.test",
+      "origin": "https://www.example.test",
+      "content-type": "application/json",
+      "user-agent": "Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0",
+      "cf-connecting-ip": "203.0.113.7"
+    },
+    "body": "[{\"kind\":\"search\",\"data\":{\"query\":\"kept\",\"index\":\"i\"}},{\"kind\":\"action\",\"data\":{\"type\":\"Tip_Click\",\"details\":{\"toUserId\":\"three\"}}},{\"kind\":\"action\",\"data\":{\"type\":\"AwardBounty_Click\"}}]"
+  },
+  "session": null,
+  "trackerEnabled": true,
+  "fallback": "track-event-invalid",
+  "expect": {
+    "status": 200,
+    "headers": {
+      "vary": "Authorization",
+      "access-control-allow-origin": "*",
+      "access-control-allow-headers": "Authorization, Content-Type, *",
+      "access-control-allow-methods": "POST",
+      "cache-control": "public, s-maxage=300, stale-while-revalidate=150"
+    },
+    "body": "",
+    "writes": [
+      {
+        "table": "search",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"query\":\"kept\",\"index\":\"i\",\"filters\":\"\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"AwardBounty_Click\",\"details\":\"\"}"
+      }
+    ]
+  },
+  "shadow": "{\"method\":\"POST\",\"target\":\"/api/track/batch\",\"query\":\"\",\"headers\":{\"host\":\"www.example.test\",\"origin\":\"https://www.example.test\",\"user-agent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"content-type\":\"application/json\",\"cf-connecting-ip\":\"203.0.113.7\"},\"body\":\"[{\\\"kind\\\":\\\"search\\\",\\\"data\\\":{\\\"query\\\":\\\"kept\\\",\\\"index\\\":\\\"i\\\"}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"Tip_Click\\\",\\\"details\\\":{\\\"toUserId\\\":\\\"three\\\"}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"AwardBounty_Click\\\"}}]\",\"bodyIsString\":false,\"node\":{\"status\":200,\"headers\":{\"access-control-allow-origin\":\"*\",\"access-control-allow-headers\":\"Authorization, Content-Type, *\",\"access-control-allow-methods\":\"POST\",\"vary\":\"Authorization\",\"cache-control\":\"public, s-maxage=300, stale-while-revalidate=150\"},\"body\":\"\",\"writes\":[{\"table\":\"search\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"query\\\":\\\"kept\\\",\\\"index\\\":\\\"i\\\",\\\"filters\\\":\\\"\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"AwardBounty_Click\\\",\\\"details\\\":\\\"\\\"}\"}]}}"
+}

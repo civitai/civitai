@@ -1,0 +1,31 @@
+{
+  "name": "invalid-text-body",
+  "endpoint": "track-batch",
+  "request": {
+    "method": "POST",
+    "target": "/api/track/batch",
+    "headers": {
+      "host": "www.example.test",
+      "origin": "https://www.example.test",
+      "cf-connecting-ip": "203.0.113.7"
+    },
+    "body": "[{\"kind\":"
+  },
+  "session": null,
+  "trackerEnabled": true,
+  "fallback": "",
+  "expect": {
+    "status": 400,
+    "headers": {
+      "vary": "Authorization",
+      "access-control-allow-origin": "*",
+      "access-control-allow-headers": "Authorization, Content-Type, *",
+      "access-control-allow-methods": "POST",
+      "cache-control": "public, s-maxage=300, stale-while-revalidate=150",
+      "etag": "\"eueval305xc\""
+    },
+    "body": "invalid body",
+    "writes": []
+  },
+  "shadow": "{\"method\":\"POST\",\"target\":\"/api/track/batch\",\"query\":\"\",\"headers\":{\"host\":\"www.example.test\",\"origin\":\"https://www.example.test\",\"cf-connecting-ip\":\"203.0.113.7\"},\"body\":\"[{\\\"kind\\\":\",\"bodyIsString\":true,\"node\":{\"status\":400,\"headers\":{\"access-control-allow-origin\":\"*\",\"access-control-allow-headers\":\"Authorization, Content-Type, *\",\"access-control-allow-methods\":\"POST\",\"vary\":\"Authorization\",\"cache-control\":\"public, s-maxage=300, stale-while-revalidate=150\",\"etag\":\"\\\"eueval305xc\\\"\"},\"body\":\"invalid body\",\"writes\":[]}}"
+}

@@ -18,7 +18,7 @@ func TestGolden(t *testing.T) {
 	for _, fx := range fixtures {
 		counts[fx.Endpoint]++
 	}
-	if counts[beacon.EndpointPing] < 50 || counts[beacon.EndpointPulse] < 30 {
+	if counts[beacon.EndpointPing] < 50 || counts[beacon.EndpointPulse] < 30 || counts[beacon.EndpointTrackBatch] < 60 {
 		t.Fatalf("fixtures loaded: %v", counts)
 	}
 	served, fellBack := 0, 0
@@ -40,7 +40,7 @@ func TestGolden(t *testing.T) {
 			served++
 		})
 	}
-	if served < 70 || fellBack < 8 {
+	if served < 120 || fellBack < 20 {
 		t.Fatalf("served %d, fell back %d: fewer than the fixtures hold", served, fellBack)
 	}
 }

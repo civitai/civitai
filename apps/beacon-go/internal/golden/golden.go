@@ -26,8 +26,8 @@ import (
 // Dir is testdata/golden relative to a package directory under internal/.
 var Dir = filepath.Join("..", "..", "testdata", "golden")
 
-// Fixture is one golden case (testdata/golden/{ping,pulse}/*.json, written by gen.ts from the Node
-// code; see that file for where each expected value comes from).
+// Fixture is one golden case (testdata/golden/{ping,pulse,track-batch}/*.json, written by gen.ts from
+// the Node code; see that file for where each expected value comes from).
 type Fixture struct {
 	Name     string `json:"name"`
 	Endpoint string `json:"endpoint"`
@@ -74,7 +74,7 @@ var GoldenNow = time.Unix(1_780_000_000+3600, 0)
 func LoadFixtures(t testing.TB, dir string) []Fixture {
 	t.Helper()
 	var out []Fixture
-	for _, ep := range []string{beacon.EndpointPing, beacon.EndpointPulse} {
+	for _, ep := range []string{beacon.EndpointPing, beacon.EndpointPulse, beacon.EndpointTrackBatch} {
 		files, err := filepath.Glob(filepath.Join(dir, ep, "*.json"))
 		if err != nil {
 			t.Fatal(err)

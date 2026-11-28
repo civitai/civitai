@@ -1,0 +1,433 @@
+{
+  "name": "max-events",
+  "endpoint": "track-batch",
+  "request": {
+    "method": "POST",
+    "target": "/api/track/batch",
+    "headers": {
+      "host": "www.example.test",
+      "origin": "https://www.example.test",
+      "content-type": "application/json",
+      "user-agent": "Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0",
+      "cf-connecting-ip": "203.0.113.7"
+    },
+    "body": "[{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":0}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":1}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":2}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":3}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":4}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":5}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":6}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":7}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":8}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":9}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":10}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":11}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":12}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":13}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":14}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":15}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":16}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":17}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":18}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":19}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":20}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":21}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":22}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":23}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":24}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":25}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":26}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":27}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":28}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":29}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":30}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":31}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":32}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":33}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":34}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":35}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":36}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":37}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":38}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":39}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":40}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":41}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":42}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":43}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":44}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":45}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":46}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":47}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":48}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":49}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":50}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":51}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":52}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":53}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":54}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":55}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":56}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":57}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":58}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":59}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":60}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":61}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":62}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":63}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":64}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":65}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":66}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":67}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":68}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":69}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":70}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":71}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":72}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":73}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":74}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":75}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":76}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":77}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":78}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":79}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":80}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":81}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":82}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":83}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":84}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":85}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":86}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":87}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":88}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":89}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":90}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":91}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":92}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":93}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":94}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":95}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":96}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":97}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":98}}},{\"kind\":\"action\",\"data\":{\"type\":\"NotEnoughFunds\",\"details\":{\"amount\":99}}}]"
+  },
+  "session": null,
+  "trackerEnabled": true,
+  "fallback": "",
+  "expect": {
+    "status": 200,
+    "headers": {
+      "vary": "Authorization",
+      "access-control-allow-origin": "*",
+      "access-control-allow-headers": "Authorization, Content-Type, *",
+      "access-control-allow-methods": "POST",
+      "cache-control": "public, s-maxage=300, stale-while-revalidate=150"
+    },
+    "body": "",
+    "writes": [
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":0}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":1}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":2}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":3}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":4}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":5}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":6}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":7}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":8}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":9}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":10}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":11}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":12}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":13}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":14}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":15}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":16}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":17}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":18}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":19}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":20}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":21}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":22}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":23}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":24}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":25}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":26}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":27}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":28}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":29}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":30}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":31}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":32}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":33}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":34}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":35}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":36}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":37}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":38}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":39}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":40}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":41}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":42}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":43}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":44}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":45}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":46}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":47}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":48}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":49}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":50}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":51}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":52}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":53}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":54}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":55}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":56}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":57}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":58}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":59}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":60}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":61}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":62}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":63}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":64}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":65}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":66}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":67}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":68}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":69}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":70}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":71}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":72}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":73}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":74}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":75}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":76}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":77}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":78}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":79}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":80}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":81}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":82}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":83}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":84}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":85}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":86}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":87}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":88}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":89}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":90}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":91}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":92}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":93}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":94}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":95}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":96}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":97}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":98}\"}"
+      },
+      {
+        "table": "actions",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"NotEnoughFunds\",\"details\":\"{\\\"amount\\\":99}\"}"
+      }
+    ]
+  },
+  "shadow": "{\"method\":\"POST\",\"target\":\"/api/track/batch\",\"query\":\"\",\"headers\":{\"host\":\"www.example.test\",\"origin\":\"https://www.example.test\",\"user-agent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"content-type\":\"application/json\",\"cf-connecting-ip\":\"203.0.113.7\"},\"body\":\"[{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":0}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":1}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":2}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":3}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":4}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":5}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":6}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":7}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":8}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":9}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":10}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":11}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":12}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":13}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":14}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":15}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":16}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":17}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":18}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":19}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":20}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":21}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":22}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":23}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":24}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":25}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":26}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":27}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":28}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":29}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":30}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":31}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":32}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":33}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":34}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":35}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":36}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":37}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":38}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":39}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":40}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":41}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":42}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":43}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":44}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":45}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":46}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":47}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":48}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":49}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":50}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":51}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":52}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":53}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":54}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":55}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":56}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":57}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":58}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":59}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":60}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":61}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":62}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":63}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":64}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":65}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":66}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":67}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":68}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":69}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":70}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":71}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":72}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":73}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":74}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":75}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":76}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":77}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":78}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":79}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":80}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":81}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":82}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":83}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":84}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":85}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":86}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":87}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":88}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":89}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":90}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":91}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":92}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":93}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":94}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":95}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":96}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":97}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":98}}},{\\\"kind\\\":\\\"action\\\",\\\"data\\\":{\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":{\\\"amount\\\":99}}}]\",\"bodyIsString\":false,\"node\":{\"status\":200,\"headers\":{\"access-control-allow-origin\":\"*\",\"access-control-allow-headers\":\"Authorization, Content-Type, *\",\"access-control-allow-methods\":\"POST\",\"vary\":\"Authorization\",\"cache-control\":\"public, s-maxage=300, stale-while-revalidate=150\"},\"body\":\"\",\"writes\":[{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":0}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":1}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":2}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":3}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":4}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":5}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":6}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":7}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":8}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":9}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":10}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":11}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":12}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":13}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":14}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":15}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":16}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":17}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":18}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":19}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":20}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":21}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":22}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":23}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":24}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":25}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":26}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":27}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":28}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":29}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":30}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":31}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":32}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":33}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":34}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":35}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":36}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":37}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":38}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":39}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":40}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":41}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":42}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":43}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":44}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":45}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":46}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":47}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":48}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":49}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":50}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":51}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":52}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":53}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":54}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":55}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":56}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":57}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":58}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":59}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":60}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":61}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":62}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":63}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":64}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":65}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":66}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":67}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":68}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":69}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":70}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":71}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":72}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":73}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":74}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":75}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":76}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":77}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":78}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":79}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":80}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":81}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":82}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":83}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":84}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":85}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":86}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":87}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":88}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":89}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":90}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":91}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":92}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":93}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":94}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":95}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":96}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":97}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":98}\\\"}\"},{\"table\":\"actions\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"NotEnoughFunds\\\",\\\"details\\\":\\\"{\\\\\\\"amount\\\\\\\":99}\\\"}\"}]}}"
+}

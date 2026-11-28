@@ -14,7 +14,10 @@ import (
 const EndpointLabel = "beacon_endpoint"
 
 // Endpoints are the label values: one per beacon.
-var Endpoints = []string{beacon.EndpointPing, beacon.EndpointPulse}
+var Endpoints = []string{beacon.EndpointPing, beacon.EndpointPulse, beacon.EndpointTrackBatch}
+
+// Tables are the tracker tables the beacons write.
+var Tables = []string{beacon.TablePageViews, beacon.TableViews, beacon.TableSearch, beacon.TableActions}
 
 // Metrics are the beacon_go_* series. Every label takes values from a fixed set.
 type Metrics struct {
@@ -104,7 +107,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			m.ShadowCompare.WithLabelValues(e, r)
 		}
 	}
-	for _, t := range []string{beacon.TablePageViews, beacon.TableViews} {
+	for _, t := range Tables {
 		for _, r := range tracker.Results {
 			m.TrackerWrites.WithLabelValues(t, r)
 		}
@@ -141,6 +144,8 @@ var diffFields = func() map[string]bool {
 	rows := map[string][]string{
 		beacon.TablePageViews: {"userId", "memberType", "ip", "pageId", "path", "host", "country", "ads", "duration", "windowWidth", "windowHeight"},
 		beacon.TableViews:     {"userId", "ip", "userAgent", "type", "entityType", "entityId", "ads", "nsfw", "details", "nsfwLevel", "browsingLevel"},
+		beacon.TableSearch:    {"userId", "ip", "userAgent", "query", "index", "filters"},
+		beacon.TableActions:   {"userId", "ip", "userAgent", "type", "reason", "details"},
 	}
 	for table, keys := range rows {
 		for _, k := range append(keys, "table", "order", "unparsed") {
