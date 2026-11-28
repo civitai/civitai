@@ -290,6 +290,7 @@ func TestServeParityV1ImagesReplaysAPIKeyAnswers(t *testing.T) {
 			t.Fatalf("replays %d, want 1 with no credential", node.callCount())
 		}
 	})
+	// Invariant guard (the pre-change sampler never replayed this route either), not regression coverage.
 	t.Run("no images upstream: no replay", func(t *testing.T) {
 		node, reg := run(t, false, map[string]string{"Authorization": "Bearer k-full-user"})
 		if node.callCount() != 0 || v1ParityTotal(t, reg, EndpointV1Images) != 0 {

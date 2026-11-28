@@ -2138,6 +2138,13 @@ the one route whose API-key answers (`api-key`, `api-key-scoped`; never `api-key
 credential stands for no session) are replayed with their credential (`parityReplaysCredential`):
 the answer is the key's user's, which is what the replay compares, and it goes only to the Node app
 the request would have been handed back to. Every other credentialed answer stays `skipped_credential`.
+The images replays share `FEED_GO_SERVE_PARITY_SAMPLE_RATE` and the replay queue with the tRPC
+routes: turning the switch on sends that fraction of this (heavy) route's served answers to its Node
+app, and its replays can push tRPC ones into `dropped_queue`. Size the rate for both before turning it on.
+
+The viewer classes are set on every images compare, switches or not, so cookie and signed-out
+images samples are counted per class from this release on (new series only; nothing is answered
+differently).
 
 ## 14. `image.getInfinite` (tRPC, shadow; served only behind `FEED_GO_SERVE_INFINITE`, default off)
 
