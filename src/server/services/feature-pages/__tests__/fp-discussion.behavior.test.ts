@@ -568,25 +568,29 @@ describe('retracts', () => {
     expect((await mirrorRow(clean.sourceId)).goneCause).toBe('author');
   });
 
-  it('the hide toggle hides a Feature Pages comment and answers an error on the unhide, which leaves it hidden', async () => {
+  it('the site hide toggle refuses a Feature Pages comment either way: the moderator app hides it', async () => {
     const { toggleHideCommentV3Handler } = await import(
       '~/server/controllers/commentv3.controller'
     );
     const { comment } = await post('to hide');
-    await toggleHideCommentV3Handler({
-      ctx: handlerCtx(OTHER, true),
-      input: { id: comment.sourceId },
-    });
-    await expect(
-      toggleHideCommentV3Handler({ ctx: handlerCtx(OTHER, true), input: { id: comment.sourceId } })
-    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
-    expect(
+    const hiddenNow = async () =>
       (
         await q<{ hidden: boolean }>(`SELECT hidden FROM "CommentV3" WHERE id = $1`, [
           comment.sourceId,
         ])
-      )[0].hidden
-    ).toBe(true);
+      )[0].hidden;
+    const toggle = () =>
+      toggleHideCommentV3Handler({ ctx: handlerCtx(OTHER, true), input: { id: comment.sourceId } });
+    await expect(toggle()).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'Hide or unhide this comment from the moderator app.',
+    });
+    expect(await hiddenNow()).toBe(false);
+    await q(`UPDATE "CommentV3" SET hidden = true, "hiddenAt" = now() WHERE id = $1`, [
+      comment.sourceId,
+    ]);
+    await expect(toggle()).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(await hiddenNow()).toBe(true);
   });
 
   it("an author's retract takes the comment away", async () => {
