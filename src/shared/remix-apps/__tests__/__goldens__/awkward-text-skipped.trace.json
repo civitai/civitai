@@ -1,0 +1,128 @@
+{
+  "source": {
+    "imageId": 7,
+    "url": "https://image.example/source.png",
+    "width": 1200,
+    "height": 800
+  },
+  "trace": [
+    {
+      "type": "ask",
+      "spec": {
+        "kind": "text",
+        "prompt": "Note \"hi\" it's \\n \\ ${ctx.source} */ // x y\nz",
+        "maxLength": 200,
+        "optional": true
+      },
+      "answer": ""
+    },
+    {
+      "type": "ask",
+      "spec": {
+        "kind": "choice",
+        "prompt": "Mood \"hi\" it's \\n \\ ${ctx.source} */ // x y\nz",
+        "options": [
+          {
+            "value": "calm",
+            "label": "Calm \"hi\" it's \\n \\ ${ctx.source} */ // x y\nz"
+          },
+          {
+            "value": "bold",
+            "label": "Bold"
+          },
+          {
+            "value": "constructor",
+            "label": "Odd value"
+          }
+        ]
+      },
+      "answer": "constructor"
+    },
+    {
+      "type": "workflow",
+      "request": {
+        "kind": "image",
+        "prompt": "plain first \"hi\" it's \\n \\ ${ctx.source} */ // x y\nz plain",
+        "images": [
+          {
+            "url": "https://image.example/source.png",
+            "width": 1200,
+            "height": 800
+          }
+        ],
+        "aspectRatio": "2:3",
+        "quantity": 2
+      },
+      "result": {
+        "workflowId": "mock-2",
+        "images": [
+          {
+            "url": "mock://remix/2/0",
+            "width": 1200,
+            "height": 800
+          },
+          {
+            "url": "mock://remix/2/1",
+            "width": 1200,
+            "height": 800
+          }
+        ]
+      }
+    },
+    {
+      "type": "workflow",
+      "request": {
+        "kind": "image",
+        "prompt": "Again",
+        "images": [
+          {
+            "url": "mock://remix/2/0",
+            "width": 1200,
+            "height": 800
+          }
+        ],
+        "aspectRatio": "source",
+        "quantity": 1
+      },
+      "result": {
+        "workflowId": "mock-3",
+        "images": [
+          {
+            "url": "mock://remix/3/0",
+            "width": 1200,
+            "height": 800
+          }
+        ]
+      }
+    },
+    {
+      "type": "workflow",
+      "request": {
+        "kind": "upscale",
+        "image": {
+          "url": "mock://remix/3/0",
+          "width": 1200,
+          "height": 800
+        },
+        "scale": 2
+      },
+      "result": {
+        "workflowId": "mock-4",
+        "images": [
+          {
+            "url": "mock://remix/4/0",
+            "width": 2400,
+            "height": 1600
+          }
+        ]
+      }
+    }
+  ],
+  "outputs": [
+    {
+      "url": "mock://remix/4/0",
+      "width": 2400,
+      "height": 1600
+    }
+  ]
+}

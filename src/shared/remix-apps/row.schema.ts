@@ -227,6 +227,9 @@ function checkWiring(
   });
 }
 
+/** A declarative spec's shape and wiring, without the engine allowlist: what a generated app is built from. */
+export const remixDeclarativeSpecSchema = declarativeSpec.superRefine(checkWiring);
+
 /** A spec's shape and wiring, without the engine allowlist: what a stored row must satisfy. */
 const storedSpecSchema = z.union([declarativeSpec, codeSpec, userSpec]).superRefine(checkWiring);
 
