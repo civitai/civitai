@@ -273,6 +273,10 @@ describe('caseIntake', () => {
     expect(alerts).toHaveLength(1);
     expect(alerts[0].join(' ')).toContain(out.publicRef);
     expect(alerts[0].join(' ')).not.toContain('example.com');
+    // Case reference and request type only: no link to the content and nothing the submitter wrote.
+    expect(alerts[0].join(' ')).not.toMatch(/https?:\/\/|civitai\.com\//);
+    for (const v of Object.values(values).flat())
+      if (typeof v === 'string') expect(alerts[0].join(' ')).not.toContain(v);
   });
 
   it('raises no alert for an ordinary request', async () => {

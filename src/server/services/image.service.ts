@@ -85,6 +85,7 @@ import {
   servableLevelWhere,
   KNIGHTS_VOTE_NSFW_LEVEL_REASON,
   minorMatureImageVisibleSql,
+  noBlockMarkerWhere,
   reviewKeptWhenLiftedSql,
   liftedBlockedForSql,
   liftedIngestionSql,
@@ -316,6 +317,7 @@ import {
 } from '~/server/services/image-cacher-retraction';
 import {
   handleLogError,
+  isPrismaRecordNotFound,
   throwAuthorizationError,
   throwBadRequestError,
   throwDbError,
@@ -6880,6 +6882,8 @@ async function afterImageNsfwLevelSet({
   await trackModActivity(userId, { entityType: 'image', entityId: id, activity });
 }
 
+const BLOCKED_RATING_REFUSED = 'This image is blocked: lift the block before rating it.';
+
 export async function updateImageNsfwLevel({
   id,
   nsfwLevel,
@@ -6889,12 +6893,15 @@ export async function updateImageNsfwLevel({
   activity,
   reason,
   csamReview = false,
+  skipBlocked = false,
 }: UpdateImageNsfwLevelOutput & {
   userId: number;
   isModerator?: boolean;
   activity?: ImageModActivity['activity'];
   /** The moderator's `csamReports` grant: without it, loosening a withheld image is refused. */
   csamReview?: boolean;
+  /** A moderator's vote in the Knights game: a blocked image is skipped, as a consensus is, not refused. */
+  skipBlocked?: boolean;
 }) {
   if (!nsfwLevel) throw throwBadRequestError();
   if (isModerator) {
@@ -6902,7 +6909,7 @@ export async function updateImageNsfwLevel({
     // decides whether a rating may come down from it — a lagging replica would misreport it.
     const image = await dbWrite.image.findUnique({
       where: { id },
-      select: { metadata: true, postId: true, nsfwLevel: true },
+      select: { metadata: true, postId: true, nsfwLevel: true, ingestion: true, blockedFor: true },
     });
     if (!image) throw throwNotFoundError('Image not found');
     // A Knights consensus is a vote, not a moderator's decision, and has no grant to check.
@@ -6917,8 +6924,22 @@ export async function updateImageNsfwLevel({
       ...ratingRecordedUnderGrace(metadata, nsfwLevel),
     };
 
-    if (activity === 'setNsfwLevelKono') {
-      // The write itself refuses a consensus that loosens a withheld image, as the webhook's does.
+    // A blocked image keeps its Blocked level until a lift; rating it Blocked again is allowed. The
+    // write decides on the row itself; the read above only names the skip in the log.
+    const reblock = nsfwLevel === NsfwLevel.Blocked;
+    const kono = activity === 'setNsfwLevelKono';
+    const skippedBlocked = () => {
+      logToAxiom({
+        type: 'info',
+        name: 'rating-write-skipped-blocked',
+        imageId: id,
+        source: kono ? 'kono-consensus' : 'knights-moderator',
+      });
+      return image.nsfwLevel;
+    };
+    if (kono) {
+      // The write itself refuses a consensus that loosens a withheld image, as the webhook's does,
+      // and skips a blocked one rather than throwing.
       const written = await dbWrite.$executeRaw`
         UPDATE "Image" i SET "nsfwLevel" = ${nsfwLevel}, "nsfwLevelLocked" = TRUE
         WHERE i.id = ${id}
@@ -6926,16 +6947,22 @@ export async function updateImageNsfwLevel({
             ${Prisma.raw(loosensImageLevelSql(nsfwLevel, 'i."nsfwLevel"'))}
             AND ${Prisma.raw(moderatorWithheldSql('i', { csamReview: false }))}
           )
+          AND (${reblock} OR NOT ${hasBlockMarkerSql('i')})
       `;
-      if (!written) return image.nsfwLevel;
+      if (!written) return !reblock && hasBlockMarker(image) ? skippedBlocked() : image.nsfwLevel;
     }
-    await dbWrite.image.update({
-      where: { id },
-      data:
-        activity === 'setNsfwLevelKono'
+    try {
+      await dbWrite.image.update({
+        where: { ...(kono || reblock ? {} : noBlockMarkerWhere()), id },
+        data: kono
           ? { metadata: updatedMetadata }
           : { nsfwLevel, nsfwLevelLocked: true, metadata: updatedMetadata },
-    });
+      });
+    } catch (error) {
+      if (kono || !isPrismaRecordNotFound(error)) throw error;
+      if (skipBlocked) return skippedBlocked();
+      throw throwBadRequestError(BLOCKED_RATING_REFUSED);
+    }
     await afterImageNsfwLevelSet({
       id,
       postId: image.postId,
@@ -7018,9 +7045,21 @@ export async function setImagesNsfwLevel({
   // primary: the current level decides which items loosen a rating.
   const current = await dbWrite.image.findMany({
     where: { id: { in: items.map((item) => item.imageId) } },
-    select: { id: true, nsfwLevel: true },
+    select: { id: true, nsfwLevel: true, ingestion: true, blockedFor: true },
   });
   const levels = new Map(current.map((image) => [image.id, image.nsfwLevel]));
+  // All or nothing: a blocked item refuses the batch before any item is written. Each write still
+  // checks its own row, for a block that lands in between.
+  const marked = new Set(current.filter(hasBlockMarker).map((image) => image.id));
+  const blocked = items
+    .filter((item) => item.nsfwLevel !== NsfwLevel.Blocked && marked.has(item.imageId))
+    .map((item) => item.imageId);
+  if (blocked.length)
+    throw throwBadRequestError(
+      `Blocked images: lift the block before rating them. Nothing was changed: ${blocked.join(
+        ', '
+      )}.`
+    );
   await assertMayLoosenImages(
     items
       .filter((item) => loosensImageLevel(levels.get(item.imageId) ?? 0, item.nsfwLevel))
@@ -7029,14 +7068,25 @@ export async function setImagesNsfwLevel({
   );
   const imageIds: number[] = [];
   for (const item of items) {
-    await updateImageNsfwLevel({
-      id: item.imageId,
-      nsfwLevel: item.nsfwLevel,
-      userId,
-      isModerator: true,
-      csamReview,
-      ...(status && { status }),
-    });
+    try {
+      await updateImageNsfwLevel({
+        id: item.imageId,
+        nsfwLevel: item.nsfwLevel,
+        userId,
+        isModerator: true,
+        csamReview,
+        ...(status && { status }),
+      });
+    } catch (error) {
+      // A block that landed after the check above: say what this call already wrote.
+      if (error instanceof TRPCError && error.message === BLOCKED_RATING_REFUSED)
+        throw throwBadRequestError(
+          `Image ${item.imageId} is blocked: lift the block before rating it. Already rated: ${
+            imageIds.join(', ') || 'none'
+          }.`
+        );
+      throw error;
+    }
     imageIds.push(item.imageId);
   }
   return imageIds;

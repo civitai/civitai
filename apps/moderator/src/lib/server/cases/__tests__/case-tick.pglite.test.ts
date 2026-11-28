@@ -68,7 +68,7 @@ describe('caseTick', () => {
     const notYet = await file('2026-11-21T23:00:00Z');
 
     const first = await caseTick(deps('2026-11-23T12:00:00Z'));
-    expect(first).toEqual({ evaluated: 3, alerted: 2, overdue: 2 });
+    expect(first).toEqual({ evaluated: 3, alerted: 2, overdue: 2, unsent: 0 });
     expect(alerts).toHaveLength(1);
     const lines = alerts[0].text.split('\n');
     expect(lines[0]).toContain(lateMinor.publicRef);
@@ -78,11 +78,11 @@ describe('caseTick', () => {
     expect(heartbeat()).toMatchObject({ at: '2026-11-23T12:00:00.000Z', evaluated: 3 });
 
     const second = await caseTick(deps('2026-11-23T12:15:00Z'));
-    expect(second).toEqual({ evaluated: 3, alerted: 0, overdue: 2 });
+    expect(second).toEqual({ evaluated: 3, alerted: 0, overdue: 2, unsent: 0 });
     expect(alerts).toHaveLength(1);
 
     const third = await caseTick(deps('2026-11-24T00:00:00Z'));
-    expect(third).toEqual({ evaluated: 3, alerted: 1, overdue: 3 });
+    expect(third).toEqual({ evaluated: 3, alerted: 1, overdue: 3, unsent: 0 });
     expect(alerts[1].text).toContain(notYet.publicRef);
     const stored = await pg.query<{ n: number }>(
       "SELECT count(*)::int AS n FROM case_event WHERE type = 'clock'"
@@ -138,28 +138,93 @@ describe('caseTick', () => {
       evaluated: 1,
       alerted: 1,
       overdue: 1,
+      unsent: 0,
     });
     expect(alerts).toHaveLength(1);
     expect(alerts[0].text).toContain(counted.publicRef);
   });
 
-  it('re-alerts on the next run when the alert send failed', async () => {
-    const { file, deps, heartbeat } = await setup();
+  it('keeps the threshold and the heartbeat when the alert fails, and records it unsent once', async () => {
+    const { pg, file, deps, heartbeat } = await setup();
     await file('2026-11-20T10:00:00Z');
-    const failing = {
+    const failing = (now: string) => ({
+      ...deps(now),
+      alert: async () => Promise.reject(Object.assign(new Error('x'), { name: 'NoAlertAddress' })),
+    });
+
+    expect(await caseTick(failing('2026-11-23T12:00:00Z'))).toEqual({
+      evaluated: 1,
+      alerted: 0,
+      overdue: 1,
+      unsent: 1,
+    });
+    expect(heartbeat()).toMatchObject({ at: '2026-11-23T12:00:00.000Z', unsent: 1 });
+    await caseTick(failing('2026-11-23T12:15:00Z'));
+    const events = await pg.query<{ type: string; n: number }>(
+      'SELECT type, count(*)::int AS n FROM case_event WHERE type LIKE $1 GROUP BY type ORDER BY type',
+      ['clock%']
+    );
+    expect(events.rows).toEqual([
+      { type: 'clock', n: 1 },
+      { type: 'clock-alert-unsent', n: 1 },
+    ]);
+  });
+
+  it('sends a threshold left unsent on the next run that can send, then never again', async () => {
+    const { pg, file, alerts, deps } = await setup();
+    const late = await file('2026-11-20T10:00:00Z');
+    await caseTick({
       ...deps('2026-11-23T12:00:00Z'),
       alert: async () => Promise.reject(new Error('SES down')),
-    };
-    await expect(caseTick(failing)).rejects.toThrow('SES down');
-    expect(heartbeat()).toBeNull();
+    });
 
-    const sent: string[] = [];
-    const ok = {
-      ...deps('2026-11-23T12:15:00Z'),
-      alert: async (_s: string, t: string) => void sent.push(t),
-    };
-    expect(await caseTick(ok)).toMatchObject({ alerted: 1 });
-    expect(sent).toHaveLength(1);
+    expect(await caseTick(deps('2026-11-23T12:15:00Z'))).toMatchObject({ alerted: 1, unsent: 0 });
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0].text).toContain(late.publicRef);
+    expect(await caseTick(deps('2026-11-23T12:30:00Z'))).toMatchObject({ alerted: 0 });
+    expect(alerts).toHaveLength(1);
+
+    // A later outage records its own unsent event: the once-only rule holds per owed threshold.
+    await pg.query(
+      "UPDATE case_record SET warn_at = '2026-11-23T12:40:00Z' WHERE public_ref = $1",
+      [late.publicRef]
+    );
+    await pg.query("UPDATE case_record SET due_at = '2026-11-24T00:00:00Z' WHERE public_ref = $1", [
+      late.publicRef,
+    ]);
+    await caseTick({
+      ...deps('2026-11-23T12:45:00Z'),
+      alert: async () => Promise.reject(new Error('SES down')),
+    });
+    const unsent = await pg.query<{ n: number }>(
+      "SELECT count(*)::int AS n FROM case_event WHERE type = 'clock-alert-unsent'"
+    );
+    expect(unsent.rows[0].n).toBe(2);
+  });
+
+  it('does not re-send a threshold recorded before the owed marker existed', async () => {
+    const { pg, file, alerts, deps } = await setup();
+    const late = await file('2026-11-20T10:00:00Z');
+    // As the earlier code left it: committed only together with a sent alert, no marker.
+    await pg.query(
+      "INSERT INTO case_event (case_id, type, threshold, data) SELECT id, 'clock', 'overdue@' || to_char(due_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'), '{}' FROM case_record WHERE public_ref = $1",
+      [late.publicRef]
+    );
+    expect(await caseTick(deps('2026-11-23T12:00:00Z'))).toMatchObject({ alerted: 0, unsent: 0 });
+    expect(alerts).toEqual([]);
+  });
+
+  it('writes the heartbeat when recording a sent alert fails', async () => {
+    const { pg, file, deps, heartbeat } = await setup();
+    await file('2026-11-20T10:00:00Z');
+    await pg.exec(`
+      CREATE FUNCTION no_alerted() RETURNS trigger AS $$
+      BEGIN IF NEW.type = 'clock-alerted' THEN RAISE EXCEPTION 'disk full'; END IF; RETURN NEW; END
+      $$ LANGUAGE plpgsql;
+      CREATE TRIGGER no_alerted BEFORE INSERT ON case_event FOR EACH ROW EXECUTE FUNCTION no_alerted();
+    `);
+    await expect(caseTick(deps('2026-11-23T12:00:00Z'))).rejects.toThrow('disk full');
+    expect(heartbeat()).toMatchObject({ at: '2026-11-23T12:00:00.000Z', evaluated: 1 });
   });
 
   it('still alerts when the heartbeat cannot be read', async () => {
@@ -220,13 +285,26 @@ describe('keyValueHeartbeat', () => {
     const hb = keyValueHeartbeat(new Kysely<DB>({ dialect: pgliteDialect(main) }));
 
     expect(await hb.read()).toBeNull();
-    await hb.write({ at: '2026-11-23T08:00:00.000Z', evaluated: 2, alerted: 1, overdue: 1 });
-    await hb.write({ at: '2026-11-23T08:15:00.000Z', evaluated: 3, alerted: 0, overdue: 1 });
+    await hb.write({
+      at: '2026-11-23T08:00:00.000Z',
+      evaluated: 2,
+      alerted: 1,
+      overdue: 1,
+      unsent: 0,
+    });
+    await hb.write({
+      at: '2026-11-23T08:15:00.000Z',
+      evaluated: 3,
+      alerted: 0,
+      overdue: 1,
+      unsent: 2,
+    });
     expect(await hb.read()).toEqual({
       at: '2026-11-23T08:15:00.000Z',
       evaluated: 3,
       alerted: 0,
       overdue: 1,
+      unsent: 2,
     });
     const rows = await main.query<{ key: string }>('SELECT key FROM "KeyValue" ORDER BY key');
     expect(rows.rows.map((r) => r.key)).toEqual(['case-tick-heartbeat', 'other-key']);

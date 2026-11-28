@@ -672,10 +672,13 @@ func run(log *slog.Logger) error {
 		ServeV1Models:  mc.Serve,
 		ServeV1Images:  mc.ServeImages,
 		V1BearerAuth:   mc.BearerAuth,
-		Associated:     associated,
-		Search:         searchDeps,
-		ServeSearch:    sc.Serve,
-		RequestBudget:  cfg.RequestBudget,
+		// The images route's API keys: the shadow's and the public route's switches, apart.
+		V1ImagesBearerAuth:  mc.ImagesBearerAuth,
+		ServeV1ImagesBearer: mc.ImagesServeBearer,
+		Associated:          associated,
+		Search:              searchDeps,
+		ServeSearch:         sc.Serve,
+		RequestBudget:       cfg.RequestBudget,
 		// The pool's resolved ceiling (FEED_GO_DB_MAX_CONNS, the URL's pool_max_conns, or the default).
 		MaxInFlight: server.ResolveMaxInFlight(log, cfg.MaxInFlight, int(poolCfg.MaxConns)),
 		Events:      &server.EventLog{Log: log, FallbackPerMinute: cfg.FallbackLogPerMinute, ErrorPerMinute: cfg.ErrorLogPerMinute},
@@ -739,7 +742,12 @@ func run(log *slog.Logger) error {
 			metrics.FallbackProxyErrors.WithLabelValues(reason).Inc()
 			srv.NoteProxyError(r, reason, err)
 		}, prop)
+		if mc.ParityImages {
+			srv.Parity = withImagesParity(srv.Parity, target, prop)
+		}
 	}
+	log.Info("serve-side parity, /api/v1/images", "FEED_GO_SERVE_PARITY_V1_IMAGES", mc.ParityImages,
+		"on", srv.Parity != nil && srv.Parity.V1ImagesUpstream != nil)
 	// The public /api/search route's one upstream (FEED_GO_SEARCH_FALLBACK_URL); unset, the route is not
 	// mounted.
 	if sc.FallbackURL != "" {
@@ -774,7 +782,8 @@ func run(log *slog.Logger) error {
 		"FEED_GO_V1_BEARER_AUTH", mc.BearerAuth, "FEED_GO_V1_MODELS_ANSWER_NOT_FOUND", mc.AnswerNotFound)
 	log.Info("public /api/v1/images", "FEED_GO_SERVE_V1_IMAGES", mc.ServeImages,
 		"mounted", srv.V1ImagesFallback != nil,
-		"FEED_GO_V1_IMAGES_SERVE_GALLERY_SETTINGS_MISS", cfg.V1ImagesServeGallerySettingsMiss)
+		"FEED_GO_V1_IMAGES_SERVE_GALLERY_SETTINGS_MISS", cfg.V1ImagesServeGallerySettingsMiss,
+		"FEED_GO_V1_IMAGES_BEARER_AUTH", mc.ImagesBearerAuth, "FEED_GO_V1_IMAGES_SERVE_BEARER", mc.ImagesServeBearer)
 	log.Info("GET /api/v1/images legacy-path shapes", "FEED_GO_V1_IMAGES_SERVE_IMAGE_ID", cfg.V1ImagesServeImageID,
 		"FEED_GO_V1_IMAGES_SERVE_MODEL_ONLY", cfg.V1ImagesServeModelOnly)
 	log.Info("public /api/search", "FEED_GO_SERVE_SEARCH", sc.Serve, "mounted", srv.SearchFallback != nil,

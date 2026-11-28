@@ -2082,6 +2082,70 @@ the race (no `raced` entries, as model.getAll's).
 again, with nothing computed. Routing public traffic to the path (a weighted ingress route in the
 infrastructure repo) is a separate step; with the switch on and no route, nothing is served.
 
+### 13.8.1 API credentials (`FEED_GO_V1_IMAGES_BEARER_AUTH`, `FEED_GO_V1_IMAGES_SERVE_BEARER`, each default off)
+
+Off, a request carrying an API credential (any Authorization line, any non-empty `token` value) is
+the `bearer-token` fallback on both paths, as before. Each switch turns the credential's decision on
+for one path: `FEED_GO_V1_IMAGES_BEARER_AUTH` for the shadow, `FEED_GO_V1_IMAGES_SERVE_BEARER` for the
+public route (which also needs `FEED_GO_SERVE_V1_IMAGES`). Both read keys with the `FEED_GO_BEARER_AUTH`
+resolver and refuse startup without it.
+
+**What Node does.** `handleImagesRequest` reads `getApiAuthSession({ whenBanned: 'anonymous', scope:
+{ anyOf: [MediaRead, AIServicesRead] } })`: the credential is read first (`readRequestBearerToken`,
+`authorization.split(' ')[1]`, else `?token=` unless it is the webhook token), and with one the
+cookies are never read; `getSessionFromBearerToken` reads the principal cache (the primary on a
+miss) and may write `lastUsedAt`; `runImageSearch` then reads with `credentialViews`: a full-scope
+personal key gets a cookie session's views (`asOwner`, and `asModerator` for a moderator); any other
+key gets neither (its own unpublished images are withheld from it, its own feed keeps the browsing
+addon's tag exclusions), while its user's id is still the feed query's `currentUserId` and
+getAllImages' `userId` (a page of its own content is a personalized page).
+
+**What is ported** (`auth.Resolver.ImagesCredential`): the same reading over the principal cache
+only, with `feed.V1Request.Viewer` (the views' viewer: nil for a scoped key) apart from
+`V1Request.SessionUserID` (the session user: the feed query's `viewerId` and
+`ImagesQuery.SessionUserID`, which decides `Built.PersonalizedViewerID`). A provider or service token
+and a client-credentials or runner key are signed out; a banned or memorialized user and the
+moderation account are signed out. Every case whose answer is not in the cache, or turns on a setting
+this service does not read, falls back:
+
+| Case | Reason |
+|---|---|
+| a miss, a revocation, an OAuth client's key, an expired or expiring key, a `lastUsedAt` write due | `bearer-key-cache-miss`, `bearer-key-revoked`, `bearer-key-uncacheable`, `bearer-key-expiry`, `bearer-last-used` |
+| a `?token=` (the webhook-token comparison needs a secret) | `bearer-query-token` |
+| several Authorization lines; a key with a byte outside printable ASCII | `bearer-multiple-headers`, `bearer-malformed` |
+| a header with no token part (the app resolves the cookies) | `v1-images-key-none` |
+| a scoped key short of MediaRead and AIServicesRead (answered signed out or as the user by `REST_SCOPE_ENFORCE`) | `v1-images-key-scope` |
+| a scoped key of a moderator (`REST_SCOPE_ENFORCE=enforce` withholds the flag) | `v1-images-key-scoped-moderator` |
+| a system account's write key | `bearer-system-account` |
+
+A session cookie beside a key is still handed back on the public route (`v1-images-session-cookie`).
+The headers are PublicEndpoint's credentialed arm (`private`, `Vary: Authorization, Cookie`).
+
+**The shadow.** The Node sampler mirrors a credentialed request only with
+`FEED_GO_SHADOW_V1_IMAGES_CREDENTIALS` (default off; a `?token=` never, since `nextPage` keeps it),
+sending the key's description in `x-feed-go-credential` (`apiCredentialDescriptor`: `key:<generateSecretHash>`,
+`provider`, `service` or `none`), never the key. `SyntheticV1Request` moves it onto the rebuilt
+request's context, where only `ImagesCredential` reads it.
+
+**Viewer classes.** Every images compare is counted under its viewer class
+(`feed_go_shadow_compare_viewer_total`, `feed_go_shadow_response_viewer_total`;
+`V1ImagesViewerClasses`): the tRPC feeds' classes without a credential, and `api-key` (a full-scope
+key), `api-key-scoped` and `api-key-anon` (a credential that stands for no session) with one.
+
+**Serve-parity** (`FEED_GO_SERVE_PARITY_V1_IMAGES`, default off; needs `FEED_GO_V1_IMAGES_FALLBACK_URL`):
+the §7.2 sampler also replays the images route's served answers to that route's own Node app. It is
+the one route whose API-key answers (`api-key`, `api-key-scoped`; never `api-key-anon`, whose
+credential stands for no session) are replayed with their credential (`parityReplaysCredential`):
+the answer is the key's user's, which is what the replay compares, and it goes only to the Node app
+the request would have been handed back to. Every other credentialed answer stays `skipped_credential`.
+The images replays share `FEED_GO_SERVE_PARITY_SAMPLE_RATE` and the replay queue with the tRPC
+routes: turning the switch on sends that fraction of this (heavy) route's served answers to its Node
+app, and its replays can push tRPC ones into `dropped_queue`. Size the rate for both before turning it on.
+
+The viewer classes are set on every images compare, switches or not, so cookie and signed-out
+images samples are counted per class from this release on (new series only; nothing is answered
+differently).
+
 ## 14. `image.getInfinite` (tRPC, shadow; served only behind `FEED_GO_SERVE_INFINITE`, default off)
 
 The flat image feed (`/images`, a creator's images, a post's carousel tail, a tag page):
@@ -3854,7 +3918,7 @@ the CPU goes in Node, and it is the reason for the port.
 | Area | Ported | Falls back (reason) |
 |---|---|---|
 | Route | the three paths, `POST` | another path, `/api/search/token` included (`search-path`), an escaped segment (`search-path`), another method (`method`) |
-| Body | the three zod schemas, key by key (generated into `inputschema/schemas.json`, held by `TestInputKeyLedger`), the windows clamped to 1000 | a value zod refuses or one not proven accepted (`search-input-invalid`), a key the schema lacks (`input-unknown-key`, after the refusals), a duplicate key (`search-input-duplicate`), not JSON or not UTF-8 (`search-input`), not `application/json` UTF-8 (`search-content-type`), past 1 MiB (`search-body-size`) |
+| Body | the three zod schemas, key by key (generated into `inputschema/schemas.json`, held by `TestInputKeyLedger`), the windows clamped to 1000 | a value zod refuses or one not proven accepted (`search-input-invalid`), a key the schema lacks (`input-unknown-key`, after the refusals; except on `facet-search` the search schema's keys the facet schema lacks, which the site's search client sends and zod strips: dropped unread as Node drops them, `facetStrippedKeys`), a duplicate key (`search-input-duplicate`), not JSON or not UTF-8 (`search-input`), not `application/json` UTF-8 (`search-content-type`), past 1 MiB (`search-body-size`) |
 | Viewer | signed out; session cookies (§4) with the session user's saved `browsingLevel` / `showNsfw`; moderators | any API credential, header or `?token=` (`bearer-token`); a banned session, Node's 403 (`search-banned`); preferences of a kind not read as JavaScript reads them (`search-session-shape`) |
 | Host | the colours, the domain cap, region restriction | public route only: **any non-empty `q` on the SFW site** (`search-profanity`: the profanity check is not ported; a shadow sample is computed, Node samples only after its own check passed) |
 | Indexes | the seven searchable ones | a retired or unknown index (`search-index`) |
@@ -3926,7 +3990,27 @@ sum by (result) (rate(feed_go_shadow_compare_total{feed_endpoint="site-search"}[
 
 # What blocks serving: fallback reasons. search-profanity is public-route only (mode="serve").
 topk(10, sum by (reason) (rate(feed_go_fallback_total{feed_endpoint="site-search",mode="shadow"}[1h])))
+
+# The servable share S of the sampled traffic: what the public route would do with each sample.
+sum(rate(feed_go_shadow_servable_total{feed_endpoint="site-search",reason="servable"}[1h]))
+  / sum(rate(feed_go_shadow_servable_total{feed_endpoint="site-search"}[1h]))
+sum by (reason) (rate(feed_go_shadow_servable_total{feed_endpoint="site-search"}[1h]))
 ```
+
+**The servable probe** (`feed_go_shadow_servable_total{reason}`, `observeSearchServable`, counted after the compute's budget has ended it). Each sample is
+counted once: `servable`, else the first hand-back serving would reach, in serving's order — the region
+block before the compute (`searchPreCompute`, which serving runs too), then the compute's own fallback
+reason, with the checks only the public route makes (`search-etag`, `search-profanity`:
+`searchServeOnly`) noted where serving would stop at them while the shadow computes on.
+`region-blocked` is a drift signal here: Node answers a blocked region's 451 before it samples, so a
+sample shows it only when the two runtimes' region rules disagree. A shadow-only failure
+(`search-no-upstream`, the shadow budget's `deadline`) is counted under its own reason. The probe
+cannot see the rate-limit ceiling (Node samples after its own limit passed the request, and each
+request is counted once by whichever side answers), a signed-out caller without a usable
+`cf-connecting-ip` (the sampler does not forward it), the body size (Next's 413 comes before the
+handler), or a full pod's `bulkhead` (load, not the request); nor what Node never samples: API credentials, and every answer but a 200 (its own 451, 429
+and 422, a backend 4xx or 5xx). S is therefore the share of the SAMPLED traffic; those classes are
+read from Node's side.
 
 Node's side: the route's CPU in the same profile window. The shadow compares SFW-site typed queries
 too (that is where the PG cap applies, so where a missed clause would leak), but the public route hands

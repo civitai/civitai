@@ -514,3 +514,42 @@ describe('other audiences', () => {
     expect(await errorOf(loadAs({ id: BLOCK_OWNER }))).toEqual(notFound);
   });
 });
+
+// The two `home_block_get_total` tiers only a Collection row reaches (the rest are pinned in
+// home-block-get-counter.test.ts).
+describe('home_block_get_total for a collection block', () => {
+  type Readable = {
+    get(): Promise<{ values: { labels: Record<string, string>; value: number }[] }>;
+  };
+  async function series() {
+    const { homeBlockGetCounter } = await import('~/server/prom/home-block-get.metrics');
+    const { values } = await (homeBlockGetCounter as unknown as Readable).get();
+    return Object.fromEntries(
+      values.map((v) => [`${v.labels.type}/${v.labels.tier}/${v.labels.viewer}`, v.value])
+    );
+  }
+  async function countedBy(call: () => Promise<unknown>) {
+    const before = await series();
+    await call().catch(() => undefined);
+    const after = await series();
+    return Object.fromEntries(
+      Object.entries(after)
+        .map(([k, v]) => [k, v - (before[k] ?? 0)] as const)
+        .filter(([, d]) => d !== 0)
+    );
+  }
+
+  it('a collection the viewer may not read counts as denied', async () => {
+    seed({ read: 'Private', userId: COLLECTION_OWNER, type: 'Image' });
+    expect(await countedBy(() => loadAs(STRANGER))).toEqual({ 'Collection/denied/authed': 1 });
+    expect(await countedBy(() => loadAs())).toEqual({ 'Collection/denied/anon': 1 });
+  });
+
+  it('a collection shown to this viewer only counts as uncached', async () => {
+    seed({ read: 'Private', userId: COLLECTION_OWNER, type: 'Image' });
+    expect(await countedBy(() => loadAs({ id: COLLECTION_OWNER }))).toEqual({
+      'Collection/uncached/authed': 1,
+    });
+    expect(getHomeBlockCached).not.toHaveBeenCalled();
+  });
+});

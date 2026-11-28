@@ -10,6 +10,16 @@ import { recordModActivity } from './mod-activity';
 import { queueDocumentsForImageMinorChanges } from './image-models-reindex';
 import { ratingRecordedUnderGrace } from '@civitai/shared/account-deletion-grace';
 import { assertNotWithheld, notWithheldTarget } from './withheld-write';
+import { blockMarkerText } from '@civitai/db-queries/profile-picture-clear';
+import { NsfwLevel } from '@civitai/shared';
+
+/** A rating write refused because the image carries a block: it takes a lift first. */
+export class BlockedImageRatingError extends Error {
+  constructor(imageId: number) {
+    super(`Image ${imageId} is blocked: lift the block before rating it.`);
+    this.name = 'BlockedImageRatingError';
+  }
+}
 
 type ReportStatus = 'Pending' | 'Processing' | 'Actioned' | 'Unactioned';
 
@@ -55,8 +65,15 @@ export async function updateImageNsfwLevel({
     })
     .where('id', '=', id)
     .where(notWithheldTarget(csamReview))
+    // A blocked image keeps its Blocked level until a lift; rating it Blocked again is allowed.
+    .$if(nsfwLevel !== NsfwLevel.Blocked, (qb) =>
+      qb.where(sql<boolean>`NOT ${sql.raw(blockMarkerText('"Image"'))}`)
+    )
     .executeTakeFirst();
-  if (Number(written.numUpdatedRows) === 0) await assertNotWithheld([id], csamReview);
+  if (Number(written.numUpdatedRows) === 0) {
+    await assertNotWithheld([id], csamReview);
+    throw new BlockedImageRatingError(id);
+  }
   if (status) {
     await dbWrite
       .updateTable('ImageRatingRequest')

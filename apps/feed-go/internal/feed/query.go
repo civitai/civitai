@@ -37,6 +37,11 @@ type ImagesQuery struct {
 	ExcludedUsers  []int
 	ViewerID       int
 	IsModerator    bool
+	// SessionUserID is getAllImages' `userId` (`user?.id`) where it differs from ViewerID, the owner
+	// view (feedViewer's id): a scoped API key on /api/v1/images, whose user is not the owner of its
+	// own content there (credentialViews) but still makes a page of their own content theirs alone
+	// (`personalizedPage`). 0 = ViewerID.
+	SessionUserID int
 	// IDs is the feed-service hydrate (feedHydrateQuery): exactly these images, whatever their order.
 	IDs []int
 	// PostIDs is the gallery's post completion, or image.getInfinite's own `postIds`: only these
@@ -561,9 +566,14 @@ func (q *ImagesQuery) Build() Built {
     LIMIT ` + a.add(q.Limit+1)
 	}
 
+	// personalizedPage: `!!userId && (reactions || targetUserId === userId)`, userId the session user.
+	sessionUser := q.ViewerID
+	if q.SessionUserID != 0 {
+		sessionUser = q.SessionUserID
+	}
 	personalizedViewer := 0
-	if reactions || (q.ViewerID != 0 && q.TargetUserID == q.ViewerID) {
-		personalizedViewer = q.ViewerID
+	if sessionUser != 0 && (reactions || q.TargetUserID == sessionUser) {
+		personalizedViewer = sessionUser
 	}
 	return Built{SQL: sql, Args: a.args, CacheTTL: cacheTTL, CacheTags: tags, ThrowOnStatementTimeout: q.ThrowOnStatementTimeout,
 		PersonalizedViewerID: personalizedViewer, Collection: collection}

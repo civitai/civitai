@@ -19,6 +19,7 @@ const { __resetProfileRouteLabelsForTests, startWallProfilingWithAsyncContext } 
 const { TokenSecuredEndpoint } = await import('~/server/utils/endpoint-helpers');
 const { createCallerFactory, publicProcedure, router } = await import('~/server/trpc');
 const { TokenScope } = await import('~/shared/constants/token-scope.constants');
+const { fetchRequestHandler } = await import('@trpc/server/adapters/fetch');
 
 // The REAL request wrappers (withApiMetrics via TokenSecuredEndpoint, the tRPC procedure chain via
 // publicProcedure) on an armed fake profiler: asserts the label value a handler runs under, after
@@ -103,5 +104,73 @@ describe('tRPC procedure label through publicProcedure', () => {
 
   it('labels the resolver with trpc:<path>', async () => {
     expect(await caller.labelled.probe()).toBe('trpc:labelled.probe');
+  });
+});
+
+describe('batched tRPC serialize label through the app transformer', () => {
+  // A field read only while the transformer serializes the value: tRPC's stream encoder copies a
+  // result's top level, never this nested getter. Records the label the read ran under.
+  const probe = (seen: (string | undefined)[]) => ({
+    items: [
+      {
+        get id() {
+          seen.push(routeNow());
+          return 1;
+        },
+      },
+    ],
+  });
+  const seenA: (string | undefined)[] = [];
+  const seenB: (string | undefined)[] = [];
+  const appRouter = router({
+    labelled: router({
+      a: publicProcedure.query(async () => {
+        await sleep(1);
+        return probe(seenA);
+      }),
+      b: publicProcedure.query(async () => {
+        await sleep(2);
+        return probe(seenB);
+      }),
+    }),
+  });
+  const ctx = {
+    user: undefined,
+    acceptableOrigin: true,
+    tokenScope: TokenScope.Full,
+    features: {},
+    track: {},
+    ip: '127.0.0.1',
+    cache: {},
+    req: undefined,
+    res: undefined,
+  } as never;
+
+  async function batch(headers: Record<string, string>) {
+    seenA.length = 0;
+    seenB.length = 0;
+    const res = await fetchRequestHandler({
+      endpoint: '/api/trpc',
+      req: new Request(
+        `http://localhost/api/trpc/labelled.a,labelled.b?batch=1&input=${encodeURIComponent('{}')}`,
+        { headers }
+      ),
+      router: appRouter,
+      createContext: () => ctx,
+    });
+    await res.text();
+    return res.status;
+  }
+
+  it('labels each result of a streamed (jsonl) batch with its own procedure', async () => {
+    expect(await batch({ 'trpc-accept': 'application/jsonl' })).toBe(200);
+    expect(new Set(seenA)).toEqual(new Set(['trpc:labelled.a']));
+    expect(new Set(seenB)).toEqual(new Set(['trpc:labelled.b']));
+  });
+
+  it('labels each result of a non-streamed batch with its own procedure', async () => {
+    expect(await batch({})).toBe(200);
+    expect(new Set(seenA)).toEqual(new Set(['trpc:labelled.a']));
+    expect(new Set(seenB)).toEqual(new Set(['trpc:labelled.b']));
   });
 });

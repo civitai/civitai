@@ -58,6 +58,7 @@ import {
   stripNsfwPanelImages,
 } from '~/server/services/comics/public-comics.service';
 import {
+  hasBlockMarkerSql,
   imageNotRestrictedWhere,
   imageRestrictionSelect,
   isImageServable,
@@ -115,6 +116,7 @@ import { getEdgeUrl } from '~/client-utils/edge-url';
 import {
   EntityAccessPermission,
   NotificationCategory,
+  NsfwLevel,
   SearchIndexUpdateQueueAction,
   SignalMessages,
 } from '~/server/common/enums';
@@ -4973,21 +4975,18 @@ export const comicsRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      // Stamp every panel image with the moderator's chosen level. The
+      // Stamp every panel image with the moderator's chosen level, skipping a blocked image
+      // unless the level is Blocked (`stampPanelImageLevel`). The
       // schema accepts only single-bit values (PG / PG-13 / R / X / XXX /
       // Blocked), so this is a "set" — it both lowers content above the
       // chosen level AND raises content below it. The previous cap-only
       // form left a regression where a mod selecting R on a PG-rated
       // project couldn't move the rating up, because the recompute below
       // aggregates from the (unchanged) images.
-      await dbWrite.$executeRaw`
-        UPDATE "Image" i
-        SET "nsfwLevel" = ${input.nsfwLevel}
-        FROM "ComicPanel" p
-        WHERE p."imageId" = i.id
-          AND p."projectId" = ${input.id}
-          AND i."nsfwLevel" <> ${input.nsfwLevel}
-      `;
+      const skipped = await stampPanelImageLevel(
+        input.nsfwLevel,
+        Prisma.sql`p."projectId" = ${input.id}`
+      );
 
       // Recompute chapter levels from the (now-stamped) images, then bubble
       // up to the project level.
@@ -5004,7 +5003,7 @@ export const comicsRouter = router({
         { reason: 'nsfw-level' }
       );
 
-      return { success: true };
+      return { success: true, skipped };
     }),
 
   setChapterNsfwLevel: comicModeratorProcedure
@@ -5017,19 +5016,14 @@ export const comicsRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      // Stamp every panel image in this chapter with the moderator's chosen
-      // level. Schema accepts single-bit values only, so this works in both
-      // directions (lower content above and lift content below). See the
+      // Stamp every panel image in this chapter with the moderator's chosen level, skipping a
+      // blocked image unless the level is Blocked. Schema accepts single-bit values only, so
+      // this works in both directions (lower content above and lift content below). See the
       // matching note on `setProjectNsfwLevel` for why "set" beats "cap".
-      await dbWrite.$executeRaw`
-        UPDATE "Image" i
-        SET "nsfwLevel" = ${input.nsfwLevel}
-        FROM "ComicPanel" p
-        WHERE p."imageId" = i.id
-          AND p."projectId" = ${input.projectId}
-          AND p."chapterPosition" = ${input.chapterPosition}
-          AND i."nsfwLevel" <> ${input.nsfwLevel}
-      `;
+      const skipped = await stampPanelImageLevel(
+        input.nsfwLevel,
+        Prisma.sql`p."projectId" = ${input.projectId} AND p."chapterPosition" = ${input.chapterPosition}`
+      );
 
       // Recompute the chapter level from its (now-stamped) images, then
       // bubble up to the project level.
@@ -5046,7 +5040,7 @@ export const comicsRouter = router({
         { reason: 'nsfw-level' }
       );
 
-      return { success: true };
+      return { success: true, skipped };
     }),
 
   // ──── Moderation tools ────
@@ -6210,3 +6204,28 @@ export const comicsRouter = router({
       return getUserQueueStatus(token, userTier);
     }),
 });
+
+/**
+ * Stamps `level` on the panel images `panels` selects (over `ComicPanel p`) and returns how many it
+ * skipped: a blocked image keeps its Blocked level until a lift, unless the stamp is Blocked itself.
+ * One statement, so the count is of the rows this write refused.
+ */
+async function stampPanelImageLevel(level: number, panels: Prisma.Sql) {
+  const [{ skipped }] = await dbWrite.$queryRaw<{ skipped: number }[]>`
+    WITH target AS (
+      SELECT DISTINCT i.id
+      FROM "Image" i
+      JOIN "ComicPanel" p ON p."imageId" = i.id
+      WHERE ${panels} AND i."nsfwLevel" <> ${level}
+    ), stamped AS (
+      UPDATE "Image" i
+      SET "nsfwLevel" = ${level}
+      FROM target t
+      WHERE i.id = t.id
+        AND (${level}::int = ${NsfwLevel.Blocked} OR NOT ${hasBlockMarkerSql('i')})
+      RETURNING i.id
+    )
+    SELECT ((SELECT count(*) FROM target) - (SELECT count(*) FROM stamped))::int AS skipped
+  `;
+  return skipped;
+}

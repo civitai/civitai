@@ -344,8 +344,8 @@ const textKey = (row: FpMirrorFactsRow, body: Record<string, unknown>) =>
 const retractAt = (row: FpMirrorFactsRow) =>
   (row.goneAt ?? row.contentAt ?? row.createdAt ?? new Date(0)).toISOString();
 
-/** The platform refuses an all-digit or empty authorName. */
-const sendableName = (username: string | null) => !!username && !/^\d+$/.test(username);
+/** The platform refuses an empty authorName. */
+const sendableName = (username: string | null) => !!username;
 
 const retractAuthorName = (username: string | null) =>
   sendableName(username) ? username! : '[deleted]';

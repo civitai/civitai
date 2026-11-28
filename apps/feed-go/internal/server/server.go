@@ -209,6 +209,17 @@ type Server struct {
 	// every one (`bearer-token`). The list is unaffected either way. Off, both routes behave exactly as
 	// before it existed.
 	V1BearerAuth bool
+	// V1ImagesBearerAuth is FEED_GO_V1_IMAGES_BEARER_AUTH (default off; needs FEED_GO_BEARER_AUTH): a
+	// `/api/v1/images` SHADOW sample carrying an API credential (its description, never the key) is
+	// computed for the viewer the key stands for (auth.Resolver.ImagesCredential; DESIGN.md §13.8.1)
+	// instead of falling back `bearer-token`. Off, the shadow behaves as before it existed.
+	V1ImagesBearerAuth bool
+	// ServeV1ImagesBearer is FEED_GO_V1_IMAGES_SERVE_BEARER (default off; needs FEED_GO_BEARER_AUTH
+	// and FEED_GO_SERVE_V1_IMAGES): the PUBLIC `/api/v1/images` route answers a request carrying an API
+	// credential the same way, instead of handing it back `bearer-token`. Off, the public route behaves
+	// as before it existed. Independent of V1ImagesBearerAuth, so the shadow can read the share before
+	// anything is served.
+	ServeV1ImagesBearer bool
 	// V1Fallback serves what the public `/api/v1/models` routes do not (a reverse proxy to the Node app
 	// that answers `/api/v1`, FEED_GO_V1_FALLBACK_URL: a different upstream from Fallback). The routes
 	// are mounted only when it is set.
@@ -584,10 +595,18 @@ func (s *Server) computeV1(ctx context.Context, r *http.Request) (*computed, err
 	return s.computeV1For(ctx, r, false)
 }
 
-// computeV1For is computeV1; serving, a request whose session resolves to a user (a banned one
+// computeV1For is computeV1; serving, a request whose session cookie resolves to a user (a banned one
 // included) falls back (`v1-images-session`) instead of being answered for that viewer: the public
-// route serves signed-out callers only (v1ImagesServeOnly hands a session cookie back first; this
+// route serves cookie-less callers only (v1ImagesServeOnly hands a session cookie back first; this
 // holds whatever cookie name the resolver reads).
+//
+// A request carrying an API credential (any Authorization line, any non-empty `token` value: the
+// looser reading of v1ModelsPreflight) falls back `bearer-token` unless the images bearer switch of
+// this path is on (v1ImagesBearer); then the credential is decided as getApiAuthSession decides it
+// (auth.Resolver.ImagesCredential) and the page is read with runImageSearch's credentialViews: a
+// full-scope personal key as its user's cookie session reads it, any other key with neither the
+// owner's nor the moderator's view but its user's id as the feed query's viewer (V1Request.Viewer and
+// SessionUserID).
 func (s *Server) computeV1For(ctx context.Context, r *http.Request, serving bool) (*computed, error) {
 	if s.V1 == nil {
 		return nil, fallback.New("v1-unconfigured")
@@ -599,18 +618,28 @@ func (s *Server) computeV1For(ctx context.Context, r *http.Request, serving bool
 	if err != nil {
 		return nil, err
 	}
-	// getApiAuthSession(whenBanned: 'anonymous'): a banned session is no user at all. An API credential
-	// falls back: PublicEndpoint's credentialed cache headers and REST_SCOPE_ENFORCE are not ported
-	// (DESIGN.md §4.2), and the sampler never sends one.
-	if auth.HasAPICredential(r) {
-		return nil, fallback.New("bearer-token")
-	}
-	user, err := s.Resolver.Resolve(ctx, r)
-	if err != nil {
-		return nil, err
-	}
-	if serving && user != nil {
-		return nil, fallback.New("v1-images-session")
+	// getApiAuthSession(whenBanned: 'anonymous'): a banned session is no user at all.
+	var (
+		user   *auth.SessionUser
+		full   = true
+		apiKey = v1APICredential(r)
+	)
+	if apiKey {
+		if !s.v1ImagesBearer(serving) || s.Resolver == nil {
+			return nil, fallback.New("bearer-token")
+		}
+		kv, err := s.Resolver.ImagesCredential(ctx, r)
+		if err != nil {
+			return nil, err
+		}
+		user, full = kv.User, kv.Full
+	} else {
+		if user, err = s.Resolver.Resolve(ctx, r); err != nil {
+			return nil, err
+		}
+		if serving && user != nil {
+			return nil, fallback.New("v1-images-session")
+		}
 	}
 	if serving && r.URL != nil && r.URL.Host != "" {
 		// An absolute-form request line: r.Host is the URL's host and the Host header Node reads for
@@ -619,13 +648,18 @@ func (s *Server) computeV1For(ctx context.Context, r *http.Request, serving bool
 	}
 	var viewer *feed.Viewer
 	viewerUsername := ""
+	sessionUserID := 0
 	if user != nil && !user.Banned {
-		viewer = &feed.Viewer{ID: user.ID, IsModerator: user.IsModerator}
-		viewerUsername = user.Username
+		sessionUserID = user.ID
+		if full {
+			viewer = &feed.Viewer{ID: user.ID, IsModerator: user.IsModerator}
+			viewerUsername = user.Username
+		}
 	}
 	restricted := regionMatches(s.RegionRules, r)
 	ans, err := feed.ServeV1(ctx, s.V1, feed.V1Request{
-		Input: in, Viewer: viewer, ViewerUsername: viewerUsername, RegionRestricted: restricted, Host: r.Host, Path: r.URL.Path,
+		Input: in, Viewer: viewer, ViewerUsername: viewerUsername, SessionUserID: sessionUserID,
+		RegionRestricted: restricted, Host: r.Host, Path: r.URL.Path,
 	})
 	if err != nil {
 		return nil, err
@@ -634,7 +668,8 @@ func (s *Server) computeV1For(ctx context.Context, r *http.Request, serving bool
 	if err != nil {
 		return nil, err
 	}
-	return &computed{payload: buf.Bytes(), buf: buf, trivial: ans.Trivial}, nil
+	return &computed{payload: buf.Bytes(), buf: buf, trivial: ans.Trivial,
+		viewerClass: v1ImagesViewerClass(user, apiKey, full, verifiedCrawler(r))}, nil
 }
 
 // release hands a pooled payload back to its pool and drops payload, so a use after it reads nothing
@@ -1344,9 +1379,15 @@ func syntheticTRPCRequest(ctx context.Context, req ShadowRequest, procedure stri
 // SyntheticV1Request rebuilds the REST request a v1-images sample describes: its path and raw query
 // string as Node received them, and the forwarded headers. It is marked as a sample (withSampled): its
 // verified-crawler header is the app's own decision, which the response headers read
-// (v1ImagesCompute), as on the model routes.
+// (v1ImagesCompute), as on the model routes. A credential description (SampleCredentialHeader, the
+// Node sampler's FEED_GO_SHADOW_V1_IMAGES_CREDENTIALS) goes on its context, not its headers, where
+// only auth.Resolver.ImagesCredential reads it (V1ImagesBearerAuth).
 func SyntheticV1Request(ctx context.Context, req ShadowRequest) (*http.Request, error) {
-	r, err := http.NewRequestWithContext(withSampled(auth.WithRedactedCredentials(ctx)), http.MethodGet, V1ImagesPath, nil)
+	ctx = withSampled(auth.WithRedactedCredentials(ctx))
+	if v, ok := req.Headers[SampleCredentialHeader]; ok {
+		ctx = auth.WithSampleCredential(ctx, v)
+	}
+	r, err := http.NewRequestWithContext(ctx, http.MethodGet, V1ImagesPath, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1357,6 +1398,9 @@ func SyntheticV1Request(ctx context.Context, req ShadowRequest) (*http.Request, 
 	r.URL = &url.URL{Path: path, RawQuery: req.Input}
 	r.RequestURI = ""
 	for k, v := range req.Headers {
+		if k == SampleCredentialHeader {
+			continue
+		}
 		r.Header.Set(k, v)
 	}
 	if h := req.Headers["host"]; h != "" {
@@ -1412,6 +1456,9 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 	start := time.Now()
 	phase := s.startPhase()
 	c, err := s.computeWithin(ctx, r, "shadow", computeFn)
+	// Site search: what the public route would have done with the request, by the compute's final
+	// outcome (the budget's deadline, a cancellation and a panic included).
+	s.observeSearchServable(endpoint, r, err)
 	if err != nil {
 		if reason := fallback.Reason(err); reason != "" {
 			s.endPhase(ctx, phase, endpoint, "compute", "fallback")
@@ -1533,7 +1580,7 @@ func (s *Server) compareAnswer(ctx context.Context, sel Selection, sink compareS
 			respResult = "mismatch"
 		}
 		sink.response.WithLabelValues(endpoint, respResult).Inc()
-		if c.viewerClass != "" && sink.source == SourceShadow && isFeedViewerEndpoint(endpoint) {
+		if c.viewerClass != "" && sink.source == SourceShadow && hasViewerResponseClass(endpoint) {
 			// Who may cache the answer differs by viewer (signed out: the edge), so the headers'
 			// result is read per class too.
 			s.Metrics.ShadowResponseViewer.WithLabelValues(endpoint, c.viewerClass, respResult).Inc()

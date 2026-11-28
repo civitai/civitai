@@ -144,7 +144,10 @@ const LIFTED_BLOCKED_FOR = sql<
 const LIFTED_INGESTION = sql<
   'Blocked' | 'Scanned'
 >`(CASE WHEN ${OWNER_DELETED} THEN ${KEPT.ingestion} ELSE ${RECORDED.ingestion} END)::"ImageIngestionStatus"`;
-const LIFTED_NSFW_LEVEL = sql<number>`(CASE WHEN ${OWNER_DELETED} THEN ${KEPT.nsfwLevel}::int ELSE "nsfwLevel" END)`;
+// In the lift statement itself, so a later step that throws can't leave the row half-lifted.
+const LIFTED_NSFW_LEVEL = sql<number>`(CASE WHEN ${OWNER_DELETED} THEN ${KEPT.nsfwLevel}::int WHEN "nsfwLevel" = ${NsfwLevel.Blocked} THEN 0 ELSE "nsfwLevel" END)`;
+// update_nsfw_levels_new skips a locked row; the caller recomputes.
+const LIFTED_NSFW_LEVEL_LOCKED = sql<boolean>`(CASE WHEN NOT ${OWNER_DELETED} AND "nsfwLevel" = ${NsfwLevel.Blocked} THEN FALSE ELSE "nsfwLevelLocked" END)`;
 const LIFT_KEPT_BLOCKED = sql<boolean>`(ingestion = ${KEPT.ingestion}::"ImageIngestionStatus")`;
 /** A recorded rating other than Blocked outlives a lift, so a restore still puts back a moderator's lock. */
 const RATING_KEPT_WHEN_LIFTED = sql`(CASE
@@ -220,17 +223,6 @@ const rescanIfUnrated = async (imageId: number, csamReview: boolean) => {
     .onConflict((oc) => oc.columns(['entityType', 'entityId', 'type']).doNothing())
     .execute();
 };
-
-// update_nsfw_levels_new skips nsfwLevelLocked rows, so a locked Blocked image would stay hidden after
-// unblock. Zeroes the level and drops the lock; the caller must run recompute afterwards.
-const resetBlockedNsfwLevel = (imageId: number, csamReview: boolean) =>
-  dbWrite
-    .updateTable('Image')
-    .set({ nsfwLevel: 0, nsfwLevelLocked: false })
-    .where('id', '=', imageId)
-    .where(notWithheldTarget(csamReview))
-    .where('nsfwLevel', '=', NsfwLevel.Blocked)
-    .execute();
 
 // pHash is a signed 64-bit value; the Kysely clients parse INT8 as a float, which rounds it.
 const pHashText = sql<string | null>`"pHash"::text`.as('pHash');
@@ -358,6 +350,7 @@ async function acceptImageUnder(
       needsReview: LIFTED_NEEDS_REVIEW,
       blockedFor: LIFTED_BLOCKED_FOR,
       nsfwLevel: LIFTED_NSFW_LEVEL,
+      nsfwLevelLocked: LIFTED_NSFW_LEVEL_LOCKED,
       ingestion: LIFTED_INGESTION,
       metadata: liftedMetadata(metadataExpr),
       ...(nr === 'poi' ? { poi: false } : {}),
@@ -439,7 +432,6 @@ async function acceptImageUnder(
   const restored = !updated.keptBlocked;
   if (restored) {
     await dropBlockedImageDeleteQueue(imageId);
-    await resetBlockedNsfwLevel(imageId, csamReview);
   } else await restartBlockedImageDeleteClock(imageId);
 
   const reviewTags = await reader
@@ -1115,6 +1107,7 @@ export async function resolveImageAppeal({
         needsReview: LIFTED_NEEDS_REVIEW,
         blockedFor: LIFTED_BLOCKED_FOR,
         nsfwLevel: LIFTED_NSFW_LEVEL,
+        nsfwLevelLocked: LIFTED_NSFW_LEVEL_LOCKED,
         ingestion: LIFTED_INGESTION,
         metadata: liftedMetadata(withoutGraceMarkers(sql`"metadata"`)),
       })
@@ -1129,7 +1122,6 @@ export async function resolveImageAppeal({
     if (written && !restored) await restartBlockedImageDeleteClock(imageId);
     if (restored) {
       await dropBlockedImageDeleteQueue(imageId);
-      await resetBlockedNsfwLevel(imageId, csamReview);
       await recompute(imageId);
       await rescanIfUnrated(imageId, csamReview);
     }

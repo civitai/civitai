@@ -269,9 +269,10 @@ describe('grading a Knight vote when it is cast', () => {
     expect(mockUpdateLevel).not.toHaveBeenCalled();
   });
 
-  // A moderator's own rating writes at once, under the moderator's own grant.
+  // A moderator's own rating writes at once, under the moderator's own grant. It is a vote, so a
+  // blocked image is skipped, not refused (the write's `skipBlocked`).
   it.each([false, true])(
-    "forwards a moderator's grant (%s) to the rating write",
+    "forwards a moderator's grant (%s) to the rating write, as a vote that skips a blocked image",
     async (csamReview) => {
       knightPool.exists.mockImplementation(async (id: number) => id === WITHHELD);
       knightPool.getCount.mockResolvedValue(0);
@@ -285,7 +286,7 @@ describe('grading a Knight vote when it is cast', () => {
         csamReview,
       }).catch(() => undefined);
       expect(mockUpdateLevel).toHaveBeenCalledExactlyOnceWith(
-        expect.objectContaining({ id: WITHHELD, isModerator: true, csamReview })
+        expect.objectContaining({ id: WITHHELD, isModerator: true, csamReview, skipBlocked: true })
       );
     }
   );

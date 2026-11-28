@@ -1,6 +1,7 @@
 import type { ExpressionBuilder, Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { sql, utc } from '@civitai/db/kysely';
+import { blockMarkerText } from '@civitai/db-queries/profile-picture-clear';
 import {
   ESCALATED_FROM_LEVEL_META_KEY,
   gradeKnightsVotes,
@@ -21,7 +22,7 @@ import { BLOCKED_RATING_REFUSED } from '$lib/knights/inquisitor-ruling';
 import { isRatingLevel } from '$lib/nsfw-levels';
 import { logToAxiom } from '../axiom';
 import { dbRead, dbWrite } from '../db';
-import { updateImageNsfwLevel } from '../image-nsfw-level';
+import { BlockedImageRatingError, updateImageNsfwLevel } from '../image-nsfw-level';
 import { listWithheldIds, readRetractedMedia } from '../retracted-media';
 import {
   consensusBlockReason,
@@ -72,8 +73,8 @@ const parseOptions = (value: unknown): QuestionOption[] =>
 const narrow = <T extends string>(values: readonly T[], value: string | null): T | null =>
   values.find((candidate) => candidate === value) ?? null;
 
-const hasBlockMarker = (image: { ingestion: string; blockedFor: string | null }) =>
-  image.ingestion === 'Blocked' || image.blockedFor !== null;
+const hasBlockMarkerSql = (alias: string) =>
+  sql<boolean>`${sql.raw(blockMarkerText(alias))}`.as('hasBlockMarker');
 
 /** Shared by the page and the sidebar badge, so a filter added here applies to both. The badge is uncapped; the page shows at most INQUISITOR_QUEUE_LIMIT. */
 const waitingOnInquisitors = (db: Kysely<DB>) =>
@@ -139,6 +140,7 @@ export async function getInquisitorQueue(
       'img.nsfwLevelLocked as locked',
       'img.ingestion',
       'img.blockedFor',
+      hasBlockMarkerSql('img'),
       sql<number | null>`(i.meta ->> ${sql.lit(ESCALATED_FROM_LEVEL_META_KEY)})::int`.as(
         'escalatedFromLevel'
       ),
@@ -191,7 +193,6 @@ export async function getInquisitorQueue(
       ...item,
       reason: narrow(KNIGHTS_WRITEBACK_REASONS, reason),
       escalationReason: narrow(KNIGHTS_ESCALATION_REASONS, escalationReason),
-      hasBlockMarker: hasBlockMarker({ ingestion, blockedFor: item.blockedFor }),
       media,
       // The page draws a restricted image from nowhere, so it gets no storage key either.
       imageKey: media === 'restricted' ? '' : item.imageKey,
@@ -328,10 +329,10 @@ export async function ruleOnInquisitorItem(
   try {
     const image = await dbWrite
       .selectFrom('Image')
-      .select(['ingestion', 'blockedFor'])
+      .select([hasBlockMarkerSql('"Image"')])
       .where('id', '=', claimed.imageId)
       .executeTakeFirst();
-    if (image && hasBlockMarker(image) && level !== NsfwLevel.Blocked) {
+    if (image?.hasBlockMarker && level !== NsfwLevel.Blocked) {
       await release(itemId, moderatorId, now);
       return { ok: false, error: BLOCKED_RATING_REFUSED };
     }
@@ -347,6 +348,9 @@ export async function ruleOnInquisitorItem(
     });
   } catch (error) {
     await release(itemId, moderatorId, now).catch(() => undefined);
+    // A block that landed after the check above: the write refused it.
+    if (error instanceof BlockedImageRatingError)
+      return { ok: false, error: BLOCKED_RATING_REFUSED };
     throw error;
   }
 

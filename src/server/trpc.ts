@@ -25,7 +25,12 @@ import {
 import { canDecodeDevalueResponse, isWebClient } from '~/server/utils/client-version-saturation';
 import { maybeLogTrpcSlow } from '~/server/logging/trpc-slow-log';
 import { longTaskLabelsArmed, runWithLongTaskLabel } from '~/server/eventloop-longtask';
-import { pyroscopeArmed, withProfileRoute } from '~/server/pyroscope-labels';
+import {
+  pyroscopeArmed,
+  rememberResultRoute,
+  serializedValueRoute,
+  withProfileRoute,
+} from '~/server/pyroscope-labels';
 import { currentSerializeCtx, instrumentSerialize } from '~/server/logging/trpc-serialize-log';
 import { buildTransformer, onDevalueWriteFallback } from '~/shared/utils/trpc-union-transformer';
 import { responseWriteSerialize, responseWritesDevalue } from '~/server/trpc/response-write-format';
@@ -130,11 +135,16 @@ const t = initTRPC
       // uses, so the freeze-instrumentation frame name matches what is ACTUALLY
       // written (superjson vs devalue). The wrappers are pass-through.
       const devalue = responseWritesDevalue();
-      const written = instrumentSerialize(() =>
-        withSpan(`trpc:serialize:${devalue ? 'devalue' : 'superjson'}`, () =>
-          responseWriteSerialize(data)
-        )
-      );
+      const serialize = () =>
+        instrumentSerialize(() =>
+          withSpan(`trpc:serialize:${devalue ? 'devalue' : 'superjson'}`, () =>
+            responseWriteSerialize(data)
+          )
+        );
+      // Pyroscope: a batch serializes its results outside every procedure's label, so the
+      // serialize is labelled with the procedure that produced the value (pyroscope-labels.ts).
+      const profileRoute = pyroscopeArmed ? serializedValueRoute(data) : undefined;
+      const written = profileRoute ? withProfileRoute(profileRoute, serialize) : serialize();
       // feed-go shadow: keeps a reference to what was written for a sampled request (one integer
       // compare when no sample is in flight). See src/server/trpc/feed-go-shadow.ts.
       captureFeedGoShadowResponse(data, written, devalue);
@@ -325,9 +335,18 @@ const recordProcedureDuration = t.middleware(({ path, type, ctx, next }) => {
   // armed (the disarmed default), the procedure-timing path is a single `.then()`
   // on the existing promise. Independent of TRPC_PROCEDURE_METRICS.
   // Re-label per procedure: the request-level label in [trpc].ts is trpc:batch for batched calls.
+  // The result is remembered under the same route so its serialize, which a batch runs later in
+  // its response stream, carries it too (the transformer above).
   if (longTaskLabelsArmed || pyroscopeArmed) {
     const run = () => runRecordProcedureDuration(path, type, userId, caller, next, metrics);
-    const profiled = pyroscopeArmed ? () => withProfileRoute(`trpc:${path}`, run) : run;
+    const route = `trpc:${path}`;
+    const profiled = pyroscopeArmed
+      ? () =>
+          withProfileRoute(route, run).then((result) => {
+            rememberResultRoute(result, route);
+            return result;
+          })
+      : run;
     return longTaskLabelsArmed ? runWithLongTaskLabel(`trpc:${path}`, profiled) : profiled();
   }
   return runRecordProcedureDuration(path, type, userId, caller, next, metrics);

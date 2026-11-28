@@ -1,0 +1,43 @@
+{
+  "source": {
+    "imageId": 7,
+    "url": "https://image.example/source.png",
+    "width": 1200,
+    "height": 800
+  },
+  "trace": [
+    {
+      "type": "workflow",
+      "request": {
+        "kind": "image",
+        "prompt": "Redraw this image as true low-resolution pixel art, as if drawn on a 160 by 240 pixel grid and scaled up with nearest-neighbor: large, clearly visible square pixels, hard stair-stepped edges, no anti-aliasing or smooth gradients, and a limited palette of about 16 flat colors with simple dithering. Keep the subject, pose and composition. Don't add any text or lettering.",
+        "images": [
+          {
+            "url": "https://image.example/source.png",
+            "width": 1200,
+            "height": 800
+          }
+        ],
+        "aspectRatio": "source",
+        "quantity": 1
+      },
+      "result": {
+        "workflowId": "mock-0",
+        "images": [
+          {
+            "url": "mock://remix/0/0",
+            "width": 1200,
+            "height": 800
+          }
+        ]
+      }
+    }
+  ],
+  "outputs": [
+    {
+      "url": "mock://remix/0/0",
+      "width": 1200,
+      "height": 800
+    }
+  ]
+}

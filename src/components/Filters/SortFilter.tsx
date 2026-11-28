@@ -2,7 +2,11 @@ import type { ButtonProps } from '@mantine/core';
 import { useRouter } from 'next/router';
 import { HatIcon } from '~/components/HatTurf/HatIcon';
 import { useHatTurfFeedPlayer } from '~/components/HatTurf/useHatTurfFeedPlayer';
-import { isSortAvailable, resolveFeedSort } from '~/components/Filters/sort-availability';
+import {
+  isSortAvailable,
+  modelSortOptions,
+  resolveFeedSort,
+} from '~/components/Filters/sort-availability';
 import { useSortAvailability } from '~/components/Filters/useSortAvailability';
 import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
 import type { FilterSubTypes } from '~/providers/FiltersProvider';
@@ -17,8 +21,6 @@ import {
   GenerationSort,
   ImageSort,
   ImageSortHidden,
-  ModelSort,
-  ModelSortHidden,
   PostSort,
   PostSortHidden,
   ThreadSort,
@@ -30,6 +32,7 @@ import {
   type HatSort,
 } from '~/shared/constants/hat-turf-feed.constants';
 import { removeEmpty } from '~/utils/object-helpers';
+import type { ModelSort } from '~/server/common/enums';
 
 type SortFilterComponentProps = {
   type: Exclude<FilterSubTypes, 'changelogs' | 'auctions'>;
@@ -42,7 +45,7 @@ type SortFilterComponentProps = {
 type SortFilterProps = StatefulProps | DumbProps;
 
 const sortOptions = {
-  models: Object.values(ModelSort).filter((x) => !Object.values(ModelSortHidden).includes(x)),
+  models: modelSortOptions,
   posts: Object.values(PostSort).filter((x) => !Object.values(PostSortHidden).includes(x)),
   images: Object.values(ImageSort).filter((x) => !Object.values(ImageSortHidden).includes(x)),
   modelImages: Object.values(ImageSort).filter((x) => !Object.values(ImageSortHidden).includes(x)),

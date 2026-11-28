@@ -41,6 +41,20 @@ type V1Models struct {
 	// (`bearer-token`); the list is unaffected. It reads keys with the tRPC routes' key resolver, so it
 	// needs FEED_GO_BEARER_AUTH (Validate).
 	BearerAuth bool
+	// ImagesBearerAuth is FEED_GO_V1_IMAGES_BEARER_AUTH (default off): a `GET /api/v1/images` SHADOW
+	// sample carrying an API credential (the Node sampler's description of it, never the key:
+	// FEED_GO_SHADOW_V1_IMAGES_CREDENTIALS there) is computed for the viewer the key stands for
+	// (DESIGN.md §13.8.1) instead of falling back `bearer-token`. Needs FEED_GO_BEARER_AUTH (Validate).
+	ImagesBearerAuth bool
+	// ImagesServeBearer is FEED_GO_V1_IMAGES_SERVE_BEARER (default off): the PUBLIC `/api/v1/images`
+	// route answers a request carrying an API credential the same way instead of handing it back
+	// `bearer-token`. Needs FEED_GO_BEARER_AUTH and FEED_GO_SERVE_V1_IMAGES (Validate).
+	ImagesServeBearer bool
+	// ParityImages is FEED_GO_SERVE_PARITY_V1_IMAGES (default off): the serve-side parity sampler
+	// (FEED_GO_SERVE_PARITY_SAMPLE_RATE) also replays answers the public `/api/v1/images` route served,
+	// to ImagesFallbackURL, its API-key answers included (DESIGN.md §7.2). Off, that route is never
+	// replayed. Needs ImagesFallbackURL (Validate).
+	ParityImages bool
 	// ServeQuery is FEED_GO_V1_MODELS_SERVE_QUERY (default off): a public `GET /api/v1/models` request
 	// with a text `query` is answered here, from the search index the Node app reads (DESIGN.md
 	// §16.11), instead of falling back (`v1-models-query`). Needs SearchHost (Validate).
@@ -113,6 +127,9 @@ func LoadV1Models() V1Models {
 		// The images route's own upstream (never FallbackURL's).
 		ImagesFallbackURL: strings.TrimSpace(os.Getenv("FEED_GO_V1_IMAGES_FALLBACK_URL")),
 		BearerAuth:        boolEnv("FEED_GO_V1_BEARER_AUTH", false),
+		ImagesBearerAuth:  boolEnv("FEED_GO_V1_IMAGES_BEARER_AUTH", false),
+		ImagesServeBearer: boolEnv("FEED_GO_V1_IMAGES_SERVE_BEARER", false),
+		ParityImages:      boolEnv("FEED_GO_SERVE_PARITY_V1_IMAGES", false),
 		ServeQuery:        boolEnv("FEED_GO_V1_MODELS_SERVE_QUERY", false),
 		SearchHost:        strings.TrimSpace(os.Getenv("SEARCH_HOST")),
 		SearchAPIKey:      os.Getenv("SEARCH_API_KEY"),
@@ -141,7 +158,9 @@ func LoadV1Models() V1Models {
 // without FEED_GO_V1_FALLBACK_URL, or FEED_GO_SERVE_V1_IMAGES on without FEED_GO_V1_IMAGES_FALLBACK_URL
 // (its one upstream), would leave every request the port does not answer unanswerable. It also refuses
 // FEED_GO_V1_BEARER_AUTH without bearerAuth (FEED_GO_BEARER_AUTH, Config.BearerAuth): with no key
-// resolver every key would fall back anyway, so the setting would claim what it cannot do.
+// resolver every key would fall back anyway, so the setting would claim what it cannot do. The same
+// holds for FEED_GO_V1_IMAGES_BEARER_AUTH and FEED_GO_V1_IMAGES_SERVE_BEARER, and the latter is also
+// refused without FEED_GO_SERVE_V1_IMAGES (the public route computes nothing then).
 func (c V1Models) Validate(bearerAuth bool) error {
 	if c.Serve && c.FallbackURL == "" {
 		return errors.New("FEED_GO_SERVE_V1_MODELS is on without FEED_GO_V1_FALLBACK_URL: the public model routes need the Node app that serves /api/v1 for their fallbacks")
@@ -154,6 +173,18 @@ func (c V1Models) Validate(bearerAuth bool) error {
 	}
 	if c.BearerAuth && !bearerAuth {
 		return errors.New("FEED_GO_V1_BEARER_AUTH is on without FEED_GO_BEARER_AUTH: GET /api/v1/models/{id} reads API keys with the key resolver that switch turns on")
+	}
+	if c.ImagesBearerAuth && !bearerAuth {
+		return errors.New("FEED_GO_V1_IMAGES_BEARER_AUTH is on without FEED_GO_BEARER_AUTH: GET /api/v1/images reads API keys with the key resolver that switch turns on")
+	}
+	if c.ImagesServeBearer && !bearerAuth {
+		return errors.New("FEED_GO_V1_IMAGES_SERVE_BEARER is on without FEED_GO_BEARER_AUTH: GET /api/v1/images reads API keys with the key resolver that switch turns on")
+	}
+	if c.ParityImages && c.ImagesFallbackURL == "" {
+		return errors.New("FEED_GO_SERVE_PARITY_V1_IMAGES is on without FEED_GO_V1_IMAGES_FALLBACK_URL: an images replay goes to the Node app that route hands back to")
+	}
+	if c.ImagesServeBearer && !c.ServeImages {
+		return errors.New("FEED_GO_V1_IMAGES_SERVE_BEARER is on without FEED_GO_SERVE_V1_IMAGES: the public images route computes nothing, so it would answer no API key")
 	}
 	return nil
 }

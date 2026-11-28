@@ -57,11 +57,16 @@ type V1Deps struct {
 // V1Request is one call.
 type V1Request struct {
 	Input *V1Input
-	// Viewer is nil when signed out or banned (getApiAuthSession whenBanned 'anonymous').
+	// Viewer is the viewer content is read for, runImageSearch's credentialViews applied (feedViewer):
+	// nil when signed out or banned (getApiAuthSession whenBanned 'anonymous'), and for a scoped API
+	// key, which reads with neither the owner's nor the moderator's view.
 	Viewer *Viewer
 	// ViewerUsername is the session user's name ("" with no Viewer): the legacy path's own-feed check
 	// reads it (the feed path's viewer carries none).
-	ViewerUsername   string
+	ViewerUsername string
+	// SessionUserID is the session user's id whatever the views (`currentUserId`, getAllImages'
+	// `userId`): the feed query's viewer, and whose own page is a personalized one. 0 = Viewer's id.
+	SessionUserID    int
 	RegionRestricted bool
 	// Host and Path are the request's Host header and path (nextPage is built from them).
 	Host string
@@ -124,6 +129,10 @@ func ServeV1(ctx context.Context, d *V1Deps, req V1Request) (*V1Answer, error) {
 	if req.Viewer != nil {
 		viewer = *req.Viewer
 	}
+	sessionUser := req.SessionUserID
+	if sessionUser == 0 {
+		sessionUser = viewer.ID
+	}
 
 	level := in.RequestedLevel()
 	if req.RegionRestricted {
@@ -169,9 +178,9 @@ func ServeV1(ctx context.Context, d *V1Deps, req V1Request) (*V1Answer, error) {
 		if req.Viewer != nil {
 			viewerUsername = req.ViewerUsername
 		}
-		page, err = v1LegacyPage(ctx, d, in, viewer, viewerUsername, level, usingPaging)
+		page, err = v1LegacyPage(ctx, d, in, viewer, viewerUsername, sessionUser, level, usingPaging)
 	} else {
-		page, err = v1Page(ctx, d, in, viewer, level)
+		page, err = v1Page(ctx, d, in, viewer, sessionUser, level)
 	}
 	if err != nil {
 		return nil, err
@@ -247,7 +256,8 @@ func nextCursorText(r *v1Result) (string, bool) {
 }
 
 // v1Page is runImageSearch's feed-service arm: getImagesFromFeedServiceForRest, then the shaping.
-func v1Page(ctx context.Context, d *V1Deps, in *V1Input, viewer Viewer, level int) (*v1Result, error) {
+// viewer is the views' viewer (feedViewer), sessionUser the session user's id (`currentUserId`).
+func v1Page(ctx context.Context, d *V1Deps, in *V1Input, viewer Viewer, sessionUser, level int) (*v1Result, error) {
 	if err := AssertFeedOffsetCursor(in.Cursor); err != nil {
 		return nil, err
 	}
@@ -287,12 +297,13 @@ func v1Page(ctx context.Context, d *V1Deps, in *V1Input, viewer Viewer, level in
 		Types:          types,
 		DisableMinor:   true,
 		DisablePoi:     true,
-		ViewerID:       viewer.ID,
-		Sort:           in.Sort,
-		Period:         in.Period,
-		Limit:          in.Limit,
-		CursorText:     in.Cursor,
-		RequiringMeta:  in.RequiringMeta,
+		// searchQuery's `currentUserId: user?.id`, not the owner view.
+		ViewerID:      sessionUser,
+		Sort:          in.Sort,
+		Period:        in.Period,
+		Limit:         in.Limit,
+		CursorText:    in.Cursor,
+		RequiringMeta: in.RequiringMeta,
 	}
 	feedCursor := feedsvc.ParseCursor(in.Cursor) != ""
 	query, refusal := feedsvc.Map(q)
@@ -338,6 +349,7 @@ func v1Page(ctx context.Context, d *V1Deps, in *V1Input, viewer Viewer, level in
 		ExcludedTagIDs:          excluded,
 		ViewerID:                viewer.ID,
 		IsModerator:             viewer.IsModerator,
+		SessionUserID:           sessionUser,
 		PostID:                  in.PostID,
 		TargetUserID:            userID,
 		ThrowOnStatementTimeout: true,
@@ -387,7 +399,7 @@ func v1Page(ctx context.Context, d *V1Deps, in *V1Input, viewer Viewer, level in
 // media by its index), paged by `skip` or by a keyset cursor on that order, then the same shaping as
 // the feed path. Unlike the feed's hydrate, an empty page is an answer here (getAllImages does no read
 // rescue), and a statement timeout is an empty page, as Node answers it on this path.
-func v1LegacyPage(ctx context.Context, d *V1Deps, in *V1Input, viewer Viewer, viewerUsername string, level int, usingPaging bool) (*v1Result, error) {
+func v1LegacyPage(ctx context.Context, d *V1Deps, in *V1Input, viewer Viewer, viewerUsername string, sessionUser, level int, usingPaging bool) (*v1Result, error) {
 	cursor := 0
 	if in.Cursor != "" {
 		// getCursor binds a single-field sort's cursor as one integer (parseCursor); a cursor that is
@@ -444,6 +456,7 @@ func v1LegacyPage(ctx context.Context, d *V1Deps, in *V1Input, viewer Viewer, vi
 		ExcludedTagIDs: excluded,
 		ViewerID:       viewer.ID,
 		IsModerator:    viewer.IsModerator,
+		SessionUserID:  sessionUser,
 		PostID:         in.PostID,
 		ImageID:        in.ImageID,
 		TargetUserID:   userID,

@@ -31,3 +31,15 @@ func newServeParity(rate float64, target, v1Target *url.URL, prop propagation.Te
 	}
 	return p
 }
+
+// withImagesParity adds the public images route's replay upstream (FEED_GO_SERVE_PARITY_V1_IMAGES) to
+// the sampler p: its own proxy instance to target (FEED_GO_V1_IMAGES_FALLBACK_URL, the Node app the
+// route hands back to), with no error hook, as newServeParity's. p nil (the sampler off) stays nil:
+// the switch turns on no sampler of its own.
+func withImagesParity(p *server.ServeParity, target *url.URL, prop propagation.TextMapPropagator) *server.ServeParity {
+	if p == nil || target == nil {
+		return p
+	}
+	p.V1ImagesUpstream = fallbackProxy(target, fallbackIdleTimeout, nil, prop)
+	return p
+}

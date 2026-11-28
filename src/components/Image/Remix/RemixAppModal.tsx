@@ -3,7 +3,7 @@ import { Menu } from '~/components/MantineOverlays';
 import { IconDots, IconX } from '@tabler/icons-react';
 import { getQueryKey } from '@trpc/react-query';
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
@@ -16,8 +16,20 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { RemixRunState } from '~/server/services/remix-app-run.service';
 import { TEAM_REMIX_SLUG } from '~/shared/constants/remix-apps.constants';
-import type { RemixAnswer, RemixImage, RemixViewerAsk } from '~/shared/remix-apps/define';
-import { USER_REMIX_SLUG } from '~/shared/remix-apps/row.schema';
+import { compileRemixApp, type RemixAppListing } from '~/shared/remix-apps/compile';
+import type {
+  RemixAnswer,
+  RemixAppSource,
+  RemixImage,
+  RemixViewerAsk,
+} from '~/shared/remix-apps/define';
+import { MOCK_IMAGE_URL_PREFIX, playToAsk } from '~/shared/remix-apps/mock-host';
+import {
+  REMIX_IMAGE_STAND_IN,
+  REMIX_RUN_LIMITS,
+  type RemixLogEntry,
+} from '~/shared/remix-apps/replay';
+import { type RemixDeclarativeSpec, USER_REMIX_SLUG } from '~/shared/remix-apps/row.schema';
 import { REMIX_DONE_TAG } from '~/shared/remix-apps/tags';
 import { generationGraphPanel } from '~/store/generation-graph.store';
 import {
@@ -56,6 +68,9 @@ type Phase =
 
 /** How long a finished segment whose outputs are still being rated waits before asking again. */
 const UNRATED_RETRY_MS = 5000;
+
+/** A preview's stand-in for the run and workflow ids a real run has. */
+const PREVIEW_WORKFLOW_ID = 'preview';
 
 function openQueue() {
   generationGraphPanel.open(undefined, { preserveEntryAction: true });
@@ -152,11 +167,14 @@ function AskStep({
   ask,
   prices,
   pending,
+  preview,
   onAnswer,
 }: {
   ask: RemixViewerAsk;
   prices?: Record<string, number>;
   pending: boolean;
+  /** A preview answers an image ask with the source itself, so it never opens the image picker. */
+  preview: boolean;
   onAnswer: (answer: RemixAnswer) => void;
 }) {
   const [text, setText] = useState('');
@@ -208,7 +226,21 @@ function AskStep({
           )}
         </div>
       )}
-      {ask.kind === 'image' && <ImageAskStep ask={ask} pending={pending} onAnswer={onAnswer} />}
+      {ask.kind === 'image' &&
+        (preview ? (
+          <div className="flex gap-2">
+            {ask.optional && (
+              <Button variant="default" disabled={pending} onClick={() => onAnswer('')}>
+                Skip
+              </Button>
+            )}
+            <Button disabled={pending} onClick={() => onAnswer(REMIX_IMAGE_STAND_IN)}>
+              Use this image for the preview
+            </Button>
+          </div>
+        ) : (
+          <ImageAskStep ask={ask} pending={pending} onAnswer={onAnswer} />
+        ))}
       {ask.kind === 'text' && (
         <form
           className="flex gap-2"
@@ -238,6 +270,212 @@ function AskStep({
   );
 }
 
+/** What the modal shows and does, from whichever driver runs it. */
+type RemixModalDriver = {
+  phase: Phase;
+  pending: boolean;
+  offer: { cost?: number; refusal?: string; loading: boolean; disabled: boolean };
+  run: () => void;
+  answer: (value: RemixAnswer) => void;
+  continuePriced: () => void;
+  remixAgain: () => void;
+  remixAgainDisabled: boolean;
+  /** Absent for a preview, which generates nothing: there is nothing to dismiss, queue or post. */
+  live?: {
+    dismiss: (workflowId: string) => void;
+    openQueue: () => void;
+    gallery: ReturnType<typeof useResultGallery>['control'];
+    post: (workflowId: string, runId?: string) => void;
+    posting: boolean;
+  };
+};
+
+function RemixModalView({
+  name,
+  driver,
+  note,
+  onClose,
+}: {
+  name: string;
+  driver: RemixModalDriver;
+  note?: string;
+  onClose: () => void;
+}) {
+  const { phase, pending, offer, live } = driver;
+  const workflowId = phaseWorkflowId(phase);
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex items-center gap-2">
+        <Text fw={700} size="lg" className="flex-1" truncate>
+          {name}
+        </Text>
+        {live && workflowId && (
+          <Menu position="bottom-end" withinPortal>
+            <Menu.Target>
+              <ActionIcon variant="subtle" color="gray" aria-label="More">
+                <IconDots size={18} />
+              </ActionIcon>
+            </Menu.Target>
+            <Menu.Dropdown>
+              <Menu.Item
+                onClick={() => {
+                  live.dismiss(workflowId);
+                  onClose();
+                }}
+              >
+                Dismiss
+              </Menu.Item>
+            </Menu.Dropdown>
+          </Menu>
+        )}
+        <ActionIcon
+          variant="subtle"
+          color="gray"
+          aria-label={live ? 'Close to tray' : 'Close'}
+          onClick={onClose}
+        >
+          <IconX size={18} />
+        </ActionIcon>
+      </div>
+
+      {phase.kind === 'offer' && (
+        <div className="flex flex-col gap-3">
+          <Text size="sm">
+            {live
+              ? `Runs ${name} on this image and adds the result to your queue. It runs in the tray, so you can keep browsing.`
+              : `Walks through ${name} on this image with placeholder results. Nothing is generated or charged.`}
+          </Text>
+          {offer.refusal && (
+            <Text size="sm" c="dimmed">
+              {offer.refusal}
+            </Text>
+          )}
+          <Button
+            onClick={driver.run}
+            disabled={offer.disabled}
+            loading={pending}
+            rightSection={
+              live &&
+              !offer.refusal && (
+                <CurrencyBadge
+                  currency="BUZZ"
+                  unitAmount={offer.cost ?? 0}
+                  loading={offer.loading}
+                  size="sm"
+                />
+              )
+            }
+          >
+            {live ? 'Run' : 'Preview'}
+          </Button>
+        </div>
+      )}
+
+      {phase.kind === 'running' && (
+        <div className="flex flex-col items-center gap-2 py-6" data-testid="remix-running">
+          <Loader size="sm" />
+          <Text size="sm" c="dimmed">
+            Generating… You can close this; it keeps going in the tray.
+          </Text>
+          {note && (
+            <Text size="xs" c="dimmed" ta="center">
+              {note}
+            </Text>
+          )}
+        </div>
+      )}
+
+      {phase.kind === 'ask' && (
+        <AskStep
+          ask={phase.ask}
+          prices={phase.prices}
+          pending={pending}
+          preview={!live}
+          onAnswer={driver.answer}
+        />
+      )}
+
+      {phase.kind === 'priced' && (
+        <Button
+          onClick={driver.continuePriced}
+          loading={pending}
+          rightSection={<CurrencyBadge currency="BUZZ" unitAmount={phase.cost} size="sm" />}
+        >
+          Continue
+        </Button>
+      )}
+
+      {phase.kind === 'failed' && (
+        <Text size="sm" c="red">
+          {phase.reason}
+        </Text>
+      )}
+
+      {phase.kind === 'done' && (
+        <div className="grid grid-cols-1 gap-2">
+          {phase.outputs.map((output) => (
+            <RemixOutput key={output.url} image={output} />
+          ))}
+          {!phase.outputs.length && (
+            <Text size="sm" c="dimmed">
+              Nothing from this remix can be shown here.
+            </Text>
+          )}
+        </div>
+      )}
+
+      {(phase.kind === 'done' || phase.kind === 'failed') &&
+        (live ? (
+          <RemixResultLine
+            onRemixAgain={driver.remixAgain}
+            remixAgainDisabled={driver.remixAgainDisabled}
+            onOpenQueue={() => {
+              live.openQueue();
+              onClose();
+            }}
+            gallery={live.gallery}
+            onPost={() =>
+              phase.kind === 'done' &&
+              phase.outputs.length &&
+              live.post(phase.workflowId, phase.runId)
+            }
+            posting={live.posting}
+            postDisabled={phase.kind !== 'done' || !phase.outputs.length}
+          />
+        ) : (
+          <Button variant="default" onClick={driver.remixAgain}>
+            Preview again
+          </Button>
+        ))}
+    </div>
+  );
+}
+
+/** Whole image at its own aspect ratio; a preview's placeholder is a labelled box of that shape. */
+function RemixOutput({ image }: { image: RemixImage }) {
+  if (!image.url.startsWith(MOCK_IMAGE_URL_PREFIX))
+    return (
+      <EdgeMedia2
+        src={image.url}
+        type="image"
+        alt=""
+        className="max-h-[60dvh] w-full rounded-md object-contain"
+      />
+    );
+  return (
+    <div
+      data-testid="remix-preview-output"
+      className="flex max-h-[60dvh] w-full items-center justify-center rounded-md bg-gray-2 dark:bg-dark-5"
+      style={{ aspectRatio: `${image.width ?? 1} / ${image.height ?? 1}` }}
+    >
+      <Text size="sm" c="dimmed">
+        Preview
+      </Text>
+    </div>
+  );
+}
+
 /**
  * One remix run, from its price to its result. Closing it leaves the run going: the tray holds it,
  * and tapping it there reopens this.
@@ -249,6 +487,87 @@ export function RemixAppModalContent({
   note,
   onClose,
 }: RemixAppModalProps & { onClose: () => void }) {
+  const driver = useLiveRemixDriver({ app, imageId, run, onClose });
+  return <RemixModalView name={app.name} driver={driver} note={note} onClose={onClose} />;
+}
+
+/**
+ * An unsaved declarative app, run in the browser over placeholder results: the same modal as a
+ * real run, with no request to the server.
+ */
+export function RemixDraftModalContent({
+  listing,
+  spec,
+  source,
+  onClose,
+}: {
+  listing: RemixAppListing;
+  spec: RemixDeclarativeSpec;
+  source: RemixAppSource;
+  onClose: () => void;
+}) {
+  const driver = useDraftRemixDriver(listing, spec, source);
+  return <RemixModalView name={listing.name} driver={driver} onClose={onClose} />;
+}
+
+function useDraftRemixDriver(
+  listing: RemixAppListing,
+  spec: RemixDeclarativeSpec,
+  source: RemixAppSource
+): RemixModalDriver {
+  const app = useMemo(() => compileRemixApp(listing, spec), [listing, spec]);
+  const [phase, setPhase] = useState<Phase>({ kind: 'offer' });
+  const [log, setLog] = useState<RemixLogEntry[]>([]);
+  const [pending, setPending] = useState(false);
+
+  async function playFrom(from: RemixLogEntry[]) {
+    setPending(true);
+    try {
+      const played = await playToAsk(app, source, from, REMIX_RUN_LIMITS.effects + 1);
+      setLog(played.log);
+      setPhase(
+        played.outcome.status === 'done'
+          ? { kind: 'done', workflowId: PREVIEW_WORKFLOW_ID, outputs: played.outcome.outputs }
+          : {
+              kind: 'ask',
+              runId: PREVIEW_WORKFLOW_ID,
+              ask: played.outcome.effect.spec,
+              answers: [],
+            }
+      );
+    } catch (error) {
+      setPhase({
+        kind: 'failed',
+        workflowId: PREVIEW_WORKFLOW_ID,
+        reason: error instanceof Error ? error.message : 'This preview failed.',
+      });
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return {
+    phase,
+    pending,
+    offer: { loading: false, disabled: pending },
+    run: () => playFrom([]),
+    answer: (value) => playFrom([...log, { type: 'ask', answer: value }]),
+    continuePriced: () => undefined,
+    remixAgain: () => {
+      setLog([]);
+      setPhase({ kind: 'offer' });
+    },
+    remixAgainDisabled: false,
+  };
+}
+
+/** A run on the server: priced, charged, followed through the tray. */
+function useLiveRemixDriver({
+  app,
+  imageId,
+  run,
+  onClose,
+}: Omit<RemixAppModalProps, 'note'> & { onClose: () => void }): RemixModalDriver {
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
   const [phase, setPhase] = useState<Phase>(run ? { kind: 'running', ...run } : { kind: 'offer' });
@@ -441,141 +760,25 @@ export function RemixAppModalContent({
     );
   }
 
-  const workflowId = phaseWorkflowId(phase);
-
-  return (
-    <div className="flex flex-col gap-4">
-      <div className="flex items-center gap-2">
-        <Text fw={700} size="lg" className="flex-1" truncate>
-          {app.name}
-        </Text>
-        {workflowId && (
-          <Menu position="bottom-end" withinPortal>
-            <Menu.Target>
-              <ActionIcon variant="subtle" color="gray" aria-label="More">
-                <IconDots size={18} />
-              </ActionIcon>
-            </Menu.Target>
-            <Menu.Dropdown>
-              <Menu.Item
-                onClick={() => {
-                  dismiss({ workflowId });
-                  onClose();
-                }}
-              >
-                Dismiss
-              </Menu.Item>
-            </Menu.Dropdown>
-          </Menu>
-        )}
-        <ActionIcon variant="subtle" color="gray" aria-label="Close to tray" onClick={onClose}>
-          <IconX size={18} />
-        </ActionIcon>
-      </div>
-
-      {phase.kind === 'offer' && (
-        <div className="flex flex-col gap-3">
-          <Text size="sm">
-            Runs {app.name} on this image and adds the result to your queue. It runs in the tray, so
-            you can keep browsing.
-          </Text>
-          {offer.refusal && (
-            <Text size="sm" c="dimmed">
-              {offer.refusal}
-            </Text>
-          )}
-          <Button
-            onClick={() => offer.cost != null && runOffer(offer.cost)}
-            disabled={offer.cost == null || imageId == null}
-            loading={pending}
-            rightSection={
-              !offer.refusal && (
-                <CurrencyBadge
-                  currency="BUZZ"
-                  unitAmount={offer.cost ?? 0}
-                  loading={offer.loading}
-                  size="sm"
-                />
-              )
-            }
-          >
-            Run
-          </Button>
-        </div>
-      )}
-
-      {phase.kind === 'running' && (
-        <div className="flex flex-col items-center gap-2 py-6" data-testid="remix-running">
-          <Loader size="sm" />
-          <Text size="sm" c="dimmed">
-            Generating… You can close this; it keeps going in the tray.
-          </Text>
-          {note && (
-            <Text size="xs" c="dimmed" ta="center">
-              {note}
-            </Text>
-          )}
-        </div>
-      )}
-
-      {phase.kind === 'ask' && (
-        <AskStep ask={phase.ask} prices={phase.prices} pending={pending} onAnswer={answer} />
-      )}
-
-      {phase.kind === 'priced' && (
-        <Button
-          onClick={continuePriced}
-          loading={pending}
-          rightSection={<CurrencyBadge currency="BUZZ" unitAmount={phase.cost} size="sm" />}
-        >
-          Continue
-        </Button>
-      )}
-
-      {phase.kind === 'failed' && (
-        <Text size="sm" c="red">
-          {phase.reason}
-        </Text>
-      )}
-
-      {phase.kind === 'done' && (
-        <div className="grid grid-cols-1 gap-2">
-          {phase.outputs.map((output) => (
-            // Whole image at its own aspect ratio, never taller than the screen leaves room for.
-            <EdgeMedia2
-              key={output.url}
-              src={output.url}
-              type="image"
-              alt=""
-              className="max-h-[60dvh] w-full rounded-md object-contain"
-            />
-          ))}
-          {!phase.outputs.length && (
-            <Text size="sm" c="dimmed">
-              Nothing from this remix can be shown here.
-            </Text>
-          )}
-        </div>
-      )}
-
-      {(phase.kind === 'done' || phase.kind === 'failed') && (
-        <RemixResultLine
-          onRemixAgain={remixAgain}
-          remixAgainDisabled={imageId == null}
-          onOpenQueue={() => {
-            openQueue();
-            onClose();
-          }}
-          gallery={gallery.control}
-          onPost={() =>
-            phase.kind === 'done' && phase.outputs.length && post(phase.workflowId, phase.runId)
-          }
-          posting={postRun.isPending}
-          postDisabled={phase.kind !== 'done' || !phase.outputs.length}
-        />
-      )}
-    </div>
-  );
+  return {
+    phase,
+    pending,
+    offer: { ...offer, disabled: offer.cost == null || imageId == null },
+    run: () => {
+      if (offer.cost != null) runOffer(offer.cost);
+    },
+    answer,
+    continuePriced,
+    remixAgain,
+    remixAgainDisabled: imageId == null,
+    live: {
+      dismiss: (workflowId) => dismiss({ workflowId }),
+      openQueue,
+      gallery: gallery.control,
+      post,
+      posting: postRun.isPending,
+    },
+  };
 }
 
 /**

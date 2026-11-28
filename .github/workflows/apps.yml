@@ -52,6 +52,9 @@ name: App suites
 #       browsing-level bits) and its one-approved-block rule to them.
 #   containers/notification-db/docker-init/**
 #       the DDL apps/notifications' behavioural test builds its database from.
+#   src/shared/remix-apps/__tests__/__goldens__/**
+#       the generated remix modules and dry-run traces apps/storage-hook-runner replays on the real
+#       runner, so a template change runs that check.
 #   package.json
 #       also read directly by apps/assistant-runner's SDK version tests.
 #
@@ -140,6 +143,7 @@ on:
       - 'src/shared/constants/browsingLevel.constants.ts'
       - 'src/server/services/apps/data-read-grant.ts'
       - 'src/server/services/knights/**'
+      - 'src/shared/remix-apps/__tests__/__goldens__/**'
       - 'containers/notification-db/docker-init/**'
   push:
     branches: [main]
