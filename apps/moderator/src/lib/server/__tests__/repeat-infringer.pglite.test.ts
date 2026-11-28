@@ -116,7 +116,7 @@ afterEach(async () => {
 const queued = async () => (await getRepeatInfringerQueue()).rows.map((r) => r.userId);
 
 describe('repeat-infringer queue', () => {
-  it('is policy A: 3 removals in 12 months', () => {
+  it('pins the repeat-infringer policy Justin chose (2026-11-24): 3 removals in 12 months', () => {
     expect(REPEAT_INFRINGER_THRESHOLD).toBe(3);
     expect(REPEAT_INFRINGER_WINDOW_MONTHS).toBe(12);
   });
@@ -267,6 +267,15 @@ describe('repeat-infringer Reviewed action', () => {
     );
     expect(rows[0].review.reviewedBy).toBe(42);
     expect(await queued()).toEqual([]);
+  });
+
+  it('records no review when the note cannot be saved, so the account stays queued', async () => {
+    addUserNote.mockRejectedValueOnce(new Error('moderator db down'));
+
+    await expect(
+      actions.repeatInfringerReviewed(event({ userId: 1, note: 'warned' }))
+    ).rejects.toThrow('moderator db down');
+    expect(await queued()).toEqual([1]);
   });
 
   it('refuses without a note, and writes nothing', async () => {

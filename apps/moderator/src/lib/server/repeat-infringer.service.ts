@@ -9,7 +9,8 @@ export const REPEAT_INFRINGER_LIMIT = 100;
 
 // A removal event is a Copyright strike that was not voided: a void reverses the removal (a
 // counter-notice restore), so it is not an event. Expired rows count, including the back-recorded ones.
-// The partial index "UserStrike_copyright_user_created_idx" covers `reason = 'Copyright'`.
+// Keep `reason = 'Copyright'` verbatim: the partial index UserStrike_copyright_user_created_idx only
+// serves that predicate.
 const events = sql`
   SELECT s."userId", count(*)::int AS "eventCount", max(s."createdAt") AS "lastEventAt"
   FROM "UserStrike" s
@@ -84,7 +85,7 @@ export async function getRepeatInfringerQueue(): Promise<{
       's.internalNotes',
     ])
     .where('s.reason', '=', 'Copyright')
-    // The same window the count uses, so the list shows what the badge counts.
+    // Same window as the count; voided rows are kept so the moderator sees them (the count excludes them).
     .where(
       sql<boolean>`s."createdAt" > now() - make_interval(months => ${REPEAT_INFRINGER_WINDOW_MONTHS})`
     )
@@ -113,8 +114,8 @@ export async function isInRepeatInfringerReview(userId: number): Promise<boolean
   return rows.length > 0;
 }
 
-/** Records the review on the account. Only this clears it from the queue: nothing in strike escalation
- *  reads or writes the key. The moderator's note goes to user notes, never into `meta`. */
+/** Records the review on the account; nothing in strike escalation reads or writes the key. The
+ *  moderator's note goes to user notes, never into `meta`. */
 export async function markRepeatInfringerReviewed(userId: number, moderatorId: number) {
   const review = JSON.stringify({ reviewedAt: new Date().toISOString(), reviewedBy: moderatorId });
   await dbWrite
