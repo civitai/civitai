@@ -587,7 +587,8 @@ describe('POST /api/blocks/submit-version — staff platform updates', () => {
     expect(res._body).toEqual({
       message: refusal.message,
       code: 'platform_update_missing',
-      details: { updates: missing },
+      // The owner reads the official sender, never the staff member's username.
+      details: { updates: [{ ...missing[0], by: 'CivitaiOfficial (App Assistant)' }] },
     });
   });
 

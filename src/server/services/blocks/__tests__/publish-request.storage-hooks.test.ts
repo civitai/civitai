@@ -647,11 +647,19 @@ describe('staff platform updates', () => {
 
   const PU_MESSAGE =
     'this bundle does not contain a platform update from Civitai staff that has not shipped yet: ' +
-    'apu_int by mod-jane ("Fix the deprecated SDK call"): src/a.ts. Merge it into the app and ' +
+    'apu_int by CivitaiOfficial (App Assistant) ("Fix the deprecated SDK call"): src/a.ts. Merge ' +
+    'it into the app and ' +
     'submit again, or submit with --allow-unmerged-platform-update (allowUnmergedPlatformUpdate: ' +
     'true) to send it for review without it; the moderator is shown what was left out';
+  // What the owner is sent (the refusal's `details`): the official sender, never the staff
+  // member's username (operator decision). The moderator record below keeps the username.
   const PU_MISSING = [
-    { id: 'apu_int', reason: 'Fix the deprecated SDK call', by: 'mod-jane', paths: ['src/a.ts'] },
+    {
+      id: 'apu_int',
+      reason: 'Fix the deprecated SDK call',
+      by: 'CivitaiOfficial (App Assistant)',
+      paths: ['src/a.ts'],
+    },
   ];
   const PU_RECORD = (via: 'override' | 'push') => ({
     via,
@@ -790,8 +798,9 @@ describe('staff platform updates', () => {
       expect(result.advisories).toContainEqual({
         code: 'platform-update-missing',
         message:
-          'Submitted without a platform update from Civitai staff: apu_int by mod-jane ("Fix the ' +
-          'deprecated SDK call"): src/a.ts. The moderator reviewing this version is shown what it left out.',
+          'Submitted without a platform update from Civitai staff: apu_int by CivitaiOfficial ' +
+          '(App Assistant) ("Fix the deprecated SDK call"): src/a.ts. The moderator reviewing this ' +
+          'version is shown what it left out.',
       });
       // The review line reads exactly what the puSubmit wrote (writer → reader, one fixture).
       expect(await reviewLines(createdFileSummary())).toEqual([
@@ -1011,8 +1020,9 @@ describe('staff platform updates', () => {
         {
           code: 'platform-update-missing',
           message:
-            'This commit does not contain a platform update from Civitai staff: apu_int by mod-jane ' +
-            '("Fix the deprecated SDK call"): src/a.ts. It was recorded for review anyway, and the ' +
+            'This commit does not contain a platform update from Civitai staff: apu_int by ' +
+            'CivitaiOfficial (App Assistant) ("Fix the deprecated SDK call"): src/a.ts. It was ' +
+            'recorded for review anyway, and the ' +
             'moderator is shown what it left out. Merge it and push again.',
         },
       ]);

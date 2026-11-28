@@ -347,6 +347,60 @@ describe('checkPlatformUpdates', () => {
       contained: [],
       missing: [],
     });
+    // Invariant guard: never refused, so never named as from the official sender.
+    await expect(
+      assertBundleHasPlatformUpdates({ appBlockId: APP, readFiles: v.readFiles, allow: false })
+    ).resolves.toEqual({ missing: [], truncated: false });
+  });
+
+  it('🔴 the refusal names a verified-staff update as from CivitaiOfficial (App Assistant), never the staff username; a former-staff update is not named', async () => {
+    await addUpdate({
+      id: 'apu_exmod',
+      commitSha: staffCommit({ 'src/a.ts': UPDATE_TEXT }),
+      staff: EX_MOD,
+      paths: [{ path: 'src/a.ts', operation: 'update' }],
+      at: '2027-01-01T00:00:00Z',
+    });
+    await addUpdate({
+      id: 'apu_staff',
+      commitSha: staffCommit({ 'src/a.ts': UPDATE_TEXT }),
+      paths: [{ path: 'src/a.ts', operation: 'update' }],
+      at: '2027-01-02T00:00:00Z',
+    });
+    const v = version({ 'src/a.ts': BASE_TEXT });
+    const err = (await assertBundleHasPlatformUpdates({
+      appBlockId: APP,
+      readFiles: v.readFiles,
+      allow: false,
+    }).catch((e: unknown) => e)) as InstanceType<typeof bundleCheck.PlatformUpdateMissingRefusal>;
+    expect(err).toBeInstanceOf(bundleCheck.PlatformUpdateMissingRefusal);
+    expect(err.message).toBe(
+      'this bundle does not contain a platform update from Civitai staff that has not shipped ' +
+        'yet: apu_staff by CivitaiOfficial (App Assistant) ("Fix the deprecated SDK call"): ' +
+        'src/a.ts. Merge it into the app and submit again, or submit with ' +
+        '--allow-unmerged-platform-update (allowUnmergedPlatformUpdate: true) to send it for ' +
+        'review without it; the moderator is shown what was left out'
+    );
+    expect(err.details).toEqual({
+      updates: [
+        {
+          id: 'apu_staff',
+          reason: 'Fix the deprecated SDK call',
+          by: 'CivitaiOfficial (App Assistant)',
+          paths: ['src/a.ts'],
+        },
+      ],
+    });
+    // The moderator record (stored, never the owner's) keeps the staff username.
+    const { missing } = await assertBundleHasPlatformUpdates({
+      appBlockId: APP,
+      readFiles: v.readFiles,
+      allow: true,
+    });
+    expect(bundleCheck.platformUpdatesMissingRecord(missing, 'override')).toEqual({
+      via: 'override',
+      updates: [{ id: 'apu_staff', by: 'mod-jane', paths: ['src/a.ts'] }],
+    });
   });
 
   it('🔴 an update whose commits cannot be read is reported missing (never thrown), and logged', async () => {
@@ -390,7 +444,8 @@ describe('checkPlatformUpdates', () => {
     await expect(
       assertBundleHasPlatformUpdates({ appBlockId: APP, readFiles: v.readFiles, allow: false })
     ).rejects.toThrow(
-      'apu_lost by mod-jane ("Fix the deprecated SDK call"): src/legacy.ts [its files could not be ' +
+      'apu_lost by CivitaiOfficial (App Assistant) ("Fix the deprecated SDK call"): src/legacy.ts ' +
+        '[its files could not be ' +
         'read from the source repo; Civitai staff can withdraw it]. Merge it into the app'
     );
     expect(
@@ -449,7 +504,8 @@ describe('checkPlatformUpdates', () => {
       await expect(
         assertBundleHasPlatformUpdates({ appBlockId: APP, readFiles: v.readFiles, allow: false })
       ).rejects.toThrow(
-        'apu_deps by mod-jane ("Bump the platform SDKs"): package.json, pnpm-lock.yaml ' +
+        'apu_deps by CivitaiOfficial (App Assistant) ("Bump the platform SDKs"): package.json, ' +
+          'pnpm-lock.yaml ' +
           '[package.json: @civitai/sdk (dependencies) must be 0.34.0, bundle has 0.33.7; ' +
           'pnpm-lock.yaml: @civitai/sdk must resolve to 0.34.0, bundle has 0.33.7]. Merge it into the app'
       );
