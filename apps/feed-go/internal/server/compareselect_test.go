@@ -27,7 +27,9 @@ const (
 
 // compareSelectionWant is every endpoint compare() handles, with the literal comparator and classifier
 // it used before CompareSelection existed (read off the pre-change compare(), the route selectors and
-// trpcClassify), and the header names a REST-marked sample compares.
+// trpcClassify), and the header names a REST-marked sample compares. site-search's comparator is
+// CompareSearch since the serve-side parity replay (it compares two shadow documents as CompareJSON
+// did: TestCompareSearchDocumentsAsBefore).
 var compareSelectionWant = map[string]struct {
 	compare, classify string
 	rest              bool
@@ -46,7 +48,7 @@ var compareSelectionWant = map[string]struct {
 	EndpointV1ModelsID: {shadowPkg + "CompareJSON", serverPkg + "ClassifyV1ModelID", true, []string{
 		"cache-control", "vary", "cache-tag", "set-cookie", "x-update-required", "etag", "access-control-allow-origin",
 		"access-control-allow-headers", "access-control-allow-methods", "access-control-expose-headers", "x-frame-options", "x-expires"}},
-	EndpointSearch: {shadowPkg + "CompareJSON", serverPkg + "ClassifySearch", true, []string{
+	EndpointSearch: {serverPkg + "CompareSearch", serverPkg + "ClassifySearch", true, []string{
 		"cache-control", "vary", "cache-tag", "set-cookie", "x-update-required", "access-control-allow-origin",
 		"access-control-allow-headers", "access-control-allow-methods", "access-control-expose-headers", "x-frame-options"}},
 }

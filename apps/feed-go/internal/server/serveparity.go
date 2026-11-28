@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"math/rand/v2"
 	"net/http"
 	"net/url"
@@ -24,8 +25,9 @@ import (
 // Node shadow sampler sees none of them, so its comparison goes dark. For a sampled fraction of the
 // requests this service SERVED, after the answer is written, the same request is replayed to the
 // Node app the route hands back to (the tRPC routes: the fallback upstream; the public model routes:
-// the /api/v1 one), and Node's body is compared with what was served, by the same comparator and into
-// the same metric families as a shadow sample, under source="serve-parity".
+// the /api/v1 one; site search: the /api/search one), and Node's body is compared with what was
+// served, by the same comparator and into the same metric families as a shadow sample, under
+// source="serve-parity".
 
 // SourceLabel splits the comparison families (feed_go_shadow_compare_total,
 // feed_go_shadow_field_diffs_total, feed_go_shadow_response_total) by where the Node answer came
@@ -43,9 +45,10 @@ const (
 const ParityReplayHeader = "X-Feed-Go-Parity-Replay"
 
 // ParityEndpoints are the routes the sampler replays: the public tRPC routes whose answers the shadow
-// comparison describes, and the two public model routes (REST: Node's plain-JSON body and the REST
-// header list are compared, as their shadow samples are).
-var ParityEndpoints = []string{EndpointAsPosts, EndpointInfinite, EndpointModelGetAll, EndpointV1Models, EndpointV1ModelsID}
+// comparison describes, the two public model routes (REST: Node's plain-JSON body and the REST
+// header list are compared, as their shadow samples are), and site search (REST: Node's body against
+// the body served, not the shadow's call-and-answer document, CompareSearch; SearchComparedHeaders).
+var ParityEndpoints = []string{EndpointAsPosts, EndpointInfinite, EndpointModelGetAll, EndpointV1Models, EndpointV1ModelsID, EndpointSearch}
 
 // Outcomes of feed_go_serve_parity_total. Every sampled served request ends in exactly one.
 const (
@@ -57,7 +60,7 @@ const (
 	ParityUpstreamError     = "upstream_error"     // the Node app could not be reached, or broke the connection
 	ParityUpstreamStatus    = "upstream_status"    // the Node app answered a status other than 200 (on v1-models-id, other than 200 or 404)
 	ParityTimeout           = "timeout"            // the replay ran past its deadline
-	ParityBadBody           = "bad_body"           // Node's body was not a tRPC result (a model route: not JSON) or over maxParityBody, or a devalue answer would not re-encode as superjson
+	ParityBadBody           = "bad_body"           // Node's body was not a tRPC result (a REST route: not JSON) or over maxParityBody, or a devalue answer would not re-encode as superjson
 )
 
 // ServeParityOutcomes is every outcome, seeded at 0 per ParityEndpoints.
@@ -95,7 +98,8 @@ const DefaultServeParityWorkers = 4
 const maxParityBody = maxShadowBody
 
 // ServeParity configures the sampler. A nil *ServeParity or a Rate of 0 is off; so is a route whose
-// upstream is nil (Upstream for the tRPC routes, V1Upstream for the model routes).
+// upstream is nil (Upstream for the tRPC routes, V1Upstream for the model routes, SearchUpstream for
+// site search).
 type ServeParity struct {
 	// Rate is FEED_GO_SERVE_PARITY_SAMPLE_RATE: the fraction of served requests replayed (0 = off).
 	Rate float64
@@ -106,6 +110,9 @@ type ServeParity struct {
 	// its own proxy to the Node app those routes hand back to (FEED_GO_V1_FALLBACK_URL). nil: those
 	// routes are not replayed.
 	V1Upstream http.Handler
+	// SearchUpstream answers the replay of `POST /api/search/*`: its own proxy to the Node app the
+	// route hands back to (FEED_GO_SEARCH_FALLBACK_URL). nil: the route is not replayed.
+	SearchUpstream http.Handler
 	// Queue holds one slot per replay in flight (DefaultServeParityWorkers); a full queue drops the
 	// replay (dropped_queue). Never waited on.
 	Queue chan struct{}
@@ -116,13 +123,16 @@ type ServeParity struct {
 }
 
 // upstream is the Node app a replay of endpoint goes to: the one the route hands its fallbacks to
-// (V1Upstream for the public model routes, whose hand-backs go to V1Fallback; Upstream for the tRPC
-// ones, Fallback), never another, so a replay reaches no app the request would not have reached as a
-// hand-back. nil for any other endpoint (v1-images and site-search hand back elsewhere).
+// (V1Upstream for the public model routes, whose hand-backs go to V1Fallback; SearchUpstream for site
+// search, SearchFallback; Upstream for the tRPC ones, Fallback), never another, so a replay reaches no
+// app the request would not have reached as a hand-back. nil for any other endpoint (v1-images hands
+// back elsewhere and is not replayed).
 func (p *ServeParity) upstream(endpoint string) http.Handler {
 	switch endpoint {
 	case EndpointV1Models, EndpointV1ModelsID:
 		return p.V1Upstream
+	case EndpointSearch:
+		return p.SearchUpstream
 	case EndpointAsPosts, EndpointInfinite, EndpointModelGetAll:
 		return p.Upstream
 	}
@@ -184,9 +194,16 @@ type parityReplay struct {
 	ttl     *trpc.CacheTTL
 	trivial bool
 	cached  bool
-	// headers are a model route's served response headers (computed.headers), for the REST header
+	// headers are a REST route's served response headers (computed.headers), for the REST header
 	// comparison; nil on the tRPC routes.
 	headers []v1models.Header
+	// body is the served request's body, replayed as it came (site search's POST; nil elsewhere: the
+	// GET routes have none).
+	body []byte
+	// rateKey is the site-search rate-limit window the served request was counted in (searchCharge;
+	// "" elsewhere, or when the store failed open and nothing was counted). Node's handler counts the
+	// replay in the same window, so a replay Node answered is refunded here (refundReplayCharge).
+	rateKey string
 	// viewer is the served request's viewer, for the eval capture (viewerKnown false: none observed,
 	// or the capture is off; viewerErr then the resolve's error, if one was observed).
 	viewer      evalcorpus.Viewer
@@ -308,7 +325,11 @@ func (s *Server) startParity(rep *parityReplay) {
 func (s *Server) replay(ctx context.Context, rep *parityReplay) string {
 	// The served request's own target, sent only to the fixed upstream (the fallback proxy rewrites
 	// scheme and host to FEED_GO_FALLBACK_URL), never to a host the request names.
-	req, err := http.NewRequestWithContext(ctx, rep.method, rep.url.String(), nil) //nolint:gosec // G704: see above; the upstream is fixed
+	var body io.Reader
+	if rep.body != nil {
+		body = bytes.NewReader(rep.body)
+	}
+	req, err := http.NewRequestWithContext(ctx, rep.method, rep.url.String(), body) //nolint:gosec // G704: see above; the upstream is fixed
 	if err != nil {
 		return ParityBadBody
 	}
@@ -317,6 +338,9 @@ func (s *Server) replay(ctx context.Context, rep *parityReplay) string {
 	req.Host = rep.host
 	req.RemoteAddr = rep.remote
 	req.Header = rep.header
+	// The body's length is the request's own (NewRequestWithContext), never a copied header line.
+	req.Header.Del("Content-Length")
+	req.Header.Del("Transfer-Encoding")
 	// The transport negotiates (and decodes) its own compression: the comparison reads a plain body.
 	req.Header.Del("Accept-Encoding")
 	// The client's trace context is not the replay's: kept, Node's span of a background replay would
@@ -334,6 +358,7 @@ func (s *Server) replay(ctx context.Context, rep *parityReplay) string {
 	req.Header.Set(ParityReplayHeader, "1")
 	rec := &replayRecorder{header: http.Header{}}
 	status := s.serveReplay(rec, s.Parity.upstream(rep.endpoint), req)
+	s.refundReplayCharge(ctx, rep, status, rec)
 	switch {
 	case s.isClosing():
 		// Shutdown cancelled it (Close cancels the background context): a rollout, not a slow Node.

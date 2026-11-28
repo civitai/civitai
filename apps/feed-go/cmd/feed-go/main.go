@@ -721,13 +721,6 @@ func run(log *slog.Logger) error {
 		}, prop)
 		parityV1Target = target
 	}
-	// The serve-side parity replays go to the same Node app as each route's hand-backs (the tRPC routes:
-	// FEED_GO_FALLBACK_URL; the public model routes: FEED_GO_V1_FALLBACK_URL) through the same proxy
-	// code, but their own instances: a replay's failure is counted as its outcome
-	// (feed_go_serve_parity_total), never as a fallback proxy error.
-	srv.Parity = newServeParity(cfg.ServeParityRate, parityTarget, parityV1Target, prop)
-	log.Info("serve-side parity", "FEED_GO_SERVE_PARITY_SAMPLE_RATE", cfg.ServeParityRate, "on", srv.Parity != nil,
-		"trpc_routes", srv.Parity != nil && srv.Parity.Upstream != nil, "v1_model_routes", srv.Parity != nil && srv.Parity.V1Upstream != nil)
 	// The public /api/v1/images route's one upstream (FEED_GO_V1_IMAGES_FALLBACK_URL); unset, the route
 	// is not mounted (FEED_GO_V1_FALLBACK_URL is never used for it).
 	if mc.ImagesFallbackURL != "" {
@@ -742,6 +735,7 @@ func run(log *slog.Logger) error {
 	}
 	// The public /api/search route's one upstream (FEED_GO_SEARCH_FALLBACK_URL); unset, the route is not
 	// mounted.
+	var paritySearchTarget *url.URL
 	if sc.FallbackURL != "" {
 		target, err := url.Parse(sc.FallbackURL)
 		if err != nil {
@@ -751,7 +745,16 @@ func run(log *slog.Logger) error {
 			metrics.FallbackProxyErrors.WithLabelValues(reason).Inc()
 			srv.NoteProxyError(r, reason, err)
 		}, prop)
+		paritySearchTarget = target
 	}
+	// The serve-side parity replays go to the same Node app as each route's hand-backs (the tRPC routes:
+	// FEED_GO_FALLBACK_URL; the public model routes: FEED_GO_V1_FALLBACK_URL; site search:
+	// FEED_GO_SEARCH_FALLBACK_URL) through the same proxy code, but their own instances: a replay's
+	// failure is counted as its outcome (feed_go_serve_parity_total), never as a fallback proxy error.
+	srv.Parity = newServeParity(cfg.ServeParityRate, parityTarget, parityV1Target, paritySearchTarget, prop)
+	log.Info("serve-side parity", "FEED_GO_SERVE_PARITY_SAMPLE_RATE", cfg.ServeParityRate, "on", srv.Parity != nil,
+		"trpc_routes", srv.Parity != nil && srv.Parity.Upstream != nil, "v1_model_routes", srv.Parity != nil && srv.Parity.V1Upstream != nil,
+		"search_route", srv.Parity != nil && srv.Parity.SearchUpstream != nil)
 
 	public := server.PublicMux(srv)
 	log.Info("public model.getAll", "FEED_GO_SERVE_MODEL_GETALL", cfg.ServeModelGetAll,

@@ -2265,6 +2265,22 @@ describe('createFeedGoShadow — POST /api/search/*', () => {
     expect(h.outcomes).toEqual(['skipped_credential']);
   });
 
+  // feed-go's serve-side parity replay of a search it served (feed-go-parity-replay.ts): feed-go
+  // compares it itself, so it is never sampled back to feed-go, and nothing is posted or counted. The
+  // same request without the marker is sampled (the positive control). An invariant guard: beginRest
+  // already skipped the marker for every REST route before site search was replayed.
+  it('a feed-go parity replay is never sampled', async () => {
+    const h = searchHarness();
+    expect(
+      h.shadow.beginSiteSearch(searchRequest({ 'x-feed-go-parity-replay': '1' }))
+    ).toBeUndefined();
+    await h.flush();
+    expect(h.fetchMock).not.toHaveBeenCalled();
+    expect(h.outcomes).toEqual([]);
+    const sample = h.shadow.beginSiteSearch(searchRequest());
+    expect(sample?.endpoint).toBe('site-search');
+  });
+
   // The sample carries the body as JSON, the path without the query, the session cookie only; the
   // backend's answer and the call spliced in as JSON, and Node's answer as `node.body`.
   it('posts the body, the call, the backend answer and the answer Node wrote', async () => {

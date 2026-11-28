@@ -1227,9 +1227,9 @@ The shadow comparison needs Node to serve the request. Once a route is served fr
 user, Node answers only the fallbacks, and the body parity of what Go serves goes dark. The
 serve-side sampler (`internal/server/serveparity.go`) keeps it lit from the Go side: for a sampled
 fraction of the requests this service **served** (`served` / `served_empty`; on `v1-models-id` also
-`served_cached` and `not_found`) on `as-posts`, `infinite`, `model-getall`, `v1-models` and
-`v1-models-id`, it replays the same request to the Node app and compares Node's body with what Go
-served.
+`served_cached` and `not_found`) on `as-posts`, `infinite`, `model-getall`, `v1-models`,
+`v1-models-id` and `site-search`, it replays the same request to the Node app and compares Node's body
+with what Go served (site search: §18.6 "Serve-side parity").
 
 - **Off the latency path.** The sample is decided after `trpc.WriteResult` (the model routes: after
   `writeV1Models`); it copies the served superjson envelope (an answer written as devalue keeps its
@@ -1240,8 +1240,9 @@ served.
   a replay that fails, times out or panics changes nothing the client received.
 - **Upstream and viewer.** The replay goes through the fallback proxy code to the same Node app as the
   route's hand-backs (the tRPC routes: `FEED_GO_FALLBACK_URL`; the model routes:
-  `FEED_GO_V1_FALLBACK_URL`, `ServeParity.V1Upstream`; a route whose target is unset is not
-  replayed), never to another, but its own instance, so its failures are counted as its outcome,
+  `FEED_GO_V1_FALLBACK_URL`, `ServeParity.V1Upstream`; site search: `FEED_GO_SEARCH_FALLBACK_URL`,
+  `ServeParity.SearchUpstream`, POST with the served request's body; a route whose target is unset
+  is not replayed), never to another, but its own instance, so its failures are counted as its outcome,
   never in `feed_go_fallback_proxy_errors_total`. It carries the original's headers,
   cookies included, so Node resolves the same session and computes for the same viewer; the
   original `Accept-Encoding` is dropped so the transport negotiates (and decodes) its own
@@ -1255,8 +1256,8 @@ served.
   a 304 without a body, and Go's answer (a 200 or a 304) was computed over the whole body.
 - **Marked.** The replay carries `X-Feed-Go-Parity-Replay: 1` (`ParityReplayHeader`). The Node app
   (`src/server/trpc/feed-go-parity-replay.ts`) then does not shadow-sample it (it would be posted
-  back here as a second comparison of the same request; the model routes' REST sampler,
-  `beginRest`, skips it as the tRPC one does), writes it as superjson, never devalue,
+  back here as a second comparison of the same request; the REST sampler, `beginRest`, skips it for
+  the model routes and site search as the tRPC one does), writes it as superjson, never devalue,
   and leaves it out of its per-procedure metrics (`civitai_app_trpc_procedure_duration_seconds`,
   the call-traffic and caller counters, `src/server/trpc.ts`): after a procedure moves to Go the
   replays would otherwise be a large share of what reads as Node's calls and latency there. Its
@@ -1272,24 +1273,27 @@ served.
 - **Outcomes.** `feed_go_serve_parity_total{feed_endpoint,outcome}`, one per sampled served request:
   `compared`, `dropped_queue`, `skipped_bulkhead`, `skipped_credential`, `skipped_closing`,
   `upstream_error` (Node unreachable or the connection broken), `upstream_status` (a status other
-  than 200, e.g. Node's own bulkhead's 429; on `v1-models-id` a 404 is its not-found answer and is
-  compared), `timeout`, `bad_body` (not a tRPC result; on a model route, not JSON). A body
+  than 200, e.g. Node's own bulkhead's 429, or site search's rate-limit 429 for a request Go served at
+  its window's last slot; on `v1-models-id` a 404 is its not-found answer and is compared),
+  `timeout`, `bad_body` (not a tRPC result; on a REST route, not JSON). A body
   that is a tRPC result but not a superjson envelope (Node answered devalue: a web release without
   the marker) is `compared` with result `bad_request`.
 - **Same comparator, same series.** A compared replay runs `compareAnswer`, the function the shadow
   path runs, with the endpoint's `server.CompareSelection` (`shadow.Compare`, the route's classifier;
-  the model routes: `shadow.CompareJSON` with `ClassifyJSON` / `ClassifyV1ModelID`; the one
+  the model routes: `shadow.CompareJSON` with `ClassifyJSON` / `ClassifyV1ModelID`; site search:
+  `CompareSearch` with `ClassifySearch` over the two answer bodies, §18.6; the one
   selection the eval harness also makes, §19.8), the response headers of the list a sampler of the
   endpoint picks (`Selection.HeaderSet`: `shadow.ComparedHeaders`, the REST list on the model
-  routes) picked as the Node sampler picks them, into the same families:
+  routes, `SearchComparedHeaders` on site search) picked as the Node sampler picks them, into the same
+  families:
   `feed_go_shadow_compare_total`, `feed_go_shadow_field_diffs_total` and
   `feed_go_shadow_response_total`, each with a `source` label, `shadow` for a Node sample and
   `serve-parity` for a replay. A query that sums by `feed_endpoint` (the recorded parity ratios)
   reads both; `source` splits them. The replay results are seeded at 0 per endpoint (`match`,
   `fields`, `membership`, `bad_request`; `order` except on `v1-models-id`; `match_empty` where an
   answer can be trivial, `v1-models-id`'s not-found answer included; `match_cached` on `v1-models-id`).
-  The model routes' replays are compared, not written to the eval capture (T2 is the tRPC routes'
-  only, §19.6).
+  The REST routes' replays (the model routes, site search) are compared, not written to the eval
+  capture (T2 is the tRPC routes' only, §19.6).
 
 **Time skew runs the other way.** A shadow sample is computed by Go milliseconds AFTER Node answered;
 a replay is computed by Node AFTER Go answered: the replay starts once the served answer is written,
@@ -1306,7 +1310,8 @@ gap §7 describes either; that is the Go-first probe's (§7.1).
 
 **Sizing the rate.** A replay costs Node one compute of the request, so the rate is a share of the
 served volume Node answers again: 0.5% of a route's served requests is 0.5% extra Node load on that
-procedure. Pick it so each route gets a few hundred compares per hour (the parity alert's guard is
+procedure. A site-search replay also costs a second search-backend call (Node calls the backend again),
+so the rate is that share of extra backend queries too (§18.6). Pick it so each route gets a few hundred compares per hour (the parity alert's guard is
 100 per hour), and raise it on the route that falls short.
 
 ## 8. Flags the Node path reads, and what this service does with them
@@ -3909,8 +3914,9 @@ result. Headers compare as the REST routes' do (§16.8) without `etag` (Node's r
 `res.json`'s ETag, its passthrough answer none, and the route is `no-store`) and `x-expires`.
 
 What the shadow does not exercise: this service's own backend call (host, key, timeouts) and the rate
-limit, both public-route only. The serve-side parity replay (§7.2) is the check for those once a route
-exists. **No Go-first probe**: the probe measures serve-time misses on per-entity caches Node fills while
+limit, both public-route only. Once Go serves the route the Node sampler sees only its hand-backs; the
+serve-side parity replay (§7.2, §18.6) then keeps a comparison of what Go served, of the answers only
+(it cannot see the call). **No Go-first probe**: the probe measures serve-time misses on per-entity caches Node fills while
 it answers (§7.1); this route reads none (the session cache is the one read, and its miss rate is
 already what the other endpoints' probes measure).
 
@@ -3974,6 +3980,61 @@ charged or refunded.
 **The answer**: the reshaped body with next.config's `X-Frame-Options`, the wrapper's `Vary` and CORS
 headers, `Cache-Control: private, no-store`, Next's JSON `Content-Type`, and `X-Feed-Go-Served: go`.
 No ETag (Node writes one only on its reshaped path; the answer is not stored).
+
+**Serve-side parity** (`FEED_GO_SERVE_PARITY_SAMPLE_RATE`, §7.2; no setting of its own). A sampled
+served search is replayed to the Node app at `FEED_GO_SEARCH_FALLBACK_URL` (`ServeParity.SearchUpstream`):
+POST, the same path and body (the buffered copy the compute read), and the request's headers (the
+session cookie, `host`, `cf-connecting-ip`, `cf-ipcountry`, `cf-region-code`, `content-type`: what the
+viewer, the host's cap and the rate-limit bucket depend on), with `X-Feed-Go-Parity-Replay` so Node's
+sampler does not post it back (`beginRest`). A served search never carries an API credential (it is
+handed back, `bearer-token`), so `skipped_credential` does not occur in practice.
+
+- **What is compared: the two answers, not the call.** Node's response has no `upstream`; the replay
+  compares Go's served body with Node's body (`CompareSearch`: `shadow.CompareJSON`; two shadow
+  documents are still compared whole, as before) and the REST headers of 18.4. The two answers come
+  from **two backend calls at different instants**, so `CompareSearch` leaves out what only the
+  backend's own instant decides: `processingTimeMs` (top level, and per multi-search result; both
+  ports pass it through untouched) is not compared, and a `facetDistribution` difference is counted
+  under the category `facetDistribution` itself, its path cut there (below it the keys are facet
+  values: an unbounded label, and index values in the log).
+- **Classification** (`ClassifySearch` on two bodies, `classifySearchBodies`): `match`;
+  `membership` when the hits differ as a set (by `id`; a facet search's `facetHits` by `value`; per
+  multi-search result) or the hits are the same and every difference is in a count over the matched
+  set (`estimatedTotalHits`, `totalHits`, `totalPages`, `facetDistribution`, `facetStats`,
+  `facetHits.*.count`); `order` when the same hits come in another order; `fields` when the same hits
+  in the same order differ in a hit or another member. The members the backend echoes from the call
+  (`query`, `limit`, `offset`, `page`, `hitsPerPage`, `indexUid`, `facetQuery`) are `fields`, never
+  `membership`: no churn moves them, so a difference there is the two ports sending different calls. **Index churn is expected and
+  lands in these results**: a document indexed or removed between the two calls is `membership`, a
+  re-rank `order`, a document updated between them (its stats) `fields` under that hit field's
+  category. Read the replay's `membership` / `order` and its `hits.*.stats.*`-style categories as the
+  churn floor; a `fields` diff on a field that does not change with time (`hits.*.nsfwLevel`, a field
+  present on one side only) is a shaping difference to explain. The shadow (on what Node still
+  answers) stays the churn-free check of the shaping and of the call.
+- **The rate limit stays counted once.** Go counted the request when it served it; Node's handler
+  counts the replay again in the same window (`checkSiteSearchRateLimit` `INCR`s
+  `site-search:rate-limit:<bucket>` before it answers, a 429 included). So when Node answered the
+  replay itself (a status of its own: not the proxy's empty 502 for a Node it could not reach),
+  Go refunds one count (`DECR`, `refundReplayCharge`), as it refunds a hand-back. Nothing on the
+  replay makes Node skip its rate limit: the replay header only opts out of the sampler. The edges,
+  each one count in that viewer's current window: Node failed open or refused before its rate limit
+  (the API request policy, the method check: answers Go would not have served) and the refund
+  under-counts by one; a replay that timed out or broke after Node counted it is not refunded and
+  over-counts by one. A request served at the window's last slot is Node's 429 on the replay
+  (`upstream_status`, refunded): the count Node saw included Go's own. While a replay is in flight
+  (until Node answers, at most the 10 s replay deadline) the window holds one extra count, so a real
+  request of that viewer at the last slot in that interval can be refused one slot early. A session
+  that changes between the serve and the replay (signed out in between) is counted by Node in the
+  other bucket while Go refunds the served one.
+- **Costs.** Each replay is Node CPU for the whole request (session, the search call, reshaping) and a
+  second search-backend query, at the serve-parity rate of the route's served volume. The rate and
+  the 4 replay slots per pod are shared with the other replayed routes (no per-route rate): site
+  search answers a request per keystroke, so it is likely the busiest replayed route, and once it is
+  served its replays take slots the other routes' replays then find busy (`dropped_queue`). Before
+  serving search, read the other routes' `compared` per hour against the parity alert's 100-per-hour
+  guard and the backend's headroom at the current rate; a per-route rate is the follow-up if they
+  conflict. The replays also show in Node's own `/api/search` request metrics and error logs (only
+  the tRPC path leaves a replay out of its metrics).
 
 **Byte-level divergence**: values the rules do not touch are the backend's bytes; Node writes them with
 `JSON.stringify`. A JSON reader sees the same values, but an integral float the backend writes `5.0` is

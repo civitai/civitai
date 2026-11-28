@@ -52,7 +52,8 @@ func CompareSelectionEndpoints() []string { return slices.Clone(compareSelection
 //   - v1-images: CompareV1Images (modelVersionIds as a multiset), ClassifyJSON
 //   - v1-models: CompareJSON, ClassifyJSON
 //   - v1-models-id: CompareJSON, ClassifyV1ModelID
-//   - site-search: CompareJSON, ClassifySearch
+//   - site-search: CompareSearch, ClassifySearch (a shadow sample's call-and-answer documents; a
+//     serve-side parity replay's two answer bodies, from two backend calls)
 func CompareSelection(endpoint string) Selection {
 	sel := Selection{Endpoint: endpoint, Compare: shadow.Compare, Classify: shadow.Classify, REST: isRESTEndpoint(endpoint)}
 	switch endpoint {
@@ -67,7 +68,7 @@ func CompareSelection(endpoint string) Selection {
 	case EndpointV1ModelsID:
 		sel.Compare, sel.Classify = shadow.CompareJSON, ClassifyV1ModelID
 	case EndpointSearch:
-		sel.Compare, sel.Classify = shadow.CompareJSON, ClassifySearch
+		sel.Compare, sel.Classify = CompareSearch, ClassifySearch
 	}
 	return sel
 }

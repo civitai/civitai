@@ -260,8 +260,12 @@ func SyntheticSearchRequest(ctx context.Context, req ShadowRequest) (*http.Reque
 // ClassifySearch classifies a site-search comparison of the two `{upstream, body}` documents (the
 // search call and the answer): `match`; `membership` when the search call differs (the query this
 // service would send is not Node's, so the hits could differ); `fields` when the call is the same and
-// the answer differs (the shaping).
-func ClassifySearch(r *shadow.Report, _, _ []byte) string {
+// the answer differs (the shaping). Two answer bodies (a serve-side parity replay, CompareSearch) are
+// classifySearchBodies'.
+func ClassifySearch(r *shadow.Report, goBody, nodeBody []byte) string {
+	if !isSearchDocument(goBody) {
+		return classifySearchBodies(r, goBody, nodeBody)
+	}
 	if r.Match {
 		return "match"
 	}
@@ -576,10 +580,14 @@ func (s *Server) serveSearchLabelled(w http.ResponseWriter, r *http.Request) {
 	}
 	if err == nil {
 		writeSearch(w, c)
+		// The serve-side parity sample (off by default) copies what it compares before the release; its
+		// replay starts only after the answer is written and never touches w.
+		replay := s.sampleSearchParity(r, c, charge)
 		c.release()
 		setOutcome(span, "served")
 		s.Metrics.Requests.WithLabelValues(EndpointSearch, "serve", "served").Inc()
 		tracing.Observe(ctx, s.Metrics.Duration.WithLabelValues(EndpointSearch, "serve", "served"), time.Since(start).Seconds())
+		s.startParity(replay) //nolint:contextcheck // the replay runs after the answer, on the server's background context (Close cancels it): it must outlive the request
 		return
 	}
 	if !s.serveFallback(ctx, span, start, EndpointSearch, err) {
