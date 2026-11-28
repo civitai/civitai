@@ -3,6 +3,9 @@ import { useEffect, useRef, useState } from 'react';
 import { IconPhotoPlus } from '@tabler/icons-react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { MediaDropzone } from '~/components/Image/ImageDropzone/MediaDropzone';
+import { getEdgeUrl } from '~/client-utils/edge-url';
+import type { PreparingMedia } from '~/components/Post/EditV2/InFlightUploadTiles';
+import { InFlightUploadTiles } from '~/components/Post/EditV2/InFlightUploadTiles';
 import { usePostEditParams, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
 import { useShowCreatePostError } from '~/components/Post/showCreatePostError';
 import ImageSelectModal from '~/components/Training/Form/ImageSelectModal';
@@ -128,13 +131,51 @@ export function PostImageDropzone({
   });
   // #endregion
 
+  // #region [preparing]
+  const [preparing, setPreparing] = useState<{ id: number; items: PreparingMedia[] }[]>([]);
+  const preparingIdRef = useRef(0);
+  async function whilePreparing(items: PreparingMedia[], work: () => Promise<unknown>) {
+    const id = preparingIdRef.current++;
+    if (items.length) setPreparing((batches) => [...batches, { id, items }]);
+    try {
+      await work();
+    } finally {
+      setPreparing((batches) => batches.filter((batch) => batch.id !== id));
+    }
+  }
+  // #endregion
+
+  // #region [unanswered creates]
+  // react-query runs a `mutate` call's own callbacks only for the latest call, and only while
+  // mounted. A create those callbacks will never answer is settled here instead, so what waits on
+  // it (preparing tiles, the import notification) does not wait forever.
+  const unansweredCreatesRef = useRef(new Set<() => void>());
+  useEffect(() => {
+    const unanswered = unansweredCreatesRef.current;
+    return () => {
+      for (const settle of unanswered) settle();
+    };
+  }, []);
+  // #endregion
+
   // #region [handlers]
+  /**
+   * Settles once the files are queued for upload, or the post they need could not be made, or its
+   * create will go unanswered (a newer create replaced it, or the dropzone unmounted).
+   */
   function handleUpload(
     fileData: { file: File; meta?: Record<string, unknown>; generationWorkflowId?: string }[]
-  ) {
-    if (currentUser?.muted) return;
-    if (post) upload(fileData);
-    else {
+  ): Promise<unknown> {
+    if (currentUser?.muted) return Promise.resolve();
+    if (post) return upload(fileData);
+    return new Promise<void>((resolve) => {
+      const unanswered = unansweredCreatesRef.current;
+      for (const superseded of unanswered) superseded();
+      const settle = () => {
+        unanswered.delete(settle);
+        resolve();
+      };
+      unanswered.add(settle);
       createPostMutation.mutate(
         {
           modelVersionId,
@@ -146,24 +187,29 @@ export function PostImageDropzone({
         },
         {
           onSuccess: async (data) => {
-            queryUtils.post.getEdit.setData({ id: data.id }, () => data);
-            // Refresh the version's post list so re-entering the post step (e.g. via
-            // the wizard's back/next) reuses this post instead of creating a new one.
-            if (modelVersionId) {
-              await queryUtils.modelVersion.getById.invalidate({
-                id: modelVersionId,
-                withFiles: true,
-              });
+            try {
+              queryUtils.post.getEdit.setData({ id: data.id }, () => data);
+              // Refresh the version's post list so re-entering the post step (e.g. via
+              // the wizard's back/next) reuses this post instead of creating a new one.
+              if (modelVersionId) {
+                await queryUtils.modelVersion.getById.invalidate({
+                  id: modelVersionId,
+                  withFiles: true,
+                });
+              }
+              await onCreatePost?.(data);
+              await upload(fileData, { postId: data.id });
+            } finally {
+              settle();
             }
-            await onCreatePost?.(data);
-            upload(fileData, { postId: data.id });
           },
           onError(error) {
             showCreatePostError(error);
+            settle();
           },
         }
       );
-    }
+    });
   }
 
   const handleDrop = (args: { file: File; meta?: Record<string, unknown> }[]) => {
@@ -186,11 +232,16 @@ export function PostImageDropzone({
       } from generator...`,
     });
 
-    const goodFiles = await downloadGeneratorImages(assets);
-
-    if (goodFiles.length > 0) {
-      handleUpload(goodFiles);
-    }
+    await whilePreparing(
+      assets.map((asset) => ({
+        url: getEdgeUrl(asset.url),
+        type: asset.type === 'video' ? 'video' : 'image',
+      })),
+      async () => {
+        const goodFiles = await downloadGeneratorImages(assets);
+        if (goodFiles.length > 0) await handleUpload(goodFiles);
+      }
+    );
 
     // Hide notification after a short delay to allow upload to start
     setTimeout(() => {
@@ -222,8 +273,17 @@ export function PostImageDropzone({
   useEffect(() => {
     async function handleSrc() {
       if (!src) return;
-      const { files, failedCount } = await orchestratorMediaTransmitter.getFiles(src);
-      if (files.length) handleUpload([...files]);
+      // getFiles empties the slot, so read the urls first.
+      const sources = useOrchestratorUrlStore.getState().data[src] ?? [];
+      let failedCount = 0;
+      await whilePreparing(
+        sources.map(({ url }) => ({ url })),
+        async () => {
+          const result = await orchestratorMediaTransmitter.getFiles(src);
+          failedCount = result.failedCount;
+          if (result.files.length) await handleUpload([...result.files]);
+        }
+      );
       if (failedCount)
         showErrorNotification({
           title: `${failedCount} file${
@@ -264,6 +324,7 @@ export function PostImageDropzone({
         {images.length + reserved} / {maxItems} files
       </Text>
       {!!files.length && showProgress && <Progress value={progress} animated size="lg" />}
+      <InFlightUploadTiles files={files} preparing={preparing.flatMap((batch) => batch.items)} />
       {!files.length && <UploadNotice />}
     </div>
   );

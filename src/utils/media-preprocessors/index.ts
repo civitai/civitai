@@ -11,12 +11,15 @@ type ProcessedVideo = { type: 'video' } & AsyncReturnType<typeof preprocessVideo
 
 export type PreprocessFileReturnType = SharedProps & (ProcessedImage | ProcessedVideo);
 
+/** The mime type a file is uploaded as: an untyped download is read as an mp4. */
+export const uploadMimeType = (file: File) =>
+  file.type === 'application/octet-stream' ? 'video/mp4' : file.type;
+
 export async function preprocessFile(
   file: File,
   options?: { allowAnimatedWebP?: boolean }
 ): Promise<PreprocessFileReturnType> {
-  let fileType = file.type;
-  if (fileType === 'application/octet-stream') fileType = 'video/mp4';
+  const fileType = uploadMimeType(file);
   const type = MEDIA_TYPE[fileType];
   const data = {
     name: file.name,
