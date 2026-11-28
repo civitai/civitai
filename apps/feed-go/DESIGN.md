@@ -3933,7 +3933,7 @@ sum(rate(feed_go_shadow_servable_total{feed_endpoint="site-search",reason="serva
 sum by (reason) (rate(feed_go_shadow_servable_total{feed_endpoint="site-search"}[1h]))
 ```
 
-**The servable probe** (`feed_go_shadow_servable_total{reason}`, `searchShadowCompute`). Each sample is
+**The servable probe** (`feed_go_shadow_servable_total{reason}`, `observeSearchServable`, counted after the compute's budget has ended it). Each sample is
 counted once: `servable`, else the first hand-back serving would reach, in serving's order — the region
 block before the compute (`searchPreCompute`, which serving runs too), then the compute's own fallback
 reason, with the checks only the public route makes (`search-etag`, `search-profanity`:
@@ -3943,8 +3943,8 @@ sample shows it only when the two runtimes' region rules disagree. A shadow-only
 (`search-no-upstream`, the shadow budget's `deadline`) is counted under its own reason. The probe
 cannot see the rate-limit ceiling (Node samples after its own limit passed the request, and each
 request is counted once by whichever side answers), a signed-out caller without a usable
-`cf-connecting-ip` (the sampler does not forward it), or the body size (Next's 413 comes before the
-handler); nor what Node never samples: API credentials, and every answer but a 200 (its own 451, 429
+`cf-connecting-ip` (the sampler does not forward it), the body size (Next's 413 comes before the
+handler), or a full pod's `bulkhead` (load, not the request); nor what Node never samples: API credentials, and every answer but a 200 (its own 451, 429
 and 422, a backend 4xx or 5xx). S is therefore the share of the SAMPLED traffic; those classes are
 read from Node's side.
 

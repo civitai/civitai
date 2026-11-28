@@ -102,7 +102,7 @@ func (s *Server) searchRoute(endpoint string) (
 	if endpoint != EndpointSearch {
 		return nil, nil, false
 	}
-	return SyntheticSearchRequest, s.searchShadowCompute(), true
+	return SyntheticSearchRequest, s.searchCompute(false), true
 }
 
 // SearchServable is feed_go_shadow_servable_total's reason for a sample the public route would have
@@ -110,10 +110,15 @@ func (s *Server) searchRoute(endpoint string) (
 const SearchServable = "servable"
 
 // SearchServeOnlyReasons are the hand-backs only the public route takes, so only the servable probe
-// can count them on a shadow sample (searchShadowCompute), in the order serving checks them.
+// can count them on a shadow sample (observeSearchServable), in the order serving checks them.
 // region-blocked is a drift signal there: Node answers a blocked region's 451 before it samples, so a
 // sample counts it only when this service's region rules and Node's disagree.
 var SearchServeOnlyReasons = []string{"region-blocked", "search-etag", "search-profanity"}
+
+// searchServableComputeReasons are the servable probe's reasons any compute can end in, whatever the
+// request (Server.within's, and a compute error): seeded with SearchServeOnlyReasons so that a reason
+// in S's denominator does not lose its first sample to rate() on a new pod.
+var searchServableComputeReasons = append(slices.Clone(computeFallbackReasons), HandbackReasonError)
 
 // searchServeProbe is the public route's decision on a shadow sample: the first serve-only hand-back
 // the compute passed (searchCompute notes it where serving would have stopped).
@@ -127,33 +132,36 @@ func (p *searchServeProbe) note(reason string) {
 	}
 }
 
-// searchShadowCompute is the shadow's compute (searchCompute(false)), which also counts what the
-// public route would have done with the same request (feed_go_shadow_servable_total): SearchServable,
-// else the reason it would hand the request back, in serving's order (searchPreCompute, then the
-// compute's checks). The shadow still computes and compares every sample it can, whatever the
-// verdict: the profanity hand-back on civitai.com is where the PG cap applies.
+// observeSearchServable counts what the public route would have done with a shadow sample's request
+// (feed_go_shadow_servable_total), once its compute has ended (compare, after computeWithin, so the
+// budget's deadline, a cancellation and a panic are the reasons they are): SearchServable, else the
+// reason it would hand the request back, in serving's order (searchPreCompute, then the compute's
+// checks). The shadow computes and compares every sample it can, whatever the verdict: the profanity
+// hand-back on civitai.com is where the PG cap applies. No-op for another endpoint, or a request
+// without a probe (SyntheticSearchRequest attaches it).
 //
 // Not visible from a sample, so never counted: the rate-limit ceiling (Node samples only after its own
 // limit passed the request; this route's count is Node's, each request counted once), a signed-out
-// caller without a usable `cf-connecting-ip` (the sampler does not forward the header), and the body
-// size (Next refuses a body past 1 MiB, 413, before the handler). Nor is what Node never samples: a
-// request with an API credential, and every answer but a 200 (its own 451, 429 and 422, a 4xx or 5xx
-// from the backend). A shadow-only failure (search-no-upstream, the shadow budget's deadline) is
-// counted under its reason.
-func (s *Server) searchShadowCompute() func(context.Context, *http.Request) (*computed, error) {
-	inner := s.searchCompute(false)
-	return func(ctx context.Context, r *http.Request) (*computed, error) {
-		probe := &searchServeProbe{}
-		if err := s.searchPreCompute(r); err != nil {
-			probe.note(fallback.Reason(err))
-		}
-		r = r.WithContext(context.WithValue(r.Context(), searchServeProbeKey{}, probe))
-		c, err := inner(ctx, r)
-		if s.Metrics != nil {
-			s.Metrics.ShadowServable.WithLabelValues(EndpointSearch, searchServeVerdict(probe, err)).Inc()
-		}
-		return c, err
+// caller without a usable `cf-connecting-ip` (the sampler does not forward the header), the body size
+// (Next refuses a body past 1 MiB, 413, before the handler), and the serve slots (a full pod's
+// `bulkhead` depends on load, not the request). Nor is what Node never samples: a request with an API
+// credential, and every answer but a 200 (its own 451, 429 and 422, a 4xx or 5xx from the backend). A
+// shadow-only failure (search-no-upstream, the shadow budget's deadline) is counted under its reason.
+func (s *Server) observeSearchServable(endpoint string, r *http.Request, err error) {
+	if endpoint != EndpointSearch || s.Metrics == nil {
+		return
 	}
+	probe, ok := r.Context().Value(searchServeProbeKey{}).(*searchServeProbe)
+	if !ok {
+		return
+	}
+	reason := ""
+	if pre := s.searchPreCompute(r); pre != nil {
+		reason = fallback.Reason(pre)
+	} else {
+		reason = searchServeVerdict(probe, err)
+	}
+	s.Metrics.ShadowServable.WithLabelValues(EndpointSearch, reason).Inc()
 }
 
 // searchPreCompute is the public route's check between buffering the body and the compute: a blocked
@@ -167,8 +175,8 @@ func (s *Server) searchPreCompute(r *http.Request) error {
 	return nil
 }
 
-// searchServeVerdict is the servable probe's reason: a serve-only hand-back noted before the compute
-// failed wins (serving stops at the first check it fails, and searchPreCompute's come first); one noted inside the compute was passed before any failure there (noted only once reached);
+// searchServeVerdict is the servable probe's reason after searchPreCompute passed: a serve-only
+// hand-back noted in the compute wins (serving stops at the first check it fails); one noted inside the compute was passed before any failure there (noted only once reached);
 // then the compute's own fallback reason ("error" for a compute error); else SearchServable.
 func searchServeVerdict(probe *searchServeProbe, err error) string {
 	if probe.reason != "" {
@@ -184,7 +192,7 @@ func searchServeVerdict(probe *searchServeProbe, err error) string {
 }
 
 // searchServeOnly is a check only the public route makes: serving, the request is handed back under
-// reason; in the shadow it is noted on the sample's servable probe (searchShadowCompute) and the
+// reason; in the shadow it is noted on the sample's servable probe (observeSearchServable) and the
 // compute goes on.
 func searchServeOnly(r *http.Request, serving bool, reason string) error {
 	if serving {
@@ -219,6 +227,8 @@ func SyntheticSearchRequest(ctx context.Context, req ShadowRequest) (*http.Reque
 	ctx = withSampled(auth.WithRedactedCredentials(ctx))
 	body := []byte(req.Input)
 	ctx = withSearchBody(ctx, body)
+	// The public route's decision on the sample (observeSearchServable).
+	ctx = context.WithValue(ctx, searchServeProbeKey{}, &searchServeProbe{})
 	if len(req.Upstream) > 0 {
 		ctx = context.WithValue(ctx, searchRecordedKey{}, sitesearch.Recorded{Body: req.Upstream})
 	}

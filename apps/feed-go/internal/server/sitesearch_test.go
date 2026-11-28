@@ -525,12 +525,35 @@ func TestSearchShadowCountsServable(t *testing.T) {
 	}
 }
 
+// The servable probe reads the compute's FINAL outcome: a sample whose compute ran past the budget is
+// `deadline` there (computeWithin), as in feed_go_fallback_total, never `servable`, even when the
+// compute itself returned an answer.
+func TestSearchShadowServableCountsTheBudget(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	s, _, _, _ := searchServer(t, reg, false)
+	s.RequestBudget = time.Nanosecond
+	s.ShadowQueue = make(chan struct{}, 1)
+	postSearchSample(t, s, ShadowRequest{
+		Input: `{"q":"cat"}`, Path: searchToolsPath, Headers: map[string]string{"host": "red.example.test"},
+		Node:     json.RawMessage(`{"upstream":{},"body":{}}`),
+		Upstream: json.RawMessage(searchToolsHits),
+	})
+	for r, want := range map[string]float64{"deadline": 1, "servable": 0} {
+		if v, _ := metricValue(t, reg, "feed_go_shadow_servable_total", map[string]string{"feed_endpoint": EndpointSearch, "reason": r}); v != want {
+			t.Errorf("servable{reason=%q} = %v, want %v", r, v, want)
+		}
+	}
+	if v, _ := metricValue(t, reg, "feed_go_fallback_total", map[string]string{"feed_endpoint": EndpointSearch, "mode": "shadow", "reason": "deadline"}); v != 1 {
+		t.Errorf("fallback{deadline} = %v, want 1 (the same sample)", v)
+	}
+}
+
 // The servable series exist from the start, reading 0: the share is a ratio of rates, and a reason
 // born inside the window would lose its first sample to increase().
 func TestShadowServableIsSeeded(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	NewMetrics(reg)
-	for _, r := range []string{"servable", "region-blocked", "search-etag", "search-profanity"} {
+	for _, r := range []string{"servable", "region-blocked", "search-etag", "search-profanity", "deadline", "canceled", "panic", "error"} {
 		v, found := metricValue(t, reg, "feed_go_shadow_servable_total", map[string]string{"feed_endpoint": EndpointSearch, "reason": r})
 		if !found || v != 0 {
 			t.Errorf("servable{reason=%q} = %v (found %v), want an exported 0", r, v, found)

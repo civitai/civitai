@@ -122,7 +122,8 @@ type Metrics struct {
 	SearchRejected *prometheus.CounterVec
 	// ShadowServable counts the site-search shadow samples by what the public route would have done with
 	// the same request (feed_go_shadow_servable_total: endpoint, reason: SearchServable, else the
-	// hand-back reason; searchShadowCompute). Seeded for SearchServable and SearchServeOnlyReasons.
+	// hand-back reason; observeSearchServable). Seeded for SearchServable, SearchServeOnlyReasons and
+	// searchServableComputeReasons.
 	ShadowServable *prometheus.CounterVec
 	// EvalCapture counts the eval capture's taps by outcome (feed_go_eval_capture_total: endpoint,
 	// source: evalcapture.Sources, outcome: evalcapture.Outcomes, and evalcapture.OutcomeRefused for
@@ -427,7 +428,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	for _, why := range []string{v1models.SearchRejectedOpen, v1models.SearchRejectedBusy} {
 		m.SearchRejected.WithLabelValues(why)
 	}
-	for _, r := range append([]string{SearchServable}, SearchServeOnlyReasons...) {
+	for _, r := range slices.Concat([]string{SearchServable}, SearchServeOnlyReasons, searchServableComputeReasons) {
 		m.ShadowServable.WithLabelValues(EndpointSearch, r)
 	}
 	return m
