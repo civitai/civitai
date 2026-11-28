@@ -219,8 +219,9 @@ async function raiseToRecordedFloor(rows: { id: number; floorLevel: number | nul
   if (raised.length) await refreshImageLevelCaches(raised.map((x) => x.id));
 }
 
-/** A row at Blocked the restore leaves visible: no CSAM block, current or recorded, and no recorded
- *  Blocked ingestion. The caller's `visible` filter, read on the row before the write. */
+/** A row at Blocked the restore leaves visible (the rows `visible` below keeps): no CSAM block,
+ *  current or recorded, and no recorded Blocked ingestion. Reads the pre-update row, so it uses the
+ *  recorded prior keys. */
 const RESTORED_FROM_BLOCKED = Prisma.sql`(
   "nsfwLevel" = ${NsfwLevel.Blocked}
   AND (${csamBlockedSql()}) IS NOT TRUE

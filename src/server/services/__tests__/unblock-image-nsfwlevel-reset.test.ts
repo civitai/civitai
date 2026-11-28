@@ -1186,6 +1186,7 @@ describe('handleUnblockImages and an image withheld from the moderator', () => {
  * moderator without the grant.
  */
 describe('a lift of a Blocked, rating-locked image', () => {
+  const TAG_LEVEL = 4;
   type Door = 'unblock' | 'appeal';
   const lift = async (
     door: Door,
@@ -1210,6 +1211,9 @@ describe('a lift of a Blocked, rating-locked image', () => {
       "postId" int, "nsfwLevel" int NOT NULL, "nsfwLevelLocked" boolean NOT NULL DEFAULT false,
       minor boolean NOT NULL DEFAULT false, "needsReview" text, "blockedFor" text, metadata jsonb,
       "scannedAt" timestamp, ingestion "ImageIngestionStatus", "scanJobs" jsonb);
+      -- Stands in for the tag recompute: rates an unlocked row at R, as its tags would.
+      CREATE FUNCTION update_nsfw_levels_new(ids int[]) RETURNS void LANGUAGE sql AS
+        $$ UPDATE "Image" SET "nsfwLevel" = ${TAG_LEVEL} WHERE id = ANY(ids) AND NOT "nsfwLevelLocked" $$;
       INSERT INTO "User" (id, "deletedAt") VALUES (1, ${
         ownerDeleted ? 'now()' : 'NULL'
       }), (2, NULL);
@@ -1231,8 +1235,9 @@ describe('a lift of a Blocked, rating-locked image', () => {
         ? raw.queryRaw(strings, ...values)
         : Promise.resolve([])) as never);
     dbWrite.$executeRawUnsafe.mockImplementation((async (sql: string) => {
-      if (recomputeThrows && sql.includes('update_nsfw_levels_new'))
-        throw new Error('recompute down');
+      if (!sql.includes('update_nsfw_levels_new')) return 0;
+      if (recomputeThrows) throw new Error('recompute down');
+      await pg.query(sql);
       return 0;
     }) as never);
     const appeal = {
@@ -1291,12 +1296,16 @@ describe('a lift of a Blocked, rating-locked image', () => {
     }
   };
 
-  const lifted = { ingestion: 'Scanned', nsfwLevel: 0, nsfwLevelLocked: false };
+  const lifted = { ingestion: 'Scanned', nsfwLevel: TAG_LEVEL, nsfwLevelLocked: false };
+  const liftedUnrated = { ...lifted, nsfwLevel: 0 };
   const kept = { ingestion: 'Blocked', nsfwLevel: 32, nsfwLevelLocked: true };
 
-  it.each<Door>(['unblock', 'appeal'])('%s: comes off Blocked and unlocked', async (door) => {
-    expect(await lift(door)).toMatchObject({ error: null, row: lifted, reopened: false });
-  });
+  it.each<Door>(['unblock', 'appeal'])(
+    '%s: comes off Blocked, unlocked, and rated from its tags',
+    async (door) => {
+      expect(await lift(door)).toMatchObject({ error: null, row: lifted, reopened: false });
+    }
+  );
 
   it.each<Door>(['unblock', 'appeal'])(
     '%s: keeps level and lock while the owner is deleted',
@@ -1309,7 +1318,7 @@ describe('a lift of a Blocked, rating-locked image', () => {
     '%s: a recompute that throws leaves the row fully lifted',
     async (door) => {
       const result = await lift(door, { recomputeThrows: true });
-      expect(result.row).toEqual(lifted);
+      expect(result.row).toEqual(liftedUnrated);
       // The unblock passes the error on; the appeal approval logs it and stays approved.
       if (door === 'unblock') expect(result.error).toBeInstanceOf(Error);
       else expect(result).toMatchObject({ error: null, reopened: false });

@@ -1972,8 +1972,7 @@ export async function settleResolvedAppeals(
   }
 ) {
   const approved = status === AppealStatus.Approved;
-  // Today's one Image approver, handleUnblockImages, passes only rows its own withheld-checked lift
-  // wrote (#10650); the check here holds for any caller after it.
+  // An approval never lifts a withheld image, whichever caller settles it.
   const notWithheld = Prisma.raw(notWithheldTargetSql({ csamReview }));
 
   // Batch-fetch recipients once to avoid N+1 lookups inside the loop.
