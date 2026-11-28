@@ -63,23 +63,31 @@ const SOURCE = { imageId: 7, url: 'https://image.example/source.png', width: 120
 const lastOption = (spec: RemixAsk) =>
   spec.kind === 'choice' ? spec.options[spec.options.length - 1].value : firstAnswer(spec);
 
+/** The same app with its optional text skipped, so a wrap's blank-answer branch runs too. */
+const RUNS = [
+  ...FIXTURES.map((f) => ({ ...f, run: f.slug, answer: lastOption })),
+  {
+    ...FIXTURES.find((f) => f.slug === 'awkward-text')!,
+    run: 'awkward-text-skipped',
+    answer: (spec: RemixAsk) => (spec.kind === 'text' ? '' : lastOption(spec)),
+  },
+];
+
 describe('remixSpecToSource', () => {
-  it.each(FIXTURES.map((f) => [f.slug, f.spec] as const))(
+  it.each(RUNS.map((r) => [r.run, r] as const))(
     '%s: the module and its trace match the goldens, and every prompt text is a literal',
-    async (slug, spec) => {
+    async (run, { slug, spec, answer }) => {
       const source = remixSpecToSource(spec);
-      await expect(source).toMatchFileSnapshot(`./__goldens__/${slug}.js`);
+      await expect(source).toMatchFileSnapshot(`./__goldens__/${run}.js`);
       // The runner replays the module over this log (apps/storage-hook-runner) and must agree.
-      const run = await dryRunRemixApp(
+      const dryRun = await dryRunRemixApp(
         compileRemixApp({ slug, name: slug, version: 1 }, spec),
         SOURCE,
-        {
-          answer: lastOption,
-        }
+        { answer }
       );
-      await expect(JSON.stringify({ source: SOURCE, ...run }, null, 2) + '\n').toMatchFileSnapshot(
-        `./__goldens__/${slug}.trace.json`
-      );
+      await expect(
+        JSON.stringify({ source: SOURCE, ...dryRun }, null, 2) + '\n'
+      ).toMatchFileSnapshot(`./__goldens__/${run}.trace.json`);
 
       // What the save audit reads: every piece of author text that can reach a prompt.
       const literals = remixSourceLiterals(source)!;

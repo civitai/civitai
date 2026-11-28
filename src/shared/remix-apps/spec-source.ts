@@ -4,16 +4,6 @@ import {
   type RemixDeclarativeSpec,
 } from '~/shared/remix-apps/row.schema';
 
-/**
- * A declarative spec as a user app's module, run like any other in the sandbox and reviewed
- * through the same submit path. It is written out step by step, never as a loop over the spec:
- * the save audit reads the prompts off the module's syntax (`remixSourceLiterals`), so every ask
- * prompt, step prompt piece, fragment and wrap has to be a literal inside the `prompt` it ends up
- * in. Its behaviour is `compileRemixApp`'s for the same spec.
- *
- * Spec text enters the module only as `JSON.stringify` output: never in a comment, an identifier
- * or a template literal.
- */
 export const REMIX_TEMPLATE_VERSION = 1;
 
 const HEADER = (version: number) => `// remix-app-creator template v${version}`;
@@ -24,7 +14,18 @@ const lit = (value: unknown) =>
     .replace(/\u2028/g, '\\u2028')
     .replace(/\u2029/g, '\\u2029');
 
-/** Throws on a spec that is not a valid declarative one: the module is only ever built from one. */
+/**
+ * A declarative spec as a user app's module, run like any other in the sandbox and reviewed
+ * through the same submit path. It is written out step by step, never as a loop over the spec:
+ * the save audit reads the prompts off the module's syntax (`remixSourceLiterals`), so every ask
+ * prompt, step prompt piece, fragment and wrap has to be a literal inside the `prompt` it ends up
+ * in. Its behaviour is `compileRemixApp`'s for the same spec.
+ *
+ * Spec text enters the module only as `JSON.stringify` output: never in a comment, an identifier
+ * or a template literal.
+ *
+ * Throws on a spec that is not a valid declarative one: the module is only ever built from one.
+ */
 export function remixSpecToSource(spec: RemixDeclarativeSpec, version = REMIX_TEMPLATE_VERSION) {
   const template = TEMPLATES[version];
   if (!template) throw new Error(`No remix app template v${version}`);
