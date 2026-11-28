@@ -268,7 +268,7 @@
         {:else}
           Players stop seeing this question for image #{item.imageId}.
         {/if}
-        {#if confirming === 'retire' || confirming === 'reword'}{pending}{/if}
+        {#if confirming === 'retire' || confirming === 'reword' || confirming === 'remove'}{pending}{/if}
       </AlertDialog.Description>
     </AlertDialog.Header>
     <AlertDialog.Footer>
