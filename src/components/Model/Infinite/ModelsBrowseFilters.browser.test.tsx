@@ -29,6 +29,7 @@ import { IsClientProvider } from '~/providers/IsClientProvider';
 const mocks = vi.hoisted(() => ({
   requested: [] as Record<string, unknown>[],
   versionRedirect: [] as (boolean | undefined)[],
+  features: {} as Record<string, boolean>,
 }));
 
 vi.mock('~/hooks/useIsMobile', async (importOriginal) => ({
@@ -37,7 +38,7 @@ vi.mock('~/hooks/useIsMobile', async (importOriginal) => ({
 }));
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsProvider>()),
-  useFeatureFlags: () => ({ imageGeneration: true, canViewNsfw: true }),
+  useFeatureFlags: () => mocks.features,
 }));
 vi.mock('~/providers/BrowserSettingsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof BrowserSettingsProvider>()),
@@ -127,6 +128,7 @@ beforeEach(() => {
   localStorage.clear();
   mocks.requested.length = 0;
   mocks.versionRedirect.length = 0;
+  mocks.features = { imageGeneration: true, canViewNsfw: true };
   router.query = {};
   router.isReady = true;
   router.pathname = '/models';
@@ -441,5 +443,58 @@ describe('the Hide Paid notice', () => {
     await mount();
     await expect.poll(() => mocks.requested.length).toBeGreaterThan(0);
     await expect.element(notice()).not.toBeInTheDocument();
+  });
+});
+
+describe('the models toolbar while the semantic search answers a query', () => {
+  // The toolbar alone: the page would run the search itself.
+  const mountToolbar = () =>
+    renderWithProviders(
+      <IsClientProvider>
+        <FiltersProvider>
+          <ModelFeedFilters />
+        </FiltersProvider>
+      </IsClientProvider>
+    );
+  const periodNotice = () => document.querySelector('.tabler-icon-exclamation-mark');
+
+  beforeEach(() => {
+    mocks.features = { modelFeedSearch: true, canViewNsfw: true };
+    router.query = { query: 'anime' };
+  });
+
+  test('sorts by Best match until another sort is picked, which goes to its own URL param', async () => {
+    await mountToolbar();
+    await userEvent.click(page.getByRole('button', { name: 'Best match' }));
+    await userEvent.click(page.getByRole('menuitem', { name: 'Most Liked' }));
+
+    const written = router.replace.mock.calls.at(-1)?.[0];
+    expect(written.query).toMatchObject({ query: 'anime', searchSort: 'Most Liked' });
+    // The saved feed sort is not the search's.
+    expect(written.query).not.toHaveProperty('sort');
+  });
+
+  test('shows the sort the URL holds', async () => {
+    router.query = { query: 'anime', searchSort: 'Most Downloaded' };
+    await mountToolbar();
+    await expect.element(page.getByRole('button', { name: 'Most Downloaded' })).toBeVisible();
+  });
+
+  test('shows Best match for a sort it does not offer', async () => {
+    router.query = { query: 'anime', searchSort: 'Bogus' };
+    await mountToolbar();
+    await expect.element(page.getByRole('button', { name: 'Best match' })).toBeVisible();
+  });
+
+  test('drops the period-disabled notice, which the keyword search keeps', async () => {
+    await mountToolbar();
+    await expect.element(page.getByRole('button', { name: 'Best match' })).toBeVisible();
+    expect(periodNotice()).toBeNull();
+  });
+
+  test('control: without the flag the keyword search shows the period-disabled notice', async () => {
+    mocks.features = { canViewNsfw: true };
+    await mountToolbar();
+    await expect.poll(periodNotice).not.toBeNull();
   });
 });

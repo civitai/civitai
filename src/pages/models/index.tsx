@@ -11,12 +11,15 @@ import {
   useModelQueryParams,
 } from '~/components/Model/model.utils';
 import type { PeriodMode } from '~/server/schema/base.schema';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 function ModelsPage() {
   const { set, view: queryView, ...queryParams } = useModelQueryParams();
   const { feedOverrides } = useModelBrowseFilters();
   const { username, query } = queryParams;
-  const periodMode = query ? ('stats' as PeriodMode) : undefined;
+  const features = useFeatureFlags();
+  // The keyword search ignores the period; the semantic search filters by it.
+  const periodMode = query && !features.modelFeedSearch ? ('stats' as PeriodMode) : undefined;
   const queryFilters = { ...queryParams, ...feedOverrides };
 
   if (periodMode) queryFilters.periodMode = periodMode;

@@ -1,7 +1,7 @@
 import Router from 'next/router';
 import type { Mock } from 'vitest';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
-import { page } from 'vitest/browser';
+import { page, userEvent } from 'vitest/browser';
 import { CorrectedQueryNote, FeedSearchSummary } from '~/components/Search/FeedSearchSummary';
 import { spellcheckFor, useSearchAsTyped } from '~/components/Search/useSearchAsTyped';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
@@ -75,5 +75,15 @@ describe('"Search instead for" the query as typed', () => {
     router.query = { query: 'anime girl', asTyped: 'Shikata nee' };
     await renderWithProviders(<Flag query="anime girl" />);
     await expect.element(page.getByTestId('flag')).toHaveTextContent(/^\{\}$/);
+  });
+});
+
+describe('Clear search', () => {
+  test('drops the query with its spelling and sort choices, and keeps the filters', async () => {
+    router.push.mockClear();
+    router.query = { query: 'anime', asTyped: 'anime', searchSort: 'Most Liked', types: 'LORA' };
+    await summary();
+    await userEvent.click(page.getByRole('button', { name: 'Clear search' }));
+    expect(router.push.mock.calls.at(-1)?.[0].query).toEqual({ types: 'LORA' });
   });
 });

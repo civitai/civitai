@@ -35,3 +35,28 @@ export function SearchSortLock() {
     </SearchLock>
   );
 }
+
+const BEST_MATCH = 'best-match';
+
+/** A search's sort: Best match (the default), or a feed sort over the best matches. */
+export function SearchSortMenu<T extends string>({
+  sorts,
+  value,
+  onChange,
+}: {
+  sorts: readonly T[];
+  value: T | undefined;
+  onChange: (value: T | undefined) => void;
+}) {
+  return (
+    <SelectMenuV2
+      label={value ?? 'Best match'}
+      value={value ?? BEST_MATCH}
+      options={[
+        { label: 'Best match', value: BEST_MATCH },
+        ...sorts.map((x) => ({ label: x, value: x })),
+      ]}
+      onClick={(picked: string) => onChange(sorts.find((x) => x === picked))}
+    />
+  );
+}
