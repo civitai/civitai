@@ -416,8 +416,7 @@ export async function toggleHideCommentV3Handler({
   const comment = await writableComment(ctx, input.id);
   assertNotRemovedForMember(ctx, comment);
   await assertSectionOwnerOrModerator(ctx, comment);
-  // A Feature Pages comment is hidden and shown only from the moderator app, bound to what the
-  // moderator saw and recorded there.
+  // The site toggle must not bypass the hide decision the moderator app records.
   if (comment.entityType === 'featurePage')
     throw throwBadRequestError('Hide or unhide this comment from the moderator app.');
   // Toggled from the row read under its lock: the read above may predate a hide since.
