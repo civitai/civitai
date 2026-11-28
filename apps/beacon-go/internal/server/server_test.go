@@ -305,8 +305,8 @@ beacon_go_tracker_queue_depth 7
 	if got := testutil.ToFloat64(TrackerQueueDepth(func() int { return depth })); got != 2 {
 		t.Fatalf("queue depth %v, want 2", got)
 	}
-	if n := testutil.CollectAndCount(m.TrackerSendSeconds); n != 2 {
-		t.Fatalf("%d send-duration series, want one per table", n)
+	if n := testutil.CollectAndCount(m.TrackerSendSeconds); n != 4 {
+		t.Fatalf("%d send-duration series, want one per table (pageViews, views, search, actions)", n)
 	}
 	counts := map[string]uint64{}
 	mfs, err := reg.Gather()
@@ -321,8 +321,9 @@ beacon_go_tracker_queue_depth 7
 			counts[s.GetLabel()[0].GetValue()] = s.GetHistogram().GetSampleCount()
 		}
 	}
-	if len(counts) != 2 || counts[beacon.TableViews] != 1 || counts[beacon.TablePageViews] != 0 {
-		t.Fatalf("send-duration sample counts %v, want views 1 and pageViews 0", counts)
+	if len(counts) != 4 || counts[beacon.TableViews] != 1 || counts[beacon.TablePageViews] != 0 ||
+		counts[beacon.TableSearch] != 0 || counts[beacon.TableActions] != 0 {
+		t.Fatalf("send-duration sample counts %v, want views 1 and pageViews, search, actions 0", counts)
 	}
 }
 
