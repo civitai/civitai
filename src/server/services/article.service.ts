@@ -175,8 +175,10 @@ import {
   keyIssuers,
   MAX_KEYS,
   recordedKeys,
+  serverCopySql,
   urlScheme,
 } from '~/server/services/image-url-ownership';
+import { assertNotDealFileImages } from '~/server/services/deal-file-image';
 import { createNotification } from '~/server/services/notification.service';
 import { updateArticleNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
@@ -2417,6 +2419,21 @@ export async function assertArticleContentUrlsUsable({
 }) {
   const missing = await contentUrlsWithoutRows(content);
   const stored = new Set(storedContent ? getContentMedia(storedContent).map((m) => m.url) : []);
+  // A url this save adds may name an existing row; linking skips a copy already stored.
+  const added = [...new Set(getContentMedia(content).map((m) => m.url))].filter(
+    (url) => !stored.has(url)
+  );
+  if (added.length) {
+    // primary: guards the save, and a copy recorded moments ago must already refuse.
+    const rows = await dbWrite.image.findMany({
+      where: { url: { in: added } },
+      select: { id: true },
+    });
+    await assertNotDealFileImages(
+      rows.map((row) => row.id),
+      'used here'
+    );
+  }
   try {
     // Linking may hold any of these rather than link it, so the hold must be readable first.
     if (missing.length) await assertContentLinkHoldWritable();
@@ -2647,6 +2664,25 @@ export async function linkArticleContentImages({
       });
 
       const existingUrlMap = new Map(existingImages.map((img) => [img.url, img]));
+      // Still content, so never an orphan, but no connection: it serves its deal or review only.
+      const copyIds = existingImages.length
+        ? new Set(
+            (
+              await tx.$queryRaw<{ id: number }[]>`
+                SELECT i.id FROM "Image" i
+                WHERE i.id IN (${Prisma.join(existingImages.map((img) => img.id))})
+                  AND ${serverCopySql('i')}
+              `
+            ).map((row) => row.id)
+          )
+        : new Set<number>();
+      if (copyIds.size)
+        logToAxiom({
+          type: 'info',
+          name: 'article-content-copy-skipped',
+          message: 'skipped linking a server copy in article content',
+          payload: { articleId, count: copyIds.size },
+        });
 
       // Batch create: Missing images (upsert with unique constraint handles races)
       const missingMedia = contentImages.filter(
@@ -2680,7 +2716,7 @@ export async function linkArticleContentImages({
       // Batch upsert: ImageConnections
       for (const url of imageUrls) {
         const image = existingUrlMap.get(url);
-        if (!image) continue;
+        if (!image || copyIds.has(image.id)) continue;
 
         await tx.imageConnection.upsert({
           where: {
@@ -2703,7 +2739,7 @@ export async function linkArticleContentImages({
 
       // Queue images for ingestion
       const pendingExistingImages = existingImages.filter(
-        (img) => img.ingestion === ImageIngestionStatus.Pending
+        (img) => img.ingestion === ImageIngestionStatus.Pending && !copyIds.has(img.id)
       );
       imagesToIngest = [...newlyCreatedImages, ...pendingExistingImages];
     } else {
