@@ -686,6 +686,9 @@ func run(log *slog.Logger) error {
 	if tp != nil {
 		srv.Tracer, srv.Propagator, prop = tp.Tracer, tp.Propagator, tp.Propagator
 	}
+	// The Node apps the serve-side parity replays go to (FEED_GO_SERVE_PARITY_SAMPLE_RATE, default 0 =
+	// off): each route's own hand-back target, set below.
+	var parityTarget, parityV1Target *url.URL
 	if cfg.FallbackURL != "" {
 		target, err := url.Parse(cfg.FallbackURL)
 		if err != nil {
@@ -695,12 +698,8 @@ func run(log *slog.Logger) error {
 			metrics.FallbackProxyErrors.WithLabelValues(reason).Inc()
 			srv.NoteProxyError(r, reason, err)
 		}, prop)
-		// The serve-side parity replays (FEED_GO_SERVE_PARITY_SAMPLE_RATE, default 0 = off) go to the
-		// same Node app through the same proxy code, but their own instance: a replay's failure is
-		// counted as its outcome (feed_go_serve_parity_total), never as a fallback proxy error.
-		srv.Parity = newServeParity(cfg.ServeParityRate, target, prop)
+		parityTarget = target
 	}
-	log.Info("serve-side parity", "FEED_GO_SERVE_PARITY_SAMPLE_RATE", cfg.ServeParityRate, "on", srv.Parity != nil)
 	// The eval capture (FEED_GO_EVAL_CAPTURE, default off; DESIGN.md §19.6): nil writers when off.
 	evalSamples, evalCases, err := newEvalCapture(cfg, srv, log)
 	if err != nil {
@@ -720,7 +719,15 @@ func run(log *slog.Logger) error {
 			metrics.FallbackProxyErrors.WithLabelValues(reason).Inc()
 			srv.NoteProxyError(r, reason, err)
 		}, prop)
+		parityV1Target = target
 	}
+	// The serve-side parity replays go to the same Node app as each route's hand-backs (the tRPC routes:
+	// FEED_GO_FALLBACK_URL; the public model routes: FEED_GO_V1_FALLBACK_URL) through the same proxy
+	// code, but their own instances: a replay's failure is counted as its outcome
+	// (feed_go_serve_parity_total), never as a fallback proxy error.
+	srv.Parity = newServeParity(cfg.ServeParityRate, parityTarget, parityV1Target, prop)
+	log.Info("serve-side parity", "FEED_GO_SERVE_PARITY_SAMPLE_RATE", cfg.ServeParityRate, "on", srv.Parity != nil,
+		"trpc_routes", srv.Parity != nil && srv.Parity.Upstream != nil, "v1_model_routes", srv.Parity != nil && srv.Parity.V1Upstream != nil)
 	// The public /api/v1/images route's one upstream (FEED_GO_V1_IMAGES_FALLBACK_URL); unset, the route
 	// is not mounted (FEED_GO_V1_FALLBACK_URL is never used for it).
 	if mc.ImagesFallbackURL != "" {

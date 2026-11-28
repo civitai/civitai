@@ -86,10 +86,15 @@ func (s *Server) serveV1ModelsLabelled(w http.ResponseWriter, r *http.Request, e
 			served = "served_cached"
 		}
 		writeV1Models(w, c, notModified(r, c))
+		// The serve-side parity sample (off by default) copies what it compares before the release,
+		// a 304's full body included; its replay starts only after the answer is written and never
+		// touches w.
+		replay := s.sampleParity(r, endpoint, c, viewer)
 		c.release()
 		setOutcome(span, served)
 		s.Metrics.Requests.WithLabelValues(endpoint, "serve", served).Inc()
 		tracing.Observe(ctx, s.Metrics.Duration.WithLabelValues(endpoint, "serve", served), time.Since(start).Seconds())
+		s.startParity(replay)                          //nolint:contextcheck // the replay runs after the answer, on the server's background context (Close cancels it): it must outlive the request
 		s.sampleServeCapture(r, endpoint, viewer, nil) //nolint:contextcheck // the capture finishes after the answer, on the server's background context
 		return
 	}

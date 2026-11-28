@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"runtime/debug"
+	"slices"
 	"time"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/auth"
@@ -16,13 +17,15 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/shadow"
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
 	"github.com/civitai/civitai/apps/feed-go/internal/trpc"
+	"github.com/civitai/civitai/apps/feed-go/internal/v1models"
 )
 
-// The serve-side parity sampler (DESIGN.md §7.2). Once a tRPC route serves every request from Go, the
+// The serve-side parity sampler (DESIGN.md §7.2). Once a route serves every request from Go, the
 // Node shadow sampler sees none of them, so its comparison goes dark. For a sampled fraction of the
 // requests this service SERVED, after the answer is written, the same request is replayed to the
-// Node app (the fallback upstream), and Node's body is compared with what was served, by the same
-// comparator and into the same metric families as a shadow sample, under source="serve-parity".
+// Node app the route hands back to (the tRPC routes: the fallback upstream; the public model routes:
+// the /api/v1 one), and Node's body is compared with what was served, by the same comparator and into
+// the same metric families as a shadow sample, under source="serve-parity".
 
 // SourceLabel splits the comparison families (feed_go_shadow_compare_total,
 // feed_go_shadow_field_diffs_total, feed_go_shadow_response_total) by where the Node answer came
@@ -40,8 +43,9 @@ const (
 const ParityReplayHeader = "X-Feed-Go-Parity-Replay"
 
 // ParityEndpoints are the routes the sampler replays: the public tRPC routes whose answers the shadow
-// comparison describes.
-var ParityEndpoints = []string{EndpointAsPosts, EndpointInfinite, EndpointModelGetAll}
+// comparison describes, and the two public model routes (REST: Node's plain-JSON body and the REST
+// header list are compared, as their shadow samples are).
+var ParityEndpoints = []string{EndpointAsPosts, EndpointInfinite, EndpointModelGetAll, EndpointV1Models, EndpointV1ModelsID}
 
 // Outcomes of feed_go_serve_parity_total. Every sampled served request ends in exactly one.
 const (
@@ -51,9 +55,9 @@ const (
 	ParitySkippedCredential = "skipped_credential" // the request carried an API credential
 	ParitySkippedClosing    = "skipped_closing"    // shutting down
 	ParityUpstreamError     = "upstream_error"     // the Node app could not be reached, or broke the connection
-	ParityUpstreamStatus    = "upstream_status"    // the Node app answered a status other than 200
+	ParityUpstreamStatus    = "upstream_status"    // the Node app answered a status other than 200 (on v1-models-id, other than 200 or 404)
 	ParityTimeout           = "timeout"            // the replay ran past its deadline
-	ParityBadBody           = "bad_body"           // Node's body was not a tRPC result (or over maxParityBody), or a devalue answer would not re-encode as superjson
+	ParityBadBody           = "bad_body"           // Node's body was not a tRPC result (a model route: not JSON) or over maxParityBody, or a devalue answer would not re-encode as superjson
 )
 
 // ServeParityOutcomes is every outcome, seeded at 0 per ParityEndpoints.
@@ -61,8 +65,25 @@ var ServeParityOutcomes = []string{ParityCompared, ParityDroppedQueue, ParitySki
 	ParitySkippedClosing, ParityUpstreamError, ParityUpstreamStatus, ParityTimeout, ParityBadBody}
 
 // parityResults are the comparison results a replay can count (a served answer is never a fallback,
-// so never unsupported, deadline or go_error); the seeded series.
-var parityResults = []string{"match", "match_empty", "fields", "order", "membership", "bad_request"}
+// so never unsupported, deadline or go_error); the seeded series, where parityResultReachable.
+var parityResults = []string{"match", "match_empty", "match_cached", "fields", "order", "membership", "bad_request"}
+
+// parityResultReachable reports whether a replay of endpoint can count result: match_cached only on
+// the single-model route (the one with a cached answer, served_cached); order not there (one model:
+// ClassifyV1ModelID has none); match_empty where a served answer can be trivial (emptyReachable), and
+// on the single-model route, whose trivial answer is the not-found body it serves as Node's 404
+// (not_found) and replays like any other answer.
+func parityResultReachable(endpoint, result string) bool {
+	switch result {
+	case "match_cached":
+		return cachedEndpoint(endpoint)
+	case "order":
+		return endpoint != EndpointV1ModelsID
+	case "match_empty":
+		return emptyReachable(endpoint, "serve") || endpoint == EndpointV1ModelsID
+	}
+	return true
+}
 
 // DefaultServeParityTimeout bounds one replay, the Node app's answer and the comparison included.
 const DefaultServeParityTimeout = 10 * time.Second
@@ -73,7 +94,8 @@ const DefaultServeParityWorkers = 4
 // maxParityBody bounds Node's body held for one replay, as maxShadowBody bounds a sample.
 const maxParityBody = maxShadowBody
 
-// ServeParity configures the sampler. A nil *ServeParity, a Rate of 0 or a nil Upstream is off.
+// ServeParity configures the sampler. A nil *ServeParity or a Rate of 0 is off; so is a route whose
+// upstream is nil (Upstream for the tRPC routes, V1Upstream for the model routes).
 type ServeParity struct {
 	// Rate is FEED_GO_SERVE_PARITY_SAMPLE_RATE: the fraction of served requests replayed (0 = off).
 	Rate float64
@@ -93,7 +115,24 @@ type ServeParity struct {
 	Random func() float64
 }
 
-func (p *ServeParity) on() bool { return p != nil && p.Rate > 0 && p.Upstream != nil }
+// upstream is the Node app a replay of endpoint goes to: the one the route hands its fallbacks to
+// (V1Upstream for the public model routes, whose hand-backs go to V1Fallback; Upstream for the tRPC
+// ones, Fallback), never another, so a replay reaches no app the request would not have reached as a
+// hand-back. nil for any other endpoint (v1-images and site-search hand back elsewhere).
+func (p *ServeParity) upstream(endpoint string) http.Handler {
+	switch endpoint {
+	case EndpointV1Models, EndpointV1ModelsID:
+		return p.V1Upstream
+	case EndpointAsPosts, EndpointInfinite, EndpointModelGetAll:
+		return p.Upstream
+	}
+	return nil
+}
+
+// on reports whether endpoint's served answers are sampled.
+func (p *ServeParity) on(endpoint string) bool {
+	return p != nil && p.Rate > 0 && isParityEndpoint(endpoint) && p.upstream(endpoint) != nil
+}
 
 func (p *ServeParity) timeout() time.Duration {
 	if p.Timeout > 0 {
@@ -118,10 +157,9 @@ func (m *Metrics) seedServeParity() {
 			m.ServeParity.WithLabelValues(e, o)
 		}
 		for _, r := range parityResults {
-			if r == "match_empty" && !emptyReachable(e, "serve") {
-				continue
+			if parityResultReachable(e, r) {
+				m.ParityResults.WithLabelValues(e, r)
 			}
-			m.ParityResults.WithLabelValues(e, r)
 		}
 		for _, r := range []string{"match", "mismatch", "uncompared"} {
 			m.ParityResponse.WithLabelValues(e, r)
@@ -145,6 +183,10 @@ type parityReplay struct {
 	value   any
 	ttl     *trpc.CacheTTL
 	trivial bool
+	cached  bool
+	// headers are a model route's served response headers (computed.headers), for the REST header
+	// comparison; nil on the tRPC routes.
+	headers []v1models.Header
 	// viewer is the served request's viewer, for the eval capture (viewerKnown false: none observed,
 	// or the capture is off; viewerErr then the resolve's error, if one was observed).
 	viewer      evalcorpus.Viewer
@@ -158,7 +200,7 @@ type parityReplay struct {
 // (every skip after the sample decision is counted).
 func (s *Server) sampleParity(r *http.Request, endpoint string, c *computed, viewer *viewerObs) *parityReplay {
 	p := s.Parity
-	if !p.on() || !isParityEndpoint(endpoint) {
+	if !p.on(endpoint) {
 		return nil
 	}
 	random := p.Random
@@ -170,7 +212,7 @@ func (s *Server) sampleParity(r *http.Request, endpoint string, c *computed, vie
 	}
 	// A credential Node treats as its own viewer (an API key, a `?token=`) is never replayed: the
 	// replay would present it again, and its answer can depend on the key's scopes.
-	if auth.HasAPICredential(r) {
+	if parityCredential(r) {
 		s.Metrics.ServeParity.WithLabelValues(endpoint, ParitySkippedCredential).Inc()
 		return nil
 	}
@@ -188,6 +230,8 @@ func (s *Server) sampleParity(r *http.Request, endpoint string, c *computed, vie
 		header:   r.Header.Clone(),
 		ttl:      c.ttl,
 		trivial:  c.trivial,
+		cached:   c.cached,
+		headers:  slices.Clone(c.headers),
 	}
 	if r.URL.User != nil {
 		u := *r.URL.User
@@ -205,12 +249,21 @@ func (s *Server) sampleParity(r *http.Request, endpoint string, c *computed, vie
 }
 
 func isParityEndpoint(endpoint string) bool {
-	for _, e := range ParityEndpoints {
-		if e == endpoint {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(ParityEndpoints, endpoint)
+}
+
+// parityCredential reports whether r carries an API credential, read as loosely as any route reads
+// one: auth.HasAPICredential (the tRPC routes), or any Authorization line, an empty one included, or
+// any non-empty `token` query value (auth.AnyQueryToken: the model routes' reading,
+// v1ModelsPreflight). The looser reading only ever skips a replay.
+func parityCredential(r *http.Request) bool {
+	return auth.HasAPICredential(r) || len(r.Header.Values("Authorization")) > 0 || auth.AnyQueryToken(r.URL.RawQuery)
+}
+
+// parityCaptured reports whether a compared replay of endpoint is also written to the eval capture
+// (T2, DESIGN.md §19.6): the tRPC routes only. The model routes' replays are compared, not captured.
+func parityCaptured(endpoint string) bool {
+	return isParityEndpoint(endpoint) && !isRESTEndpoint(endpoint)
 }
 
 // startParity runs rep in the background, bounded by the replay queue (full: dropped_queue) and
@@ -271,9 +324,16 @@ func (s *Server) replay(ctx context.Context, rep *parityReplay) string {
 	for _, h := range replayStrippedTraceHeaders {
 		req.Header.Del(h)
 	}
+	sel := CompareSelection(rep.endpoint)
+	if sel.REST {
+		// Node answers a conditional request its ETag satisfies with a bodiless 304: the replay asks
+		// for the body, which is what Go computed whether it wrote a 200 or a 304.
+		req.Header.Del("If-None-Match")
+		req.Header.Del("If-Modified-Since")
+	}
 	req.Header.Set(ParityReplayHeader, "1")
 	rec := &replayRecorder{header: http.Header{}}
-	status := s.serveReplay(rec, req)
+	status := s.serveReplay(rec, s.Parity.upstream(rep.endpoint), req)
 	switch {
 	case s.isClosing():
 		// Shutdown cancelled it (Close cancels the background context): a rollout, not a slow Node.
@@ -282,7 +342,8 @@ func (s *Server) replay(ctx context.Context, rep *parityReplay) string {
 		return ParityTimeout
 	case status != "":
 		return status
-	case rec.status != http.StatusOK:
+	case rec.status != http.StatusOK && !(rep.endpoint == EndpointV1ModelsID && rec.status == http.StatusNotFound):
+		// `[id]`'s 404 is an answer (its not-found body), compared like a 200.
 		if rec.status == http.StatusBadGateway && rec.body.Len() == 0 {
 			// The proxy's own answer to a Node app it could not reach (fallbackProxy's ErrorHandler).
 			return ParityUpstreamError
@@ -290,6 +351,20 @@ func (s *Server) replay(ctx context.Context, rep *parityReplay) string {
 		return ParityUpstreamStatus
 	case rec.over:
 		return ParityBadBody
+	}
+	sink := compareSink{source: SourceServeParity, results: s.Metrics.ParityResults, diffs: s.Metrics.ParityDiffs, response: s.Metrics.ParityResponse}
+	// Node's headers picked from the list a sampler of the endpoint picks (the REST list on the model
+	// routes), and compared over it.
+	nodeHeaders := PickResponseHeaders(rec.header, sel.HeaderNames(sel.HeaderSet()))
+	if sel.REST {
+		// A model route answers plain JSON (res.json), compared as its shadow sample is.
+		node := rec.body.Bytes()
+		if !json.Valid(node) {
+			return ParityBadBody
+		}
+		c := &computed{payload: rep.goBody, trivial: rep.trivial, cached: rep.cached, headers: rep.headers}
+		s.compareAnswer(ctx, sel, sink, c, node, nodeHeaders, sel.HeaderSet(), nil)
+		return ParityCompared
 	}
 	var env struct {
 		Result *struct {
@@ -308,10 +383,8 @@ func (s *Server) replay(ctx context.Context, rep *parityReplay) string {
 		defer buf.Release()
 		goBody = buf.Bytes()
 	}
-	c := &computed{payload: goBody, ttl: rep.ttl, trivial: rep.trivial}
-	sink := compareSink{source: SourceServeParity, results: s.Metrics.ParityResults, diffs: s.Metrics.ParityDiffs, response: s.Metrics.ParityResponse}
-	nodeHeaders := pickResponseHeaders(rec.header)
-	out := s.compareAnswer(ctx, CompareSelection(rep.endpoint), sink, c, env.Result.Data, nodeHeaders, "", nil)
+	c := &computed{payload: goBody, ttl: rep.ttl, trivial: rep.trivial, cached: rep.cached}
+	out := s.compareAnswer(ctx, sel, sink, c, env.Result.Data, nodeHeaders, sel.HeaderSet(), nil)
 	s.captureParity(rep, env.Result.Data, nodeHeaders, out)
 	return ParityCompared
 }
@@ -326,9 +399,9 @@ func (s *Server) isClosing() bool {
 	return s.closing
 }
 
-// serveReplay runs the upstream for req, turning ReverseProxy's mid-body abort (a panic with
+// serveReplay runs upstream for req, turning ReverseProxy's mid-body abort (a panic with
 // http.ErrAbortHandler) into an outcome. "" = it returned normally.
-func (s *Server) serveReplay(rec *replayRecorder, req *http.Request) (outcome string) {
+func (s *Server) serveReplay(rec *replayRecorder, upstream http.Handler, req *http.Request) (outcome string) {
 	defer func() {
 		if v := recover(); v != nil {
 			if err, ok := v.(error); ok && errors.Is(err, http.ErrAbortHandler) {
@@ -338,7 +411,7 @@ func (s *Server) serveReplay(rec *replayRecorder, req *http.Request) (outcome st
 			panic(v)
 		}
 	}()
-	s.Parity.Upstream.ServeHTTP(rec, req)
+	upstream.ServeHTTP(rec, req)
 	return ""
 }
 

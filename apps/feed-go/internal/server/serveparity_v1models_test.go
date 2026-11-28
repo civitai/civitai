@@ -408,3 +408,25 @@ func TestServeParityV1ModelsSeeded(t *testing.T) {
 		}
 	}
 }
+
+// Invariant guard (the old code never replayed `[id]`, so it never captured one either): with the eval
+// capture on, a compared `[id]` replay is not written as a T2 row (replay's model-route branch never
+// calls captureParity, which parityCaptured also gates), while the comparison is still counted. The
+// tRPC positive control: TestEvalCaptureServeParity.
+func TestServeParityV1ModelsReplayIsNotCaptured(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	node := restAnswer(http.StatusOK, v1DetailBody, v1DetailCC, v1DetailETag)
+	s, _ := v1ParitySrv(t, reg, node)
+	rec := &fakeRecorder{}
+	s.EvalCapture = &EvalCapture{Recorder: rec}
+	s.ServeV1ModelsIDHTTP(httptest.NewRecorder(), v1Request("/api/v1/models/42", nil))
+	s.shadows.Wait()
+	if v := compareCount(t, reg, EndpointV1ModelsID, "match", SourceServeParity); v != 1 {
+		t.Fatalf("compare{match,serve-parity} = %v, want 1", v)
+	}
+	for _, g := range rec.got() {
+		if g.Source == "serve-parity" {
+			t.Fatalf("a v1-models-id replay was captured: %+v", g)
+		}
+	}
+}

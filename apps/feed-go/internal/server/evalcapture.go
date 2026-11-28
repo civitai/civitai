@@ -109,15 +109,15 @@ var EvalCaptureDropReasons = []string{chwrite.ReasonQueueFull, chwrite.ReasonMar
 var corpusOnlyEndpoints = []string{EndpointV1ModelsID, EndpointInfinite}
 
 // evalCaptureEndpoints are the endpoints a source captures: every first-wave endpoint (all are shadowed
-// and have public routes), less the ones serve-parity does not replay; corpus-only only
-// corpusOnlyEndpoints.
+// and have public routes), less, for serve-parity, the ones whose replays it does not capture
+// (parityCaptured); corpus-only only corpusOnlyEndpoints.
 func evalCaptureEndpoints(source string) []string {
 	if source == evalcapture.SourceCorpusOnly {
 		return corpusOnlyEndpoints
 	}
 	var out []string
 	for _, e := range evalcorpus.Endpoints {
-		if source == evalcapture.SourceServeParity && !isParityEndpoint(e) {
+		if source == evalcapture.SourceServeParity && !parityCaptured(e) {
 			continue
 		}
 		out = append(out, e)
@@ -309,7 +309,7 @@ func carriesJSON(raw json.RawMessage) bool {
 
 // captureParity is T2: a compared serve-parity replay, with Node's answer.
 func (s *Server) captureParity(rep *parityReplay, node []byte, nodeHeaders map[string]string, out compareOutcome) {
-	if !s.EvalCapture.on() || !evalcapture.Supported(rep.endpoint) {
+	if !s.EvalCapture.on() || !evalcapture.Supported(rep.endpoint) || !parityCaptured(rep.endpoint) {
 		return
 	}
 	s.recordEval(rep.endpoint, evalcapture.Sample{
