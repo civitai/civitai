@@ -23,12 +23,32 @@ import (
 type recordingWriter struct {
 	mu   sync.Mutex
 	rows []beacon.Write
+	// room, when > 0, is how many rows EnqueueAll still takes (tracker.Client's free queue slots); 0
+	// means no limit.
+	room int
+	// singles and batches count the Enqueue and EnqueueAll calls.
+	singles, batches int
 }
 
 func (w *recordingWriter) Enqueue(r beacon.Write) bool {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	w.singles++
 	w.rows = append(w.rows, r)
+	return true
+}
+
+func (w *recordingWriter) EnqueueAll(rs []beacon.Write) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.batches++
+	if w.room > 0 {
+		if len(rs) > w.room {
+			return false
+		}
+		w.room -= len(rs)
+	}
+	w.rows = append(w.rows, rs...)
 	return true
 }
 
@@ -49,6 +69,8 @@ func newServer(t *testing.T, engine *beacon.Engine, proxy http.Handler) (*Server
 		Metrics:     NewMetrics(prometheus.NewRegistry()),
 		Log:         slog.New(slog.NewTextHandler(io.Discard, nil)),
 		ShadowQueue: make(chan struct{}, 2),
+		// On, so the golden track-batch fixtures are served; TestTrackBatchSwitch covers off.
+		TrackBatchServe: true,
 	}, w
 }
 
@@ -70,7 +92,17 @@ func TestServeGolden(t *testing.T) {
 				out.Response.Headers = append(out.Response.Headers, beacon.Header{Name: name, Value: v})
 			}
 		}
-		t.Run(fx.Endpoint+"/"+fx.Name, func(t *testing.T) { fx.CheckOutcome(t, out) })
+		t.Run(fx.Endpoint+"/"+fx.Name, func(t *testing.T) {
+			fx.CheckOutcome(t, out)
+			// A track batch is queued in one all-or-nothing call; ping and pulse rows one at a time.
+			if fx.Endpoint == beacon.EndpointTrackBatch {
+				if w.singles != 0 || w.batches != 1 {
+					t.Errorf("track-batch: %d Enqueue, %d EnqueueAll calls; want 0 and 1", w.singles, w.batches)
+				}
+			} else if w.batches != 0 || w.singles != len(w.rows) {
+				t.Errorf("%s: %d Enqueue, %d EnqueueAll calls for %d rows; want %d and 0", fx.Endpoint, w.singles, w.batches, len(w.rows), len(w.rows))
+			}
+		})
 		served++
 	}
 	if served < 70 {
@@ -303,8 +335,8 @@ beacon_go_tracker_queue_depth 7
 	if got := testutil.ToFloat64(TrackerQueueDepth(func() int { return depth })); got != 2 {
 		t.Fatalf("queue depth %v, want 2", got)
 	}
-	if n := testutil.CollectAndCount(m.TrackerSendSeconds); n != 2 {
-		t.Fatalf("%d send-duration series, want one per table", n)
+	if n := testutil.CollectAndCount(m.TrackerSendSeconds); n != 4 {
+		t.Fatalf("%d send-duration series, want one per table (pageViews, views, search, actions)", n)
 	}
 	counts := map[string]uint64{}
 	mfs, err := reg.Gather()
@@ -319,7 +351,219 @@ beacon_go_tracker_queue_depth 7
 			counts[s.GetLabel()[0].GetValue()] = s.GetHistogram().GetSampleCount()
 		}
 	}
-	if len(counts) != 2 || counts[beacon.TableViews] != 1 || counts[beacon.TablePageViews] != 0 {
-		t.Fatalf("send-duration sample counts %v, want views 1 and pageViews 0", counts)
+	if len(counts) != 4 || counts[beacon.TableViews] != 1 || counts[beacon.TablePageViews] != 0 ||
+		counts[beacon.TableSearch] != 0 || counts[beacon.TableActions] != 0 {
+		t.Fatalf("send-duration sample counts %v, want views 1 and pageViews, search, actions 0", counts)
+	}
+}
+
+// The public and shadow paths of each endpoint, literally: the Node sampler builds the shadow URL
+// from the same routes (beaconGoShadowUrl), and ping / pulse keep the paths they had.
+func TestRoutesAndShadowPaths(t *testing.T) {
+	want := map[string][2]string{
+		"ping":        {"/api/internal/ping", "/internal/shadow/api/internal/ping"},
+		"pulse":       {"/api/internal/pulse", "/internal/shadow/api/internal/pulse"},
+		"track-batch": {"/api/track/batch", "/internal/shadow/api/track/batch"},
+	}
+	if len(Endpoints) != len(want) || len(Routes) != len(want) {
+		t.Fatalf("endpoints %v, routes %v", Endpoints, Routes)
+	}
+	for _, e := range Endpoints {
+		if got := [2]string{Routes[e], ShadowPath(e)}; got != want[e] {
+			t.Errorf("%s: %v, want %v", e, got, want[e])
+		}
+	}
+}
+
+const trackBatchBody = `[{"kind":"search","data":{"query":"q","index":"i"}},{"kind":"action","data":{"type":"AwardBounty_Click"}}]`
+
+func trackBatchRequest(t *testing.T) *http.Request {
+	t.Helper()
+	r := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/track/batch", strings.NewReader(trackBatchBody))
+	r.Host = "a.test"
+	r.Header.Set("Origin", "https://a.test")
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("User-Agent", "ua")
+	r.Header.Set("Cf-Connecting-Ip", "192.0.2.1")
+	return r
+}
+
+// BEACON_GO_TRACK_BATCH_SERVE off (the default): every /api/track/batch request is proxied with its
+// whole body, counted as fallback `disabled`, and nothing is computed or written. On: served, and
+// its rows queued.
+func TestTrackBatchSwitch(t *testing.T) {
+	var proxiedBody string
+	proxied := 0
+	backend := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		proxiedBody = string(b)
+		proxied++
+		w.WriteHeader(200)
+	})
+	engine := &beacon.Engine{Sessions: nilSessions{}, TrackerEnabled: true}
+	s, w := newServer(t, engine, backend)
+	s.TrackBatchServe = false
+	rec := httptest.NewRecorder()
+	PublicMux(s).ServeHTTP(rec, trackBatchRequest(t))
+	if rec.Code != 200 || proxied != 1 || proxiedBody != trackBatchBody {
+		t.Fatalf("off: %d, proxied %d, body %q", rec.Code, proxied, proxiedBody)
+	}
+	if len(w.rows) != 0 {
+		t.Fatalf("off wrote %d rows", len(w.rows))
+	}
+	if n := testutil.ToFloat64(s.Metrics.Fallbacks.WithLabelValues("track-batch", "serve", "disabled")); n != 1 {
+		t.Fatalf("disabled fallbacks %v", n)
+	}
+	if n := testutil.ToFloat64(s.Metrics.Requests.WithLabelValues("track-batch", "fallback")); n != 1 {
+		t.Fatalf("fallback requests %v", n)
+	}
+	// Off and no proxy (never in serve mode): 503, nothing written.
+	s.Proxy = nil
+	rec = httptest.NewRecorder()
+	PublicMux(s).ServeHTTP(rec, trackBatchRequest(t))
+	if rec.Code != http.StatusServiceUnavailable || len(w.rows) != 0 {
+		t.Fatalf("off without a proxy: %d, %d rows", rec.Code, len(w.rows))
+	}
+
+	s.Proxy = backend
+	s.TrackBatchServe = true
+	rec = httptest.NewRecorder()
+	PublicMux(s).ServeHTTP(rec, trackBatchRequest(t))
+	if rec.Code != 200 || proxied != 1 {
+		t.Fatalf("on: %d, proxied %d", rec.Code, proxied)
+	}
+	want := []beacon.Write{
+		{Table: "search", Body: []byte(`{"userId":0,"ip":"192.0.2.1","userAgent":"ua","query":"q","index":"i","filters":""}`)},
+		{Table: "actions", Body: []byte(`{"userId":0,"ip":"192.0.2.1","userAgent":"ua","type":"AwardBounty_Click","details":""}`)},
+	}
+	if len(w.rows) != len(want) {
+		t.Fatalf("on: %d rows", len(w.rows))
+	}
+	for i := range want {
+		if w.rows[i].Table != want[i].Table || !bytes.Equal(w.rows[i].Body, want[i].Body) {
+			t.Errorf("row %d: %s %s", i, w.rows[i].Table, w.rows[i].Body)
+		}
+	}
+	if n := testutil.ToFloat64(s.Metrics.Requests.WithLabelValues("track-batch", "served")); n != 1 {
+		t.Fatalf("served %v", n)
+	}
+	// A batch with an impression is proxied whole, even when on.
+	r := trackBatchRequest(t)
+	imp := `[{"kind":"search","data":{"query":"q","index":"i"}},{"kind":"impression","data":{}}]`
+	r.Body = io.NopCloser(strings.NewReader(imp))
+	rec = httptest.NewRecorder()
+	PublicMux(s).ServeHTTP(rec, r)
+	if proxied != 2 || proxiedBody != imp || len(w.rows) != 2 {
+		t.Fatalf("impression batch: proxied %d body %q rows %d", proxied, proxiedBody, len(w.rows))
+	}
+	if n := testutil.ToFloat64(s.Metrics.Fallbacks.WithLabelValues("track-batch", "serve", "track-impression")); n != 1 {
+		t.Fatalf("track-impression fallbacks %v", n)
+	}
+}
+
+// A served batch whose rows the tracker queue cannot all take is proxied whole to the Node app
+// (fallback `track-queue-full`) with nothing queued; with room for exactly its rows it is served.
+// trackBatchBody computes 2 rows.
+func TestTrackBatchQueueFullFallsBackWhole(t *testing.T) {
+	cases := []struct {
+		name      string
+		room      int
+		proxied   int
+		code      int
+		rows      int
+		fallbacks float64
+		served    float64
+	}{
+		{"one slot short", 1, 1, 299, 0, 1, 0},
+		{"exactly the room", 2, 0, 200, 2, 0, 1},
+	}
+	for _, c := range cases {
+		var proxiedBody string
+		proxied := 0
+		backend := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			b, _ := io.ReadAll(r.Body)
+			proxiedBody = string(b)
+			proxied++
+			w.WriteHeader(299)
+		})
+		engine := &beacon.Engine{Sessions: nilSessions{}, TrackerEnabled: true}
+		s, w := newServer(t, engine, backend)
+		w.room = c.room
+		rec := httptest.NewRecorder()
+		PublicMux(s).ServeHTTP(rec, trackBatchRequest(t))
+		if rec.Code != c.code || proxied != c.proxied || len(w.rows) != c.rows || w.batches != 1 || w.singles != 0 {
+			t.Errorf("%s: %d, proxied %d, %d rows, %d EnqueueAll, %d Enqueue", c.name, rec.Code, proxied, len(w.rows), w.batches, w.singles)
+		}
+		if c.proxied == 1 && proxiedBody != trackBatchBody {
+			t.Errorf("%s: proxied body %q, want the whole request", c.name, proxiedBody)
+		}
+		if n := testutil.ToFloat64(s.Metrics.Fallbacks.WithLabelValues("track-batch", "serve", "track-queue-full")); n != c.fallbacks {
+			t.Errorf("%s: track-queue-full fallbacks %v, want %v", c.name, n, c.fallbacks)
+		}
+		if n := testutil.ToFloat64(s.Metrics.Requests.WithLabelValues("track-batch", "fallback")); n != c.fallbacks {
+			t.Errorf("%s: fallback requests %v, want %v", c.name, n, c.fallbacks)
+		}
+		if n := testutil.ToFloat64(s.Metrics.Requests.WithLabelValues("track-batch", "served")); n != c.served {
+			t.Errorf("%s: served %v, want %v", c.name, n, c.served)
+		}
+	}
+}
+
+// A track-batch shadow sample is computed and compared and NEVER written, matching or not, with the
+// serve switch on or off; the writer stays untouched.
+func TestTrackBatchShadowNeverWrites(t *testing.T) {
+	var match, mismatch, impression *golden.Fixture
+	for _, f := range golden.LoadFixtures(t, golden.Dir) {
+		if f.Endpoint != beacon.EndpointTrackBatch {
+			continue
+		}
+		switch f.Name {
+		case "mixed-order":
+			match = &f
+		case "action-signed-in":
+			mismatch = &f
+		case "impression-with-search":
+			impression = &f
+		}
+	}
+	if match == nil || mismatch == nil || impression == nil {
+		t.Fatal("track-batch fixtures missing")
+	}
+	for _, serveOn := range []bool{false, true} {
+		s, w := newServer(t, match.Engine(), nil)
+		s.TrackBatchServe = serveOn
+		// Room for all three samples at once, so none is dropped for a full queue.
+		s.ShadowQueue = make(chan struct{}, 8)
+		mux := InternalMux(s, http.NotFoundHandler())
+		post := func(body string) {
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodPost, ShadowPath(beacon.EndpointTrackBatch), strings.NewReader(body)))
+			if rec.Code != http.StatusAccepted {
+				t.Fatalf("sample: %d", rec.Code)
+			}
+		}
+		post(match.Shadow)
+		// Node's signed-in row against this engine's signed-out session: a userId mismatch.
+		post(mismatch.Shadow)
+		post(impression.Shadow)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := s.Close(ctx); err != nil {
+			t.Fatal(err)
+		}
+		cancel()
+		for result, want := range map[string]float64{"match": 1, "mismatch_writes": 1, "fallback": 1} {
+			if got := testutil.ToFloat64(s.Metrics.ShadowCompare.WithLabelValues("track-batch", result)); got != want {
+				t.Errorf("serve %v: %s = %v, want %v", serveOn, result, got, want)
+			}
+		}
+		if got := testutil.ToFloat64(s.Metrics.ShadowDiffs.WithLabelValues("track-batch", "write:actions:userId")); got != 1 {
+			t.Errorf("serve %v: write:actions:userId = %v", serveOn, got)
+		}
+		if got := testutil.ToFloat64(s.Metrics.Fallbacks.WithLabelValues("track-batch", "shadow", "track-impression")); got != 1 {
+			t.Errorf("serve %v: shadow track-impression = %v", serveOn, got)
+		}
+		if len(w.rows) != 0 {
+			t.Fatalf("serve %v: the shadow path wrote %d rows", serveOn, len(w.rows))
+		}
 	}
 }

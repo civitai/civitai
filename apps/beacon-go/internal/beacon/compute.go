@@ -1,7 +1,7 @@
-// Package beacon computes the Node app's answer to the two browser beacons — POST /api/internal/ping
-// (page views) and POST /api/internal/pulse (entity views) — and the tracker write each one makes,
-// byte for byte. DESIGN.md is the contract this package implements; every function names the Node
-// code it reproduces.
+// Package beacon computes the Node app's answer to the browser beacons — POST /api/internal/ping
+// (page views), POST /api/internal/pulse (entity views) and POST /api/track/batch (search and action
+// telemetry, trackbatch.go) — and the tracker writes each one makes, byte for byte. DESIGN.md is the
+// contract this package implements; every function names the Node code it reproduces.
 //
 // The rule, as in feed-go: answer only what can be answered exactly as the Node handler would, and
 // hand everything else back as a fallback (internal/fallback). A fallback is not an error: in serve
@@ -79,6 +79,8 @@ func (e *Engine) Compute(ctx context.Context, endpoint string, r *Request) (Outc
 		return e.Ping(ctx, r)
 	case EndpointPulse:
 		return e.Pulse(ctx, r)
+	case EndpointTrackBatch:
+		return e.TrackBatch(ctx, r)
 	}
 	return Outcome{}, fallback.New("unknown-endpoint")
 }
@@ -221,50 +223,12 @@ func (e *Engine) Pulse(ctx context.Context, r *Request) (Outcome, error) {
 	if done {
 		return out, err
 	}
-	// `req.headers.origin ?? req.headers.referer`: an Origin that was sent, even empty, wins.
-	source, ok := r.Header("origin")
-	if !ok {
-		source, _ = r.Header("referer")
+	if res, err := checkSameOrigin(r, resp); err != nil || res != nil {
+		return outcomeOf(res), err
 	}
-	sourceHost := ""
-	if source != "" {
-		h, res := urlHostOf(source)
-		switch res {
-		case urlUncertain:
-			return Outcome{}, fallback.New("url")
-		case urlHost:
-			sourceHost = h
-		}
-	}
-	host, hostOK := r.Header("host")
-	if sourceHost == "" || !hostOK || sourceHost != host {
-		return Outcome{Response: send400(resp, "invalid request")}, nil
-	}
-
-	invalidBody := func() Outcome { return Outcome{Response: send400(resp, "invalid body")} }
-	var parsed jsvalue.Value
-	switch pb.kind {
-	case bodyText:
-		v, err := jsvalue.Parse(pb.text)
-		if errors.Is(err, jsvalue.ErrTooDeep) {
-			return Outcome{}, fallback.New("json-depth")
-		}
-		if err != nil {
-			return invalidBody(), nil
-		}
-		parsed = v
-	case bodyJSON:
-		parsed = pb.json
-		if parsed.Kind == jsvalue.String {
-			v, err := jsvalue.Parse(parsed.S)
-			if errors.Is(err, jsvalue.ErrTooDeep) {
-				return Outcome{}, fallback.New("json-depth")
-			}
-			if err != nil {
-				return invalidBody(), nil
-			}
-			parsed = v
-		}
+	parsed, res, err := beaconBody(pb, resp)
+	if err != nil || res != nil {
+		return outcomeOf(res), err
 	}
 	values, ok := parseAddView(parsed)
 	if !ok {
@@ -304,6 +268,62 @@ func (e *Engine) Pulse(ctx context.Context, r *Request) (Outcome, error) {
 		Response: end200(resp),
 		Writes:   []Write{{Table: TableViews, Body: jsvalue.Stringify(jsvalue.ObjectValue(row))}},
 	}, nil
+}
+
+// checkSameOrigin is the Origin / Referer guard /api/internal/pulse and /api/track/batch share:
+// `source = req.headers.origin ?? req.headers.referer` (an Origin that was sent, even empty, wins);
+// no source, a `new URL` throw, or a host other than `req.headers.host` is `400 invalid request`.
+// It returns that response, or nil when the request passes.
+func checkSameOrigin(r *Request, resp Response) (*Response, error) {
+	source, ok := r.Header("origin")
+	if !ok {
+		source, _ = r.Header("referer")
+	}
+	sourceHost := ""
+	if source != "" {
+		h, res := urlHostOf(source)
+		switch res {
+		case urlUncertain:
+			return nil, fallback.New("url")
+		case urlHost:
+			sourceHost = h
+		}
+	}
+	host, hostOK := r.Header("host")
+	if sourceHost == "" || !hostOK || sourceHost != host {
+		out := send400(resp, "invalid request")
+		return &out, nil
+	}
+	return nil, nil
+}
+
+// beaconBody is the body step /api/internal/pulse and /api/track/batch share:
+// `typeof req.body === 'string' ? JSON.parse(req.body) : req.body`, a throw answered with
+// `400 invalid body`. It returns the parsed value, or that response.
+func beaconBody(pb parsedBody, resp Response) (jsvalue.Value, *Response, error) {
+	text := pb.text
+	if pb.kind == bodyJSON {
+		if pb.json.Kind != jsvalue.String {
+			return pb.json, nil, nil
+		}
+		text = pb.json.S
+	}
+	v, err := jsvalue.Parse(text)
+	if errors.Is(err, jsvalue.ErrTooDeep) {
+		return jsvalue.Value{}, nil, fallback.New("json-depth")
+	}
+	if err != nil {
+		out := send400(resp, "invalid body")
+		return jsvalue.Value{}, &out, nil
+	}
+	return v, nil, nil
+}
+
+func outcomeOf(r *Response) Outcome {
+	if r == nil {
+		return Outcome{}
+	}
+	return Outcome{Response: *r}
 }
 
 // The pageViews column bounds (tracker.ts UINT32_MAX / INT16_MAX).

@@ -31,3 +31,16 @@ export function countHomeBlockL1Miss() {
 export function countHomeBlockL1Eviction() {
   homeBlockL1EvictionCounter.inc({ cache_name: HOME_BLOCK_L1_CACHE_NAME });
 }
+
+// The per-process copy of the HomeBlock row `getHomeBlockById` reads, on the same shared series.
+export const HOME_BLOCK_ROW_CACHE_NAME = 'home-block-row';
+
+const rowLabels = { cache_name: HOME_BLOCK_ROW_CACHE_NAME, cache_type: HOME_BLOCK_L1_CACHE_TYPE };
+
+export function countHomeBlockRowHit() {
+  cacheHitCounter.inc(rowLabels);
+}
+
+export function countHomeBlockRowMiss() {
+  cacheMissCounter.inc(rowLabels);
+}

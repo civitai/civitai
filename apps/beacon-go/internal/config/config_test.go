@@ -184,3 +184,28 @@ func TestCookieNamesPerMode(t *testing.T) {
 		})
 	}
 }
+
+// BEACON_GO_TRACK_BATCH_SERVE is off unless it is exactly `true` (after trimming): a typo or any other
+// truthy spelling leaves /api/track/batch on the Node app.
+func TestTrackBatchServeSwitch(t *testing.T) {
+	cases := []struct {
+		value string
+		want  bool
+	}{
+		{"", false}, {"false", false}, {"1", false}, {"yes", false}, {"TRUE", false}, {"ture", false},
+		{"true", true}, {" true ", true},
+	}
+	for _, c := range cases {
+		m := base()
+		if c.value != "" {
+			m["BEACON_GO_TRACK_BATCH_SERVE"] = c.value
+		}
+		cfg, err := Load(env(m))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.TrackBatchServe != c.want {
+			t.Errorf("BEACON_GO_TRACK_BATCH_SERVE=%q: %v, want %v", c.value, cfg.TrackBatchServe, c.want)
+		}
+	}
+}

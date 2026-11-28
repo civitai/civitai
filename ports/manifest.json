@@ -253,6 +253,31 @@
       "nodeDeletion": null
     },
     {
+      "id": "POST /api/track/batch",
+      "kind": "rest",
+      "service": "beacon-go",
+      "metricEndpoint": "track-batch",
+      "status": "shadow",
+      "routes": ["/api/track/batch"],
+      "nodeEntry": {
+        "file": "src/pages/api/track/batch.ts",
+        "symbol": "default"
+      },
+      "goHandler": [
+        "apps/beacon-go/internal/server/server.go",
+        "apps/beacon-go/internal/beacon/trackbatch.go"
+      ],
+      "goRoots": ["apps/beacon-go/internal/beacon", "apps/beacon-go/internal/tracker"],
+      "flags": {
+        "shadow": "beacon-go-shadow",
+        "transport": null,
+        "probe": null
+      },
+      "holdout": null,
+      "soak": null,
+      "nodeDeletion": null
+    },
+    {
       "id": "contentPolicy.registrySubscription",
       "kind": "policy",
       "service": "content-policy-go",

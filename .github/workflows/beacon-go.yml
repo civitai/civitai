@@ -261,6 +261,7 @@ jobs:
         internal/auth:FuzzTokenFromCookieHeader:130000
         internal/auth:FuzzVerify:80000
         internal/beacon:FuzzCompute:180000
+        internal/beacon:FuzzTrackBatch:180000
         internal/beacon:FuzzURLHost:300000
         internal/hydrate:FuzzUnpack:270000
         internal/jsvalue:FuzzParse:610000

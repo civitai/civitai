@@ -14,8 +14,11 @@ import {
   countHomeBlockL1Eviction,
   countHomeBlockL1Hit,
   countHomeBlockL1Miss,
+  countHomeBlockRowHit,
+  countHomeBlockRowMiss,
 } from '~/server/prom/home-block-l1.metrics';
 import type { HomeBlockCacheTier } from '~/server/prom/home-block-get.metrics';
+import { roughSizeOf } from '@civitai/redis';
 import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import type * as HomeBlockService from '~/server/services/home-block.service';
 import type { HomeBlockWithData } from '~/server/services/home-block.service';
@@ -115,6 +118,15 @@ export const HOME_BLOCK_L1_TTL_MS = 10_000;
 // segments (`getRequestBoardDomainColor` answers green, blue, red or none); a user's own
 // collection blocks add one key per public collection that is on someone's page. Sized to hold
 // the hot part with room for users' blocks; `home_block_l1_evictions_total` shows whether it does.
+//
+// EXPIRED ENTRIES LEAVE ON TIME (`ttlAutopurge`). Without it lru-cache drops an expired entry only
+// when that key is read again or the entry is pushed out for room, so the budget filled with
+// entries whose 10s had run out, and every fill of a new key then "evicted" one of them. In
+// production the first eviction came after about 50 fills of a fresh process, when no more than
+// the last 10s of them were live, and evictions then ran at about a quarter of all misses
+// however old the process was: the budget was full of dead entries, not short for live ones.
+// Purged on time, the budget holds only the last 10s of fills, so an eviction now means live
+// entries really did not fit. One timer per fill, a few per second per process at most.
 const HOME_BLOCK_L1_MAX = 256;
 // The byte cap is measured with an estimate, not a serialisation: `packed.get` hands back the
 // decoded value only (the wire size is not exposed to the caller), and a JSON.stringify of a
@@ -124,6 +136,11 @@ const HOME_BLOCK_L1_MAX = 256;
 // cache hold more than its budget, an over-estimate only evicts sooner (which the counter shows).
 const HOME_BLOCK_L1_ENTRY_BYTES = 4 * 1024;
 const HOME_BLOCK_L1_ITEM_BYTES = 4 * 1024;
+
+// Both per-process caches here age entries by `Date.now()` rather than lru-cache's default
+// `performance.now()`: millisecond resolution is all a 10s TTL needs, and it is the clock a test's
+// fake timers move.
+const wallClock = { now: () => Date.now() };
 
 const readHomeBlockL1Flag = () => isFliptSync(FLIPT_FEATURE_FLAGS.HOME_BLOCK_SERVER_CACHE);
 let isHomeBlockL1On = createCachedFlagGate(readHomeBlockL1Flag);
@@ -154,6 +171,8 @@ const homeBlockL1 = new LRUCache<string, HomeBlockWithData>({
   maxSize: L1_CACHE_BYTE_BUDGETS.homeBlocks,
   sizeCalculation: (value) => Math.max(1, estimateHomeBlockBytes(value)),
   ttl: HOME_BLOCK_L1_TTL_MS,
+  ttlAutopurge: true,
+  perf: wallClock,
   // 'evict' is a removal to make room; expiry, a bust ('delete') and replacement ('set') are not.
   dispose: (_value, _key, reason) => {
     if (reason === 'evict') countHomeBlockL1Eviction();
@@ -177,9 +196,70 @@ export function homeBlockCacheKey(
   return `${REDIS_KEYS.HOMEBLOCKS.BASE}:${type}:${identifier}:${domainSegment(domain)}` as const;
 }
 
+// ---------------------------------------------------------------------------------------------
+// The HomeBlock ROW `getHomeBlockById` reads (id, type, metadata, userId, sourceId), per process,
+// keyed by block id, behind the same `home-block-server-cache` flag. Off, every call reads the
+// replica as before.
+//
+// The row decides who may see the block: its metadata's feature flag and event gate, and for a
+// Collection block the collection and the owner the audience check runs against. The gates still
+// run on every request, for that request's viewer; only the row they read can be old. A copy is
+// served for at most HOME_BLOCK_ROW_TTL_MS after the read that filled it. That read is a replica
+// read, so a write that NARROWS who may see a block (a flag or event added, the collection
+// changed, the block deleted) is seen by a process within the replica's lag plus 10s (it was the
+// lag alone). It stacks with the edge exactly as the L1's TTL does: up to 10s more for a request
+// that misses the edge, up to 10s + the edge's 60s for one served from it. Each writer of those
+// columns also forgets the row in its own process (`forgetHomeBlockRows`), so that process's next
+// read goes back to the replica (which may still lag); every other process waits out the TTL.
+// A read already in flight when a write lands can put the old row back here, bounded the same way.
+//
+// A missing row is never kept: a block created a moment ago is read on its first request.
+export const HOME_BLOCK_ROW_TTL_MS = 10_000;
+// Bounded by bytes too (`L1_CACHE_BYTE_BUDGETS.homeBlockRows`, sized by `roughSizeOf`). A row is
+// four scalars and the block's metadata, and a process is asked for a few hundred distinct ids in
+// 10s at most, so neither cap is expected to bind; the shared miss counter shows if one does.
+const HOME_BLOCK_ROW_MAX = 2_000;
+
+const homeBlockRows = new LRUCache<number, object>({
+  max: HOME_BLOCK_ROW_MAX,
+  maxSize: L1_CACHE_BYTE_BUDGETS.homeBlockRows,
+  sizeCalculation: (value) => roughSizeOf(value),
+  ttl: HOME_BLOCK_ROW_TTL_MS,
+  ttlAutopurge: true,
+  perf: wallClock,
+});
+
+/**
+ * The row for `id`: this process's copy while the flag is on and the copy is under
+ * HOME_BLOCK_ROW_TTL_MS old, else `read(id)` (kept for the next caller when it found a row). Each
+ * caller gets its own top-level object; the metadata inside is shared, as the L1's content is,
+ * which is safe because nothing on the read path mutates it.
+ */
+export async function readHomeBlockRowThrough<T extends object>(
+  id: number,
+  read: (id: number) => Promise<T | null>
+): Promise<T | null> {
+  if (!isHomeBlockL1On()) return read(id);
+  const held = homeBlockRows.get(id) as T | undefined;
+  if (held) {
+    countHomeBlockRowHit();
+    return { ...held };
+  }
+  countHomeBlockRowMiss();
+  const row = await read(id);
+  if (row) homeBlockRows.set(id, row);
+  return row && { ...row };
+}
+
+/** Drops these rows from this process's copy, whatever the flag says now (see the L1's bust). */
+export function forgetHomeBlockRows(ids: Iterable<number>) {
+  for (const id of ids) homeBlockRows.delete(id);
+}
+
 /** Tests only: forget every L1 entry and the cached flag read, optionally reading `read` instead. */
 export function resetHomeBlockL1ForTests(read: () => boolean | null = readHomeBlockL1Flag) {
   homeBlockL1.clear();
+  homeBlockRows.clear();
   isHomeBlockL1On = createCachedFlagGate(read);
 }
 
@@ -293,6 +373,7 @@ export async function bustSystemHomeBlockCaches(row?: {
   ]);
 
   if (!row) return;
+  forgetHomeBlockRows([row.id]);
   const identifier = getHomeBlockIdentifier(
     { id: row.id, type: row.type, metadata: {} as HomeBlockMetaSchema },
     (row.metadata || {}) as HomeBlockMetaSchema

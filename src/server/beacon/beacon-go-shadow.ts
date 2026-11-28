@@ -18,14 +18,16 @@ import {
 
 /**
  * Shadow sampler for the Go beacon service (apps/beacon-go, see its DESIGN.md): after Node has
- * answered a sampled `/api/internal/ping` or `/api/internal/pulse` request, post what Node saw, what
- * it answered AND the tracker rows it wrote to that service's internal compare endpoint, which
- * recomputes all three and compares them byte for byte. Node keeps serving and writing every request;
- * beacon-go writes nothing in this mode.
+ * answered a sampled `/api/internal/ping`, `/api/internal/pulse` or `/api/track/batch` request, post
+ * what Node saw, what it answered AND the tracker rows it wrote to that service's internal compare
+ * endpoint, which recomputes all three and compares them byte for byte. Node keeps serving and
+ * writing every request; beacon-go writes nothing in this mode.
  *
- * Off unless ALL of these hold: `BEACON_GO_SHADOW_URL` is set; `BEACON_GO_SHADOW_SAMPLE_RATE` is
- * > 0; the Tracker would actually send (otherwise Node writes nothing and there is no row to
- * compare); the `beacon-go-shadow` Flipt flag is on (unknown or uninitialized reads as off). A
+ * Off unless ALL of these hold: `BEACON_GO_SHADOW_URL` is set; the endpoint's rate is > 0
+ * (`BEACON_GO_SHADOW_SAMPLE_RATE` for ping and pulse, `BEACON_GO_SHADOW_TRACK_BATCH_SAMPLE_RATE` for
+ * track-batch, each default 0, so turning on the beacons' shadow leaves track-batch off); the Tracker
+ * would actually send (otherwise Node writes nothing and there is no row to compare); the
+ * `beacon-go-shadow` Flipt flag is on (unknown or uninitialized reads as off). A
  * per-endpoint token bucket (`BEACON_GO_SHADOW_MAX_PER_SECOND`) and a shared in-flight cap
  * (`BEACON_GO_SHADOW_MAX_IN_FLIGHT`) bound the work.
  *
@@ -44,7 +46,15 @@ import {
  * caller's address: `BEACON_GO_SHADOW_URL` must be an in-cluster address, never a public hostname.
  */
 
-export const BEACON_GO_SHADOW_PATH_PREFIX = '/internal/shadow/api/internal/';
+/** beacon-go's compare path is this prefix + the endpoint's public route (internal/server ShadowPath). */
+export const BEACON_GO_SHADOW_PATH_PREFIX = '/internal/shadow';
+
+/** Each endpoint's public route (beacon-go internal/server Routes). */
+export const BEACON_GO_SHADOW_ROUTES: Record<BeaconGoShadowEndpoint, string> = {
+  ping: '/api/internal/ping',
+  pulse: '/api/internal/pulse',
+  'track-batch': '/api/track/batch',
+};
 
 export const BEACON_GO_SHADOW_DEFAULT_TIMEOUT_MS = 2_000;
 export const BEACON_GO_SHADOW_MAX_TIMEOUT_MS = 10_000;
@@ -54,7 +64,10 @@ export const BEACON_GO_SHADOW_DEFAULT_MAX_PER_SECOND = 20;
 export type BeaconGoShadowConfig = {
   /** Base of beacon-go's internal listener (scheme + host + port), or undefined (disabled). */
   base: string | undefined;
+  /** ping and pulse. */
   rate: number;
+  /** track-batch, on its own so the beacons' shadow does not turn it on. */
+  trackBatchRate: number;
   timeoutMs: number;
   maxInFlight: number;
   maxPerSecond: number;
@@ -77,6 +90,7 @@ export function readBeaconGoShadowConfig(env: Env = process.env): BeaconGoShadow
   return {
     base,
     rate: envNumber(env.BEACON_GO_SHADOW_SAMPLE_RATE, 0, 0, 1),
+    trackBatchRate: envNumber(env.BEACON_GO_SHADOW_TRACK_BATCH_SAMPLE_RATE, 0, 0, 1),
     timeoutMs: Math.round(
       envNumber(
         env.BEACON_GO_SHADOW_TIMEOUT_MS,
@@ -99,7 +113,10 @@ export function readBeaconGoShadowConfig(env: Env = process.env): BeaconGoShadow
 
 /** The compare endpoint for one beacon. */
 export function beaconGoShadowUrl(base: string, endpoint: BeaconGoShadowEndpoint): string {
-  return new URL(`${BEACON_GO_SHADOW_PATH_PREFIX}${endpoint}`, base).toString();
+  return new URL(
+    `${BEACON_GO_SHADOW_PATH_PREFIX}${BEACON_GO_SHADOW_ROUTES[endpoint]}`,
+    base
+  ).toString();
 }
 
 type ResponseLike = ResponseHeadersLike & {
@@ -211,10 +228,11 @@ export function createBeaconGoShadow(deps: BeaconGoShadowDeps) {
     endpoint: BeaconGoShadowEndpoint
   ): BeaconGoShadowSample | undefined {
     try {
-      if (!config.base || config.rate <= 0) return undefined;
+      const rate = endpoint === 'track-batch' ? config.trackBatchRate : config.rate;
+      if (!config.base || rate <= 0) return undefined;
       if (!trackerSends()) return undefined;
       if (!enabled()) return undefined;
-      if (random() >= config.rate) return undefined;
+      if (random() >= rate) return undefined;
       if (inFlight >= config.maxInFlight) {
         record('dropped_overload', endpoint);
         return undefined;

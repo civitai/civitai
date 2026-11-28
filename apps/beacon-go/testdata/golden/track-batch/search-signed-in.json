@@ -1,0 +1,43 @@
+{
+  "name": "search-signed-in",
+  "endpoint": "track-batch",
+  "request": {
+    "method": "POST",
+    "target": "/api/track/batch",
+    "headers": {
+      "host": "www.example.test",
+      "origin": "https://www.example.test",
+      "content-type": "application/json",
+      "user-agent": "Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0",
+      "cf-connecting-ip": "203.0.113.7",
+      "cookie": "_ga=GA1.1; __Secure-civ-token=hdr.payload.sig"
+    },
+    "body": "[{\"kind\":\"search\",\"data\":{\"query\":\"x\",\"index\":\"i\"}}]"
+  },
+  "session": {
+    "id": 1001,
+    "tier": "gold",
+    "cookie": "__Secure-civ-token",
+    "iat": 1780000000
+  },
+  "trackerEnabled": true,
+  "fallback": "",
+  "expect": {
+    "status": 200,
+    "headers": {
+      "vary": "Authorization, Cookie",
+      "access-control-allow-origin": "*",
+      "access-control-allow-headers": "Authorization, Content-Type, *",
+      "access-control-allow-methods": "POST",
+      "cache-control": "max-age=0, private, no-cache"
+    },
+    "body": "",
+    "writes": [
+      {
+        "table": "search",
+        "body": "{\"userId\":1001,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"query\":\"x\",\"index\":\"i\",\"filters\":\"\"}"
+      }
+    ]
+  },
+  "shadow": "{\"method\":\"POST\",\"target\":\"/api/track/batch\",\"query\":\"\",\"headers\":{\"host\":\"www.example.test\",\"origin\":\"https://www.example.test\",\"user-agent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"content-type\":\"application/json\",\"cf-connecting-ip\":\"203.0.113.7\",\"cookie\":\"__Secure-civ-token=hdr.payload.sig\"},\"body\":\"[{\\\"kind\\\":\\\"search\\\",\\\"data\\\":{\\\"query\\\":\\\"x\\\",\\\"index\\\":\\\"i\\\"}}]\",\"bodyIsString\":false,\"node\":{\"status\":200,\"headers\":{\"access-control-allow-origin\":\"*\",\"access-control-allow-headers\":\"Authorization, Content-Type, *\",\"access-control-allow-methods\":\"POST\",\"vary\":\"Authorization, Cookie\",\"cache-control\":\"max-age=0, private, no-cache\"},\"body\":\"\",\"writes\":[{\"table\":\"search\",\"body\":\"{\\\"userId\\\":1001,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"query\\\":\\\"x\\\",\\\"index\\\":\\\"i\\\",\\\"filters\\\":\\\"\\\"}\"}]}}"
+}
