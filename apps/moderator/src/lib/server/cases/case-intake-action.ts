@@ -222,7 +222,9 @@ export function defaultCaseIntakeDeps(
     rateLimit: limitPerIp,
     sendDeps: defaultSendDeps,
     receiptsPerAddressPerDay: receiptCapFromEnv(env.TAKEDOWN_RECEIPTS_PER_ADDRESS_PER_DAY),
-    alert: (subject, text) => caseAlert(subject, text, 'caseIntakeAlert'),
+    // Intake alerts only for a minor flag, which Legal also receives.
+    alert: (subject, text) =>
+      caseAlert(subject, text, 'caseIntakeAlert', { cc: env.CASE_MINOR_ALERT_CC }),
     background: (work) =>
       void work.catch((e) => console.error('case receipt send failed', e?.name)),
     ...more,
