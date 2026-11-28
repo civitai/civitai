@@ -354,6 +354,10 @@ const heldSiblings: [string, (id: number) => Promise<unknown>][] = [
   ],
   ['blocked as CSAM', (id) => pg.query(`UPDATE "Image" SET "blockedFor"='CSAM' WHERE id=$1`, [id])],
   [
+    'blocked as CSAM in a list of reasons',
+    (id) => pg.query(`UPDATE "Image" SET "blockedFor"='Other,CSAM' WHERE id=$1`, [id]),
+  ],
+  [
     'listed on a CsamReport',
     (id) =>
       pg.query(
@@ -364,10 +368,6 @@ const heldSiblings: [string, (id: number) => Promise<unknown>][] = [
 ];
 
 const withheldOnly: [string, (id: number) => Promise<unknown>][] = [
-  [
-    'blocked as CSAM in a list of reasons',
-    (id) => pg.query(`UPDATE "Image" SET "blockedFor"='Other,CSAM' WHERE id=$1`, [id]),
-  ],
   [
     'under a CSAM hash block',
     async (id) => {
@@ -421,7 +421,7 @@ describe('"KnightsImageGate" on a file another image row shares', () => {
     await pg.exec(`CREATE VIEW "KnightsImageGateMutant" AS ${mutant};
       GRANT SELECT ON "KnightsImageGateMutant" TO ${KNIGHTS_APP_ROLE};`);
     try {
-      await seedSharedFile(withheldOnly[1][1]);
+      await seedSharedFile(withheldOnly[0][1]); // the CSAM hash block
       expect((await fromView([2], 'KnightsImageGateMutant')).get(2)?.modReviewContent).toBe(true);
       expect((await fromView([2])).get(2)?.modReviewContent).toBe(false);
     } finally {

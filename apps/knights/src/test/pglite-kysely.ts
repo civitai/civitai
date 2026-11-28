@@ -58,7 +58,9 @@ export const IMAGE_GATE_REVOKES_MIGRATION = migrationPath(
 );
 
 /** The migration carrying the current "KnightsImageGate" SQL. */
-export const IMAGE_GATE_MIGRATION = migrationPath('20271207120000_knights_image_gate_mod_review');
+export const IMAGE_GATE_MIGRATION = migrationPath(
+  '20271210120200_knights_image_gate_csam_comma_list'
+);
 
 /** Points the main site's knights-new-order leaderboard row at this app's votes. */
 export const SITE_BOARD_MIGRATION = migrationPath('20271209120000_knights_new_order_site_board_v2');

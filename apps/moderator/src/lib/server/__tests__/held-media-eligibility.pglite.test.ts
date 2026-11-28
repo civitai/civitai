@@ -49,7 +49,7 @@ beforeAll(async () => {
   db = await freshPglite();
   await db.exec(SCHEMA);
   // Owners: 201 nothing; 202 on an archived report sent long ago; 203 secondary on a report;
-  // 204 nothing; 207 nothing; 208 nothing, one image flagged; -1 the placeholder.
+  // 204 nothing; 207 nothing; 208 nothing, one image flagged; 209, 210 nothing; -1 the placeholder.
   await db.exec(`
     INSERT INTO "Image" ("id", "userId", "needsReview", "blockedFor", "url", "mimeType") VALUES
       (1, 201, 'csam', NULL, 'key-1', 'image/png'),
@@ -63,7 +63,9 @@ beforeAll(async () => {
       (11, 208, NULL, NULL, 'key-11', NULL),
       (12, 208, 'csam', NULL, 'key-12', NULL),
       (13, 202, NULL, 'AiNotVerified', 'key-13', NULL),
-      (14, 201, 'csam', 'AiNotVerified', 'key-14', NULL);
+      (14, 201, 'csam', 'AiNotVerified', 'key-14', NULL),
+      (15, 209, NULL, 'tos,CSAM', 'key-15', NULL),
+      (16, 210, NULL, 'tos,moderated', 'key-16', NULL);
     INSERT INTO "CsamReport" ("userId", "details", "archivedAt", "reportSentAt") VALUES
       (202, '{}', '2024-01-01', '2023-01-01'),
       (-1, '{"secondaryUserId": "203"}', NULL, NULL),
@@ -99,6 +101,11 @@ describe('held media eligibility', () => {
 
   it('skips an AiNotVerified block on the owner legs, but not when the image itself is flagged', async () => {
     expect(await served([13, 14])).toEqual([14]);
+  });
+
+  // "blockedFor" is a comma list of block reasons; CSAM anywhere in it is a CSAM block.
+  it('serves an image blocked for a list naming CSAM, and not one blocked for other reasons', async () => {
+    expect(await served([15, 16])).toEqual([15]);
   });
 
   it('never treats the placeholder owner as held, though a report names it', async () => {

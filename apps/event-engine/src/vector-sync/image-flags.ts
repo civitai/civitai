@@ -13,13 +13,23 @@ const CSAM_REPORT_LISTED_IMAGE_IDS_SQL = `SELECT listed.id FROM (
   ) listed
   WHERE listed.id IS NOT NULL`;
 
+/** Whether `blockedFor`, a comma list of block reasons, names CSAM: the site's `csamInBlockedForSql`. */
+function csamInBlockedForSql(blockedFor: string): string {
+  return `EXISTS (
+      SELECT 1 FROM unnest(string_to_array(${blockedFor}, ',')) AS mw_reason(value)
+      WHERE lower(btrim(mw_reason.value)) = 'csam'
+    )`;
+}
+
 /**
  * The "Image" row aliased `image` is under CSAM review, blocked as CSAM, or listed on a CsamReport.
  * Never NULL, so NOT of it is safe on an unflagged image.
  */
 export function csamFlaggedImageSql(image: string): string {
   if (!/^[a-z_][a-z0-9_]*$/i.test(image)) throw new Error(`Bad table alias: ${image}`);
-  return `COALESCE(((${image}."needsReview" = 'csam' OR ${image}."blockedFor" = 'CSAM') OR (${image}.id)::text IN (${CSAM_REPORT_LISTED_IMAGE_IDS_SQL})), false)`;
+  return `COALESCE(((${image}."needsReview" = 'csam' OR ${csamInBlockedForSql(
+    `${image}."blockedFor"`
+  )}) OR (${image}.id)::text IN (${CSAM_REPORT_LISTED_IMAGE_IDS_SQL})), false)`;
 }
 
 /** An aliased column (`st."coverImageId"`), checked because the SQL splices it as written. */
