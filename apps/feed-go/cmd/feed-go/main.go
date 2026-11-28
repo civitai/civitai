@@ -174,6 +174,9 @@ func dedicatedMetricsReader(cfg *config.Config, tracer chread.Tracer) (hydrate.C
 // .PROFANITY_MANAGED_LIST): on, the moderators' managed block list; off, the shipped one.
 const searchProfanityFlag = "profanity-managed-list"
 
+// searchProfanityFlagMaxStale bounds how long the flag's last good read stands through failed reads.
+const searchProfanityFlagMaxStale = 3 * flipt.RefreshInterval
+
 // searchProfanityChecker is the site-search profanity check (internal/profanity): the lists Node
 // reads, from the same cache-cluster keys, and the flag read in the background like the other
 // switches. Without FLIPT_URL there is no flag to read, and every SFW-site query with text is handed
@@ -204,6 +207,9 @@ func searchProfanityChecker(ctx context.Context, cfg *config.Config, cache redis
 		log.Error("flag unread past its staleness bound; SFW-site search text is handed back", "flag", searchProfanityFlag,
 			"since_last_good", age.Round(time.Second).String())
 	}
+	// Past three missed refreshes the last good value is no longer taken as Node's: the flag picks the
+	// lists, so an unconfirmed state hands back (unproven) rather than enforce lists Node may have left.
+	sw.MaxStale = searchProfanityFlagMaxStale
 	sw.Start(ctx)
 	c.Flag = sw
 	return c, nil

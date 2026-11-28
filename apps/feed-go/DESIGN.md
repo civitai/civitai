@@ -3910,16 +3910,17 @@ The conservative rules, each `unproven` (handed back on the public route, counte
 |---|---|
 | a query with any byte outside ASCII (`text`) | obscenity iterates code points, maps Unicode confusables and indexes UTF-16; JavaScript's `trim`, `toLowerCase` and `\s` are Unicode-aware. None of that is ported |
 | a query past 4096 bytes (`text-length`) | one regexp scan per term; Node scans it, this hands it back |
-| the flag's state not known (`flag`): never read, or unread past `flipt.DefaultMaxStale`; no `FLIPT_URL` (`unconfigured`) | the flag picks the lists |
+| the flag's state not known (`flag`): never read, or unread for 15 s (three missed refreshes, not `flipt.DefaultMaxStale`); no `FLIPT_URL` (`unconfigured`) | the flag picks the lists: a value held through failed reads could be one Node has already left |
 | a row's key absent or empty (`list-miss`), the cache read failing (`list-read`) | Node then reads the database row, which this service does not read |
 | a cached value that is not a plain `BlocklistDTO` of strings (`list-shape`) | not read the way `JSON.parse` and the list service read it |
 | a block list that does not build, or a managed entry outside ASCII (`list-build`) | Node's pattern parser and floor count are not proven on it |
 | an ALLOW entry outside ASCII is dropped, not handed back | an allow entry only excuses a match, so dropping one only refuses more (JavaScript lower-cases the Kelvin sign to `k`, so such an entry can excuse an ASCII word in Node) |
 
 Not reproduced, by design: Node's own failure paths (its last good list while its read fails, the
-shipped list when its check throws), which follow Node's reads, not this service's. Between Node pods
-and this service the lists can differ for up to the 5 s share after a moderator's edit or a flag flip,
-as they can between Node pods.
+shipped list when its check throws), which follow Node's reads, not this service's. After a moderator's
+edit the lists can differ from a Node pod's for up to the 5 s share on either side; after a flag flip,
+for this service's 5 s flag refresh plus its 5 s share plus Node's own Flipt poll. Node pods differ
+from each other the same way.
 
 Parity: `testdata/profanity/parity.json`, shared by `internal/profanity/parity_test.go` and
 `src/server/__tests__/feed-go-site-search-profanity.test.ts`. Its literal cases (clean, profane,

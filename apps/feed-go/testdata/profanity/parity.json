@@ -313,6 +313,18 @@
       "node": "profane"
     },
     {
+      "name": "a match ending on a leet symbol",
+      "flag": "off",
+      "rows": {
+        "ProfanityBenignWord": {
+          "data": []
+        }
+      },
+      "queries": ["as$umPttionnn-tit$-f'uku"],
+      "go": "profane",
+      "node": "profane"
+    },
+    {
       "name": "multi-search: any profane query refuses",
       "flag": "off",
       "rows": {
