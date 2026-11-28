@@ -342,7 +342,7 @@ func (s *Server) replay(ctx context.Context, rep *parityReplay) string {
 		return ParityTimeout
 	case status != "":
 		return status
-	case rec.status != http.StatusOK && !(rep.endpoint == EndpointV1ModelsID && rec.status == http.StatusNotFound):
+	case rec.status != http.StatusOK && (rep.endpoint != EndpointV1ModelsID || rec.status != http.StatusNotFound):
 		// `[id]`'s 404 is an answer (its not-found body), compared like a 200.
 		if rec.status == http.StatusBadGateway && rec.body.Len() == 0 {
 			// The proxy's own answer to a Node app it could not reach (fallbackProxy's ErrorHandler).
