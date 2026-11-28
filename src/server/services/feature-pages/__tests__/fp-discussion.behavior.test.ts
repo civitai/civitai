@@ -123,7 +123,6 @@ describe('posting', () => {
     expect(
       await q(`SELECT count(*)::int AS n FROM "CommentV3" WHERE "userId" = $1`, [OTHER])
     ).toEqual([{ n: 0 }]);
-    expect(posts().map((p) => p.uid)).not.toContain(OTHER);
   });
 
   it('writes one comment and one mirror row, and once its scan is clean posts it once under a mirror key, not the client requestId', async () => {

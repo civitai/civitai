@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createFeaturePageHost } from '../featurePageHostLogic';
+import { FEATURE_PAGES_SET_USERNAME_MESSAGE } from '~/shared/constants/feature-pages.constants';
 
 const ORIGIN = 'https://features.example.com';
 const REQUEST = 'urn:data.civitai.com:feature-pages/requests/dark-mode';
@@ -179,6 +180,31 @@ describe('feature page comments', () => {
     type: 'fp-comment',
     payload: { requestId: 'c1', subject: REQUEST, text: 'hi' },
   };
+
+  it('a refusal for want of a username is refused to the frame, and the page is told', async () => {
+    const { frame, deps, send, flush } = setup();
+    const onNeedsUsername = vi.fn();
+    Object.assign(deps, { onNeedsUsername });
+    deps.comment.mockRejectedValueOnce(
+      Object.assign(new Error(FEATURE_PAGES_SET_USERNAME_MESSAGE), {
+        data: { code: 'PRECONDITION_FAILED' },
+      })
+    );
+    send(comment);
+    await flush();
+    expect(onNeedsUsername).toHaveBeenCalledOnce();
+    expect(frame.postMessage).toHaveBeenLastCalledWith(
+      { type: 'fp-comment-result', payload: { requestId: 'c1', ok: false, error: 'refused' } },
+      ORIGIN
+    );
+    // Any other refusal tells the page nothing.
+    deps.comment.mockRejectedValueOnce(
+      Object.assign(new Error('Refused'), { data: { code: 'FORBIDDEN' } })
+    );
+    send(comment);
+    await flush();
+    expect(onNeedsUsername).toHaveBeenCalledOnce();
+  });
 
   it('answers try_again before fp-init without calling anything, and posts once after it', async () => {
     const { frame, deps, send, flush } = setup({ uninitialised: true });

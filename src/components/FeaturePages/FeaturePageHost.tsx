@@ -60,23 +60,19 @@ export function FeaturePageHost({
       viewerAuthor,
       openLogin: () => openLoginHere('perform-action'),
       vote: (input) => vote(input as FeaturePageVoteInput),
-      // The frame learns only that it was refused; the way to a username is shown here.
-      comment: (input) =>
-        comment(input as FeaturePageCommentInput).catch((e: unknown) => {
-          if ((e as { message?: string })?.message === FEATURE_PAGES_SET_USERNAME_MESSAGE)
-            showErrorNotification({
-              title: 'Username needed',
-              error: { message: FEATURE_PAGES_SET_USERNAME_MESSAGE },
-              reason: (
-                <>
-                  {FEATURE_PAGES_SET_USERNAME_MESSAGE}{' '}
-                  <Link href={FEATURE_PAGES_SET_USERNAME_HREF} className="underline">
-                    Set your username
-                  </Link>
-                </>
-              ),
-            });
-          throw e;
+      comment: (input) => comment(input as FeaturePageCommentInput),
+      onNeedsUsername: () =>
+        showErrorNotification({
+          title: 'Username needed',
+          error: { message: FEATURE_PAGES_SET_USERNAME_MESSAGE },
+          reason: (
+            <>
+              {FEATURE_PAGES_SET_USERNAME_MESSAGE}{' '}
+              <Link href={FEATURE_PAGES_SET_USERNAME_HREF} className="underline">
+                Set your username
+              </Link>
+            </>
+          ),
         }),
       editComment: (input) => editComment(input as FeaturePageCommentEditInput),
       retractComment: (input) => retractComment(input as FeaturePageCommentRetractInput),

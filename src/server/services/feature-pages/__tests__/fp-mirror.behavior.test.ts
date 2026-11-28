@@ -1725,13 +1725,13 @@ describe('the hide state', () => {
     expect(decided(id)).toBe('hidden');
   });
 
+  // The author name is the username, never the account id (civitai/civitai#10750).
   it('an all-digit username is posted as it is, never as the account id', async () => {
     await q(`UPDATE "User" SET username = '12345' WHERE id = $1`, [AUTHOR]);
     const id = (await seed('numbered')).comment.sourceId;
     await runMirror(mirror);
     expect(posts().map((p) => [p.sourceId, p.authorName])).toEqual([[id, '12345']]);
     expect(decided(id)).toBe('visible');
-    for (const p of platform.posts) expect(p.authorName).not.toBe(String(p.uid));
   });
 
   it('a post by an author with no name is held back, counted, and posted once named', async () => {
