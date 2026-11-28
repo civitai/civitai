@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { IconPhotoPlus } from '@tabler/icons-react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { MediaDropzone } from '~/components/Image/ImageDropzone/MediaDropzone';
+import { InFlightUploadTiles } from '~/components/Post/EditV2/InFlightUploadTiles';
 import { usePostEditParams, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
 import { useShowCreatePostError } from '~/components/Post/showCreatePostError';
 import ImageSelectModal from '~/components/Training/Form/ImageSelectModal';
@@ -264,6 +265,7 @@ export function PostImageDropzone({
         {images.length + reserved} / {maxItems} files
       </Text>
       {!!files.length && showProgress && <Progress value={progress} animated size="lg" />}
+      <InFlightUploadTiles files={files} />
       {!files.length && <UploadNotice />}
     </div>
   );
