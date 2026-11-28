@@ -84,6 +84,7 @@ import {
   formatGenerationResponse2,
 } from '~/server/services/orchestrator/orchestration-new.service';
 import { GenerationStatusRefusedError } from '~/server/services/generation/generation-kill-switch';
+import { isBuzzLimitRefusalError } from '~/server/orchestrator/api-key-buzz-limit-refusal';
 import {
   getPresetModelConfig,
   pickAspectRatioSize,
@@ -264,6 +265,8 @@ function normalizeCandidateNsfwLevel(value: unknown): number | undefined {
 export function getOrchestratorErrorMessage(error: unknown): string {
   // The generation kill switch's refusal is the operator's own message: shown as written.
   if (error instanceof GenerationStatusRefusedError) return error.message;
+  // Names the key's or app's Buzz limit; the "buzz" match below would call it a low balance.
+  if (isBuzzLimitRefusalError(error)) return error.message;
   const msg = error instanceof Error ? error.message : String(error);
   const lower = msg.toLowerCase();
 

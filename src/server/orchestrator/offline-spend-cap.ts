@@ -1,5 +1,4 @@
 import { sql } from 'kysely';
-import { TRPCError } from '@trpc/server';
 import type { NextApiRequest } from 'next';
 import type { kyselyWrite } from '~/server/db/kyselyDb';
 
@@ -7,12 +6,6 @@ type KyselyWrite = typeof kyselyWrite;
 import { readRequestBearerToken } from '~/server/auth/request-bearer-token';
 import { getRequestCredential, type RequestCredential } from '~/server/auth/request-credential';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
-import {
-  getBuzzLimitForSubject,
-  type BuzzSpendEntry,
-  type Subject,
-} from '~/server/http/orchestrator/api-key-spend';
-import { OFFLINE_BUZZ_CAP_REACHED } from '~/server/orchestrator/api-key-buzz-limit-refusal';
 import type { BuzzLimit } from '~/server/schema/api-key.schema';
 
 // THE CALLER'S OWN KEY, sent to the orchestrator in place of the user's System token, so the
@@ -50,8 +43,6 @@ export interface OwnKeyReads {
   offlineGrantFlagOn: () => Promise<boolean>;
   userKeyFlagOn: () => Promise<boolean>;
   mintOrigin: (apiKeyId: number) => Promise<string | null>;
-  /** The orchestrator's spend snapshot for the subject; null when it has none or cannot answer. */
-  spend: (userId: number, subject: Subject) => Promise<BuzzSpendEntry | null>;
 }
 
 /**
@@ -75,13 +66,7 @@ export async function resolveOwnKeyToken(
 
   if (userKey) return (await reads.userKeyFlagOn()) ? bearerToken : null;
   if (!(await reads.offlineGrantFlagOn())) return null;
-  if ((await reads.mintOrigin(apiKeyId)) !== 'refresh') return null;
-
-  const snapshot = await reads.spend(input.userId, subject).catch(() => null);
-  if (snapshot?.rules.some((rule) => rule.limit > 0 && rule.remaining <= 0)) {
-    throw new TRPCError({ code: 'FORBIDDEN', message: OFFLINE_BUZZ_CAP_REACHED });
-  }
-  return bearerToken;
+  return (await reads.mintOrigin(apiKeyId)) === 'refresh' ? bearerToken : null;
 }
 
 /** The token to send the orchestrator for this request when it is the caller's own limited key; null otherwise. */
@@ -102,7 +87,6 @@ export function ownKeyOrchestratorToken(
       offlineGrantFlagOn: () => isFlipt(FLIPT_FEATURE_FLAGS.OAUTH_OFFLINE_GRANT),
       userKeyFlagOn: () => isFlipt(FLIPT_FEATURE_FLAGS.USER_KEY_BUZZ_LIMIT_PROXY),
       mintOrigin: readMintOrigin,
-      spend: (id, subject) => getBuzzLimitForSubject({ userId: id, subject }),
     }
   );
 }

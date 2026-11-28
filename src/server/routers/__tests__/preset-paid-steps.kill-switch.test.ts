@@ -44,6 +44,8 @@ vi.mock('~/server/services/comics/prompt-enhance', () => ({
 
 import { comicsRouter, getOrchestratorErrorMessage } from '../comics.router';
 import { GenerationStatusRefusedError } from '~/server/services/generation/generation-kill-switch';
+import { TRPCError } from '@trpc/server';
+import { API_KEY_BUZZ_LIMIT_REACHED } from '~/server/orchestrator/api-key-buzz-limit-refusal';
 import { orchestratorRouter } from '../orchestrator.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { OnboardingSteps } from '~/server/common/enums';
@@ -191,6 +193,11 @@ describe("comics show the kill switch's refusal verbatim", () => {
     'Members only while we add Buzz capacity',
   ])('%j', (message) => {
     expect(getOrchestratorErrorMessage(new GenerationStatusRefusedError(message))).toBe(message);
+  });
+
+  it("shows a key's Buzz limit refusal as written, not as a low balance", () => {
+    const refusal = new TRPCError({ code: 'FORBIDDEN', message: API_KEY_BUZZ_LIMIT_REACHED });
+    expect(getOrchestratorErrorMessage(refusal)).toBe(API_KEY_BUZZ_LIMIT_REACHED);
   });
 
   it('CONTROL: an orchestrator error with the same words is still rewritten', () => {

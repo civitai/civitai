@@ -232,7 +232,7 @@ export async function queryWorkflows({
     (performance.now() - readStart) / 1000
   );
   if (!data) {
-    throwIfApiKeyBuzzLimitRefusal(error.status, error);
+    throwIfApiKeyBuzzLimitRefusal(error.status, error, token);
     switch (error.status) {
       case 400:
         throw throwBadRequestError(error.detail);
@@ -312,7 +312,7 @@ export async function getWorkflow({
     (performance.now() - readStart) / 1000
   );
   if (!data) {
-    throwIfApiKeyBuzzLimitRefusal(error.status, error);
+    throwIfApiKeyBuzzLimitRefusal(error.status, error, token);
     switch (error.status) {
       case 400:
         throw throwBadRequestError(error.detail);
@@ -482,7 +482,7 @@ export async function submitWorkflow({
       console.log('----Workflow End Error Request Body----');
     }
     try {
-      throwOrchestratorFailure({ error, response, message, unavailableMessage });
+      throwOrchestratorFailure({ error, response, message, unavailableMessage, token });
     } catch (e) {
       // Additive: record which attempt received this response and its status, as a
       // non-enumerable property (see `submit-failure.ts`). The thrown error is
@@ -899,7 +899,7 @@ export async function updateWorkflow({
     ...(signal ? { signal } : {}),
   });
   if (throwOnError && !response?.ok)
-    throwOrchestratorFailure({ error, response, message: orchestratorErrorMessage(error) });
+    throwOrchestratorFailure({ error, response, message: orchestratorErrorMessage(error), token });
   return await getWorkflow({ token, path: { workflowId } });
 }
 
@@ -930,10 +930,9 @@ export async function liftWorkflowMatureRestriction({
     ...(signal ? { signal } : {}),
   });
   if (!response || response.status >= 500) return { outcome: 'no-response' };
-  throwIfApiKeyBuzzLimitRefusal(response.status, error);
   if (response.status === 403) return { outcome: 'insufficient-funds' };
   if (!response.ok)
-    throwOrchestratorFailure({ error, response, message: orchestratorErrorMessage(error) });
+    throwOrchestratorFailure({ error, response, message: orchestratorErrorMessage(error), token });
   return { outcome: 'lifted' };
 }
 
@@ -960,7 +959,7 @@ export async function setWorkflowDownloadPriority({
   });
 
   if (!response?.ok)
-    throwOrchestratorFailure({ error, response, message: orchestratorErrorMessage(error) });
+    throwOrchestratorFailure({ error, response, message: orchestratorErrorMessage(error), token });
 
   // The 200 body is the updated workflow — with `whatif`, the priced one it would become.
   return withoutCallbacks(data) as
@@ -990,10 +989,13 @@ export function throwOrchestratorFailure({
   response,
   message,
   unavailableMessage = ORCHESTRATOR_UNAVAILABLE_MESSAGE,
+  token,
 }: {
   error: unknown;
   response: Response | undefined;
   message: string | undefined;
+  /** The token the call was sent with: it names whose Buzz limit an over-limit refusal is. */
+  token: string;
   /** The 503's copy for a status-less failure or an upstream 5xx. */
   unavailableMessage?: string;
 }): never {
@@ -1008,7 +1010,7 @@ export function throwOrchestratorFailure({
   if (!response) {
     throw throwServiceUnavailableError(unavailableMessage, error);
   }
-  throwIfApiKeyBuzzLimitRefusal(response.status, error);
+  throwIfApiKeyBuzzLimitRefusal(response.status, error, token);
   switch (response.status) {
     case 400:
       throw throwBadRequestError(message);

@@ -462,6 +462,7 @@ const orchestratorFailure = async (status: number | undefined, detail: string) =
     error: { detail },
     response: status === undefined ? undefined : new Response(null, { status }),
     message: detail,
+    token: 'user-token',
   });
 };
 /** A two-image panel the owner picked 'picked' from; slot 2 was mature and still locked. */
