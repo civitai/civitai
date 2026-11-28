@@ -6330,6 +6330,21 @@ async function filterAssociatedArticles(
   return { shown, regionDependent };
 }
 
+/** The card read's article ids through the list's rule, so a card never shows what the list hides. */
+export async function shownAssociatedArticleIds(
+  ids: number[],
+  reader: ArticleRegionReader,
+  viewer: ArticleReader,
+  browsingLevel: number
+) {
+  if (!ids.length) return { shown: new Set<number>(), regionDependent: false };
+  const articles = await dbRead.article.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, ...articleReadSelect },
+  });
+  return filterAssociatedArticles(articles, reader, viewer, browsingLevel);
+}
+
 export const getAssociatedResourcesSimple = async (
   { fromId, type, browsingLevel, ...addons }: GetAssociatedResourcesInput & AssociatedModelAddons,
   reader: ArticleRegionReader,

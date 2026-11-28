@@ -168,7 +168,10 @@ import {
   queueModelEarlyAccessReindex,
   upsertModel,
   holdShowcaseImages,
+  shownAssociatedArticleIds,
 } from '~/server/services/model.service';
+import { associatedResourcesReadersOf } from '~/server/utils/article-region';
+import { keepAnswerOutOfEdgeCache } from '~/server/utils/image-media-visibility';
 import { getOfficialModelIds } from '~/server/services/resource-select.service';
 import { isPersonalHotLeadViewer } from '~/server/services/personal-hot-lead.service';
 import {
@@ -2115,9 +2118,16 @@ export const getAssociatedResourcesCardDataHandler = async ({
     const modelResources = resourcesIds
       .filter(({ resourceType }) => resourceType === 'model')
       .map(({ id }) => id);
-    const articleResources = resourcesIds
-      .filter(({ resourceType }) => resourceType === 'article')
-      .map(({ id }) => id);
+    const articleShown = await shownAssociatedArticleIds(
+      resourcesIds
+        .filter(({ resourceType }) => resourceType === 'article')
+        .map(({ id }) => id)
+        .filter(isDefined),
+      ...associatedResourcesReadersOf(ctx),
+      input.browsingLevel
+    );
+    if (articleShown.regionDependent) keepAnswerOutOfEdgeCache(ctx);
+    const articleResources = [...articleShown.shown];
 
     const period = MetricTimeframe.AllTime;
     const { cursor, ...modelInput } = getAllModelsSchema.parse({
