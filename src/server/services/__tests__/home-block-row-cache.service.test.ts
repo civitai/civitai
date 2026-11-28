@@ -26,7 +26,7 @@ vi.mock('@civitai/db-queries/hot-reads-5', async (importOriginal) => ({
 }));
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
 
-const { getHomeBlockById, upsertHomeBlock, deleteHomeBlockById } = await import(
+const { getHomeBlockById, upsertHomeBlock, deleteHomeBlockById, setHomeBlocksOrder } = await import(
   '~/server/services/home-block.service'
 );
 const { resetHomeBlockL1ForTests } = await import('~/server/services/home-block-cache.service');
@@ -131,6 +131,24 @@ describe('getHomeBlockById row read', () => {
     dbMock.dbRead.homeBlock.findFirst.mockResolvedValue({ id: BLOCK_ID, userId: OWNER } as never);
     dbMock.dbWrite.homeBlock.delete.mockResolvedValue({ id: BLOCK_ID } as never);
     await deleteHomeBlockById({ input: { id: BLOCK_ID, userId: OWNER } });
+    expect(await get()).toBeNull();
+    expect(state.rowReads).toBe(2);
+  });
+
+  it('flag on: a removal through setHomeBlocksOrder in THIS process applies on the next call', async () => {
+    resetHomeBlockL1ForTests(() => true);
+    expect(await get()).not.toBeNull();
+    state.row = undefined;
+    // The owner's block 41 is absent from the submitted list, so it is removed.
+    dbMock.dbRead.homeBlock.findMany.mockResolvedValue([
+      { id: BLOCK_ID, type: HomeBlockType.Announcement, metadata: { title: 'A' }, sourceId: null },
+    ] as never);
+    dbMock.dbWrite.$transaction.mockResolvedValue([] as never);
+    await setHomeBlocksOrder({
+      input: { userId: OWNER, homeBlocks: [] } as never,
+      viewer: undefined,
+    });
+    expect(dbMock.dbWrite.homeBlock.deleteMany).toHaveBeenCalledTimes(1);
     expect(await get()).toBeNull();
     expect(state.rowReads).toBe(2);
   });

@@ -203,14 +203,15 @@ export function homeBlockCacheKey(
 //
 // The row decides who may see the block: its metadata's feature flag and event gate, and for a
 // Collection block the collection and the owner the audience check runs against. The gates still
-// run on every request, for that request's viewer; only the row they read can be old. So a write
-// that NARROWS who may see a block (a flag or event added, the collection changed, the block
-// deleted) reaches a process that holds the old row within HOME_BLOCK_ROW_TTL_MS, never later. It
-// stacks with the edge exactly as the L1's TTL does: up to 10s for a request that misses the edge
-// (it was 0s), up to 10s + the edge's 60s for one served from it (it was 60s). Each writer of
-// those columns also forgets the row in its own process (`forgetHomeBlockRows`), which serves the
-// editor's next request when it lands on the same process; every other process waits out the TTL.
-// A read already in flight when a write lands can put the old row back here, bounded by the TTL.
+// run on every request, for that request's viewer; only the row they read can be old. A copy is
+// served for at most HOME_BLOCK_ROW_TTL_MS after the read that filled it. That read is a replica
+// read, so a write that NARROWS who may see a block (a flag or event added, the collection
+// changed, the block deleted) is seen by a process within the replica's lag plus 10s (it was the
+// lag alone). It stacks with the edge exactly as the L1's TTL does: up to 10s more for a request
+// that misses the edge, up to 10s + the edge's 60s for one served from it. Each writer of those
+// columns also forgets the row in its own process (`forgetHomeBlockRows`), so that process's next
+// read goes back to the replica (which may still lag); every other process waits out the TTL.
+// A read already in flight when a write lands can put the old row back here, bounded the same way.
 //
 // A missing row is never kept: a block created a moment ago is read on its first request.
 export const HOME_BLOCK_ROW_TTL_MS = 10_000;
