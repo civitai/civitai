@@ -3,6 +3,7 @@ import { IconCloudOff } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { removeEmpty } from '~/utils/object-helpers';
 import { SEARCH_AS_TYPED_PARAM, useSearchAsTyped } from '~/components/Search/useSearchAsTyped';
+import { SEARCH_SORT_PARAM } from '~/components/Search/useSearchSort';
 
 type Props = {
   /** What the feed lists, as the title words it: "Models", "Articles". */
@@ -35,6 +36,7 @@ export function FeedSearchSummary({ noun, query, correctedQuery, failed, onRetry
                   ...router.query,
                   query: undefined,
                   [SEARCH_AS_TYPED_PARAM]: undefined,
+                  [SEARCH_SORT_PARAM]: undefined,
                 }),
               },
               undefined,

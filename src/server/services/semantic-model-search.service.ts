@@ -18,6 +18,7 @@ import {
 import {
   auditedTextCandidates,
   collectPage,
+  MAX_CANDIDATE_LIMIT,
   resolveUserIds,
   searchServiceSource,
   viewerExcludedUserIds,
@@ -30,7 +31,6 @@ import { getBrowsingSettingAddons } from '~/server/services/system-cache';
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
 import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
 import { Flags } from '~/shared/utils/flags';
-import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import type { SessionUser } from '~/types/session';
 
 const MODEL_COLLECTION = 'models';
@@ -69,7 +69,7 @@ export async function searchSemanticModels({
     correctedQuery: undefined,
     refused: false as boolean,
   };
-  const { query, cursor, limit, spellcheck, ...feedFilters } = input;
+  const { query, cursor, limit, spellcheck, searchSort, ...feedFilters } = input;
   let browsingLevel = resolveSemanticBrowsingLevel(
     input.browsingLevel,
     user,
@@ -148,30 +148,31 @@ export async function searchSemanticModels({
   };
   // The index only proposes. The feed's own query, narrowed to the candidates, decides what is
   // shown, so every feed filter, the private-model rule and moderation apply as they do on the feed.
-  // No `query` (it would run Meilisearch) and Newest, the cheapest order: collectPage keeps rank order.
-  const hydrate: Hydrate<HydratedModel> = async (ids) => {
-    const result = await timed(
-      'hydrate',
-      getModelsWithImagesAndModelVersions({
+  // No `query`: it would run Meilisearch.
+  const feedInput = (ids: number[]) => ({
+    ...feedFilters,
+    browsingLevel,
+    excludedUserIds: [
+      ...new Set([...(input.excludedUserIds ?? []), ...viewerExcludedUserIds(hidden)]),
+    ],
+    disablePoi: addons.disablePoi || input.disablePoi,
+    disableMinor: addons.disableMinor || input.disableMinor,
+    limit: ids.length,
+  });
+  const feed = async (args: Parameters<typeof getModelsWithImagesAndModelVersions>[0]) => {
+    const result = await timed('hydrate', getModelsWithImagesAndModelVersions(args));
+    if (result.isPrivate) onViewerDependent?.();
+    return result;
+  };
+  // Best match: Newest is the cheapest order, and collectPage keeps rank order.
+  const hydrate: Hydrate<HydratedModel> = async (ids) =>
+    (
+      await feed({
         ...queryOptions,
-        input: {
-          ...feedFilters,
-          browsingLevel,
-          sort: ModelSort.Newest,
-          period: MetricTimeframe.AllTime,
-          limit: ids.length,
-          excludedUserIds: [
-            ...new Set([...(input.excludedUserIds ?? []), ...viewerExcludedUserIds(hidden)]),
-          ],
-          disablePoi: addons.disablePoi || input.disablePoi,
-          disableMinor: addons.disableMinor || input.disableMinor,
-        },
+        input: { ...feedInput(ids), sort: ModelSort.Newest },
         onlyModelIds: ids,
       })
-    );
-    if (result.isPrivate) onViewerDependent?.();
-    return result.items;
-  };
+    ).items;
 
   // Name or tag matches first (the `name` word index, the `tags` keyword index), then by meaning.
   const ranked = withWordMatchesFirst(cachedSource, 'name', 'tags');
@@ -183,16 +184,30 @@ export async function searchSemanticModels({
     filter,
     audit: (correction) => refusalOf(correction, 'correction'),
   });
-  const page = await collectPage({
-    candidates: search.candidates,
-    hydrate,
-    offset: cursor ?? 0,
-    limit,
-    // The Hidden view lists exactly these.
-    excluded: input.hidden
-      ? undefined
-      : new Set(hidden.hiddenModels.filter((x) => x.hidden).map((x) => x.id)),
-  });
+  // The Hidden view lists exactly these.
+  const excluded = input.hidden
+    ? undefined
+    : new Set(hidden.hiddenModels.filter((x) => x.hidden).map((x) => x.id));
+
+  const page = searchSort
+    ? await (async () => {
+        const pool = await topCandidates(search.candidates, excluded);
+        if (!pool.length) return { items: [], nextCursor: undefined };
+        const { items, nextCursor } = await feed({
+          ...queryOptions,
+          input: { ...feedInput(pool), sort: searchSort, cursor, limit },
+          onlyModelIds: pool,
+        });
+        return { items, nextCursor };
+      })()
+    : await collectPage({
+        candidates: search.candidates,
+        hydrate,
+        // A keyset cursor from a sorted page means nothing here: start over.
+        offset: typeof cursor === 'number' ? cursor : 0,
+        limit,
+        excluded,
+      });
 
   audit.candidates(search.state.first);
   if (search.state.refused)
@@ -203,4 +218,27 @@ export async function searchSemanticModels({
       async () => search.state.first ?? { ids: [] }
     );
   return audit.done({ ...page, correctedQuery: search.state.correctedQuery }, browsingLevel);
+}
+
+/**
+ * How many of the best matches a sort reorders. A sort over the whole ranking would surface
+ * barely related models with high counts; the feed query orders, filters and pages this pool.
+ */
+const SORT_POOL = 500;
+
+/** The first SORT_POOL candidates, less the excluded. */
+async function topCandidates(
+  candidates: (offset: number, limit: number) => Promise<number[]>,
+  excluded: Set<number> | undefined
+) {
+  const pool = new Set<number>();
+  for (let offset = 0; offset < SORT_POOL; ) {
+    const size = Math.min(MAX_CANDIDATE_LIMIT, SORT_POOL - offset);
+    const ids = await candidates(offset, size);
+    for (const id of ids) if (!excluded?.has(id)) pool.add(id);
+    offset += ids.length;
+    // A short block is the end of the ranking.
+    if (ids.length < size) break;
+  }
+  return [...pool];
 }

@@ -96,11 +96,6 @@ export function ignoredWhileSearching(filters: FeedFilters) {
 
 export type ImageFeedSearchSort = 'newest';
 
-/** The feed's `?searchSort=`: Newest, or undefined for the search's own Best match order. */
-export function parseFeedSearchSort(value: unknown): ImageFeedSearchSort | undefined {
-  return value === 'newest' ? value : undefined;
-}
-
 export function normalizeFeedQuery(query: string | undefined) {
   const text = query?.replace(/\s+/g, ' ').trim().slice(0, SEMANTIC_QUERY_MAX_LENGTH);
   return text || undefined;

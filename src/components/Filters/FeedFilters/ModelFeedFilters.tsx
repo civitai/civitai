@@ -12,7 +12,8 @@ import type { PeriodMode } from '~/server/schema/base.schema';
 import { FollowedFilter } from '~/components/Filters/FollowedFilter';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
-import { SearchSortLock } from '~/components/Search/SearchSortLock';
+import { SearchSortMenu } from '~/components/Search/SearchSortLock';
+import { useModelSearchSort } from '~/components/Model/model.utils';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export function ModelFeedFilters({ ...groupProps }: GroupProps) {
@@ -21,7 +22,10 @@ export function ModelFeedFilters({ ...groupProps }: GroupProps) {
   const { set, ...queryFilters } = useModelQueryParams();
   const { filters, setFilters } = useModelBrowseFilters();
   const { favorites, query } = queryFilters;
-  const periodMode = query || favorites ? ('stats' as PeriodMode) : undefined;
+  const semanticSearch = !!query && features.modelFeedSearch;
+  const { searchSort, setSearchSort, sorts } = useModelSearchSort();
+  // The semantic search filters by period; the keyword search and favorites ignore it.
+  const periodMode = (query && !semanticSearch) || favorites ? ('stats' as PeriodMode) : undefined;
   if (periodMode) queryFilters.periodMode = periodMode;
 
   return (
@@ -42,8 +46,12 @@ export function ModelFeedFilters({ ...groupProps }: GroupProps) {
         </Popover>
       )}
       {currentUser && <FollowedFilter type="models" variant="button" />}
-      {query && features.modelFeedSearch ? (
-        <SearchSortLock />
+      {semanticSearch ? (
+        <SearchSortMenu
+          sorts={sorts.map((value) => ({ value, label: value }))}
+          value={searchSort}
+          onChange={setSearchSort}
+        />
       ) : (
         <SortFilter
           type="models"

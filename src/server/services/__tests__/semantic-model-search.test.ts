@@ -24,6 +24,9 @@ const h = vi.hoisted(() => ({
   visible: new Set<number>(),
   calls: [] as FeedCall[],
   isPrivate: false,
+  // Models whose last version is older than any period but All Time.
+  outOfPeriod: new Set<number>(),
+  nextCursor: undefined as string | undefined,
   includesInappropriate:
     vi.fn<(input: { prompt?: string }, nsfw?: boolean) => 'minor' | 'poi' | false>(),
   hidden: {
@@ -44,9 +47,17 @@ vi.mock('~/server/services/semantic-search-audit.service', async (importOriginal
 vi.mock('~/server/services/model.service', () => ({
   getModelsWithImagesAndModelVersions: async (args: FeedCall) => {
     h.calls.push(args);
-    const ids = (args.onlyModelIds ?? []).filter((id) => h.visible.has(id));
+    const { period, periodMode } = args.input;
+    const periodApplies = period !== MetricTimeframe.AllTime && periodMode !== 'stats';
+    const ids = (args.onlyModelIds ?? []).filter(
+      (id) => h.visible.has(id) && !(periodApplies && h.outOfPeriod.has(id))
+    );
     // The feed's order, not the candidates': hydration must not decide the ranking.
-    return { items: [...ids].sort((a, b) => b - a).map((id) => ({ id })), isPrivate: h.isPrivate };
+    return {
+      items: [...ids].sort((a, b) => b - a).map((id) => ({ id })),
+      isPrivate: h.isPrivate,
+      nextCursor: h.nextCursor,
+    };
   },
 }));
 vi.mock('~/server/services/semantic-search-client', async (importOriginal) => ({
@@ -119,6 +130,8 @@ beforeEach(() => {
   h.visible = new Set();
   h.calls = [];
   h.isPrivate = false;
+  h.outOfPeriod = new Set();
+  h.nextCursor = undefined;
   h.includesInappropriate.mockReset().mockReturnValue(false);
   sent = [];
 });
@@ -175,6 +188,46 @@ describe('hydration through the models feed', () => {
       onViewerDependent,
     });
     expect(onViewerDependent).toHaveBeenCalled();
+  });
+});
+
+describe('sort and period', () => {
+  it("keeps Best match by default, whatever the viewer's saved feed sort", async () => {
+    h.visible = new Set([1, 2, 3]);
+    const result = await run([2, 1, 3], { sort: ModelSort.MostLiked });
+    expect(result.items.map((m) => m.id)).toEqual([2, 1, 3]);
+  });
+
+  it("a search sort orders the best matches by the feed's own sort, and pages by its cursor", async () => {
+    h.visible = new Set([1, 2, 3]);
+    h.nextCursor = 'next';
+    const result = await run([2, 1, 3], { searchSort: ModelSort.MostLiked, limit: 2 });
+    // The fake feed orders by id, descending, as its sort.
+    expect(result.items.map((m) => m.id)).toEqual([3, 2, 1]);
+    expect(result.nextCursor).toBe('next');
+    expect(h.calls[0].input).toMatchObject({ sort: ModelSort.MostLiked, limit: 2 });
+
+    await run([2, 1, 3], { searchSort: ModelSort.MostLiked, cursor: 'next' });
+    expect(h.calls[1].input.cursor).toBe('next');
+  });
+
+  it('sorts only the first SORT_POOL matches, less the hidden ones', async () => {
+    const ids = Array.from({ length: 600 }, (_, i) => i + 1);
+    h.visible = new Set(ids);
+    await run(ids, { searchSort: ModelSort.Newest });
+    const pool = h.calls[0].onlyModelIds ?? [];
+    expect(pool).toEqual(ids.slice(0, 500).filter((id) => id !== 7));
+  });
+
+  it('a period drops the models outside it, under Best match and under a sort', async () => {
+    h.visible = new Set([1, 2, 3]);
+    h.outOfPeriod = new Set([2]);
+    const over = { period: MetricTimeframe.Week };
+    expect((await run([1, 2, 3], over)).items.map((m) => m.id)).toEqual([1, 3]);
+    const sorted = await run([1, 2, 3], { ...over, searchSort: ModelSort.MostDownloaded });
+    expect(sorted.items.map((m) => m.id)).toEqual([3, 1]);
+    // All Time keeps them.
+    expect((await run([1, 2, 3])).items.map((m) => m.id)).toEqual([1, 2, 3]);
   });
 });
 
