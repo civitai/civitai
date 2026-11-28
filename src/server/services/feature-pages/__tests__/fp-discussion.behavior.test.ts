@@ -123,6 +123,13 @@ describe('posting', () => {
     expect(
       await q(`SELECT count(*)::int AS n FROM "CommentV3" WHERE "userId" = $1`, [OTHER])
     ).toEqual([{ n: 0 }]);
+    expect(
+      await q(`SELECT count(*)::int AS n FROM "FeaturePageCommentMirror" WHERE "userId" = $1`, [
+        OTHER,
+      ])
+    ).toEqual([{ n: 0 }]);
+    // The parent's own post is the only one the platform saw.
+    expect(posts().map((p) => p.uid)).toEqual([AUTHOR]);
   });
 
   it('writes one comment and one mirror row, and once its scan is clean posts it once under a mirror key, not the client requestId', async () => {

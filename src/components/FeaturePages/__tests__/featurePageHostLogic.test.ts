@@ -197,7 +197,6 @@ describe('feature page comments', () => {
       { type: 'fp-comment-result', payload: { requestId: 'c1', ok: false, error: 'refused' } },
       ORIGIN
     );
-    // Any other refusal tells the page nothing.
     deps.comment.mockRejectedValueOnce(
       Object.assign(new Error('Refused'), { data: { code: 'FORBIDDEN' } })
     );

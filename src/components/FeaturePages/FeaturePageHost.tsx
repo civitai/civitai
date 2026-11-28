@@ -16,10 +16,8 @@ import type {
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import {
-  FEATURE_PAGES_SET_USERNAME_HREF,
-  FEATURE_PAGES_SET_USERNAME_MESSAGE,
-} from '~/shared/constants/feature-pages.constants';
+import { FEATURE_PAGES_SET_USERNAME_MESSAGE } from '~/shared/constants/feature-pages.constants';
+import { getSettingHref } from '~/components/Account/setting-links';
 import type { FeaturePageHostDeps } from './featurePageHostLogic';
 import { createFeaturePageHost, FEATURE_PAGE_SANDBOX } from './featurePageHostLogic';
 
@@ -68,7 +66,7 @@ export function FeaturePageHost({
           reason: (
             <>
               {FEATURE_PAGES_SET_USERNAME_MESSAGE}{' '}
-              <Link href={FEATURE_PAGES_SET_USERNAME_HREF} className="underline">
+              <Link href={getSettingHref('account-info')} className="underline">
                 Set your username
               </Link>
             </>
