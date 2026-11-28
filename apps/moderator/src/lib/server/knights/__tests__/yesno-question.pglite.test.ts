@@ -132,7 +132,9 @@ beforeAll(async () => {
       'utf8'
     )
   );
-  await db.exec(`CREATE TABLE "Report" ("id" INTEGER PRIMARY KEY, "status" TEXT NOT NULL);`);
+  await db.exec(`CREATE TABLE "Report" ("id" INTEGER PRIMARY KEY, "status" TEXT NOT NULL);
+    ALTER TABLE "User" ADD COLUMN "username" TEXT;
+    INSERT INTO "User" ("id","username") VALUES (10,'ten'),(11,'eleven'),(12,'twelve'),(13,NULL);`);
   dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
 });
 
@@ -557,10 +559,19 @@ describe('reported questions', () => {
     expect(items[1].reported).toEqual({
       image: 2,
       question: 1,
-      reporters: [10, 11, 12],
+      reporters: [
+        { id: 10, username: 'ten' },
+        { id: 11, username: 'eleven' },
+        { id: 12, username: 'twelve' },
+      ],
       pull: { causedHere: true, reportId: 55, reportStatus: 'Pending', filing: 'filed' },
     });
-    expect(items[0].reported).toEqual({ image: 0, question: 1, reporters: [13], pull: null });
+    expect(items[0].reported).toEqual({
+      image: 0,
+      question: 1,
+      reporters: [{ id: 13, username: null }],
+      pull: null,
+    });
   });
 
   it('are neither open nor closed', async () => {

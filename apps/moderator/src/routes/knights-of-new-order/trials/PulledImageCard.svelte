@@ -7,6 +7,7 @@
   import { imageLookupUrl } from '$lib/entity-url';
   import { FormState } from '$lib/form-state.svelte';
   import { LINK_CLASS } from '$lib/format';
+  import { reportBreakdown } from '$lib/knights/report-copy';
   import type { OrphanImagePull } from '$lib/server/knights/yesno-question.service';
   import PullFiling from './PullFiling.svelte';
   import TrialMedia from './TrialMedia.svelte';
@@ -25,9 +26,10 @@
   <div class="flex min-w-0 flex-1 flex-col gap-2">
     <a href={imageLookupUrl(pull.imageId)} class="font-medium {LINK_CLASS}">Image #{pull.imageId}</a>
     <p class="text-sm text-dark-0">Pulled by: {pull.prompt}</p>
+    <p class="text-xs text-dark-2">{reportBreakdown(pull)}</p>
     <p class="text-xs text-dark-2">
-      {pull.questionKey} · {pull.image} image, {pull.question} question reports. That question was removed, so the image
-      stays out of Knights questions and Acolyte pairs until it is returned.
+      {pull.questionKey} · That question was removed, so the image stays out of Knights questions and Acolyte pairs until
+      it is returned.
     </p>
     <p class="flex flex-wrap items-center gap-2 text-xs text-dark-2"><PullFiling {pull} /></p>
     {#if returning.error}<ErrorAlert message={returning.error} />{/if}

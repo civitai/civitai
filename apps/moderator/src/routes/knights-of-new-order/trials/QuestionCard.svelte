@@ -6,9 +6,10 @@
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import { toast } from '@civitai/ui/components/ui/sonner/index.js';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
-  import { imageLookupUrl } from '$lib/entity-url';
+  import { imageLookupUrl, userLookupUrl } from '$lib/entity-url';
   import { FormState } from '$lib/form-state.svelte';
   import { LINK_CLASS } from '$lib/format';
+  import { reportBreakdown } from '$lib/knights/report-copy';
   import { NOTE_MAX, YESNO_PROMPT_MAX } from '$lib/knights/trials-limits';
   import type { YesNoQuestionItem } from '$lib/server/knights/yesno-question.service';
   import PullFiling from './PullFiling.svelte';
@@ -112,11 +113,14 @@
 
     {#if reported}
       <div class="flex flex-col gap-1 rounded-md border border-dark-4 p-3 text-xs text-dark-2" data-testid="question-reports">
-        <p class="text-sm text-dark-0">
-          Reported by {reported.reporters.length}
-          {reported.reporters.length === 1 ? 'player' : 'players'}: {reported.image} image, {reported.question} question
+        <p class="text-sm text-dark-0">{reportBreakdown(reported)}</p>
+        <p>
+          Reporters:
+          {#each reported.reporters as reporter, index (reporter.id)}{index > 0 ? ', ' : ''}<a
+              href={userLookupUrl(reporter.id)}
+              class={LINK_CLASS}>{reporter.username ?? `User ${reporter.id}`}</a
+            >{/each}
         </p>
-        <p>Players {reported.reporters.map((id) => `#${id}`).join(', ')}</p>
         {#if reported.pull && !reported.pull.causedHere}
           <p>Another question's reports pulled this image; keeping this question does not return it.</p>
         {:else if reported.pull}
@@ -257,9 +261,8 @@
           {#if reported?.pull?.causedHere}The image's open questions and Acolyte pairs are served again; questions on it
             that closed meanwhile stay closed.{/if}
         {:else if confirming === 'remove'}
-          This question for image #{item.imageId} is closed for good, with no label and nothing written back.
+          Closed for good. Its answers don't change the image's rating.
           {#if reported?.pull?.causedHere}The image stays out of Knights until you return it under Pulled images.{/if}
-          {pending}
         {:else if confirming === 'reword'}
           This question is retired and a new one with the new words replaces it for image #{item.imageId}.
         {:else}

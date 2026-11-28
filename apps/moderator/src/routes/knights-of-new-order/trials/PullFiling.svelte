@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { LINK_CLASS } from '$lib/format';
+  import { FILING_TEXT } from '$lib/knights/report-copy';
   import { ReportEntity, reportActionPath, reportStatusVariant } from '$lib/reports';
 
   /** The main-app report Knights filed (or did not need to) for an image pull. */
@@ -15,7 +16,7 @@
     <Badge variant={reportStatusVariant(pull.reportStatus)}>{pull.reportStatus}</Badge>
   {/if}
 {:else if pull.filing === 'not-needed'}
-  <span>No image report: the main app no longer has the image.</span>
+  <span>{FILING_TEXT['not-needed']}</span>
 {:else}
-  <span>Its image report is not filed yet; Knights retries it.</span>
+  <span>{FILING_TEXT.pending}</span>
 {/if}

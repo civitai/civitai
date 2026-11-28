@@ -18,6 +18,7 @@
   import LevelPicker from './LevelPicker.svelte';
   import ListSearch from './ListSearch.svelte';
   import SpotCheckCard from './SpotCheckCard.svelte';
+  import { trialsCount, trialsNoun } from '$lib/knights/report-copy';
   import PulledImageCard from './PulledImageCard.svelte';
   import QuestionCard from './QuestionCard.svelte';
   import YesNoReferenceCard from './YesNoReferenceCard.svelte';
@@ -56,13 +57,7 @@
       keepFocus: true,
       noScroll: true,
     });
-  const nouns = {
-    core: 'core images',
-    fresh: 'fresh images',
-    'spot-check': 'images to spot-check',
-    'yes-no': 'pairs',
-    questions: 'questions',
-  } as const;
+
   const toPage = (p: number) =>
     goto(urlWith(page.url, { page: p === 1 ? null : p }), { keepFocus: true, noScroll: true });
   const empty = {
@@ -78,7 +73,7 @@
     text: data.search.text,
     error: data.search.error,
     total: data.paging.total,
-    noun: nouns[data.tab],
+    noun: trialsCount(data.tab, data.paging.total),
   });
 
   let level = $state<number | null>(null);
@@ -233,20 +228,23 @@
     </Select.Root>
   </div>
   {#key data.tab}<ListSearch {...searchProps} placeholder="Image id, image URL or question text" />{/key}
-  {#if data.questionQueue.pulledImages.length > 0}
-    <h3 class="mb-2 text-sm font-medium text-dark-0">Pulled images</h3>
-    <div class="mb-4 flex flex-col gap-3">
-      {#each data.questionQueue.pulledImages as pull (pull.id)}
-        <PulledImageCard {pull} />
-      {/each}
-    </div>
-  {/if}
   {#if data.questionQueue.items.length === 0}
     <p class="text-sm text-dark-2">{empty.questions}</p>
   {:else}
     <div class="flex flex-col gap-3">
       {#each data.questionQueue.items as item (item.id)}
         <QuestionCard {item} />
+      {/each}
+    </div>
+  {/if}
+  {#if data.questionQueue.pulledImages.length > 0}
+    <h3 class="mt-6 mb-1 text-sm font-medium text-dark-0">Pulled images ({data.questionQueue.pulledImages.length})</h3>
+    <p class="mb-3 text-sm text-dark-2">
+      Images whose question was removed while they were pulled. Return an image to serve its open questions again.
+    </p>
+    <div class="flex flex-col gap-3">
+      {#each data.questionQueue.pulledImages as pull (pull.id)}
+        <PulledImageCard {pull} />
       {/each}
     </div>
   {/if}
@@ -289,6 +287,6 @@
   page={data.paging.page}
   total={data.paging.total}
   perPage={data.pageSize}
-  label={nouns[data.tab]}
+  label={trialsNoun(data.tab)}
   onPageChange={toPage}
 />

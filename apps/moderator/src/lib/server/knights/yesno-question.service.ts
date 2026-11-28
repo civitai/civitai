@@ -55,8 +55,8 @@ export type YesNoQuestionItem = {
 export type Reported = {
   image: number;
   question: number;
-  /** Player ids, ascending. */
-  reporters: number[];
+  /** By player id, ascending; `username` is null for an account without one. */
+  reporters: { id: number; username: string | null }[];
   /**
    * The image's open pull, if any. `causedHere`: this question's reports pulled it, so keeping this question returns the
    * image; otherwise another question's did. `filing` is 'pending' until Knights filed the main-app report (`reportId`),
@@ -186,16 +186,17 @@ async function reportsOf(items: { id: number; imageId: number }[]): Promise<Map<
   if (items.length === 0) return new Map();
   const [reports, pulls] = await Promise.all([
     dbWrite
-      .selectFrom('KnightsQuestionReport')
-      .select(['itemId', 'playerId', 'reason'])
+      .selectFrom('KnightsQuestionReport as qr')
+      .leftJoin('User as u', 'u.id', 'qr.playerId')
+      .select(['qr.itemId', 'qr.playerId', 'qr.reason', 'u.username'])
       .where(
-        'itemId',
+        'qr.itemId',
         'in',
         items.map((i) => i.id)
       )
-      .where('counted', '=', true)
-      .where('resolvedAt', 'is', null)
-      .orderBy('playerId', 'asc')
+      .where('qr.counted', '=', true)
+      .where('qr.resolvedAt', 'is', null)
+      .orderBy('qr.playerId', 'asc')
       .execute(),
     dbWrite
       .selectFrom('KnightsImagePull as ip')
@@ -218,7 +219,7 @@ async function reportsOf(items: { id: number; imageId: number }[]): Promise<Map<
         item.id,
         {
           ...reasonCounts(mine),
-          reporters: mine.map((r) => r.playerId),
+          reporters: mine.map((r) => ({ id: r.playerId, username: r.username ?? null })),
           pull: pull
             ? {
                 causedHere: pull.itemId === item.id,
