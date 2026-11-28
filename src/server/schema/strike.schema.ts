@@ -42,17 +42,27 @@ export const strikeReasonPublicLabel: Record<StrikeReason, string> = {
   [StrikeReason.Copyright]: 'Content removed after a copyright (DMCA) notice',
 };
 
-export const createStrikeSchema = z.object({
-  userId: z.number(),
-  reason: z.enum(StrikeReason),
-  points: z.number().min(1).max(3).default(1),
-  description: z.string().min(1).max(1000),
-  internalNotes: z.string().max(2000).optional(),
-  entityType: z.enum(EntityType).optional(),
-  entityId: z.number().optional(),
-  reportId: z.number().optional(),
-  expiresInDays: z.number().min(1).max(365).default(365),
-});
+/** A Copyright strike records a removal for the repeat-infringer count; at 0 points it changes no
+ *  escalation. Every other reason carries at least 1. */
+export const strikePointsAllowed = (reason: StrikeReason, points: number) =>
+  points >= 1 || (points === 0 && reason === StrikeReason.Copyright);
+
+export const createStrikeSchema = z
+  .object({
+    userId: z.number(),
+    reason: z.enum(StrikeReason),
+    points: z.number().int().min(0).max(3).default(1),
+    description: z.string().min(1).max(1000),
+    internalNotes: z.string().max(2000).optional(),
+    entityType: z.enum(EntityType).optional(),
+    entityId: z.number().optional(),
+    reportId: z.number().optional(),
+    expiresInDays: z.number().min(1).max(365).default(365),
+  })
+  .refine((input) => strikePointsAllowed(input.reason, input.points), {
+    path: ['points'],
+    message: 'Only a Copyright strike can carry 0 points',
+  });
 export type CreateStrikeInput = z.infer<typeof createStrikeSchema>;
 
 export const voidStrikeSchema = z.object({
