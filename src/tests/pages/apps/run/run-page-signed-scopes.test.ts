@@ -65,6 +65,7 @@ const PROPS = {
   betaMessage: null,
   audience: null,
   privateRunStatus: null,
+  privateRunUnpublished: false,
   launchOrigin: 'store' as const,
   isHiddenForViewer: false,
 };
