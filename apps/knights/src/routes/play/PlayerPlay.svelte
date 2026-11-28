@@ -231,10 +231,17 @@
   }
 
   // Posts the skip with the reason, through its hidden button for that reason, so it moves on the way Not sure does.
-  function pickReport(reason: string) {
+  // The picker hands focus back to the pill that opened it as it closes; a vote leaves no answer focused, so neither does
+  // this. The note says the report went in: the server's reply is a skip's, the same for every item.
+  async function pickReport(reason: string) {
     reportItem = null;
+    await tick();
     const button = skipForm?.querySelector<HTMLButtonElement>(`button[name="report"][value="${reason}"]`);
-    if (button) skipForm?.requestSubmit(button);
+    if (!button) return;
+    if (document.activeElement instanceof HTMLElement && skipForm?.contains(document.activeElement))
+      document.activeElement.blur();
+    skipForm?.requestSubmit(button);
+    confirmReport();
   }
 
   function pickReason(reason: string) {
@@ -490,12 +497,23 @@
 
   // A right hidden-check answer while a smite weighs on the player: a short cue that it counted toward the next heart.
   let cue = $state<string | null>(null);
+  // A report's confirmation is the same note, in the quiet border rather than the gold one.
+  let cueQuiet = $state(false);
   let cueTimer: ReturnType<typeof setTimeout> | undefined;
   const CUE_MS = 2500;
+  const REPORTED_NOTICE = 'Reported, thanks';
+  const REPORTED_MS = 2000;
+  function confirmReport() {
+    cue = REPORTED_NOTICE;
+    cueQuiet = true;
+    clearTimeout(cueTimer);
+    cueTimer = setTimeout(() => (cue = null), REPORTED_MS);
+  }
   function cheer(result: Record<string, unknown> | undefined, smitesBefore: number) {
     const next = skillCheckCue(result, smitesBefore);
     if (!next) return;
     cue = next;
+    cueQuiet = false;
     clearTimeout(cueTimer);
     cueTimer = setTimeout(() => (cue = null), CUE_MS);
   }
@@ -1050,7 +1068,7 @@
             {/if}
           </p>
         {:else if cue}
-          <p class="nudge cheer" role="status">{cue}</p>
+          <p class="nudge cheer" class:quiet-cue={cueQuiet} role="status">{cue}</p>
         {/if}
       </div>
       <div class="controls" class:yesno={yesNo} class:failed={imageFailed} class:locked={questionTimeShowing}>
@@ -1238,6 +1256,10 @@
   }
   .nudge.cheer {
     border-color: var(--io-gold);
+  }
+  .nudge.cheer.quiet-cue {
+    border-color: var(--border);
+    color: var(--io-parchment-muted);
   }
 
   .column {
