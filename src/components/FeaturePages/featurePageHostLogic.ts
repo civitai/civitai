@@ -7,6 +7,7 @@ import {
   resolveOutboundTargetOrigin,
 } from '~/components/AppBlocks/usePostMessage';
 import type { FeaturePageFrameError } from '~/shared/constants/feature-pages.constants';
+import { FEATURE_PAGES_SET_USERNAME_MESSAGE } from '~/shared/constants/feature-pages.constants';
 import { FeaturePageFrameMessage as Msg } from '~/shared/constants/feature-pages.constants';
 
 // allow-same-origin is safe only because the frame is on a non-civitai registrable domain
@@ -60,6 +61,8 @@ export type FeaturePageHostDeps = {
     details: unknown;
   }) => Promise<unknown>;
   navigate: (req: NavigateRequest) => void;
+  /** A comment refused for want of a username: the frame is told only 'refused', so the page says why. */
+  onNeedsUsername?: () => void;
 };
 
 export function frameErrorFor(error: unknown): FeaturePageFrameError {
@@ -166,12 +169,18 @@ export function createFeaturePageHost(deps: FeaturePageHostDeps) {
 
     const commentWork: Record<string, (() => Promise<unknown>) | undefined> = {
       [Msg.Comment]: () =>
-        deps.comment({
-          requestId,
-          subject: payload.subject,
-          parent: payload.parent,
-          text: payload.text,
-        }),
+        deps
+          .comment({
+            requestId,
+            subject: payload.subject,
+            parent: payload.parent,
+            text: payload.text,
+          })
+          .catch((error: unknown) => {
+            if ((error as { message?: unknown })?.message === FEATURE_PAGES_SET_USERNAME_MESSAGE)
+              deps.onNeedsUsername?.();
+            throw error;
+          }),
       [Msg.CommentEdit]: () =>
         deps.editComment({ requestId, comment: payload.comment, text: payload.text }),
       [Msg.CommentRetract]: () => deps.retractComment({ requestId, comment: payload.comment }),

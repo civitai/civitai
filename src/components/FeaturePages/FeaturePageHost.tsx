@@ -1,4 +1,5 @@
 import { useComputedColorScheme } from '@mantine/core';
+import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useEffect, useMemo, useRef } from 'react';
 import { openLoginHere } from '~/components/Login/requireLogin';
@@ -13,7 +14,10 @@ import type {
   FeaturePageMineInput,
 } from '~/server/schema/feature-pages.schema';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
+import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { FEATURE_PAGES_SET_USERNAME_MESSAGE } from '~/shared/constants/feature-pages.constants';
+import { getSettingHref } from '~/components/Account/setting-links';
 import type { FeaturePageHostDeps } from './featurePageHostLogic';
 import { createFeaturePageHost, FEATURE_PAGE_SANDBOX } from './featurePageHostLogic';
 
@@ -55,6 +59,19 @@ export function FeaturePageHost({
       openLogin: () => openLoginHere('perform-action'),
       vote: (input) => vote(input as FeaturePageVoteInput),
       comment: (input) => comment(input as FeaturePageCommentInput),
+      onNeedsUsername: () =>
+        showErrorNotification({
+          title: 'Username needed',
+          error: { message: FEATURE_PAGES_SET_USERNAME_MESSAGE },
+          reason: (
+            <>
+              {FEATURE_PAGES_SET_USERNAME_MESSAGE}{' '}
+              <Link href={getSettingHref('account-info')} className="underline">
+                Set your username
+              </Link>
+            </>
+          ),
+        }),
       editComment: (input) => editComment(input as FeaturePageCommentEditInput),
       retractComment: (input) => retractComment(input as FeaturePageCommentRetractInput),
       reportComment: (input) => reportComment(input as FeaturePageCommentReportInput),

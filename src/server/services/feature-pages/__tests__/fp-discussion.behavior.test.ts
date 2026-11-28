@@ -98,6 +98,40 @@ const post = async (
 const UNKNOWN_LATER = 'urn:data.civitai.com:feature-pages/requests/dropped-later';
 
 describe('posting', () => {
+  it('refuses an account with no username before anything is written or sent, moderators included', async () => {
+    const parent = await post('a parent');
+    for (const [username, isModerator] of [
+      [null, false],
+      ['', false],
+      ['  ', false],
+      [null, true],
+    ] as const) {
+      const ctx = { user: { id: OTHER, username, isModerator }, track: {} } as never;
+      for (const over of [{}, { parent: parent.comment.urn! }])
+        await expect(
+          comments.postFeaturePageComment(ctx, {
+            requestId: `nameless-${++seq}`,
+            subject: SUBJECT,
+            text: 'no name yet',
+            ...over,
+          })
+        ).rejects.toMatchObject({
+          code: 'PRECONDITION_FAILED',
+          message: 'Set a username on your account to comment.',
+        });
+    }
+    expect(
+      await q(`SELECT count(*)::int AS n FROM "CommentV3" WHERE "userId" = $1`, [OTHER])
+    ).toEqual([{ n: 0 }]);
+    expect(
+      await q(`SELECT count(*)::int AS n FROM "FeaturePageCommentMirror" WHERE "userId" = $1`, [
+        OTHER,
+      ])
+    ).toEqual([{ n: 0 }]);
+    // The parent's own post is the only one the platform saw.
+    expect(posts().map((p) => p.uid)).toEqual([AUTHOR]);
+  });
+
   it('writes one comment and one mirror row, and once its scan is clean posts it once under a mirror key, not the client requestId', async () => {
     const reply = await comments.postFeaturePageComment(ctxFor(AUTHOR), {
       requestId: 'req-1',
