@@ -31,7 +31,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     { key: `knights:report-image:${imageId}`, ttl: 30, maxRetries: 20, autoRenew: true },
     async () => {
       // primary: a report filed a moment ago must be seen, or a retry files a second one.
-      const open = await dbWrite.report.findFirst({
+      const existing = await dbWrite.report.findFirst({
         where: {
           reason: ReportReason.TOSViolation,
           userId: constants.system.user.id,
@@ -41,7 +41,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
         select: { id: true },
         orderBy: { id: 'desc' },
       });
-      if (open) return { reportId: open.id, created: false };
+      if (existing) return { reportId: existing.id, created: false };
 
       // Joins a report still waiting for a moderator, as the system's other filings do.
       const report = await createReport({

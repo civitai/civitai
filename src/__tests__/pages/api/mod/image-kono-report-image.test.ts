@@ -55,7 +55,6 @@ const q = async <T>(sql: string) => (await harness.pg.query<T>(sql)).rows;
 beforeAll(async () => {
   harness = await startPglitePrisma(SCHEMA);
   const prisma = harness.prisma;
-  // The app's db clients, answered by the PGlite database.
   dbMock.dbWrite.$transaction.mockImplementation(((fn: Parameters<typeof prisma.$transaction>[0]) =>
     prisma.$transaction(fn)) as never);
   for (const method of ['findFirst', 'create', 'update'] as const)
@@ -119,7 +118,14 @@ const call = async (
       return res;
     },
   } as unknown as NextApiResponse;
-  const req = { method, url: '/api/mod/image/kono-report-image', query: {}, headers, body, context };
+  const req = {
+    method,
+    url: '/api/mod/image/kono-report-image',
+    query: {},
+    headers,
+    body,
+    context,
+  };
   await (handler as unknown as (r: NextApiRequest, s: NextApiResponse) => Promise<void>)(
     req as unknown as NextApiRequest,
     res
@@ -146,10 +152,8 @@ describe('/api/mod/image/kono-report-image', () => {
   });
 
   it('refuses a moderator session that carries no webhook token, and files nothing', async () => {
-    // A request whose session has already resolved to a moderator, as the auth hub resolves a cookie.
     const moderator = () => ({ session: { user: { id: 1, isModerator: true } } });
     const headers = { cookie: 'civ-token=moderator-session' };
-    // The same request does pass a moderator-session route.
     const modRoute = ModEndpoint(async (_req, res) => res.status(200).json({}), ['POST']);
     const modStatus = await (async () => {
       let code = 200;
@@ -281,6 +285,26 @@ describe('/api/mod/image/kono-report-image', () => {
       { id: knights, userId: SYSTEM, status: 'Unactioned', alsoReportedBy: [] },
       { id: expect.any(Number), userId: PLAYER, status: 'Pending', alsoReportedBy: [] },
     ]);
+  });
+
+  it("files nothing new for a player who already co-reported this route's dismissed report", async () => {
+    const knights = reportIdOf((await call({ imageId: IMAGE })).json);
+    await harness.pg.exec(
+      `UPDATE "Report" SET status = 'Unactioned', "alsoReportedBy" = ARRAY[${PLAYER}]::int[]`
+    );
+
+    await createReport({
+      type: ReportEntity.Image,
+      id: IMAGE,
+      userId: PLAYER,
+      reason: ReportReason.TOSViolation,
+      details: { violation: 'Graphic violence' },
+    });
+
+    const rows = await q<{ id: number; status: string }>(
+      `SELECT id, status FROM "Report" ORDER BY id`
+    );
+    expect(rows).toEqual([{ id: knights, status: 'Unactioned' }]);
   });
 
   it("joins a player's TOS report still waiting for a moderator, and says it created none", async () => {
