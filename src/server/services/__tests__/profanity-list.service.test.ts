@@ -33,7 +33,10 @@ vi.mock('@civitai/mod-utils/profanity/word-rules', async (importOriginal) => {
     },
   };
 });
-import { ensureRegisterProfanityListMetrics } from '~/server/metrics/profanity-list.metrics';
+import {
+  ensureRegisterProfanityListMetrics,
+  profanityEntryId,
+} from '~/server/metrics/profanity-list.metrics';
 import {
   createProfanityListReader,
   getServerProfanityFilter,
@@ -254,9 +257,9 @@ describe('isProfaneSearch', () => {
   it('counts a refusal with the flag off, or with the list unreadable, by source only', async () => {
     const { hits } = ensureRegisterProfanityListMetrics();
     const count = async (source: string) =>
-      (await hits.get()).values.find(
-        (v) => v.labels.surface === 'search' && v.labels.source === source
-      )?.value ?? 0;
+      (await hits.get()).values
+        .filter((v) => v.labels.surface === 'search' && v.labels.source === source)
+        .reduce((sum, v) => sum + v.value, 0);
     h.flagOn = false;
     const shipped = await count('shipped');
     expect([await isProfaneSearch([SHIPPED_WORD]), await isProfaneSearch(['hello'])]).toEqual([
@@ -269,6 +272,53 @@ describe('isProfaneSearch', () => {
     const fallback = await count('fallback');
     expect(await isProfaneSearch([SHIPPED_WORD])).toBe(true);
     expect(await count('fallback')).toBe(fallback + 1);
+  });
+
+  // Pins that the label never carries the query: user text in it would make Prometheus cardinality
+  // unbounded.
+  async function labelsMovedBy(source: string, query: string) {
+    const { hits } = ensureRegisterProfanityListMetrics();
+    const entries = async () =>
+      new Map(
+        (await hits.get()).values
+          .filter((v) => v.labels.surface === 'search' && v.labels.source === source)
+          .map((v) => [v.labels.entry as string, v.value])
+      );
+    const before = await entries();
+    expect(await isProfaneSearch(['hello', query])).toBe(true);
+    const after = await entries();
+    return [...after]
+      .filter(([entry, value]) => value !== (before.get(entry) ?? 0))
+      .map(([entry, value]) => [entry, value - (before.get(entry) ?? 0)]);
+  }
+
+  it('labels a search refusal with the matched list entry id, never the query', async () => {
+    setBlocked({ id: 1, data: MANAGED });
+    const typed = `zqvunique${MANAGED_WORD}zqv`;
+    const moved = await labelsMovedBy('managed', `left ${typed} right`);
+    expect(moved).toEqual([[profanityEntryId(MANAGED_WORD), 1]]);
+    expect(moved.flat()).not.toContain(profanityEntryId(typed));
+  });
+
+  it('labels a flag-off refusal with the matched shipped entry id, never the query', async () => {
+    h.flagOn = false;
+    const typed = `zqvunique${SHIPPED_WORD}zqv`;
+    const moved = await labelsMovedBy('shipped', `left ${typed} right`);
+    expect(moved).toEqual([[profanityEntryId(SHIPPED_WORD), 1]]);
+    expect(moved.flat()).not.toContain(profanityEntryId(typed));
+  });
+
+  it('labels a fallback refusal with the matched list entry id, never the query', async () => {
+    setProfanityListReaderForTests({ read: () => Promise.reject(new Error('list down')) });
+    const typed = `zqvunique${SHIPPED_WORD}zqv`;
+    const moved = await labelsMovedBy('fallback', `left ${typed} right`);
+    expect(moved).toEqual([[profanityEntryId(SHIPPED_WORD), 1]]);
+    expect(moved.flat()).not.toContain(profanityEntryId(typed));
+  });
+
+  it('keys an entry id on the entry without its boundary markers or case', () => {
+    expect(profanityEntryId('|Zqvox|')).toBe(profanityEntryId('zqvox'));
+    expect(profanityEntryId('zqvox')).toMatch(/^[0-9a-f]{8}$/);
   });
 
   it('reads the query of a single search and of each search in a multi-search', () => {

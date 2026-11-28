@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import client, { type Counter, type Gauge, type Registry } from 'prom-client';
 
 const READS = 'profanity_list_reads_total';
@@ -24,11 +25,22 @@ export function ensureRegisterProfanityListMetrics(reg: Registry = client.regist
     (reg.getSingleMetric(HITS) as Counter<string> | undefined) ??
     new client.Counter({
       name: HITS,
-      help: 'Server profanity matches, by surface and by the list source that matched',
-      labelNames: ['surface', 'source'],
+      help: 'Server profanity matches, by surface, by the list source that matched, and (search only) by profanityEntryId of the first list entry matched; "none" elsewhere',
+      labelNames: ['surface', 'source', 'entry'],
       registers: [reg],
     });
   return { reads, fallback, hits };
 }
 
 export type ProfanityHitSurface = 'search' | 'mask' | 'appdata' | 'dryrun';
+
+/**
+ * Only ever fed a list entry, never user text: that keeps the label term-free and its cardinality
+ * bounded by the list size.
+ */
+export function profanityEntryId(entry: string): string {
+  return createHash('sha256')
+    .update(entry.replace(/\|/g, '').toLowerCase())
+    .digest('hex')
+    .slice(0, 8);
+}
