@@ -1,24 +1,17 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { readFileSync } from 'fs';
 import type { Kysely } from 'kysely';
-import path from 'path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
 import { KNIGHTS_STAGE_RANKS } from '@civitai/shared/new-order';
-import { createQueueDb } from '../../test/pglite-kysely';
+import { createQueueDb, SITE_BOARD_MIGRATION } from '../../test/pglite-kysely';
 import { seedGradedVotes, seedPlayer } from '../../test/seed';
 import { queryBoard } from './leaderboard';
 import { ensureVotePartitions } from './queue/queue.service';
 
 // The main site's /leaderboard/knights-new-order board is a stored query on its "Leaderboard" row, run by the main
 // app's prepare-leaderboard job. This pins that the migration makes it score what this app's own board scores.
-const MIGRATION = readFileSync(
-  path.resolve(
-    __dirname,
-    '../../../../../packages/civitai-db-schema/prisma/migrations/20271209120000_knights_new_order_site_board_v2/migration.sql'
-  ),
-  'utf8'
-);
+const MIGRATION = readFileSync(SITE_BOARD_MIGRATION, 'utf8');
 
 const V1_QUERY = `WITH clickhouse_data AS (
   SELECT userId, countIf(status = 'Correct') AS correctJudgments, count() AS allJudgments

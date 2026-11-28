@@ -60,6 +60,9 @@ export const IMAGE_GATE_REVOKES_MIGRATION = migrationPath(
 /** The migration carrying the current "KnightsImageGate" SQL. */
 export const IMAGE_GATE_MIGRATION = migrationPath('20271207120000_knights_image_gate_mod_review');
 
+/** Points the main site's knights-new-order leaderboard row at this app's votes. */
+export const SITE_BOARD_MIGRATION = migrationPath('20271209120000_knights_new_order_site_board_v2');
+
 /** Owns the tables and applies the image gate migration, as the tables' owner does in production. Not a superuser. */
 export const TABLE_OWNER = 'knights_table_owner';
 

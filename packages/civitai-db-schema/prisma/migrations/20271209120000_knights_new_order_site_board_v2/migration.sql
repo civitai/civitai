@@ -4,9 +4,8 @@
 -- Standings change on the next prepare-leaderboard run.
 --
 -- The row still held the original in-app game's query: ClickHouse knights_new_order_image_rating over 7 days,
--- fervor = correct * 100 * max(accuracy, 0.1). That game no longer takes votes, so the only rows left in its window
--- are its last pending votes being settled, one each. The Knights app scores from "KnightsVote" with accuracy
--- squared (apps/knights/src/lib/server/progression/fervor.ts); this makes the site board compute the same thing as
+-- fervor = correct * 100 * max(accuracy, 0.1). That game no longer takes votes. The Knights app scores from
+-- "KnightsVote" with accuracy squared (apps/knights/src/lib/server/progression/fervor.ts); this makes the site board compute the same thing as
 -- the app's own board (apps/knights/src/lib/server/leaderboard.ts queryBoard): Knight rank and above, settled
 -- correct or failed votes cast in the last 7 days and after the player's startAt, fervor above 0. The job itself
 -- drops banned, deleted and excluded accounts. Accuracy below 10% counts as 10%, which makes fervor = correct.
