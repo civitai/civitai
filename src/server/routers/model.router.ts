@@ -164,11 +164,14 @@ const modelVisibleToViewer = (pick: (input: any) => number | undefined) =>
 const modelByIdVisible = modelVisibleToViewer((input) => input.id);
 const associationSourceVisible = modelVisibleToViewer((input) => input.fromId);
 
-/** Linked models and articles share one owner-or-moderator viewer, as the editor lists both. */
-const associatedResourcesReaderOf = (ctx: Context) => ({
-  ...articleRegionReaderOf(ctx),
-  viewer: ownerOrModeratorViewer(ctx) ?? {},
-});
+/**
+ * Linked models and articles share one viewer, as the editor lists both: the owner's view only on
+ * a session or a full-access key, and moderator rights only as the region reader grants them.
+ */
+const associatedResourcesReaderOf = (ctx: Context) => {
+  const reader = articleRegionReaderOf(ctx);
+  return { ...reader, viewer: { ...reader.viewer, id: ownerOrModeratorViewer(ctx)?.id } };
+};
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();
