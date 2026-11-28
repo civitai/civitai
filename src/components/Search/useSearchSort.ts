@@ -19,7 +19,7 @@ export function useSearchSort<T extends string>(sorts: readonly T[]) {
         query: removeEmpty({ ...router.query, [SEARCH_SORT_PARAM]: next }),
       },
       undefined,
-      { shallow: true }
+      { shallow: true, scroll: false }
     );
   return { searchSort, setSearchSort };
 }

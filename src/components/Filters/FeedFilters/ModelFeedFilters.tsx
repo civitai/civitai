@@ -47,7 +47,11 @@ export function ModelFeedFilters({ ...groupProps }: GroupProps) {
       )}
       {currentUser && <FollowedFilter type="models" variant="button" />}
       {semanticSearch ? (
-        <SearchSortMenu sorts={sorts} value={searchSort} onChange={setSearchSort} />
+        <SearchSortMenu
+          sorts={sorts.map((value) => ({ value, label: value }))}
+          value={searchSort}
+          onChange={setSearchSort}
+        />
       ) : (
         <SortFilter
           type="models"
