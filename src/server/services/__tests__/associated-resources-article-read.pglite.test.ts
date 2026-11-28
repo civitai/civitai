@@ -400,6 +400,8 @@ describe('associated articles whose author blocked the viewer', () => {
   });
 });
 
+// Decided on civitai/civitai#10684: the list applies article.getById's region rule, and a save keeps
+// what it withheld.
 describe('associated articles above SFW in a restricted region', () => {
   const REGION_MODEL = 600;
   const REGION_MODEL_OWNER = 60;

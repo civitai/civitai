@@ -6284,11 +6284,7 @@ export const setModelsCategory = async ({
 };
 
 // #region [associated models]
-/**
- * The associated articles a reader is shown: readable, within their browsing level, not by an
- * author who blocked them, and not withheld in their region. The editor lists the same set, so a
- * save never removes an article this hides.
- */
+/** The editor lists the same set, so a save never removes an article this hides. */
 async function filterAssociatedArticles(
   articles: (Parameters<typeof canReadArticle>[0] & {
     id: number;
