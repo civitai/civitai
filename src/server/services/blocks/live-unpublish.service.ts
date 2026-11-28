@@ -33,7 +33,9 @@
  *
  * Every Job failure is reported as an `app-blocks-live-pointer` warning, not only logged: the
  * moderator's response returns before the Job ends. A failed step is not retried within a run;
- * the next takedown, relist or deploy of the app reconciles it again from the app's state.
+ * the next takedown, relist or deploy of the app reconciles it again from the app's state, and so
+ * does the scheduled sweep ({@link reconcileSuspendedLiveApps}), which also covers apps taken
+ * down before the flag was on.
  *
  * Callers: takedown from the moderator delist, the moderator reset to pending and the owner
  * unpublish, restore from the moderator relist and the owner republish (offsite-moderation.service)
@@ -78,6 +80,8 @@ export type LiveUnpublishDeps = {
   readReadinessProbeSlugs: () => Promise<string[]>;
   /** The app's block, read on the primary. */
   readBlockBySlug: (slug: string) => Promise<{ id: string; status: string } | null>;
+  /** The slugs of every suspended block, oldest change first. Used by the scheduled sweep. */
+  listSuspendedSlugs: () => Promise<string[]>;
   /** The block's approved sha and when it last deployed (null when it never did). */
   readLiveBuild: (
     appBlockId: string
@@ -170,6 +174,17 @@ const defaultDeps: LiveUnpublishDeps = {
       where: { blockId: slug },
       select: { id: true, status: true },
     });
+  },
+  // The replica is enough: this only picks candidates, and the reconciler re-reads each block on
+  // the primary before it decides anything.
+  listSuspendedSlugs: async () => {
+    const { dbRead } = await import('~/server/db/client');
+    const rows = await dbRead.appBlock.findMany({
+      where: { status: 'suspended' },
+      select: { blockId: true },
+      orderBy: [{ updatedAt: 'asc' }, { id: 'asc' }],
+    });
+    return rows.map((r) => r.blockId);
   },
   readLiveBuild: async (appBlockId) => {
     const { dbWrite } = await import('~/server/db/client');
@@ -333,6 +348,123 @@ export async function afterLiveDeploy(
 type Step = { action: 'unpublish' } | { action: 'restore'; appBlockId: string };
 export type SyncOutcome = 'settled' | 'queued' | 'unsettled' | 'failed';
 
+/** Apps one sweep reconciles at most; the rest are left for the next run. */
+export const RECONCILE_BATCH = 25;
+/** Apps one sweep reconciles at the same time (each may hold a Job of its own). */
+const RECONCILE_CONCURRENCY = 4;
+
+export type ReconcileSummary = {
+  flag: 'on' | 'off';
+  /** Suspended blocks found. */
+  suspended: number;
+  /** Skipped: an unpublish of the app already succeeded. */
+  confirmed: number;
+  /** Skipped: the shared static server's readiness app, never unpublished. */
+  readiness: number;
+  /** Skipped: the takedown marker could not be read. */
+  unreadable: number;
+  /** Reconciled by this run. */
+  selected: number;
+  /** Over the batch, or not started because the run was cancelled: the next run picks them up. */
+  deferred: number;
+  outcomes: Partial<Record<SyncOutcome, number>>;
+};
+
+/**
+ * The scheduled sweep: reconcile every SUSPENDED app whose takedown is not confirmed, through the
+ * same {@link syncLivePointer} the takedown paths use (lock, markers, current-state decision).
+ * It is how an app taken down before the flag was on gets unpublished, and how a takedown whose
+ * Job failed gets retried without waiting for the next takedown, relist or deploy of that app.
+ *
+ * Does nothing with the flag off. Approved apps are never listed, so a restore is never started
+ * here; a relist restores the app through its own path. At most `batch` apps per run (oldest
+ * change first), `RECONCILE_CONCURRENCY` at a time. `shouldStop` is checked before each app is
+ * started, so a cancelled run starts nothing new; an app already started runs to its end under
+ * its own lock. Never throws for one app; a failed flag read or listing throws (the job reports it).
+ */
+export async function reconcileSuspendedLiveApps(
+  opts: Opts & { batch?: number; shouldStop?: () => boolean } = {}
+): Promise<ReconcileSummary> {
+  const d = { ...defaultDeps, ...opts.deps };
+  const summary: ReconcileSummary = {
+    flag: 'off',
+    suspended: 0,
+    confirmed: 0,
+    readiness: 0,
+    unreadable: 0,
+    selected: 0,
+    deferred: 0,
+    outcomes: {},
+  };
+  if (!(await d.flagOn())) {
+    info(`sweep: flag off, nothing reconciled`);
+    return summary;
+  }
+  summary.flag = 'on';
+
+  const slugs = await d.listSuspendedSlugs();
+  summary.suspended = slugs.length;
+  let readinessSlugs: string[] = [];
+  try {
+    readinessSlugs = await d.readReadinessProbeSlugs();
+  } catch (err) {
+    // Not fatal: syncLivePointer reads the list again, and the unpublish script enforces it.
+    warn('sweep: readiness list unreadable', err);
+  }
+
+  const candidates: string[] = [];
+  for (const slug of slugs) {
+    if (readinessSlugs.includes(slug)) {
+      summary.readiness++;
+      continue;
+    }
+    let takedown: TakedownState;
+    try {
+      takedown = await d.store.readTakedown(slug);
+    } catch (err) {
+      warn(`sweep: takedown marker of ${slug} unreadable; skipped`, err);
+      summary.unreadable++;
+      continue;
+    }
+    if (takedown === 'confirmed') {
+      summary.confirmed++;
+      continue;
+    }
+    candidates.push(slug);
+  }
+
+  const batch = candidates.slice(0, Math.max(0, opts.batch ?? RECONCILE_BATCH));
+  summary.deferred = candidates.length - batch.length;
+
+  let next = 0;
+  const worker = async () => {
+    for (;;) {
+      if (next >= batch.length) return;
+      if (opts.shouldStop?.()) {
+        summary.deferred += batch.length - next;
+        next = batch.length;
+        return;
+      }
+      const slug = batch[next++];
+      summary.selected++;
+      const outcome = await syncLivePointer(slug, opts).catch((): SyncOutcome => 'failed');
+      summary.outcomes[outcome] = (summary.outcomes[outcome] ?? 0) + 1;
+      info(`sweep: ${slug} ${outcome}`);
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(RECONCILE_CONCURRENCY, batch.length) }, () => worker())
+  );
+
+  info(
+    `sweep: suspended=${summary.suspended} confirmed=${summary.confirmed} ` +
+      `readiness=${summary.readiness} unreadable=${summary.unreadable} ` +
+      `selected=${summary.selected} deferred=${summary.deferred} ` +
+      `outcomes=${JSON.stringify(summary.outcomes)}`
+  );
+  return summary;
+}
+
 /** What the app needs now, from its CURRENT state. Null: nothing. */
 async function nextStep(slug: string, d: LiveUnpublishDeps): Promise<Step | null> {
   const [block, takedown] = await Promise.all([
@@ -460,6 +592,11 @@ const COMMIT_SHA = /^[0-9a-f]{40}$/;
 
 function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function info(what: string): void {
+  // eslint-disable-next-line no-console
+  console.log(`[live-unpublish] ${what}`);
 }
 
 function warn(what: string, err: unknown): void {

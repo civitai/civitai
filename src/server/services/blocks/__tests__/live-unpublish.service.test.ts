@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import {
   afterLiveDeploy,
   isReadinessProbeApp,
+  reconcileSuspendedLiveApps,
   readinessAppNote,
   restoreLiveApp,
   syncLivePointer,
@@ -81,6 +83,7 @@ function world(over: { status?: string; served?: boolean; flag?: boolean; auto?:
     flagOn: vi.fn(async () => w.flag),
     readReadinessProbeSlugs: vi.fn(async () => ['readiness-probe-app']),
     readBlockBySlug: vi.fn(async () => ({ id: BLOCK, status: w.status })),
+    listSuspendedSlugs: vi.fn(async () => (w.status === 'suspended' ? [SLUG] : [])),
     readLiveBuild: vi.fn(
       async (): Promise<{ sha: string | null; deployedAt: Date | null } | null> => ({
         sha: SHA,
@@ -582,4 +585,185 @@ it('readinessAppNote is the line the moderator gets back', () => {
   expect(readinessAppNote('some-app')).toBe(
     "some-app keeps serving: it is the static server's readiness app"
   );
+});
+
+// The scheduled sweep: every suspended app whose takedown is not confirmed goes through the same
+// reconciler, so an app delisted before the flag was on (no marker at all) and an app whose
+// unpublish Job failed (marker attempted) are unpublished without a new takedown.
+describe('reconcileSuspendedLiveApps (the scheduled sweep)', () => {
+  /** Several apps, each with its own block status and marker; one shared lock map per slug. */
+  function fleet(
+    apps: Record<string, { status: string; takedown?: 'attempted' | 'confirmed' }>,
+    over: { flag?: boolean; readiness?: string[] } = {}
+  ) {
+    const takedown = new Map<string, 'attempted' | 'confirmed'>();
+    for (const [slug, a] of Object.entries(apps)) if (a.takedown) takedown.set(slug, a.takedown);
+    const locks = new Set<string>();
+    const dirty = new Set<string>();
+    const unpublished: string[] = [];
+    const jobs: Array<{ slug: string; action: string }> = [];
+    const store: LivePointerStore = {
+      readTakedown: vi.fn(async (s: string) => takedown.get(s) ?? 'none'),
+      markTakedownAttempted: vi.fn(async (s: string) => {
+        takedown.set(s, 'attempted');
+      }),
+      markTakedownConfirmed: vi.fn(async (s: string) => {
+        if (!takedown.has(s)) return false;
+        takedown.set(s, 'confirmed');
+        return true;
+      }),
+      clearTakedown: vi.fn(async (s: string) => {
+        takedown.delete(s);
+      }),
+      acquire: vi.fn(async (s: string) => {
+        if (locks.has(s)) return false;
+        locks.add(s);
+        return true;
+      }),
+      refresh: vi.fn(async () => undefined),
+      release: vi.fn(async (s: string) => {
+        locks.delete(s);
+      }),
+      markDirty: vi.fn(async (s: string) => {
+        dirty.add(s);
+      }),
+      takeDirty: vi.fn(async (s: string) => dirty.delete(s)),
+    };
+    const deps = {
+      flagOn: vi.fn(async () => over.flag ?? true),
+      readReadinessProbeSlugs: vi.fn(async () => over.readiness ?? []),
+      readBlockBySlug: vi.fn(async (s: string) =>
+        apps[s] ? { id: `apb_${s}`, status: apps[s].status } : null
+      ),
+      listSuspendedSlugs: vi.fn(async () =>
+        Object.entries(apps)
+          .filter(([, a]) => a.status === 'suspended')
+          .map(([s]) => s)
+      ),
+      readLiveBuild: vi.fn(async () => ({ sha: SHA, deployedAt: new Date(0) })),
+      triggerPointerJob: vi.fn(async (job: { slug: string; action: string }) => {
+        jobs.push({ slug: job.slug, action: job.action });
+        return { name: `${job.slug}-live-pointer` };
+      }),
+      waitForJob: vi.fn(async (name: string): Promise<Outcome> => {
+        unpublished.push(name.replace(/-live-pointer$/, ''));
+        return 'succeeded';
+      }),
+      store,
+      report: vi.fn(),
+    } satisfies LiveUnpublishDeps;
+    return { deps, takedown, jobs, unpublished };
+  }
+
+  it('unpublishes a suspended app that has no marker (taken down before the flag was on)', async () => {
+    const { deps, takedown, jobs } = fleet({ 'old-takedown': { status: 'suspended' } });
+    const summary = await reconcileSuspendedLiveApps({ deps });
+    expect(jobs).toEqual([{ slug: 'old-takedown', action: 'unpublish' }]);
+    expect(takedown.get('old-takedown')).toBe('confirmed');
+    expect(summary).toEqual({
+      flag: 'on',
+      suspended: 1,
+      confirmed: 0,
+      readiness: 0,
+      unreadable: 0,
+      selected: 1,
+      deferred: 0,
+      outcomes: { settled: 1 },
+    });
+  });
+
+  it('retries a suspended app whose earlier unpublish only got as far as attempted', async () => {
+    const { deps, takedown, jobs } = fleet({
+      'failed-job': { status: 'suspended', takedown: 'attempted' },
+    });
+    await reconcileSuspendedLiveApps({ deps });
+    expect(jobs).toEqual([{ slug: 'failed-job', action: 'unpublish' }]);
+    expect(takedown.get('failed-job')).toBe('confirmed');
+  });
+
+  it('never touches an approved app, even one with a marker', async () => {
+    const { deps, jobs, takedown } = fleet({
+      live: { status: 'approved' },
+      relisted: { status: 'approved', takedown: 'attempted' },
+    });
+    const summary = await reconcileSuspendedLiveApps({ deps });
+    expect(jobs).toEqual([]);
+    expect(takedown.get('relisted')).toBe('attempted');
+    expect(deps.store.acquire).not.toHaveBeenCalled();
+    expect(summary.selected).toBe(0);
+  });
+
+  it('skips a suspended app whose takedown is confirmed', async () => {
+    const { deps, jobs } = fleet({
+      done: { status: 'suspended', takedown: 'confirmed' },
+      todo: { status: 'suspended' },
+    });
+    const summary = await reconcileSuspendedLiveApps({ deps });
+    expect(jobs).toEqual([{ slug: 'todo', action: 'unpublish' }]);
+    expect(deps.store.acquire).not.toHaveBeenCalledWith('done');
+    expect(summary.confirmed).toBe(1);
+    expect(summary.selected).toBe(1);
+  });
+
+  it('skips the readiness app', async () => {
+    const { deps, jobs } = fleet(
+      { probe: { status: 'suspended' }, other: { status: 'suspended' } },
+      { readiness: ['probe'] }
+    );
+    const summary = await reconcileSuspendedLiveApps({ deps });
+    expect(jobs).toEqual([{ slug: 'other', action: 'unpublish' }]);
+    expect(summary.readiness).toBe(1);
+  });
+
+  it('flag OFF: lists nothing and starts nothing', async () => {
+    const { deps, jobs } = fleet({ a: { status: 'suspended' } }, { flag: false });
+    const summary = await reconcileSuspendedLiveApps({ deps });
+    expect(jobs).toEqual([]);
+    expect(deps.listSuspendedSlugs).not.toHaveBeenCalled();
+    expect(summary.flag).toBe('off');
+  });
+
+  it('reconciles at most the batch; confirmed apps do not use it up', async () => {
+    const apps: Record<string, { status: string; takedown?: 'confirmed' }> = {};
+    for (let i = 0; i < 7; i++) apps[`done-${i}`] = { status: 'suspended', takedown: 'confirmed' };
+    for (let i = 0; i < 5; i++) apps[`todo-${i}`] = { status: 'suspended' };
+    const { deps, jobs } = fleet(apps);
+    const summary = await reconcileSuspendedLiveApps({ deps, batch: 3 });
+    expect(jobs.map((j) => j.slug).sort()).toEqual(['todo-0', 'todo-1', 'todo-2']);
+    expect(summary).toMatchObject({ suspended: 12, confirmed: 7, selected: 3, deferred: 2 });
+  });
+
+  it('a cancelled run starts no further app', async () => {
+    const { deps, jobs } = fleet({ a: { status: 'suspended' }, b: { status: 'suspended' } });
+    const summary = await reconcileSuspendedLiveApps({ deps, shouldStop: () => true });
+    expect(jobs).toEqual([]);
+    expect(summary).toMatchObject({ selected: 0, deferred: 2 });
+  });
+
+  // The real listing (not the fake above) is what keeps an approved app out of the sweep.
+  it('the default listing reads only suspended blocks, from the replica', async () => {
+    const { deps, jobs } = fleet({ listed: { status: 'suspended' } });
+    const { listSuspendedSlugs: _fake, ...rest } = deps;
+    const reads = dbMock.dbRead.appBlock.findMany;
+    const before = reads.mock.calls.length;
+    const writesBefore = dbMock.dbWrite.appBlock.findMany.mock.calls.length;
+    reads.mockResolvedValueOnce([{ blockId: 'listed' }]);
+    const summary = await reconcileSuspendedLiveApps({ deps: rest });
+    expect(reads.mock.calls.length - before).toBe(1);
+    expect(reads.mock.calls[before][0]).toMatchObject({ where: { status: 'suspended' } });
+    expect(dbMock.dbWrite.appBlock.findMany.mock.calls.length).toBe(writesBefore);
+    expect(jobs).toEqual([{ slug: 'listed', action: 'unpublish' }]);
+    expect(summary.suspended).toBe(1);
+  });
+
+  it('an unreadable marker skips that app only', async () => {
+    const { deps, jobs } = fleet({ bad: { status: 'suspended' }, good: { status: 'suspended' } });
+    vi.mocked(deps.store.readTakedown).mockImplementation(async (s: string) => {
+      if (s === 'bad') throw new Error('redis down');
+      return 'none';
+    });
+    const summary = await reconcileSuspendedLiveApps({ deps });
+    expect(jobs).toEqual([{ slug: 'good', action: 'unpublish' }]);
+    expect(summary.unreadable).toBe(1);
+  });
 });
