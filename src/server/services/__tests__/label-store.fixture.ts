@@ -7,6 +7,12 @@ export const LABEL_STORE_MIGRATION = path.resolve(
   '../../../../packages/civitai-db-schema/prisma/migrations/20261103120000_label_store/migration.sql'
 );
 
+/** Redefines `label_store.image_row_excluded`, so every store test runs the live exclusion rule. */
+export const CSAM_COMMA_LIST_MIGRATION = path.resolve(
+  __dirname,
+  '../../../../packages/civitai-db-schema/prisma/migrations/20271210120100_csam_comma_list_label_store/migration.sql'
+);
+
 /** A hand-written subset of the site tables the label store hooks into. */
 const SOURCE_TABLES = `
   CREATE TABLE "Image" (
@@ -74,4 +80,5 @@ const SOURCE_TABLES = `
 export async function bootLabelStore(db: PGlite) {
   await db.exec(SOURCE_TABLES);
   await db.exec(readFileSync(LABEL_STORE_MIGRATION, 'utf8'));
+  await db.exec(readFileSync(CSAM_COMMA_LIST_MIGRATION, 'utf8'));
 }

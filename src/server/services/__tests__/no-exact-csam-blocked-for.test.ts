@@ -44,14 +44,8 @@ const EXACT = new RegExp(
 const ALLOWED: Record<string, number> = {
   // A retention hold, kept exact: a hold is not widened.
   'src/server/jobs/image-ingestion.ts': 4,
-  // Restated in a label_store function and trigger; moves with them.
-  'src/server/jobs/appeal-decision-records.ts': 4,
-  // Twin of feed-go's training_data_listing.sql; moves with it.
+  // Exact match intended.
   'src/server/services/training-data-restricted.service.ts': 1,
-  // Read by the Knights gate view; moves with a new view migration.
-  'packages/civitai-shared/src/held-media.ts': 2,
-  // The vector index's flag; moves with the event-engine readers.
-  'apps/event-engine/src/vector-sync/image-flags.ts': 1,
   // A retention hold, kept exact: a hold is not widened; image-appeal-flag's clear moves with the case.
   'packages/civitai-db-queries/src/child-safety-case.db.ts': 3,
   'src/server/services/image-appeal-flag.ts': 1,

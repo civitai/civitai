@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
+import {
+  CSAM_LINK_TABLES_SQL,
+  WITHHELD_TABLES_SQL,
+} from '../../../../packages/civitai-shared/src/__tests__/csam-restriction-cases';
 
 // Unit tests for applyModelFlagSideEffects — the post-update flag fan-out
 // extracted from upsertModel (model tag/search-index refresh, gallery cache
@@ -188,6 +192,50 @@ async function imageAfterUpdate(image: { minor: boolean; poi: boolean }) {
   }
 }
 
+const QUEUED = 900; // in the CSAM queue: withheld
+const ON_BLOCKED_FILE = 901; // shares its file with a row blocked for a list naming CSAM: withheld
+const CLEAN = 902;
+
+/** Runs the image UPDATE the call made against a gallery on version 100, with the withheld rule's tables. */
+async function galleryAfterUpdate(minor: boolean) {
+  const db = new PGlite();
+  try {
+    await db.exec(CSAM_LINK_TABLES_SQL);
+    await db.exec(`
+      CREATE TYPE "MediaType" AS ENUM ('image', 'video', 'audio');
+      CREATE TABLE "Image" (
+        id int PRIMARY KEY, url text NOT NULL, type "MediaType" NOT NULL DEFAULT 'image',
+        ingestion text NOT NULL DEFAULT 'Scanned', "needsReview" text, "blockedFor" text,
+        minor boolean NOT NULL, poi boolean NOT NULL DEFAULT false, "userId" int NOT NULL DEFAULT 7,
+        "pHash" bigint, "postId" int
+      );
+      ${WITHHELD_TABLES_SQL}
+      INSERT INTO "Post" (id, "modelVersionId") VALUES (1, 100), (2, 200);
+    `);
+    await db.query(
+      `INSERT INTO "Image" (id, url, "needsReview", minor, "postId") VALUES
+        (${QUEUED}, 'key-a', 'csam', $1, 1), (${ON_BLOCKED_FILE}, 'key-b', NULL, $1, 1),
+        (${CLEAN}, 'key-c', NULL, $1, 1)`,
+      [minor]
+    );
+    // Off the gallery, on another post.
+    await db.exec(
+      `INSERT INTO "Image" (id, url, "blockedFor", ingestion, minor, "postId") VALUES (950, 'key-b', 'tos,CSAM', 'Blocked', false, 2)`
+    );
+    const { text, values } = imageUpdateCall();
+    const INT4_OID = 23;
+    await db.query(text, values, {
+      paramTypes: values.map((v) => (Number.isInteger(v) ? INT4_OID : 0)),
+    });
+    const { rows } = await db.query<{ id: number; minor: boolean }>(
+      `SELECT id, minor FROM "Image" WHERE "postId" = 1 ORDER BY id`
+    );
+    return Object.fromEntries(rows.map((row) => [row.id, row.minor]));
+  } finally {
+    await db.close();
+  }
+}
+
 afterEach(() => {
   vi.useRealTimers();
 });
@@ -346,6 +394,31 @@ describe('applyModelFlagSideEffects — image propagation', () => {
 
     expect(mockQueueImageSearchIndexUpdate).not.toHaveBeenCalled();
     expect(mockBustMvCache).toHaveBeenCalledWith([100], 42);
+  });
+});
+
+describe('applyModelFlagSideEffects — a gallery image withheld from moderators', () => {
+  // Mutants this catches: the lift writing minor: false on every row (no guard), and the guard also
+  // stopping the set.
+  it('🔴 keeps minor on a withheld image when the model is lifted, and clears it on a clean one', async () => {
+    await applyModelFlagSideEffects({
+      before: { ...baseBefore, minor: true },
+      after: { ...baseAfter, minor: false },
+    });
+    expect(await galleryAfterUpdate(true)).toEqual({
+      [QUEUED]: true,
+      [ON_BLOCKED_FILE]: true,
+      [CLEAN]: false,
+    });
+  });
+
+  it('marks every image minor, withheld or not, when the model is flagged (control)', async () => {
+    await applyModelFlagSideEffects({ before: baseBefore, after: { ...baseAfter, minor: true } });
+    expect(await galleryAfterUpdate(false)).toEqual({
+      [QUEUED]: true,
+      [ON_BLOCKED_FILE]: true,
+      [CLEAN]: true,
+    });
   });
 });
 

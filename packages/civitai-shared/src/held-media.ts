@@ -1,3 +1,5 @@
+import { csamInBlockedForSql } from './csam-blocked-for';
+
 /**
  * Serving review-queue media to moderators from storage rather than the public image CDN. Shared by
  * the moderator app's `/api/held-media` and the main app's `/api/mod/held-media`, so the two routes
@@ -34,10 +36,10 @@ export function heldUserSql(column: string): string {
     )`;
 }
 
-/** Whether the "Image" row aliased `image` is itself in the CSAM queue or blocked as CSAM. */
+/** Whether the "Image" row aliased `image` is itself in the CSAM queue or blocked as CSAM (anywhere in its comma list). */
 export function heldItemImageSql(image: string): string {
   if (!/^[a-z_][a-z0-9_]*$/i.test(image)) throw new Error(`Bad table alias: ${image}`);
-  return `(${image}."needsReview" = 'csam' OR ${image}."blockedFor" = 'CSAM')`;
+  return `(${image}."needsReview" = 'csam' OR ${csamInBlockedForSql(`${image}."blockedFor"`)})`;
 }
 
 /**
@@ -55,7 +57,7 @@ export function heldImageSql(image: string): string {
   // blocked for a reason added there and not here is still held here whenever its owner is held.
   return `(
     ${image}."needsReview" = 'csam'
-    OR ${image}."blockedFor" = 'CSAM'
+    OR ${csamInBlockedForSql(`${image}."blockedFor"`)}
     OR (${owner} <> ${PLACEHOLDER_OWNER_ID}
       AND ${image}."blockedFor" IS DISTINCT FROM 'AiNotVerified' AND ${heldUserSql(owner)})
   )`;

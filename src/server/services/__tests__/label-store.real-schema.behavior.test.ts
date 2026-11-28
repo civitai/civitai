@@ -52,6 +52,8 @@ beforeAll(async () => {
   ])
     await db.pg.exec(migration(dir));
   await db.pg.exec(readFileSync(LABEL_STORE_MIGRATION, 'utf8'));
+  await db.pg.exec(migration('20271210120000_csam_comma_list_appeal_record'));
+  await db.pg.exec(migration('20271210120100_csam_comma_list_label_store'));
   await db.pg.exec(migration('20261230140000_scan_label_csam_hold'));
   await db.pg.exec(migration('20261230140100_scan_label_csam_hold_label_store'));
 });

@@ -6,6 +6,7 @@ import { PLATFORM_REVENUE_SOURCES_SQL } from '@civitai/buzz';
 import { kyselyOver } from '~/server/db/prisma-kysely';
 import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
 import { minorContentBrowsingLevelsFlag } from '@civitai/shared/minor-content-gate';
+import { moderatorWithheldSql } from '@civitai/shared/retracted-media-tier';
 import { queueModelCollectionsReindex } from '~/server/services/collection-index-sync';
 import { queueModelArticlesReindex } from '~/server/services/article-cover-reindex';
 import type { ArticleReader } from '~/server/services/article-read';
@@ -2876,17 +2877,27 @@ export async function applyModelFlagSideEffects({
       // binding one parameter per image id blows past Postgres' 65535 parameter limit.
       // The value guard keeps a re-toggle from rewriting every row (and re-queueing every
       // id into the search index) when the flags already match.
+      // A lift leaves `minor` on an image withheld from moderators without the CSAM grant: their
+      // review keeps it, whoever lifts the model. Setting `minor` and writing `poi` stay unguarded.
+      const minorWrite = !syncMinor
+        ? Prisma.sql`false`
+        : after.minor
+        ? Prisma.sql`true`
+        : Prisma.sql`NOT ${Prisma.raw(moderatorWithheldSql('i', { csamReview: false }))}`;
       const updatedImages = !syncImageFlags
         ? []
         : await dbWrite.$queryRaw<{ id: number }[]>`
         UPDATE "Image" i
-          SET minor = CASE WHEN ${syncMinor} THEN ${after.minor} ELSE i.minor END,
+          SET minor = CASE WHEN i.minor IS DISTINCT FROM ${after.minor} AND ${minorWrite}
+                THEN ${after.minor} ELSE i.minor END,
               poi = ${after.poi}
         FROM "Post" p
         WHERE i."postId" = p.id
           AND p."modelVersionId" IN (${Prisma.join(modelVersionIds, ',')})
           AND (${
-            syncMinor ? Prisma.sql`i.minor IS DISTINCT FROM ${after.minor} OR` : Prisma.empty
+            syncMinor
+              ? Prisma.sql`(i.minor IS DISTINCT FROM ${after.minor} AND ${minorWrite}) OR`
+              : Prisma.empty
           } i.poi IS DISTINCT FROM ${after.poi})
         RETURNING i.id
       `;
