@@ -13,6 +13,7 @@ import type * as Notifications from '~/utils/notifications';
 
 const mocks = vi.hoisted(() => ({
   params: {} as Record<string, unknown>,
+  post: { id: 1 } as { id: number } | null,
   uploadToS3: vi.fn(),
   showErrorNotification: vi.fn(),
 }));
@@ -25,7 +26,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
 vi.mock('~/components/Post/EditV2/PostEditProvider', async (orig) => ({
   ...(await orig<typeof PostEditProviderMod>()),
   usePostEditStore: (selector: (state: unknown) => unknown) =>
-    selector({ post: { id: 1 }, images: [], setImages: vi.fn() }),
+    selector({ post: mocks.post, images: [], setImages: vi.fn() }),
   usePostEditParams: () => mocks.params,
 }));
 
@@ -64,6 +65,7 @@ function renderDropzone() {
 describe('PostImageDropzone — items on their way to the post', () => {
   beforeEach(() => {
     mocks.params = {};
+    mocks.post = { id: 1 };
     mocks.uploadToS3.mockReset().mockImplementation(() => new Promise(() => undefined));
     mocks.showErrorNotification.mockReset();
   });
@@ -110,5 +112,28 @@ describe('PostImageDropzone — items on their way to the post', () => {
     await vi.waitFor(() => expect(mocks.showErrorNotification).toHaveBeenCalledTimes(1));
     await vi.waitFor(() => expect(document.body.textContent).not.toContain('Preparing…'));
     expect(mocks.uploadToS3).not.toHaveBeenCalled();
+  });
+
+  test('a batch whose post create a newer batch replaced does not stay preparing', async () => {
+    const png = await (await fetch(SOURCE_URL)).blob();
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(png));
+    // No post yet, and the stubbed create never answers: each batch waits on its own create.
+    mocks.post = null;
+    const first = `${SOURCE_URL}#first`;
+    const second = `${SOURCE_URL}#second`;
+    mocks.params = { src: 'generator' };
+    renderDropzone();
+    const preparingSrcs = () =>
+      [...document.querySelectorAll('[aria-label="Uploading"] img')].map((img) =>
+        img.getAttribute('src')
+      );
+
+    orchestratorMediaTransmitter.setUrls('generator', [{ url: first }]);
+    await vi.waitFor(() => expect(preparingSrcs()).toEqual([first]));
+    // Long enough for the first download to finish and its create to start.
+    await new Promise((r) => setTimeout(r, 200));
+
+    orchestratorMediaTransmitter.setUrls('generator', [{ url: second }]);
+    await vi.waitFor(() => expect(preparingSrcs()).toEqual([second]));
   });
 });

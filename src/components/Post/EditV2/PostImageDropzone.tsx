@@ -133,7 +133,7 @@ export function PostImageDropzone({
 
   // #region [preparing]
   // Generator media shown from its source url from the moment it is picked until each item is a
-  // queued upload with a local preview of its own: the download and the read for upload take minutes.
+  // queued upload with a local preview of its own, covering the download and the read for upload.
   const [preparing, setPreparing] = useState<{ id: number; items: PreparingMedia[] }[]>([]);
   const preparingIdRef = useRef(0);
   async function whilePreparing(items: PreparingMedia[], work: () => Promise<unknown>) {

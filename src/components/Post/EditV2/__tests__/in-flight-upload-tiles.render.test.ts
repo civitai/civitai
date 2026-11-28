@@ -89,6 +89,14 @@ describe('InFlightUploadTiles', () => {
     expect(el.querySelector('video')?.getAttribute('src')).toBe('https://example.com/out');
   });
 
+  it('previews an untyped download as a video, as it is uploaded', () => {
+    const untyped = new File(['v'], 'out', { type: 'application/octet-stream' });
+    const el = render([tracked(untyped)]);
+
+    expect(el.querySelector('img')).toBeNull();
+    expect(el.querySelector('video')?.getAttribute('src')).toMatch(/^blob:/);
+  });
+
   it('shows no tile for a file that finished or failed', () => {
     const done = new File(['i'], 'done.jpeg', { type: 'image/jpeg' });
     const failed = new File(['i'], 'failed.jpeg', { type: 'image/jpeg' });
