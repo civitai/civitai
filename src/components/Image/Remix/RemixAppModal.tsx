@@ -23,10 +23,10 @@ import type {
   RemixImage,
   RemixViewerAsk,
 } from '~/shared/remix-apps/define';
-import { MOCK_IMAGE_URL_PREFIX, mockResult } from '~/shared/remix-apps/mock-host';
+import { MOCK_IMAGE_URL_PREFIX, playToAsk } from '~/shared/remix-apps/mock-host';
 import {
   REMIX_IMAGE_STAND_IN,
-  replayRemixApp,
+  REMIX_RUN_LIMITS,
   type RemixLogEntry,
 } from '~/shared/remix-apps/replay';
 import { type RemixDeclarativeSpec, USER_REMIX_SLUG } from '~/shared/remix-apps/row.schema';
@@ -520,26 +520,21 @@ function useDraftRemixDriver(
   const [log, setLog] = useState<RemixLogEntry[]>([]);
   const [pending, setPending] = useState(false);
 
-  /** Replays from `from`, answering every workflow with placeholders, up to the next ask or the end. */
   async function playFrom(from: RemixLogEntry[]) {
     setPending(true);
-    const entries = [...from];
     try {
-      // Replay refuses a run past the effect limit, so this ends.
-      for (;;) {
-        const outcome = await replayRemixApp(app, source, entries);
-        if (outcome.status === 'done') {
-          setPhase({ kind: 'done', workflowId: PREVIEW_WORKFLOW_ID, outputs: outcome.outputs });
-          break;
-        }
-        const { effect, index } = outcome;
-        if (effect.type === 'ask') {
-          setPhase({ kind: 'ask', runId: PREVIEW_WORKFLOW_ID, ask: effect.spec, answers: [] });
-          break;
-        }
-        entries.push({ type: 'workflow', result: mockResult(effect.request, index) });
-      }
-      setLog(entries);
+      const played = await playToAsk(app, source, from, REMIX_RUN_LIMITS.effects + 1);
+      setLog(played.log);
+      setPhase(
+        played.outcome.status === 'done'
+          ? { kind: 'done', workflowId: PREVIEW_WORKFLOW_ID, outputs: played.outcome.outputs }
+          : {
+              kind: 'ask',
+              runId: PREVIEW_WORKFLOW_ID,
+              ask: played.outcome.effect.spec,
+              answers: [],
+            }
+      );
     } catch (error) {
       setPhase({
         kind: 'failed',

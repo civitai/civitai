@@ -62,12 +62,10 @@ test('a draft walks its asks to placeholder results without calling the server',
   await page.getByRole('button', { name: 'Use this image for the preview' }).click();
   await page.getByRole('button', { name: 'Bold' }).click();
 
-  // The step's two images, at the source's shape.
   const outputs = page.getByTestId('remix-preview-output');
   await expect.poll(() => outputs.elements().length).toBe(2);
   expect(outputs.first().element().getAttribute('style')).toContain('832 / 1216');
   await expect.element(page.getByRole('button', { name: 'Preview again' })).toBeVisible();
-  // Nothing to post, queue or dismiss.
   expect(page.getByTestId('remix-result-line').elements()).toHaveLength(0);
   expect(wire.calls.map((call) => call.path).filter((path) => path !== APP_PROVIDER_QUERY)).toEqual(
     []
