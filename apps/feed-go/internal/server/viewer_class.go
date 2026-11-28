@@ -45,8 +45,8 @@ func isFeedViewerEndpoint(endpoint string) bool {
 //   - api-key-anon: a credential that stands for no session (a download or service token, a
 //     client-credentials key), answered as for anyone.
 const (
-	V1ImagesViewerAPIKeyScoped = "api-key-scoped"
-	V1ImagesViewerAPIKeyAnon   = "api-key-anon"
+	V1ImagesViewerAPIKeyScoped = "api-key-scoped" //nolint:gosec // G101: a metric label value, not a credential
+	V1ImagesViewerAPIKeyAnon   = "api-key-anon"   //nolint:gosec // G101: a metric label value, not a credential
 )
 
 // V1ImagesViewerClasses is every `/api/v1/images` viewer class, in a fixed order.
