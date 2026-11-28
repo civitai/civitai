@@ -3,6 +3,7 @@ import type { DB } from '@civitai/db-schema/kysely';
 import { kyselyWrite } from '~/server/db/kyselyDb';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
+import { TIPALTI_SIGNATURE_LIFETIME_SECONDS } from '~/server/http/tipalti/tipalti.caller';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 
 /**
@@ -50,6 +51,14 @@ const SCOPES = {
     pendingSeconds: 30 * 24 * 60 * 60,
     resultSeconds: 30 * 24 * 60 * 60,
     marker: true,
+  },
+  // A Tipalti event id. In flight for as long as a signature stays accepted; once handled, kept a
+  // week so a retry Tipalti signs again later is still a repeat, well past common retry windows.
+  'tipalti-event': {
+    sysPrefix: REDIS_SYS_KEYS.WEBHOOKS.TIPALTI_EVENT,
+    pendingSeconds: TIPALTI_SIGNATURE_LIFETIME_SECONDS,
+    resultSeconds: 7 * 24 * 60 * 60,
+    marker: false,
   },
 } as const;
 

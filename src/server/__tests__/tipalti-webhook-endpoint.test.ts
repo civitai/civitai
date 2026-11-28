@@ -6,6 +6,7 @@ import '~/__tests__/mocks/db.mock';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import type * as TipaltiCallerModule from '~/server/http/tipalti/tipalti.caller';
 import type * as CreatorProgramService from '~/server/services/creator-program.service';
 import type * as UserPaymentConfigurationService from '~/server/services/user-payment-configuration.service';
 
@@ -23,7 +24,8 @@ vi.mock('~/server/prom/http-errors', () => ({ instrumentApiResponse: vi.fn() }))
 vi.mock('~/server/clickhouse/client', () => ({
   trackWebhookEvent: vi.fn(() => Promise.resolve()),
 }));
-vi.mock('~/server/http/tipalti/tipalti.caller', () => ({
+vi.mock('~/server/http/tipalti/tipalti.caller', async (importOriginal) => ({
+  ...(await importOriginal<typeof TipaltiCallerModule>()),
   default: async () => ({}),
   TipaltiCaller: { validateWebhookEvent },
 }));
@@ -138,7 +140,6 @@ describe('tipalti webhook endpoint: paymentGroupApproved for a cash withdrawal',
     ]);
   });
 
-  // Tipalti has already approved; a failed hold read must be visible but not drop the approval.
   it('records the approval and logs when the hold cannot be read', async () => {
     dbMock.dbWrite.creatorProgramPayoutReview.findMany.mockRejectedValue(
       new Error('connection reset')
@@ -157,6 +158,29 @@ describe('tipalti webhook endpoint: paymentGroupApproved for a cash withdrawal',
         withdrawalId: 'abc123-full',
         refCode,
         message: 'connection reset',
+      })
+    );
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'creator-program-payout-approved-while-held' })
+    );
+  });
+
+  it('records the approval and alerts when the creator is held', async () => {
+    dbMock.dbWrite.creatorProgramPayoutReview.findMany.mockResolvedValue([
+      { userId: 7, status: 'open', hold: true, period: '2026-10' },
+    ]);
+
+    const res = await approve();
+
+    expect(res._status()).toBe(200);
+    expect(updateCashWithdrawal).toHaveBeenCalledWith(
+      expect.objectContaining({ withdrawalId: 'abc123-full', status: 'Cleared' })
+    );
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'creator-program-payout-approved-while-held',
+        userId: 7,
+        withdrawalId: 'abc123-full',
       })
     );
   });

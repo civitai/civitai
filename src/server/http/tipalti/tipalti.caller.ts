@@ -9,6 +9,12 @@ import { outboundFetch } from '~/server/utils/fetch-timeout';
 // DOCUMENTATION
 // https://documentation.tipalti.com/reference/quick-start
 
+const SIGNATURE_MAX_AGE_SECONDS = 5 * 60;
+const SIGNATURE_MAX_CLOCK_SKEW_SECONDS = 60;
+// Longest a signature stays acceptable: a `t` at the skew limit is valid for the full age after it.
+export const TIPALTI_SIGNATURE_LIFETIME_SECONDS =
+  SIGNATURE_MAX_AGE_SECONDS + SIGNATURE_MAX_CLOCK_SKEW_SECONDS;
+
 type TipaltiAccessToken = {
   accessToken: string;
   expiresIn: number;
@@ -17,7 +23,7 @@ type TipaltiAccessToken = {
 
 export class TipaltiCaller extends HttpCaller {
   private static instance: TipaltiCaller;
-  private static acessToken: TipaltiAccessToken;
+  private static acessToken: TipaltiAccessToken | undefined;
 
   protected constructor(baseUrl?: string, token?: TipaltiAccessToken) {
     baseUrl ??= env.TIPALTI_API_URL;
@@ -77,6 +83,20 @@ export class TipaltiCaller extends HttpCaller {
   static async getInstance(): Promise<TipaltiCaller> {
     const token = await TipaltiCaller.getAccessToken();
     return new TipaltiCaller(undefined, token);
+  }
+
+  // A token can be revoked before its expires_in; drop the cached copy so the next instance re-authenticates.
+  private static forgetTokenIfRejected(response: Response) {
+    if (response.status === 401) TipaltiCaller.acessToken = undefined;
+    return response;
+  }
+
+  override async getRaw(...args: Parameters<HttpCaller['getRaw']>) {
+    return TipaltiCaller.forgetTokenIfRejected(await super.getRaw(...args));
+  }
+
+  override async postRaw(...args: Parameters<HttpCaller['postRaw']>) {
+    return TipaltiCaller.forgetTokenIfRejected(await super.postRaw(...args));
   }
 
   async getPayeeByRefCode(refCode: string) {
@@ -182,10 +202,12 @@ export class TipaltiCaller extends HttpCaller {
 
     const [t, v] = signature.split(',');
     const tValue = t.split('=')[1];
-    const fiveMinAgo = Date.now() - 5 * 60 * 1000;
-    const isTooOld = new Date(Number.parseInt(tValue) * 1000).getTime() < fiveMinAgo;
+    if (!/^\d+$/.test(tValue ?? '')) throw new Error('Signature timestamp is not a number');
 
-    if (isTooOld) throw new Error('Signature is too old');
+    const ageSeconds = Date.now() / 1000 - Number(tValue);
+    if (ageSeconds > SIGNATURE_MAX_AGE_SECONDS) throw new Error('Signature is too old');
+    if (ageSeconds < -SIGNATURE_MAX_CLOCK_SKEW_SECONDS)
+      throw new Error('Signature timestamp is in the future');
 
     const stringToSign = `${tValue}-${payload}`;
     const hash = createHmac('sha256', env.TIPALTI_WEBTOKEN_SECRET)

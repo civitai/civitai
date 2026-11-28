@@ -8,6 +8,10 @@ import tipaltiCaller, { TipaltiCaller } from '~/server/http/tipalti/tipalti.call
 import { Tipalti } from '~/server/http/tipalti/tipalti.schema';
 import { TipaltiStatus } from '~/server/common/enums';
 import { logToAxiom } from '~/server/logging/client';
+import {
+  claimIdempotencyKey,
+  type IdempotencyClaim,
+} from '~/server/services/idempotency-key.service';
 import { updateBuzzWithdrawalRequest } from '~/server/services/buzz-withdrawal-request.service';
 import {
   findCashWithdrawalByRefCode,
@@ -81,6 +85,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // Track to ClickHouse (fire and forget, never throws)
     trackWebhookEvent('tipalti', rawPayload).catch(() => null);
 
+    let claim: IdempotencyClaim | undefined;
     try {
       if (!sig || !webhookSecret) {
         // only way this is false is if we forgot to include our secret or paddle decides to suddenly not include their signature
@@ -90,11 +95,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
 
       const { isValid } = TipaltiCaller.validateWebhookEvent(sig as string, rawPayload);
-      const { isValid: isValid2 } = TipaltiCaller.validateWebhookEvent(
-        sig as string,
-        req.body as string
-      );
-      if (!isValid && !isValid2) {
+      if (!isValid) {
         console.log('❌ Invalid signature');
         return res.status(400).send({
           error: 'Invalid Request. Could not validate Webhook signature',
@@ -102,6 +103,30 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
 
       event = JSON.parse(rawPayload) as TipaltiWebhookEventData;
+
+      // Claimed only after the signature verifies, so an unsigned request cannot take an id.
+      if (event.id) {
+        const eventId = String(event.id);
+        // Unguarded when the claim store is down: the payout writes below refuse a second refund
+        // on their own, so a repeat costs a duplicate history row, not money.
+        const result = await claimIdempotencyKey('tipalti-event', eventId).catch((error: Error) => {
+          logToAxiom(
+            {
+              type: 'error',
+              name: 'tipalti-webhook-dedupe-unavailable',
+              message: error.message,
+              payload: { eventId },
+            },
+            'webhooks'
+          );
+          return undefined;
+        });
+        if (result?.status === 'done')
+          return res.status(200).json({ received: true, duplicate: true });
+        if (result?.status === 'pending')
+          return res.status(409).send({ error: 'Event is already being processed' });
+        if (result?.status === 'claimed') claim = result;
+      }
 
       switch (event.type) {
         case 'payeeDetailsChanged':
@@ -156,9 +181,29 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
     } catch (error: any) {
       console.log(`❌ Error message: ${error.message}`);
+      if (claim)
+        await claim.release().catch((releaseError: Error) =>
+          logToAxiom(
+            {
+              type: 'error',
+              name: 'tipalti-webhook-dedupe-release-failed',
+              message: releaseError.message,
+            },
+            'webhooks'
+          )
+        );
       return res.status(400).send('Webhook Error');
     }
 
+    if (claim)
+      await claim
+        .store(JSON.stringify({ received: true }))
+        .catch((error: Error) =>
+          logToAxiom(
+            { type: 'error', name: 'tipalti-webhook-dedupe-mark-failed', message: error.message },
+            'webhooks'
+          )
+        );
     return res.status(200).json({ received: true });
   } else {
     res.setHeader('Allow', 'POST');

@@ -203,6 +203,13 @@ const SYS_KEY_LEDGER = [
   'webhooks:image-scan:job-reason',
   'webhooks:model-file-scan:processed',
   'webhooks:stripe:air-notified',
+  // Tipalti event dedupe, through claimIdempotencyKey. The webhook processes an event unguarded
+  // when this store is down, which is safe because the payout writes refuse a repeat themselves:
+  // creator-program.service.ts updateCashWithdrawal skips a refunded burn (isWithdrawalBurnRefunded),
+  // claims the refund (claimWithdrawalRefund) and refunds with an externalTransactionId Buzz
+  // deduplicates; buzz-withdrawal-request.service.ts refunds with the withdrawal's
+  // buzzWithdrawalTransactionId as externalTransactionId.
+  'webhooks:tipalti:event',
   'wordlists',
 ];
 
@@ -248,7 +255,7 @@ describe('REDIS_SYS_KEYS ledger', () => {
   });
 
   // The ledger's size, written out: a change to it is a change to this number too.
-  it('holds 192 keys', () => {
-    expect(SYS_KEY_LEDGER.length).toBe(192);
+  it('holds 193 keys', () => {
+    expect(SYS_KEY_LEDGER.length).toBe(193);
   });
 });

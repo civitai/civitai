@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
+import type * as TipaltiCallerModule from '~/server/http/tipalti/tipalti.caller';
 import type * as CreatorProgramService from '~/server/services/creator-program.service';
 
 const { bust, getPaymentByRefCode, updateCashWithdrawal, validateWebhookEvent } = vi.hoisted(
@@ -18,7 +19,8 @@ vi.mock('~/server/prom/http-errors', () => ({ instrumentApiResponse: vi.fn() }))
 vi.mock('~/server/clickhouse/client', () => ({
   trackWebhookEvent: vi.fn(() => Promise.resolve()),
 }));
-vi.mock('~/server/http/tipalti/tipalti.caller', () => ({
+vi.mock('~/server/http/tipalti/tipalti.caller', async (importOriginal) => ({
+  ...(await importOriginal<typeof TipaltiCallerModule>()),
   default: async () => ({ getPaymentByRefCode }),
   TipaltiCaller: { validateWebhookEvent },
 }));
