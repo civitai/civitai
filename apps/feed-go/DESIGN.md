@@ -2431,7 +2431,7 @@ without one Node answers `Random sort requires a collectionId` (a BAD_REQUEST), 
   `unsupported` off), `TestParseInfiniteRandomSortPostID` and `fallback-collection-random-post-id`, `TestIntegrationCollectionRandomPage` (the order, the cursor column and the
   strict next page on Postgres).
 
-### 14.10 A gallery-settings miss (`FEED_GO_INFINITE_SERVE_GALLERY_SETTINGS_MISS`, default off)
+### 14.10 A gallery-settings miss (`FEED_GO_INFINITE_SERVE_GALLERY_SETTINGS_MISS`, `FEED_GO_V1_IMAGES_SERVE_GALLERY_SETTINGS_MISS`, default off)
 
 The hold gates (`getHeldGalleryLevel` for a model, version or post scope, and `getHeldLevelsByPost`
 under `ids`) read each model's `model:gallery-settings:<modelId>` key through
@@ -2444,18 +2444,37 @@ both flags). The gates read nothing else of the entry. With the switch off, the 
 `hydrate.Sources.GalleryHolds`), the absent keys of the request are answered from the replica in one
 statement (`SELECT id, minor, "sfwOnly", jsonb_typeof("gallerySettings"->'level'), "gallerySettings"->>'level'
 FROM "Model" WHERE id = ANY($1)`): a model with no row has no hold (Node's `null`), one with neither flag
-none, a held one the level above. Image.getInfinite only: the other routes that read the key keep
-falling back on a miss.
+none, a held one the level above. `GET /api/v1/images` reads the same gates and computes its misses
+the same way behind its own switch (`feed.HoldComputingGallery`). The other routes that read the key
+(`getImagesAsPostsInfinite`, which also reads the pinned posts; `model.getAll`; the v1 models routes)
+keep falling back on a miss.
 
-- **Lag.** Node reads the primary for a model a recent write flagged (`lag-helper:model:<id>`). This
-  service reads only the replica, so a flagged model among the misses, or a failed flag read, is still
-  `gallery-settings-miss` and Node reads the primary.
-- **Nothing written, nothing kept.** The entry Node writes back also holds the creator's hidden users,
-  which Node reads from the primary (`getCreatorGalleryHiddenUserIds` with `fresh`), and the hidden
-  tags, users and images, which the hold does not need; this service builds none of them, so the key is
-  never written (Node's next read rebuilds it). Concurrent requests for the same models share one
-  statement (singleflight), but no answer is kept in process (`MissCompute.memoized`): the hold is a
-  safety rule and a kept answer could outlive the bust a flag change sends.
+- **Lag.** Node reads the primary for a model a recent write flagged (`lag-helper:model:<id>`).
+  Without write-back this service reads only the replica, so a flagged model among the misses is still
+  `gallery-settings-miss` and Node reads the primary; with write-back it reads the primary too. A failed
+  flag read is `gallery-settings-miss` either way.
+- **Nothing kept; written only with `gallery-settings` in `FEED_GO_CACHE_WRITEBACK`.** Without it the
+  key is never written (Node's next read rebuilds it), so a miss stays a miss and every request for that
+  model repeats the statement. Concurrent requests for the same models share one statement
+  (singleflight), but no answer is kept in process (`MissCompute.memoized`): the hold is a safety rule
+  and a kept answer could outlive the bust a flag change sends.
+- **Write-back (`gallery-settings`, needs `DATABASE_URL`).** The whole entry is rebuilt as
+  `getGallerySettingsByModelId` rebuilds it (`hydrate/gallerysettings.go`): the model
+  (`id, "userId", "gallerySettings", minor, "sfwOnly"`) from the replica, or from the primary for a
+  lag-flagged model (as `getDbWithoutLag`, so a flagged model no longer falls back); the stored `tags` /
+  `users` looked up as `{id, name}` / `{id, username}` on the replica (`dbRead`); the creator's hidden
+  users (`getCreatorGalleryHiddenUserIds(userId, { fresh: true })`) from the primary; `hiddenImages` and
+  `pinnedPosts` as stored (`{}` when absent); `level ?? allBrowsingLevelsFlag`, `heldGalleryLevel` for a
+  held model; the `none` marker for an unheld model without settings; nothing for a model with no row.
+  It is serialised as `toJson` (JSON.stringify) writes it, members in JS order, and SET under the same
+  key with `EX 604800` (`CacheTTL.week`), as **SET NX**: Node's own SET is plain, but NX never replaces
+  an entry Node rebuilt since the read, which can only be as fresh. The hold is read off the rebuilt
+  entry. A bust (`DEL`) that lands between this read and the write leaves the entry as stale as Node's
+  own rebuild would in the same race (the hidden-users change re-busts after 5 s for that reason).
+  Written once per flight; counted in `feed_go_cache_writes_total{cache="gallery-settings"}`, its
+  misses in `feed_go_cache_miss_total{cache="gallery-settings"}`. A stored value Node would reject
+  (`tags`/`users` not a list of integers) is `gallery-settings-miss-failed`. The bytes differ from Node's
+  only where `superjson.Plain` differs from JSON.stringify (U+2028/U+2029 escaped), which parse alike.
 - **Values JS would coerce.** A stored `level` that is not a JSON number or null (a string, a
   boolean), a fraction, or past int32 on a held model is not guessed at: `gallery-settings-miss-failed`.
 - **Stale entries.** A present entry Node would rebuild (`null`, or no `sfwHeld`: before the SFW hold)
@@ -2463,7 +2482,7 @@ falling back on a miss.
 - **Go-first probe.** The image.getInfinite probe runs the serving path, so it computes the hold as
   serving would (a replica read, nothing written).
 - **Counted** as `feed_go_cache_miss_total{cache="gallery-hold",result="computed"|"error"}` (models per
-  computed miss).
+  computed miss; `cache="gallery-settings"` with write-back).
 
 Golden fixtures: `infinite/cold-gallery-settings-*` (a held version, the `ids` per-post hold, an
 unheld model), each with the key absent; the `GallerySettingsMiss` rows of

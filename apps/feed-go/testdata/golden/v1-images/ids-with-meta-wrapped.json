@@ -1288,6 +1288,23 @@
         }
       ],
       "metadata": {}
+    },
+    "writes": {
+      "packed:caches:image-meta:8004": {
+        "value": {
+          "id": 8004,
+          "meta": {
+            "Size": "832x1216",
+            "seed": 9007199254740,
+            "prompt": "golden synthetic prompt four"
+          },
+          "cachedAt": {
+            "$date": "2026-06-15T12:00:00.000Z"
+          }
+        },
+        "packed": "3gADomlkzR9EpG1ldGHeAAOkU2l6Zag4MzJ4MTIxNqRzZWVky0KgYk3S8agApnByb21wdLxnb2xkZW4gc3ludGhldGljIHByb21wdCBmb3VyqGNhY2hlZEF01v9qL+lA",
+        "ex": 18000
+      }
     }
   }
 }

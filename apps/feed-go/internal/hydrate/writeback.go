@@ -15,13 +15,14 @@ import (
 // (MissImageMeta) is computed but never written, so it is not one.
 var WriteCaches = []string{MissUserCosmetics, MissImageFrames, MissEventDecorations, MissTagIDs, MissModelFrames,
 	MissModelDecorations, MissVersionImages, MissModelData, MissModelTags, MissOfficialModels, MissMetrics,
-	MissCreatorMemberships, MissVersionFiles}
+	MissCreatorMemberships, MissVersionFiles, MissGallerySettings}
 
 // PrimaryCaches are the caches whose lookups read the primary database when written back: the frame
 // and event-decoration lookups always (entityDB), the version-images and model-data lookups for an id
-// a recent write flagged (lagAwareDB). The primary is opened only when one of them is written back.
+// a recent write flagged (lagAwareDB), and the gallery settings always (the creator's hidden users;
+// the model too when flagged). The primary is opened only when one of them is written back.
 var PrimaryCaches = []string{MissImageFrames, MissEventDecorations, MissModelFrames, MissModelDecorations,
-	MissVersionImages, MissModelData}
+	MissVersionImages, MissModelData, MissGallerySettings}
 
 // WriteSet is the caches write-back writes, by WriteCaches label. Empty (or nil): none, and this
 // service writes no cache entry, lock or metric hash.
