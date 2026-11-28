@@ -894,7 +894,6 @@ function CrucibleReviewNotice({
   );
 }
 
-/** Generatable version id -> its base model. */
 function useGeneratableVersions(versionIds: number[]) {
   const { data: resources } = trpc.generation.getResourceDataByIds.useQuery(
     { ids: versionIds },
