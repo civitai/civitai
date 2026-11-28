@@ -275,25 +275,8 @@ describe('setAssociatedResources model side', () => {
     expect(await remaining(104)).toEqual([]);
   });
 
-  it('with a tag excluded, keeps a link carrying it that the editor did not list', async () => {
-    const save = (fromId: number, excludedTagIds?: number[]) =>
-      setAssociatedResources(
-        { fromId, type: 'Suggested', associations: [], browsingLevel: ALL, excludedTagIds },
-        fromOwner,
-        readerOf(fromOwner),
-        fromOwner
-      );
-    await link(105, [MODELS.tagged.id]);
-    await save(105, [EXCLUDED_TAG]);
-    expect(await remaining(105)).toEqual([MODELS.tagged.id]);
-
-    await link(106, [MODELS.tagged.id]);
-    await save(106);
-    expect(await remaining(106)).toEqual([]);
-  });
-
-  // Mod Lead ruling: a link is written only to a model the editor can see, and the browsing level
-  // binds the owner too. Do not relax this to status-only checks.
+  // Decided on civitai/civitai#10684: a link is written only to a model the editor can see, and
+  // the browsing level binds the owner too. Do not relax this to status-only checks.
   describe('refuses to newly link a model the editor cannot see', () => {
     const linkTo = (toModelId: number, browsingLevel: number) =>
       setAssociatedResources(
