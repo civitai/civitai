@@ -69,8 +69,8 @@ export type FpMirrorFactsRow = {
   /** The text version a moderator lifted the scan's hide for. */
   liftGrantedVersion: number | null;
   /**
-   * A moderator lifted the hide on this version after the last moderator hide sent, and that hide
-   * was sent for the scan or a moderator here, never another's.
+   * A moderator lifted the last moderator hide sent from here, after it was sent: a moderator's own
+   * hide, or the scan's for this text version. Never another's.
    */
   liftGranted: boolean;
 };
@@ -84,8 +84,9 @@ const FACTS = `
          m."updatedAt"::text AS "mirrorUpdatedAt", m."postAttemptedAt", m."subjectMissingAt",
          m."removeWantedAt", m."restrictedAt", m."postSeq", m."goneAt", m."contentAt",
          m."modHideSentAt", m."modHideOrigin", m."liftGrantedVersion",
-         COALESCE(m."modHideOrigin" IN ('scan', 'moderator') AND m."liftGrantedAt" > m."modHideSentAt"
-           AND m."liftGrantedVersion" = m.version, false) AS "liftGranted",
+         COALESCE(m."liftGrantedAt" > m."modHideSentAt" AND (m."modHideOrigin" = 'moderator'
+           OR (m."modHideOrigin" = 'scan' AND m."liftGrantedVersion" = m.version)), false)
+           AS "liftGranted",
          ${FP_SCAN_HIDE} AS "scanHide",
          c.id IS NOT NULL AS "commentExists", c.hidden, c."tosViolation", c."deletedAt", c.content,
          c."createdAt", c."entityId" AS "topicId",
@@ -759,8 +760,8 @@ export type FpUnhideHeld =
 
 /**
  * A moderator shows again a Feature Pages comment a moderator hid, bound to the hide and text version
- * they saw (`seenHiddenAt` is `hiddenAt::text`), and grants that version. Made only over a clean
- * finished scan of the current text (`contentHash`). Never lifts the scan's own hide: its report's
+ * they saw (`seenHiddenAt` is `hiddenAt::text`). Made only over a clean finished scan of the current
+ * text (`contentHash`), and grants no version: a later scan of the text still hides it. Never lifts the scan's own hide: its report's
  * Unactioned does (unactionReportLiftingScanHide). `exceptReportId` does not hold the unhide.
  * `held`: nothing was written, and why.
  */
@@ -823,7 +824,8 @@ export async function liftModeratorFpHide(
     );
     const [lifted] = await rows<{ commentId: number; version: number }>(
       trx,
-      `UPDATE "FeaturePageCommentMirror" SET ${fpLiftGrantSet('$3::timestamptz', '$2', 'version')}
+      `UPDATE "FeaturePageCommentMirror"
+       SET ${fpLiftGrantSet('$3::timestamptz', '$2', '"liftGrantedVersion"')}
        WHERE "commentId" = $1
        RETURNING "commentId", version`,
       [commentId, actorId, f.at]

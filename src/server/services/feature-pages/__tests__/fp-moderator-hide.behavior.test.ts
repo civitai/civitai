@@ -170,7 +170,8 @@ describe("a moderator's hide and unhide of a Feature Pages comment", () => {
     const id = await hiddenByModerator();
     expect(await unhide(id)).toEqual({ lifted: { commentId: id, version: 1 } });
     expect((await seen(id)).hidden).toBe(false);
-    expect(await mirrorRow(id)).toMatchObject({ liftGrantedBy: MOD, liftGrantedVersion: 1 });
+    // Records the lift, and grants no version: that is the scan report's dismissal alone.
+    expect(await mirrorRow(id)).toMatchObject({ liftGrantedBy: MOD, liftGrantedVersion: null });
     expect(
       await q(`SELECT "userId", "entityType", "entityId", activity FROM "ModActivity" ORDER BY id`)
     ).toEqual([
@@ -272,17 +273,6 @@ describe("a moderator's hide and unhide of a Feature Pages comment", () => {
       [id]
     );
     expect(await reconcile()).toMatchObject({ moderatorLifts: 0 });
-    expect(decided(id)).toBe('hidden');
-  });
-
-  it('a lift of one text version lifts nothing on the platform after an edit', async () => {
-    const id = await hiddenByModerator();
-    await unhide(id);
-    await q(`UPDATE "FeaturePageCommentMirror" SET version = version + 1 WHERE "commentId" = $1`, [
-      id,
-    ]);
-    expect(await settle()).toMatchObject({ moderatorLifts: 0 });
-    expect(modVisibleBySource()).toHaveLength(0);
     expect(decided(id)).toBe('hidden');
   });
 
@@ -397,26 +387,20 @@ describe("a moderator's hide and unhide of a Feature Pages comment", () => {
     expect(await unhide(id)).toMatchObject({ lifted: { commentId: id } });
   });
 
-  it('a replayed scan of the same text after the unhide does not hide it again', async () => {
-    const id = await hiddenByModerator('a replayed scan');
+  it('a later scan hide of the same text still applies after an unhide: the unhide grants no override', async () => {
+    const id = await hiddenByModerator('scanned again later');
     const textHash = await judgedText(id);
     await unhide(id);
     await flagScan(id);
     const report = vi.fn(async () => scanReport(id));
     expect(
       await moderation.hideFlaggedFpComment(id, { textHash, createReport: report as never })
-    ).toBe(false);
-    expect(report).not.toHaveBeenCalled();
-    expect((await seen(id)).hidden).toBe(false);
-
-    // The same scan does hide a comment that was never unhidden.
-    const control = (await seedFpComment(mirror, 'never unhidden')).comment.sourceId;
-    await flagScan(control);
-    expect(
-      await moderation.hideFlaggedFpComment(control, {
-        textHash: await judgedText(control),
-        createReport: (async () => scanReport(control)) as never,
-      })
     ).toBe(true);
+    expect(report).toHaveBeenCalledTimes(1);
+    expect((await seen(id)).hidden).toBe(true);
+    expect(await mirrorRow(id)).toMatchObject({ scanHiddenVersion: 1 });
+    // Nor does the mirror show the flagged text: no version was lifted.
+    await settle();
+    expect(decided(id)).toBe('hidden');
   });
 });
