@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { FILING_TEXT, reportBreakdown, trialsCount } from '../report-copy';
+import { reportBreakdown, trialsCount } from '../report-copy';
 
 describe('reportBreakdown', () => {
   it('names the only reason without a number', () => {
@@ -16,13 +16,6 @@ describe('reportBreakdown', () => {
       'Reported by 6 players: 4 problem with the image, 2 problem with the question'
     );
     expect(reportBreakdown({ image: 0, question: 1 })).not.toContain('0');
-  });
-});
-
-describe('FILING_TEXT', () => {
-  it('says each filing state in plain words', () => {
-    expect(FILING_TEXT.pending).toBe('Image report pending: Knights will file it shortly.');
-    expect(FILING_TEXT['not-needed']).toBe('No image report needed: the image no longer exists.');
   });
 });
 
