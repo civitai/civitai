@@ -1,6 +1,8 @@
 -- "KnightsImageGate", regenerated so its CSAM legs read a CSAM block anywhere in "blockedFor", a comma list of
 -- block reasons (`csamInBlockedForSql` via `heldItemImageSql` / `heldImageSql`, packages/civitai-shared/src/held-media.ts),
--- instead of only the exact value 'CSAM'. Same columns in the same order, so CREATE OR REPLACE keeps the grants on the view.
+-- instead of only the exact value 'CSAM', and so `reportListedUrlSql` (packages/civitai-shared/src/held-url.ts) builds its
+-- listed image ids once per statement rather than once per row. Same columns in the same order, so CREATE OR REPLACE
+-- keeps the grants on the view.
 --
 -- Apply MANUALLY, per environment, as the owner of "Image" (SET ROLE <owner>), never as a superuser, after
 -- 20271207120000_knights_image_gate_mod_review and before deploying the Knights release built on it.
@@ -219,7 +221,18 @@ select "img"."id" as "imageId", COALESCE(((("img"."type" = 'image' and "img"."ns
       )
     )
   ), false) and not exists (select 1 as "one" from "ScanLabelItem" as "si" where "si"."imageId" = "img"."id" and (exists (select 1 as "one" from "ScanLabelFlag" as "sf" where "sf"."itemId" = "si"."id" and sf.snapshot ->> 'minorDetected' = 'true') or exists (select 1 as "one" from "ScanLabelVote" as "sv" where "sv"."itemId" = "si"."id" and ("sv"."reason" = 'school-nsfw' or "sv"."reason" like 'minor-%')))) and NOT COALESCE((img."ingestion"::text NOT IN ('Scanned', 'Blocked')), false) and NOT (
-    EXISTS (SELECT 1 FROM "Image" rl_i WHERE rl_i.url = img."url" AND rl_i.id IN (SELECT CASE WHEN rl_ids.id ~ '^[0-9]{1,18}$' THEN (rl_ids.id)::bigint END
+    EXISTS (SELECT 1 FROM "Image" rl_i WHERE rl_i.url = img."url" AND rl_i.id = ANY(ARRAY(SELECT CASE WHEN rl_ids.id ~ '^[0-9]{1,18}$' THEN (rl_ids.id)::bigint END
+  FROM (SELECT listed.id FROM (
+    SELECT CASE jsonb_typeof(le) WHEN 'object' THEN le ->> 'id' ELSE le #>> '{}' END AS id
+    FROM "CsamReport" lr
+    CROSS JOIN LATERAL jsonb_array_elements(
+      CASE WHEN jsonb_typeof(lr.images) = 'array' THEN lr.images ELSE '[]'::jsonb END
+    ) le
+  ) listed
+  WHERE listed.id IS NOT NULL) rl_ids)))
+    OR EXISTS (
+      SELECT 1 FROM "ImageCdnModeratorDelete" rl_d
+      WHERE rl_d.url = img."url" AND rl_d."imageId" = ANY(ARRAY(SELECT CASE WHEN rl_ids.id ~ '^[0-9]{1,18}$' THEN (rl_ids.id)::bigint END
   FROM (SELECT listed.id FROM (
     SELECT CASE jsonb_typeof(le) WHEN 'object' THEN le ->> 'id' ELSE le #>> '{}' END AS id
     FROM "CsamReport" lr
@@ -228,17 +241,6 @@ select "img"."id" as "imageId", COALESCE(((("img"."type" = 'image' and "img"."ns
     ) le
   ) listed
   WHERE listed.id IS NOT NULL) rl_ids))
-    OR EXISTS (
-      SELECT 1 FROM "ImageCdnModeratorDelete" rl_d
-      WHERE rl_d.url = img."url" AND rl_d."imageId" IN (SELECT CASE WHEN rl_ids.id ~ '^[0-9]{1,18}$' THEN (rl_ids.id)::bigint END
-  FROM (SELECT listed.id FROM (
-    SELECT CASE jsonb_typeof(le) WHEN 'object' THEN le ->> 'id' ELSE le #>> '{}' END AS id
-    FROM "CsamReport" lr
-    CROSS JOIN LATERAL jsonb_array_elements(
-      CASE WHEN jsonb_typeof(lr.images) = 'array' THEN lr.images ELSE '[]'::jsonb END
-    ) le
-  ) listed
-  WHERE listed.id IS NOT NULL) rl_ids)
     )
     OR EXISTS (
       SELECT 1 FROM "Image" rl_p
@@ -346,7 +348,18 @@ select "img"."id" as "imageId", COALESCE(((("img"."type" = 'image' and "img"."ns
       )
     )
   ), false) and not exists (select 1 as "one" from "ScanLabelItem" as "si" where "si"."imageId" = "img"."id" and (exists (select 1 as "one" from "ScanLabelFlag" as "sf" where "sf"."itemId" = "si"."id" and sf.snapshot ->> 'minorDetected' = 'true') or exists (select 1 as "one" from "ScanLabelVote" as "sv" where "sv"."itemId" = "si"."id" and ("sv"."reason" = 'school-nsfw' or "sv"."reason" like 'minor-%')))) and NOT (
-    EXISTS (SELECT 1 FROM "Image" rl_i WHERE rl_i.url = img."url" AND rl_i.id IN (SELECT CASE WHEN rl_ids.id ~ '^[0-9]{1,18}$' THEN (rl_ids.id)::bigint END
+    EXISTS (SELECT 1 FROM "Image" rl_i WHERE rl_i.url = img."url" AND rl_i.id = ANY(ARRAY(SELECT CASE WHEN rl_ids.id ~ '^[0-9]{1,18}$' THEN (rl_ids.id)::bigint END
+  FROM (SELECT listed.id FROM (
+    SELECT CASE jsonb_typeof(le) WHEN 'object' THEN le ->> 'id' ELSE le #>> '{}' END AS id
+    FROM "CsamReport" lr
+    CROSS JOIN LATERAL jsonb_array_elements(
+      CASE WHEN jsonb_typeof(lr.images) = 'array' THEN lr.images ELSE '[]'::jsonb END
+    ) le
+  ) listed
+  WHERE listed.id IS NOT NULL) rl_ids)))
+    OR EXISTS (
+      SELECT 1 FROM "ImageCdnModeratorDelete" rl_d
+      WHERE rl_d.url = img."url" AND rl_d."imageId" = ANY(ARRAY(SELECT CASE WHEN rl_ids.id ~ '^[0-9]{1,18}$' THEN (rl_ids.id)::bigint END
   FROM (SELECT listed.id FROM (
     SELECT CASE jsonb_typeof(le) WHEN 'object' THEN le ->> 'id' ELSE le #>> '{}' END AS id
     FROM "CsamReport" lr
@@ -355,17 +368,6 @@ select "img"."id" as "imageId", COALESCE(((("img"."type" = 'image' and "img"."ns
     ) le
   ) listed
   WHERE listed.id IS NOT NULL) rl_ids))
-    OR EXISTS (
-      SELECT 1 FROM "ImageCdnModeratorDelete" rl_d
-      WHERE rl_d.url = img."url" AND rl_d."imageId" IN (SELECT CASE WHEN rl_ids.id ~ '^[0-9]{1,18}$' THEN (rl_ids.id)::bigint END
-  FROM (SELECT listed.id FROM (
-    SELECT CASE jsonb_typeof(le) WHEN 'object' THEN le ->> 'id' ELSE le #>> '{}' END AS id
-    FROM "CsamReport" lr
-    CROSS JOIN LATERAL jsonb_array_elements(
-      CASE WHEN jsonb_typeof(lr.images) = 'array' THEN lr.images ELSE '[]'::jsonb END
-    ) le
-  ) listed
-  WHERE listed.id IS NOT NULL) rl_ids)
     )
     OR EXISTS (
       SELECT 1 FROM "Image" rl_p
@@ -489,7 +491,18 @@ select "img"."id" as "imageId", COALESCE(((("img"."type" = 'image' and "img"."ns
   )
     )
     OR (
-    EXISTS (SELECT 1 FROM "Image" rl_i WHERE rl_i.url = img."url" AND rl_i.id IN (SELECT CASE WHEN rl_ids.id ~ '^[0-9]{1,18}$' THEN (rl_ids.id)::bigint END
+    EXISTS (SELECT 1 FROM "Image" rl_i WHERE rl_i.url = img."url" AND rl_i.id = ANY(ARRAY(SELECT CASE WHEN rl_ids.id ~ '^[0-9]{1,18}$' THEN (rl_ids.id)::bigint END
+  FROM (SELECT listed.id FROM (
+    SELECT CASE jsonb_typeof(le) WHEN 'object' THEN le ->> 'id' ELSE le #>> '{}' END AS id
+    FROM "CsamReport" lr
+    CROSS JOIN LATERAL jsonb_array_elements(
+      CASE WHEN jsonb_typeof(lr.images) = 'array' THEN lr.images ELSE '[]'::jsonb END
+    ) le
+  ) listed
+  WHERE listed.id IS NOT NULL) rl_ids)))
+    OR EXISTS (
+      SELECT 1 FROM "ImageCdnModeratorDelete" rl_d
+      WHERE rl_d.url = img."url" AND rl_d."imageId" = ANY(ARRAY(SELECT CASE WHEN rl_ids.id ~ '^[0-9]{1,18}$' THEN (rl_ids.id)::bigint END
   FROM (SELECT listed.id FROM (
     SELECT CASE jsonb_typeof(le) WHEN 'object' THEN le ->> 'id' ELSE le #>> '{}' END AS id
     FROM "CsamReport" lr
@@ -498,17 +511,6 @@ select "img"."id" as "imageId", COALESCE(((("img"."type" = 'image' and "img"."ns
     ) le
   ) listed
   WHERE listed.id IS NOT NULL) rl_ids))
-    OR EXISTS (
-      SELECT 1 FROM "ImageCdnModeratorDelete" rl_d
-      WHERE rl_d.url = img."url" AND rl_d."imageId" IN (SELECT CASE WHEN rl_ids.id ~ '^[0-9]{1,18}$' THEN (rl_ids.id)::bigint END
-  FROM (SELECT listed.id FROM (
-    SELECT CASE jsonb_typeof(le) WHEN 'object' THEN le ->> 'id' ELSE le #>> '{}' END AS id
-    FROM "CsamReport" lr
-    CROSS JOIN LATERAL jsonb_array_elements(
-      CASE WHEN jsonb_typeof(lr.images) = 'array' THEN lr.images ELSE '[]'::jsonb END
-    ) le
-  ) listed
-  WHERE listed.id IS NOT NULL) rl_ids)
     )
     OR EXISTS (
       SELECT 1 FROM "Image" rl_p

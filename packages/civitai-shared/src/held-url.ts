@@ -231,13 +231,15 @@ export function reportListedUrlSql(
       WHERE rl_p.url = ${u}
         AND (rl_e ->> 1)::bigint = rl_p."pHash" AND (rl_e ->> 0)::bigint <> ${except}
     )`;
+  // ANY(ARRAY(...)), not IN (...): the uncorrelated id list is built once per statement, so each
+  // outer row costs only its url probe.
   return `(
     EXISTS (SELECT 1 FROM "Image" rl_i WHERE rl_i.url = ${u}${
     except == null ? '' : ` AND rl_i.id <> ${except}`
-  } AND rl_i.id IN (${LISTED_IMAGE_IDS_SQL}))
+  } AND rl_i.id = ANY(ARRAY(${LISTED_IMAGE_IDS_SQL})))
     OR EXISTS (
       SELECT 1 FROM "ImageCdnModeratorDelete" rl_d
-      WHERE rl_d.url = ${u} AND rl_d."imageId" IN (${LISTED_IMAGE_IDS_SQL})
+      WHERE rl_d.url = ${u} AND rl_d."imageId" = ANY(ARRAY(${LISTED_IMAGE_IDS_SQL}))
     )
     OR ${pHashLeg}
   )`;
