@@ -5,6 +5,7 @@ import { createRoot } from 'react-dom/client';
 import type { act as actType } from 'react-dom/test-utils';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { TrackedFile } from '~/components/FileUpload/FileUploadProvider';
+import type { PreparingMedia } from '~/components/Post/EditV2/InFlightUploadTiles';
 import { InFlightUploadTiles } from '~/components/Post/EditV2/InFlightUploadTiles';
 
 const act = (React as unknown as { act: typeof actType }).act;
@@ -33,7 +34,7 @@ function tracked(file: File, status: TrackedFile['status'] = 'uploading'): Track
   };
 }
 
-function render(files: TrackedFile[]) {
+function render(files: TrackedFile[], preparing?: PreparingMedia[]) {
   host = document.createElement('div');
   document.body.appendChild(host);
   root = createRoot(host);
@@ -42,7 +43,7 @@ function render(files: TrackedFile[]) {
       React.createElement(
         MantineProvider,
         null,
-        React.createElement(InFlightUploadTiles, { files })
+        React.createElement(InFlightUploadTiles, { files, preparing })
       )
     )
   );
@@ -61,6 +62,31 @@ describe('InFlightUploadTiles', () => {
     expect(img?.getAttribute('alt')).toBe('a.jpeg');
     expect(vid?.getAttribute('src')).toMatch(/^blob:/);
     expect(vid?.getAttribute('aria-label')).toBe('b.mp4');
+  });
+
+  it('previews generator media with no File yet from its source url, marked as preparing', () => {
+    const el = render(
+      [],
+      [
+        { url: 'https://example.com/out.jpeg', type: 'image' },
+        { url: 'https://example.com/out.mp4', type: 'video' },
+      ]
+    );
+
+    expect(el.querySelector('img')?.getAttribute('src')).toBe('https://example.com/out.jpeg');
+    expect(el.querySelector('video')?.getAttribute('src')).toBe('https://example.com/out.mp4');
+    expect(el.textContent).toContain('Preparing…');
+  });
+
+  it('tries generator media of unknown type as a video once it fails as an image', () => {
+    const el = render([], [{ url: 'https://example.com/out' }]);
+    const img = el.querySelector('img');
+    expect(img?.getAttribute('src')).toBe('https://example.com/out');
+
+    act(() => img!.dispatchEvent(new Event('error')));
+
+    expect(el.querySelector('img')).toBeNull();
+    expect(el.querySelector('video')?.getAttribute('src')).toBe('https://example.com/out');
   });
 
   it('shows no tile for a file that finished or failed', () => {
