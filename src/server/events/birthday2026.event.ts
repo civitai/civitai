@@ -50,19 +50,19 @@ export const birthday2026 = createEvent(name, {
     },
     prizeBadge: {
       Yellow: {
-        animated: '5cf4f411-bb05-4afc-86b9-0ce9fbd8c683',
+        animated: '3304b431-f9c2-4d9c-beac-6ca6671ce172',
         static: 'c447b59d-bc02-4e7f-a83b-ad1efe3a70cf',
       },
       Blue: {
-        animated: 'd0aedf96-8bb4-4837-9e22-f13662391e98',
+        animated: '02e9c821-e76d-403f-85bf-5c1ed81d6c12',
         static: 'aa5ee01e-dfee-458a-9431-16c5e8656754',
       },
       Pink: {
-        animated: '54cec518-332c-49cb-8584-359df0ff2ff8',
+        animated: '7b8240c0-eb61-4aff-8eeb-ea25ac6f1070',
         static: '271a8ed5-46ae-47bc-8e63-7f913859bd3b',
       },
       Green: {
-        animated: '3d5d9dea-c84a-4801-bf95-78dae8731010',
+        animated: 'b9049441-eff3-4765-95ac-a121a2475f83',
         static: '0c6d2d0a-ab63-45ee-925f-4019ee78db20',
       },
     },
