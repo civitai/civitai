@@ -389,6 +389,12 @@ export interface PageBlockSsr {
    *  exists, so a declaration over an empty `#root` reaches production. A
    *  platform-build check is planned (talos-infra). */
   bootSkeleton: boolean;
+  /** `app_blocks.current_version_sha`: the current approved version's commit sha, or
+   *  NULL (never approved through the git pipeline). The run host frames
+   *  `<iframeSrc>v/<sha>/` with it when the viewer's `appBlocksVersionedFramePath` flag
+   *  is on (`~/components/AppBlocks/versionedFrameSrc`). Not a secret: it is the path
+   *  segment the frame loads. */
+  currentVersionSha: string | null;
 }
 
 /**
@@ -435,6 +441,12 @@ export interface PrivateRunPageBlockResolution {
   contentRating: string | null;
   bootSkeleton: boolean;
   currentVersionDeployedAt: Date | null;
+  /** `app_blocks.current_version_sha`: the current approved version's commit sha, or
+   *  NULL. For a non-approved app it is the LAST APPROVED version, the bundle a private run serves. The run host frames
+   *  `<iframeSrc>v/<sha>/` with it when the viewer's `appBlocksVersionedFramePath` flag
+   *  is on (`~/components/AppBlocks/versionedFrameSrc`). Not a secret: it is the path
+   *  segment the frame loads. */
+  currentVersionSha: string | null;
   ownerUserId: number | null;
   listingStatus: string | null;
 }
@@ -1936,6 +1948,8 @@ export class BlockRegistry {
         // NSFW-APP-RED-ONLY: authoritative content rating (set on approve). The
         // SSR run-page gate uses it to 404 a mature page app off a red host.
         contentRating: true,
+        // The versioned frame path (`PageBlockSsr.currentVersionSha`).
+        currentVersionSha: true,
       },
     });
     if (!ab) return null;
@@ -1981,6 +1995,7 @@ export class BlockRegistry {
       // NSFW-APP-RED-ONLY: NULL-safe (column is non-null on approve, but defend
       // against a pre-feature / partial row → treated as SFW by the gate).
       contentRating: typeof ab.contentRating === 'string' ? ab.contentRating : null,
+      currentVersionSha: ab.currentVersionSha ?? null,
     };
   }
 
@@ -2043,6 +2058,8 @@ export class BlockRegistry {
         trustTier: true,
         contentRating: true,
         currentVersionDeployedAt: true,
+        // The versioned frame path (`PrivateRunPageBlockResolution.currentVersionSha`).
+        currentVersionSha: true,
         // The publisher-ban input. `app` is the OauthClient; `userId` on it is the
         // canonical owner — the same value `resolveAppAccess` derives.
         app: { select: { userId: true } },
@@ -2094,6 +2111,7 @@ export class BlockRegistry {
         // truthy-but-not-boolean value.
         bootSkeleton: (manifest as { bootSkeleton?: unknown }).bootSkeleton === true,
         currentVersionDeployedAt: ab.currentVersionDeployedAt ?? null,
+        currentVersionSha: ab.currentVersionSha ?? null,
         ownerUserId: ab.app?.userId ?? null,
         listingStatus: ab.appListing?.status ?? null,
       },

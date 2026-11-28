@@ -532,3 +532,64 @@ describe('BlockRegistry.resolvePrivateRunPageBlock — the projection [REG]', ()
     });
   });
 });
+
+/**
+ * The versioned frame path: both page resolvers carry `AppBlock.currentVersionSha`, which
+ * the run host appends to the frame src as `v/<sha>/` when the viewer's
+ * `appBlocksVersionedFramePath` flag is on. The stored `iframeSrc` stays the root.
+ */
+describe('BlockRegistry page resolvers — currentVersionSha for the versioned frame path', () => {
+  // Distinct from every other value in this file; letters and digits.
+  const SHA = 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockDbWrite.appBlock.findFirst.mockReset();
+  });
+
+  it('public: selects the column and surfaces it, iframeSrc unchanged', async () => {
+    mockDbRead.appBlock.findFirst.mockResolvedValue({
+      ...pageRow({ manifest: PAGE_MANIFEST(), trustTier: 'verified' }),
+      currentVersionSha: SHA,
+    });
+    const res = await BlockRegistry.resolvePageBlockBySlug('hello-page', { db: 'read' });
+    const call = mockDbRead.appBlock.findFirst.mock.calls.at(-1)?.[0] as {
+      select?: Record<string, unknown>;
+    };
+    expect(call?.select?.currentVersionSha).toBe(true);
+    expect(res?.currentVersionSha).toBe(SHA);
+    expect(res?.iframeSrc).toBe('https://hello-page.civit.ai');
+  });
+
+  it('public: a row with no sha → null, never undefined (SSR props must serialise)', async () => {
+    mockDbRead.appBlock.findFirst.mockResolvedValue(
+      pageRow({ manifest: PAGE_MANIFEST(), trustTier: 'verified' })
+    );
+    const res = await BlockRegistry.resolvePageBlockBySlug('hello-page', { db: 'read' });
+    expect(res?.currentVersionSha).toBeNull();
+  });
+
+  it('private run: selects the column and surfaces it', async () => {
+    mockDbWrite.appBlock.findFirst.mockResolvedValue({
+      id: 'apb_pr',
+      blockId: 'hello-page',
+      appId: 'app_pr',
+      status: 'suspended',
+      manifest: PAGE_MANIFEST(),
+      approvedScopes: [],
+      trustTier: 'unverified',
+      contentRating: 'g',
+      currentVersionDeployedAt: new Date('2026-09-01'),
+      currentVersionSha: SHA,
+      app: { userId: 4001 },
+      appListing: { status: 'removed' },
+    });
+    const res = await BlockRegistry.resolvePrivateRunPageBlock({ appBlockId: 'apb_pr' });
+    const call = mockDbWrite.appBlock.findFirst.mock.calls.at(-1)?.[0] as {
+      select?: Record<string, unknown>;
+    };
+    expect(call?.select?.currentVersionSha).toBe(true);
+    expect(res.ok && res.block.currentVersionSha).toBe(SHA);
+    expect(res.ok && res.block.iframeSrc).toBe('https://hello-page.civit.ai');
+  });
+});

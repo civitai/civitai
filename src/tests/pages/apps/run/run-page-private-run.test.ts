@@ -743,3 +743,56 @@ describe('the audience-keyed client decisions [REG]', () => {
     expect(recentsEntryFor({ ...args, audience: null })).not.toBeNull();
   });
 });
+
+/**
+ * The versioned frame path: the run page hands the resolver's `currentVersionSha` to the host
+ * as `versionSha` on BOTH branches, and `null` when the resolver has none (a Next prop cannot
+ * be `undefined`). Distinct shas per branch, so a page that read one branch's field on the
+ * other cannot pass.
+ */
+describe('run page SSR — versionSha for the versioned frame path', () => {
+  const PUBLIC_SHA = '1f2e3d4c5b6a79880716253443526170abcdef12';
+  const PRIVATE_SHA = 'abcdef1234567890fedcba0987654321a1b2c3d4';
+  const PUBLIC_PAGE = {
+    appBlockId: 'apb_public',
+    blockId: 'public-app',
+    appId: 'app_public',
+    iframeSrc: 'https://public-app.civit.ai',
+    sandbox: 'allow-scripts',
+    trustTier: 'unverified',
+    name: 'Public App',
+    pageTitle: 'Public',
+    scopes: [],
+    contentRating: 'g',
+    bootSkeleton: false,
+  };
+
+  it('public branch: versionSha is the resolver currentVersionSha', async () => {
+    mockResolvePageBlockBySlug.mockResolvedValue({ ...PUBLIC_PAGE, currentVersionSha: PUBLIC_SHA });
+    const res = await resolver()(ctx());
+    expect(res.props?.versionSha).toBe(PUBLIC_SHA);
+    expect(res.props?.iframeSrc).toBe('https://public-app.civit.ai');
+  });
+
+  it('private branch: versionSha is the resolver currentVersionSha', async () => {
+    mockResolvePrivateRunAccess.mockResolvedValue({
+      allowed: true,
+      audience: 'moderator',
+      block: BLOCK({ currentVersionSha: PRIVATE_SHA }),
+    });
+    const res = await resolver()(ctx());
+    expect(res.props?.versionSha).toBe(PRIVATE_SHA);
+  });
+
+  it('no sha on either branch: null, never undefined', async () => {
+    mockResolvePageBlockBySlug.mockResolvedValue(PUBLIC_PAGE);
+    expect((await resolver()(ctx())).props?.versionSha).toBeNull();
+    mockResolvePageBlockBySlug.mockResolvedValue(null);
+    mockResolvePrivateRunAccess.mockResolvedValue({
+      allowed: true,
+      audience: 'moderator',
+      block: BLOCK(),
+    });
+    expect((await resolver()(ctx())).props?.versionSha).toBeNull();
+  });
+});
