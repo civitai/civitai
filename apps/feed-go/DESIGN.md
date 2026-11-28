@@ -1826,16 +1826,26 @@ it had before its port. What differs from an `ids` batch:
   order, as Node's are commented out. Its gallery gates (withheld, held level) run first, as for a
   version. The page is cached 10 minutes under the `images-model:<id>` bust tag in this service's own
   page cache (only with `IMAGE_QUERY_CACHING` on), as Node caches it in its own.
-  **Cost.** Postgres plans this join by reading every resource row of the model's versions before it
-  sorts and limits (the `ORDER BY … LIMIT` is not pushed into the per-version index scans), so the
-  query's time grows with the model's whole gallery, not with the page. Measured on a production
-  replica (plain `EXPLAIN ANALYZE`, PG level): a model with a few hundred thousand resource rows took
-  about 2-3 s cold and 0.2 s warm; most of the models the route is actually asked for ran past 6 s,
-  and the largest past 20 s (Node's statement timeout, which it answers with an empty page). Past the
-  request budget (`FEED_GO_REQUEST_BUDGET_MS`) the computation is cancelled, its query with it, and
-  the request is handed to Node, which runs the same query again. So this switch moves load off Node
-  only for the models whose page fits the budget, and without the page cache each request runs the
-  query where Node, caching, would not.
+  **Cost.** Postgres plans Node's join by reading every resource row of the model's versions before
+  it sorts and limits (the `ORDER BY … LIMIT` is not pushed into the per-version index scans), so
+  that query's time grows with the model's whole gallery, not with the page. This service sends the
+  same page read per version instead (`ImagesQuery.PerVersionTopN`, set by the legacy path only):
+  `SELECT t.* FROM "ModelVersion" mv CROSS JOIN LATERAL (<the page query, scoped to irr."modelVersionId"
+  = mv.id, ordered by irr."imageId", LIMIT skip + limit + 1>) t WHERE mv."modelId" = <model> ORDER
+  BY t."cursorId" OFFSET <skip> LIMIT limit + 1`. Each version's slice is a newest-first (oldest-first
+  for Oldest) scan of the `("modelVersionId", "imageId" DESC)` resource index that stops after its
+  limit. It is the same page: a row of the page is among its own version's first skip + limit + 1 in
+  the page's order (one resource row per image and version, the primary key), and an image two
+  versions share is still one row per version, the rows identical (nothing per version is selected).
+  Oldest's order and cursor are spelled `irr."imageId"`, the same value as `i."id"`, so the cursor
+  bounds the index scan. `page` is at most 1000 / limit (`v1-page-limit`), so a slice reads at most
+  1001 matching rows. Measured on a production replica (plain `EXPLAIN (ANALYZE, BUFFERS)`, PG level,
+  limit 100, first page, cold then warm): from 59k to 21M resource rows, 31 ms-2.6 s cold and
+  7-218 ms warm, where Node's join took 1.9-21 s or ran past 30 s on the largest three (cancelled; past
+  Node's own statement timeout, which it answers with an empty page). A `page=10` request reads up
+  to 1001 rows per version: up to 6 s cold and 0.7 s warm on the largest; a cursor page stays a
+  first page's cost. The rows were byte-identical to Node's join on every model where it finished,
+  pages with shared images included.
 - `requiringMeta` reaches getAllImages on every legacy shape (the handler spreads it in `data`):
   `i."blockedFor" = 'AiNotVerified'` after the visibility gates (Node drops those gates for it on the
   red domain only, and this route passes no domain), so a signed-out page is empty and an owner sees

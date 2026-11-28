@@ -178,8 +178,8 @@ type Config struct {
 	// V1ImagesServeModelOnly is FEED_GO_V1_IMAGES_SERVE_MODEL_ONLY (default off): compute a `GET
 	// /api/v1/images` request with a `modelId` and no `modelVersionId` on the legacy Postgres path
 	// (feed.V1Ports.ModelOnly). Off, such a request is the `v1-model-only` fallback, as before the port.
-	// Keep it off for now: the query reads the model's whole gallery, so most requested models run past
-	// RequestBudget and are handed to Node, which runs the query again (DESIGN.md §13.2.1, Cost).
+	// The page is read per version of the model (feed.ImagesQuery.PerVersionTopN), the same rows as
+	// Node's join without reading the model's whole gallery first (DESIGN.md §13.2.1, Cost).
 	V1ImagesServeModelOnly bool
 	// AnswerRegionBlocked is FEED_GO_ANSWER_REGION_BLOCKED (default off): answer a public request from a
 	// region on REGION_BLOCK_CONFIG with the app's own 451 here (server.Server.AnswerRegionBlocked).
