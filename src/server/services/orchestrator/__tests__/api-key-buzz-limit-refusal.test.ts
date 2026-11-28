@@ -103,7 +103,7 @@ type Site = [
   /** What this site gives for a failure that is not the over-limit reply, by status and detail. */
   (status: number, detail: string) => unknown
 ];
-// Each maps a 403 to its insufficient-funds BAD_REQUEST, as on main.
+/// Each site maps a 400 and a 403 to a BAD_REQUEST carrying the orchestrator's detail.
 const asBefore = (_status: number, message: string) => ({ code: 'BAD_REQUEST', message });
 const submitBody = { steps: [] } as never;
 const sites: Site[] = [
