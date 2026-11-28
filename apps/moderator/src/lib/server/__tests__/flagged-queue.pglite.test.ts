@@ -148,6 +148,18 @@ describe('Needs review: held detections', () => {
     expect(flag.redetected).toMatchObject({ textHash: 'new', reason: 'r' });
   });
 
+  it("marks a lead whose flag entry is this detection's own unfinished keep", async () => {
+    // The keep wrote the flag (workflow and text of the detection) and left the marker.
+    await seedModel(8, 1, {
+      minor: { workflowId: 'wf', textHash: 'new', redetected: redetected('2026-10-05T00:00:00Z') },
+    });
+    const { items } = await needsReview({ limit: 10 });
+    const own = (id: number) =>
+      items.find((r) => r.modelId === id)!.flags.map((f) => f.redetected?.unfinishedKeep);
+    expect(own(8)).toEqual([true]);
+    expect(own(1)).toEqual([false]);
+  });
+
   it('flags the models whose owner also has an open appeal', async () => {
     await pg.exec(`INSERT INTO "Appeal" VALUES
       (1, 'Model', 1, 'Pending'), (2, 'Model', 2, 'Approved')`);

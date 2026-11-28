@@ -38,6 +38,7 @@
   import TriageDecisionBar from '$lib/components/triage/TriageDecisionBar.svelte';
   import TriageKeyButton from '$lib/components/triage/TriageKeyButton.svelte';
   import { waiting } from '$lib/minor-flags/appeal-row';
+  import { MOOT_LEAD_LISTED_NOTE } from '$lib/minor-flags/moot-lead';
   import { modelFlagDetail } from '$lib/minor-flags/model-detail-request';
   import { MODEL_FLAGS_APPEALS_PATH } from '$lib/minor-flags/paths';
   import type { MinorFlagAppealRow } from '$lib/server/minor-hash.service';
@@ -194,10 +195,15 @@
         class="flex items-start gap-2 rounded-md border border-amber-500/50 bg-amber-500/10 p-2.5 text-xs leading-[1.45] text-amber-200"
       >
         <IconAlertTriangle class="mt-px size-3.5 shrink-0" aria-hidden="true" />
-        <p class="m-0">
-          Needs review also lists this model, for a held detection or a file match. Rule on that
-          first: a real person or minor flag it confirms keeps these settings locked.
-        </p>
+        <div class="space-y-1">
+          <p class="m-0">
+            Needs review also lists this model, for a held detection or a file match. Rule on that
+            first: a real person or minor flag it confirms keeps these settings locked.
+          </p>
+          {#if row.needsReviewMootLead}
+            <p class="m-0" data-testid="moot-lead">{MOOT_LEAD_LISTED_NOTE}</p>
+          {/if}
+        </div>
       </div>
     {/if}
     <OwnerSaysCard

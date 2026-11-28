@@ -631,6 +631,50 @@ describe('also in Auto-flagged and Needs review', () => {
     expect((await also())[4]).toEqual([false, false]);
   });
 
+  it('marks a held detection on a flag the model already carries as a moot lead', async () => {
+    const moot = async () => {
+      const { items } = await getMinorFlagAppealsForReview({ limit: 50 });
+      return Object.fromEntries(items.map((i) => [i.modelId, i.needsReviewMootLead]));
+    };
+    const lead = (label: 'minor' | 'poi') =>
+      db.query(`UPDATE "Model" SET meta = $1::jsonb WHERE id = 4`, [
+        JSON.stringify({
+          textScanFlags: { [label]: { redetected: { workflowId: 'w', textHash: 'h' } } },
+        }),
+      ]);
+    // Not flagged: the lead is the decision itself, not a moot one.
+    await lead('minor');
+    expect((await moot())[4]).toBe(false);
+    // Flagged on the label it waits on: ruling it closes the lead and nothing else.
+    await db.query(`UPDATE "Model" SET minor = true WHERE id = 4`);
+    expect((await moot())[4]).toBe(true);
+    expect((await also())[4]).toEqual([false, true]);
+    // Flagged, but the lead is for the other label: that one would still apply.
+    await lead('poi');
+    expect((await moot())[4]).toBe(false);
+    // Flagged on the label it waits on, real person this time.
+    await db.query(`UPDATE "Model" SET poi = true WHERE id = 4`);
+    expect((await moot())[4]).toBe(true);
+  });
+
+  it("is not moot while the label entry is this detection's own unfinished keep", async () => {
+    const moot = async () => {
+      const { items } = await getMinorFlagAppealsForReview({ limit: 50 });
+      return items.find((i) => i.modelId === 4)!.needsReviewMootLead;
+    };
+    const marker = { workflowId: 'w', textHash: 'h' };
+    const setEntry = (entry: Record<string, unknown>) =>
+      db.query(`UPDATE "Model" SET minor = true, meta = $1::jsonb WHERE id = 4`, [
+        JSON.stringify({ textScanFlags: { minor: { ...entry, redetected: marker } } }),
+      ]);
+    // A keep that wrote the flag and left the marker: Keep resumes it and Dismiss refuses.
+    await setEntry({ workflowId: 'w', textHash: 'h' });
+    expect(await moot()).toBe(false);
+    // Control: a flag from another route or an earlier keep, so this lead only closes.
+    await setEntry({ workflowId: 'older', textHash: 'older-h' });
+    expect(await moot()).toBe(true);
+  });
+
   it('drops a hash flag once its review window has closed', async () => {
     await db.query(`UPDATE "Model" SET meta = $1::jsonb WHERE id = 2`, [
       JSON.stringify(snapshot('auto', '2020-01-01T00:00:00Z')),

@@ -151,6 +151,9 @@ beforeAll(async () => {
     CREATE TABLE "Appeal" (
       id serial PRIMARY KEY, "entityType" text, "entityId" int, status text, category text
     );
+    CREATE TABLE "ModActivity" (
+      id serial PRIMARY KEY, "userId" int, activity text NOT NULL, "entityType" text, "entityId" int
+    );
     CREATE TABLE "EntityModeration" (
       "entityType" text, "entityId" int, "workflowId" text, result jsonb,
       PRIMARY KEY ("entityType", "entityId")
@@ -1390,6 +1393,58 @@ describe('review mode: a first detection waits for a moderator', () => {
         payload: expect.objectContaining({ promptIds: { p: 1 } }),
       })
     );
+  });
+
+  describe('closing a lead on a model already flagged', () => {
+    const activity = async () =>
+      (
+        await holder.db.query(
+          `SELECT "userId", activity, "entityType", "entityId" FROM "ModActivity"`
+        )
+      ).rows;
+
+    beforeEach(async () => {
+      await holder.db.exec(`DELETE FROM "ModActivity"`);
+    });
+
+    it.each([
+      ['dismiss', false],
+      ['keep', true],
+    ])('records who closed it on %s, once, with the label', async (_, keep) => {
+      await hold();
+      await holder.db.query(`UPDATE "Model" SET minor = true WHERE id = $1`, [MODEL_ID]);
+
+      expect(await resolve('minor', keep)).toBe('closed');
+
+      expect(await activity()).toEqual([
+        {
+          userId: 9,
+          activity: 'textScanRedetection:closed:minor',
+          entityType: 'model',
+          entityId: MODEL_ID,
+        },
+      ]);
+    });
+
+    it('records nothing when the lead is dismissed on an unflagged model', async () => {
+      await hold();
+      expect(await resolve('minor', false)).toBe('dismissed');
+      expect(await activity()).toEqual([]);
+    });
+
+    it('still closes, and logs the miss, when the activity row cannot be written', async () => {
+      await hold();
+      await holder.db.query(`UPDATE "Model" SET minor = true WHERE id = $1`, [MODEL_ID]);
+      await holder.db.exec(`ALTER TABLE "ModActivity" RENAME TO "ModActivityGone"`);
+      try {
+        expect(await resolve('minor', false)).toBe('closed');
+      } finally {
+        await holder.db.exec(`ALTER TABLE "ModActivityGone" RENAME TO "ModActivity"`);
+      }
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'closed lead activity not recorded', moderatorId: 9 })
+      );
+    });
   });
 
   describe('a first write that matches nothing for a correct reason', () => {
