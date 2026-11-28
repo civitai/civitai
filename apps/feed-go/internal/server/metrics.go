@@ -404,6 +404,12 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			}
 		}
 	}
+	for _, v := range V1ImagesViewerClasses {
+		m.ShadowViewer.WithLabelValues(EndpointV1Images, v, "match")
+		for _, r := range []string{"match", "mismatch"} {
+			m.ShadowResponseViewer.WithLabelValues(EndpointV1Images, v, r)
+		}
+	}
 	reg.MustRegister(m.ShadowViewer, m.ShadowResponseViewer)
 	reg.MustRegister(m.Requests, m.Fallbacks, m.Duration, shadowResults, shadowDiffs, shadowResponse, m.ShadowDropped, m.ServeParity, m.EvalCapture, m.EvalCaptureUnresolved, m.EvalCaptureRowsDropped,
 		m.ShadowPhase, m.ShadowPhaseCPU, m.ShadowPhaseSolo, m.ShadowPhaseSoloWall,

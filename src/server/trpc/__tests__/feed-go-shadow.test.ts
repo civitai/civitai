@@ -178,6 +178,7 @@ describe('readFeedGoShadowConfig', () => {
       probeV1ImagesRate: 0,
       v1ModelsCredentials: false,
       v1ModelsQuery: false,
+      v1ImagesCredentials: false,
       corpusOnlyRate: 0,
     });
   });
@@ -213,6 +214,7 @@ describe('readFeedGoShadowConfig', () => {
       probeV1ImagesRate: 0,
       v1ModelsCredentials: false,
       v1ModelsQuery: false,
+      v1ImagesCredentials: false,
       corpusOnlyRate: 0,
     });
   });
@@ -229,6 +231,22 @@ describe('readFeedGoShadowConfig', () => {
     ] as const) {
       expect(
         readFeedGoShadowConfig({ FEED_GO_SHADOW_V1_MODELS_CREDENTIALS: value }).v1ModelsCredentials
+      ).toBe(want);
+    }
+  });
+
+  it('reads FEED_GO_SHADOW_V1_IMAGES_CREDENTIALS as on only for true or 1', () => {
+    for (const [value, want] of [
+      [undefined, false],
+      ['', false],
+      ['false', false],
+      ['yes', false],
+      ['true', true],
+      [' TRUE ', true],
+      ['1', true],
+    ] as const) {
+      expect(
+        readFeedGoShadowConfig({ FEED_GO_SHADOW_V1_IMAGES_CREDENTIALS: value }).v1ImagesCredentials
       ).toBe(want);
     }
   });
@@ -1056,6 +1074,90 @@ describe('createFeedGoShadow — GET /api/v1/images', () => {
     await h.flush();
     expect(h.outcomes).toEqual(['skipped_no_capture', 'skipped_no_capture']);
     expect(h.fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('createFeedGoShadow — GET /api/v1/images with an API credential', () => {
+  const KEY = 'k-live-images-secret-0123';
+  const DESCRIBED = 'key:described-images';
+  const keyed = (overrides: Record<string, unknown> = {}) =>
+    restRequest({
+      headers: {
+        host: 'civitai.com',
+        cookie: '__Secure-civ-token=t; x=y',
+        'cf-ipcountry': 'GB',
+        authorization: `Bearer ${KEY}`,
+      },
+      ...overrides,
+    });
+  const begin = (
+    h: ReturnType<typeof harness>,
+    req: ReturnType<typeof restRequest>,
+    credential?: () => string | undefined
+  ) => {
+    const sample = h.shadow.beginV1Images(req, { credential });
+    if (sample) {
+      h.shadow.captureV1Images(sample, { items: [], metadata: {} });
+      h.shadow.finish(sample, 200);
+    }
+    return sample;
+  };
+
+  it('off (the default): counted skipped_credential and never sent, description or not', async () => {
+    const h = harness();
+    expect(begin(h, keyed(), () => DESCRIBED)).toBeUndefined();
+    await h.flush();
+    expect(h.fetchMock).not.toHaveBeenCalled();
+    expect(h.outcomes).toEqual(['skipped_credential']);
+    expect(h.endpoints).toEqual(['v1-images']);
+  });
+
+  it("[id]'s switch alone does not mirror the images route", async () => {
+    const h = harness({ config: { v1ModelsCredentials: true } });
+    expect(begin(h, keyed(), () => DESCRIBED)).toBeUndefined();
+    await h.flush();
+    expect(h.outcomes).toEqual(['skipped_credential']);
+  });
+
+  it('on: sent with the description in place of the key, the session cookie kept', async () => {
+    const h = harness({ config: { v1ImagesCredentials: true } });
+    expect(begin(h, keyed(), () => DESCRIBED)).toBeDefined();
+    await h.flush();
+    expect(h.outcomes).toEqual(['sent']);
+    const [url, init] = h.fetchMock.mock.calls[0];
+    expect(url).toBe(V1_URL);
+    const body = init.body as string;
+    expect(JSON.parse(body).headers).toEqual({
+      host: 'civitai.com',
+      'cf-ipcountry': 'GB',
+      cookie: '__Secure-civ-token=t',
+      authorization: 'present',
+      'x-feed-go-credential': DESCRIBED,
+    });
+    expect(body).not.toContain(KEY);
+  });
+
+  it.each([
+    [
+      'a ?token= (the query string and nextPage carry it)',
+      keyed({ url: '/api/v1/images?token=KEY&limit=2', query: { token: 'KEY', limit: '2' } }),
+      () => DESCRIBED,
+    ],
+    ['no description', keyed(), undefined],
+    ['an empty description', keyed(), () => undefined],
+    [
+      'a throwing description',
+      keyed(),
+      () => {
+        throw new Error('x');
+      },
+    ],
+  ] as const)('on: %s is still skipped_credential', async (_name, req, credential) => {
+    const h = harness({ config: { v1ImagesCredentials: true } });
+    expect(begin(h, req, credential)).toBeUndefined();
+    await h.flush();
+    expect(h.fetchMock).not.toHaveBeenCalled();
+    expect(h.outcomes).toEqual(['skipped_credential']);
   });
 });
 

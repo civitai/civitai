@@ -325,6 +325,31 @@ func (r *Resolver) resolveBearer(ctx context.Context, key string) (*SessionUser,
 	if apiKey.scope&(ScopeClientCredentialsOnly|ScopeRunnerOnly) != 0 {
 		return nil, nil
 	}
+	u, err := r.keyUser(ctx, apiKey)
+	if err != nil || u == nil {
+		return nil, err
+	}
+	// The one credential with a cookie session's views (isFullScopeUserKey): a full-scope personal key
+	// not issued to an OAuth client (the cache holds no OAuth key). Any other key changes the moderator
+	// and owner views (withModeratorRightsFor, credentialViews) and is held to each procedure's scope.
+	if !apiKey.fullUserKey() {
+		return nil, fallback.New("bearer-scoped-key")
+	}
+	return u, nil
+}
+
+// fullUserKey is isFullScopeUserKey for a cached key: a personal (`User`) key holding exactly
+// TokenScope.Full. A cached key is never an OAuth client's (readPrincipal refuses a clientId), so its
+// subject is always `apiKey`.
+func (k *cachedAPIKey) fullUserKey() bool {
+	return k.typ == apiKeyTypeUser && k.scope == ScopeFull
+}
+
+// keyUser is getBearerTokenUser for a cached key: the session user the key stands for, marked as an API
+// key's (SessionUser.APIKey), or nil (signed out) for a banned or memorialized user or the moderation
+// account. A system account with moderator access holding a write scope falls back
+// (`bearer-system-account`): the app reads its access from the primary database.
+func (r *Resolver) keyUser(ctx context.Context, apiKey *cachedAPIKey) (*SessionUser, error) {
 	u, err := r.user(ctx, apiKey.userID)
 	if err != nil {
 		return nil, err
@@ -350,12 +375,6 @@ func (r *Resolver) resolveBearer(ctx context.Context, key string) (*SessionUser,
 		if sys, ok := systemAccountMeta(u.raw["meta"]); sys || !ok {
 			return nil, fallback.New("bearer-system-account")
 		}
-	}
-	// The one credential with a cookie session's views (isFullScopeUserKey): a full-scope personal key
-	// not issued to an OAuth client (the cache holds no OAuth key). Any other key changes the moderator
-	// and owner views (withModeratorRightsFor, credentialViews) and is held to each procedure's scope.
-	if apiKey.typ != apiKeyTypeUser || apiKey.scope != ScopeFull {
-		return nil, fallback.New("bearer-scoped-key")
 	}
 	out := *u
 	out.APIKey = true

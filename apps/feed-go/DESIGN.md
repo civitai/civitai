@@ -2082,6 +2082,62 @@ the race (no `raced` entries, as model.getAll's).
 again, with nothing computed. Routing public traffic to the path (a weighted ingress route in the
 infrastructure repo) is a separate step; with the switch on and no route, nothing is served.
 
+### 13.8.1 API credentials (`FEED_GO_V1_IMAGES_BEARER_AUTH`, `FEED_GO_V1_IMAGES_SERVE_BEARER`, each default off)
+
+Off, a request carrying an API credential (any Authorization line, any non-empty `token` value) is
+the `bearer-token` fallback on both paths, as before. Each switch turns the credential's decision on
+for one path: `FEED_GO_V1_IMAGES_BEARER_AUTH` for the shadow, `FEED_GO_V1_IMAGES_SERVE_BEARER` for the
+public route (which also needs `FEED_GO_SERVE_V1_IMAGES`). Both read keys with the `FEED_GO_BEARER_AUTH`
+resolver and refuse startup without it.
+
+**What Node does.** `handleImagesRequest` reads `getApiAuthSession({ whenBanned: 'anonymous', scope:
+{ anyOf: [MediaRead, AIServicesRead] } })`: the credential is read first (`readRequestBearerToken`,
+`authorization.split(' ')[1]`, else `?token=` unless it is the webhook token), and with one the
+cookies are never read; `getSessionFromBearerToken` reads the principal cache (the primary on a
+miss) and may write `lastUsedAt`; `runImageSearch` then reads with `credentialViews`: a full-scope
+personal key gets a cookie session's views (`asOwner`, and `asModerator` for a moderator); any other
+key gets neither (its own unpublished images are withheld from it, its own feed keeps the browsing
+addon's tag exclusions), while its user's id is still the feed query's `currentUserId` and
+getAllImages' `userId` (a page of its own content is a personalized page).
+
+**What is ported** (`auth.Resolver.ImagesCredential`): the same reading over the principal cache
+only, with `feed.V1Request.Viewer` (the views' viewer: nil for a scoped key) apart from
+`V1Request.SessionUserID` (the session user: the feed query's `viewerId` and
+`ImagesQuery.SessionUserID`, which decides `Built.PersonalizedViewerID`). A provider or service token
+and a client-credentials or runner key are signed out; a banned or memorialized user and the
+moderation account are signed out. Every case whose answer is not in the cache, or turns on a setting
+this service does not read, falls back:
+
+| Case | Reason |
+|---|---|
+| a miss, a revocation, an OAuth client's key, an expired or expiring key, a `lastUsedAt` write due | `bearer-key-cache-miss`, `bearer-key-revoked`, `bearer-key-uncacheable`, `bearer-key-expiry`, `bearer-last-used` |
+| a `?token=` (the webhook-token comparison needs a secret) | `bearer-query-token` |
+| several Authorization lines; a key with a byte outside printable ASCII | `bearer-multiple-headers`, `bearer-malformed` |
+| a header with no token part (the app resolves the cookies) | `v1-images-key-none` |
+| a scoped key short of MediaRead and AIServicesRead (answered signed out or as the user by `REST_SCOPE_ENFORCE`) | `v1-images-key-scope` |
+| a scoped key of a moderator (`REST_SCOPE_ENFORCE=enforce` withholds the flag) | `v1-images-key-scoped-moderator` |
+| a system account's write key | `bearer-system-account` |
+
+A session cookie beside a key is still handed back on the public route (`v1-images-session-cookie`).
+The headers are PublicEndpoint's credentialed arm (`private`, `Vary: Authorization, Cookie`).
+
+**The shadow.** The Node sampler mirrors a credentialed request only with
+`FEED_GO_SHADOW_V1_IMAGES_CREDENTIALS` (default off; a `?token=` never, since `nextPage` keeps it),
+sending the key's description in `x-feed-go-credential` (`apiCredentialDescriptor`: `key:<generateSecretHash>`,
+`provider`, `service` or `none`), never the key. `SyntheticV1Request` moves it onto the rebuilt
+request's context, where only `ImagesCredential` reads it.
+
+**Viewer classes.** Every images compare is counted under its viewer class
+(`feed_go_shadow_compare_viewer_total`, `feed_go_shadow_response_viewer_total`;
+`V1ImagesViewerClasses`): the tRPC feeds' classes without a credential, and `api-key` (a full-scope
+key), `api-key-scoped` and `api-key-anon` (a credential that stands for no session) with one.
+
+**Serve-parity** (`FEED_GO_SERVE_PARITY_V1_IMAGES`, default off; needs `FEED_GO_V1_IMAGES_FALLBACK_URL`):
+the §7.2 sampler also replays the images route's served answers to that route's own Node app. It is
+the one route whose API-key answers are replayed with their credential (`parityReplaysCredential`):
+the answer is the key's user's, which is what the replay compares, and it goes only to the Node app
+the request would have been handed back to. Every other credentialed answer stays `skipped_credential`.
+
 ## 14. `image.getInfinite` (tRPC, shadow; served only behind `FEED_GO_SERVE_INFINITE`, default off)
 
 The flat image feed (`/images`, a creator's images, a post's carousel tail, a tag page):

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/civitai/civitai/apps/feed-go/internal/auth"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
 	"github.com/civitai/civitai/apps/feed-go/internal/tracing"
@@ -21,8 +22,11 @@ import (
 // V1ImagesFallback (FEED_GO_V1_IMAGES_FALLBACK_URL), the route's one upstream (never V1Fallback). No origin check: PublicEndpoint answers any origin
 // (CORS `*`, no credentials), and the route has no block-scope middleware.
 //
-// Signed-out callers only: a request presenting any credential (an Authorization header, a `?token=`,
-// a session cookie) is handed back to Node before anything is computed, as the model list does.
+// Signed-out callers only, by default: a request presenting any credential (an Authorization header, a
+// `?token=`, a session cookie) is handed back to Node before anything is computed, as the model list
+// does. With ServeV1ImagesBearer (FEED_GO_V1_IMAGES_SERVE_BEARER) an API credential is decided instead,
+// as getApiAuthSession decides it (computeV1For, auth.Resolver.ImagesCredential; DESIGN.md §13.8.1),
+// and the answer is the key's user's; a session cookie is still handed back.
 
 // errV1ImagesOff is the `v1-images-off` fallback: the public images route with ServeV1Images off.
 var errV1ImagesOff = fallback.New("v1-images-off")
@@ -59,10 +63,14 @@ func (s *Server) serveV1ImagesLabelled(w http.ResponseWriter, r *http.Request) {
 			served = "served_empty"
 		}
 		writeV1Models(w, c, notModified(r, c))
+		// The serve-side parity sample (off unless ServeParity.V1ImagesUpstream is set) copies what it
+		// compares before the release; its replay starts only after the answer is written.
+		replay := s.sampleParity(r, endpoint, c, nil)
 		c.release()
 		setOutcome(span, served)
 		s.Metrics.Requests.WithLabelValues(endpoint, "serve", served).Inc()
 		tracing.Observe(ctx, s.Metrics.Duration.WithLabelValues(endpoint, "serve", served), time.Since(start).Seconds())
+		s.startParity(replay) //nolint:contextcheck // the replay runs after the answer, on the server's background context (Close cancels it): it must outlive the request
 		return
 	}
 	if s.answerRegionBlocked(ctx, span, start, w, endpoint, err) {
@@ -75,8 +83,9 @@ func (s *Server) serveV1ImagesLabelled(w http.ResponseWriter, r *http.Request) {
 }
 
 // v1ImagesCompute is the compute of the images route, the shadow's and the public route's alike
-// (serving tells them apart): the request checks of v1ModelsPreflight (not a GET, any API credential),
-// then, serving only, those of v1ImagesServeOnly; the port (computeV1, which serving also refuses a
+// (serving tells them apart): the request checks of v1ModelsPreflight (not a GET, any API credential;
+// with the path's images bearer switch on, v1ImagesBearer, only the method: the port decides the
+// credential), then, serving only, those of v1ImagesServeOnly; the port (computeV1, which serving also refuses a
 // resolved session: computeV1For); then the body as JSON.stringify writes it (v1models.NodeBody) and
 // the headers Node sends with it (v1models.ResponseHeaders with the handler's own no-store above SFW).
 // Serving, a body with no known JSON.stringify text falls back (`v1-images-invalid-utf8`); in the
@@ -87,8 +96,13 @@ func (s *Server) v1ImagesCompute(serving bool) func(context.Context, *http.Reque
 		inner = s.computeV1Fn
 	}
 	return func(ctx context.Context, r *http.Request) (*computed, error) {
-		if err := v1ModelsPreflight(r); err != nil {
-			return nil, err
+		if !s.v1ImagesBearer(serving) {
+			if err := v1ModelsPreflight(r); err != nil {
+				return nil, err
+			}
+		} else if r.Method != http.MethodGet {
+			// With the images bearer switch on, the credential is decided in the port (computeV1For).
+			return nil, fallback.New("method")
 		}
 		if serving {
 			if err := v1ImagesServeOnly(r); err != nil {
@@ -126,6 +140,25 @@ func (s *Server) v1ImagesCompute(serving bool) func(context.Context, *http.Reque
 		}, body)
 		return c, nil
 	}
+}
+
+// v1ImagesBearer reports whether the images route decides an API credential on this path instead of
+// falling back `bearer-token`: the public route with ServeV1ImagesBearer, the shadow with
+// V1ImagesBearerAuth.
+func (s *Server) v1ImagesBearer(serving bool) bool {
+	if serving {
+		return s.ServeV1ImagesBearer
+	}
+	return s.V1ImagesBearerAuth
+}
+
+// v1APICredential reports whether an images request carries an API credential, read as loosely as
+// v1ModelsPreflight reads one: any Authorization line (an empty one included) or any non-empty `token`
+// query value (auth.AnyQueryToken). PublicEndpoint's own test (requestCarriesCallerCredentials) is no
+// looser, and the looser reading only ever sends a request to ImagesCredential, which falls back on
+// whatever it cannot read.
+func v1APICredential(r *http.Request) bool {
+	return len(r.Header.Values("Authorization")) > 0 || auth.AnyQueryToken(r.URL.RawQuery)
 }
 
 // v1Ports are the images route's port switches (none without the port's dependencies).

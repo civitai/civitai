@@ -43,9 +43,10 @@ const (
 const ParityReplayHeader = "X-Feed-Go-Parity-Replay"
 
 // ParityEndpoints are the routes the sampler replays: the public tRPC routes whose answers the shadow
-// comparison describes, and the two public model routes (REST: Node's plain-JSON body and the REST
-// header list are compared, as their shadow samples are).
-var ParityEndpoints = []string{EndpointAsPosts, EndpointInfinite, EndpointModelGetAll, EndpointV1Models, EndpointV1ModelsID}
+// comparison describes, the two public model routes and the images route (REST: Node's plain-JSON body
+// and the REST header list are compared, as their shadow samples are). The images route is replayed
+// only with its own upstream (ServeParity.V1ImagesUpstream, FEED_GO_SERVE_PARITY_V1_IMAGES).
+var ParityEndpoints = []string{EndpointAsPosts, EndpointInfinite, EndpointModelGetAll, EndpointV1Models, EndpointV1ModelsID, EndpointV1Images}
 
 // Outcomes of feed_go_serve_parity_total. Every sampled served request ends in exactly one.
 const (
@@ -106,6 +107,11 @@ type ServeParity struct {
 	// its own proxy to the Node app those routes hand back to (FEED_GO_V1_FALLBACK_URL). nil: those
 	// routes are not replayed.
 	V1Upstream http.Handler
+	// V1ImagesUpstream answers the replay of the public images route (`/api/v1/images`): its own proxy
+	// to the Node app that route hands back to (FEED_GO_V1_IMAGES_FALLBACK_URL), set only with
+	// FEED_GO_SERVE_PARITY_V1_IMAGES. nil: the route is not replayed. It is the one route whose
+	// API-key answers are replayed too (parityReplaysCredential).
+	V1ImagesUpstream http.Handler
 	// Queue holds one slot per replay in flight (DefaultServeParityWorkers); a full queue drops the
 	// replay (dropped_queue). Never waited on.
 	Queue chan struct{}
@@ -118,11 +124,13 @@ type ServeParity struct {
 // upstream is the Node app a replay of endpoint goes to: the one the route hands its fallbacks to
 // (V1Upstream for the public model routes, whose hand-backs go to V1Fallback; Upstream for the tRPC
 // ones, Fallback), never another, so a replay reaches no app the request would not have reached as a
-// hand-back. nil for any other endpoint (v1-images and site-search hand back elsewhere).
+// hand-back. nil for any other endpoint (site-search hands back elsewhere).
 func (p *ServeParity) upstream(endpoint string) http.Handler {
 	switch endpoint {
 	case EndpointV1Models, EndpointV1ModelsID:
 		return p.V1Upstream
+	case EndpointV1Images:
+		return p.V1ImagesUpstream
 	case EndpointAsPosts, EndpointInfinite, EndpointModelGetAll:
 		return p.Upstream
 	}
@@ -211,8 +219,9 @@ func (s *Server) sampleParity(r *http.Request, endpoint string, c *computed, vie
 		return nil
 	}
 	// A credential Node treats as its own viewer (an API key, a `?token=`) is never replayed: the
-	// replay would present it again, and its answer can depend on the key's scopes.
-	if parityCredential(r) {
+	// replay would present it again, and its answer can depend on the key's scopes. The images route's
+	// API-key answers are the exception (parityReplaysCredential).
+	if parityCredential(r) && !parityReplaysCredential(endpoint, c) {
 		s.Metrics.ServeParity.WithLabelValues(endpoint, ParitySkippedCredential).Inc()
 		return nil
 	}
@@ -246,6 +255,23 @@ func (s *Server) sampleParity(r *http.Request, endpoint string, c *computed, vie
 		rep.goBody = bytes.Clone(c.payload)
 	}
 	return rep
+}
+
+// parityReplaysCredential reports whether a served answer to a credentialed request is replayed with
+// its credential: on the images route only, for an answer computed for the key (an API-key viewer
+// class: ServeV1ImagesBearer). That route's answer is the key's user's, which is exactly what the
+// replay compares, and the replay goes only to the Node app the request would have been handed back
+// to, which reads the key from the principal cache as the served compute did (a served key had no
+// lastUsedAt write due). Every other credentialed answer is still skipped_credential.
+func parityReplaysCredential(endpoint string, c *computed) bool {
+	if endpoint != EndpointV1Images || c == nil {
+		return false
+	}
+	switch c.viewerClass {
+	case V1ViewerAPIKey, V1ImagesViewerAPIKeyScoped, V1ImagesViewerAPIKeyAnon:
+		return true
+	}
+	return false
 }
 
 func isParityEndpoint(endpoint string) bool {

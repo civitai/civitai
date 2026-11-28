@@ -253,6 +253,12 @@ export type FeedGoShadowConfig = {
    */
   v1ModelsCredentials?: boolean;
   /**
+   * `FEED_GO_SHADOW_V1_IMAGES_CREDENTIALS` (`true` or `1`; default off): mirror a `GET /api/v1/images`
+   * request with an Authorization credential, described rather than forwarded
+   * (`apiCredentialDescriptor`), instead of counting it `skipped_credential`. A `?token=` never.
+   */
+  v1ImagesCredentials?: boolean;
+  /**
    * `FEED_GO_SHADOW_V1_MODELS_QUERY` (`true` or `1`; default off): mirror a `GET /api/v1/models`
    * request with a text `query` (the search path). Off, such a request is never sampled, as before
    * feed-go answered it.
@@ -339,6 +345,9 @@ export function readFeedGoShadowConfig(env: Env = process.env): FeedGoShadowConf
     ),
     v1ModelsQuery: ['true', '1'].includes(
       (env.FEED_GO_SHADOW_V1_MODELS_QUERY ?? '').trim().toLowerCase()
+    ),
+    v1ImagesCredentials: ['true', '1'].includes(
+      (env.FEED_GO_SHADOW_V1_IMAGES_CREDENTIALS ?? '').trim().toLowerCase()
     ),
     corpusOnlyRate: envNumber(env.FEED_GO_SHADOW_CORPUS_ONLY_RATE, 0, 0, 1),
     rate: envNumber(env.FEED_GO_SHADOW_SAMPLE_RATE, 0, 0, 1),
@@ -913,17 +922,21 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
   }
 
   /**
-   * The header describing `[id]`'s credential (FEED_GO_SAMPLE_CREDENTIAL_HEADER), or undefined when
-   * the request is not mirrored: another route (the list included), the credential sampling off, a
-   * `?token=` (the query string itself carries it), or no description.
+   * The header describing the request's credential (FEED_GO_SAMPLE_CREDENTIAL_HEADER), or undefined
+   * when the request is not mirrored: another route (the list included), that route's credential
+   * sampling off (`[id]`: v1ModelsCredentials; the images route: v1ImagesCredentials; each route
+   * hands its own description in as `opts.credential`), a `?token=` (the query string itself carries
+   * it, and the images body's `nextPage` keeps it), or no description.
    */
   function credentialHeaders(
     endpoint: RestEndpoint,
     req: ShadowRequestLike,
     opts: RestSampleOptions
   ): Record<string, string> | undefined {
-    if (endpoint !== 'v1-models-id' || !config.v1ModelsCredentials) return undefined;
-    if (req.query.token !== undefined || !opts.credential) return undefined;
+    const on =
+      (endpoint === 'v1-models-id' && config.v1ModelsCredentials) ||
+      (endpoint === 'v1-images' && config.v1ImagesCredentials);
+    if (!on || req.query.token !== undefined || !opts.credential) return undefined;
     let credential: string | undefined;
     try {
       credential = opts.credential();
@@ -1019,8 +1032,11 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
   }
 
   /** `beginRest` for `GET /api/v1/images`. */
-  function beginV1Images(req: ShadowRequestLike): FeedGoShadowSample | undefined {
-    return beginRest('v1-images', req);
+  function beginV1Images(
+    req: ShadowRequestLike,
+    opts: RestSampleOptions = {}
+  ): FeedGoShadowSample | undefined {
+    return beginRest('v1-images', req, opts);
   }
 
   /**
@@ -1423,11 +1439,17 @@ export function beginFeedGoShadow(req: ShadowRequestLike): FeedGoShadowSample | 
   return sample;
 }
 
-/** `GET /api/v1/images`: whether this request is sampled (see `beginV1Images`). Never throws. */
-export function beginFeedGoShadowV1Images(req: ShadowRequestLike): FeedGoShadowSample | undefined {
+/**
+ * `GET /api/v1/images`: whether this request is sampled (see `beginV1Images`; `opts.credential`
+ * describes an Authorization credential: `apiCredentialDescriptor`). Never throws.
+ */
+export function beginFeedGoShadowV1Images(
+  req: ShadowRequestLike,
+  opts?: RestSampleOptions
+): FeedGoShadowSample | undefined {
   try {
     const owner = getInstance();
-    const sample = owner.beginV1Images(req);
+    const sample = owner.beginV1Images(req, opts);
     if (sample) owners.set(sample, owner);
     return sample;
   } catch {

@@ -37,6 +37,44 @@ func isFeedViewerEndpoint(endpoint string) bool {
 	return false
 }
 
+// Viewer classes of `GET /api/v1/images` answers (shadow and serve-parity compares; EndpointV1Images):
+// the tRPC feeds' classes for a request without an API credential, and for one with:
+//
+//   - api-key (V1ViewerAPIKey): a full-scope personal key, read as its user's cookie session;
+//   - api-key-scoped: any other key, read with neither the owner's nor the moderator's view;
+//   - api-key-anon: a credential that stands for no session (a download or service token, a
+//     client-credentials key), answered as for anyone.
+const (
+	V1ImagesViewerAPIKeyScoped = "api-key-scoped"
+	V1ImagesViewerAPIKeyAnon   = "api-key-anon"
+)
+
+// V1ImagesViewerClasses is every `/api/v1/images` viewer class, in a fixed order.
+var V1ImagesViewerClasses = []string{FeedViewerAnon, FeedViewerCrawler, FeedViewerBanned, FeedViewerUser, FeedViewerModerator,
+	V1ViewerAPIKey, V1ImagesViewerAPIKeyScoped, V1ImagesViewerAPIKeyAnon}
+
+// v1ImagesViewerClass is the class of an images answer: user is the resolved viewer (nil: signed out),
+// apiKey whether the request carried an API credential, full whether that credential reads with the
+// session's views (auth.ImagesViewer.Full), crawler whether the request is a verified crawler's.
+func v1ImagesViewerClass(user *auth.SessionUser, apiKey, full, crawler bool) string {
+	switch {
+	case !apiKey:
+		return feedViewerClass(user, crawler)
+	case user == nil:
+		return V1ImagesViewerAPIKeyAnon
+	case full:
+		return V1ViewerAPIKey
+	}
+	return V1ImagesViewerAPIKeyScoped
+}
+
+// hasViewerResponseClass reports whether endpoint's response-header compares are counted per viewer
+// class too (feed_go_shadow_response_viewer_total): the tRPC feeds, and the images route, whose
+// headers differ by credential (PublicEndpoint's credentialed arm).
+func hasViewerResponseClass(endpoint string) bool {
+	return isFeedViewerEndpoint(endpoint) || endpoint == EndpointV1Images
+}
+
 // feedViewerClass is the class of a request with session user (nil: none) and, for image.getInfinite,
 // whether it is a verified crawler's.
 func feedViewerClass(user *auth.SessionUser, crawler bool) string {
