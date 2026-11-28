@@ -1845,7 +1845,13 @@ it had before its port. What differs from an `ids` batch:
   Node's own statement timeout, which it answers with an empty page). A `page=10` request reads up
   to 1001 rows per version: up to 6 s cold and 0.7 s warm on the largest; a cursor page stays a
   first page's cost. The rows were byte-identical to Node's join on every model where it finished,
-  pages with shared images included.
+  pages with shared images included. Under `plan_cache_mode = force_generic_plan` (a `PREPARE`d
+  statement, as pgx's statement cache can reach) the plan kept that index scan and the timings
+  matched. That index lives on the production database but in no Prisma migration (the schema
+  declares only `("modelVersionId")`); without it each slice reads and sorts its whole version, about
+  the join's cost again, so check it before turning the switch on. Not measured: a filter that keeps
+  few of a version's rows (`type`, `requiringMeta`, a sparse level) makes a slice scan deeper, up to
+  its whole version, which is still no more rows than the join reads.
 - `requiringMeta` reaches getAllImages on every legacy shape (the handler spreads it in `data`):
   `i."blockedFor" = 'AiNotVerified'` after the visibility gates (Node drops those gates for it on the
   red domain only, and this route passes no domain), so a signed-out page is empty and an owner sees
