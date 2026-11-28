@@ -164,6 +164,12 @@ const modelVisibleToViewer = (pick: (input: any) => number | undefined) =>
 const modelByIdVisible = modelVisibleToViewer((input) => input.id);
 const associationSourceVisible = modelVisibleToViewer((input) => input.fromId);
 
+/** Linked models and articles share one owner-or-moderator viewer, as the editor lists both. */
+const associatedResourcesReaderOf = (ctx: Context) => ({
+  ...articleRegionReaderOf(ctx),
+  viewer: ownerOrModeratorViewer(ctx) ?? {},
+});
+
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();
 
@@ -519,8 +525,7 @@ export const modelRouter = router({
     .query(async ({ input, ctx }) => {
       const { items, regionDependent } = await getAssociatedResourcesSimple(
         { ...input, ...(await resolveAssociatedModelAddons(ctx)) },
-        articleRegionReaderOf(ctx),
-        ownerOrModeratorViewer(ctx)
+        associatedResourcesReaderOf(ctx)
       );
       if (regionDependent) keepAnswerOutOfEdgeCache(ctx);
       return items;
@@ -532,8 +537,7 @@ export const modelRouter = router({
       setAssociatedResources(
         { ...input, ...(await resolveAssociatedModelAddons(ctx)) },
         ctx.user,
-        articleRegionReaderOf(ctx),
-        ownerOrModeratorViewer(ctx)
+        associatedResourcesReaderOf(ctx)
       )
     ),
   rescan: moderatorProcedure.input(getByIdSchema).mutation(({ input }) => rescanModel(input)),

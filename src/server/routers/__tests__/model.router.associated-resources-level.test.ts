@@ -54,7 +54,7 @@ const taggedModel = (tagId: number, id = TAGGED_MODEL) => {
 
 const PG_ARTICLE = 31;
 const X_ARTICLE = 32;
-const linkedArticle = (id: number, nsfwLevel: number) => ({
+const linkedArticle = (id: number, nsfwLevel: number, extra: Record<string, unknown> = {}) => ({
   id,
   toModel: null,
   toArticle: {
@@ -67,6 +67,7 @@ const linkedArticle = (id: number, nsfwLevel: number) => ({
     status: 'Published',
     ingestion: 'Scanned',
     availability: 'Public',
+    ...extra,
   },
 });
 
@@ -187,6 +188,32 @@ describe('model.getAssociatedResourcesSimple owner view', () => {
   });
 });
 
+describe('model.getAssociatedResourcesSimple article owner view', () => {
+  const DRAFT_ARTICLE = 33;
+  const UNRATED_ARTICLE = 34;
+  beforeEach(() => {
+    dbMock.dbWrite.modelAssociations.findMany.mockResolvedValue([
+      linkedArticle(PG_ARTICLE, NsfwLevel.PG),
+      linkedArticle(DRAFT_ARTICLE, NsfwLevel.PG, { status: 'Draft', publishedAt: null }),
+      linkedArticle(UNRATED_ARTICLE, 0),
+    ] as never);
+  });
+
+  it('shows the author their own draft and unrated articles on a session, not on a scoped key', async () => {
+    expect(await listedIds(signedIn(ITEM_OWNER), true)).toEqual([
+      PG_ARTICLE,
+      DRAFT_ARTICLE,
+      UNRATED_ARTICLE,
+    ]);
+    expect(
+      await listedIds(signedIn(ITEM_OWNER), true, {
+        ...scopedKey,
+        tokenScope: TokenScope.ModelsRead,
+      })
+    ).toEqual([PG_ARTICLE]);
+  });
+});
+
 describe('model.getAssociatedResourcesSimple minor content', () => {
   const minorIds = (user: { id: number; isModerator?: boolean }) => {
     dbMock.dbWrite.modelAssociations.findMany.mockResolvedValue([
@@ -286,6 +313,25 @@ describe('model.setAssociatedResources', () => {
     ];
     return args.where.id.in;
   };
+  const removedArticleIds = async (
+    linked: ReturnType<typeof linkedArticle>,
+    credential?: Record<string, unknown>
+  ) => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue({
+      userId: FROM_OWNER,
+      associations: [{ ...linked, id: 1, toModelId: null }],
+    } as never);
+    dbMock.dbWrite.$transaction.mockResolvedValue([] as never);
+    await caller(signedIn(FROM_OWNER), true, credential).setAssociatedResources({
+      fromId: 1,
+      type: 'Suggested',
+      associations: [],
+    });
+    const [args] = dbMock.dbWrite.modelAssociations.deleteMany.mock.calls[0] as [
+      { where: { id: { in: number[] } } }
+    ];
+    return args.where.id.in;
+  };
 
   it('a save on the SFW domain keeps a mature link its editor could not show', async () => {
     expect(await removedIds(false)).toEqual([]);
@@ -307,6 +353,19 @@ describe('model.setAssociatedResources', () => {
     redisMock.redis.packed.get.mockResolvedValue([] as never);
     hide({ models: [PG_MODEL] });
     expect(await removedIds(true, linkedModel(PG_MODEL, NsfwLevel.PG))).toEqual([]);
+  });
+
+  it("a save on a scoped key keeps a link to the caller's own draft article", async () => {
+    const ownDraft = linkedArticle(40, NsfwLevel.PG, {
+      userId: FROM_OWNER,
+      status: 'Draft',
+      publishedAt: null,
+    });
+    expect(await removedArticleIds(ownDraft)).toEqual([1]);
+    vi.clearAllMocks();
+    expect(
+      await removedArticleIds(ownDraft, { ...scopedKey, tokenScope: TokenScope.ModelsWrite })
+    ).toEqual([]);
   });
 
   it("a save on a scoped key keeps a link to the caller's own private model", async () => {

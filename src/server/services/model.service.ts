@@ -6329,8 +6329,7 @@ async function filterAssociatedArticles(
 
 export const getAssociatedResourcesSimple = async (
   { fromId, type, browsingLevel, ...addons }: GetAssociatedResourcesInput & AssociatedModelAddons,
-  reader: ArticleRegionReader,
-  modelViewer?: ArticleReader
+  reader: ArticleRegionReader
 ) => {
   const associations = await dbWrite.modelAssociations.findMany({
     where: { fromModelId: fromId, type },
@@ -6358,7 +6357,8 @@ export const getAssociatedResourcesSimple = async (
   );
   const items = associations
     .map(({ id, toModel, toArticle }) => {
-      if (toModel) return associatedModelItem(id, toModel, modelViewer, browsingLevel, addons);
+      if (toModel)
+        return associatedModelItem(id, toModel, reader.viewer, browsingLevel, addons);
       if (!toArticle || !shown.has(toArticle.id)) return null;
       const { userId, publishedAt, status, ingestion, availability, ...item } = toArticle;
       return { id, item, resourceType: 'article' as const };
@@ -6391,8 +6391,7 @@ export const setAssociatedResources = async (
     ...addons
   }: SetAssociatedResourcesInput & AssociatedModelAddons,
   user: SessionUser | undefined,
-  reader: ArticleRegionReader,
-  modelViewer?: ArticleReader
+  reader: ArticleRegionReader
 ) => {
   const fromModel = await dbWrite.model.findUnique({
     where: { id: fromId },
@@ -6425,7 +6424,8 @@ export const setAssociatedResources = async (
   const existingAssociations = fromModel.associations
     .filter((x) => !x.toArticle || shown.has(x.toArticle.id))
     .filter(
-      (x) => !x.toModel || canListAssociatedModel(x.toModel, modelViewer, browsingLevel, addons)
+      (x) =>
+        !x.toModel || canListAssociatedModel(x.toModel, reader.viewer, browsingLevel, addons)
     )
     .map((x) => x.id);
   const ownIds = new Set(fromModel.associations.map((x) => x.id));
@@ -6448,7 +6448,7 @@ export const setAssociatedResources = async (
     });
     const linkable = new Set(
       targets
-        .filter((x) => canListAssociatedModel(x, modelViewer, browsingLevel, addons))
+        .filter((x) => canListAssociatedModel(x, reader.viewer, browsingLevel, addons))
         .map((x) => x.id)
     );
     if (newModelTargets.some((id) => !linkable.has(id))) throw throwNotFoundError();

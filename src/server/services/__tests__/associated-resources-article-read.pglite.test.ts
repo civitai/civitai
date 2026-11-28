@@ -260,8 +260,9 @@ describe('setAssociatedResources and articles the editor cannot list', () => {
     expect(await ids()).toEqual([ARTICLES.draft.id]);
   });
 
-  // Drops every link: deletes LEVEL_MODEL's rows, so the browsing-level reads above must run before
-  // these, and the two calls in the first test run in order. OWNER wrote the articles.
+  // Mutates links (removes those visible at browsingLevel), so the read-only browsing-level tests
+  // above must run first; the two calls in the first test are order-dependent. OWNER wrote the
+  // articles.
   const savedLevelLinks = async (fromId: number, editor: number, browsingLevel: number) => {
     await save(fromId, { id: editor } as SessionUser, [], { browsingLevel });
     const rows = await h.prisma.modelAssociations.findMany({
