@@ -147,6 +147,7 @@ export function PostImageDropzone({
   }
   // #endregion
 
+  // #region [unanswered creates]
   // react-query runs a `mutate` call's own callbacks only for the latest call, and only while
   // mounted. A create those callbacks will never answer is settled here instead, so what waits on
   // it (preparing tiles, the import notification) does not wait forever.
