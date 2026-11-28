@@ -4,7 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as DbLagHelpers from '~/server/db/db-lag-helpers';
 import type * as SystemCache from '~/server/services/system-cache';
-import type * as UserService from '~/server/services/user.service';
+import type * as UserPreferencesService from '~/server/services/user-preferences.service';
 import type * as FileService from '~/server/services/file.service';
 import type * as CollectionCoverVisibility from '~/server/services/collection-cover-visibility';
 
@@ -21,9 +21,9 @@ vi.mock('~/server/services/system-cache', async (importOriginal) => ({
   ...(await importOriginal<typeof SystemCache>()),
   getCategoryTags: vi.fn(async () => []),
 }));
-vi.mock('~/server/services/user.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof UserService>()),
-  amIBlockedByUser: vi.fn(async () => false),
+vi.mock('~/server/services/user-preferences.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof UserPreferencesService>()),
+  getUsersBlockingViewer: vi.fn(async () => new Set<number>()),
 }));
 vi.mock('~/server/services/file.service', async (importOriginal) => ({
   ...(await importOriginal<typeof FileService>()),

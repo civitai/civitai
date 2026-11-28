@@ -51,6 +51,10 @@ const stranger = { id: 8 } as SessionUser;
 const itemOwner = { id: ITEM_OWNER } as SessionUser;
 const moderator = { id: 9, isModerator: true } as SessionUser;
 const fromOwner = { id: FROM_OWNER } as SessionUser;
+const readerOf = (viewer: SessionUser | undefined) => ({
+  isRestricted: () => false,
+  viewer: viewer ?? {},
+});
 
 let h: Awaited<ReturnType<typeof startPglitePrisma>>;
 
@@ -80,13 +84,13 @@ beforeAll(async () => {
     CREATE TABLE "Article" (id int PRIMARY KEY);
     CREATE TABLE "TagsOnModels" ("modelId" int NOT NULL, "tagId" int NOT NULL, PRIMARY KEY ("modelId", "tagId"));
     CREATE TABLE "ModelAssociations" (
-      id int PRIMARY KEY, "fromModelId" int NOT NULL, "toModelId" int, "toArticleId" int,
+      id serial PRIMARY KEY, "fromModelId" int NOT NULL, "toModelId" int, "toArticleId" int,
       "associatedById" int, "createdAt" timestamp(3) NOT NULL DEFAULT now(),
       type "AssociationType" NOT NULL, index int
     );
     INSERT INTO "User" (id, username) VALUES (${FROM_OWNER}, 'from-owner'), (${ITEM_OWNER}, 'item-owner');
   `);
-  for (const fromId of [FROM, 101, 102, 103, 104, 105, 106]) {
+  for (const fromId of [FROM, 101, 102, 103, 104, 105, 106, 107]) {
     await h.pg.query(
       `INSERT INTO "Model" (id, name, "nsfwLevel", "userId", status, availability, poi) VALUES ($1, 'from', 1, $2, 'Published', 'Public', false)`,
       [fromId, FROM_OWNER]
@@ -121,6 +125,7 @@ beforeAll(async () => {
 
   const { model, modelAssociations, $transaction } = dbMock.dbWrite;
   model.findUnique.mockImplementation(((args: never) => h.prisma.model.findUnique(args)) as never);
+  model.findMany.mockImplementation(((args: never) => h.prisma.model.findMany(args)) as never);
   modelAssociations.findMany.mockImplementation(((args: never) =>
     h.prisma.modelAssociations.findMany(args)) as never);
   modelAssociations.deleteMany.mockImplementation(((args: never) =>
@@ -140,10 +145,10 @@ const listed = async (
   (
     await getAssociatedResourcesSimple(
       { fromId: FROM, type: 'Suggested', browsingLevel, ...addons },
-      viewer,
+      readerOf(viewer),
       viewer
     )
-  ).map(({ item }) => item.id);
+  ).items.map(({ item }) => item.id);
 
 // Visibility rule for linked models set in civitai/civitai#10680.
 describe('getAssociatedResourcesSimple model side', () => {
@@ -205,9 +210,9 @@ describe('getAssociatedResourcesSimple model side', () => {
 
   it('names a model by its .com face at a safe level and by its own name at a mature one', async () => {
     const nameAt = async (browsingLevel: number) => {
-      const items = await getAssociatedResourcesSimple(
+      const { items } = await getAssociatedResourcesSimple(
         { fromId: FROM, type: 'Suggested', browsingLevel },
-        stranger,
+        readerOf(stranger),
         stranger
       );
       const item = items.find(
@@ -236,6 +241,7 @@ describe('setAssociatedResources model side', () => {
     await setAssociatedResources(
       { fromId: 101, type: 'Suggested', associations: [], browsingLevel: PG },
       fromOwner,
+      readerOf(fromOwner),
       fromOwner
     );
     expect((await remaining(101)).sort()).toEqual([MODELS.mature.id, MODELS.private.id]);
@@ -246,6 +252,7 @@ describe('setAssociatedResources model side', () => {
     await setAssociatedResources(
       { fromId: 102, type: 'Suggested', associations: [], browsingLevel: ALL },
       fromOwner,
+      readerOf(fromOwner),
       fromOwner
     );
     expect(await remaining(102)).toEqual([]);
@@ -256,6 +263,7 @@ describe('setAssociatedResources model side', () => {
       setAssociatedResources(
         { fromId, type: 'Suggested', associations: [], browsingLevel: ALL, disableMinor },
         fromOwner,
+        readerOf(fromOwner),
         fromOwner
       );
     await link(103, [MODELS.minor.id]);
@@ -272,6 +280,7 @@ describe('setAssociatedResources model side', () => {
       setAssociatedResources(
         { fromId, type: 'Suggested', associations: [], browsingLevel: ALL, excludedTagIds },
         fromOwner,
+        readerOf(fromOwner),
         fromOwner
       );
     await link(105, [MODELS.tagged.id]);
@@ -281,5 +290,48 @@ describe('setAssociatedResources model side', () => {
     await link(106, [MODELS.tagged.id]);
     await save(106);
     expect(await remaining(106)).toEqual([]);
+  });
+
+  // Decided on civitai/civitai#10684: a link is written only to a model the editor can see, and
+  // the browsing level binds the owner too. Do not relax this to status-only checks.
+  describe('refuses to newly link a model the editor cannot see', () => {
+    const linkTo = (toModelId: number, browsingLevel: number) =>
+      setAssociatedResources(
+        {
+          fromId: 107,
+          type: 'Suggested',
+          associations: [{ resourceId: toModelId, resourceType: 'model' }],
+          browsingLevel,
+        },
+        fromOwner,
+        readerOf(fromOwner),
+        fromOwner
+      );
+
+    it('refuses an owner browsing at PG a mature target, and links it at a mature level', async () => {
+      await expect(linkTo(MODELS.mature.id, PG)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+      expect(await remaining(107)).toEqual([]);
+      await linkTo(MODELS.mature.id, ALL);
+      expect(await remaining(107)).toEqual([MODELS.mature.id]);
+    });
+
+    it('refuses an owner browsing at PG an R target', async () => {
+      const R_MODEL = 13;
+      await h.pg.query(
+        `INSERT INTO "Model" (id, name, "nsfwLevel", "userId", status, availability, poi, minor)
+         VALUES ($1, 'r', $2, $3, 'Published', 'Public', false, false)`,
+        [R_MODEL, NsfwLevel.R, ITEM_OWNER]
+      );
+      await expect(linkTo(R_MODEL, PG)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+      expect(await remaining(107)).not.toContain(R_MODEL);
+    });
+
+    it.each(['private', 'unpublished', 'takenDown'] as const)(
+      'refuses a %s model of another user',
+      async (state) => {
+        await expect(linkTo(MODELS[state].id, ALL)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+        expect(await remaining(107)).not.toContain(MODELS[state].id);
+      }
+    );
   });
 });

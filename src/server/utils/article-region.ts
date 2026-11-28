@@ -1,5 +1,7 @@
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
+import { eventViewerOf } from '~/server/events/event-viewer';
+import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 
 type ArticleLevels = {
   nsfwLevel: number;
@@ -15,4 +17,30 @@ type ArticleLevels = {
 export function isArticleServableWhenRestricted(article: ArticleLevels) {
   const levels = [article.nsfwLevel, ...(article.contentImages ?? []).map((i) => i.nsfwLevel)];
   return levels.every((level) => !!level && Flags.hasFlag(sfwBrowsingLevelsFlag, level));
+}
+
+/** The reader a region gate is asked about. The region is read only when the gate needs it. */
+export type ArticleRegionReader = {
+  isRestricted: () => boolean;
+  viewer: { id?: number; isModerator?: boolean };
+};
+
+export function articleRegionReaderOf(
+  ctx: Parameters<typeof eventViewerOf>[0] & { req: Parameters<typeof getRegion>[0] }
+): ArticleRegionReader {
+  // A moderator only on a session or a full-access personal key, as for moderatorProcedure.
+  return { viewer: eventViewerOf(ctx), isRestricted: () => isRegionRestricted(getRegion(ctx.req)) };
+}
+
+/**
+ * `withheld`: refuse this reader the article, as a missing one; its author and moderators still
+ * read it. `regionDependent`: the answer differs by region, so keep it out of the edge cache.
+ */
+export function articleRegionGate(
+  article: ArticleLevels & { userId: number | null },
+  { isRestricted, viewer }: ArticleRegionReader
+) {
+  const regionDependent = !isArticleServableWhenRestricted(article);
+  const exempt = !!viewer.isModerator || (viewer.id !== undefined && viewer.id === article.userId);
+  return { withheld: regionDependent && !exempt && isRestricted(), regionDependent };
 }

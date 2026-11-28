@@ -1860,7 +1860,7 @@
   "src/server/services/__tests__/app-access-request.service.test.ts": 2,
   "src/server/services/__tests__/appeal-entity-link.test.ts": 3,
   "src/server/services/__tests__/appeal-fee.retry.test.ts": 2,
-  "src/server/services/__tests__/article-banner.test.ts": 5,
+  "src/server/services/__tests__/article-banner.test.ts": 4,
   "src/server/services/__tests__/article-content-link-hold.test.ts": 4,
   "src/server/services/__tests__/article-content-shop-key.test.ts": 3,
   "src/server/services/__tests__/article-content-urls.upsert.test.ts": 2,

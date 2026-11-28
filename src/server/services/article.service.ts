@@ -93,6 +93,7 @@ import { lockAccessTokens, revokeActiveAccessTokens } from '~/server/services/ac
 import { isSharedArticle, sharedArticleTextHash } from '~/server/services/article-share.helpers';
 import { getArticleScheduleError } from '~/server/services/article-schedule.helpers';
 import { articleReadableWhere, canViewArticle } from '~/server/services/article-read';
+import { getUsersBlockingViewer } from '~/server/services/user-preferences.service';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { newTagNames } from '~/server/services/new-tag-names';
 import {
@@ -120,7 +121,6 @@ import {
   getCollectionIdsForArticle,
 } from '~/server/services/collection-media-index';
 import { getCategoryTags, getSystemTags } from '~/server/services/system-cache';
-import { amIBlockedByUser } from '~/server/services/user.service';
 import { isImageOwner } from '~/server/services/util.service';
 import { getArticleImageHolds } from '~/server/services/article-image-holds';
 import { imageAllowedByItsModelSql } from '~/server/services/collection-cover-visibility';
@@ -944,10 +944,8 @@ export const getArticleById = async ({
 
     if (!article || !canViewArticle(article, { id: userId, isModerator }))
       throw throwNotFoundError(`No article with id ${id}`);
-    if (userId && !isModerator) {
-      const blocked = await amIBlockedByUser({ userId, targetUserId: article.userId });
-      if (blocked) throw throwNotFoundError(`No article with id ${id}`);
-    }
+    const blockedBy = await getUsersBlockingViewer({ id: userId, isModerator });
+    if (blockedBy.has(article.userId)) throw throwNotFoundError(`No article with id ${id}`);
 
     // Fetch connected images with ingestion status, and what the body needs to guard each by level.
     const imageConnections = await dbRead.imageConnection.findMany({

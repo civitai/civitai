@@ -56,15 +56,18 @@ export function canViewImageMedia(
   return cap === undefined || isRatingWithinCap(image.nsfwLevel, cap);
 }
 
-/** Signed-out answers are edge-cached by URL alone; a crawler's must not be served to others. */
+/** Signed-out answers are edge-cached by URL alone; use this for one that must not be served to others. */
+export function keepAnswerOutOfEdgeCache(ctx: Partial<Pick<Context, 'cache'>>) {
+  if (!ctx.cache) return;
+  ctx.cache.edgeTTL = 0;
+  ctx.cache.browserTTL = 0;
+  ctx.cache.staleWhileRevalidate = 0;
+}
+
 export function keepCrawlerAnswerOutOfEdgeCache(
   ctx: Pick<Context, 'user' | 'req'> & Partial<Pick<Context, 'cache'>>
 ) {
-  if (!ctx.user && requestVerifiedCrawler(ctx.req) !== null && ctx.cache) {
-    ctx.cache.edgeTTL = 0;
-    ctx.cache.browserTTL = 0;
-    ctx.cache.staleWhileRevalidate = 0;
-  }
+  if (!ctx.user && requestVerifiedCrawler(ctx.req) !== null) keepAnswerOutOfEdgeCache(ctx);
 }
 
 /** The image with `url` null and external video ids dropped; blur hash, size and rating stay. */
