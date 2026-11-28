@@ -921,6 +921,7 @@ describe("the re-removal queue's list", () => {
     db.exec(`CREATE TABLE "ImageRemovalConfirmation" (
         id INTEGER PRIMARY KEY, "imageId" INTEGER, "appealId" INTEGER, status TEXT, source TEXT,
         "violationType" TEXT, "violationDetails" TEXT, "reportIds" INTEGER[],
+        "joinedByIds" INTEGER[] NOT NULL DEFAULT '{}',
         "requestedAt" TIMESTAMP(3) DEFAULT now(), "requestedById" INTEGER,
         "decidedAt" TIMESTAMP(3), "decidedById" INTEGER, "decisionNote" TEXT
       );

@@ -9,6 +9,7 @@ import {
   OPEN_REPORT_STATUSES,
 } from '@civitai/db-queries/image-removal-confirmation';
 import { restrictedImageIds, withheldRow } from './retracted-media';
+import { confirmRemovalRefusal } from '$lib/removal-confirmation';
 
 // Removals held by `holdRemovals` because they repeat the reason an approved appeal overturned. A
 // moderator holding `image.removal.confirm` decides each one on /images/re-removals. Confirming runs
@@ -54,6 +55,7 @@ export async function getRemovalConfirmations({
       'c.reportIds',
       'c.requestedAt',
       'c.requestedById',
+      'c.joinedByIds',
       'rq.username as requestedByUsername',
       'c.decidedAt',
       'dc.username as decidedByUsername',
@@ -121,9 +123,9 @@ export async function removalConfirmationImageId(id: number): Promise<number | n
 }
 
 /**
- * Confirms a held removal and runs it. The requester cannot confirm their own: the hold exists so a
- * second moderator agrees. The removal is recorded as the requester's, the confirmation as the
- * confirmer's.
+ * Confirms a held removal and runs it. Neither the requester nor a moderator whose removal joined the
+ * request may confirm: the hold exists so a moderator with no part in it agrees. The removal is
+ * recorded as the requester's, the confirmation as the confirmer's.
  */
 export async function confirmRemoval({
   id,
@@ -140,11 +142,8 @@ export async function confirmRemoval({
     .where('id', '=', id)
     .executeTakeFirst();
   if (!row || row.status !== 'Pending') return { ok: false, error: NOT_PENDING };
-  if (row.requestedById === userId)
-    return {
-      ok: false,
-      error: 'You requested this removal, so another moderator must confirm it.',
-    };
+  const refusal = confirmRemovalRefusal(row, userId);
+  if (refusal) return { ok: false, error: refusal };
 
   // Void rather than run: removed meanwhile (running it again would notify the owner twice), or a
   // later appeal was approved, which this request never weighed.
@@ -175,6 +174,7 @@ export async function confirmRemoval({
     .where('id', '=', id)
     .where('status', '=', 'Pending')
     .where('requestedById', '<>', userId)
+    .where(sql<boolean>`NOT (${userId} = ANY("joinedByIds"))`)
     .where('appealId', '=', row.appealId)
     .returning('reportIds')
     .executeTakeFirst();
@@ -204,9 +204,7 @@ export async function confirmRemoval({
       throw e;
     }
   // The image is down either way, so the reports the removal answered are actioned, unless it is
-  // held: the ones kept on the request, and, when this removal ran and its path settles the image's
-  // TOS reports unheld, any TOS report filed since the hold. Only reports on this image; one a
-  // moderator has reviewed since the hold keeps its status.
+  // held. One a moderator has reviewed since the hold keeps its status.
   const settlesTos = !voidNote && TOS_SETTLING_SOURCES.includes(row.source);
   const openReportIds =
     skipped || (!settlesTos && !claimed.reportIds.length)

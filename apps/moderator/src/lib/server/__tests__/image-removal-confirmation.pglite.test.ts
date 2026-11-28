@@ -76,6 +76,15 @@ const MIGRATION = readFileSync(
   ),
   'utf8'
 );
+const JOINERS_MIGRATION = readFileSync(
+  fileURLToPath(
+    new URL(
+      '../../../../../../packages/civitai-db-schema/prisma/migrations/20271208130000_image_removal_confirmation_joiners/migration.sql',
+      import.meta.url
+    )
+  ),
+  'utf8'
+);
 
 const SCHEMA = `
 CREATE TYPE "EntityType" AS ENUM ('Image', 'Post', 'Model');
@@ -122,6 +131,7 @@ INSERT INTO "ImageReport" ("imageId", "reportId") VALUES (50, 7), (50, 8);
 const REQUESTER = 2;
 const CONFIRMER = 3;
 const APPROVER = 4;
+const JOINER = 5;
 const IMAGE = 50;
 
 let db: PGlite;
@@ -156,9 +166,10 @@ const confirmations = async () =>
       requestedById: number;
       decidedById: number | null;
       reportIds: number[];
+      joinedByIds: number[];
       violationType: string | null;
     }>(
-      `SELECT id, status, "requestedById", "decidedById", "reportIds", "violationType"
+      `SELECT id, status, "requestedById", "decidedById", "reportIds", "joinedByIds", "violationType"
        FROM "ImageRemovalConfirmation" ORDER BY id`
     )
   ).rows;
@@ -169,6 +180,7 @@ beforeEach(async () => {
   db = await freshPglite();
   await db.exec(SCHEMA);
   await db.exec(MIGRATION);
+  await db.exec(JOINERS_MIGRATION);
   await db.query(`INSERT INTO "User" VALUES ($1, 'req'), ($2, 'conf'), ($3, 'appr')`, [
     REQUESTER,
     CONFIRMER,
@@ -318,6 +330,21 @@ describe('a removal of an image approved on appeal', () => {
     const rows = await confirmations();
     expect(rows).toHaveLength(1);
     expect([...rows[0].reportIds].sort()).toEqual([7, 8]);
+  });
+
+  it('records a moderator whose removal joins the request once, and never the requester', async () => {
+    await approve();
+    const remove = (userId: number) =>
+      blockImage({ imageId: IMAGE, userId, violationType: 'animatedMinorNsfw', reportIds: [7] });
+    await remove(REQUESTER);
+    await remove(JOINER);
+    await remove(REQUESTER);
+    await remove(JOINER);
+
+    expect((await confirmations())[0]).toMatchObject({
+      requestedById: REQUESTER,
+      joinedByIds: [JOINER],
+    });
   });
 
   it('moves a pending request to the latest appeal when a new removal joins it', async () => {
@@ -633,6 +660,47 @@ describe('deciding a held removal', () => {
       expect.objectContaining({ status: 'Pending', decidedById: null }),
     ]);
     expect(setReportStatus).not.toHaveBeenCalled();
+  });
+
+  describe("after another moderator's removal joined it", () => {
+    const holdAndJoin = async () => {
+      const id = await hold();
+      await blockImage({
+        imageId: IMAGE,
+        userId: JOINER,
+        violationType: 'animatedMinorNsfw',
+        reportIds: [7],
+      });
+      return id;
+    };
+
+    it('refuses the joining moderator confirming it', async () => {
+      const id = await holdAndJoin();
+
+      expect(await confirmRemoval({ id, userId: JOINER })).toEqual({
+        ok: false,
+        error: expect.stringContaining('joined this request'),
+      });
+      expect((await confirmations())[0].status).toBe('Pending');
+      expect((await image()).ingestion).toBe('Scanned');
+    });
+
+    it('still refuses the requester', async () => {
+      const id = await holdAndJoin();
+
+      expect(await confirmRemoval({ id, userId: REQUESTER })).toMatchObject({ ok: false });
+      expect((await confirmations())[0].status).toBe('Pending');
+    });
+
+    it('lets a moderator who had no part in it confirm', async () => {
+      const id = await holdAndJoin();
+
+      expect(await confirmRemoval({ id, userId: CONFIRMER })).toEqual({
+        ok: true,
+        status: 'Confirmed',
+      });
+      expect((await image()).ingestion).toBe('Blocked');
+    });
   });
 
   it('runs the removal once when two moderators confirm', async () => {

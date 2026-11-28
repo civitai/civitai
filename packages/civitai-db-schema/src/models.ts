@@ -5003,6 +5003,7 @@ export interface ImageRemovalConfirmation {
   violationDetails: string | null;
   source: string;
   reportIds: number[];
+  joinedByIds: number[];
   status: string;
   decidedById: number | null;
   decidedAt: Date | null;

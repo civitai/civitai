@@ -36,6 +36,13 @@ const MIGRATION = readFileSync(
   ),
   'utf8'
 );
+const JOINERS_MIGRATION = readFileSync(
+  path.resolve(
+    __dirname,
+    '../../../packages/civitai-db-schema/prisma/migrations/20271208130000_image_removal_confirmation_joiners/migration.sql'
+  ),
+  'utf8'
+);
 
 const MODERATOR = 2;
 const APPROVER = 4;
@@ -74,6 +81,7 @@ beforeAll(async () => {
     CREATE TABLE "ImageReport" ("imageId" int, "reportId" int);
   `);
   await holder.db.exec(MIGRATION);
+  await holder.db.exec(JOINERS_MIGRATION);
 });
 
 beforeEach(async () => {

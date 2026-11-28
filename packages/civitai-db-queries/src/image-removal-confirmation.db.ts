@@ -239,7 +239,8 @@ export async function holdSameReasonRemovals(opts: {
   if (!toHold.length) return { held: [], proceed };
 
   // A removal that joins a pending request adds its reports to it, so confirming actions them all,
-  // and moves it to the appeal it was checked against, so a confirmation weighs the latest one.
+  // and moves it to the appeal it was checked against, so a confirmation weighs the latest one. Its
+  // moderator joins `joinedByIds`, and so may not confirm it either.
   const rows = await db
     .insertInto('ImageRemovalConfirmation')
     .values(
@@ -259,6 +260,12 @@ export async function holdSameReasonRemovals(opts: {
         .where('status', '=', 'Pending')
         .doUpdateSet({
           appealId: sql<number>`excluded."appealId"`,
+          joinedByIds: sql<number[]>`CASE
+            WHEN excluded."requestedById" = "ImageRemovalConfirmation"."requestedById"
+              OR excluded."requestedById" = ANY("ImageRemovalConfirmation"."joinedByIds")
+            THEN "ImageRemovalConfirmation"."joinedByIds"
+            ELSE array_append("ImageRemovalConfirmation"."joinedByIds", excluded."requestedById")
+          END`,
           reportIds: sql<
             number[]
           >`ARRAY(SELECT DISTINCT unnest("ImageRemovalConfirmation"."reportIds" || excluded."reportIds"))`,

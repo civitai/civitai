@@ -8526,6 +8526,8 @@ model ImageRemovalConfirmation {
   /// Which removal path was held, e.g. `moderator.block`, `site.setTosViolation`.
   source           String
   reportIds        Int[]     @default([])
+  /// Moderators whose removal joined this request while Pending; like the requester, they may not confirm it.
+  joinedByIds      Int[]     @default([])
   /// Pending | Confirmed | Declined | Void
   status           String    @default("Pending")
   decidedById      Int?
