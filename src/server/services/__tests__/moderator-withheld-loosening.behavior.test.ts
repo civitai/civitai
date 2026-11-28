@@ -36,9 +36,11 @@ beforeAll(async () => {
   await holder.db.exec(CSAM_LINK_TABLES_SQL);
   await holder.db.exec(`
     CREATE TYPE "MediaType" AS ENUM ('image', 'video', 'audio');
+    CREATE TYPE "ImageIngestionStatus" AS ENUM
+      ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
     CREATE TABLE "Image" (
       id int PRIMARY KEY, url text NOT NULL, type "MediaType" NOT NULL DEFAULT 'image',
-      "mimeType" text, ingestion text NOT NULL DEFAULT 'Scanned', "needsReview" text,
+      "mimeType" text, ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned', "needsReview" text,
       "blockedFor" text, minor boolean NOT NULL DEFAULT false, "nsfwLevel" int NOT NULL DEFAULT 4,
       "userId" int NOT NULL, "acceptableMinor" boolean NOT NULL DEFAULT false, "pHash" bigint,
       "postId" int, metadata jsonb, "nsfwLevelLocked" boolean NOT NULL DEFAULT false,

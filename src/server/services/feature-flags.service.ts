@@ -989,6 +989,18 @@ const featureFlags = createFeatureFlags({
   // only on-switch + kill-switch. (Mirrors the `hiddenPrefsCompact` /
   // `genTabDeferView` `availability: []` precedent.)
   appBlocksAgenticReview: { availability: [], fliptKey: 'app-blocks-agentic-review' },
+  // UNVERIFIED App Block frames at a REAL origin (`allow-same-origin`), so an app can use
+  // localStorage, IndexedDB, SharedWorker and cookies. Read only by `useAppFrameOriginPolicy`;
+  // `mayGrantSameOrigin` (`~/components/AppBlocks/sandbox`) still requires an app-frame host
+  // (published, dev tunnel or App Assistant preview) and refuses review mounts. `[]`: dark for
+  // everyone, mods included, until the Flipt flag serves true.
+  appBlocksSameOriginFrames: { availability: [], fliptKey: 'app-blocks-same-origin-frames' },
+  // Frame a published page app at its VERSION path, `https://<slug>.<APPS_DOMAIN>/v/<sha>/`,
+  // instead of the root, so a service worker (scoped at most to its script's directory)
+  // is confined to one version and can never control a newer one. Read only by
+  // `useVersionedFrameSrc` (`~/components/AppBlocks/versionedFrameSrc`); the app host serves
+  // the current version at both paths. `[]`: dark for everyone until Flipt serves true.
+  appBlocksVersionedFramePath: { availability: [], fliptKey: 'app-blocks-versioned-frame-path' },
   // The agent review's CONNECT lane: the `AgentReviewPanel` in the off-site review modal, for an
   // OAuth-connect listing request. `[]` for the `appBlocksAgenticReview` reason; the server half
   // is `isAppListingsAgenticReviewEnabled`, on the same key.

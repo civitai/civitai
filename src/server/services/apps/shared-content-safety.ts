@@ -26,16 +26,21 @@ import { isPromptCheckUnavailable } from '~/server/services/orchestrator/prompt-
  *     `innerHTML` / `.html()` sink consumes it), so escaping only made stored
  *     entities display LITERALLY (a title `Tom & Jerry <3` rendered as
  *     `Tom &amp; Jerry &lt;3`). XSS containment now rests on (b) text-render and
- *     (c) the opaque-origin sandbox — all approved apps are `unverified` → no
- *     `allow-same-origin`, so even an injected `<script>` runs in an origin that
- *     can't touch civitai. The raw text is STILL run through the full block below
+ *     (c) the opaque-origin sandbox — an app that declares `apps:storage:shared:*`
+ *     is never given `allow-same-origin` at the `unverified` tier, even with the
+ *     `appBlocksSameOriginFrames` flag on (`mayGrantSameOrigin`,
+ *     `src/components/AppBlocks/sandbox.ts`), so an injected `<script>` runs in an
+ *     opaque origin: nothing it writes (storage, a service worker) outlives the
+ *     session. The raw text is STILL run through the full block below
  *     (minor/POI/link/audit/size) — only the entity-escape of the stored form is
  *     gone.
  *     🔴 GATE-2 (pre-GA): a STRUCTURAL opaque-origin pin MUST be enforced before any
  *     `verified`/`internal`-tier app is ever granted `apps:storage:shared:*` — a
  *     verified app receives `allow-same-origin`, and escape-at-rest was the only
  *     belt for that case. Do not grant a shared scope to a non-`unverified` tier
- *     until that pin exists.
+ *     until that pin exists, and do not lift the shared-scope exclusion in
+ *     `mayGrantSameOrigin` for unverified apps either: a real origin lets injected
+ *     shared content persist (storage, a service worker) for every later viewer.
  *   - C3 (illegal content): `includesMinor` / `includesPoi` are a HARD legal fail
  *     (minor/POI/CSAM signals) — reject + the caller files a Report. Then
  *     `auditPromptServer` runs the full platform audit (regex + external

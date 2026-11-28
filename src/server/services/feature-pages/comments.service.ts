@@ -1,5 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
+import { FEATURE_PAGES_SET_USERNAME_MESSAGE } from '~/shared/constants/feature-pages.constants';
 import {
   readFpMirrorByRequest,
   readFpMirrorByUrns,
@@ -184,6 +185,13 @@ export async function postFeaturePageComment(
   // A resend of a request that already wrote its comment gets that comment back.
   const written = await readFpMirrorByRequest(kyselyWrite, userId, input.requestId);
   if (written) return answerOfWrittenRequest(ctx, written, parentUrn);
+
+  // Posted under the username, so an account without one writes nothing, moderators included.
+  if (!ctx.user.username?.trim())
+    throw new TRPCError({
+      code: 'PRECONDITION_FAILED',
+      message: FEATURE_PAGES_SET_USERNAME_MESSAGE,
+    });
 
   await assertNotBlocked(ctx, html);
   let parent: StoredCommentV3 | undefined;

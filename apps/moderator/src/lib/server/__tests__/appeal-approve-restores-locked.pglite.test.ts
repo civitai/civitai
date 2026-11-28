@@ -625,17 +625,10 @@ describe('a write that races the image becoming withheld', () => {
     expect(await imageRow()).toMatchObject({ ingestion: 'Blocked', nsfwLevel: 32 });
   });
 
-  it("an accept's level reset, after the lift, leaves the Blocked level", async () => {
-    race.nth = 2;
-    await acceptImage({ csamReview: false, imageId: IMAGE_ID, userId: 2, restoreRemoved: true });
-
-    expect(await imageRow()).toMatchObject({ nsfwLevel: 32, nsfwLevelLocked: true });
-  });
-
   it("an accept's rescan of an unrated image, after the lift, sends nothing to the scanner", async () => {
     await db.exec(`CREATE OR REPLACE FUNCTION update_nsfw_levels_new(ids INTEGER[]) RETURNS VOID
       LANGUAGE SQL AS $$ SELECT $$;`);
-    race.nth = 3;
+    race.nth = 2;
     await acceptImage({ csamReview: false, imageId: IMAGE_ID, userId: 2, restoreRemoved: true });
 
     expect(await imageRow()).toMatchObject({ ingestion: 'Scanned', nsfwLevel: 0 });
@@ -675,5 +668,93 @@ describe('a write that races the image becoming withheld', () => {
     );
 
     expect(await imageRow()).toMatchObject({ ingestion: 'Pending' });
+  });
+});
+
+describe('the lift resets the Blocked level in its own statement', () => {
+  const lockedRow = async () =>
+    (
+      await db.query<{
+        ingestion: string;
+        blockedFor: string | null;
+        nsfwLevel: number;
+        nsfwLevelLocked: boolean;
+      }>(
+        `SELECT "ingestion", "blockedFor", "nsfwLevel", "nsfwLevelLocked" FROM "Image" WHERE "id" = $1`,
+        [IMAGE_ID]
+      )
+    ).rows[0];
+
+  it.each([
+    ['an approved appeal', approve],
+    ['an accept', () => acceptImage({ csamReview: true, imageId: IMAGE_ID, userId: 2 })],
+  ])(
+    '%s whose next step throws still leaves the row fully lifted: 0 and unlocked',
+    async (_, lift) => {
+      // The delete-queue cleanup runs right after the lift statement; without its table it throws.
+      await db.exec(`DROP TABLE "JobQueue"`);
+
+      await expect(lift()).rejects.toThrow();
+
+      expect(await lockedRow()).toEqual({
+        ingestion: 'Scanned',
+        blockedFor: null,
+        nsfwLevel: 0,
+        nsfwLevelLocked: false,
+      });
+    }
+  );
+
+  it.each([
+    ['an approved appeal', approve],
+    ['an accept', () => acceptImage({ csamReview: true, imageId: IMAGE_ID, userId: 2 })],
+  ])('%s keeps any other level and its lock', async (_, lift) => {
+    await db.query(`UPDATE "Image" SET "nsfwLevel" = 4 WHERE "id" = $1`, [IMAGE_ID]);
+
+    await lift();
+
+    expect(await lockedRow()).toEqual({
+      ingestion: 'Scanned',
+      blockedFor: null,
+      nsfwLevel: 4,
+      nsfwLevelLocked: true,
+    });
+  });
+
+  it.each([
+    ['an approved appeal', approve],
+    ['an accept', () => acceptImage({ csamReview: true, imageId: IMAGE_ID, userId: 2 })],
+  ])(
+    '%s while the owner is deleted keeps the Blocked level, its lock and the block',
+    async (_, lift) => {
+      await db.query(`INSERT INTO "User" ("id", "deletedAt") VALUES (7, '2026-11-20 00:00:00')`);
+      await db.query(`UPDATE "Image" SET "userId" = 7 WHERE "id" = $1`, [IMAGE_ID]);
+
+      await lift();
+
+      expect(await lockedRow()).toEqual({
+        ingestion: 'Blocked',
+        blockedFor: 'moderated',
+        nsfwLevel: 32,
+        nsfwLevelLocked: true,
+      });
+    }
+  );
+
+  // A row an earlier lift left Scanned with no block reason, still at the Blocked level and locked.
+  it('an accept takes a half-lifted row off the Blocked level', async () => {
+    await db.query(
+      `UPDATE "Image" SET "ingestion" = 'Scanned', "blockedFor" = NULL, "needsReview" = NULL WHERE "id" = $1`,
+      [IMAGE_ID]
+    );
+
+    await acceptImage({ csamReview: true, imageId: IMAGE_ID, userId: 2 });
+
+    expect(await lockedRow()).toEqual({
+      ingestion: 'Scanned',
+      blockedFor: null,
+      nsfwLevel: 1,
+      nsfwLevelLocked: false,
+    });
   });
 });

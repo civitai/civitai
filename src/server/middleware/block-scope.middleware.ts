@@ -650,10 +650,13 @@ export interface WithBlockScopeOpts {
    * Opt-in: answer CORS for an OPAQUE-origin caller (`Origin: null`) by echoing
    * `Access-Control-Allow-Origin: null`.
    *
-   * WHY: UNVERIFIED App Blocks are sandboxed WITHOUT `allow-same-origin` (see
-   * `src/components/AppBlocks/sandbox.ts` — only internal/verified tiers get
-   * it), so the iframe runs at an OPAQUE origin and every `fetch` it makes
-   * sends `Origin: null`. `null` can never be in the OauthClient.allowedOrigins
+   * WHY: UNVERIFIED App Blocks are sandboxed WITHOUT `allow-same-origin` unless
+   * the viewer's `appBlocksSameOriginFrames` flag is on (see
+   * `src/components/AppBlocks/sandbox.ts`), so for every other viewer the iframe
+   * runs at an OPAQUE origin and every `fetch` it makes sends `Origin: null`.
+   * (With the flag on it sends its real origin instead, which is allowed only if
+   * the app's OauthClient.allowedOrigins lists it, as publish stamps, or it is a
+   * live preview session host.) `null` can never be in the OauthClient.allowedOrigins
    * allowlist, so a direct (non-bridge) fetch's CORS preflight falls through to
    * the handler and 405s — the in-block resource browser (or collections / tip /
    * shared-storage rail) then can't load. (First hit by the catalog
@@ -958,7 +961,8 @@ async function setBlockCors(
 
   // Opaque-origin (`Origin: null`) opt-in — opted-in block endpoints only (see
   // WithBlockScopeOpts.allowOpaqueOrigin). Unverified blocks run sandboxed
-  // without `allow-same-origin` → opaque origin → `Origin: null`, which can
+  // without `allow-same-origin` (unless the viewer's `appBlocksSameOriginFrames`
+  // flag is on) → opaque origin → `Origin: null`, which can
   // never be in the allowlist above. We echo `ACAO: null` ONLY when the
   // endpoint opted in. Allow-Credentials stays omitted (no cookies ride a
   // null-origin request anyway), and the real GET still requires a valid block

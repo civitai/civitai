@@ -312,10 +312,75 @@ off for everyone): `app-blocks-post-creation` (`posts:write:self`),
 `app-blocks-app-reactions` (`social:react:self`; off refuses both reaction
 procedures at once). See `src/server/services/app-blocks-flag.ts`.
 
+## Frame origin and storage
+
+An app frame runs either at an OPAQUE origin (`'null'`: no localStorage,
+IndexedDB, SharedWorker or cookies; every attempt throws `SecurityError`) or at
+its REAL origin, `https://<slug>.<APPS_DOMAIN>` for a published app,
+`dev-<16 hex>.<APPS_DOMAIN>` for a dev tunnel, or its session host under
+`APP_ASSISTANT_PREVIEW_DOMAIN` for an App Assistant preview.
+
+- **Who gets a real origin:** see the sandbox bullet under "Threat model
+  highlights". For an unverified app it is the `appBlocksSameOriginFrames` flag
+  (Flipt `app-blocks-same-origin-frames`, created off), so a preview and the
+  published app behave alike for the same viewer. While the flag is off for a
+  viewer the frame stays opaque, so an app must tolerate storage being
+  unavailable. Use `app.storage` for anything that must persist.
+- **Partitioned:** browser storage (and any service worker) in the frame is
+  keyed by the app's origin AND the top-level site, so it is the app's own under
+  civitai.com and separate from the same app opened directly or under another
+  Civitai site.
+- **Not durable:** Safari may evict script-written storage after a period
+  without a visit; third-party cookies are unreliable in every browser (the
+  frame is cross-site to civitai.com).
+- **Previews lose it:** a dev tunnel or App Assistant preview host is minted per
+  session, so its storage is gone when the session ends.
+- **Service workers:** allowed, scoped to ONE VERSION of the app. The app host
+  serves a published app's current version both at `/` and at its version path,
+  `https://<slug>.<APPS_DOMAIN>/v/<sha>/`, and serves a service worker script ONLY
+  under the current version's path (a worker script requested at `/`, under
+  `/assets/` or under another version's path is a 404). It never sends
+  `Service-Worker-Allowed`, so a worker's scope is at most `/v/<sha>/`. With the
+  `appBlocksVersionedFramePath` flag (Flipt `app-blocks-versioned-frame-path`,
+  created off) the run page frames the app at `/v/<sha>/` (sha:
+  `AppBlock.currentVersionSha`); off, it frames `/`, where no worker can register.
+  - **Register with a RELATIVE URL**: `navigator.serviceWorker.register('./sw.js')`.
+    An absolute `'/sw.js'` resolves to the root and gets a 404 (the app keeps
+    working, without a worker). Asset URLs need no change: absolute `/assets/…`
+    keeps resolving at `/`, which serves the current version.
+  - **A stale worker cannot follow a new version.** The new version is framed at
+    its own `/v/<new sha>/`, outside the old worker's scope. The old worker is not
+    removed (a browser keeps a worker whose update check fails); it lingers,
+    controlling only its old path, which the run page no longer frames and which
+    the app host redirects to the current version for any request that reaches it.
+  - **Takedown stops framing.** Civitai does not frame a taken-down app publicly,
+    and the app host answers every path of it with a 404 and
+    `Clear-Site-Data: "storage"`. That clears the origin only when a request from
+    the page reaches the app host: a worker that serves fully from its cache keeps
+    running at its own origin if something still loads it.
+  - **Not versioned (yet):** a model-slot frame and the dev tunnel, App Assistant
+    preview and moderator review hosts keep their own URLs. The published root
+    serves no worker script, so a model-slot frame has no worker.
+- **Fixed per mount:** the host decides once when it mounts (a sandbox change
+  applies only when the frame navigates), and reads the version-path flag once too, so a flag change takes effect on the
+  next mount, not in a frame already loaded.
+
 ## Threat model highlights
 
 - **Iframe sandbox** is the primary isolation. Sandbox token allowlist is
-  trust-tier gated; `allow-same-origin` is internal-only.
+  trust-tier gated; a manifest can declare `allow-same-origin` only at the
+  `internal` tier. The HOST adds it (`mayGrantSameOrigin` in
+  `src/components/AppBlocks/sandbox.ts`, the one rule every host uses) for
+  `verified`/`internal`, and for `unverified` only with the viewer's
+  `appBlocksSameOriginFrames` flag on — and in every case only when
+  `iframe.src` is `https:`, has no port, and its host is the app's OWN frame
+  host: `<blockId>.<APPS_DOMAIN>`, a dev tunnel `dev-<16 hex>.<APPS_DOMAIN>`,
+  or an App Assistant preview session host under `APP_ASSISTANT_PREVIEW_DOMAIN`
+  (so an app is never framed at another app's origin). Never for a review host
+  (`review-<sha16>`, and every review mount is refused by `reviewMode` whatever
+  its host), never under a root on the embedding site. An unverified app that
+  declares an `apps:storage:shared:*` scope stays opaque even with the flag on
+  (GATE-2, `shared-content-safety.ts`). See "Frame origin and storage" below.
 - **CORS** on `/api/v1/block-tokens` is same-origin only (exact-host
   match). Block iframes never call this endpoint; the host page fetches
   and passes the token via `BLOCK_INIT`.

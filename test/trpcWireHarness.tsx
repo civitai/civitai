@@ -94,7 +94,16 @@ export type WireViewer = { id: number; username: string };
 /** The provider stack `_app` mounts, cut to what a signed-in page needs. */
 export function renderWithTrpcWire(
   ui: React.ReactElement,
-  { viewer, flags }: { viewer: WireViewer; flags: Partial<FeatureAccess> }
+  {
+    viewer,
+    flags,
+    appFrameDomains,
+  }: {
+    viewer: WireViewer;
+    flags: Partial<FeatureAccess>;
+    /** `_app`'s App Block frame roots; omitted, the provider carries none (as a tab with no server props). */
+    appFrameDomains?: { appsDomain: string | null; previewDomain: string | null };
+  }
 ) {
   const session: Session = {
     user: { ...viewer, showNsfw: false, blurNsfw: true, browsingLevel: 1, onboarding: 15 },
@@ -115,6 +124,7 @@ export function renderWithTrpcWire(
           blue: { primary: window.location.host, aliases: [] },
           red: { primary: 'civitai.red', aliases: [] },
         }}
+        appFrameDomains={appFrameDomains}
         availableOAuthProviders={[]}
         verifiedBot={null}
         isAuthed

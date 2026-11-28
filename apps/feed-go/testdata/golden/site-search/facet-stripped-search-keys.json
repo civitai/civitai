@@ -1,0 +1,32 @@
+{
+  "name": "facet-stripped-search-keys",
+  "description": "A facet search as the site's search client sends it, its whole search spread in (highlight, crop, pagination, sort, retrieve): zod strips every key the facet schema lacks, unread (an invalid value included), so neither runtime forwards one.",
+  "request": {
+    "path": "/api/search/indexes/comics_v1/facet-search",
+    "body": "{\"q\":\"\",\"facetName\":\"genre\",\"facetQuery\":\"ac\",\"filter\":\"status = Published\",\"attributesToHighlight\":[\"*\"],\"attributesToCrop\":[],\"attributesToRetrieve\":[\"id\"],\"cropLength\":5000,\"cropMarker\":\"...\",\"facets\":[\"genre\"],\"highlightPreTag\":\"__ais-highlight__\",\"highlightPostTag\":\"__/ais-highlight__\",\"hitsPerPage\":-1,\"limit\":\"20\",\"offset\":0,\"page\":1,\"sort\":null}",
+    "host": "red.example.test"
+  },
+  "config": {
+    "passthrough": false
+  },
+  "viewer": null,
+  "upstream": {
+    "status": 200,
+    "body": "{\"facetHits\":[{\"value\":\"Action\",\"count\":2}],\"facetQuery\":\"ac\",\"processingTimeMs\":0}"
+  },
+  "expect": {
+    "call": {
+      "path": "/indexes/comics_v1/facet-search",
+      "body": {
+        "q": "",
+        "facetName": "genre",
+        "facetQuery": "ac",
+        "filter": [
+          "status = Published",
+          "nsfwLevel IS NOT EMPTY AND nsfwLevel NOT IN [2, 4, 8, 16, 32]"
+        ]
+      }
+    },
+    "body": "{\"facetHits\":[{\"value\":\"Action\",\"count\":2}],\"facetQuery\":\"ac\",\"processingTimeMs\":0}"
+  }
+}

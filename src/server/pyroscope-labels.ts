@@ -49,6 +49,8 @@ type LabelState = {
   run: ContextRunner;
   contexts: Map<string, SampleContext>;
   counts: Record<RouteKind, number>;
+  /** A procedure's result value (and its object-valued fields) → the route that produced it. */
+  results: WeakMap<object, string>;
 };
 
 const STATE_KEY = Symbol.for('civitai.pyroscope.profileRouteLabels');
@@ -91,6 +93,78 @@ function contextFor(state: LabelState, route: string): SampleContext {
   state.contexts.set(route, context);
   state.counts[kind]++;
   return context;
+}
+
+// ---------------------------------------------------------------------------
+// Batched tRPC serialize → the procedure that produced the value
+// ---------------------------------------------------------------------------
+//
+// A batched tRPC request runs each procedure under its own `trpc:<path>` label, but tRPC serializes
+// the results afterwards, in the batch's response stream, so that work lands on the request-level
+// `trpc:batch` label. The procedure chain remembers which route produced each result value
+// (`rememberResultRoute`); the transformer looks the value it is about to serialize up
+// (`serializedValueRoute`) and runs the serialize under that route.
+//
+// What reaches the transformer: the result value itself (non-streamed batch), or a stream chunk
+// `[index, status, [[value], ...]]` in which a plain-object value is a SHALLOW COPY (tRPC's stream
+// encoder rebuilds the top level to find nested promises) whose fields are still the procedure's
+// own objects. So a plain-object result also remembers its object-valued fields, the first
+// FIELD_LOOKUP_MAX of them. A value with no object-valued field (`{ count: 5 }`) is not found and
+// stays on `trpc:batch`, as do the stream's envelope chunks. The map is process-wide and the last
+// write wins, so an object that more than one procedure returns, at the top level or as a field
+// (a shared cached value), is attributed to whichever of them ran last, even from another request.
+// Only the profile label is affected.
+
+const FIELD_LOOKUP_MAX = 8;
+
+const isObject = (value: unknown): value is object => typeof value === 'object' && value !== null;
+
+function forEachObjectField(value: object, fn: (field: object) => boolean | void): void {
+  if (Array.isArray(value)) return;
+  let seen = 0;
+  for (const key in value) {
+    if (!Object.prototype.hasOwnProperty.call(value, key)) continue;
+    if (seen++ >= FIELD_LOOKUP_MAX) return;
+    const field = (value as Record<string, unknown>)[key];
+    if (isObject(field) && fn(field) === true) return;
+  }
+}
+
+/**
+ * Remember that `result` (a tRPC middleware result, `{ ok: true, data }`) was produced by `route`.
+ * A no-op when dark, for a failed result, and for a primitive `data`.
+ */
+export function rememberResultRoute(result: unknown, route: string): void {
+  const state = (globalThis as GlobalWithState)[STATE_KEY];
+  if (!state || !isObject(result)) return;
+  const { ok, data } = result as { ok?: unknown; data?: unknown };
+  if (ok === false || !isObject(data)) return;
+  state.results.set(data, route);
+  forEachObjectField(data, (field) => {
+    state.results.set(field, route);
+  });
+}
+
+/**
+ * The route that produced `serialized` (a result value or a tRPC stream chunk carrying one), or
+ * undefined when dark or not found.
+ */
+export function serializedValueRoute(serialized: unknown): string | undefined {
+  const state = (globalThis as GlobalWithState)[STATE_KEY];
+  if (!state || !isObject(serialized)) return undefined;
+  const direct = state.results.get(serialized);
+  if (direct !== undefined) return direct;
+  if (!Array.isArray(serialized) || serialized.length !== 3) return undefined;
+  const encoded = serialized[2];
+  const head = Array.isArray(encoded) && Array.isArray(encoded[0]) ? encoded[0][0] : undefined;
+  if (!isObject(head)) return undefined;
+  let route = state.results.get(head);
+  if (route === undefined)
+    forEachObjectField(head, (field) => {
+      route = state.results.get(field);
+      return route !== undefined;
+    });
+  return route;
 }
 
 // One frozen label object per route, reused across requests. pprof's runWithContext still
@@ -155,6 +229,7 @@ export function startWallProfilingWithAsyncContext(
     run: (context, fn) => time.runWithContext(context, fn),
     contexts: new Map(),
     counts: { trpc: 0, api: 0 },
+    results: new WeakMap(),
   };
   return true;
 }

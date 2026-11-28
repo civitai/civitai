@@ -25,6 +25,7 @@ import {
   type FeedGoV1ShapeInput,
 } from '~/server/trpc/feed-go-shadow';
 import { recordFeedGoV1Shape } from '~/server/prom/feed-go-shadow.metrics';
+import { apiCredentialDescriptor } from '~/server/trpc/feed-go-shadow-credential';
 import { imagesEndpointSchema } from '~/server/schema/images-endpoint.schema';
 import { getPagination } from '~/server/utils/pagination-helpers';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
@@ -183,7 +184,9 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
 
     // Timed only for admitted requests (bulkhead 503 returns above, before this).
     endTimer = requestDurationSeconds.startTimer({ route: 'api/v1/images' });
-    shadow = beginFeedGoShadowV1Images(req);
+    // An Authorization credential is mirrored only with FEED_GO_SHADOW_V1_IMAGES_CREDENTIALS on,
+    // described rather than forwarded (`apiCredentialDescriptor`); a `?token=` never.
+    shadow = beginFeedGoShadowV1Images(req, { credential: () => apiCredentialDescriptor(req) });
     // Go-first probe (its own rate, FEED_GO_GOFIRST_PROBE_V1_IMAGES_SAMPLE_RATE, default 0): started
     // here, before the gates and the search fill the per-image caches, and never awaited.
     probeFeedGoShadow(shadow);

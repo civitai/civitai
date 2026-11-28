@@ -1,0 +1,43 @@
+{
+  "source": {
+    "imageId": 7,
+    "url": "https://image.example/source.png",
+    "width": 1200,
+    "height": 800
+  },
+  "trace": [
+    {
+      "type": "workflow",
+      "request": {
+        "kind": "image",
+        "prompt": "Redraw this image as a detailed graphite pencil sketch on paper. Don't add any text or lettering.",
+        "images": [
+          {
+            "url": "https://image.example/source.png",
+            "width": 1200,
+            "height": 800
+          }
+        ],
+        "aspectRatio": "source",
+        "quantity": 1
+      },
+      "result": {
+        "workflowId": "mock-0",
+        "images": [
+          {
+            "url": "mock://remix/0/0",
+            "width": 1200,
+            "height": 800
+          }
+        ]
+      }
+    }
+  ],
+  "outputs": [
+    {
+      "url": "mock://remix/0/0",
+      "width": 1200,
+      "height": 800
+    }
+  ]
+}

@@ -13,18 +13,14 @@ import {
   useImageFeedSearchSort,
   useImageFeedSimilarTo,
 } from '~/components/Image/Infinite/useImageFeedSearch';
-import { SearchLock, SearchSortLock } from '~/components/Search/SearchSortLock';
-import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
+import { SearchLock, SearchSortLock, SearchSortMenu } from '~/components/Search/SearchSortLock';
 import { SearchResourceFilter } from '~/components/Image/Filters/SearchResourceFilter';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { SortFilter } from '../SortFilter';
 
 // Newest orders the best matches by date; it never widens them to every new image.
-const searchSortOptions = [
-  { label: 'Best match', value: 'best-match' },
-  { label: 'Newest matches', value: 'newest' },
-];
+const searchSortOptions = [{ label: 'Newest matches', value: 'newest' as const }];
 
 export function ImageFeedFilters({
   type = 'images',
@@ -58,11 +54,10 @@ export function ImageFeedFilters({
           <FollowedFilter type={type} variant="button" />
         ))}
       {searchQuery && searchSort.selectable ? (
-        <SelectMenuV2
-          label={searchSort.sort === 'newest' ? 'Newest matches' : 'Best match'}
-          value={searchSort.sort ?? 'best-match'}
-          options={searchSortOptions}
-          onClick={(value) => searchSort.setSort(value === 'newest' ? value : undefined)}
+        <SearchSortMenu
+          sorts={searchSortOptions}
+          value={searchSort.sort}
+          onChange={searchSort.setSort}
         />
       ) : searching ? (
         // Without the Newest flag (and always for "more like this") the search ranks by match only; a feed sort would be a promise it

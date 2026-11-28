@@ -55,6 +55,7 @@ import { reapDevTunnelsJob } from '~/server/jobs/reap-dev-tunnels';
 import { sweepStaleAgentReviewsJob } from '~/server/jobs/sweep-stale-agent-reviews';
 import { sweepReviewStorageJob } from '~/server/jobs/sweep-review-storage';
 import { drainReviewPreviewQueueJob } from '~/server/jobs/drain-review-preview-queue';
+import { reconcileLiveUnpublishJob } from '~/server/jobs/reconcile-live-unpublish';
 import { runStorageMigrationsJob } from '~/server/jobs/run-storage-migrations';
 import { expireStorageMaintenanceDumpsJob } from '~/server/jobs/expire-storage-maintenance-dumps';
 import { reapDeletedAppStorageJob } from '~/server/jobs/reap-deleted-app-storage';
@@ -341,6 +342,7 @@ export const jobs: Job[] = [
   purgeReviewSnapshotsJob,
   sweepReviewStorageJob,
   drainReviewPreviewQueueJob,
+  reconcileLiveUnpublishJob,
   runStorageMigrationsJob,
   expireStorageMaintenanceDumpsJob,
   reapDeletedAppStorageJob,

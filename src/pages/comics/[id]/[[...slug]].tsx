@@ -94,6 +94,15 @@ import { trpc } from '~/utils/trpc';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import styles from '../Comics.module.scss';
 import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
+import { showWarningNotification } from '~/utils/notifications';
+
+const warnBlockedPanelsSkipped = (skipped: number) =>
+  showWarningNotification({
+    title: 'Some panels were not rated',
+    message: `${skipped} blocked panel image${
+      skipped === 1 ? ' keeps its' : 's keep their'
+    } Blocked rating until the block is lifted.`,
+  });
 
 export const getServerSideProps = createServerSideProps({
   resolver: async ({ features }) => {
@@ -368,11 +377,17 @@ function ComicOverview({ project }: { project: Project }) {
   });
 
   const setProjectNsfwLevel = trpc.comics.setProjectNsfwLevel.useMutation({
-    onSuccess: () => void utils.comics.getPublicProjectForReader.invalidate({ id: project.id }),
+    onSuccess: ({ skipped }) => {
+      if (skipped) warnBlockedPanelsSkipped(skipped);
+      void utils.comics.getPublicProjectForReader.invalidate({ id: project.id });
+    },
   });
 
   const setChapterNsfwLevel = trpc.comics.setChapterNsfwLevel.useMutation({
-    onSuccess: () => void utils.comics.getPublicProjectForReader.invalidate({ id: project.id }),
+    onSuccess: ({ skipped }) => {
+      if (skipped) warnBlockedPanelsSkipped(skipped);
+      void utils.comics.getPublicProjectForReader.invalidate({ id: project.id });
+    },
   });
 
   // Hero image for the wide banner, fallback to cover, then first panel

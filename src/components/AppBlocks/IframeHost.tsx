@@ -73,6 +73,7 @@ import {
 } from './appInAppTelemetry';
 import { sendBlockRender } from './sendBlockRender';
 import { effectiveSandboxIsOpaque, intersectSandbox } from './sandbox';
+import { useAppFrameOriginPolicy } from './useAppFrameOriginPolicy';
 import {
   projectBlockInitContext,
   projectBlockInitMaturity,
@@ -1468,11 +1469,26 @@ export function IframeHost({
 
   // The EFFECTIVE sandbox handed to the iframe attribute below. Derive the
   // transport's opaque-origin mode from the SAME string so they can never
-  // drift: unverified (no allow-same-origin) → opaque frame → opaque transport;
-  // internal/verified (has allow-same-origin) → real origin → pinned transport.
+  // drift: no allow-same-origin → opaque frame → opaque transport; a grant from
+  // `mayGrantSameOrigin` (on the BASE src, never the fragment) → real origin →
+  // pinned transport.
+  const frameOriginPolicy = useAppFrameOriginPolicy();
   const effectiveSandbox = useMemo(
-    () => intersectSandbox(install.manifest.iframe?.sandbox, install.trustTier),
-    [install.manifest.iframe?.sandbox, install.trustTier]
+    () =>
+      intersectSandbox(install.manifest.iframe?.sandbox, install.trustTier, {
+        src: baseIframeSrc,
+        appLabel: install.blockId,
+        scopes: install.manifest.scopes,
+        policy: frameOriginPolicy,
+      }),
+    [
+      install.manifest.iframe?.sandbox,
+      install.trustTier,
+      baseIframeSrc,
+      install.blockId,
+      install.manifest.scopes,
+      frameOriginPolicy,
+    ]
   );
   const opaqueOrigin = useMemo(
     () => effectiveSandboxIsOpaque(effectiveSandbox),

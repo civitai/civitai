@@ -1,0 +1,83 @@
+{
+  "source": {
+    "imageId": 7,
+    "url": "https://image.example/source.png",
+    "width": 1200,
+    "height": 800
+  },
+  "trace": [
+    {
+      "type": "ask",
+      "spec": {
+        "kind": "text",
+        "prompt": "Add something to the scene (optional)",
+        "maxLength": 120,
+        "optional": true
+      },
+      "answer": "remix"
+    },
+    {
+      "type": "ask",
+      "spec": {
+        "kind": "choice",
+        "prompt": "Pick a style",
+        "options": [
+          {
+            "value": "watercolor",
+            "label": "Watercolor"
+          },
+          {
+            "value": "oil-painting",
+            "label": "Oil painting"
+          },
+          {
+            "value": "ukiyo-e",
+            "label": "Ukiyo-e"
+          },
+          {
+            "value": "cyberpunk-neon",
+            "label": "Cyberpunk neon"
+          },
+          {
+            "value": "claymation",
+            "label": "Claymation"
+          }
+        ]
+      },
+      "answer": "claymation"
+    },
+    {
+      "type": "workflow",
+      "request": {
+        "kind": "image",
+        "prompt": "Restyle this image as a stop-motion claymation scene, with plasticine figures and fingerprint texture. Keep the subject, their pose and the composition the same. Also add to the scene: remix. Don't add any text or lettering.",
+        "images": [
+          {
+            "url": "https://image.example/source.png",
+            "width": 1200,
+            "height": 800
+          }
+        ],
+        "aspectRatio": "source",
+        "quantity": 1
+      },
+      "result": {
+        "workflowId": "mock-2",
+        "images": [
+          {
+            "url": "mock://remix/2/0",
+            "width": 1200,
+            "height": 800
+          }
+        ]
+      }
+    }
+  ],
+  "outputs": [
+    {
+      "url": "mock://remix/2/0",
+      "width": 1200,
+      "height": 800
+    }
+  ]
+}

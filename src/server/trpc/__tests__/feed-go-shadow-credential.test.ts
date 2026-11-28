@@ -7,7 +7,10 @@
 import { createHash } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { setEnv } from '~/__tests__/mocks/env.mock';
-import { blockCredentialDescriptor } from '~/server/trpc/feed-go-shadow-credential';
+import {
+  apiCredentialDescriptor,
+  blockCredentialDescriptor,
+} from '~/server/trpc/feed-go-shadow-credential';
 
 vi.hoisted(() => {
   // generateSecretHash salts with the package env's NEXTAUTH_SECRET.
@@ -47,6 +50,30 @@ describe('blockCredentialDescriptor (withBlockScope)', () => {
   it('never carries the key itself', () => {
     const key = 'k-secret-value-123';
     const got = blockCredentialDescriptor(req(`Bearer ${key}`));
+    expect(got).toMatch(/^key:[0-9a-f]{128}$/);
+    expect(got).not.toContain(key);
+  });
+});
+
+describe('apiCredentialDescriptor (readRequestBearerToken, /api/v1/images)', () => {
+  it.each([
+    ['no header', undefined, undefined],
+    ['an empty header (the app reads ?token= then, which is never sampled)', '', undefined],
+    ['no token part', 'Bearer', 'none'],
+    ['an empty token part', 'Bearer  k-123', 'none'],
+    ['any scheme: the second space-separated part', 'Basic k-123', keyOf('k-123')],
+    ['a key: its hash', 'Bearer k-123', keyOf('k-123')],
+    ['split, not trimmed: only the second part', 'Bearer k-123 extra', keyOf('k-123')],
+    ['a bearer holding a dot is hashed like any key', 'Bearer a.b.c', keyOf('a.b.c')],
+    ['a provider download token', 'Bearer github:secret', 'provider'],
+    ['the orchestrator service token', `Bearer ${SERVICE}`, 'service'],
+  ])('%s', (_name, header, want) => {
+    expect(apiCredentialDescriptor(req(header))).toBe(want);
+  });
+
+  it('never carries the key itself', () => {
+    const key = 'k-secret-images-123';
+    const got = apiCredentialDescriptor(req(`Bearer ${key}`));
     expect(got).toMatch(/^key:[0-9a-f]{128}$/);
     expect(got).not.toContain(key);
   });
