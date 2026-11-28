@@ -25,7 +25,7 @@ import (
 const siteSearchGoldenDir = "../../testdata/golden/site-search"
 
 // goldenSiteSearchMin bounds the fixtures found: a glob that matched nothing would pass every case.
-const goldenSiteSearchMin = 14
+const goldenSiteSearchMin = 15
 
 type siteSearchFixture struct {
 	Name    string `json:"name"`
@@ -195,8 +195,8 @@ func TestSiteSearchGolden(t *testing.T) {
 			}
 		})
 	}
-	if served < 8 {
-		t.Errorf("%d served fixtures, want at least 8", served)
+	if served < 9 {
+		t.Errorf("%d served fixtures, want at least 9", served)
 	}
 }
 
