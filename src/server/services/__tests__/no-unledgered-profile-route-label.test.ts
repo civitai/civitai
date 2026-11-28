@@ -29,7 +29,7 @@ describe('no-unledgered-profile-route-label', () => {
   it('calls withProfileRoute only from the ledgered request wrappers', () => {
     expect(calls()).toEqual({
       'src/pages/api/trpc/[trpc].ts': 1, // whole tRPC request
-      'src/server/trpc.ts': 1, // each procedure
+      'src/server/trpc.ts': 2, // each procedure, and a batch result's serialize
       'src/server/utils/endpoint-helpers.ts': 1, // pages API via withApiMetrics
     });
   });
