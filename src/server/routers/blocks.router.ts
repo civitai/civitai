@@ -26,7 +26,10 @@ import { env } from '~/env/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { FORGEJO_ORG } from '~/server/services/blocks/forgejo.service';
 import { logToAxiom, safeError } from '~/server/logging/client';
-import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
+import {
+  assertCallerCanSpendOnRunningWork,
+  getOrchestratorToken,
+} from '~/server/orchestrator/get-orchestrator-token';
 import {
   BLOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB,
   BLOCK_TRAINING_MAX_BUZZ_PER_RUN,
@@ -15962,12 +15965,14 @@ async function outputUnlockDeps(opts: {
         workflowId,
         outsideComicEditor: true,
       }),
-    liftRestriction: async () =>
-      workflows.liftWorkflowMatureRestriction({
+    liftRestriction: async () => {
+      await assertCallerCanSpendOnRunningWork(userId, ctx.req);
+      return workflows.liftWorkflowMatureRestriction({
         token: await token(),
         workflowId,
         signal: AbortSignal.timeout(unlockService.OUTPUT_UNLOCK_ORCHESTRATOR_TIMEOUT_MS),
-      }),
+      });
+    },
     acquireLock: () => acquireOutputUnlockLock(workflowId),
     warnChargedNotReleased: (entry) => {
       recordBlockUnlockChargedNotReleased(entry.readBackFailed);

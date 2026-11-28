@@ -65,6 +65,7 @@ import {
   type RestrictableImage,
 } from '~/server/common/image-visibility';
 import {
+  assertCallerCanSpendOnRunningWork,
   callerOwnOrchestratorToken,
   getOrchestratorToken,
 } from '~/server/orchestrator/get-orchestrator-token';
@@ -3664,6 +3665,7 @@ export const comicsRouter = router({
       let chargeMayLand = false;
       try {
         if (!alreadyPaid) {
+          await assertCallerCanSpendOnRunningWork(ctx.user!.id, ctx.req);
           claim = await claimPanelUnlock(panel.id);
           if (!claim) throw throwBadRequestError('This panel is already being unlocked.');
           await assertUnlockReleasesOutput({ token, workflowId: panel.workflowId });

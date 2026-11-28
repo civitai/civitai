@@ -25,6 +25,7 @@ const h = vi.hoisted(() => ({
   authorize: vi.fn(),
   assertEnabled: vi.fn(async () => undefined),
   getOrchestratorToken: vi.fn(async () => 'orch-token'),
+  assertCanSpendOnRunningWork: vi.fn(async (..._a: unknown[]) => undefined),
   getWorkflow: vi.fn(),
   updateWorkflow: vi.fn(),
   assertUnlockReleasesOutput: vi.fn(async () => undefined),
@@ -45,6 +46,7 @@ vi.mock('~/server/services/blocks/block-token-access.service', async (importOrig
 }));
 vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
   getOrchestratorToken: () => h.getOrchestratorToken(),
+  assertCallerCanSpendOnRunningWork: (...a: unknown[]) => h.assertCanSpendOnRunningWork(...a),
 }));
 vi.mock('~/server/services/orchestrator/workflows', () => ({
   getWorkflow: (...a: unknown[]) => h.getWorkflow(...a),
@@ -97,6 +99,8 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { appBlockTag } from '~/server/services/blocks/workflow.service';
 import { buzzCapRedisKey, consentBudgetRedisKey } from '~/server/services/blocks/block-buzz-cap';
 import { REDIS_SYS_KEYS } from '~/server/redis/client';
+import { TRPCError } from '@trpc/server';
+import { OFFLINE_BUZZ_CAP_REACHED } from '~/server/orchestrator/api-key-buzz-limit-refusal';
 
 /** Spelled out, not imported: a missing constant must not make the assertion vacuous. */
 const NOT_RELEASED_MESSAGE =
@@ -356,6 +360,16 @@ describe('blocks.unlockOutput — the seam', () => {
     expect(store.get(consentKey())).toBe('400');
     expect(keysWith(LOCK_PREFIX)).toEqual([]);
     expectNoAuthorFee();
+  });
+
+  it('an app at its offline Buzz cap is refused before the lift, counting nothing', async () => {
+    h.assertCanSpendOnRunningWork.mockRejectedValueOnce(
+      new TRPCError({ code: 'FORBIDDEN', message: OFFLINE_BUZZ_CAP_REACHED })
+    );
+    await expect(unlock()).rejects.toMatchObject({ message: OFFLINE_BUZZ_CAP_REACHED });
+    expect(h.lift).not.toHaveBeenCalled();
+    expect(store.get(consentKey())).toBe('400');
+    expect(keysWith(LOCK_PREFIX)).toEqual([]);
   });
 
   it('🔴 not-released: the swap stands, the viewer is told why, no cap or fee is counted', async () => {

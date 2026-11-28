@@ -17,6 +17,7 @@ const h = vi.hoisted(() => ({
 
 vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
   getOrchestratorToken: vi.fn(async () => 'token'),
+  assertCallerCanSpendOnRunningWork: vi.fn(async () => undefined),
 }));
 vi.mock('~/server/services/orchestrator/workflows', async (importOriginal) => ({
   ...(await importOriginal<typeof Workflows>()),
