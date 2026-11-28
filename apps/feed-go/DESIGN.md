@@ -3926,7 +3926,22 @@ sum by (result) (rate(feed_go_shadow_compare_total{feed_endpoint="site-search"}[
 
 # What blocks serving: fallback reasons. search-profanity is public-route only (mode="serve").
 topk(10, sum by (reason) (rate(feed_go_fallback_total{feed_endpoint="site-search",mode="shadow"}[1h])))
+
+# The servable share S of the sampled traffic: what the public route would do with each sample.
+sum(rate(feed_go_shadow_servable_total{feed_endpoint="site-search",reason="servable"}[1h]))
+  / sum(rate(feed_go_shadow_servable_total{feed_endpoint="site-search"}[1h]))
+sum by (reason) (rate(feed_go_shadow_servable_total{feed_endpoint="site-search"}[1h]))
 ```
+
+**The servable probe** (`feed_go_shadow_servable_total{reason}`, `searchShadowCompute`). Each sample is
+counted once: `servable`, else the first hand-back serving would reach, in serving's order — the body
+size and the region block before the compute, then the compute's own fallback reason, with the checks
+only the public route makes (`search-etag`, `search-profanity`: `searchServeOnly`) noted where serving
+would stop at them while the shadow computes on. It cannot see the rate-limit ceiling (Node samples
+after its own limit passed the request, and each request is counted once by whichever side answers),
+nor a signed-out caller without a usable `cf-connecting-ip` (the sampler does not forward it), nor
+what Node never samples (API credentials; its own 429 and 422). S is therefore the share of the
+SAMPLED traffic; those classes are read from Node's side.
 
 Node's side: the route's CPU in the same profile window. The shadow compares SFW-site typed queries
 too (that is where the PG cap applies, so where a missed clause would leak), but the public route hands

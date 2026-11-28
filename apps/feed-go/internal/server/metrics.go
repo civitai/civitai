@@ -120,6 +120,10 @@ type Metrics struct {
 	// (feed_go_search_rejected_total: why = open | busy; v1models.MeiliClient.OnReject). Each is a
 	// `v1-models-query` fallback too, which alone would not tell it from the switch being off.
 	SearchRejected *prometheus.CounterVec
+	// ShadowServable counts the site-search shadow samples by what the public route would have done with
+	// the same request (feed_go_shadow_servable_total: endpoint, reason: SearchServable, else the
+	// hand-back reason; searchShadowCompute). Seeded for SearchServable and SearchServeOnlyReasons.
+	ShadowServable *prometheus.CounterVec
 	// EvalCapture counts the eval capture's taps by outcome (feed_go_eval_capture_total: endpoint,
 	// source: evalcapture.Sources, outcome: evalcapture.Outcomes, and evalcapture.OutcomeRefused for
 	// corpus-only; evalcapture.go). Seeded per source for the endpoints it captures.
@@ -288,6 +292,10 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "feed_go_search_rejected_total",
 			Help: "Text searches (GET /api/v1/models `query`) not made, by why: open (the search circuit is open, or its half-open trial is in flight) or busy (the per-process concurrency cap is reached). Each is handed back to the app as a v1-models-query fallback.",
 		}, []string{"why"}),
+		ShadowServable: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "feed_go_shadow_servable_total",
+			Help: "Site-search shadow samples by what the public route would have done with the same request: servable (answered by this service), else the reason it would hand it back to the app (the shadow's own fallback reason, or a check only the public route makes: search-body-size, region-blocked, search-etag, search-profanity). Not counted: the rate-limit ceiling and the client-address case, which a sample does not show, and requests the app never samples (API credentials, its own 429 and 422).",
+		}, []string{EndpointLabel, "reason"}),
 		Errors: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_errors_total",
 			Help: "Compute errors (mode serve|shadow|probe) and fallback-proxy errors (mode proxy), by the error's class (fallback.ErrorClasses: deadline, canceled, pg_no_rows, pg_<SQLSTATE class>, redis_nil, timeout, conn_refused, http_5xx, ...). Every error is counted, whether or not its log line was rate-limited.",
@@ -409,7 +417,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		m.ShadowPhase, m.ShadowPhaseCPU, m.ShadowPhaseSolo, m.ShadowPhaseSoloWall,
 		m.GoFirst, m.GoFirstMiss, m.GoFirstDropped, m.GoFirstRaced, m.GoFirstDBReads, m.GoFirstPages, m.GoFirstCheckLag,
 		m.Panics, m.RevocationDegraded, m.JWKSRefresh, m.JWKSStale, m.FallbackProxyErrors, m.CacheMisses, m.CacheWrites, m.Errors, serveInFlight, m.SearchRejected,
-		m.SessionCookieSlot, m.DevalueWrites, m.FeedUnavailable, m.FeedRetry)
+		m.SessionCookieSlot, m.DevalueWrites, m.FeedUnavailable, m.FeedRetry, m.ShadowServable)
 	for _, o := range feed.RetryOutcomes {
 		m.FeedRetry.WithLabelValues(EndpointInfinite, o)
 	}
@@ -418,6 +426,9 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	}
 	for _, why := range []string{v1models.SearchRejectedOpen, v1models.SearchRejectedBusy} {
 		m.SearchRejected.WithLabelValues(why)
+	}
+	for _, r := range append([]string{SearchServable}, SearchServeOnlyReasons...) {
+		m.ShadowServable.WithLabelValues(EndpointSearch, r)
 	}
 	return m
 }

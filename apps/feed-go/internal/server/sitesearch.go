@@ -102,7 +102,102 @@ func (s *Server) searchRoute(endpoint string) (
 	if endpoint != EndpointSearch {
 		return nil, nil, false
 	}
-	return SyntheticSearchRequest, s.searchCompute(false), true
+	return SyntheticSearchRequest, s.searchShadowCompute(), true
+}
+
+// SearchServable is feed_go_shadow_servable_total's reason for a sample the public route would have
+// answered itself.
+const SearchServable = "servable"
+
+// SearchServeOnlyReasons are the hand-backs only the public route takes, so only the servable probe
+// can count them on a shadow sample (searchShadowCompute), in the order serving checks them.
+var SearchServeOnlyReasons = []string{"search-body-size", "region-blocked", "search-etag", "search-profanity"}
+
+// searchServeProbe is the public route's decision on a shadow sample: the first serve-only hand-back
+// the compute passed (searchCompute notes it where serving would have stopped).
+type searchServeProbe struct{ reason string }
+
+type searchServeProbeKey struct{}
+
+func (p *searchServeProbe) note(reason string) {
+	if p != nil && p.reason == "" {
+		p.reason = reason
+	}
+}
+
+// searchShadowCompute is the shadow's compute (searchCompute(false)), which also counts what the
+// public route would have done with the same request (feed_go_shadow_servable_total): SearchServable,
+// else the reason it would hand the request back, in serving's order (bufferSearchBody's size, the
+// region block, then the compute's checks). The shadow still computes and compares every sample it
+// can, whatever the verdict: the profanity hand-back on civitai.com is where the PG cap applies.
+//
+// Not visible from a sample, so never counted: the rate-limit ceiling (Node samples only after its own
+// limit passed the request; this route's count is Node's, each request counted once) and a signed-out
+// caller without a usable `cf-connecting-ip` (the sampler does not forward the header). Nor is what
+// Node never samples: a request with an API credential, and Node's own refusals (the 429, the 422).
+func (s *Server) searchShadowCompute() func(context.Context, *http.Request) (*computed, error) {
+	inner := s.searchCompute(false)
+	return func(ctx context.Context, r *http.Request) (*computed, error) {
+		probe := &searchServeProbe{}
+		body, _ := r.Context().Value(searchBodyKey{}).([]byte)
+		if len(body) > maxSearchBody {
+			probe.note("search-body-size")
+		}
+		if regionMatches(s.RegionBlockRules, r) {
+			probe.note(fallback.Reason(errRegionBlocked))
+		}
+		r = r.WithContext(context.WithValue(r.Context(), searchServeProbeKey{}, probe))
+		c, err := inner(ctx, r)
+		if s.Metrics != nil {
+			s.Metrics.ShadowServable.WithLabelValues(EndpointSearch, searchServeVerdict(probe, err)).Inc()
+		}
+		return c, err
+	}
+}
+
+// searchServeVerdict is the servable probe's reason: a serve-only hand-back noted before the compute
+// failed wins (serving stops at the first check it fails, and the body size and the region come
+// first); one noted inside the compute was passed before any failure there (noted only once reached);
+// then the compute's own fallback reason ("error" for a compute error); else SearchServable.
+func searchServeVerdict(probe *searchServeProbe, err error) string {
+	if probe.reason != "" {
+		return probe.reason
+	}
+	if err != nil {
+		if reason := fallback.Reason(err); reason != "" {
+			return reason
+		}
+		return HandbackReasonError
+	}
+	return SearchServable
+}
+
+// searchServeOnly is a check only the public route makes: serving, the request is handed back under
+// reason; in the shadow it is noted on the sample's servable probe (searchShadowCompute) and the
+// compute goes on.
+func searchServeOnly(r *http.Request, serving bool, reason string) error {
+	if serving {
+		return fallback.New(reason)
+	}
+	if probe, ok := r.Context().Value(searchServeProbeKey{}).(*searchServeProbe); ok {
+		probe.note(reason)
+	}
+	return nil
+}
+
+// searchProfane is civitai.com's profanity refusal (isProfaneSearch: the managed list, the shipped
+// one, the moderators' benign words). Not ported: on the SFW site any query with text is taken as
+// refused, which a public request hands back (`search-profanity`).
+func searchProfane(color string, req *sitesearch.Request) bool {
+	if color != "green" {
+		return false
+	}
+	for _, q := range req.QueryTexts() {
+		if q != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // SyntheticSearchRequest rebuilds the request a site-search sample describes: a POST to its path with
@@ -210,7 +305,8 @@ func searchJSONBody(r *http.Request) error {
 // apart). In order: the method, the path, any API credential (`bearer-token`), on the public route an
 // `etag` query (`search-etag`: MixedAuthEndpoint may add X-Expires from its database), the body, the
 // session (a banned one is Node's 403: `search-banned`), the profanity refusal civitai.com applies
-// (`search-profanity`: not ported), the viewer, the rate limit (public route only), then the port.
+// (`search-profanity`, searchProfane), the viewer, the rate limit (public route only), then the port.
+// The public route's own checks (searchServeOnly) are noted on a shadow sample's servable probe.
 func (s *Server) searchCompute(serving bool) func(context.Context, *http.Request) (*computed, error) {
 	return func(ctx context.Context, r *http.Request) (*computed, error) {
 		if r.Method != http.MethodPost {
@@ -229,8 +325,10 @@ func (s *Server) searchCompute(serving bool) func(context.Context, *http.Request
 			return nil, fallback.New("bearer-token")
 		}
 		etag := etagChecked(r)
-		if serving && etag {
-			return nil, fallback.New("search-etag")
+		if etag {
+			if err := searchServeOnly(r, serving, "search-etag"); err != nil {
+				return nil, err
+			}
 		}
 		if err := searchJSONBody(r); err != nil {
 			return nil, err
@@ -257,14 +355,11 @@ func (s *Server) searchCompute(serving bool) func(context.Context, *http.Request
 			return nil, fallback.New("search-session-shape")
 		}
 		color := s.Hosts.ColorOf(r.Host)
-		// civitai.com refuses a profane search (isProfaneSearch: the managed list, the shipped one, the
-		// moderators' benign words). Not ported: serving, any text there is handed back. A shadow sample
-		// is computed: Node samples a request only after its own check has passed it.
-		if serving && color == "green" {
-			for _, q := range req.QueryTexts() {
-				if q != "" {
-					return nil, fallback.New("search-profanity")
-				}
+		// civitai.com refuses a profane search (searchProfane). A shadow sample is computed: Node samples
+		// a request only after its own check has passed it.
+		if searchProfane(color, req) {
+			if err := searchServeOnly(r, serving, "search-profanity"); err != nil {
+				return nil, err
 			}
 		}
 		restricted := regionMatches(s.RegionRules, r)

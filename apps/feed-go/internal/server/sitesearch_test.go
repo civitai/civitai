@@ -465,6 +465,80 @@ func TestSearchShadowCompares(t *testing.T) {
 	}
 }
 
+// Every shadow sample is counted once in feed_go_shadow_servable_total under what the public route
+// would have done with it: servable, else the first hand-back serving reaches, in serving's order (the
+// body size and the region before the compute; in the compute, a credential before the etag query,
+// the etag query before the body, the profanity refusal after it). The sample is computed either way.
+func TestSearchShadowCountsServable(t *testing.T) {
+	rules, err := config.RegionBlockRules("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	big := `{"q":"` + strings.Repeat("a", maxSearchBody) + `"}`
+	for _, c := range []struct {
+		name, path, input, host, country, reason string
+		computed                                 bool
+	}{
+		{name: "the other site, text", path: searchToolsPath, input: `{"q":"cat"}`, host: "red.example.test", reason: "servable", computed: true},
+		{name: "the SFW site, no text", path: searchToolsPath, input: `{"limit":5}`, host: "green.example.test", reason: "servable", computed: true},
+		{name: "the SFW site, text", path: searchToolsPath, input: `{"q":"cat"}`, host: "green.example.test", reason: "search-profanity", computed: true},
+		{name: "an etag query", path: searchToolsPath + "?etag=1", input: `{"q":"cat"}`, host: "red.example.test", reason: "search-etag", computed: true},
+		{name: "an etag query before the SFW site's text", path: searchToolsPath + "?etag=1", input: `{"q":"cat"}`, host: "green.example.test", reason: "search-etag", computed: true},
+		{name: "an etag query before an unknown key", path: searchToolsPath + "?etag=1", input: `{"q":"cat","vector":[1]}`, host: "red.example.test", reason: "search-etag"},
+		{name: "a query token before the etag query", path: searchToolsPath + "?token=k&etag=1", input: `{"q":"cat"}`, host: "red.example.test", reason: "bearer-token"},
+		{name: "an unknown key", path: searchToolsPath, input: `{"q":"cat","vector":[1]}`, host: "red.example.test", reason: "input-unknown-key"},
+		{name: "the SFW site's text after an unknown key", path: searchToolsPath, input: `{"q":"cat","vector":[1]}`, host: "green.example.test", reason: "input-unknown-key"},
+		{name: "a blocked region", path: searchToolsPath, input: `{"q":"cat"}`, host: "red.example.test", country: "GB", reason: "region-blocked", computed: true},
+		{name: "a blocked region before an unknown key", path: searchToolsPath, input: `{"q":"cat","vector":[1]}`, host: "red.example.test", country: "GB", reason: "region-blocked"},
+		{name: "a body past the limit before the region", path: searchToolsPath, input: big, host: "red.example.test", country: "GB", reason: "search-body-size"},
+	} {
+		reg := prometheus.NewRegistry()
+		s, up, _, _ := searchServer(t, reg, false)
+		s.RegionBlockRules = rules
+		s.ShadowQueue = make(chan struct{}, 1)
+		headers := map[string]string{"host": c.host}
+		if c.country != "" {
+			headers["cf-ipcountry"] = c.country
+		}
+		postSearchSample(t, s, ShadowRequest{
+			Input: c.input, Path: c.path, Headers: headers,
+			Node:     json.RawMessage(`{"upstream":{},"body":{}}`),
+			Upstream: json.RawMessage(searchToolsHits),
+		})
+		total := 0.0
+		for _, r := range []string{"servable", "search-profanity", "search-etag", "region-blocked", "search-body-size", "bearer-token", "input-unknown-key"} {
+			v, _ := metricValue(t, reg, "feed_go_shadow_servable_total", map[string]string{"feed_endpoint": EndpointSearch, "reason": r})
+			total += v
+			if want := map[bool]float64{true: 1}[r == c.reason]; v != want {
+				t.Errorf("%s: servable{reason=%q} = %v, want %v", c.name, r, v, want)
+			}
+		}
+		if total != 1 {
+			t.Errorf("%s: counted %v times, want once", c.name, total)
+		}
+		served, _ := metricValue(t, reg, "feed_go_requests_total", map[string]string{"feed_endpoint": EndpointSearch, "mode": "shadow", "outcome": "served"})
+		if want := map[bool]float64{true: 1}[c.computed]; served != want {
+			t.Errorf("%s: shadow computes = %v, want %v", c.name, served, want)
+		}
+		if len(up.calls) != 0 {
+			t.Errorf("%s: the shadow called the backend", c.name)
+		}
+	}
+}
+
+// The servable series exist from the start, reading 0: the share is a ratio of rates, and a reason
+// born inside the window would lose its first sample to increase().
+func TestShadowServableIsSeeded(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	NewMetrics(reg)
+	for _, r := range []string{"servable", "search-body-size", "region-blocked", "search-etag", "search-profanity"} {
+		v, found := metricValue(t, reg, "feed_go_shadow_servable_total", map[string]string{"feed_endpoint": EndpointSearch, "reason": r})
+		if !found || v != 0 {
+			t.Errorf("servable{reason=%q} = %v (found %v), want an exported 0", r, v, found)
+		}
+	}
+}
+
 // A sample without the recorded backend response cannot be reshaped: unsupported, never a call.
 func TestSearchShadowWithoutUpstream(t *testing.T) {
 	reg := prometheus.NewRegistry()
