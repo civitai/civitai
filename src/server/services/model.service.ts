@@ -6408,7 +6408,7 @@ export const setAssociatedResources = async (
           id: true,
           toModelId: true,
           toModel: { select: associatedModelVisibilitySelect },
-          toArticle: { select: { id: true, nsfwLevel: true, ...articleReadSelect } },
+          toArticle: { select: { id: true, ...articleReadSelect } },
         },
         orderBy: { index: 'asc' },
       },

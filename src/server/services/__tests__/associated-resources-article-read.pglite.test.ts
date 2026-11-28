@@ -2,7 +2,6 @@ import type { Prisma } from '@prisma/client';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MockInstance } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { NsfwLevel } from '~/server/common/enums';
 import { startPglitePrisma } from '~/__tests__/pglite-prisma';
 import {
   articleReadableWhere,
@@ -222,12 +221,9 @@ describe('getAssociatedResourcesSimple article side', () => {
 // Linked articles follow the article listing's browsing-level rule (articleWithinBrowsingLevel).
 describe('getAssociatedResourcesSimple article browsing level', () => {
   const listed = async (viewer: ArticleReader, browsingLevel: number) =>
-    (
-      await getAssociatedResourcesSimple(
-        { fromId: LEVEL_MODEL, type: 'Suggested', browsingLevel },
-        viewer
-      )
-    ).map((x) => ('title' in x.item ? x.item.title : null));
+    (await list(viewer, { fromId: LEVEL_MODEL, browsingLevel })).items.map((x) =>
+      'title' in x.item ? x.item.title : null
+    );
 
   it('hides R and X articles at PG from anyone, and unrated ones from all but author and mods', async () => {
     expect(await listed(VIEWERS.anon, PG)).toEqual(['pg']);
@@ -267,9 +263,7 @@ describe('setAssociatedResources and articles the editor cannot list', () => {
   // Drops every link: deletes LEVEL_MODEL's rows, so the browsing-level reads above must run before
   // these, and the two calls in the first test run in order. OWNER wrote the articles.
   const savedLevelLinks = async (fromId: number, editor: number, browsingLevel: number) => {
-    await setAssociatedResources({ fromId, type: 'Suggested', associations: [], browsingLevel }, {
-      id: editor,
-    } as SessionUser);
+    await save(fromId, { id: editor } as SessionUser, [], { browsingLevel });
     const rows = await h.prisma.modelAssociations.findMany({
       where: { fromModelId: fromId },
       select: { toArticleId: true },
@@ -285,19 +279,22 @@ describe('setAssociatedResources and articles the editor cannot list', () => {
   });
 
   it("removes the author's own unrated link, which their editor showed", async () => {
-    await h.pg.query(
-      `INSERT INTO "ModelAssociations" (id, "fromModelId", "toArticleId", type, index)
-       VALUES (401, ${MODEL}, ${LEVEL_ARTICLES.unrated[0]}, 'Suggested', 0)`
-    );
-    expect(await savedLevelLinks(MODEL, OWNER, PG)).not.toContain(LEVEL_ARTICLES.unrated[0]);
+    // Its own model: a save drops every link the author sees, which is all of MODEL's.
+    const AUTHOR_MODEL = 900;
+    await h.pg.exec(`
+      INSERT INTO "Model" VALUES (${AUTHOR_MODEL}, ${OWNER});
+      INSERT INTO "ModelAssociations" (id, "fromModelId", "toArticleId", type, index)
+      VALUES (901, ${AUTHOR_MODEL}, ${LEVEL_ARTICLES.unrated[0]}, 'Suggested', 0);
+    `);
+    expect(await savedLevelLinks(AUTHOR_MODEL, OWNER, PG)).not.toContain(LEVEL_ARTICLES.unrated[0]);
   });
 });
 
 describe('setAssociatedResources only writes rows of the model being edited', () => {
-  const A = 300;
+  const A = 310;
   const A_OWNER = 30;
-  const B = 400;
-  const B_ROW = 401;
+  const B = 410;
+  const B_ROW = 411;
 
   beforeAll(async () => {
     await h.pg.exec(`
@@ -469,41 +466,6 @@ describe('associated articles above SFW in a restricted region', () => {
       orderBy: { toArticleId: 'asc' },
     });
     expect(kept.map((x) => x.toArticleId)).toEqual([11, 12, 14]);
-  });
-});
-
-describe('associated articles above the browsing level', () => {
-  const LEVEL_MODEL = 800;
-  const LEVEL_MODEL_OWNER = 80;
-  const MATURE = 21;
-  const { PG, X } = NsfwLevel;
-
-  beforeAll(async () => {
-    await h.pg.exec(`
-      INSERT INTO "Model" VALUES (${LEVEL_MODEL}, ${LEVEL_MODEL_OWNER});
-      INSERT INTO "Article" VALUES (${MATURE}, 'mature', ${X}, ${OWNER}, '2026-01-01', 'Published', 'Scanned', 'Public');
-      INSERT INTO "ModelAssociations" (id, "fromModelId", "toArticleId", type, index)
-      VALUES (821, ${LEVEL_MODEL}, ${MATURE}, 'Suggested', 0);
-    `);
-  });
-
-  const count = async (viewer: ArticleReader, browsingLevel: number) =>
-    (await list(viewer, { fromId: LEVEL_MODEL, browsingLevel })).items.length;
-
-  it('are not listed to a reader browsing below them', async () => {
-    expect(await count(undefined, PG)).toBe(0);
-    expect(await count(VIEWERS.stranger, PG)).toBe(0);
-  });
-
-  it('are listed to a reader whose level includes them, and to the author and a moderator', async () => {
-    expect(await count(undefined, PG | X)).toBe(1);
-    expect(await count(VIEWERS.owner, PG)).toBe(1);
-    expect(await count(VIEWERS.moderator, PG)).toBe(1);
-  });
-
-  it('are kept when the model owner saves the list browsing below them', async () => {
-    await save(LEVEL_MODEL, { id: LEVEL_MODEL_OWNER } as SessionUser, [], { browsingLevel: PG });
-    expect(await h.prisma.modelAssociations.findUnique({ where: { id: 821 } })).not.toBeNull();
   });
 });
 
