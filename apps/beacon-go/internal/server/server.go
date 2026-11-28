@@ -30,7 +30,11 @@ const (
 
 // Writer queues tracker rows (tracker.Client).
 type Writer interface {
+	// Enqueue queues one row; a full queue drops it (ping and pulse write one row each).
 	Enqueue(w beacon.Write) bool
+	// EnqueueAll queues every row or none, atomically: false (nothing queued) when the queue cannot
+	// take them all.
+	EnqueueAll(ws []beacon.Write) bool
 }
 
 // Server holds what the handlers share.
@@ -149,24 +153,43 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, endpoint string) 
 				reason = "panic"
 			}
 		}
-		s.Metrics.Fallbacks.WithLabelValues(endpoint, "serve", reason).Inc()
-		s.Metrics.Requests.WithLabelValues(endpoint, "fallback").Inc()
-		// The proxy reads the body from the start: what was read, then whatever is left.
-		r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(body), r.Body))
-		s.proxy(w, r)
+		s.fallBack(w, r, endpoint, reason, body)
 		return
 	}
 	if s.Writer != nil {
-		for _, wr := range out.Writes {
-			s.Writer.Enqueue(wr)
+		if endpoint == beacon.EndpointTrackBatch {
+			// A batch's rows (up to beacon.TrackBatchMax) are queued whole or not at all: a queue that cannot
+			// take them all hands the whole request to Node, so no 200 answers a partly written batch.
+			if !s.Writer.EnqueueAll(out.Writes) {
+				s.fallBack(w, r, endpoint, ReasonTrackQueueFull, body)
+				return
+			}
+		} else {
+			for _, wr := range out.Writes {
+				s.Writer.Enqueue(wr)
+			}
 		}
 	}
 	s.Metrics.Requests.WithLabelValues(endpoint, "served").Inc()
 	WriteResponse(w, out.Response)
 }
 
+// fallBack counts a served-path fallback and proxies the request to the Node app with its whole body
+// (body is what was already read).
+func (s *Server) fallBack(w http.ResponseWriter, r *http.Request, endpoint, reason string, body []byte) {
+	s.Metrics.Fallbacks.WithLabelValues(endpoint, "serve", reason).Inc()
+	s.Metrics.Requests.WithLabelValues(endpoint, "fallback").Inc()
+	// The proxy reads the body from the start: what was read, then whatever is left.
+	r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(body), r.Body))
+	s.proxy(w, r)
+}
+
 // ReasonDisabled is the fallback reason of a /api/track/batch request while TrackBatchServe is off.
 const ReasonDisabled = "disabled"
+
+// ReasonTrackQueueFull is the fallback reason of a served /api/track/batch request whose rows the
+// tracker queue cannot all take (it is too full, or the client is closing).
+const ReasonTrackQueueFull = "track-queue-full"
 
 // proxy hands a request to the Node app; without one (never in serve mode) it is a 503.
 func (s *Server) proxy(w http.ResponseWriter, r *http.Request) {

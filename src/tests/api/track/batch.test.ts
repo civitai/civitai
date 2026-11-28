@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import type { TrackBatchHandlerDeps } from '~/pages/api/track/batch';
 
 /**
  * Coverage for POST /api/track/batch — the coalesced telemetry beacon that
@@ -59,8 +60,6 @@ vi.mock('~/env/other', () => ({
     return !devStore.isDev;
   },
 }));
-
-vi.mock('~/server/beacon/beacon-go-shadow', () => ({ beginBeaconGoShadow: mockBeginShadow }));
 
 // Tracker is the shared ClickHouse client; assert .search()/.action() are called
 // with the exact per-event payload (same methods the tRPC resolvers used).
@@ -144,6 +143,15 @@ const impressionEvent = {
 
 async function importHandler() {
   return (await import('~/pages/api/track/batch')).default;
+}
+
+// The handler with the beacon-go shadow sampler passed in (the default export uses the real one, which
+// is off without its URL and sample rate).
+async function importHandlerWithShadow() {
+  const { createTrackBatchHandler } = await import('~/pages/api/track/batch');
+  return createTrackBatchHandler({
+    beginShadow: mockBeginShadow as unknown as TrackBatchHandlerDeps['beginShadow'],
+  });
 }
 
 describe('POST /api/track/batch', () => {
@@ -512,7 +520,7 @@ describe('POST /api/track/batch', () => {
       order.push('action');
       return acted;
     });
-    const handler = await importHandler();
+    const handler = await importHandlerWithShadow();
     const req = makeReq({
       origin: 'https://civitai.com',
       body: [searchEvent, impressionEvent, actionEvent],
@@ -538,7 +546,7 @@ describe('POST /api/track/batch', () => {
   it('asks the shadow sampler before the origin guard, and dispatches nothing on a 400', async () => {
     const handle = { attach: vi.fn(), waitFor: vi.fn() };
     mockBeginShadow.mockReturnValueOnce(handle);
-    const handler = await importHandler();
+    const handler = await importHandlerWithShadow();
     const req = makeReq({ origin: 'https://evil.example', body: [searchEvent] });
     const res = makeRes();
 

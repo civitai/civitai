@@ -23,12 +23,32 @@ import (
 type recordingWriter struct {
 	mu   sync.Mutex
 	rows []beacon.Write
+	// room, when > 0, is how many rows EnqueueAll still takes (tracker.Client's free queue slots); 0
+	// means no limit.
+	room int
+	// singles and batches count the Enqueue and EnqueueAll calls.
+	singles, batches int
 }
 
 func (w *recordingWriter) Enqueue(r beacon.Write) bool {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	w.singles++
 	w.rows = append(w.rows, r)
+	return true
+}
+
+func (w *recordingWriter) EnqueueAll(rs []beacon.Write) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.batches++
+	if w.room > 0 {
+		if len(rs) > w.room {
+			return false
+		}
+		w.room -= len(rs)
+	}
+	w.rows = append(w.rows, rs...)
 	return true
 }
 
@@ -72,7 +92,17 @@ func TestServeGolden(t *testing.T) {
 				out.Response.Headers = append(out.Response.Headers, beacon.Header{Name: name, Value: v})
 			}
 		}
-		t.Run(fx.Endpoint+"/"+fx.Name, func(t *testing.T) { fx.CheckOutcome(t, out) })
+		t.Run(fx.Endpoint+"/"+fx.Name, func(t *testing.T) {
+			fx.CheckOutcome(t, out)
+			// A track batch is queued in one all-or-nothing call; ping and pulse rows one at a time.
+			if fx.Endpoint == beacon.EndpointTrackBatch {
+				if w.singles != 0 || w.batches != 1 {
+					t.Errorf("track-batch: %d Enqueue, %d EnqueueAll calls; want 0 and 1", w.singles, w.batches)
+				}
+			} else if w.batches != 0 || w.singles != len(w.rows) {
+				t.Errorf("%s: %d Enqueue, %d EnqueueAll calls for %d rows; want %d and 0", fx.Endpoint, w.singles, w.batches, len(w.rows), len(w.rows))
+			}
+		})
 		served++
 	}
 	if served < 70 {
@@ -428,6 +458,54 @@ func TestTrackBatchSwitch(t *testing.T) {
 	}
 	if n := testutil.ToFloat64(s.Metrics.Fallbacks.WithLabelValues("track-batch", "serve", "track-impression")); n != 1 {
 		t.Fatalf("track-impression fallbacks %v", n)
+	}
+}
+
+// A served batch whose rows the tracker queue cannot all take is proxied whole to the Node app
+// (fallback `track-queue-full`) with nothing queued; with room for exactly its rows it is served.
+// trackBatchBody computes 2 rows.
+func TestTrackBatchQueueFullFallsBackWhole(t *testing.T) {
+	cases := []struct {
+		name      string
+		room      int
+		proxied   int
+		code      int
+		rows      int
+		fallbacks float64
+		served    float64
+	}{
+		{"one slot short", 1, 1, 299, 0, 1, 0},
+		{"exactly the room", 2, 0, 200, 2, 0, 1},
+	}
+	for _, c := range cases {
+		var proxiedBody string
+		proxied := 0
+		backend := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			b, _ := io.ReadAll(r.Body)
+			proxiedBody = string(b)
+			proxied++
+			w.WriteHeader(299)
+		})
+		engine := &beacon.Engine{Sessions: nilSessions{}, TrackerEnabled: true}
+		s, w := newServer(t, engine, backend)
+		w.room = c.room
+		rec := httptest.NewRecorder()
+		PublicMux(s).ServeHTTP(rec, trackBatchRequest(t))
+		if rec.Code != c.code || proxied != c.proxied || len(w.rows) != c.rows || w.batches != 1 || w.singles != 0 {
+			t.Errorf("%s: %d, proxied %d, %d rows, %d EnqueueAll, %d Enqueue", c.name, rec.Code, proxied, len(w.rows), w.batches, w.singles)
+		}
+		if c.proxied == 1 && proxiedBody != trackBatchBody {
+			t.Errorf("%s: proxied body %q, want the whole request", c.name, proxiedBody)
+		}
+		if n := testutil.ToFloat64(s.Metrics.Fallbacks.WithLabelValues("track-batch", "serve", "track-queue-full")); n != c.fallbacks {
+			t.Errorf("%s: track-queue-full fallbacks %v, want %v", c.name, n, c.fallbacks)
+		}
+		if n := testutil.ToFloat64(s.Metrics.Requests.WithLabelValues("track-batch", "fallback")); n != c.fallbacks {
+			t.Errorf("%s: fallback requests %v, want %v", c.name, n, c.fallbacks)
+		}
+		if n := testutil.ToFloat64(s.Metrics.Requests.WithLabelValues("track-batch", "served")); n != c.served {
+			t.Errorf("%s: served %v, want %v", c.name, n, c.served)
+		}
 	}
 }
 

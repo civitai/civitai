@@ -163,7 +163,12 @@ Sources: `src/pages/api/track/batch.ts`, `parseTrackBatch` / `trackBatchEventSch
 
 **What beacon-go answers**: a batch whose every element is a `search` or an `action` it parses. It
 answers every 400 of steps 1-2 itself. Everything else falls back WITH THE WHOLE REQUEST, so a batch
-is written by one writer only and nothing is split, lost or written twice:
+is written by one writer only and is never split or written twice. A batch it answers is queued
+whole: its rows go onto the tracker queue in one all-or-nothing step (`EnqueueAll`, under the
+queue's lock, so two batches cannot both find room and then overflow it), and when the queue cannot
+take every row the request falls back to Node rather than answering 200 for a partly queued batch.
+Once queued, a row can still end `failed` or `dropped` at shutdown (§3), as a Node tracker send can
+fail:
 
 | reason | when |
 |---|---|
@@ -172,6 +177,7 @@ is written by one writer only and nothing is split, lost or written twice:
 | `track-action-unported` | an `Experiment_Exposure` action (its schema reads the experiment registry) |
 | `track-event-invalid` | an element this service's copy of the schema does not accept: Node would drop it, but a value Node has started accepting since the copy was taken would be lost, so Node decides |
 | `disabled` | serve mode with `BEACON_GO_TRACK_BATCH_SERVE` off (§3): every request |
+| `track-queue-full` | serve mode: the batch was computed, but the tracker queue has room for fewer than its rows (or the client is closing); nothing is queued |
 
 When several apply, the first in that order is counted, so the `track-impression` and `track-feed`
 rates are the share of batches carrying one: the measured size of the follow-up ports.
@@ -232,7 +238,8 @@ sends here. Its shadow compare endpoint runs in either mode and either way, and 
 sampler (below) posts samples; each one is computed and compared.
 
 `BEACON_GO_MODE=serve`: the public listener answers both routes. A computed row is queued and sent
-by a bounded worker pool with the Node retry policy (a full queue drops the row and counts it). A
+by a bounded worker pool with the Node retry policy (a full queue drops a ping or pulse row and
+counts it; a track batch that does not fit falls back whole, `track-queue-full`, §1). A
 fallback is proxied to `BEACON_GO_FALLBACK_URL` with the original Host and the whole body.
 
 Every queued row ends in exactly one `beacon_go_tracker_writes_total{table, result}` count: `ok`,
@@ -321,7 +328,8 @@ pods (the sampler) and the monitoring stack (`/metrics`), and nothing else.
 ### Before serve mode
 
 The tracker writer is a fixed pool of synchronous workers (`BEACON_GO_TRACKER_WORKERS`, default 16)
-in front of a bounded queue (`BEACON_GO_TRACKER_QUEUE`); a full queue drops the row. Before switching
+in front of a bounded queue (`BEACON_GO_TRACKER_QUEUE`); a full queue drops a ping or pulse row and
+sends a track batch back to Node (`track-queue-full`). Before switching
 any replica to `BEACON_GO_MODE=serve`:
 
 1. size the workers from measurement: per-pod beacon rate (from the shadow phase) × the tracker's
