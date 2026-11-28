@@ -456,7 +456,7 @@ describe('the models toolbar while the semantic search answers a query', () => {
         </FiltersProvider>
       </IsClientProvider>
     );
-  const periodNotice = () => document.querySelector('.tabler-icon-exclamation-mark');
+  const periodNotice = () => page.getByRole('button', { name: 'Period filter disabled' });
 
   beforeEach(() => {
     mocks.features = { modelFeedSearch: true, canViewNsfw: true };
@@ -489,12 +489,12 @@ describe('the models toolbar while the semantic search answers a query', () => {
   test('drops the period-disabled notice, which the keyword search keeps', async () => {
     await mountToolbar();
     await expect.element(page.getByRole('button', { name: 'Best match' })).toBeVisible();
-    expect(periodNotice()).toBeNull();
+    expect(periodNotice().query()).toBeNull();
   });
 
   test('control: without the flag the keyword search shows the period-disabled notice', async () => {
     mocks.features = { canViewNsfw: true };
     await mountToolbar();
-    await expect.poll(periodNotice).not.toBeNull();
+    await expect.element(periodNotice()).toBeVisible();
   });
 });

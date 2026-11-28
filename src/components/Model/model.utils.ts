@@ -2,7 +2,7 @@ import { withPlaceholderData } from '~/hooks/trpcHelpers';
 import type { SemanticModelSearchRequest } from '~/server/schema/semantic-model-search.schema';
 import { spellcheckFor, useSearchAsTyped } from '~/components/Search/useSearchAsTyped';
 import { useSearchSort } from '~/components/Search/useSearchSort';
-import { isSortAvailable } from '~/components/Filters/sort-availability';
+import { isSortAvailable, modelSortOptions } from '~/components/Filters/sort-availability';
 import { useSortAvailability } from '~/components/Filters/useSortAvailability';
 import { keepPreviousData } from '@tanstack/react-query';
 import { isEqual } from 'lodash-es';
@@ -18,7 +18,7 @@ import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsPro
 import type { ModelFilterSchema } from '~/providers/FiltersProvider';
 import { modelSortPeriodDefaults, useFiltersContext } from '~/providers/FiltersProvider';
 import { constants } from '~/server/common/constants';
-import { ModelSort, ModelSortHidden } from '~/server/common/enums';
+import { ModelSort } from '~/server/common/enums';
 import { periodModeSchema } from '~/server/schema/base.schema';
 import type {
   GetAllModelsInput,
@@ -326,14 +326,10 @@ export const useQueryModels = (
   return { data, models: items, isLoading: isLoading || loadingPreferences, ...rest };
 };
 
-const modelSearchSorts = Object.values(ModelSort).filter(
-  (x) => !Object.values(ModelSortHidden).includes(x)
-);
-
 /** The model search's own sort (absent is Best match), and the sorts it offers, as the feed's menu. */
 export const useModelSearchSort = () => {
   const availability = useSortAvailability();
-  const sorts = modelSearchSorts.filter((value) =>
+  const sorts = modelSortOptions.filter((value) =>
     isSortAvailable({ type: 'models', value }, availability)
   );
   return { ...useSearchSort(sorts), sorts };
