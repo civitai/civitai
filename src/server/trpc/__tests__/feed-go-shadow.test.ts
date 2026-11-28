@@ -1141,24 +1141,27 @@ describe('createFeedGoShadow — GET /api/v1/images with an API credential', () 
     [
       'a ?token= (the query string and nextPage carry it)',
       keyed({ url: '/api/v1/images?token=KEY&limit=2', query: { token: 'KEY', limit: '2' } }),
-      () => DESCRIBED,
+      (): string | undefined => DESCRIBED,
     ],
     ['no description', keyed(), undefined],
-    ['an empty description', keyed(), () => undefined],
+    ['an empty description', keyed(), (): string | undefined => undefined],
     [
       'a throwing description',
       keyed(),
-      () => {
+      (): string | undefined => {
         throw new Error('x');
       },
     ],
-  ] as const)('on: %s is still skipped_credential', async (_name, req, credential) => {
-    const h = harness({ config: { v1ImagesCredentials: true } });
-    expect(begin(h, req, credential)).toBeUndefined();
-    await h.flush();
-    expect(h.fetchMock).not.toHaveBeenCalled();
-    expect(h.outcomes).toEqual(['skipped_credential']);
-  });
+  ] as Array<[string, ReturnType<typeof restRequest>, (() => string | undefined) | undefined]>)(
+    'on: %s is still skipped_credential',
+    async (_name, req, credential) => {
+      const h = harness({ config: { v1ImagesCredentials: true } });
+      expect(begin(h, req, credential)).toBeUndefined();
+      await h.flush();
+      expect(h.fetchMock).not.toHaveBeenCalled();
+      expect(h.outcomes).toEqual(['skipped_credential']);
+    }
+  );
 });
 
 /** A model-route request as the Next route receives it (`/api/v1/models` or `/api/v1/models/[id]`). */
