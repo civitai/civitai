@@ -192,7 +192,8 @@ export async function reportYesNo(
   try {
     const { threshold, fileReport } = await deps();
     const outcome = await recordReport(db, input, threshold);
-    if (outcome.pulledImage !== null) await fileImagePull(db, outcome.pulledImage, fileReport, input.now);
+    if (outcome.pulledImage !== null)
+      await fileImagePull(db, outcome.pulledImage, fileReport, input.now);
     return outcome;
   } catch (error) {
     console.error('knights: could not record a yes/no report', {

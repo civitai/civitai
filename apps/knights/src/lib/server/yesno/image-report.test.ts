@@ -42,7 +42,10 @@ describe('reportImageToMainApp', () => {
 
   it.each([
     ['a refusal', () => answer({ error: 'nope' }, 500)],
-    ['a 404 that is not the route (not deployed yet)', () => new Response('<html>', { status: 404 })],
+    [
+      'a 404 that is not the route (not deployed yet)',
+      () => new Response('<html>', { status: 404 }),
+    ],
     ['an answer with no report id', () => answer({ created: true })],
     ['a body that is not JSON', () => new Response('<html>', { status: 200 })],
   ])('throws on %s, so the pull is filed again later', async (_case, response) => {

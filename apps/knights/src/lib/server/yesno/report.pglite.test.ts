@@ -142,7 +142,9 @@ describe('a report below the threshold', () => {
 
   it('counts no report from a held or reset-pending player, who still stops being dealt it', async () => {
     await seedPlayer(pg, 104);
-    await pg.exec(`UPDATE "NewOrderPlayer" SET "payoutBlockedAt" = '2026-12-19' WHERE "userId" = 104`);
+    await pg.exec(
+      `UPDATE "NewOrderPlayer" SET "payoutBlockedAt" = '2026-12-19' WHERE "userId" = 104`
+    );
     await seedPlayer(pg, 105);
     await pg.exec(`INSERT INTO "NewOrderSmite" ("targetPlayerId") VALUES (105), (105), (105)`);
     await reportBy('a', ['image', 'image', 'image', 'image']);
@@ -195,7 +197,9 @@ describe('the fifth distinct reporter', () => {
     expect(fileReport).toHaveBeenCalledTimes(1);
     expect(fileReport).toHaveBeenCalledWith(IMAGE);
     expect(await pulls()).toEqual([{ imageId: IMAGE, reportId: 77, resolvedAt: null }]);
-    expect(await filings()).toEqual([{ imageId: IMAGE, itemId: ids.a, filing: 'filed', attempts: 1 }]);
+    expect(await filings()).toEqual([
+      { imageId: IMAGE, itemId: ids.a, filing: 'filed', attempts: 1 },
+    ]);
     expect(await statusOf('b')).toBe('Open');
     expect(await dealtToFresh()).toEqual(['c']);
   });
