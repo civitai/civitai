@@ -28,7 +28,10 @@ vi.mock('../../db', () => ({
     return dbHandle.current;
   },
 }));
-vi.mock('../../image-nsfw-level', () => ({ updateImageNsfwLevel: setLevel }));
+vi.mock('../../image-nsfw-level', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  updateImageNsfwLevel: setLevel,
+}));
 
 const {
   countInquisitorQueue,
@@ -340,6 +343,20 @@ describe('getInquisitorQueue block markers', () => {
 });
 
 // An image whose only marker is the Blocked level is blocked too (the shared marker counts all three).
+describe('a block that lands during a ruling', () => {
+  // A block that lands after the ruling's check: the write refuses it, and so does the ruling.
+  it('a block landing after the check gets the same refusal, and leaves it with the Inquisitors', async () => {
+    await insertItem(1, 1, 'Inquisitor');
+    const { BlockedImageRatingError } = await import('../../image-nsfw-level');
+    setLevel.mockRejectedValueOnce(new BlockedImageRatingError(1));
+
+    const outcome = await ruleOnInquisitorItem(1, { level: 8 }, MOD, { csamReview: true });
+
+    expect(outcome).toEqual({ ok: false, error: BLOCKED_RATING_REFUSED });
+    expect(await item(1)).toMatchObject({ status: 'Inquisitor', resolvedBy: null });
+  });
+});
+
 describe('an image whose only block marker is the Blocked level', () => {
   beforeEach(async () => {
     await db.query(`UPDATE "Image" SET "nsfwLevel"=32, "nsfwLevelLocked"=TRUE WHERE id=1`);

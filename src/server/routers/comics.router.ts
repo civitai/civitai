@@ -4975,7 +4975,8 @@ export const comicsRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      // Stamp every panel image but a blocked one with the moderator's chosen level. The
+      // Stamp every panel image with the moderator's chosen level, skipping a blocked image
+      // unless the level is Blocked (`stampPanelImageLevel`). The
       // schema accepts only single-bit values (PG / PG-13 / R / X / XXX /
       // Blocked), so this is a "set" — it both lowers content above the
       // chosen level AND raises content below it. The previous cap-only
@@ -5015,9 +5016,9 @@ export const comicsRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      // Stamp every panel image in this chapter but a blocked one with the moderator's chosen
-      // level. Schema accepts single-bit values only, so this works in both
-      // directions (lower content above and lift content below). See the
+      // Stamp every panel image in this chapter with the moderator's chosen level, skipping a
+      // blocked image unless the level is Blocked. Schema accepts single-bit values only, so
+      // this works in both directions (lower content above and lift content below). See the
       // matching note on `setProjectNsfwLevel` for why "set" beats "cap".
       const skipped = await stampPanelImageLevel(
         input.nsfwLevel,

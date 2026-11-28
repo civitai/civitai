@@ -22,7 +22,7 @@ import { BLOCKED_RATING_REFUSED } from '$lib/knights/inquisitor-ruling';
 import { isRatingLevel } from '$lib/nsfw-levels';
 import { logToAxiom } from '../axiom';
 import { dbRead, dbWrite } from '../db';
-import { updateImageNsfwLevel } from '../image-nsfw-level';
+import { BlockedImageRatingError, updateImageNsfwLevel } from '../image-nsfw-level';
 import { listWithheldIds, readRetractedMedia } from '../retracted-media';
 import {
   consensusBlockReason,
@@ -348,6 +348,9 @@ export async function ruleOnInquisitorItem(
     });
   } catch (error) {
     await release(itemId, moderatorId, now).catch(() => undefined);
+    // A block that landed after the check above: the write refused it.
+    if (error instanceof BlockedImageRatingError)
+      return { ok: false, error: BLOCKED_RATING_REFUSED };
     throw error;
   }
 
